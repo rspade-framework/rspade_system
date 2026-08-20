@@ -7,6 +7,37 @@ define('LARAVEL_START', microtime(true));
 
 /*
 |--------------------------------------------------------------------------
+| Environment Symlink Guard
+|--------------------------------------------------------------------------
+|
+| system/.env is framework space and is always a symlink to the project-root
+| .env. A real file there SHADOWS the root one, and the application then serves
+| every request against configuration nobody wrote - silently, because it boots
+| and answers perfectly well while ignoring the operator's settings.
+|
+| Runs first, before the IDE endpoints and before Laravel: everything after this
+| point may read configuration. The healthy path is two syscalls and no writes.
+|
+*/
+
+require __DIR__ . '/../bootstrap/rsx_env_link.php';
+
+/*
+|--------------------------------------------------------------------------
+| First-Run Setup
+|--------------------------------------------------------------------------
+|
+| With APP_URL still empty, offer to set it from the address this request
+| arrived on - the one thing a container cannot work out for itself, and the one
+| thing the browser knows for certain. Development mode only, and unreachable
+| the moment APP_URL has a value.
+|
+*/
+
+require __DIR__ . '/../bootstrap/rsx_first_run.php';
+
+/*
+|--------------------------------------------------------------------------
 | IDE Service Endpoints (Must be before maintenance check)
 |--------------------------------------------------------------------------
 |

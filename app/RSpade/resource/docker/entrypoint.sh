@@ -144,9 +144,73 @@ fi
 # 4. Writable storage
 # -----------------------------------------------------------------------------
 mkdir -p storage/rsx-build storage/rsx-tmp storage/flock storage/rsx-framework storage/logs 2>/dev/null || true
-if [ "$TARGET" = "prod" ]; then
-    # Production runs php-fpm as www-data, so the tree it writes to must be its
-    # own. Development runs as root and needs no ownership change.
+
+# -----------------------------------------------------------------------------
+# 4b. PUID / PGID - run the application as YOUR user
+# -----------------------------------------------------------------------------
+# THE PROBLEM THIS SOLVES, which only Linux hosts have. Your project is a bind
+# mount, and by default the application runs as root inside the container - so
+# every file it writes (.env, compiled bundles, logs, uploads) comes out owned by
+# root ON YOUR MACHINE, and you cannot edit your own project without sudo. macOS
+# and Windows never see it: Docker Desktop's filesystem layer presents everything
+# as yours regardless.
+#
+# Set PUID and PGID to your own ids and the application runs as you instead:
+#
+#     id -u    # -> PUID
+#     id -g    # -> PGID
+#
+# UNSET IS THE DEFAULT and changes nothing. Mac and Windows users never need to
+# think about this, and nobody gets a surprise ownership change for upgrading.
+#
+# nginx runs as root here, so it reaches the FPM socket whoever owns it - the one
+# thing that usually makes this awkward is not a problem.
+if [ -n "${PUID:-}" ]; then
+    APP_GID="${PGID:-$PUID}"
+    APP_USER="rspade"
+
+    # Reuse an existing group/user with those ids rather than colliding with it -
+    # uid 33 is already www-data, and creating a second name for one id is how
+    # ownership gets confusing later.
+    existing_group="$(getent group "$APP_GID" 2>/dev/null | cut -d: -f1)"
+    if [ -n "$existing_group" ]; then
+        APP_GROUP="$existing_group"
+    else
+        APP_GROUP="$APP_USER"
+        groupadd -g "$APP_GID" "$APP_GROUP" 2>/dev/null \
+            || warn "could not create group $APP_GID"
+    fi
+
+    existing_user="$(getent passwd "$PUID" 2>/dev/null | cut -d: -f1)"
+    if [ -n "$existing_user" ]; then
+        APP_USER="$existing_user"
+    else
+        useradd -u "$PUID" -g "$APP_GID" -M -s /usr/sbin/nologin "$APP_USER" 2>/dev/null \
+            || warn "could not create user $PUID"
+    fi
+
+    # Point both FPM pools at that identity.
+    for pool in /etc/php/8.4/fpm/pool.d/www.conf /etc/php/8.4/fpm/pool.d/ajax.conf; do
+        [ -f "$pool" ] || continue
+        sed -i \
+            -e "s/^user = .*/user = ${APP_USER}/" \
+            -e "s/^group = .*/group = ${APP_GROUP}/" \
+            -e "s/^listen.owner = .*/listen.owner = ${APP_USER}/" \
+            -e "s/^listen.group = .*/listen.group = ${APP_GROUP}/" \
+            "$pool" || warn "could not repoint $(basename "$pool")"
+    done
+
+    # Hand over the things the application writes. Everything else in the project
+    # is yours already - it came from your checkout.
+    chown -R "${APP_USER}:${APP_GROUP}" storage 2>/dev/null \
+        || warn "could not chown storage/ to ${APP_USER}"
+    [ -f "$APP_DIR/.env" ] && chown "${APP_USER}:${APP_GROUP}" "$APP_DIR/.env" 2>/dev/null
+
+    say "Running the application as ${APP_USER} (uid ${PUID}, gid ${APP_GID})."
+
+elif [ "$TARGET" = "prod" ]; then
+    # Production has no bind-mounted developer tree to fight, so it runs as
+    # www-data unconditionally and owns what it writes.
     chown -R www-data:www-data storage 2>/dev/null || warn "Could not chown storage/ to www-data"
 fi
 

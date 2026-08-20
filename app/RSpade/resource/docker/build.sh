@@ -27,7 +27,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 cd "$SCRIPT_DIR" || { echo "ERROR: cannot enter $SCRIPT_DIR" >&2; exit 1; }
 
-REGISTRY="ghcr.io/rspade-framework"
+REGISTRY="rspade"
 
 say() { echo "[build] $*"; }
 die() { echo "[build] ERROR: $*" >&2; exit 1; }
@@ -90,11 +90,10 @@ fi
 BUILT=""
 
 for target in $TARGETS; do
-    image="rspade-${target}"
+    image="rspade-server-${target}"
     registry_name="${REGISTRY}/${image}"
 
-    say "Building the ${target} image (this takes a while on a cold cache - the"
-    say "  PHP extension set and LibreOffice dominate it)..."
+    say "Building the ${target} image (this takes a while)..."
 
     # The registry-qualified :latest is the PRIMARY tag, because that is the name
     # docker-compose.yml declares. Tagging it here is what "registers" the image
