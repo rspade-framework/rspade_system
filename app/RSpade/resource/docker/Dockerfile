@@ -128,9 +128,30 @@ RUN chmod 644 /etc/nginx/nginx.conf \
 COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run
 COPY task-run.sh       /usr/local/bin/rspade-task-run
-RUN chmod +x /usr/local/bin/rspade-entrypoint \
-             /usr/local/bin/rspade-realtime-run \
-             /usr/local/bin/rspade-task-run
+COPY retry-run.sh      /usr/local/bin/rspade-retry-run
+COPY claude-run.sh     /usr/local/bin/claude
+
+# git IS the RSpade git proxy in this container.
+#
+# /usr/local/bin precedes /usr/bin on PATH, so `git` routes through
+# `php artisan rsx:git` without anyone having to remember to type that. The real
+# binary stays at /usr/bin/git, and the shim steps aside for it whenever the
+# proxy is not wanted - see the script's own header for the three cases.
+#
+# This is a CONTAINER-only arrangement. Taking over `git` machine-wide on
+# somebody's own server would be presumptuous; inside an image that exists to run
+# one project, it is just the project's git.
+COPY git-shim.sh       /usr/local/bin/git
+
+# 755, not +x: the source tree these come from is world-writable, and `chmod +x`
+# would preserve that - a world-WRITABLE executable on PATH is a different thing
+# entirely from an executable one.
+RUN chmod 755 /usr/local/bin/rspade-entrypoint \
+              /usr/local/bin/rspade-realtime-run \
+              /usr/local/bin/rspade-task-run \
+              /usr/local/bin/rspade-retry-run \
+              /usr/local/bin/claude \
+              /usr/local/bin/git
 
 # Runtime directories the services expect to exist before they start.
 RUN mkdir -p /run/php /var/log/supervisor /var/run/redis /var/log/redis /var/lib/redis \
@@ -165,6 +186,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY mysql/mysqld.cnf   /etc/mysql/mysql.conf.d/mysqld.cnf
 COPY mysql/provision.sql /opt/rspade/provision.sql
 RUN chmod 644 /etc/mysql/mysql.conf.d/mysqld.cnf /opt/rspade/provision.sql
+
+# Claude Code, when the image is built with --claude.
+#
+# OPT-IN on purpose. RSpade works with any agentic tooling or none, and an image
+# that installs an AI assistant nobody asked for is making a decision that is not
+# the framework's to make. The LAUNCHER ships either way (it installs on first
+# use if the binary is absent), so `--claude` is really about baking it into the
+# image rather than fetching it the first time somebody runs it.
+ARG INSTALL_CLAUDE=false
+RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
+        echo 'export PATH="$HOME/.local/bin:$PATH"' >> /root/.bashrc; \
+        curl -fsSL https://claude.ai/install.sh | CLAUDE_INSTALL_ALLOW_SUDO=1 bash \
+            || echo "WARNING: Claude Code install failed; the launcher will retry on first use."; \
+    fi
 
 # Development OPcache: revalidate on every request, so editing a file is
 # immediately live. This is what makes "edit, refresh, see it" true.

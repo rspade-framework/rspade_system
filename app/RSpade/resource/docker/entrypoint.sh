@@ -89,7 +89,28 @@ env_set() {
 }
 
 # -----------------------------------------------------------------------------
-# 2. APP_URL - the container cannot discover its own published port
+# 2. APP_KEY - a random key, generated here rather than by artisan
+# -----------------------------------------------------------------------------
+# An application key is 32 random bytes, base64-encoded. That is all it is - so
+# it is generated in ten characters of shell, BEFORE anything else runs.
+#
+# The alternative was `artisan key:generate`, and it was a trap: writing a random
+# string into a file looks local, but artisan boots the entire framework to do
+# it, and that boot wants Redis, the database, and a provisioned schema. Which
+# means the key could only be made AFTER the services were up - while two of
+# those services (rsx-lockd, the realtime relay) refuse to start WITHOUT a key.
+# A circle with no entry point, and on a fresh install it failed exactly there.
+#
+# Doing it in shell breaks the circle: by the time supervisor starts anything,
+# the key exists.
+if [ -z "$(env_value APP_KEY)" ]; then
+    new_key="base64:$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
+    env_set APP_KEY "$new_key"
+    say "Generated APP_KEY"
+fi
+
+# -----------------------------------------------------------------------------
+# 3. APP_URL - the container cannot discover its own published port
 # -----------------------------------------------------------------------------
 # Docker does not tell a container which host port maps to it, so APP_URL cannot
 # be inferred - it must be declared. RSPADE_APP_URL is the declaration; without
@@ -108,7 +129,7 @@ case "$APP_URL_NOW" in
 esac
 
 # -----------------------------------------------------------------------------
-# 3. First-user credentials
+# 4. First-user credentials
 # -----------------------------------------------------------------------------
 # The framework refuses to create the first user while these are blank, and
 # ships no default on purpose. In DEVELOPMENT we generate a password so that
@@ -141,12 +162,12 @@ if [ -z "$(env_value RSPADE_DEFAULT_EMAIL)" ] || [ -z "$(env_value RSPADE_DEFAUL
 fi
 
 # -----------------------------------------------------------------------------
-# 4. Writable storage
+# 5. Writable storage
 # -----------------------------------------------------------------------------
 mkdir -p storage/rsx-build storage/rsx-tmp storage/flock storage/rsx-framework storage/logs 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
-# 4b. PUID / PGID - run the application as YOUR user
+# 5b. PUID / PGID - run the application as YOUR user
 # -----------------------------------------------------------------------------
 # THE PROBLEM THIS SOLVES, which only Linux hosts have. Your project is a bind
 # mount, and by default the application runs as root inside the container - so
@@ -215,7 +236,7 @@ elif [ "$TARGET" = "prod" ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 5. MySQL runtime directory (development target only)
+# 6. MySQL runtime directory (development target only)
 # -----------------------------------------------------------------------------
 # The DATA directory needs nothing here. Installing mysql-server initialises
 # /var/lib/mysql at build time, and Docker copies an image directory into a named
@@ -226,7 +247,7 @@ mkdir -p /var/run/mysqld 2>/dev/null || true
 chown mysql:mysql /var/run/mysqld 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
-# 6. Start supervisor in the background
+# 7. Start supervisor in the background
 # -----------------------------------------------------------------------------
 say "Starting services..."
 supervisord -c /etc/supervisor/supervisord.conf &
@@ -236,7 +257,7 @@ SUPERVISOR_PID=$!
 trap 'kill -TERM "$SUPERVISOR_PID" 2>/dev/null; wait "$SUPERVISOR_PID"' TERM INT
 
 # -----------------------------------------------------------------------------
-# 7. Wait for Redis
+# 8. Wait for Redis
 # -----------------------------------------------------------------------------
 # Every artisan command boots the framework, and the framework reaches for its
 # cache while booting - so nothing that runs artisan may happen before this.
@@ -246,7 +267,7 @@ until (echo > /dev/tcp/127.0.0.1/6379) >/dev/null 2>&1; do
 done
 
 # -----------------------------------------------------------------------------
-# 8. Wait for the database to answer
+# 9. Wait for the database to answer
 # -----------------------------------------------------------------------------
 # Deliberately unbounded. A database that is slow to come up is normal - it is
 # replaying a log or warming a large buffer pool - and a deadline here would
@@ -267,7 +288,7 @@ done
 say "Database is accepting connections."
 
 # -----------------------------------------------------------------------------
-# 9. Provision the databases (development target, first boot only)
+# 9b. Provision the databases (development target, first boot only)
 # -----------------------------------------------------------------------------
 if [ "$TARGET" = "dev" ]; then
     # The datadir being present says nothing about whether OUR databases exist -
@@ -287,34 +308,7 @@ if [ "$TARGET" = "dev" ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 10. APP_KEY
-# -----------------------------------------------------------------------------
-# Generated HERE, last of the bootstrap steps, and not a moment earlier. It looks
-# like a pure local operation - write a random string into .env - but artisan
-# boots the whole framework to do it, and that boot reads both the cache and the
-# database. Attempted before Redis, MySQL and the provisioned schema all exist,
-# it fails with a bare "Connection refused" naming none of them.
-if [ -z "$(env_value APP_KEY)" ]; then
-    # --show PRINTS a key instead of writing one, and we write it ourselves.
-    # Letting artisan edit .env appends a second APP_KEY line when the existing
-    # one is blank, and then the file has two - which is not merely untidy: the
-    # .env parser takes the FIRST definition, so the application keeps reading
-    # the blank one and every boot generates another key.
-    new_key="$(php system/artisan key:generate --show 2>/dev/null | tr -d '\r\n')"
-
-    case "$new_key" in
-        base64:*)
-            env_set APP_KEY "$new_key"
-            say "Generated APP_KEY"
-            ;;
-        *)
-            die "Could not generate APP_KEY. Run 'php system/artisan key:generate --show' inside the container to see why."
-            ;;
-    esac
-fi
-
-# -----------------------------------------------------------------------------
-# 11. Migrations
+# 10. Migrations
 # -----------------------------------------------------------------------------
 # DEVELOPMENT migrates automatically: a freshly cloned project should just work.
 #
@@ -339,7 +333,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# 12. The application's own container hook
+# 11. The application's own container hook
 # -----------------------------------------------------------------------------
 # A documented extension point: rsx/resource/docker/configure.sh runs as root at
 # container startup, before the application serves traffic. Invoked through bash
@@ -351,10 +345,38 @@ if [ -f "$APP_DIR/rsx/resource/docker/configure.sh" ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 13. Ready
+# 12. Ready
 # -----------------------------------------------------------------------------
 echo ""
 say "RSpade is up. ${APP_URL_NOW:-(APP_URL unset)}"
 echo ""
+
+# -----------------------------------------------------------------------------
+# 13. Hand over
+# -----------------------------------------------------------------------------
+# With a COMMAND passed to the container, run it now that the application is
+# actually serving, and take the container down when it finishes. That is what
+# makes this work:
+#
+#     docker compose run --service-ports --rm app bash
+#
+# - boot in the foreground, watch the setup happen, land at a prompt, and the
+# container stops when the shell exits. It is also just the conventional
+# entrypoint contract: an image that ignores its own CMD cannot be composed with
+# anything.
+#
+# With no command - the ordinary `docker compose up` - wait on supervisor and
+# keep serving, which is what a development server should do: outlive the
+# terminal that started it.
+if [ "$#" -gt 0 ]; then
+    "$@"
+    status=$?
+
+    say "Command finished (exit ${status}). Stopping services..."
+    kill -TERM "$SUPERVISOR_PID" 2>/dev/null
+    wait "$SUPERVISOR_PID" 2>/dev/null
+
+    exit "$status"
+fi
 
 wait "$SUPERVISOR_PID"

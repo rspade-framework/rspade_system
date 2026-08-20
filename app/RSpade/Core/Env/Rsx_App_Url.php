@@ -71,8 +71,11 @@ class Rsx_App_Url
     }
 
     /**
-     * Fail loud when APP_URL carries a scheme this mode does not accept, or is
-     * empty/missing (always fatal - a hostname source with no value is never valid).
+     * Fail loud when APP_URL carries a scheme this mode does not accept.
+     *
+     * EMPTY is the one value whose meaning depends on the mode: in development it
+     * is the un-configured first-run state that the setup screen exists to resolve,
+     * and anywhere else it is a deployment nobody finished.
      *
      * https is accepted in every mode. http is accepted ONLY when $allow_http, which
      * the boot seam sets from Rsx::is_development().
@@ -89,6 +92,21 @@ class Rsx_App_Url
      */
     public static function enforce_scheme(string $app_url, bool $allow_http): void
     {
+        // EMPTY IN DEVELOPMENT IS THE FIRST-RUN STATE, not a misconfiguration.
+        //
+        // A fresh install ships APP_URL blank on purpose: a container cannot know
+        // which host port was mapped to it, so the first-run setup screen asks the
+        // browser instead. Throwing here would make every artisan command fail
+        // before anyone could reach that screen - including the container
+        // entrypoint's own migrate, which is what has to run before the site can
+        // answer at all.
+        //
+        // Outside development there is no such screen and no such excuse: a blank
+        // APP_URL there is a deployment nobody finished configuring.
+        if (trim($app_url) === '' && $allow_http) {
+            return;
+        }
+
         $scheme = strtolower((string) parse_url($app_url, PHP_URL_SCHEME));
 
         if ($scheme === 'https') {
