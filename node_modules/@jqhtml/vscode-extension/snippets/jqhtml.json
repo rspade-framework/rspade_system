@@ -1,0 +1,110 @@
+{
+  "Component Definition": {
+    "prefix": "define",
+    "body": [
+      "<Define:${1:ComponentName}>",
+      "\t$0",
+      "</Define:${1:ComponentName}>"
+    ],
+    "description": "Create a new JQHTML component"
+  },
+  "Component with Structure": {
+    "prefix": "definecomp",
+    "body": [
+      "<Define:${1:ComponentName}>",
+      "\t<div class=\"${2:component-class}\">",
+      "\t\t<h2><%= this.data.${3:title} %></h2>",
+      "\t\t$0",
+      "\t</div>",
+      "</Define:${1:ComponentName}>"
+    ],
+    "description": "Create a component with basic structure"
+  },
+  "If Statement (Brace Style)": {
+    "prefix": "if{",
+    "body": [
+      "<% if (${1:condition}) { %>",
+      "\t$0",
+      "<% } %>"
+    ],
+    "description": "If statement with brace syntax"
+  },
+  "For Loop (Brace Style)": {
+    "prefix": "for{",
+    "body": [
+      "<% for (const ${1:item} of ${2:items}) { %>",
+      "\t$0",
+      "<% } %>"
+    ],
+    "description": "For loop with brace syntax"
+  },
+  "Expression": {
+    "prefix": "exp",
+    "body": "<%= ${1:expression} %>",
+    "description": "Template expression"
+  },
+  "Scoped ID": {
+    "prefix": "$id",
+    "body": "$id=\"${1:elementId}\"",
+    "description": "Component-scoped ID attribute"
+  },
+  "Data Binding": {
+    "prefix": ":prop",
+    "body": ":${1:property}=\"${2:value}\"",
+    "description": "Property binding"
+  },
+  "Event Handler": {
+    "prefix": "@event",
+    "body": "@${1:click}=\"${2:handler}\"",
+    "description": "Event handler binding"
+  },
+  "Named Slot": {
+    "prefix": "slot",
+    "body": [
+      "<#${1:slotname}>",
+      "\t$0",
+      "</#${1:slotname}>"
+    ],
+    "description": "Named slot definition"
+  },
+  "Slot with Props": {
+    "prefix": "slotprop",
+    "body": [
+      "<#${1:slotname} let:${2:item}>",
+      "\t$0",
+      "</#${1:slotname}>"
+    ],
+    "description": "Named slot with props"
+  },
+  "Self-Closing Slot": {
+    "prefix": "slotself",
+    "body": "<#${1:slotname} />",
+    "description": "Self-closing slot"
+  },
+  "Comment Block": {
+    "prefix": "comment",
+    "body": [
+      "<%-- ",
+      "\t$0",
+      " --%>"
+    ],
+    "description": "JQHTML comment block"
+  },
+  "Component Usage": {
+    "prefix": "comp",
+    "body": "<${1:ComponentName} ${2:prop}=\"${3:value}\" />",
+    "description": "Use a component"
+  },
+  "Component with Slots": {
+    "prefix": "compslot",
+    "body": [
+      "<${1:ComponentName}>",
+      "\t<#${2:header}>",
+      "\t\t$3",
+      "\t</#${2:header}>",
+      "\t$0",
+      "</${1:ComponentName}>"
+    ],
+    "description": "Component with slot content"
+  }
+}
