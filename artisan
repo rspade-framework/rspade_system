@@ -11,16 +11,31 @@ define('LARAVEL_START', microtime(true));
 | Environment File Initialization
 |--------------------------------------------------------------------------
 |
-| Ensure .env file exists before proceeding. If .env is missing but
-| .env.dist is present, copy .env.dist to .env. If neither exists,
-| fail with a clear error message.
+| system/.env is FRAMEWORK SPACE: always a symlink to the project-root .env,
+| which is where a developer's configuration actually lives. The guard below
+| repairs that link before anything reads configuration.
+|
+| This replaces an earlier block that copied system/.env.dist to system/.env
+| whenever the latter was missing. That looked like a courtesy and was a trap:
+| on a clone without the symlink it created a REAL file which then SHADOWED the
+| root .env, so the application read the template forever while every value the
+| operator had set sat in a file nobody loaded (field failure, 2026-08-20).
+|
+| Seeding an initial .env is still done - but for the ROOT .env, the one that
+| is genuinely the developer's.
 |
 */
 
-if (!file_exists(__DIR__.'/.env')) {
-    if (file_exists(__DIR__.'/.env.dist')) {
-        copy(__DIR__.'/.env.dist', __DIR__.'/.env');
+require __DIR__.'/bootstrap/rsx_env_link.php';
+
+if (!file_exists(__DIR__.'/../.env')) {
+    if (file_exists(__DIR__.'/../.env.dist')) {
+        copy(__DIR__.'/../.env.dist', __DIR__.'/../.env');
         echo "Created .env from .env.dist template.\n";
+        echo "Please review .env and update configuration as needed.\n\n";
+    } elseif (file_exists(__DIR__.'/.env.dist')) {
+        copy(__DIR__.'/.env.dist', __DIR__.'/../.env');
+        echo "Created .env from the framework's .env.dist template.\n";
         echo "Please review .env and update configuration as needed.\n\n";
     } else {
         echo "ERROR: No .env or .env.dist file found.\n";

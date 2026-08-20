@@ -67,8 +67,19 @@ runonsave_debug.log
 test-*
 __pycache__
 
-# Environment configuration (use .env.dist as template)
-.env
+# system/.env is NOT ignored, deliberately.
+#
+# It is framework space: always a SYMLINK to ../.env, the project-root file where
+# a developer's actual configuration lives. Tracking the symlink is what makes it
+# survive a clone - and it must, because Laravel boots from system/. Ignoring it
+# meant a fresh checkout had no link at all, artisan seeded a real file from
+# .env.dist in its place, and the application then read that template forever
+# while every configured value sat unread in the root .env (field failure,
+# 2026-08-20).
+#
+# Nothing secret is committed by this: the tracked object is a symlink whose
+# content is the literal string "../.env". The real file it points at is root
+# space and is ignored there.
 docs.dev/*/node_modules/
 docs.dev/ace_reference/vendor/
 .rspade_last_commit_for_publish

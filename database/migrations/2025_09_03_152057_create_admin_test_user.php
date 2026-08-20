@@ -35,6 +35,34 @@ return new class extends Migration
         $email = trim((string) env('RSPADE_DEFAULT_EMAIL', ''));
         $password = (string) env('RSPADE_DEFAULT_PASSWORD', '');
 
+        // Two contexts where blank is not an error, and the account is simply not
+        // created:
+        //
+        //   DEVELOPMENT - the first-run setup screen offers to create this account
+        //   in the browser instead, which is a far better introduction than a login
+        //   form with no way past it.
+        //
+        //   THE TEST DATABASE - a test run provisions a schema, not a person. It
+        //   migrates with RSX_MODE=debug (to skip the datadir snapshot), so the
+        //   mode alone does not identify it; the database being migrated does.
+        //   Without this the whole suite fails at provisioning the moment
+        //   credentials are blank, which is their shipped state.
+        //
+        // Anywhere else, blank stays fatal: a real install is configured
+        // deliberately, and inventing a password is exactly what this refuses to do.
+        if ($email === '' || $password === '') {
+            $connection = (string) config('database.default');
+            $current_database = (string) config('database.connections.' . $connection . '.database');
+            $test_database = (string) env('DB_TEST_DATABASE', 'rspade_test');
+
+            $is_development = env('RSX_MODE', 'development') === 'development';
+            $is_test_database = $current_database !== '' && $current_database === $test_database;
+
+            if ($is_development || $is_test_database) {
+                return;
+            }
+        }
+
         if ($email === '' || $password === '') {
             $missing = [];
             if ($email === '') {

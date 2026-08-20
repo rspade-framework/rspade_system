@@ -21,6 +21,7 @@ use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Env\Rsx_Env_Hostname_Guard;
+use App\RSpade\Core\Env\Rsx_First_User_Setup;
 use App\RSpade\Core\Errors\Error_Screens;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Portal\Portal_Dispatcher;
@@ -94,6 +95,11 @@ class Dispatcher
         // under. Runs before the portal delegation so portal requests are covered
         // too; loopback requests exempt.
         Rsx_Env_Hostname_Guard::check();
+
+        // First-run setup: with no credential records at all, offer to create the
+        // first account rather than serving a login form nobody can get past.
+        // Development mode only, and unreachable once one account exists.
+        Rsx_First_User_Setup::check();
 
         $request = $request ?? request();
 
