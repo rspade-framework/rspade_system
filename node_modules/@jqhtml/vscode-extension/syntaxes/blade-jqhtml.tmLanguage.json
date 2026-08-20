@@ -1,0 +1,20 @@
+{
+    "name": "Blade JQHTML Components",
+    "scopeName": "source.jqhtml.blade-injection",
+    "injectionSelector": "L:text.blade, L:text.html.php",
+    "patterns": [
+        {
+            "comment": "JQHTML Component Tags",
+            "name": "meta.tag.jqhtml.component",
+            "match": "(</?)(([A-Z][A-Za-z0-9_]*))(?=[\\s/>])",
+            "captures": {
+                "1": {
+                    "name": "punctuation.definition.tag.html"
+                },
+                "2": {
+                    "name": "entity.name.tag.component.jqhtml"
+                }
+            }
+        }
+    ]
+}

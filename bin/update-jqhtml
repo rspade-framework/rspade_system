@@ -1,0 +1,15 @@
+#!/bin/bash
+# Update all jqhtml packages to latest versions
+cd "$(dirname "$0")"
+cd ..
+
+echo "Updating jqhtml packages to latest versions..."
+
+# Update all @jqhtml packages
+npm update @jqhtml/core @jqhtml/parser @jqhtml/router @jqhtml/vscode-extension @jqhtml/webpack-loader
+rm -rf storage/rsx_*
+
+# Show installed versions
+echo ""
+echo "Current jqhtml package versions:"
+npm list 2>/dev/null | grep "@jqhtml/" | grep -v deduped

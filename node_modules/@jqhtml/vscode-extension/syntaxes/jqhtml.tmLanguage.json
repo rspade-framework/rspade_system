@@ -1,0 +1,685 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "JQHTML",
+  "scopeName": "source.jqhtml",
+  "fileTypes": ["jqhtml"],
+  "patterns": [
+    { "include": "#component-definition" },
+    { "include": "#comments" },
+    { "include": "#javascript-block" },
+    { "include": "#expression-block" },
+    { "include": "#html-tag" },
+    { "include": "#text" }
+  ],
+  "repository": {
+    "component-definition": {
+      "comment": "Matches <Define:ComponentName> tags with any attributes, including special ones like as='span', class='foo', $prop='value'",
+      "patterns": [
+        {
+          "comment": "Closing Define tag - standalone pattern for proper highlighting",
+          "name": "meta.tag.component-definition.close.jqhtml",
+          "match": "(</)(Define)(:)(\\w+)(>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.jqhtml" },
+            "2": { "name": "keyword.control.define.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.jqhtml" },
+            "4": { "name": "entity.name.class.component.jqhtml" },
+            "5": { "name": "punctuation.definition.tag.end.jqhtml" }
+          }
+        },
+        {
+          "comment": "Opening Define tag with attributes",
+          "name": "meta.tag.component-definition.jqhtml",
+          "begin": "(<)(Define)(:)(\\w+)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.jqhtml" },
+            "2": { "name": "keyword.control.define.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.jqhtml" },
+            "4": { "name": "entity.name.class.component.jqhtml" }
+          },
+          "end": "(/?>)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.tag.end.jqhtml" }
+          },
+          "patterns": [
+            { "include": "#define-special-attributes" },
+            { "include": "#tag-attributes" }
+          ]
+        },
+        {
+          "comment": "Component definition body - everything between <Define:Name> and </Define:Name>",
+          "name": "meta.component.body.jqhtml",
+          "begin": "(<)(Define)(:)(\\w+)([^>]*)(>)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.jqhtml" },
+            "2": { "name": "keyword.control.define.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.jqhtml" },
+            "4": { "name": "entity.name.class.component.jqhtml" },
+            "5": {
+              "patterns": [
+                { "include": "#tag-attributes" }
+              ]
+            },
+            "6": { "name": "punctuation.definition.tag.end.jqhtml" }
+          },
+          "end": "(</)(Define)(:)(\\4)(>)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.jqhtml" },
+            "2": { "name": "keyword.control.define.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.jqhtml" },
+            "4": { "name": "entity.name.class.component.jqhtml" },
+            "5": { "name": "punctuation.definition.tag.end.jqhtml" }
+          },
+          "patterns": [
+            { "include": "$self" }
+          ]
+        }
+      ]
+    },
+    "comments": {
+      "comment": "JQHTML supports both <%-- --%> style comments and HTML <!-- --> comments",
+      "patterns": [
+        {
+          "comment": "JQHTML-specific comment syntax <%-- --%>",
+          "name": "comment.block.jqhtml",
+          "begin": "<%--",
+          "end": "--%>",
+          "captures": {
+            "0": { "name": "punctuation.definition.comment.jqhtml" }
+          }
+        },
+        {
+          "comment": "Standard HTML comments <!-- -->",
+          "name": "comment.block.html",
+          "begin": "<!--",
+          "end": "-->",
+          "captures": {
+            "0": { "name": "punctuation.definition.comment.html" }
+          }
+        }
+      ]
+    },
+    "javascript-block": {
+      "comment": "JavaScript code blocks <% %> for control flow and arbitrary JS - uses js-fragment to handle unbalanced brackets",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.javascript",
+          "begin": "<%(?!=|--)",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.embedded.begin.jqhtml" }
+          },
+          "end": "%>",
+          "endCaptures": {
+            "0": { "name": "punctuation.section.embedded.end.jqhtml" }
+          },
+          "patterns": [
+            { "include": "#js-fragment" }
+          ]
+        }
+      ]
+    },
+    "js-fragment": {
+      "comment": "JavaScript fragments that may have unmatched braces",
+      "patterns": [
+        {
+          "comment": "JavaScript keywords",
+          "match": "\\b(if|else|for|while|do|switch|case|break|continue|return|function|var|let|const|new|typeof|instanceof|try|catch|finally|throw|async|await)\\b",
+          "name": "keyword.control.js"
+        },
+        {
+          "comment": "JavaScript constants",
+          "match": "\\b(true|false|null|undefined|NaN|Infinity)\\b",
+          "name": "constant.language.js"
+        },
+        {
+          "comment": "this keyword",
+          "match": "\\bthis\\b",
+          "name": "variable.language.this.js"
+        },
+        {
+          "comment": "Numbers",
+          "match": "\\b\\d+(\\.\\d+)?\\b",
+          "name": "constant.numeric.js"
+        },
+        {
+          "comment": "Double-quoted strings",
+          "name": "string.quoted.double.js",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.js"
+            }
+          ]
+        },
+        {
+          "comment": "Single-quoted strings",
+          "name": "string.quoted.single.js",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.js"
+            }
+          ]
+        },
+        {
+          "comment": "Template literals",
+          "name": "string.template.js",
+          "begin": "`",
+          "end": "`",
+          "patterns": [
+            {
+              "match": "\\\\.",
+              "name": "constant.character.escape.js"
+            }
+          ]
+        },
+        {
+          "comment": "Comments",
+          "match": "//.*$",
+          "name": "comment.line.double-slash.js"
+        },
+        {
+          "comment": "Property access",
+          "match": "\\.(\\w+)",
+          "captures": {
+            "1": { "name": "variable.other.property.js" }
+          }
+        },
+        {
+          "comment": "Function calls",
+          "match": "(\\w+)\\s*\\(",
+          "captures": {
+            "1": { "name": "entity.name.function.js" }
+          }
+        },
+        {
+          "comment": "Operators",
+          "match": "(===|!==|==|!=|<=|>=|&&|\\|\\||\\+\\+|--|\\+|\\-|\\*|/|%|=|<|>|!|\\?|:)",
+          "name": "keyword.operator.js"
+        },
+        {
+          "comment": "Braces and brackets - using keyword.operator to prevent bracket matching and show in purple",
+          "match": "[{}\\[\\]()]",
+          "name": "keyword.operator.bracket.js"
+        },
+        {
+          "comment": "Semicolons and commas",
+          "match": "[;,]",
+          "name": "punctuation.separator.js"
+        }
+      ]
+    },
+    "expression-block": {
+      "comment": "Expression blocks <%= %> for escaped, <%!= %> for unescaped, <%br= %> for escaped with nl2br",
+      "name": "meta.embedded.expression.javascript",
+      "begin": "<%(?:[=!]=?|br=)",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.embedded.begin.expression.jqhtml" }
+      },
+      "end": "%>",
+      "endCaptures": {
+        "0": { "name": "punctuation.section.embedded.end.expression.jqhtml" }
+      },
+      "contentName": "source.js",
+      "patterns": [
+        { "include": "source.js" }
+      ]
+    },
+    "html-tag": {
+      "patterns": [
+        { "include": "#slot-tag" },
+        { "include": "#component-tag" },
+        { "include": "#standard-tag" }
+      ]
+    },
+    "slot-tag": {
+      "comment": "Slot tags <Slot:slotname> for defining named content areas",
+      "patterns": [
+        {
+          "comment": "Opening slot tag <Slot:name> or self-closing <Slot:name />",
+          "name": "meta.tag.slot.jqhtml",
+          "match": "(<)(Slot)(:)(\\w+)\\s*([^>]*?)(/?>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.jqhtml" },
+            "2": { "name": "keyword.control.slot.jqhtml" },
+            "3": { "name": "keyword.control.slot.jqhtml" },
+            "4": { "name": "keyword.control.slot.jqhtml" },
+            "5": {
+              "patterns": [
+                { "include": "#tag-attributes" }
+              ]
+            },
+            "6": { "name": "punctuation.definition.tag.end.jqhtml" }
+          }
+        },
+        {
+          "comment": "Closing slot tag </Slot:name>",
+          "name": "meta.tag.slot.close.jqhtml",
+          "match": "(</)(Slot)(:)(\\w+)(>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.jqhtml" },
+            "2": { "name": "keyword.control.slot.jqhtml" },
+            "3": { "name": "keyword.control.slot.jqhtml" },
+            "4": { "name": "keyword.control.slot.jqhtml" },
+            "5": { "name": "punctuation.definition.tag.end.jqhtml" }
+          }
+        }
+      ]
+    },
+    "component-tag": {
+      "comment": "Component invocations - tags starting with capital letter",
+      "patterns": [
+        {
+          "comment": "Opening component tag <ComponentName> with attributes",
+          "name": "meta.tag.component.jqhtml",
+          "begin": "(<)([A-Z]\\w*)(?=\\s|>)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.jqhtml" },
+            "2": { "name": "entity.name.class.component.jqhtml" }
+          },
+          "end": "(/?>)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.tag.end.jqhtml" }
+          },
+          "patterns": [
+            { "include": "#define-special-attributes" },
+            { "include": "#tag-attributes" }
+          ]
+        },
+        {
+          "comment": "Closing component tag </ComponentName>",
+          "name": "meta.tag.component.close.jqhtml",
+          "match": "(</)([A-Z]\\w*)(>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.jqhtml" },
+            "2": { "name": "entity.name.class.component.jqhtml" },
+            "3": { "name": "punctuation.definition.tag.end.jqhtml" }
+          }
+        }
+      ]
+    },
+    "standard-tag": {
+      "comment": "Standard HTML tags - lowercase",
+      "patterns": [
+        {
+          "comment": "Opening HTML tag <div>, <span>, etc.",
+          "name": "meta.tag.html",
+          "begin": "(<)([a-z][a-z0-9\\-]*)(?=\\s|>)",
+          "beginCaptures": {
+            "1": { "name": "punctuation.definition.tag.begin.html" },
+            "2": { "name": "entity.name.tag.html" }
+          },
+          "end": "(/?>)",
+          "endCaptures": {
+            "1": { "name": "punctuation.definition.tag.end.html" }
+          },
+          "patterns": [
+            { "include": "#tag-attributes" }
+          ]
+        },
+        {
+          "comment": "Closing HTML tag </div>, </span>, etc.",
+          "name": "meta.tag.close.html",
+          "match": "(</)(\\w+)(>)",
+          "captures": {
+            "1": { "name": "punctuation.definition.tag.begin.html" },
+            "2": { "name": "entity.name.tag.html" },
+            "3": { "name": "punctuation.definition.tag.end.html" }
+          }
+        }
+      ]
+    },
+    "define-special-attributes": {
+      "comment": "Special attributes that only appear on Define tags: extends and tag",
+      "patterns": [
+        {
+          "comment": "extends attribute with component name value - highlighted in orange and teal",
+          "name": "meta.attribute.extends.jqhtml",
+          "match": "(extends)(=)(\"([A-Z]\\w*)\"|'([A-Z]\\w*)')",
+          "captures": {
+            "1": { "name": "keyword.control.extends.jqhtml" },
+            "2": { "name": "punctuation.separator.key-value.html" },
+            "3": { "name": "string.quoted.html" },
+            "4": { "name": "entity.name.class.component.jqhtml" },
+            "5": { "name": "entity.name.class.component.jqhtml" }
+          }
+        },
+        {
+          "comment": "tag attribute in Define or component tags - attribute name in orange",
+          "name": "meta.attribute.tag.jqhtml",
+          "match": "(tag)(=)(\"[^\"]*\"|'[^']*')",
+          "captures": {
+            "1": { "name": "keyword.control.tag.jqhtml" },
+            "2": { "name": "punctuation.separator.key-value.html" },
+            "3": {
+              "patterns": [
+                { "include": "#attribute-value" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "tag-attributes": {
+      "comment": "All attribute types that can appear on tags",
+      "patterns": [
+        { "include": "#conditional-attributes" },
+        { "include": "#special-attributes" },
+        { "include": "#binding-attributes" },
+        { "include": "#event-attributes" },
+        { "include": "#standard-attributes" }
+      ]
+    },
+    "conditional-attributes": {
+      "comment": "Conditional attributes: <% if (condition) { %>attr='value'<% } %>",
+      "patterns": [
+        {
+          "name": "meta.embedded.block.javascript",
+          "begin": "<%(?!=|--)",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.embedded.begin.jqhtml" }
+          },
+          "end": "%>",
+          "endCaptures": {
+            "0": { "name": "punctuation.section.embedded.end.jqhtml" }
+          },
+          "patterns": [
+            { "include": "#js-fragment" }
+          ]
+        }
+      ]
+    },
+    "special-attributes": {
+      "comment": "$ prefixed attributes for component data and special handling",
+      "patterns": [
+        {
+          "comment": "$redrawable boolean attribute (no value) - $ in purple, redrawable in purple",
+          "name": "meta.attribute.special.redrawable.jqhtml",
+          "match": "(\\$)(redrawable)(?!\\s*=)",
+          "captures": {
+            "1": { "name": "keyword.control.slot.jqhtml" },
+            "2": { "name": "keyword.control.tag.jqhtml" }
+          }
+        },
+        {
+          "comment": "Expression syntax: $attr=(expression) - parentheses with any JS expression",
+          "name": "meta.attribute.special.expression.jqhtml",
+          "match": "(\\$)(\\w+)(=)(\\([^)]*\\))",
+          "captures": {
+            "1": { "name": "keyword.control.slot.jqhtml" },
+            "2": { "name": "entity.other.attribute-name.special.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.html" },
+            "4": {
+              "name": "meta.embedded.expression.javascript",
+              "patterns": [
+                { "include": "source.js" }
+              ]
+            }
+          }
+        },
+        {
+          "comment": "$ attributes with unquoted JS expression - custom minimal highlighter for property chains",
+          "name": "meta.attribute.special.unquoted-js.jqhtml",
+          "begin": "(\\$)(\\w+)(=)(?=[a-zA-Z_$0-9])",
+          "beginCaptures": {
+            "1": { "name": "keyword.control.slot.jqhtml" },
+            "2": { "name": "entity.other.attribute-name.special.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.html" }
+          },
+          "end": "(?=[\\s>])",
+          "patterns": [
+            {
+              "comment": "Literal constants",
+              "match": "\\b(true|false|null|undefined)\\b",
+              "name": "constant.language.js"
+            },
+            {
+              "comment": "Number literals",
+              "match": "\\b\\d+(\\.\\d+)?\\b",
+              "name": "constant.numeric.js"
+            },
+            {
+              "comment": "First identifier in property chain - class/controller name (teal)",
+              "match": "\\G[a-zA-Z_$][a-zA-Z0-9_$]*",
+              "name": "entity.name.class.jqhtml"
+            },
+            {
+              "comment": "Property accessor: dot + property name (dot purple, property yellow like JS functions)",
+              "match": "(\\.)([a-zA-Z_$][a-zA-Z0-9_$]*)",
+              "captures": {
+                "1": { "name": "keyword.operator.accessor.js" },
+                "2": { "name": "entity.name.function.js" }
+              }
+            },
+            {
+              "comment": "Parentheses for function calls",
+              "match": "[()]",
+              "name": "keyword.operator.bracket.js"
+            },
+            {
+              "comment": "Comma separator in function arguments",
+              "match": ",",
+              "name": "punctuation.separator.js"
+            },
+            {
+              "comment": "String literals in function arguments",
+              "match": "\"[^\"]*\"|'[^']*'",
+              "name": "string.quoted.js"
+            }
+          ]
+        },
+        {
+          "comment": "Standard $ attributes: $id='foo', $prop='value' with quoted strings",
+          "name": "meta.attribute.special.jqhtml",
+          "match": "(\\$)(id|\\w+)(=)(\"[^\"]*\"|'[^']*')",
+          "captures": {
+            "1": { "name": "keyword.control.slot.jqhtml" },
+            "2": { "name": "entity.other.attribute-name.special.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.html" },
+            "4": {
+              "patterns": [
+                { "include": "#attribute-value" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "binding-attributes": {
+      "comment": "Property binding with : prefix (future feature)",
+      "patterns": [
+        {
+          "name": "meta.attribute.binding.jqhtml",
+          "match": "(:)(\\w+)(=)(\"[^\"]*\"|'[^']*'|[^\\s>]+)",
+          "captures": {
+            "1": { "name": "punctuation.definition.attribute.binding.jqhtml" },
+            "2": { "name": "entity.other.attribute-name.binding.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.html" },
+            "4": {
+              "patterns": [
+                { "include": "#attribute-value" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "event-attributes": {
+      "comment": "Event binding with @ prefix - unquoted values are function references, quoted are strings",
+      "patterns": [
+        {
+          "comment": "Event attribute with unquoted method reference: @click=this.handleClick",
+          "name": "meta.attribute.event.unquoted.method.jqhtml",
+          "match": "(@)(\\w+)(=)(this\\.)(\\w+)",
+          "captures": {
+            "1": { "name": "punctuation.definition.attribute.event.jqhtml" },
+            "2": { "name": "entity.other.attribute-name.event.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.html" },
+            "4": { "name": "variable.language.this.jqhtml" },
+            "5": { "name": "entity.name.function.jqhtml" }
+          }
+        },
+        {
+          "comment": "Event attribute with unquoted function reference: @click=handleClick",
+          "name": "meta.attribute.event.unquoted.function.jqhtml",
+          "match": "(@)(\\w+)(=)([a-zA-Z_$][a-zA-Z0-9_$]*)",
+          "captures": {
+            "1": { "name": "punctuation.definition.attribute.event.jqhtml" },
+            "2": { "name": "entity.other.attribute-name.event.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.html" },
+            "4": { "name": "entity.name.function.jqhtml" }
+          }
+        },
+        {
+          "comment": "Event attribute with quoted string value (likely an error)",
+          "name": "meta.attribute.event.quoted.jqhtml",
+          "match": "(@)(\\w+)(=)(\"[^\"]*\"|'[^']*')",
+          "captures": {
+            "1": { "name": "punctuation.definition.attribute.event.jqhtml" },
+            "2": { "name": "entity.other.attribute-name.event.jqhtml" },
+            "3": { "name": "punctuation.separator.key-value.html" },
+            "4": { "name": "invalid.illegal.quoted-event-handler.jqhtml" }
+          }
+        }
+      ]
+    },
+    "standard-attributes": {
+      "comment": "Regular HTML attributes like class, id, style, etc.",
+      "patterns": [
+        {
+          "comment": "Event handler attributes with unquoted method reference: onclick=this.handleClick",
+          "name": "meta.attribute.event-handler.method.html",
+          "match": "(on\\w+)(=)(this\\.)(\\w+)",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.event.html" },
+            "2": { "name": "punctuation.separator.key-value.html" },
+            "3": { "name": "variable.language.this.jqhtml" },
+            "4": { "name": "entity.name.function.jqhtml" }
+          }
+        },
+        {
+          "comment": "Event handler attributes with unquoted function reference: onclick=handleClick",
+          "name": "meta.attribute.event-handler.function.html",
+          "match": "(on\\w+)(=)([a-zA-Z_$][a-zA-Z0-9_$]*)",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.event.html" },
+            "2": { "name": "punctuation.separator.key-value.html" },
+            "3": { "name": "entity.name.function.jqhtml" }
+          }
+        },
+        {
+          "comment": "Attribute with unquoted JavaScript identifier or property access",
+          "name": "meta.attribute.unquoted-identifier.html",
+          "match": "(\\w[\\w\\-]*)(=)([a-zA-Z_$][a-zA-Z0-9_$.]*)",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.html" },
+            "2": { "name": "punctuation.separator.key-value.html" },
+            "3": { "name": "variable.other.property.jqhtml" }
+          }
+        },
+        {
+          "comment": "Attribute with quoted value: name='value' or name=\"value\"",
+          "name": "meta.attribute.html",
+          "match": "(\\w[\\w\\-]*)(=)(\"[^\"]*\"|'[^']*')",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.html" },
+            "2": { "name": "punctuation.separator.key-value.html" },
+            "3": {
+              "patterns": [
+                { "include": "#attribute-value" }
+              ]
+            }
+          }
+        },
+        {
+          "comment": "Attribute with other unquoted values (numbers, etc)",
+          "name": "meta.attribute.html",
+          "match": "(\\w[\\w\\-]*)(=)([^\\s>]+)",
+          "captures": {
+            "1": { "name": "entity.other.attribute-name.html" },
+            "2": { "name": "punctuation.separator.key-value.html" },
+            "3": { "name": "string.unquoted.html" }
+          }
+        },
+        {
+          "comment": "Boolean attributes without value: disabled, checked, etc.",
+          "name": "entity.other.attribute-name.html",
+          "match": "\\w[\\w\\-]*"
+        }
+      ]
+    },
+    "attribute-value": {
+      "comment": "Attribute values can contain embedded expressions",
+      "patterns": [
+        {
+          "comment": "Double-quoted string value",
+          "name": "string.quoted.double.html",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.html" }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.html" }
+          },
+          "patterns": [
+            { "include": "#embedded-expression" }
+          ]
+        },
+        {
+          "comment": "Single-quoted string value",
+          "name": "string.quoted.single.html",
+          "begin": "'",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.string.begin.html" }
+          },
+          "end": "'",
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.string.end.html" }
+          },
+          "patterns": [
+            { "include": "#embedded-expression" }
+          ]
+        },
+        {
+          "comment": "Unquoted attribute value",
+          "name": "string.unquoted.html",
+          "match": "[^\\s>]+"
+        }
+      ]
+    },
+    "embedded-expression": {
+      "comment": "Embedded expressions within attribute values: 'text <%= expr %> more' or <%br= %>",
+      "patterns": [
+        {
+          "name": "meta.embedded.inline.javascript",
+          "begin": "<%(?:[=!]=?|br=)",
+          "beginCaptures": {
+            "0": { "name": "punctuation.section.embedded.begin.jqhtml" }
+          },
+          "end": "%>",
+          "endCaptures": {
+            "0": { "name": "punctuation.section.embedded.end.jqhtml" }
+          },
+          "contentName": "source.js",
+          "patterns": [
+            { "include": "source.js" }
+          ]
+        }
+      ]
+    },
+    "text": {
+      "comment": "Plain text content between tags",
+      "patterns": [
+        {
+          "name": "text.html.jqhtml",
+          "match": "[^<]+"
+        }
+      ]
+    }
+  }
+}
