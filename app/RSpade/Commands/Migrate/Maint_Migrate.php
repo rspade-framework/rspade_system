@@ -64,18 +64,72 @@ class Maint_Migrate extends Command
             config(['rsx.files.storage_root' => $storage_root]);
         }
 
-        // Determine mode
-        $is_development = Rsx::is_development();
+        // WHERE this is running decides how it runs - the CONTAINER, not RSX_MODE.
+        //
+        //   dev container   snapshot, migrate, then discard the snapshot. A
+        //                   developer breaks schemas all day and wants the undo,
+        //                   not a growing pile of copies.
+        //
+        //   prod container  snapshot, migrate, and KEEP it. Same protection, but
+        //                   the copy is left behind: on a production box that is
+        //                   the last image of the database before the change, and
+        //                   throwing it away the moment migrations pass is exactly
+        //                   the wrong instinct.
+        //
+        //   no container    migrate only. Stopping services and copying a data
+        //                   directory are things this framework's container does;
+        //                   somewhere else, they are things this framework has no
+        //                   business doing to somebody's machine.
+        //
+        // The one refusal: DEVELOPMENT mode outside the container. Development
+        // means the source tree is being edited and regenerated, and a migration
+        // there is expected to be undoable. Silently dropping that protection
+        // because of where the command was typed is not a trade to make on
+        // somebody's behalf.
         $is_framework_only = $this->option('framework-only');
+        $in_container = Rsx::is_rspade_container();
 
-        // In development mode, use snapshot strategy (unless framework-only)
-        $use_snapshot = $is_development && !$is_framework_only;
-
-        if ($use_snapshot) {
-            return $this->run_with_snapshot();
-        } else {
-            return $this->run_without_snapshot();
+        if (Rsx::is_development() && !$in_container) {
+            return $this->refuse_development_outside_container();
         }
+
+        // Framework-only runs never snapshot: they are a schema-only subset used
+        // by tooling, and the snapshot exists to protect a developer's data.
+        if ($in_container && !$is_framework_only) {
+            return $this->run_with_snapshot();
+        }
+
+        return $this->run_without_snapshot();
+    }
+
+    /**
+     * Development mode, no RSpade container: refuse, and say exactly what to type.
+     *
+     * An error that only says "wrong environment" leaves somebody guessing at the
+     * invocation. This prints it.
+     */
+    protected function refuse_development_outside_container(): int
+    {
+        $this->error('[ERROR] Development-mode migrations run inside the RSpade container.');
+        $this->info('');
+        $this->info('  Migrations in development are snapshot-protected: the database is copied');
+        $this->info('  first, so a bad migration rolls back instead of leaving you to repair it.');
+        $this->info('  That protection is the container\'s - it stops the supervised MySQL');
+        $this->info('  service and copies its data directory - and this is not that container.');
+        $this->info('');
+        $this->info('  Run it there instead:');
+        $this->info('');
+        $this->info('      docker compose exec app php artisan migrate');
+        $this->info('');
+        $this->info('  Or from a shell inside the container:');
+        $this->info('');
+        $this->info('      docker compose exec app bash');
+        $this->info('      php artisan migrate');
+        $this->info('');
+        $this->info('  A deployed application migrates here normally - this refusal is only for');
+        $this->info('  development mode (RSX_MODE=development).');
+
+        return 1;
     }
 
     /**
@@ -83,14 +137,11 @@ class Maint_Migrate extends Command
      */
     protected function run_with_snapshot(): int
     {
-        // Check if running in Docker environment (required for snapshots)
-        if (!file_exists('/.dockerenv')) {
-            $this->error('[ERROR] Snapshot-based migrations require Docker environment!');
-            $this->info('In non-Docker development, set RSX_MODE=debug to run without snapshots.');
-            return 1;
-        }
+        $keep_snapshot = !Rsx::is_rspade_dev_container();
 
-        $this->info(' Development mode: Using automatic snapshot protection');
+        $this->info($keep_snapshot
+            ? ' Production container: snapshot protection (the snapshot is KEPT)'
+            : ' Development container: automatic snapshot protection');
         $this->info('');
 
         // Step 1: Create snapshot
@@ -157,22 +208,37 @@ class Maint_Migrate extends Command
 
         $this->info('[OK] Schema quality check passed.');
 
-        // Step 4: Commit - cleanup snapshot and run post-migration tasks
+        // Step 4: Commit.
         $this->info('');
         $this->info('[4/4] Committing changes...');
-        $this->commit_snapshot();
 
-        // Run post-migration tasks (development only)
-        $this->info('');
-        $this->info('Running post-migration tasks...');
+        if ($keep_snapshot) {
+            // Leave the copy where it is. The migration succeeded, so nothing here
+            // needs undoing - but on a production box this is the database as it
+            // was immediately before the change, and that is worth more than the
+            // disk it occupies. Removing it is a deliberate act.
+            $this->release_migration_flag();
+            $this->info('[OK] Snapshot RETAINED at ' . $this->backup_dir . '.');
+            $this->info('     Remove it when you are satisfied with the migration:');
+            $this->info('         rm -rf ' . $this->backup_dir);
+        } else {
+            $this->commit_snapshot();
+        }
 
-        // Regenerate model constants
-        $this->call('rsx:constants:regenerate');
+        // Post-migration source regeneration, which only makes sense where the
+        // source tree is writable and gets edited.
+        if (Rsx::is_development()) {
+            $this->info('');
+            $this->info('Running post-migration tasks...');
 
-        // Recompile bundles
-        $this->newLine();
-        $this->info('Recompiling bundles...');
-        Rsx_Artisan::passthru('rsx:bundle:compile');
+            // Regenerate model constants
+            $this->call('rsx:constants:regenerate');
+
+            // Recompile bundles
+            $this->newLine();
+            $this->info('Recompiling bundles...');
+            Rsx_Artisan::passthru('rsx:bundle:compile');
+        }
 
         $this->info('');
         $this->info('[OK] Migration completed successfully!');
@@ -539,6 +605,21 @@ class Maint_Migrate extends Command
         }
 
         $this->info('[OK] Snapshot committed - backup removed.');
+    }
+
+    /**
+     * Clear the migration flag WITHOUT touching the snapshot.
+     *
+     * commit_snapshot() removes both; this removes only the flag, for the
+     * production-container path where the copy is deliberately kept. Leaving the
+     * flag behind would make every later run believe a migration was still in
+     * progress - and the application answers 503 while it is.
+     */
+    protected function release_migration_flag(): void
+    {
+        if (file_exists($this->flag_file)) {
+            unlink($this->flag_file);
+        }
     }
 
     /**

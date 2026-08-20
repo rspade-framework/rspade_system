@@ -157,6 +157,23 @@ RUN chmod 755 /usr/local/bin/rspade-entrypoint \
 RUN mkdir -p /run/php /var/log/supervisor /var/run/redis /var/log/redis /var/lib/redis \
     && chown -R redis:redis /var/run/redis /var/log/redis /var/lib/redis
 
+# The RSpade container marker.
+#
+# /.dockerenv only says "some container". This says "the container RSpade's own
+# tooling was written for" - one that runs supervisor, with the service names and
+# the data-directory layout that things like the migrate snapshot depend on.
+# Somebody running RSpade in a container they built themselves would satisfy
+# /.dockerenv and none of those assumptions, so the operations that need them
+# check for THIS file and refuse rather than half-work.
+#
+# Rsx::is_rspade_container() is the reader.
+RUN printf '%s\n' \
+    "# This is an RSpade application container." \
+    "# Framework tooling that drives supervisor, the bundled database or the" \
+    "# container's service layout checks for this file before acting." \
+    "target=${RSPADE_CONTAINER_TARGET:-base}" \
+    > /.rspade_container
+
 WORKDIR /var/www/html
 EXPOSE 80 8000
 
@@ -170,6 +187,14 @@ ENTRYPOINT ["bash", "/usr/local/bin/rspade-entrypoint"]
 FROM base AS dev
 
 ENV RSPADE_CONTAINER_TARGET=dev
+
+# Two markers, and the second one matters: /.rspade_container says "an RSpade
+# container", this says "the DEVELOPMENT one". They gate different things -
+# the migrate snapshot runs in both targets, but only the dev container throws
+# its snapshot away afterwards. On a production container the snapshot is the
+# thing you would actually want to still have.
+RUN sed -i "s/^target=.*/target=dev/" /.rspade_container \
+    && printf '%s\n' "# This is the RSpade DEVELOPMENT container." > /.rspade_container_dev
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # the database, for a self-contained development environment
@@ -216,6 +241,7 @@ RUN chmod 644 /etc/supervisor/conf.d/mysql.conf
 FROM base AS prod
 
 ENV RSPADE_CONTAINER_TARGET=prod
+RUN sed -i "s/^target=.*/target=prod/" /.rspade_container
 
 # Production OPcache: hold compiled bytecode and re-check the source at most
 # every 10 seconds, rather than on every single request. Deploying new code

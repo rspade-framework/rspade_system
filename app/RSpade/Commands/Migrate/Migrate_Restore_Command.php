@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Commands\Migrate;
 
+use App\RSpade\Core\Rsx;
+
 /**
  * Restore the database to the pre-migration snapshot after an INTERRUPTED migrate.
  *
@@ -38,9 +40,14 @@ class Migrate_Restore_Command extends Maint_Migrate
             return 0;
         }
 
-        // Snapshots only exist in the Docker development flow (same gate as migrate).
-        if (!file_exists('/.dockerenv')) {
-            $this->error('[ERROR] Snapshot restore requires the Docker environment!');
+        // Same gate as migrate: the snapshot it restores was taken by, and can only
+        // be put back by, the RSpade container's supervisor and data-directory
+        // layout.
+        if (!Rsx::is_rspade_container()) {
+            $this->error('[ERROR] Snapshot restore requires the RSpade container.');
+            $this->info('  The snapshot is restored by stopping the supervised MySQL service and');
+            $this->info('  replacing its data directory; this environment is not that container');
+            $this->info('  (/.rspade_container absent).');
             return 1;
         }
 

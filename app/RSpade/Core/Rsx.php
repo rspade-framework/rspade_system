@@ -433,6 +433,41 @@ class Rsx
     }
 
     /**
+     * Whether this is running inside an RSPADE CONTAINER - the one the framework's
+     * own tooling was written for.
+     *
+     * NOT the same question as "am I in Docker". /.dockerenv answers that, and it
+     * is not enough: somebody running RSpade in a container they built themselves
+     * satisfies it while having no supervisor, none of the service names the
+     * framework drives, and a different data-directory layout. Operations that
+     * depend on those things - stopping MySQL to snapshot its datadir, restarting
+     * a named service - must refuse there rather than half-work.
+     *
+     * The marker is written by the framework's own Dockerfile. Its absence is not
+     * an error in itself; it simply means container-specific operations are not
+     * available and should say so.
+     */
+    public static function is_rspade_container(): bool
+    {
+        return is_file('/.rspade_container');
+    }
+
+    /**
+     * Whether this is the RSpade DEVELOPMENT container specifically.
+     *
+     * Distinct from is_rspade_container(), and the distinction decides what
+     * happens to a migration snapshot: both targets take one, but only the
+     * development container discards it once the migration succeeds. On a
+     * production container that snapshot is the last copy of the database as it
+     * was a minute ago, which is precisely the thing an operator would want to
+     * still have.
+     */
+    public static function is_rspade_dev_container(): bool
+    {
+        return is_file('/.rspade_container_dev');
+    }
+
+    /**
      * Check if this is a DEBUG SITE - a host the operator has declared as their
      * own, where developer backdoors are permitted: login credential auto-fill,
      * debug tools, test data access. Every debug site is also a dev site.
