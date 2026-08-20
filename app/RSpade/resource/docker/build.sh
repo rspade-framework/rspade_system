@@ -10,6 +10,7 @@
 #     bash build.sh prod             # the production image
 #     bash build.sh both             # both
 #     bash build.sh dev --push       # build, then push to the registry
+#     bash build.sh --claude         # ...with Claude Code baked into the image
 #
 # Run it with `bash build.sh`, never as a bare path: the exec bit does not
 # survive every checkout, and a bare path then dies with "Permission denied".
@@ -37,6 +38,7 @@ die() { echo "[build] ERROR: $*" >&2; exit 1; }
 # -----------------------------------------------------------------------------
 TARGETS=""
 PUSH=false
+INSTALL_CLAUDE=false
 
 for arg in "$@"; do
     case "$arg" in
@@ -44,6 +46,7 @@ for arg in "$@"; do
         prod)         TARGETS="$TARGETS prod" ;;
         both|all)     TARGETS="dev prod" ;;
         --push)       PUSH=true ;;
+        --claude)     INSTALL_CLAUDE=true ;;
         -h|--help)
             # Print the header comment block and stop at the first line of
             # actual code, so the usage text cannot drift out of range.
@@ -51,7 +54,7 @@ for arg in "$@"; do
             exit 0
             ;;
         *)
-            die "Unknown argument '$arg'. Expected: dev | prod | both | --push"
+            die "Unknown argument '$arg'. Expected: dev | prod | both | --push | --claude"
             ;;
     esac
 done
@@ -100,6 +103,13 @@ for target in $TARGETS; do
     # locally: compose then finds it and does not attempt a pull.
     build_args="--target $target -t ${registry_name}:latest -t ${image}:latest"
 
+    # Bake Claude Code in. Without this the launcher is still present and
+    # installs it on first use - the flag decides whether that cost is paid at
+    # build time or the first time somebody types `claude`.
+    if [ "$INSTALL_CLAUDE" = true ]; then
+        build_args="$build_args --build-arg INSTALL_CLAUDE=true"
+    fi
+
     if [ -n "$RELEASE_TAG" ]; then
         build_args="$build_args -t ${registry_name}:${RELEASE_TAG}"
     fi
@@ -128,6 +138,7 @@ done
 # -----------------------------------------------------------------------------
 echo ""
 say "Built:$BUILT"
+[ "$INSTALL_CLAUDE" = true ] && say "Claude Code: installed in the image."
 
 for target in $BUILT; do
     echo ""
