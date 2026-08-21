@@ -333,7 +333,7 @@ GIT OPERATIONS
         Change          Bare `git` is replaced by
                         `php artisan rsx:git <any git command>` - same
                         subcommands, flags, exit codes, stdin and TTY.
-        Reason          In a downstream app, system/ is a vendored,
+        Reason          In a downstream app, system/ is a submodule,
                         machine-owned tree. The proxy keeps framework churn out
                         of application commits, wraps tree-rewriting operations
                         in a maintenance window, and resolves system/ conflicts

@@ -74,15 +74,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SYSTEM_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_ROOT="$(dirname "$SYSTEM_DIR")"
 
-# Volatile storage: <project>/storage once the relocation marker exists, else the
-# historic system/storage. Same resolution as bootstrap/app.php, artisan and the
-# updater's storage_base().
+# Volatile storage: <project>/storage, one level above system/. Same single answer
+# bootstrap/app.php, artisan and the updater give - system/storage is a symlink to
+# it, so there is nothing to choose between.
 storage_base() {
-    if [ -f "$PROJECT_ROOT/storage/.rspade_storage_relocated" ]; then
-        printf '%s' "$PROJECT_ROOT/storage"
-    else
-        printf '%s' "$SYSTEM_DIR/storage"
-    fi
+    printf '%s' "$PROJECT_ROOT/storage"
 }
 
 # Mirrors App\RSpade\Core\Framework\Framework_Maintenance::FLAG_RELATIVE.

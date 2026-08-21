@@ -19,9 +19,9 @@
 6. **Verify before committing** — build, run the relevant tests, confirm the incoming feature still works.
 7. **Report** what you kept from each side and anything you dropped.
 
-**Why this is a mandate and not advice**: a blanket resolution that looks like tidying can silently revert an entire framework release. `system/` is a vendored tree of thousands of machine-owned files producing large, mechanical-looking conflict sets; taking the local side across one rolls the framework back a release while the app keeps the code written against the newer one — broken behavior, no error.
+**Why this is a mandate and not advice**: a blanket resolution that looks like tidying can silently revert work someone intended to keep, with no error to show for it.
 
-**`system/` conflicts are the one place with a per-environment rule** — in a downstream app `rsx:git` settles them itself, by RELEASE, before the merge runs (see the app git fragment), and the monorepo has no such rule (framework git fragment). Everywhere else `--ours`/`--theirs` stays forbidden without explicit user direction.
+**`system/` is not one of these conflicts.** Downstream it is a git submodule, so a conflict there is a one-line gitlink disagreement about which framework release to use — resolved by choosing a release and running `php artisan rsx:framework:pull`, never by merging file contents. **All of `system/` is framework property and is overwritten on every update**, so there is nothing inside it to preserve from either side. In the monorepo `system/` IS the authored framework source and its conflicts get the same per-hunk treatment as any other code.
 
 ## CLASS OVERRIDES
 

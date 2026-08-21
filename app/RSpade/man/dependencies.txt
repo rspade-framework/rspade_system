@@ -15,7 +15,7 @@ SYNOPSIS
 
 DESCRIPTION
     An RSpade project is two layers of code that ship differently: the
-    framework core in /var/www/html/system (vendored tracked files in your
+    framework core in /var/www/html/system (a git submodule of your
     repo, maintained by rsx:framework:pull) and your application in
     /var/www/html/rsx (your own fork). Third-party dependencies follow the
     same split.

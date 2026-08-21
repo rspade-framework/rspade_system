@@ -41,9 +41,7 @@ function ide_auth_framework_path($relative_path) {
 // bin/environment_updates/030_relocate_storage.sh), historic system/storage until then.
 // This gate runs WITHOUT Laravel, so the marker is read directly.
 function ide_auth_storage_path($relative_path = '') {
-    $base = is_file(IDE_AUTH_BASE_PATH . '/storage/.rspade_storage_relocated')
-        ? IDE_AUTH_BASE_PATH . '/storage'
-        : IDE_AUTH_SYSTEM_PATH . '/storage';
+    $base = IDE_AUTH_BASE_PATH . '/storage';
     return $relative_path ? $base . '/' . ltrim($relative_path, '/') : $base;
 }
 

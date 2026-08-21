@@ -9,7 +9,6 @@ namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Codegen\Model_Codegen_Rewriter;
 use App\RSpade\Core\Database\DetailTables\Detail_Tables_Resolver;
-use App\RSpade\Core\Framework\Framework_Mutations;
 use App\RSpade\Core\Manifest\Manifest;
 use Exception;
 use Illuminate\Console\Command;
@@ -424,11 +423,6 @@ class Constants_Regenerate_Command extends Command
             return false;
         }
 
-        // Label the mutation-marker record for this write precisely (the generic
-        // file_put_contents_safe hook consumes this one-shot hint). Only framework-core
-        // model files under app/RSpade fall in an owned zone; app model files resolve
-        // outside it and the recorder no-ops.
-        Framework_Mutations::$next_mechanism = 'model_codegen';
         file_put_contents_safe($file_path, $new_content);
 
         return true;

@@ -27,10 +27,7 @@ function ide_framework_path($relative_path) {
 // Volatile storage root. Relocated to <project>/storage once the relocation marker
 // exists (bin/environment_updates/030_relocate_storage.sh); historic system/storage
 // until then. This handler runs WITHOUT Laravel, so the marker is read directly.
-define('IDE_STORAGE_PATH',
-    is_file(IDE_BASE_PATH . '/storage/.rspade_storage_relocated')
-        ? IDE_BASE_PATH . '/storage'
-        : IDE_SYSTEM_PATH . '/storage');
+define('IDE_STORAGE_PATH', IDE_BASE_PATH . '/storage');
 
 // Define the Laravel helper this standalone handler needs
 // This handler never runs with Laravel, so no conflict

@@ -30,10 +30,10 @@ use App\RSpade\Core\Rsx;
  * class and bin/maintenance-mode.sh) produce that shape; readers take line 1 for the reason and
  * treat a missing stamp as production.
  *
- * The flag lives under storage/rsx-framework/ - the framework-update state directory (shared with
- * the mutation-marker store, see Framework_Mutations), which the tamper gate skips
- * (Framework_Verify) and rsx:clean preserves - so it can never itself trip a verify finding and it
- * survives the window until deliberately cleared.
+ * The flag lives under storage/rsx-framework/ - the framework-update state directory, which is
+ * OUTSIDE the system/ submodule and therefore untouched by the reset that every update and every
+ * rsx:clean performs. That is why a raised window survives until deliberately cleared, including
+ * across the update that raised it.
  */
 class Framework_Maintenance
 {

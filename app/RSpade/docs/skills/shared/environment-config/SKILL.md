@@ -54,7 +54,7 @@ Keys that are application PREFERENCES rather than framework requirements already
 
 ## Registering HTTP middleware
 
-`system/app/Http/Kernel.php` is a **framework-owned file**: every framework update hard-syncs it, and the tamper gate refuses a pull while it carries a local edit. So you never register middleware by editing the kernel - you declare it in config and the kernel folds it in at bootstrap:
+`system/app/Http/Kernel.php` is framework property like everything else under `system/`: the framework is a git submodule, and every update resets it hard - a local edit there is discarded silently, without being reported. So you never register middleware by editing the kernel - you declare it in config and the kernel folds it in at bootstrap:
 
 ```php
 // rsx/resource/config/rsx.php

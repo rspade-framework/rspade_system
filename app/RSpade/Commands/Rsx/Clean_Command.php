@@ -19,7 +19,7 @@ class Clean_Command extends Command
      *
      * @var string
      */
-    protected $signature = 'rsx:clean {--silent : Suppress all output except errors} {--force : Skip the system/ integrity check before the downstream reset (discard framework-tree drift unconditionally)}';
+    protected $signature = 'rsx:clean {--silent : Suppress all output except errors} {--force : Accepted for compatibility; the system/ reset is unconditional and needs no override}';
 
     /**
      * Framework-internal flag (the `--_` convention - argv-stripped pre-boot, declared as no
@@ -46,7 +46,6 @@ class Clean_Command extends Command
      *
      * @var string|null
      */
-    protected $reset_refusal = null;
 
     /**
      * Execute the console command.
@@ -162,17 +161,16 @@ class Clean_Command extends Command
 
         // Note: We never clear rsx-locks directory as it contains active lock files
 
-        // 5. Downstream apps only: reset system/ to its last committed state.
-        //    system/ is the vendored framework tree - ordinary tracked files OWNED by the
-        //    framework updater (rsx:framework:pull), which is the only thing that may commit
-        //    it. "Clean" for an app developer therefore includes discarding any local drift
-        //    in that tree: unstage system/ and restore its tracked files to HEAD. Untracked
-        //    files are left alone (they may be legitimate runtime artifacts).
+        // 5. Downstream apps only: reset the framework submodule to its own HEAD.
+        //    system/ is a git submodule - a checkout of the framework's repository. ALL of
+        //    it is framework property, so "clean" for an app developer means discarding
+        //    every local change there without asking: there is no such thing as work worth
+        //    keeping inside somebody else's checkout.
         //    The framework monorepo is EXEMPT: there system/ IS the work being done.
         //    --_no-system-reset skips this step entirely (caches only): build tooling that
         //    shells to rsx:clean (rsx:manifest:build, rsx:bundle:compile, the updater, ...)
         //    wants cache invalidation, never git-state changes - the reset is for a HUMAN
-        //    (or agent) running rsx:clean directly, and for the pre-commit hook.
+        //    (or agent) running rsx:clean directly.
         if (!$is_framework_dev && !\App\RSpade\Core\Console\Rsx_Internal_Flags::has(self::FLAG_NO_SYSTEM_RESET)) {
             $note = $this->reset_system_tree();
             if ($note !== null) {
@@ -193,40 +191,34 @@ class Clean_Command extends Command
             }
         }
 
-        // A refused system/ reset is an ERROR even under --silent: the caches above
-        // were still cleaned, but the framework tree carries unauthorized (hand-made)
-        // modifications that a reset would silently destroy. Exit 1 so callers can react.
-        if ($this->reset_refusal !== null) {
-            $this->error('[ERROR] system/ reset refused - unauthorized framework modifications detected:');
-            $this->line($this->reset_refusal);
-            $this->line('  Inspect the changes:  php artisan rsx:framework:pull --diff-system-changes');
-            $this->line('  Discard them anyway:  php artisan rsx:clean --force');
-            $this->line('                   or:  git checkout HEAD -- system   (from the project root)');
-
-            return 1;
-        }
 
         return 0;
     }
 
     /**
-     * Reset the vendored framework tree (system/) to its last committed state.
+     * Reset the framework submodule to its own HEAD, discarding everything local.
      *
-     * Downstream apps only (the caller gates on is_framework_developer). Runs
-     * `git reset -- system` + `git checkout -- system` + `git clean -fd -- system`
-     * from the PROJECT ROOT: unstages system/, restores its tracked files to HEAD,
-     * and REMOVES untracked files (owner ruling 2026-08-12 - on a downstream box the
-     * framework tree is machine-written, so an untracked file there is churn or
-     * foreign by definition; a stale class-override .php.upstream leftover was
-     * surviving even --force). Gitignored files (the system/.env symlink, local
-     * caches) are deliberately untouched - no -x. Active class-override churn is
-     * regenerate-on-demand state: the next manifest build re-applies any rename it
-     * needs.
+     * system/ is a git submodule - a checkout of the framework's repository, replaced
+     * wholesale by every update. ALL of it is framework property, so this is a plain
+     * `git reset --hard` + `git clean -fdx` INSIDE the submodule. There is no integrity
+     * gate and no --force: a modification under system/ is not work to protect, it is a
+     * checkout that has drifted from the commit it claims to be, and the supported way to
+     * customize a framework class is a class override in rsx/.
      *
-     * Git environment variables are stripped from the subprocesses: rsx:clean is
-     * invoked from inside the pre-commit hook, where git exports GIT_DIR /
-     * GIT_INDEX_FILE and would otherwise re-target these calls at the in-progress
-     * commit's index.
+     * WHY THIS IS NOT `git checkout -- system` FROM THE PARENT. That treats system/ as
+     * ordinary tracked files, which is what it was under the vendored model. Against a
+     * submodule it would restore the GITLINK (the recorded revision) and say nothing about
+     * the submodule's own working tree, leaving every dirty file exactly where it was. The
+     * two repositories have to be addressed separately.
+     *
+     * -x on the clean is deliberate: ignored files under system/ are framework build
+     * residue, not developer content. The one thing that survives is what lives OUTSIDE
+     * the submodule - storage/ is one level up, reached through the system/storage symlink
+     * that the reset restores rather than removes.
+     *
+     * Git environment variables are stripped from the subprocesses: rsx:clean may be
+     * invoked from inside a git hook, where git exports GIT_DIR / GIT_INDEX_FILE and would
+     * otherwise re-target these calls at the in-progress commit's index.
      *
      * @return string|null Line for the cleaned-items report, or null when there is
      *                     nothing to say.
@@ -238,59 +230,33 @@ class Clean_Command extends Command
             return '[WARNING] system/ reset skipped (' . $skip_reason . ')';
         }
 
-        $project_root = dirname(base_path());
+        $system_dir = base_path();
 
-        // env -u strips the inherited git context (see docblock); every call is
-        // explicitly -C'd at the project root.
-        $git = 'env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C ' . escapeshellarg($project_root);
+        // Not a submodule: the monorepo never reaches here (the caller gates on
+        // is_framework_developer), so this is a project that has not been converted yet.
+        // Nothing to reset in the submodule sense, and reaching into a tree whose shape
+        // we do not recognise is not an improvement.
+        if (!file_exists($system_dir . '/.git')) {
+            return '[WARNING] system/ reset skipped (system/ is not a git submodule)';
+        }
+
+        // env -u strips the inherited git context (see docblock); -C targets the SUBMODULE.
+        $git = 'env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C ' . escapeshellarg($system_dir);
 
         $output = [];
         $rc = 0;
-        exec_safe($git . ' rev-parse --git-dir', $output, $rc);
+
+        exec_safe($git . ' reset --hard -q HEAD', $output, $rc);
         if ($rc !== 0) {
-            return '[WARNING] system/ reset skipped (' . $project_root . ' is not a git repository)';
+            return '[WARNING] system/ reset skipped (git reset --hard failed: ' . trim(implode(' ', $output)) . ')';
         }
 
-        exec_safe($git . ' ls-files -- system | head -n 1', $output, $rc);
-        if ($rc !== 0 || empty(array_filter($output))) {
-            return '[WARNING] system/ reset skipped (no tracked files under system/)';
-        }
-
-        // Integrity gate: before discarding drift, prove the framework tree carries
-        // no UNAUTHORIZED (hand-made) modifications. rsx:framework:verify exits
-        // non-zero iff it finds any; class-override churn, marked framework churn,
-        // and a missing release manifest all pass. A refusal makes rsx:clean itself
-        // exit 1 (see handle()) so callers can react instead of losing work to a
-        // silent reset. --force skips the check: rsx:framework:pull runs its own
-        // tamper gate before calling us, and a human passing --force is explicitly
-        // choosing to discard whatever is there. Framework-developer trees never
-        // reach this method (the caller gates on is_framework_developer).
-        if (!$this->option('force')) {
-            $verify_rc = \Illuminate\Support\Facades\Artisan::call('rsx:framework:verify');
-            if ($verify_rc !== 0) {
-                $this->reset_refusal = trim(\Illuminate\Support\Facades\Artisan::output());
-
-                return '[ERROR] system/ reset refused (unauthorized framework modifications)';
-            }
-        }
-
-        exec_safe($git . ' reset -q -- system', $output, $rc);
-        if ($rc !== 0) {
-            return '[WARNING] system/ reset skipped (git reset failed: ' . trim(implode(' ', $output)) . ')';
-        }
-
-        exec_safe($git . ' checkout -q -- system', $output, $rc);
-        if ($rc !== 0) {
-            return '[WARNING] system/ reset incomplete (git checkout failed: ' . trim(implode(' ', $output)) . ')';
-        }
-
-        // Untracked files too (see docblock). -q: unix silence; failures speak below.
-        exec_safe($git . ' clean -qfd -- system', $output, $rc);
+        exec_safe($git . ' clean -qfdx', $output, $rc);
         if ($rc !== 0) {
             return '[WARNING] system/ reset incomplete (git clean failed: ' . trim(implode(' ', $output)) . ')';
         }
 
-        return '[OK] system/ reset to last commit';
+        return '[OK] system/ reset to its checked-out revision';
     }
 
     /**

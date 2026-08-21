@@ -25,6 +25,22 @@ die()  { echo "[rspade] ERROR: $*" >&2; exit 1; }
 # 0. Sanity: is a project actually mounted here?
 # -----------------------------------------------------------------------------
 if [ ! -f "$APP_DIR/system/artisan" ]; then
+    # THE COMMON CASE IS A CLONE WITHOUT SUBMODULES, not a missing project. system/
+    # is a git submodule, so `git clone` on its own leaves an empty directory there
+    # and every symptom - no artisan, a 500 from the web server - points nowhere near
+    # the cause. Distinguish the two: a project directory that exists with an empty
+    # system/ is an uninitialised submodule and nothing else.
+    if [ -d "$APP_DIR/rsx" ] && [ -d "$APP_DIR/system" ] && [ -z "$(ls -A "$APP_DIR/system" 2>/dev/null)" ]; then
+        die "The framework is not checked out: $APP_DIR/system is empty.
+
+  system/ is a git submodule, and a plain 'git clone' does not populate it. From
+  your project directory on the HOST:
+
+      git submodule update --init --recursive
+
+  Then start the container again. (Cloning with --recurse-submodules avoids this.)"
+    fi
+
     die "No RSpade project found at $APP_DIR (system/artisan is missing).
 
   This image runs YOUR project - it does not contain one. Mount a checkout:
@@ -32,7 +48,9 @@ if [ ! -f "$APP_DIR/system/artisan" ]; then
       docker run -v \"\$(pwd)\":$APP_DIR -p 8080:80 <image>
 
   If you have not created a project yet, start from the RSpade starter
-  repository: https://github.com/rspade-framework/rspade"
+  repository: https://github.com/rspade-framework/rspade
+
+      git clone --recurse-submodules https://github.com/rspade-framework/rspade"
 fi
 
 cd "$APP_DIR" || die "Cannot enter $APP_DIR"

@@ -1097,17 +1097,7 @@ class _Manifest_Scanner_Helper
 
             // Check if an active .php file with this class exists
             if (isset($active_php_classes[$class_name])) {
-                // Override still exists - keep .upstream as-is. Attest the
-                // applied rename (no-op when already attested): recording is
-                // otherwise event-driven, so a marker ledger that post-dates
-                // the rename (a pre-ledger install, a lost store) would stay
-                // empty forever and trip the update tamper gate. This is the
-                // one place the steady state is visited every build.
-                $upstream_path = base_path($file);
-                $renamed_from = preg_replace('/\.upstream$/', '', $upstream_path);
-                if (file_exists($upstream_path) && !file_exists($renamed_from)) {
-                    \App\RSpade\Core\Framework\Framework_Mutations::attest_rename($renamed_from, $upstream_path, 'class_override_rename');
-                }
+                // Override still exists - keep .upstream as-is.
                 continue;
             }
 
@@ -1118,8 +1108,6 @@ class _Manifest_Scanner_Helper
             if (file_exists($upstream_path) && !file_exists($restored_path)) {
                 rename($upstream_path, $restored_path);
                 console_debug('MANIFEST', "Class restore: {$class_name} - restored {$file} to .php");
-                // Marker: .php.upstream gone, .php restored to its archived content.
-                \App\RSpade\Core\Framework\Framework_Mutations::record_restore($upstream_path, $restored_path);
 
                 // Remove the .upstream entry from manifest
                 unset(Manifest::$data['data']['files'][$file]);

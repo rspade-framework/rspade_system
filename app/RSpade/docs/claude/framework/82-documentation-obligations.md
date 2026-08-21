@@ -20,7 +20,7 @@ monorepo. CANONICAL HOME of the documentation-authoring obligations. -->
 
 **Keep the audiences separate.** Always-on knowledge describes how to write code with the feature TODAY — audit sweeps, "find your existing call sites" and conversion steps belong in `upstream_changes/`; recurring pre-launch verification belongs in the prelaunch checklist. Mixing migration prose into always-on knowledge bloats what every reader loads on every task.
 
-**An `upstream_changes` document exists ONLY when the end user must MANUALLY act** — it is NOT a changelog, and self-applying behavior (owned-zone sync, environment updates, migrations) needs no document (owner ruling 2026-08-04). A recurring FRAMEWORK-INTERNAL audit goes instead to `docs.dev/audits/framework_internal_audit_checklist.md`.
+**An `upstream_changes` document exists ONLY when the end user must MANUALLY act** — it is NOT a changelog, and self-applying behavior (the submodule update, environment updates, migrations) needs no document (owner ruling 2026-08-04). A recurring FRAMEWORK-INTERNAL audit goes instead to `docs.dev/audits/framework_internal_audit_checklist.md`.
 
 ### External requests
 

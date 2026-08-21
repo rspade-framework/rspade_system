@@ -52,5 +52,13 @@ if [ ! -f "$ARTISAN" ] || ! command -v php >/dev/null 2>&1; then
     exec "$REAL_GIT" "$@"
 fi
 
+# THE OPERATOR'S DIRECTORY, CARRIED ACROSS THE PHP BOUNDARY.
+#
+# system/artisan does chdir(__DIR__) before anything else, so by the time the proxy
+# runs, php has already destroyed the cwd every relative pathspec was written
+# against - `git log -- rsx/foo.php` from anywhere resolves as system/rsx/foo.php and
+# silently matches nothing. This shim is the last place that still knows the answer,
+# so it exports it and the proxy restores it.
 export RSX_GIT_SHIM_ACTIVE=1
+export RSX_GIT_CWD="$PWD"
 exec php "$ARTISAN" rsx:git "$@"

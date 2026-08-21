@@ -26,13 +26,15 @@ RSpade offers two development approaches:
 2. **Forked** - Automatic updates are disabled; the entire codebase is
    yours to modify and maintain
 
-Because the framework is vendored - `system/` consists of ordinary tracked
-files in your own application repository - your repo ALREADY contains the
-full framework source, including `system/vendor/` and `system/node_modules/`.
-Forking does not change your repository layout, add remotes, or switch
-branches. It is purely a policy switch: the `.rspade-forked-framework`
-marker tells the updater to stand down, and from then on the framework
-files are simply more code in your repo.
+`system/` is a GIT SUBMODULE tracking the framework distribution, so your
+repository records WHICH REVISION to use rather than a copy of the source.
+Forking changes that: the framework stops being somebody else's checkout and
+becomes code you own.
+
+The `.rspade-forked-framework` marker tells the updater to stand down. What
+you do with the submodule afterwards is your decision - keep it and manage
+the revision by hand, point it at your own fork of rspade_system, or absorb
+the tree into your repository outright (see ABSORBING THE FRAMEWORK).
 
 ## RSPADE'S RELATIONSHIP TO LARAVEL
 
@@ -50,21 +52,21 @@ RSpade is built within Laravel with minimal divergence:
 **Developer experience:**
 For most developers, Laravel's existence is transparent. You work in
 `./rsx`, use Laravel helpers where useful, and never touch files under
-`system/`. Framework updates replace the framework-owned zones and
-reconcile the rest (see rsx:man rsx_upstream).
+`system/`. ALL OF `system/` IS FRAMEWORK PROPERTY AND IS OVERWRITTEN ON
+EVERY UPDATE (see rsx:man rsx_upstream).
 
-**But you CAN break the abstraction - two tiers:**
+**There is exactly one supported way to change framework behaviour without
+forking: a CLASS OVERRIDE in `rsx/`** (rsx:man class_override). Copy the
+class into `rsx/` under the same name; the manifest uses yours, every
+reference to the original FQCN keeps resolving, and it survives every update
+because it lives outside the submodule.
 
-Tier 1 (NO fork needed): local changes to `system/` OUTSIDE
-`system/app/RSpade/` - `config/`, `app/Http/`, `routes/`, etc. The
-updater's three-way reconcile preserves these across updates (kept when
-upstream did not change the same file; conflicts are reported and kept
-by default). You stay on managed updates.
-
-Tier 2 (fork): modifying `system/app/RSpade/` itself. The updater treats
-edits there as unauthorized (its tamper gate aborts, and `--force`
-overwrites them), so owning RSpade core code means leaving managed
-updates behind.
+There is no longer a middle tier. Under the vendored model, edits to
+`system/` outside `system/app/RSpade/` were preserved by a three-way merge -
+that merge is gone, along with the tamper gate that policed the rest. An
+update now resets the submodule hard and checks out the tip: any local edit
+under `system/`, anywhere, is discarded without being reported. If you need
+one that a class override cannot express, you need a fork.
 
 ## WHEN TO FORK
 
@@ -87,9 +89,9 @@ modifications (see REVERTING TO MANAGED MODE).
 ## MANAGED VS FORKED
 
 Managed (default):
-    system/                        - Tracked files, maintained by rsx:framework:pull
-    system/app/RSpade/ edits       - Detected by the tamper gate, overwritten on update
-    system/ edits outside RSpade   - Preserved by the three-way reconcile
+    system/                        - A git submodule, replaced by rsx:framework:pull
+    ANY edit under system/         - Discarded on the next update, silently
+    Customization                  - A class override in rsx/ (rsx:man class_override)
     Updates                        - php artisan rsx:framework:pull
     Update history                 - rsx/resource/framework_update_history.dat
 
@@ -177,7 +179,8 @@ framework changes (see rsx:man upstream_changes).
 
 ## REVERTING TO MANAGED MODE
 
-**WARNING: this discards your `system/app/RSpade/` modifications.**
+**WARNING: this discards EVERY modification under `system/`, not just those
+under `system/app/RSpade/`.**
 
     # 1. Commit everything (snapshot before the reset)
     git add -A && git commit -m "Pre-unfork snapshot"
@@ -185,10 +188,10 @@ framework changes (see rsx:man upstream_changes).
     # 2. Remove the marker
     rm .rspade-forked-framework
 
-    # 3. Pull with --force: restores pristine framework-owned zones,
-    #    wiping core edits; your system/ edits OUTSIDE app/RSpade go
-    #    through the normal three-way reconcile and survive where possible
-    php artisan rsx:framework:pull --force
+    # 3. Pull. There is no --force and nothing to force: the update resets
+    #    system/ hard and checks out the tip, so EVERY local edit under
+    #    system/ is discarded - there is no tier that survives.
+    php artisan rsx:framework:pull
 
     # 4. Review and commit the result
     git status
@@ -235,6 +238,6 @@ churn already subtracted.
 
 ## SEE ALSO
 
-rsx_upstream(7) - Managed updates, tamper gate, three-way reconcile
+rsx_upstream(7) - Managed updates: what the submodule model does and refuses
 upstream_changes(7) - Mandatory downstream change notices
 class_override(7) - Overriding framework classes WITHOUT forking

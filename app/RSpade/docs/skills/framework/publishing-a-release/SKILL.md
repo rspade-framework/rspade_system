@@ -72,7 +72,7 @@ These three steps are one mechanism and their ORDER is load-bearing.
 ## Changing what a release ships
 
 - **A new framework file must reach downstream** - nothing to do: everything tracked under `system/` ships, and the inventory is derived from the index. But if the monorepo `.gitignore` excludes it, the Step 12d assertion or a downstream `git add system` will drop it - check both.
-- **A new owned zone (hard-synced dir or individual file)** - declare it in BOTH `OWNED_DIRS`/`OWNED_FILES` in `system/bin/framework-pull-upstream.sh.dist` AND `Framework_Mutations::OWNED_ZONE_DIRS`/`OWNED_ZONE_FILES`. **They must change together** - the non-owned list DERIVES its exclusions from them, so a half-declared zone is a zone that can never apply.
+- **A new file or directory anywhere under `system/`** - nothing to declare. ALL of `system/` is framework property and is overwritten on every update; downstream it is a git submodule, so whatever is committed here is what arrives there.
 - **New durable "make the environment correct" behavior** - a numbered script in `system/bin/environment_updates/`, never the updater. The updater is a running bash script downstream; edits to its `.dist` also lag one pull.
 - **A dev-only file must NOT ship** - add it to the Step 7 removal list. A framework-developer man page goes in the man-strip list, and nothing shipped may then point at it.
 - **A file needs a downstream-specific form** - ship the `.dist` (Step 8 renames `bin/*.dist` to its real name) rather than branching at runtime.

@@ -206,9 +206,6 @@ class Php_Fixer
             if (trim($modified_content) === '') {
                 throw new RuntimeException("Php_Fixer produced empty output for file: {$file_path}. This should never happen.");
             }
-            // Label the mutation-marker record for this write precisely (the generic
-            // file_put_contents_safe hook consumes this one-shot hint).
-            \App\RSpade\Core\Framework\Framework_Mutations::$next_mechanism = 'php_fixer';
             file_put_contents_safe($absolute_path, $modified_content);
             return true;
         }

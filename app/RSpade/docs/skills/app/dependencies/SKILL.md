@@ -5,7 +5,7 @@ description: Adding PHP and JS packages to a downstream RSpade application - rsx
 
 # Managing application dependencies
 
-An RSpade project is **two layers**: the framework core in `system/` (vendored tracked files maintained by `rsx:framework:pull`) and your application at the project root. Dependencies follow the same split.
+An RSpade project is **two layers**: the framework core in `system/` (a git submodule maintained by `rsx:framework:pull`) and your application at the project root. Dependencies follow the same split.
 
 **NEVER run `composer` or `npm` inside `system/`.** That directory is read-only to you, exactly like `node_modules` or the Linux kernel - the next framework pull overwrites it, and anything you installed there vanishes. Your packages go at the project root:
 

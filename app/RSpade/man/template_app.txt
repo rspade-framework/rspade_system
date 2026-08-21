@@ -24,7 +24,7 @@ DESCRIPTION
          "follow an existing pattern", the pattern lives here.
 
     Framework vs application (the boundary):
-      /system/  framework core - ships as rspade_system; vendored into the app repo
+      /system/  framework core - ships as rspade_system; a git submodule of the app repo
                 as ordinary tracked files (no submodule) and updated via
                 rsx:framework:pull.
       /rsx/     this reference app - ships as rspade_template_app (and inside the full
@@ -99,14 +99,14 @@ DISTRIBUTION
         temp, vendor, .git   regenerated/local metadata
     Anything else under /rsx/ ships. The same cleaned tree is also embedded in the full
     runnable project, rspade_project (which adds the Laravel scaffolding + the system
-    tree vendored in as ordinary files); rspade_template_app is the app-only,
+    tree recorded as a submodule gitlink); rspade_template_app is the app-only,
     reference-only view.
 
 USING IT
     - As reference: clone rspade_template_app and read it alongside this framework's man
       pages; copy the patterns into your own /rsx/.
     - As a runnable app: use rspade_project (it bundles this app + the framework
-      core vendored in + Laravel scaffolding), then customize /rsx/.
+      core as a submodule + Laravel scaffolding), then customize /rsx/.
 
 NOTES
     - The reference app is meant to be CHANGED. Treat the framework (/system/) as

@@ -5,7 +5,7 @@
 **NEVER modify `system/`** - It's like node_modules or the Linux kernel.
 
 - **App repo**: your project root `.git` (you control)
-- **Framework**: `system/` (vendored framework files, don't touch)
+- **Framework**: `system/` (a git submodule - ALL of it is overwritten on every update; don't touch)
 - **Your code**: `rsx/` (all changes here)
 
 **USE `php artisan rsx:git <any git command>` INSTEAD OF BARE `git`.** It is a transparent proxy — same subcommands, flags, exit codes, stdin and editor/pager behavior — that owns what plain git cannot see on an RSpade box: the build regenerates class-override churn as uncommitted `system/` modifications within a second of any clean, so **bare git loses a race it cannot see** and refuses a pull with "your local changes would be overwritten by merge". A Claude Code PreToolUse hook blocks a bare `git` and names the `rsx:git` equivalent.

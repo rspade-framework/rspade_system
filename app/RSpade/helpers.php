@@ -652,15 +652,6 @@ function file_put_contents_safe($file, $content)
         rmdir_recursive($cleanup_dir);
     }
 
-    // Record framework-authored writes to owned-zone files so the tamper check
-    // can subtract legitimate churn by construction. The recorder does its own
-    // fast owned-zone guard first (a string prefix on the already-resolved $file),
-    // so bundle/manifest/storage writes pay only a no-op call. $file here is the
-    // final symlink-resolved target - the correct path to record against.
-    if ($renamed) {
-        \App\RSpade\Core\Framework\Framework_Mutations::record_write($file, 'file_write');
-    }
-
     return $renamed ? $bytes : false;
 }
 
