@@ -1,6 +1,6 @@
 {
-  "release_id": "53388c8ce059bd4f2cc3b0fcc1af2ce58b9ac345",
-  "date": "2026-08-21T12:05:12Z",
+  "release_id": "6020ce437712844c1b871bf4e4d7216226fc4dce",
+  "date": "2026-08-21T12:10:20Z",
   "files": {
     ".bladeformatterrc.json": "893892dc2fdbe0bcd5085dbc56a99b77332534fd8793671b28cf1c6f468697d7",
     ".cspell/custom-dictionary-workspace.txt": "7a34db1d9a5dd27c7a32a3bc5b79f093ad986f0a6ac16da70bf38aff4d11f3ae",
@@ -15179,7 +15179,7 @@
     "app/RSpade/resource/docker/README.md": "b85b2de6e9310bdf220b5a96c7654334ceca3e74078bb80ad128abb93144ccb8",
     "app/RSpade/resource/docker/build.sh": "fe74d2ea282063f93a9d36117830641a1702493f1f981dcab3afcde5ad818a31",
     "app/RSpade/resource/docker/claude-run.sh": "7f3bead04a00353fe61372740bfdaad11b83b0b2d9afa422e165214211f13f4c",
-    "app/RSpade/resource/docker/entrypoint.sh": "ae89eea2b8731902b4a6e66cf7b54dcd3437b0ffc57eea87d59589a7c7c6f86f",
+    "app/RSpade/resource/docker/entrypoint.sh": "794cda80d73f678bc63c4c531928f7dbd7d3188c8a3b6e7041e67c2d189086b2",
     "app/RSpade/resource/docker/git-shim.sh": "1d04864119240695f9c438599b2700940103c1445693a426aef08b33e02bc9cc",
     "app/RSpade/resource/docker/mysql/mysqld.cnf": "77ef71dfd55adf3bf35e405001a5faa7a67f8026681cd97f4bd1f9ab3709e4f0",
     "app/RSpade/resource/docker/mysql/provision.sql": "dc540ff9217ca36b00de566065867f4d1b9724fc6cfb55ba543af7a79d1dd834",
