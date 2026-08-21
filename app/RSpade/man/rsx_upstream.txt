@@ -256,6 +256,16 @@ FOR FRAMEWORK DEVELOPERS
     bin/publish; see rsx:man framework_pull_mechanics for how a release is
     assembled and what a downstream receives.
 
+RECOVERING A BOX THAT CANNOT UPDATE
+    A project on a framework release from before 2026-08-21 carries an updater whose
+    own git calls were intercepted by the git proxy, which reset the submodule back
+    mid-update. Such a box reports a successful update and does not move.
+
+    One run with the proxy bypassed brings it forward, after which normal updates
+    work:
+
+        RSX_GIT_SHIM_ACTIVE=1 php artisan rsx:framework:pull
+
 SEE ALSO
     rsx:man framework_pull_mechanics    how a release is built and delivered
     rsx:man rsx_git                     the git proxy that keeps system/ in step

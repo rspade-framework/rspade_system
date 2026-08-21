@@ -1,6 +1,6 @@
 {
-  "release_id": "8e7be833c8f54e5d3f8f8cafa901f3b8a96235bd",
-  "date": "2026-08-21T12:25:53Z",
+  "release_id": "af84a38880efde3ebb49d504c80d139bfd9446c6",
+  "date": "2026-08-21T12:31:53Z",
   "files": {
     ".bladeformatterrc.json": "893892dc2fdbe0bcd5085dbc56a99b77332534fd8793671b28cf1c6f468697d7",
     ".cspell/custom-dictionary-workspace.txt": "7a34db1d9a5dd27c7a32a3bc5b79f093ad986f0a6ac16da70bf38aff4d11f3ae",
@@ -15148,7 +15148,7 @@
     "app/RSpade/man/rspade.txt": "58086628498c970ade481c2d3988e0fdbb74a070e6c7ae657a64c189d3223385",
     "app/RSpade/man/rsx_debug.txt": "8a5961c3b074720054d073c4580534d4b16cfd3ba7e3bc6cc395e8288d22eeae",
     "app/RSpade/man/rsx_git.txt": "9b5f46443e47bbf7da4f36bd46c8a07a905cdab5d2e58bdc6286d5681a2d5149",
-    "app/RSpade/man/rsx_upstream.txt": "1406a02f6d54dcfcaf6ba584b0a07b7126bb6acfb0d889229892627c024f1fbf",
+    "app/RSpade/man/rsx_upstream.txt": "1278b987fef710c5beed0a096bf8b1b0bbcda342d97ae86b752d936f0ead77b5",
     "app/RSpade/man/rsxapp.txt": "72d167c13ef7d2a85f40af5f1e843b4247a0db8e177b7b132cd1eac97f513ecf",
     "app/RSpade/man/safe_html.txt": "106233361367e359e96d1298fee3431eb623633b827743609730e7e462a20820",
     "app/RSpade/man/scss.txt": "d95a582f6380551b8003367372f9e1e7d786662df717e0b242c3e56ceb0d7939",
