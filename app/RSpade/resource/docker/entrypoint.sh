@@ -130,9 +130,13 @@ fi
 # -----------------------------------------------------------------------------
 # 3. APP_URL - the container cannot discover its own published port
 # -----------------------------------------------------------------------------
-# Docker does not tell a container which host port maps to it, so APP_URL cannot
-# be inferred - it must be declared. RSPADE_APP_URL is the declaration; without
-# it we leave whatever .env already says alone.
+# Docker does not tell a container which host port maps to it, so APP_URL cannot be
+# inferred here. THE BROWSER KNOWS, and the first-run welcome screen asks it: whatever
+# host and port you actually browse is the one recorded. That is why a blank APP_URL on
+# a first boot is the NORMAL state and not a warning.
+#
+# RSPADE_APP_URL remains as a declaration for an automated deployment that wants to skip
+# the screen entirely - CI, a provisioning script, anything with no human to browse.
 if [ -n "${RSPADE_APP_URL:-}" ]; then
     if [ "$(env_value APP_URL)" != "$RSPADE_APP_URL" ]; then
         env_set APP_URL "$RSPADE_APP_URL"
@@ -142,8 +146,16 @@ fi
 
 APP_URL_NOW="$(env_value APP_URL)"
 case "$APP_URL_NOW" in
-    http://*|https://*) : ;;
-    *) warn "APP_URL is '$APP_URL_NOW', which is not an http(s) URL. Pass -e RSPADE_APP_URL=http://localhost:8080 (matching your published port), or edit .env." ;;
+    http://*|https://*)
+        : ;;
+    "")
+        # First run. Say what happens next rather than warning about a state the
+        # application is about to resolve by itself.
+        say "APP_URL is not set yet - the welcome screen will record it from your first visit."
+        ;;
+    *)
+        warn "APP_URL is '$APP_URL_NOW', which is not an http(s) URL. Clear it to let the welcome screen set it, or correct it in .env."
+        ;;
 esac
 
 # -----------------------------------------------------------------------------
