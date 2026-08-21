@@ -507,6 +507,7 @@ fi
 # -----------------------------------------------------------------------------
 echo ""
 say "RSpade is up. ${APP_URL_NOW:-(APP_URL unset)}"
+say "      framework $(cd "$APP_DIR/system" 2>/dev/null && /usr/bin/git rev-parse --short=12 HEAD 2>/dev/null || echo 'unknown')"
 echo ""
 
 # -----------------------------------------------------------------------------
