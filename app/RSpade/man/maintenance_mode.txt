@@ -16,7 +16,7 @@ DESCRIPTION
 
         storage/rsx-framework/.maintenance.mode.framework.update
 
-    The flag lives under storage/ (the tamper gate skips it and rsx:clean preserves it, so it
+    The flag lives under storage/ - OUTSIDE the system/ submodule, so no update or rsx:clean can remove it, and it
     can never itself trip a verify finding). Its CONTENT is the operator REASON, quoted by the
     web 503 body and by every CLI refusal.
 

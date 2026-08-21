@@ -105,15 +105,16 @@ signal over inferring from side effects.
   ONLY when absent (`array_key_exists`, so an explicit `false`/`null` counts as a developer
   decision), tested per sub-key, and never overwritten — `/effort high` writes `effortLevel`
   and that value then survives every future pull. Delete a key to have its default restored.
-- `020_precommit_hook.sh` — installs the downstream pre-commit hook that keeps `system/` out
-  of app commits (runs `rsx:clean` + unstages `system/`); also restores a lost exec bit on an
-  already-installed hook.
-- `030_relocate_storage.sh` — one-time migration of `system/storage` -> `./storage`. When
-  both trees hold data it MERGES (system/storage side wins existence; directory collisions
-  recurse; identical files dedup; a zero-byte file on either side is lossless debris the
-  non-empty side wins; only a file collision with DIFFERING non-empty content aborts, with
-  the specific paths listed). Also maintains the root `.gitignore` storage rules and
-  untracks any git-tracked files the rules cover (removal staged, disk untouched).
+- `020_remove_precommit_hook.sh` — REMOVES the pre-commit hook this slot used to install
+  (the one that ran `rsx:clean` and unstaged `system/` to keep the vendored framework tree
+  out of app commits). That guard was a consequence of `system/` being vendored — one index
+  holding both the framework's files and the application's, with nothing but a hook to tell
+  them apart. The slot now does the inverse job rather than being deleted, because git does
+  not distribute `.git/hooks`: every environment that ever received the hook still has it,
+  and nothing else would ever take it away. Only a hook carrying the `RSPADE-PRECOMMIT-V1`
+  marker is removed; a developer's own pre-commit hook is left alone, silently. Retire this
+  slot once the fleet has turned over.
+
 - `040_claude_git_guard.sh` — registers `system/bin/claude-git-guard.sh` as a Claude Code
   PreToolUse hook (augment-only, downstream only) as
   `bash "$CLAUDE_PROJECT_DIR/system/bin/claude-git-guard.sh"`: blocks a bare `git` from the

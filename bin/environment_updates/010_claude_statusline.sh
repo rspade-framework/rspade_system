@@ -17,11 +17,30 @@
 # simply runs `/effort high`, which WRITES that key - keeps their value through every future
 # pull. Delete a key to have the default restored on the next run; change it to keep yours.
 #
-#   attribution.commit = ""      Suppress the "Co-Authored-By: Claude" commit trailer.
-#   attribution.pr     = ""      Suppress the PR-description attribution footer.
-#                                (An empty string is how the documented `attribution` object
-#                                disables each one. This SUPERSEDES `includeCoAuthoredBy`,
-#                                which is deprecated - do not reintroduce it.)
+#   attribution.commit     = ""     Suppress the "Co-Authored-By: Claude" commit trailer.
+#   attribution.pr         = ""     Suppress the PR-description attribution footer.
+#   attribution.sessionUrl = false  Suppress the SEPARATE `Claude-Session: <url>` git
+#                                   trailer and PR-body link that web / Remote Control
+#                                   sessions add. Emptying commit does NOT cover this -
+#                                   all three keys are needed to remove attribution
+#                                   completely. Boolean, not a string. Requires Claude
+#                                   Code v2.1.182+; an older build ignores the key.
+#
+#                                An empty string is how the documented `attribution`
+#                                object disables commit and pr. It SUPERSEDES
+#                                `includeCoAuthoredBy`, which is DEPRECATED - the schema
+#                                says "Deprecated: Use attribution instead" and
+#                                attribution takes precedence over it. Do not reintroduce
+#                                it.
+#
+# PRECEDENCE (later wins): user (~/.claude/settings.json) -> project
+# (.claude/settings.json, what this writes) -> local (.claude/settings.local.json) ->
+# CLI flag -> managed. A higher-precedence file setting `attribution` overrides what we
+# write here, so the local file is checked and reported rather than silently losing.
+#
+# GOTCHA: the instruction to add the trailer is part of an already-loaded session
+# prompt, so an in-flight session may keep adding it until restarted. New sessions pick
+# it up immediately.
 #   effortLevel        = medium  Default reasoning effort. `/effort` overwrites it.
 #   spinnerTipsEnabled = false   No tips in the working spinner.
 #   cleanupPeriodDays  = 3650    Transcript retention. Claude Code deletes session files older
@@ -101,13 +120,18 @@ out="$(RSX_SETTINGS="$settings" RSX_CMD="$cmd" RSX_CMD_PRIOR="$cmd_prior" php -r
         if (!array_key_exists($key, $data)) { $data[$key] = $value; $added[] = $key; }
     }
 
+    // Three keys, and ALL THREE are required to remove attribution completely.
+    // sessionUrl is a separate mechanism from commit/pr - it controls the
+    // `Claude-Session: <url>` git trailer and PR-body link that web and Remote
+    // Control sessions add, and emptying commit does NOT cover it. It is a BOOLEAN,
+    // not an empty string, which is why this carries values rather than writing ""
+    // to every sub-key.
     if (!array_key_exists("attribution", $data) || !is_array($data["attribution"])) {
-        if (!array_key_exists("attribution", $data)) { $data["attribution"] = []; }
-        elseif (!is_array($data["attribution"])) { $data["attribution"] = []; }
+        $data["attribution"] = [];
     }
-    foreach (["commit", "pr"] as $sub) {
+    foreach (["commit" => "", "pr" => "", "sessionUrl" => false] as $sub => $value) {
         if (!array_key_exists($sub, $data["attribution"])) {
-            $data["attribution"][$sub] = "";
+            $data["attribution"][$sub] = $value;
             $added[] = "attribution." . $sub;
         }
     }
@@ -129,11 +153,29 @@ out="$(RSX_SETTINGS="$settings" RSX_CMD="$cmd" RSX_CMD_PRIOR="$cmd_prior" php -r
         $data["statusLine"] = ["type" => "command", "command" => $cmd, "padding" => 1];
     }
 
+    // PRECEDENCE. .claude/settings.local.json is read AFTER this file, so an
+    // `attribution` object there wins outright - we would write the defaults, report
+    // success, and the trailer would keep appearing. That is the shape of a fix that
+    // looks applied and is not, so it is reported instead of assumed.
+    //
+    // Reported, never edited: the local file is personal scope by definition, and
+    // overriding a personal override is precisely what that file exists to prevent.
+    $local = $dir . "/settings.local.json";
+    if (is_file($local)) {
+        $local_data = json_decode((string) file_get_contents($local), true);
+        if (is_array($local_data) && array_key_exists("attribution", $local_data)) {
+            echo "LOCAL_ATTRIBUTION:", $local, "\n";
+        }
+    }
+
     // Nothing to change at all -> do not rewrite the file (preserves the developer formatting
-    // and keeps mtime stable, so a healthy env is untouched on every pull).
+    // and keeps mtime stable, so a healthy env is untouched on every pull). The precedence
+    // probe above runs FIRST: an override that defeats our defaults is most likely to be
+    // present exactly on the runs where there is nothing else to say.
     if (!$added && ($status_rc === 1 || $status_rc === 2)) { exit($status_rc); }
 
     if ($added) { echo "PREFS:", implode(",", $added), "\n"; }
+
 
     $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
     if (file_put_contents($settings, $json) === false) { fwrite(STDERR, "failed to write ".$settings."\n"); exit(3); }
@@ -153,5 +195,14 @@ esac
 prefs="$(printf '%s\n' "$out" | sed -n 's/^PREFS://p' | head -1)"
 if [ -n "$prefs" ]; then
   echo "[env] Claude Code settings: added RSpade defaults for ${prefs//,/, } (absent keys only; yours are never overwritten)."
+fi
+
+# A personal override that outranks what we just wrote. Not silent: the defaults would
+# look applied while the trailer kept appearing, which is worse than not writing them.
+local_attr="$(printf '%s\n' "$out" | sed -n 's/^LOCAL_ATTRIBUTION://p' | head -1)"
+if [ -n "$local_attr" ]; then
+  echo "[env] NOTE: $local_attr sets 'attribution' and outranks .claude/settings.json," >&2
+  echo "[env]       so the RSpade defaults there do not take effect. Remove it from the" >&2
+  echo "[env]       local file, or set attribution.commit/pr to \"\" and sessionUrl to false there." >&2
 fi
 exit 0

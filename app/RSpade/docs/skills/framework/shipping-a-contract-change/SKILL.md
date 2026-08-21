@@ -79,7 +79,7 @@ Worked examples:
 |---|---|---|
 | A new framework migration ships | **No** | `migrate` applies it. Nothing left for the developer. |
 | A new environment update script | **No** | `post-update.sh` self-applies it, silently. |
-| An owned-zone file changed | **No** | Hard-synced by the pull. |
+| Any file under `system/` changed | **No** | ALL of `system/` is overwritten by the pull. |
 | A method signature changed (fatals on the old call) | **Usually no** for the fragment/man tier alone — **yes** if call sites must be FOUND and converted across an app that will otherwise fatal in production paths nobody exercises locally |
 | A DEFAULT changed silently (old code keeps running, differently) | **Yes** | Nothing fails; only an audit finds it. Also a prelaunch-checklist candidate. |
 | A `/rsx/` template file improved | **Yes** (Category 1) | Their `/rsx/` is their own fork - they get nothing automatically. |

@@ -46,6 +46,43 @@ if (!file_exists(__DIR__.'/../.env')) {
 
 /*
 |--------------------------------------------------------------------------
+| Storage Link Guard (pre-boot)
+|--------------------------------------------------------------------------
+|
+| Laravel boots from system/, so every storage_path() lands under system/storage -
+| which is a SYMLINK to ../storage, the project-root tree where volatile state
+| actually lives. system/ is a submodule, replaced wholesale on every update, and
+| nothing durable can live inside it.
+|
+| Creates ../storage when it is simply absent; REFUSES when system/storage is
+| anything other than a link onto it, because a real directory there may hold the
+| only copy of a previous install's data.
+|
+| Placed before the submodule guard, which writes its own state into storage.
+|
+*/
+
+require __DIR__.'/bootstrap/rsx_storage_link.php';
+
+/*
+|--------------------------------------------------------------------------
+| Submodule Sync Guard (pre-boot)
+|--------------------------------------------------------------------------
+|
+| system/ is a git submodule. A plain `git pull` moves the RECORDED revision
+| without checking the submodule out, so the framework about to run may not be
+| the one this project says it uses - silently. This refuses before any of that
+| framework code is loaded, which is the only moment the refusal is meaningful.
+|
+| Silent when system/ is not a submodule (the monorepo, and any project not yet
+| migrated), and silent when it cannot tell.
+|
+*/
+
+require __DIR__.'/bootstrap/rsx_submodule_sync.php';
+
+/*
+|--------------------------------------------------------------------------
 | Container Gate (pre-boot, development mode only)
 |--------------------------------------------------------------------------
 |
@@ -67,19 +104,18 @@ require __DIR__.'/bootstrap/rsx_container_gate.php';
 | Storage Root (pre-boot)
 |--------------------------------------------------------------------------
 |
-| Volatile storage lives at <project>/storage once the relocation marker exists
-| (written by bin/environment_updates/030_relocate_storage.sh); before that it is
-| the historic system/storage. Everything below runs BEFORE Laravel boots, so
-| storage_path() does not exist yet and the marker must be read directly - the same
-| resolution the bootstrap bridge (bootstrap/app.php) and the updater (bin/
-| framework-pull-upstream.sh, storage_base) perform. TRANSITIONAL fallback.
+| Volatile storage lives at <project>/storage, one level ABOVE the Laravel base
+| path. Everything below runs BEFORE Laravel boots, so storage_path() does not
+| exist yet and the path is composed directly - the same single answer the
+| bootstrap bridge (bootstrap/app.php) and the updater (bin/
+| framework-pull-upstream.sh, storage_base) give.
+|
+| No marker, no fallback: the framework ships system/storage as a symlink to this
+| directory, so there is one place storage can be.
 |
 */
 
 $__rsx_storage = dirname(__DIR__) . '/storage';
-if (!is_file($__rsx_storage . '/.rspade_storage_relocated')) {
-    $__rsx_storage = __DIR__ . '/storage';
-}
 
 /*
 |--------------------------------------------------------------------------

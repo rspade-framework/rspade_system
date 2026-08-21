@@ -133,19 +133,27 @@ class Prod_Export_Command extends Command
         ]);
 
         // --- volatile storage: ONLY the sealed build artifacts + an empty writable skeleton.
-        //     Storage lives at <project>/storage once relocated (marker file), at the
-        //     historic system/storage before that - export it at the SAME relative
-        //     location, marker included, so the deployed tree resolves identically.
+        //     Storage is at <project>/storage, always - one level above system/, which is
+        //     a submodule and is replaced wholesale on update. Exported at that same
+        //     relative location so the deployed tree resolves identically.
         $storage_src = storage_path();
-        $storage_relocated = is_file($storage_src . '/.rspade_storage_relocated');
-        $storage_rel = $storage_relocated ? 'storage' : 'system/storage';
-        $storage_dest = $export_path . '/' . $storage_rel;
-        $this->line('      ' . $storage_rel . '/ (sealed build artifacts only)...');
+        $storage_dest = $export_path . '/storage';
+        $this->line('      storage/ (sealed build artifacts only)...');
         $copied += $this->_copy_sealed_build($storage_src, $storage_dest);
         $this->_create_storage_skeleton($storage_dest);
-        if ($storage_relocated
-            && !copy($storage_src . '/.rspade_storage_relocated', $storage_dest . '/.rspade_storage_relocated')) {
-            $this->warn('      [WARNING] Failed to copy the storage relocation marker into the export.');
+
+        // system/storage is a SYMLINK to ../storage, and the system/ copy above excludes
+        // it by name - so without this the exported tree would have no system/storage at
+        // all, and the pre-boot storage guard (bootstrap/rsx_storage_link.php) would
+        // refuse to start the deployed application. Recreated rather than copied: a
+        // symlink is one string, and copying it risks following it into the whole tree.
+        $system_storage_link = $export_path . '/system/storage';
+        if (!is_link($system_storage_link)) {
+            if (file_exists($system_storage_link)) {
+                $this->warn('      [WARNING] ' . $system_storage_link . ' exists and is not a symlink; the deployed tree will refuse to boot.');
+            } elseif (!@symlink('../storage', $system_storage_link)) {
+                $this->warn('      [WARNING] Failed to create the system/storage symlink in the export; the deployed tree will refuse to boot.');
+            }
         }
 
         // --- rsx/ application tree (minus research/dev material; keep the CDN cache)

@@ -422,7 +422,7 @@ THE RSX LOCKD DAEMON
     a Node process that cannot read Laravel's config:
 
         listen side   system/bin/rsx-lockd/lockd.conf (or <project>/lockd.conf,
-                      which wins - system/bin/ is a framework-owned zone whose
+                      which wins - system/bin/ is framework property, overwritten on every update, whose
                       shipped copy is overwritten on framework pull)
         connect side  config('rsx.locks.server_host' / 'server_port'), from
                       LOCK_SERVER_HOST / LOCK_SERVER_PORT in .env

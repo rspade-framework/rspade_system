@@ -141,7 +141,7 @@ HTTP MIDDLEWARE
 
     The sanctioned seam for an application's own HTTP middleware.
     system/app/Http/Kernel.php is a FRAMEWORK-OWNED file - every framework
-    update hard-syncs it and the tamper gate refuses a pull while it carries
+    update overwrites it - ALL of system/ is framework property - so it carries
     a local edit - so an app never registers middleware by editing the
     kernel. It declares it here and the kernel folds it in at bootstrap.
 

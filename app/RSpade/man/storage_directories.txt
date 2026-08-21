@@ -9,7 +9,7 @@ SYNOPSIS
 DESCRIPTION
     Volatile storage lives at <project>/storage - one level ABOVE the Laravel base
     path (system/). It was relocated out of system/ because that tree is the
-    framework-owned zone: hard-synced by rsx:framework:pull and committed wholesale
+    framework property: ALL of system/ is overwritten by rsx:framework:pull
     by it, which runtime data has no business being part of. The move is performed
     once per environment by bin/environment_updates/030_relocate_storage.sh, which
     drops the marker storage/.rspade_storage_relocated; the bootstrap bridge
@@ -240,7 +240,7 @@ MAINTENANCE
         - removes orphaned .tmp_<digits> atomic-write staging dirs under the tree
         - heals the system/.env -> ../.env symlink first
         - PRESERVES rsx-locks/ and rsx-framework/
-        - in a DOWNSTREAM app (not this monorepo) also resets the vendored
+        - in a DOWNSTREAM app (not this monorepo) also resets the framework
           framework tree: git reset + checkout of system/ back to its last
           commit (untracked files untouched). Skipped while a framework update
           is in flight, which would otherwise revert the update itself.
@@ -263,4 +263,4 @@ SEE ALSO
     locks         RsxLocks - cluster locks (rsx-lockd) and flock system locks
     file_upload   the file subsystem whose blob store lives at storage/storage/files
     document_search  the rendition cache and preview pipeline
-    rsx_upstream  the framework-update tamper gate that uses rsx-framework
+    rsx_upstream  the framework update, whose state lives in rsx-framework

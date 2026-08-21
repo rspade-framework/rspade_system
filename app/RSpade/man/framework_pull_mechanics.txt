@@ -1,235 +1,125 @@
-FRAMEWORK_PULL_MECHANICS(1)         RSpade Manual         FRAMEWORK_PULL_MECHANICS(1)
+FRAMEWORK_PULL_MECHANICS(1)      RSpade Manual      FRAMEWORK_PULL_MECHANICS(1)
 
 NAME
-    framework_pull_mechanics - the exact step sequence rsx:framework:pull runs on a
-    downstream app, and the maintenance window that protects a live app during it
+    framework_pull_mechanics - how a release is built, delivered and applied
 
 SYNOPSIS
-    php artisan rsx:framework:pull [--yes] [--force] [--resync] [--no-commit]
-                                   [--no-service-control] [--no-rebuild] [--diff]
+    A framework-developer page. For USING the update, see rsx:man rsx_upstream.
 
 DESCRIPTION
-    rsx:framework:pull updates a downstream application's vendored framework (system/) from
-    the published distribution repository. This page documents the FULL ordered sequence the
-    updater runs and WHY each step is where it is - especially the maintenance window that
-    quiesces the running application around the destructive part of the update.
+    Three repositories, one direction of travel:
 
-    The command is a thin pre-boot shim: system/artisan intercepts `rsx:framework:pull` before
-    Laravel boots and passthru()s the shell updater system/bin/framework-pull-upstream.sh, so a
-    half-synced framework can still repair itself. The updater's logic lives in that script
-    (its editable source is the tracked .dist template; artisan regenerates the .sh from it).
+        rspade_framework_dev    the monorepo. system/ is the authored source.
+              |  bin/publish
+              v
+        rspade_system           the distribution. What a downstream tracks.
+              |  git submodule
+              v
+        rspade (the starter)    what a new project clones. system/ is a
+                                submodule pinned at a rspade_system revision.
 
-    Unlike a git merge, the pull never merges: it HARD-SYNCS the framework-owned zones
-    (app/RSpade, vendor, node_modules, bin, docs, database, config, resources, supervisor) from the
-    release and THREE-WAY RECONCILES the
-    remainder, gated by a marker-based tamper check. See rsx_upstream for the tamper gate and
-    mutation-marker model; this page is the operational step order.
+    ALL OF system/ IS FRAMEWORK PROPERTY AND IS OVERWRITTEN ON EVERY UPDATE.
+    Nothing downstream may edit it, nothing downstream is preserved across an
+    update, and the framework does not ask.
 
-THE FULL PULL SEQUENCE
-    An EXIT/INT/TERM trap is armed first so every teardown below runs on normal exit, error,
-    or Ctrl-C. Then:
+PUBLISHING A RELEASE
+    bin/publish, run from the monorepo. Pre-flight: rsx:check clean, git tree
+    clean.
 
-    1.  Gates. Refuse to run as a framework developer (IS_FRAMEWORK_DEVELOPER=true), in
-        production (APP_ENV=production), or outside development mode (RSX_MODE must be
-        development - debug and production are sealed builds a pull would corrupt).
+    rspade_system
+        The finalized system/ tree - development files stripped, bin/*.dist
+        renamed to their live names, terminology normalized. Committed by the
+        RSpade Release Bot with no attribution trailers, and pushed to BOTH
+        the internal remote and github.com/rspade-framework/rspade_system.
 
-    2.  Resolve the update. Clone/fetch the distribution repo into a bare cache, compute the
-        OLD..NEW commit range (or BASELINE on a first install). --diff / --diff-system-changes
-        preview and exit here without changing anything.
+        A failed GitHub push is fatal, never skipped: that repository is what
+        every downstream pull fetches from, so a release nobody can obtain is
+        not a release.
 
-        WHAT IS INSTALLED HAS ONE AUTHORITY: system/.rspade-release.json. Its release_id is
-        matched against the distribution history to give OLD_SHA; no match is a BASELINE.
-        rsx/resource/framework_update_history.dat is a LOG - read only to WARN when its
-        `to=` contradicts the marker, and decisive in nothing. The two files merge
-        independently (one inside system/, one in the app tree), and when a backwards merge
-        made them disagree the log's "up to date" verdict sent the run into a baseline
-        repair against the OLD marker, untracking 7,503 paths (field report, 2026-08-18).
+    rspade (the starter)
+        The application template, with system/ recorded as a GITLINK at the
+        rspade_system revision this run just pushed. The revision is captured
+        immediately after that push, because that is the moment it becomes
+        fetchable - a gitlink the world cannot reach produces a starter that
+        clones and then cannot initialise its own framework.
 
-    2b. Already at the tip? Two questions, not one. A marker that matches the distribution
-        tip only says the RELEASE is current: check_tree_complete then asks whether the
-        release's files are all ON DISK (a miss falls through to the ordinary passes, which
-        restore them - free, so no flag), and committed_baseline_is_dirty asks whether
-        HEAD's system/ path set IS the inventory. A dirty baseline (tracked sidecars,
-        tracked foreign paths, or a lost release path) falls through to a COMMIT-ONLY
-        BASELINE REPAIR: the step-8 throwaway-index commit and nothing else - no sync, no
-        rebuild, no maintenance window, working tree untouched - under the subject
-        "Framework baseline repair <release_id>: ..." and the usual Committed-By trailer.
-        No --force needed (--force is a tamper-gate override, and would also overwrite
-        accepted committed drift). A complete tree with a clean baseline reports
-        "Framework is up to date" and exits 0.
+        .gitmodules is written directly rather than by `git submodule add`,
+        which would clone hundreds of megabytes on every publish to produce
+        two artifacts we can write ourselves. It carries:
 
-        A REPAIR ONLY EVER GOES FORWARD. The repair re-states the committed tree against
-        the ON-DISK marker, so a stale marker would untrack everything the newer release
-        added. Before repairing, the marker's date is compared with the distribution tip's;
-        an OLDER marker says so and falls through to the ordinary forward sync instead.
+            ignore = dirty
 
-        --resync SKIPS THIS WHOLE STEP. It is the explicit recovery for a tree a backwards
-        merge moved off its release: owned zones restored to the tip and system/ re-committed
-        as that release, regardless of what any marker claims. It is not --force - the tamper
-        gate and the three-way pass still stand, so accepted committed drift survives.
+        which is load-bearing, not tidiness: the manifest build renames
+        .php <-> .php.upstream inside system/ to apply class overrides, and
+        without it every `git status` in every downstream project reports
+        ` M system` forever for churn that regenerates itself. It hides
+        DIRTINESS only - a moved revision still shows.
 
-    3.  Tamper gate (read-only). rsx:framework:verify compares the on-disk owned zones against
-        the release inventory + mutation markers. Unauthorized owned-zone edits abort the pull
-        unless --force. This runs BEFORE the maintenance window, so it needs no override.
-        (Composer autoloader outputs are treated as regenerable here and never flagged.)
+        STAGING EXCLUDES system/. The gitlink is staged deliberately, and the
+        worktree there is an empty mount point; `git add -A` reading that
+        directory would see nothing and drop the gitlink straight back out,
+        publishing a starter with no framework at all.
 
-    4.  ENTER THE MAINTENANCE WINDOW (see THE MAINTENANCE WINDOW). Unless
-        --no-service-control, delegate to bin/maintenance-mode.sh - the SAME script
-        `php artisan rsx:maintenance:enable` runs - with the reason "framework update in
-        progress": raise the flag, force-kill running background tasks, then stop realtime,
-        fpc-proxy, php-fpm and redis (in that order).
+    rspade_template_app
+        The reference application (rsx/) on its own, for browsing.
 
-    5.  owned_zone_sync. rsync the owned zones from the release with --delete: upstream wins
-        absolutely. This restores every owned file (incl. the composer classmap) to pristine.
+THE RELEASE MARKER
+    system/.rspade-release.json is still written - a release_id and a per-file
+    sha256 inventory - and is still useful as a record of what a release
+    contained. NOTHING READS IT ANY MORE. The update resolves everything from
+    git revisions; the marker outlived the tamper gate and the pull resolution
+    that once depended on it.
 
-    6.  Reconcile. Force-stage the updater's own entry script; prune/reconcile the mutation
-        markers at the earliest pristine moment; three-way reconcile the non-owned remainder.
+WHAT A DOWNSTREAM UPDATE DOES
+    See rsx:man rsx_upstream for the full sequence. In summary: reset the
+    submodule hard, fetch, check out the tip, commit the gitlink, rebuild.
 
-    7.  Record. write_history prepends the OLD..NEW changelog + diffstat to
-        rsx/resource/framework_update_history.dat. It moves with the commit below: history
-        and commit describe the SAME pristine state.
+    The updater COPIES ITSELF TO /tmp AND RE-EXECS before touching anything.
+    It lives at system/bin/framework-pull-upstream.sh, inside the tree it is
+    about to replace, and git offers no guarantee that a checkout leaves a
+    running script's inode intact. The vendored-era updater survived this by
+    accident, because rsync writes a temp file and renames.
 
-    8.  Auto-commit. commit_system_update commits the WHOLE system/ tree as one dedicated
-        framework-update commit BEFORE the rebuild, so it records the PRISTINE distribution
-        state as synced. Pristine by construction, so the commit needs no authorization
-        gate. --no-commit leaves the changes for manual commit - and warns, because a synced
-        but UNCOMMITTED system/ is reverted by the next rsx:clean or app commit.
+THE UPDATER SELF-DELIVERS
+    The live bin/framework-pull-upstream.sh is GENERATED from the authoritative
+    bin/framework-pull-upstream.sh.dist by the interception in system/artisan.
+    EDIT THE .dist ONLY.
 
-        THE TREE IS BUILT IN A THROWAWAY INDEX, AND THEN PROVEN. `git commit -- <paths>`
-        rebuilds the tree from HEAD plus the WORKING TREE and ignores the index entirely -
-        and the working tree is the one thing that must not be trusted here, because it
-        carries this box's class-override pairs. So the commit is assembled by hand in a
-        temporary index (GIT_INDEX_FILE, never the developer's own): seed from HEAD, add
-        the system/ pathspec, then normalize_commit_index makes the index BE the release
-        in two passes:
-
-          (a) OVERRIDE PAIRS OUT - every `X.php.upstream` is dropped from the index and
-              the release copy of `X.php` staged in its place, so the commit carries the
-              release even where this box holds the pair inverted on disk.
-          (b) FOREIGN PATHS OUT - every tracked path under system/ that
-              .rspade-release.json does not list is untracked from the commit. system/ is
-              rsynced from the distribution with --delete semantics (owner ruling,
-              2026-08-18): a vendored read-only tree has no local additions, so there is
-              no allowlist and no escape hatch. The WORKING TREE is not touched; the
-              disk-side purge is a peer's next rsx:git reset. The count and a sample are
-              printed (thousands of paths on a contaminated box).
-
-        assert_index_matches_release then proves the staged path set IS the release
-        inventory (excluding the inventory itself, .env, storage/** - the same exclusions
-        pass (b) uses, via one shared partition helper). ALL THREE findings are FATAL: a
-        MISSING release path, a SIDECAR path, and an EXTRA path the release does not ship.
-        EXTRA is empty by construction after (b), so a non-empty EXTRA means the
-        normalization failed. write-tree + commit-tree + update-ref commits exactly that
-        tree. Class-override churn therefore stays always-local, regenerate-on-demand
-        state - because it is actively normalized out, not because nothing would sweep it
-        in.
-
-    9.  do_rebuild + report. The post-update artisan pipeline: rsx:env:heal, rsx:clean (with
-        the internal --_no-system-reset: cache invalidation only - build tooling never
-        touches git state), rsx:manifest:build (re-applies class overrides + re-dumps the
-        composer classmap; carries --_no-check-schema-updates-pending so the build's own
-        migration notice does not double up with the pull's final advisory), migrate
-        --framework-only, rsx:bundle:compile, rsx:framework:post_update. Every command here
-        carries the internal --_framework-update-override so the maintenance gate lets the
-        pull's own calls through. --no-rebuild skips this and prints the manual steps.
-        A FAILURE HERE COSTS ONLY THE BUILD: the release is already in history, so the
-        repair is a rebuild (dev auto-rebuild, or rsx:manifest:build), never a re-pull.
-        Then print_summary reports, run_post_update hands off to bin/post-update.sh, and
-        migrate:status_notice gives a final advisory if migrations are pending. The final
-        `=== Update complete ===` block repeats the durable reconciliation report path
-        (storage/rsx-framework/last_pull_report.txt): the reconciliation section that
-        prints it first is exactly the part that scrolls away.
-
-    10. EXIT / teardown (the trap). LIFT the maintenance window by delegating to
-        bin/maintenance-mode.sh disable (start redis, php-fpm, realtime, fpc-proxy, then clear
-        the flag) and clean temp dirs. This ALWAYS runs - normal exit, an aborting error, or
-        Ctrl-C - and only when THIS run raised the window (a window an operator raised before
-        starting the pull is left exactly as they left it).
+    It ships in the submodule like everything else, so improvements land
+    automatically - on the pull AFTER the one that delivers them (one-pull
+    lag). That lag is why durable "make the environment correct" behaviour
+    belongs in bin/environment_updates/ rather than in the updater: those run
+    from the freshly-synced copy, so they take effect on the same pull.
 
 THE MAINTENANCE WINDOW
-    Stopping php-fpm is not enough to safely swap the framework: background task workers keep
-    writing and the realtime relay keeps serving old code. The window is the SAME mechanism the
-    operator command `rsx:maintenance:enable` uses - one flag file whose CONTENT is the reason:
+    ONE implementation, bin/maintenance-mode.sh - the same script
+    rsx:maintenance:enable runs. It owns the service list; nothing else
+    repeats it.
 
-        storage/rsx-framework/.maintenance.mode.framework.update   ("framework update in progress")
+    Raised before anything is touched and lifted on every exit path, Ctrl-C
+    included. An operator's existing window is left exactly as they raised it:
+    the services it stopped are already stopped, and lowering ours on the way
+    out would restart them mid-surgery.
 
-    (under storage/, which the tamper gate skips and rsx:clean preserves, so the flag can never
-    itself trip a verify finding and it survives the update until the trap clears it).
+    A stale window left by a previous updater run IS adopted, identified by
+    the flag's reason line, so an interrupted update cannot leave a box 503ing
+    until somebody finds the file.
 
-    While the flag exists:
-    - Every WEB request returns HTTP 503 quoting the reason (checked pre-boot in
-      system/public/index.php, before Composer's autoloader - so even a half-synced vendor/
-      answers cleanly). The IDE bridge (/_ide/service/*) is intentionally exempt. Once
-      php-fpm itself is stopped no PHP runs, so the web server answers its own upstream
-      error (nginx: 502) instead - both mean "down"; only the 503 can carry the reason.
-    - The CLI gate is ALLOW-MOST-DENY-SOME (system/artisan, pre-boot): rsx:task:process and
-      rsx:task:worker are refused, rsx:task:run is refused unless --force, and everything else
-      runs. The window exists to keep AUTOMATED processes out of a half-swapped tree, not to
-      babysit humans. Commands bearing --_framework-update-override - which the pull passes on
-      its own sub-calls - bypass the classification entirely. That token is argv-scanned and
-      STRIPPED before dispatch, so it triggers no unknown-option error and appears in no
-      `php artisan` help/list output.
-    - rsx-lockd and redis are STOPPED, so RsxLocks cluster locks degrade to the flock backend
-      and the cache/realtime consumers degrade quietly. See `rsx:man maintenance_mode` for the
-      full contract.
+TROUBLESHOOTING A RELEASE
+    Starter clones but system/ is empty
+        The clone did not recurse. That is the user's fix
+        (git submodule update --init --recursive), but check the README says
+        --recurse-submodules.
 
-    Runtime quiescing (skipped by --no-service-control, which skips the whole window):
-    - rsx:tasks:kill-all force-kills every running task (SIGTERM, 5s grace, SIGKILL). On-demand
-      tasks become KILLED with the explanation; recurring cron trackers recycle to PENDING so
-      their schedule survives. See `rsx:man tasks`.
-    - realtime, fpc-proxy, php-fpm, rsx-lockd and redis are stopped via supervisorctl (the
-      lock daemon after its PHP consumers, redis LAST, all after the flag is already up) and
-      started by the trap in the reverse order (redis FIRST, then rsx-lockd). Every
-      service call is BEST-EFFORT: on a host without that exact supervisor setup they are a
-      silent no-op and never fatal the pull.
+    Starter's gitlink names an unreachable revision
+        The rspade_system push failed or was skipped. Publish is fail-loud on
+        that push precisely to prevent this.
 
-    If a pull is interrupted so violently that the trap cannot run (SIGKILL of the updater
-    itself, a power loss), the flag can be stuck. Leave it the normal way:
-
-        php artisan rsx:maintenance:disable
-
-    (or, if that is somehow unavailable, remove the flag file by hand and restart the four
-    services yourself).
-
-FLAGS
-    --yes                  Consent non-interactively (needed for the one-time submodule
-                           conversion).
-    --force                Overwrite unauthorized owned-zone edits + take upstream on conflicts;
-                           also proceeds when the tree cannot be verified. Needed once to adopt a
-                           fix a stale installed verifier would otherwise block.
-    --no-commit            Skip the automatic commit of system/ into the app repo.
-    --no-service-control   Skip the WHOLE maintenance window (flag + task-kill + realtime +
-                           fpc-proxy + php-fpm + redis). For hosts that manage their own
-                           quiescing, and used by the test fixture. The operator is then
-                           responsible for the window.
-    --no-rebuild           Skip the post-update artisan rebuild (prints the manual steps).
-    --diff                 Preview the changelog + diffstat the update would bring; no changes.
-
-RSX VS LARAVEL
-    Laravel has `php artisan down`/`up` writing storage/framework/maintenance.php, checked in
-    index.php. RSpade's maintenance mode is DISTINCT and stricter: it also gates the CLI, kills
-    background workers, and cycles realtime, fpc-proxy, php-fpm and redis - because a framework
-    swap (not just an app deploy) can leave the tree momentarily inconsistent. Laravel's
-    down/up are HIDDEN from `php artisan list` (still runnable by name) so there is one obvious
-    maintenance mechanism: rsx:maintenance:enable / rsx:maintenance:disable, which the pull
-    itself delegates to.
-
-TROUBLESHOOTING
-    Every command returns 503 and no pull is running
-        A pull was interrupted before its trap could clear the flag. Run
-        `php artisan rsx:maintenance:disable` (immune to its own gate).
-
-    The pull aborts on "unauthorized changes" for the composer autoloader
-        Fixed: those outputs are regenerable and no longer flagged. If an OLD installed verifier
-        still blocks, run the adopting pull once with --force.
-
-    redis / php-fpm / realtime / fpc-proxy did not come back
-        The trap restarts them best-effort. Re-run `php artisan rsx:maintenance:disable` (it is
-        idempotent and starts whichever of the four units exist). If supervisorctl is
-        unavailable, restart them by your host's own means; --no-service-control avoids the
-        framework touching them at all.
+    Downstream reports ` M system` constantly
+        ignore = dirty is missing from .gitmodules.
 
 SEE ALSO
-    maintenance_mode, rsx_upstream, tasks, realtime, prod_mode
-
-FRAMEWORK_PULL_MECHANICS(1)         RSpade Manual         FRAMEWORK_PULL_MECHANICS(1)
+    rsx:man rsx_upstream        the update, from a downstream perspective
+    rsx:man rsx_git             the proxy that keeps the submodule in step
+    rsx:man upstream_changes    mandatory manual migrations
+    rsx:man maintenance_mode    the window an update raises

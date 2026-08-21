@@ -2,245 +2,195 @@
 
 namespace App\RSpade\Commands\Framework;
 
-use App\RSpade\Core\Framework\Framework_Maintenance;
 use Illuminate\Console\Command;
 
 /**
- * rsx:framework:status - report the installed framework release and update
- * availability under the vendored-system topology (system/ is ordinary tracked
- * files, not a git submodule).
+ * rsx:framework:status - what framework revision is this project running, and is
+ * there a newer one?
  *
- * Reports:
- *   - installed release: release_id + date from system/.rspade-release.json
- *     ("not an installed release" on a framework-development tree, which has no
- *     release manifest);
- *   - last update: the newest section of rsx/resource/framework_update_history.dat;
- *   - update availability: fetch the cached distribution clone (if present) and
- *     compare the installed commit against its tip, with a pending diffstat.
+ * system/ is a git submodule, so the whole answer is two revisions and whether they
+ * agree:
+ *
+ *   RECORDED  the gitlink this project commits - what it CLAIMS to run
+ *   CHECKED OUT  the submodule's own HEAD - what it ACTUALLY runs
+ *
+ * They disagree after a plain `git pull` moves the gitlink without updating the
+ * submodule, which is the failure this command exists to make visible. The pre-boot
+ * guard (bootstrap/rsx_submodule_sync.php) refuses to start in that state, so anyone
+ * reading this output is either checking before it bites or has just been stopped by
+ * it.
+ *
+ * Everything here is read-only and offline EXCEPT the update check, which is opt-in
+ * (--fetch) because a status command should not require a network.
  */
 class Framework_Status_Command extends Command
 {
-    protected $signature = 'rsx:framework:status';
+    protected $signature = 'rsx:framework:status {--fetch : Contact the remote to report whether an update is available}';
 
-    protected $description = 'Report the installed framework release and update availability';
-
-    private const DEFAULT_UPSTREAM_URL = 'ssh://git@git.internal.hanson.xyz/brianhansonxyz/rspade_system.git';
-    private const UPSTREAM_BRANCH = 'master';
+    protected $description = 'Report the framework revision this project runs, and whether it is current';
 
     public function handle(): int
     {
+        $system_dir   = base_path();
+        $project_root = dirname($system_dir);
+
         $this->line('');
         $this->info('=== RSpade Framework Status ===');
         $this->line('');
 
-        $manifest_path = base_path('.rspade-release.json');
-        $history_path = base_path('rsx/resource/framework_update_history.dat');
-        // Tolerates absence throughout (reports "no cache" below): the distribution
-        // clone is re-derivable and may simply not exist yet, or have been wiped with /tmp.
-        $cache = Framework_Maintenance::upstream_cache_dir();
-
-        // -------------------------------------------------------- installed release
-        //
-        // TWO DIFFERENT SHAs LIVE HERE AND THEY ARE NOT INTERCHANGEABLE:
-        //
-        //   $installed_commit - the DISTRIBUTION commit in rspade_system. This is the
-        //                       identifier rsx:framework:pull, framework_update_history.dat
-        //                       (`to=`) and the "Updates available" comparison below all
-        //                       speak in. It IS the installed release.
-        //   $installed_id     - .rspade-release.json's `release_id`: the MONOREPO commit
-        //                       the release was BUILT FROM. A different repository's
-        //                       namespace entirely.
-        //
-        // This block used to print $installed_id under the label "Installed release",
-        // which meant `status` reported a sha that appears nowhere in the pull's own
-        // vocabulary. During the 2026-08-11 field diagnosis that cost a long detour
-        // chasing a phantom version mismatch (status said fed581e02fa3; the recorded
-        // release and the distribution tip were both 2f98e15dc53c - and both were right).
-        // The distribution commit now leads; the source commit is labelled as such.
-        $installed_id = null;
-        if (file_exists($manifest_path)) {
-            $manifest = json_decode(file_get_contents($manifest_path), true);
-            if (is_array($manifest)) {
-                $installed_id = $manifest['release_id'] ?? null;
-                $date = $manifest['date'] ?? '(unknown)';
-                $count = is_array($manifest['files'] ?? null) ? count($manifest['files']) : 0;
-
-                $installed_commit = $this->__resolve_installed_commit($history_path, $cache, $installed_id);
-
-                $this->line('<fg=green>Installed release:</> '
-                    . ($installed_commit !== null ? substr($installed_commit, 0, 12) : '(unresolved)'));
-                $this->line('  Built from source commit: ' . ($installed_id ? substr($installed_id, 0, 12) : '(unknown)'));
-                $this->line('  Published: ' . $date);
-                $this->line('  Inventory: ' . $count . ' files');
-            } else {
-                $this->line('<fg=red>Installed release:</> release manifest is malformed');
-                $installed_commit = null;
-            }
-        } else {
-            $this->line('<fg=yellow>Not an installed release</> - this is a framework-development tree (no .rspade-release.json).');
+        if (!file_exists($system_dir . '/.git')) {
+            $this->line('<fg=yellow>system/ is not a git submodule.</>');
+            $this->line('');
+            $this->line('  This is either the framework monorepo (where system/ IS the authored');
+            $this->line('  source) or a project that predates the submodule model. In the latter');
+            $this->line('  case, converting is what the next framework update does:');
+            $this->line('');
+            $this->line('      php artisan rsx:framework:pull');
             $this->line('');
 
             return 0;
         }
 
-        $this->line('');
+        $recorded = $this->__recorded_revision($project_root);
+        $actual   = $this->__git($system_dir, ['rev-parse', 'HEAD']);
+        $url      = $this->__git($system_dir, ['remote', 'get-url', 'origin']);
+        $branch   = $this->__gitmodules_value($project_root, 'branch') ?: 'master';
 
-        // -------------------------------------------------------------- last update
-        if (file_exists($history_path)) {
-            $head = $this->__first_history_line($history_path);
-            if ($head !== null) {
-                $this->line('<fg=green>Last update:</> ' . $head);
+        $this->line('<fg=green>Running:</>  ' . ($actual !== null ? substr($actual, 0, 12) : '(unknown)'));
+        if ($actual !== null) {
+            $subject = $this->__git($system_dir, ['log', '-1', '--format=%s', $actual]);
+            $date    = $this->__git($system_dir, ['log', '-1', '--format=%ad', '--date=short', $actual]);
+            if ($subject !== null) {
+                $this->line('           ' . $date . '  ' . $subject);
             }
-        } else {
-            $this->line('<fg=yellow>No update history recorded yet.</>');
         }
 
+        $this->line('<fg=green>Recorded:</> ' . ($recorded !== null ? substr($recorded, 0, 12) : '(unknown)'));
+        $this->line('<fg=green>Tracking:</> ' . ($url ?: '(no origin remote)') . '  (' . $branch . ')');
         $this->line('');
 
-        // ------------------------------------------------------- update availability
-        if (!is_dir($cache)) {
-            $this->line('<fg=yellow>[INFO]</> No distribution cache yet - run: php artisan rsx:framework:pull');
+        // THE ONE ANSWER THAT MATTERS.
+        if ($recorded !== null && $actual !== null && $recorded !== $actual) {
+            $this->error('  system/ is OUT OF STEP with what this project records.');
             $this->line('');
-
-            return 0;
-        }
-
-        $fetch_out = [];
-        $fetch_rc = 0;
-        \exec_safe(
-            'git --git-dir=' . escapeshellarg($cache) . ' fetch --prune ' . escapeshellarg(self::DEFAULT_UPSTREAM_URL)
-            . ' ' . escapeshellarg('+refs/heads/*:refs/heads/*') . ' 2>&1',
-            $fetch_out,
-            $fetch_rc
-        );
-        if ($fetch_rc !== 0) {
-            $this->line('<fg=yellow>[INFO]</> Could not reach the distribution repository (offline?); showing cached state.');
-        }
-
-        $tip_out = [];
-        \exec_safe('git --git-dir=' . escapeshellarg($cache) . ' rev-parse ' . escapeshellarg('refs/heads/' . self::UPSTREAM_BRANCH) . ' 2>/dev/null', $tip_out);
-        $tip = trim($tip_out[0] ?? '');
-
-        if ($tip === '') {
-            $this->line('<fg=red>[ERROR]</> Distribution cache has no ' . self::UPSTREAM_BRANCH . ' branch.');
+            $this->line('  The framework running is not the one this project claims to use - a plain');
+            $this->line('  `git pull` moves the recorded revision without checking the submodule out.');
+            $this->line('');
+            $this->line('      git submodule update --init --recursive');
             $this->line('');
 
             return 1;
         }
 
-        if ($installed_commit !== null && $installed_commit === $tip) {
-            $this->line('<fg=green>Up to date</> (' . substr($tip, 0, 12) . ')');
+        // A dirty submodule is churn, not drift: the manifest build renames
+        // .php <-> .php.upstream to apply class overrides. Worth mentioning, never a
+        // problem - the next update discards it along with everything else.
+        $dirty = $this->__git($system_dir, ['status', '--porcelain']);
+        if ($dirty !== null && $dirty !== '') {
+            $count = count(array_filter(explode("\n", $dirty)));
+            $this->line('  <fg=yellow>' . $count . ' local change(s) under system/</> - build churn, discarded by the next');
+            $this->line('  update. All of system/ is framework property.');
+            $this->line('');
+        }
+
+        if (!$this->option('fetch')) {
+            $this->line('  <fg=gray>Add --fetch to check whether a newer release is available.</>');
             $this->line('');
 
             return 0;
         }
 
-        if ($installed_commit === null) {
-            $this->line('<fg=yellow>Updates may be available.</> Installed commit could not be resolved; run rsx:framework:pull.');
-            $this->line('  Distribution tip: ' . substr($tip, 0, 12));
+        if ($url === null || $url === '') {
+            $this->warn('  No origin remote on the submodule; cannot check for updates.');
+
+            return 0;
+        }
+
+        $this->line('  Checking ' . $url . ' (' . $branch . ')...');
+        $this->__git($system_dir, ['fetch', '--quiet', $url, $branch]);
+        $tip = $this->__git($system_dir, ['rev-parse', 'FETCH_HEAD']);
+
+        if ($tip === null) {
+            $this->warn('  Could not reach the remote.');
+
+            return 0;
+        }
+
+        if ($tip === $actual) {
+            $this->line('  <fg=green>Up to date.</>');
             $this->line('');
 
             return 0;
         }
 
-        $this->line('<fg=yellow>Updates available</>');
-        $this->line('  Installed: ' . substr($installed_commit, 0, 12));
-        $this->line('  Latest:    ' . substr($tip, 0, 12));
+        $behind = $this->__git($system_dir, ['rev-list', '--count', $actual . '..' . $tip]);
         $this->line('');
-
-        $count_out = [];
-        \exec_safe('git --git-dir=' . escapeshellarg($cache) . ' rev-list --count ' . escapeshellarg($installed_commit . '..' . $tip) . ' 2>/dev/null', $count_out);
-        $pending = trim($count_out[0] ?? '');
-        if ($pending !== '') {
-            $this->line('  Pending commits: ' . $pending);
-        }
-
-        $stat_out = [];
-        \exec_safe('git --git-dir=' . escapeshellarg($cache) . ' diff --stat ' . escapeshellarg($installed_commit) . ' ' . escapeshellarg($tip) . ' 2>/dev/null', $stat_out);
-        if (!empty($stat_out)) {
-            $this->line('');
-            $this->line('  Files that will change:');
-            foreach (array_slice($stat_out, 0, 15) as $line) {
-                $this->line('    ' . $line);
-            }
-            if (count($stat_out) > 15) {
-                $this->line('    ... and ' . (count($stat_out) - 15) . ' more');
-            }
-        }
-
+        $this->line('  <fg=yellow>Update available:</> ' . substr($tip, 0, 12)
+            . ($behind !== null && $behind !== '' ? '  (' . $behind . ' release(s) ahead)' : ''));
         $this->line('');
-        $this->line('To update: php artisan rsx:framework:pull');
+        $this->line('      php artisan rsx:framework:pull');
         $this->line('');
 
         return 0;
     }
 
     /**
-     * Resolve the installed rspade_system commit: primary = the newest history
-     * section's to= field; secondary = match the installed release_id against the
-     * cached distribution's .rspade-release.json history.
+     * The gitlink this project records for system/, read from the parent index - the
+     * same value `git status` compares against.
      */
-    private function __resolve_installed_commit(string $history_path, string $cache, ?string $installed_id): ?string
+    private function __recorded_revision(string $project_root): ?string
     {
-        // Primary: history to= field.
-        if (file_exists($history_path)) {
-            $head = $this->__first_history_line($history_path);
-            if ($head !== null && preg_match('/\bto=([0-9a-f]{7,40})\b/', $head, $m)) {
-                if (is_dir($cache)) {
-                    $check = [];
-                    $rc = 0;
-                    \exec_safe('git --git-dir=' . escapeshellarg($cache) . ' cat-file -e ' . escapeshellarg($m[1] . '^{commit}') . ' 2>/dev/null', $check, $rc);
-                    if ($rc === 0) {
-                        return $m[1];
-                    }
-                } else {
-                    return $m[1];
-                }
-            }
+        $out = $this->__git($project_root, ['ls-files', '-s', '--', 'system']);
+        if ($out === null || $out === '') {
+            return null;
         }
 
-        // Secondary: release_id scan of the cached distribution history.
-        if ($installed_id !== null && is_dir($cache)) {
-            $log = [];
-            \exec_safe('git --git-dir=' . escapeshellarg($cache) . ' log --format=%H ' . self::UPSTREAM_BRANCH . ' -- .rspade-release.json 2>/dev/null', $log);
-            foreach ($log as $sha) {
-                $sha = trim($sha);
-                if ($sha === '') {
-                    continue;
-                }
-                $show = [];
-                \exec_safe('git --git-dir=' . escapeshellarg($cache) . ' show ' . escapeshellarg($sha . ':.rspade-release.json') . ' 2>/dev/null', $show);
-                $content = implode("\n", $show);
-                if (preg_match('/"release_id"\s*:\s*"([^"]*)"/', $content, $m) && $m[1] === $installed_id) {
-                    return $sha;
-                }
+        foreach (explode("\n", $out) as $line) {
+            $parts = preg_split('/\s+/', trim($line));
+            if (($parts[0] ?? '') === '160000' && isset($parts[1])) {
+                return $parts[1];
             }
         }
 
         return null;
     }
 
-    /**
-     * The first machine-readable history header line (newest section), stripped of
-     * the leading marker, or null when none is present.
-     */
-    private function __first_history_line(string $history_path): ?string
+    private function __gitmodules_value(string $project_root, string $key): ?string
     {
-        $fh = fopen($history_path, 'r');
-        if ($fh === false) {
+        $file = $project_root . '/.gitmodules';
+        if (!is_file($file)) {
             return null;
         }
-        try {
-            while (($line = fgets($fh)) !== false) {
-                $line = rtrim($line, "\r\n");
-                if (str_starts_with($line, '## RSPADE-UPDATE ')) {
-                    return substr($line, strlen('## RSPADE-UPDATE '));
-                }
-            }
-        } finally {
-            fclose($fh);
+
+        $out = $this->__git($project_root, ['config', '--file', $file, '--get', 'submodule.system.' . $key]);
+
+        return ($out === null || $out === '') ? null : $out;
+    }
+
+    /**
+     * Run git in $dir and return trimmed stdout, or null when it failed.
+     *
+     * The inherited git context is stripped: this command may be reached from inside a
+     * hook, where git exports GIT_DIR / GIT_INDEX_FILE and would re-target every call
+     * at an in-progress commit's index.
+     */
+    private function __git(string $dir, array $args): ?string
+    {
+        $command = 'env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE git -C '
+            . escapeshellarg($dir);
+        foreach ($args as $arg) {
+            $command .= ' ' . escapeshellarg($arg);
+        }
+        $command .= ' 2>/dev/null';
+
+        $output = [];
+        $rc = 0;
+        exec_safe($command, $output, $rc);
+
+        if ($rc !== 0) {
+            return null;
         }
 
-        return null;
+        return trim(implode("\n", $output));
     }
 }

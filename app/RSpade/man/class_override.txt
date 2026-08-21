@@ -116,13 +116,12 @@ Location of originals:
 When updating the framework with `php artisan rsx:framework:pull`:
 
 1. The override artifacts (.upstream files, use-header rewrites in framework
-   files) are known to the updater as framework-authored churn - the manifest
-   records every such mutation in the marker store at
-   storage/rsx-framework/, so the tamper gate never mistakes them for
-   your edits.
-2. The update hard-syncs the framework-owned zones (rsync --delete of
-   app/RSpade/ and friends from the new release), which simply overwrites
-   the rewritten importers and removes the .upstream files.
+   files) need no special handling. They live inside system/, which the update
+   discards wholesale - there is nothing to distinguish them from, because
+   nothing under system/ is preserved.
+2. The update resets the submodule hard and checks out the new revision, which
+   removes the .upstream files and the rewritten importers along with every
+   other local difference.
 3. Your rsx/ override remains unchanged (rsx/ is never touched by an update).
 4. On the next manifest build, override detection runs again.
 5. The updated framework file is re-renamed to .upstream and the importers

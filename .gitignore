@@ -23,11 +23,18 @@ yarn-error.log
 ._*
 Thumbs.db
 
-# Storage directory (except cdn-cache which is committed)
-/storage/*
-!/storage/rsx-build/
-/storage/rsx-build/*
-!/storage/rsx-build/cdn-cache/
+# system/storage is NOT ignored, deliberately - and it is not a directory either.
+#
+# It is a SYMLINK to ../storage, the project-root storage that everything volatile
+# actually lives in. Tracking the symlink is what makes it survive a clone, exactly
+# as system/.env does: Laravel boots from system/, so anything resolving a path
+# under system/storage has to land on the real tree from the first request, before
+# any relocation marker or environment update has run.
+#
+# The old rules here (/storage/*, plus the cdn-cache exception) ignored the CONTENTS
+# of a real system/storage directory. There is no such directory now; the contents
+# live one level up and are ignored by the project-root .gitignore, which is where
+# that decision belongs.
 
 # Hand-made snapshots of storage/ taken while debugging the clean/build scenarios.
 # Three of these (7,410 files of pure build output - php_reflection JSON, compiled

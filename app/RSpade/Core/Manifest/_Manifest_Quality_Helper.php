@@ -345,16 +345,12 @@ class _Manifest_Quality_Helper
                                 // Normal case: rename to .upstream
                                 rename($full_framework_path, $upstream_path);
                                 console_debug('MANIFEST', "Class override: {$class_name} - moved {$framework_file} to .upstream");
-                                // Marker: .php now absent, .php.upstream now present.
-                                \App\RSpade\Core\Framework\Framework_Mutations::record_rename($full_framework_path, $upstream_path, 'class_override_rename');
                                 $did_change = true;
                             } elseif (file_exists($full_framework_path) && file_exists($upstream_path)) {
                                 // Self-healing: both .php and .php.upstream exist (e.g., after framework update)
                                 // Remove the .php file since .upstream is the correct archived version
                                 unlink($full_framework_path);
                                 console_debug('MANIFEST', "Class override: {$class_name} - removed duplicate {$framework_file} (upstream already exists)");
-                                // Marker: .php now absent, the pre-existing .php.upstream stands as present.
-                                \App\RSpade\Core\Framework\Framework_Mutations::record_rename($full_framework_path, $upstream_path, 'class_override_selfheal');
                                 $did_change = true;
                             }
 
@@ -442,12 +438,6 @@ class _Manifest_Quality_Helper
 
         $runner = static::$_composer_dump_runner ?? [static::class, '_run_composer_dump'];
         $runner($stale);
-
-        // Record the regenerated composer autoloader outputs as framework-authored
-        // mutations. Placed at the call site so both the real runner and the test
-        // seam are covered. A no-op composer runner (e.g. composer absent) leaves the
-        // outputs unchanged, so re-recording their identical content is harmless.
-        \App\RSpade\Core\Framework\Framework_Mutations::record_composer_dump();
     }
 
     /**

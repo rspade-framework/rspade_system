@@ -24,6 +24,39 @@ require __DIR__ . '/../bootstrap/rsx_env_link.php';
 
 /*
 |--------------------------------------------------------------------------
+| Storage Link Guard
+|--------------------------------------------------------------------------
+|
+| system/storage must be a symlink to ../storage - the project-root tree holding
+| every piece of volatile state. system/ is a submodule and is replaced wholesale
+| on update, so nothing durable can live inside it. Creates ../storage when
+| absent; refuses when the link itself is wrong.
+|
+*/
+
+require __DIR__ . '/../bootstrap/rsx_storage_link.php';
+
+/*
+|--------------------------------------------------------------------------
+| Submodule Sync Guard
+|--------------------------------------------------------------------------
+|
+| system/ is a git submodule, and a plain `git pull` moves the RECORDED revision
+| without checking the submodule out - leaving the application serving a
+| framework version the project never recorded, with nothing to indicate it.
+| Refuse with a 503 before any of that framework code loads.
+|
+| Placed BEFORE the first-run screen deliberately: a wrong-version framework must
+| not get as far as offering to configure the application.
+|
+| Silent when system/ is not a submodule, and silent when it cannot tell.
+|
+*/
+
+require __DIR__ . '/../bootstrap/rsx_submodule_sync.php';
+
+/*
+|--------------------------------------------------------------------------
 | First-Run Setup
 |--------------------------------------------------------------------------
 |
@@ -102,14 +135,12 @@ if (str_starts_with($request_path, '/_ide/service')) {
 | (written by bin/environment_updates/030_relocate_storage.sh); before that it is
 | the historic system/storage. This runs before Laravel boots, so storage_path()
 | is unavailable and the marker is read directly - the same resolution used by
-| bootstrap/app.php, artisan and the updater. TRANSITIONAL fallback.
+| bootstrap/app.php, artisan and the updater. No marker, no fallback: the
+| framework ships system/storage as a symlink to this directory.
 |
 */
 
 $__rsx_storage = __DIR__ . '/../../storage';
-if (!is_file($__rsx_storage . '/.rspade_storage_relocated')) {
-    $__rsx_storage = __DIR__ . '/../storage';
-}
 
 
 /*

@@ -117,17 +117,22 @@ $app = new Illuminate\Foundation\Application(
     $_ENV['APP_BASE_PATH'] ?? dirname(__DIR__)
 );
 
-// RSpade storage relocation bridge: volatile storage lives at <project>/storage once the
-// relocation marker exists (written by bin/environment_updates/030_relocate_storage.sh);
-// until then fall back to the historic system/storage. TRANSITIONAL - removed once the
-// fleet has migrated. dirname(__DIR__, 2) = the project root (system/bootstrap -> up 2).
-// Every storage_path() consumer follows from here; nothing else needs per-call edits.
+// RSpade storage: volatile state lives at <project>/storage, one level ABOVE the
+// Laravel base path. system/ is a git submodule - replaced wholesale on every update
+// and cleaned of untracked files - so nothing durable can live inside it.
+//
+// UNCONDITIONAL. This used to consult a relocation marker and fall back to the
+// historic system/storage, because the move was a migration each environment
+// performed at some unknown moment. It is not a migration any more: the framework
+// SHIPS system/storage as a symlink to this directory, so both spellings were
+// already landing here and the marker only chose which string storage_path()
+// returned. Two spellings of one path is how the same file ends up under two
+// different manifest keys, so there is now one.
+//
+// dirname(__DIR__, 2) = the project root (system/bootstrap -> up 2). Every
+// storage_path() consumer follows from here; nothing else needs per-call edits.
 $rsx_storage_root = dirname(__DIR__, 2) . '/storage';
-if (is_file($rsx_storage_root . '/.rspade_storage_relocated')) {
-    $app->useStoragePath($rsx_storage_root);
-} else {
-    $rsx_storage_root = ($_ENV['APP_BASE_PATH'] ?? dirname(__DIR__)) . '/storage';
-}
+$app->useStoragePath($rsx_storage_root);
 
 /*
 |--------------------------------------------------------------------------
