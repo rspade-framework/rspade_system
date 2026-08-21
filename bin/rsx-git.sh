@@ -142,6 +142,24 @@ command -v git >/dev/null 2>&1 || bail_to_git
 #    recognise is not an improvement.
 [ -e "$SYSTEM_DIR/.git" ] || exec git "${ARGS[@]}"
 
+# 3b. A FRAMEWORK UPDATE IS IN FLIGHT. Stand down completely.
+#
+# rsx:framework:pull checks the new revision out BEFORE committing the gitlink, so
+# for one moment the checkout is legitimately ahead of the record - which is exactly
+# the shape this proxy exists to correct. Correcting it there means resetting the
+# submodule back to the old revision and undoing the update.
+#
+# The updater already exports RSX_GIT_SHIM_ACTIVE so its own git calls never reach
+# here. This is the second line, covering anything else that runs during the window -
+# a build step, a hook, another shell in the same container.
+if [ "${RSPADE_FRAMEWORK_UPDATE:-0}" = "1" ] || [ "${RSPADE_FRAMEWORK_COMMIT:-0}" = "1" ]; then
+    exec git "${ARGS[@]}"
+fi
+if [ -f "$PROJECT_ROOT/storage/rsx-framework/.maintenance.mode.framework.update" ] \
+    && [ "$(head -n1 "$PROJECT_ROOT/storage/rsx-framework/.maintenance.mode.framework.update" 2>/dev/null)" = "framework update in progress" ]; then
+    exec git "${ARGS[@]}"
+fi
+
 # -----------------------------------------------------------------------------
 # Find the real subcommand, stepping past git's global options. `git -C x -c k=v
 # --no-pager pull` must classify as `pull`, not as `-C`.

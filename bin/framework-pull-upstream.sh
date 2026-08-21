@@ -40,6 +40,24 @@
 
 set -uo pipefail
 
+# EVERY `git` THIS SCRIPT RUNS MUST BE THE REAL BINARY, never the shim.
+#
+# Inside the container /usr/local/bin/git routes to `php artisan rsx:git`, and the
+# proxy's whole job is to notice when the submodule and the recorded revision
+# disagree and to put them back in step. That is precisely the state this script
+# passes through: it checks the new revision out BEFORE committing the gitlink, so
+# for one moment the checkout is ahead of the record.
+#
+# Without this, the proxy sees that moment, calls it drift, and resets the submodule
+# BACK to the old recorded revision - undoing the update, while this script goes on
+# to report success against variables it set before the reset happened. Both
+# components pass their own tests and quietly destroy each other's work (found by
+# the end-to-end update test, 2026-08-21).
+#
+# This script IS the thing that manages the submodule. It must never be watched by
+# the thing that watches for unmanaged changes.
+export RSX_GIT_SHIM_ACTIVE=1
+
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
