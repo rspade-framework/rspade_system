@@ -232,8 +232,9 @@ if (isset($argv[1]) && $argv[1] === 'rsx:framework:pull') {
 | rsx:maintenance:enable / rsx:maintenance:disable shell straight to
 | bin/maintenance-mode.sh, exactly as rsx:framework:pull does above: they must
 | work with a broken or half-synced tree, and they can never be refused by the
-| gate they themselves control. There is no Laravel stub command for either
-| (one way of doing things - the pull has none either); they are documented in
+| gate they themselves control. Commands/Rsx/Maintenance_{Enable,Disable}_Command
+| are STUBS - registration and help text only, exactly like the pull's stub above
+| and rsx:git's below; they never execute. Full treatment in
 | `php artisan rsx:man maintenance_mode`.
 |
 */
