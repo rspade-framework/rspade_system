@@ -270,7 +270,7 @@ if [ -n "${PUID:-}" ]; then
     fi
 
     # Point both FPM pools at that identity.
-    for pool in /etc/php/8.4/fpm/pool.d/www.conf /etc/php/8.4/fpm/pool.d/ajax.conf; do
+    for pool in /etc/php/8.5/fpm/pool.d/www.conf /etc/php/8.5/fpm/pool.d/ajax.conf; do
         [ -f "$pool" ] || continue
         sed -i \
             -e "s/^user = .*/user = ${APP_USER}/" \

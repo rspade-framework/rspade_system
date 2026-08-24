@@ -77,13 +77,73 @@ still requires it, stop and look at why.
 
 ---
 
+## PHP 8.5 - THE CHANGE THAT WAS ACTUALLY MADE
+
+Laravel 13 needs only 8.3, and the container was already on 8.4, so nothing was
+REQUIRED. Owner directed the move to 8.5 anyway (2026-08-24), and the timing is
+right: **8.4 leaves active support on 31 Dec 2026** - four months out - after
+which it gets security patches only. 8.5 (released 20 Nov 2025) is active until
+31 Dec 2027.
+
+Installed and verified on the running box before any definition was touched:
+PHP **8.5.9** from the same ondrej PPA, alongside 8.4 rather than replacing it.
+
+### THE ONE TRAP: there is no php8.5-opcache package
+
+Every PHP release from 5.6 through 8.4 ships a `phpN.N-opcache` package. **8.5
+does not**, and this is not a stale index - 85 other `php8.5-*` packages are
+published. A stack or Dockerfile that lists it fails the whole `apt-get` and
+breaks the image build.
+
+OPcache is not missing; it is **built into the 8.5 core**. `php8.5 -m` reports
+`Zend OPcache` with no such package installed. So the package is simply dropped
+from the install lists, with a comment at each site saying why.
+
+### Files changed
+
+Container definition (`/docker`, the host applies these):
+
+| File | Change |
+|---|---|
+| `Dockerfile` | `#@stack php-8.4` -> `#@stack php-8.5` |
+| `.stacks/php-8.5/install.sh` | NEW - copied from php-8.4, `phpv=8.5`, opcache dropped |
+| `supervisor.conf` | `php-fpm8.4` -> `php-fpm8.5`, `/etc/php/8.4/` -> `/etc/php/8.5/` |
+| `phpv` | `8.4` -> `8.5` |
+
+`.stacks/php-8.4/` is left in place - it is no longer referenced and does no
+harm; delete it whenever the 8.5 build is confirmed. `.Dockerfile` is generated
+by the serv preprocessor and regenerates itself from the `#@stack` line.
+
+Shipped image (`system/app/RSpade/resource/docker/`, ships downstream):
+
+| File | Change |
+|---|---|
+| `Dockerfile` | `PHP_VERSION=8.5`; opcache package removed; **every hardcoded `/etc/php/8.4/` path is now `/etc/php/${PHP_VERSION}/`** so the next bump is one line |
+| `supervisor/conf.d/php-fpm.conf` | `php-fpm8.5`, `/etc/php/8.5/` |
+| `entrypoint.sh` | FPM pool paths -> 8.5 |
+
+`man/ssr.txt` also carried two `/etc/php/8.4/` pool paths; corrected.
+
+### What did NOT need changing
+
+- **Extensions.** Every extension in the stack exists for 8.5 (checked one by
+  one), and all seven of Laravel 13's requirements load. `composer
+  check-platform-reqs` is clean under 8.5 for the whole dependency set, not just
+  Laravel.
+- **Composer.** 2.10.2, current.
+- **composer.json.** The `php` constraint stays `^8.3` - that is the FLOOR
+  Laravel requires, and raising it to `^8.5` would refuse installs on perfectly
+  supported hosts for no reason.
+
 ## Checklist for the container rebuild - FINAL
 
 The upgrade is complete (Laravel 13.26.1) and **the container needs no changes at
 all**. Recorded here so the conclusion is not re-derived later.
 
-- [x] **PHP version - NO CHANGE.** 8.4 clears Laravel 13's 8.3 floor. The
-      Dockerfile's `PHP_VERSION=8.4` stands.
+- [x] **PHP version - MOVED TO 8.5.** Not required by Laravel 13 (8.4 already
+      cleared the 8.3 floor) but directed by the owner, and well timed: 8.4 loses
+      active support 31 Dec 2026. See the section above, including the missing
+      `php8.5-opcache` package.
 - [x] **Composer version - NO CHANGE.** 2.10.2 is current.
 - [x] **PHP extensions - NO CHANGE.** Nothing new was required across all three
       hops; the full suite (1778 tests) passes on the existing extension set.

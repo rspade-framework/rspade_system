@@ -28,7 +28,7 @@ FROM ubuntu:24.04 AS base
 
 ENV DEBIAN_FRONTEND=noninteractive \
     TZ=UTC \
-    PHP_VERSION=8.4
+    PHP_VERSION=8.5
 
 # tzdata configures itself non-interactively from this file, so it is written
 # BEFORE the first apt-get - otherwise the install stops on a region prompt.
@@ -58,13 +58,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # PHP from the ondrej PPA, which is where a current PHP for Ubuntu lives.
+#
+# NOTE: no php${PHP_VERSION}-opcache. OPcache is BUILT INTO the PHP 8.5 core and
+# sury publishes no such package - every release from 5.6 to 8.4 has one, 8.5 does
+# not. Listing it fails the whole apt-get and breaks the build. It is present:
+# `php -m` reports Zend OPcache without it.
 RUN add-apt-repository -y ppa:ondrej/php \
     && apt-get update && apt-get install -y --no-install-recommends \
         php${PHP_VERSION} \
         php${PHP_VERSION}-fpm \
         php${PHP_VERSION}-cli \
         php${PHP_VERSION}-common \
-        php${PHP_VERSION}-opcache \
         php${PHP_VERSION}-mysql \
         php${PHP_VERSION}-redis \
         php${PHP_VERSION}-curl \
@@ -104,9 +108,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_23.x | bash - \
 # supervisor programs are layered on top by the targets below.
 COPY nginx/nginx.conf              /etc/nginx/nginx.conf
 COPY nginx/site.conf               /etc/nginx/sites-enabled/default
-COPY php/php.ini                   /etc/php/8.4/fpm/php.ini
-COPY php/www.conf                  /etc/php/8.4/fpm/pool.d/www.conf
-COPY php/ajax.conf                 /etc/php/8.4/fpm/pool.d/ajax.conf
+COPY php/php.ini                   /etc/php/${PHP_VERSION}/fpm/php.ini
+COPY php/www.conf                  /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
+COPY php/ajax.conf                 /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
 COPY redis/redis.conf              /etc/redis/redis.conf
 COPY supervisor/supervisord.conf   /etc/supervisor/supervisord.conf
 COPY supervisor/conf.d/nginx.conf      /etc/supervisor/conf.d/nginx.conf
@@ -124,9 +128,9 @@ COPY supervisor/conf.d/tasks.conf      /etc/supervisor/conf.d/tasks.conf
 # ignored", with every setting in it quietly not applied.
 RUN chmod 644 /etc/nginx/nginx.conf \
               /etc/nginx/sites-enabled/default \
-              /etc/php/8.4/fpm/php.ini \
-              /etc/php/8.4/fpm/pool.d/www.conf \
-              /etc/php/8.4/fpm/pool.d/ajax.conf \
+              /etc/php/${PHP_VERSION}/fpm/php.ini \
+              /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf \
+              /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf \
               /etc/redis/redis.conf \
               /etc/supervisor/supervisord.conf \
               /etc/supervisor/conf.d/*.conf
@@ -268,8 +272,8 @@ RUN if [ "$INSTALL_CLAUDE" = "true" ]; then \
 
 # Development OPcache: revalidate on every request, so editing a file is
 # immediately live. This is what makes "edit, refresh, see it" true.
-COPY php/opcache-dev.ini /etc/php/8.4/fpm/conf.d/10-opcache.ini
-RUN chmod 644 /etc/php/8.4/fpm/conf.d/10-opcache.ini
+COPY php/opcache-dev.ini /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
+RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 
 # MySQL runs under supervisor only in this target.
 COPY supervisor/conf.d/mysql.conf /etc/supervisor/conf.d/mysql.conf
@@ -286,15 +290,15 @@ RUN sed -i "s/^target=.*/target=prod/" /.rspade_container
 # Production OPcache: hold compiled bytecode and re-check the source at most
 # every 10 seconds, rather than on every single request. Deploying new code
 # becomes visible within that window without a restart.
-COPY php/opcache-prod.ini /etc/php/8.4/fpm/conf.d/10-opcache.ini
+COPY php/opcache-prod.ini /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 
 # Production pools: www-data rather than root, and a dynamic worker pool rather
 # than ondemand. These REPLACE the development pools of the same names.
-COPY php/www-prod.conf  /etc/php/8.4/fpm/pool.d/www.conf
-COPY php/ajax-prod.conf /etc/php/8.4/fpm/pool.d/ajax.conf
-RUN chmod 644 /etc/php/8.4/fpm/conf.d/10-opcache.ini \
-              /etc/php/8.4/fpm/pool.d/www.conf \
-              /etc/php/8.4/fpm/pool.d/ajax.conf
+COPY php/www-prod.conf  /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf
+COPY php/ajax-prod.conf /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
+RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini \
+              /etc/php/${PHP_VERSION}/fpm/pool.d/www.conf \
+              /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf
 
 # mysql-client is present (from base) on purpose: migrations, db:query and
 # operational access all need to reach the database server you provide.

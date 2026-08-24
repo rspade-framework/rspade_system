@@ -176,13 +176,13 @@ NGINX AND PHP-FPM DEADLOCK PREVENTION
 
     PHP-FPM Configuration:
 
-        /etc/php/8.4/fpm/pool.d/www.conf (page requests):
+        /etc/php/8.5/fpm/pool.d/www.conf (page requests):
             [www]
             listen = /run/php/php-fpm.sock
             pm = ondemand
             pm.max_children = 4
 
-        /etc/php/8.4/fpm/pool.d/ajax.conf (Ajax requests):
+        /etc/php/8.5/fpm/pool.d/ajax.conf (Ajax requests):
             [ajax]
             listen = /run/php/php-fpm-ajax.sock
             pm = ondemand
