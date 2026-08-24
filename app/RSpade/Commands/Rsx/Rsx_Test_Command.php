@@ -12,8 +12,7 @@ use App\RSpade\Core\Database\MigrationPaths;
 use App\RSpade\Core\Manifest\Manifest;
 use Exception;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Hash;
-use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Env\Rsx_Initial_User;
 use App\RSpade\Core\Models\User_Model;
 use ReflectionClass;
 use App\RSpade\Core\Console\Rsx_Artisan;
@@ -26,32 +25,37 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * test-database schema differ from an existing cached dump even though the
      * migration files themselves are unchanged. Bumping invalidates all caches.
      */
-    const CACHE_VERSION = 2;
+    const CACHE_VERSION = 3;
 
     /**
      * The single user the migrated TEST baseline carries.
      *
-     * WHY THE BASELINE CARRIES A USER AT ALL. The first-user migration creates an
-     * account only when RSPADE_DEFAULT_EMAIL / RSPADE_DEFAULT_PASSWORD are configured,
-     * which is correct for a real install (a framework must not invent a credential)
-     * and leaves a freshly migrated database with nobody in it. Tests, however, are
-     * written against an application that HAS an identity: __acting_as_user(1) is how
-     * a test says "somebody is signed in", and the audit-stamp, actor and auth-gate
-     * suites all assume that user resolves. So the runner provisions it - in the test
-     * database only, never in a real one.
+     * WHY THE BASELINE CARRIES A USER AT ALL. A freshly migrated database has nobody in
+     * it: the RSPADE_DEFAULT_* post-migrate seed creates an account only when those keys
+     * are configured (a framework must not invent a credential), and the test runner
+     * suppresses even that with --_no-initial-user. Tests, however, are written against
+     * an application that HAS an identity: __acting_as_user(1) is how a test says
+     * "somebody is signed in", and the audit-stamp, actor and auth-gate suites all assume
+     * that user resolves. So the runner provisions it - in the test database only, never
+     * in a real one - as its own step after migrate, which is also what a developer
+     * cloning an application experiences.
      *
-     * WHY ID 1. Nothing chooses the id: the seed runs against a freshly migrated,
-     * empty `users` table, so AUTO_INCREMENT hands out 1. That is why it is asserted
-     * rather than requested - if the row lands on any other id, the assumption behind
-     * the whole baseline (an empty table at seed time) is already false, and every
-     * test that hardcodes user 1 would fail later and further away. shouldnt_happen()
-     * makes it fail here instead.
+     * WHY ID 1. Because the framework guarantees it: Rsx_Initial_User::create() ASSIGNS
+     * id 1 to both halves of the initial account rather than leaving it to
+     * AUTO_INCREMENT, and refuses when id 1 is already taken. Every test that hardcodes
+     * user 1 is relying on that contract, not on an empty table.
      */
     const BASELINE_USER_ID = 1;
 
     const BASELINE_SITE_ID = 1;
 
     const BASELINE_USER_EMAIL = 'test-user-1@rspade.test';
+
+    /**
+     * The baseline account's password. A fixture credential in a throwaway database,
+     * named here because a test that signs in by password needs to know it.
+     */
+    const BASELINE_USER_PASSWORD = 'rspade-test-user-password';
 
     /**
      * The name and signature of the console command.
@@ -543,8 +547,15 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             return false;
         }
 
-        // Seed the baseline user BEFORE the dump is taken, so the cached dump - which
-        // every later re-provision restores instead of re-migrating - carries it too.
+        // THE ORDER HERE IS THE POINT: migrations -> normalize (both inside the migrate
+        // subprocess) -> the baseline user -> the dump. Creating the account as its own
+        // step AFTER migrate finishes is what a developer cloning an application actually
+        // experiences, and it means the event fires - and the application's handlers run -
+        // against the converged tip schema, exactly as they will on a real install. The
+        // migrate subprocess is told not to seed an account of its own (--_no-initial-user).
+        //
+        // Before the dump, so the cached dump - which every later re-provision restores
+        // instead of re-migrating - carries the account and its handler rows too.
         // The 'test' connection may still hold a PDO for the database we just dropped.
         DB::purge('test');
         if (!$this->seed_test_baseline_user()) {
@@ -588,7 +599,14 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     {
         $storage_root = config('rsx.files.storage_root');
 
-        $args = ['--force'];
+        // --_no-initial-user: the migrate post-step must NOT seed an account from
+        // RSPADE_DEFAULT_* here. This database's ONE identity is the baseline user, seeded
+        // as the very next step by seed_test_baseline_user() - and it needs id 1, which an
+        // env-seeded account would already have taken. A framework-internal flag rather
+        // than relying on those keys being blank: whether the developer running the suite
+        // happens to have configured credentials is not something the baseline may depend
+        // on. (The `--_` convention: no InputOption, stripped pre-boot from argv.)
+        $args = ['--force', '--_no-initial-user'];
         if (!empty($storage_root)) {
             $args[] = '--rsx-storage-root=' . (string) $storage_root;
         }
@@ -612,20 +630,25 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     /**
      * Provision the ONE user the test baseline carries (see BASELINE_USER_ID).
      *
-     * Structurally identical to what the first-run setup screen produces: an activated,
-     * verified, active login_users credential plus an enabled users site profile in site
-     * 1 - so a test signing in as it exercises the same shape a real first account has.
+     * Created through Rsx_Initial_User - the one implementation of "this application's
+     * initial user" - so the baseline account is structurally identical to what a real
+     * first run produces: an activated, verified, active login_users credential with id
+     * 1, plus an enabled users site profile with id 1 in site 1. A test signing in as it
+     * therefore exercises the same shape a real first account has, and the
+     * user.initial.created handlers an application registers have run against the
+     * baseline exactly as they will have run on a real install.
+     *
      * The role is the highest one there is (ROLE_DEVELOPER), because a baseline identity
      * that fails an auth gate would make every gated surface untestable by default; a
      * test that needs a WEAKER identity creates its own.
      *
      * Idempotent: a baseline that already carries the user (restored from the dump cache,
-     * or created by the first-user migration when credentials are configured) is left
+     * or created by the initial-user migration when credentials are configured) is left
      * exactly as it is.
      *
-     * Written through the 'test' connection with raw SQL rather than models: this runs
-     * while the default connection may still be the developer database, and a model save
-     * would target that instead.
+     * The write goes to the 'test' CONNECTION explicitly: this runs while the default
+     * connection may still be the developer database, and an unqualified model save would
+     * target that instead.
      *
      * @return bool
      */
@@ -654,35 +677,14 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             return true;
         }
 
-        $login_user_id = $connection->table('login_users')->insertGetId([
-            'email' => self::BASELINE_USER_EMAIL,
-            'password' => Hash::make('rspade-test-user-password'),
-            'is_activated' => 1,
-            'is_verified' => 1,
-            'status_id' => Login_User_Model::STATUS_ACTIVE,
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s'),
-        ]);
-
-        $user_id = $connection->table('users')->insertGetId([
-            'login_user_id' => $login_user_id,
+        Rsx_Initial_User::create(self::BASELINE_USER_EMAIL, self::BASELINE_USER_PASSWORD, [
+            'connection' => $connection_name,
             'site_id' => self::BASELINE_SITE_ID,
-            'email' => self::BASELINE_USER_EMAIL,
+            'role_id' => User_Model::ROLE_DEVELOPER,
             'first_name' => 'Test',
             'last_name' => 'User',
-            'role_id' => User_Model::ROLE_DEVELOPER,
-            'is_enabled' => 1,
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s'),
+            'source' => Rsx_Initial_User::SOURCE_TEST_BASELINE,
         ]);
-
-        if ((int) $user_id !== self::BASELINE_USER_ID) {
-            shouldnt_happen(
-                'The test baseline user was created as id ' . $user_id . ', not '
-                . self::BASELINE_USER_ID . ' - the users table was not empty at seed time, '
-                . 'so the baseline every test assumes no longer holds.'
-            );
-        }
 
         return true;
     }

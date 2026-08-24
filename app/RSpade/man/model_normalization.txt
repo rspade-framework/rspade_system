@@ -183,6 +183,11 @@ FRAMEWORK-REQUIRED COLUMNS
 --------------------------
 normalize_schema ensures these columns exist on ALL tables (except excluded tables):
 
+All of a table's normalizations are applied in a SINGLE `ALTER TABLE t clause, clause, ...`
+statement per table per pass (the `order` triggers, which cannot be ALTER clauses, are
+created immediately afterwards), so a table is rewritten once rather than once per change.
+
+
 ### Audit Columns
   * created_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)
   * updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)

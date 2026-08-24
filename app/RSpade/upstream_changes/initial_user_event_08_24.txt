@@ -1,0 +1,164 @@
+THE INITIAL USER - id 1 by contract, and one event to decorate it
+Date: 2026-08-24
+
+SUMMARY
+    The application's first account is now created by ONE framework function,
+    App\RSpade\Core\Env\Rsx_Initial_User::create(), which assigns id 1 to BOTH
+    halves of the account (login_users and users) and then fires a new action event,
+    user.initial.created.
+
+    That event is the supported place for an application to attach its founder's own
+    rows - a group membership, admin ACLs, a starter workspace. If your app has a
+    MIGRATION that inserts rows keyed to user id 1, that migration should be deleted
+    and replaced with a handler. See ACTION REQUIRED.
+
+THE CHANGE
+    Four framework paths used to create the first account, each with its own
+    INSERTs, none of them able to guarantee the id and none announcing itself:
+
+      - the development first-run setup screen (Rsx_First_User_Setup),
+      - the RSPADE_DEFAULT_EMAIL / RSPADE_DEFAULT_PASSWORD seed,
+      - the framework test-suite baseline seed,
+      - an operator doing it by hand.
+
+    Because nothing guaranteed the id, an application that wanted rows for its first
+    user had only one place to put them: a migration hardcoding user_id = 1. That is
+    the wrong tool. A migration runs ONCE per database at a FIXED point in history -
+    it cannot know whether the account exists yet (on a fresh install the account is
+    now created AFTER the whole migration chain has run), it never runs for the test
+    baseline at all, so the rows it makes are missing from every test, and the rows it
+    wants to write are application rows written by application code, which a migration
+    must not couple itself to.
+
+    THE SEED ITSELF IS NO LONGER A MIGRATION EITHER, for the same reason: creating the
+    account runs model code and application handler code, which only work against the
+    CURRENT schema. It is now a POST-MIGRATE STEP - the last thing `php artisan
+    migrate` does, after the final normalize pass, so the schema is at the tip by
+    construction. A fresh install's migrate still ends with an account to log in as,
+    and prints one line saying so.
+
+THE FIX
+    Downstream receives this automatically via the submodule; nothing here to copy.
+
+      - New: App\RSpade\Core\Env\Rsx_Initial_User - create(), is_needed(),
+        resolve_site_id(), INITIAL_USER_ID, the SOURCE_* constants.
+      - All four framework paths now call create(). It asserts that neither
+        login_users nor users already has a row with id 1 (shouldnt_happen if one
+        does - each caller is expected to have checked), writes both rows with an
+        explicit id 1, and fires:
+
+            user.initial.created (action)
+            {user: User_Model (id 1), login_user: Login_User_Model (id 1),
+             site_id: int, source: 'first_run'|'post_migrate'|'test_baseline'|'manual'}
+
+      - The two historical framework migrations that created the halves
+        (create_admin_test_user, create_test_user_record) no longer create a user;
+        the account is created by Maint_Migrate's post-migrate step, calling
+        Rsx_Initial_User::create_from_env_if_needed(). create_test_user_record still
+        seeds site 1. Both migrate paths (snapshot-protected development and
+        --production) run the step; a failure fails the migrate, so the development
+        path rolls its snapshot back.
+      - The framework test baseline is seeded through the same function, so the event
+        FIRES during test-database provisioning and your handler's rows are part of
+        every test's starting database.
+
+    Two behavior changes worth knowing, both on NEW installs only:
+      - The initial profile's email is now the credential's email. The retired
+        migration hardcoded test@example.com for the profile half.
+      - The initial profile's role_id is left NULL by the framework. Assign it in
+        your handler (the reference app does exactly this).
+
+ACTION REQUIRED
+    1. FIND any migration in your app that inserts rows keyed to user id 1.
+
+           grep -rn "user_id.*1" rsx/resource/migrations/
+           grep -rniE "VALUES *\( *1 *,|user_id' *=> *1|WHERE id = 1" rsx/resource/migrations/
+           grep -rn "login_users\|INTO users" rsx/resource/migrations/
+
+       You are looking for seed data ABOUT the first user: a group membership, a
+       permission GRANT row, a profile, a default record owned by user 1. (Schema
+       migrations that merely define a user_id COLUMN are not this.)
+
+    2. DELETE those migrations, or empty their up() body if they have already run on
+       an install you care about (a migration with a row in the migrations table must
+       keep replaying as a no-op for a from-scratch build). Do NOT try to make them
+       conditional - the work moves to the handler.
+
+    3. REGISTER A HANDLER instead. One file, no wiring - the manifest discovers it:
+
+           File: rsx/handlers/Initial_User_Handlers.php
+
+           <?php
+
+           namespace Rsx\Handlers;
+
+           use App\RSpade\Core\Models\User_Model;
+           use Rsx\Models\User_Group_Model;
+
+           class Initial_User_Handlers
+           {
+               #[OnEvent('user.initial.created', priority: 10)]
+               public static function make_founder_an_administrator($data)
+               {
+                   /** @var User_Model $user */
+                   $user = $data['user'];              // id 1
+                   $site_id = (int) $data['site_id'];
+                   $connection_name = $user->getConnectionName();
+
+                   // Only fill in a role the caller left unset - the test baseline
+                   // chooses ROLE_DEVELOPER deliberately.
+                   if ($user->role_id === null) {
+                       $user->role_id = User_Model::ROLE_ROOT_ADMIN;
+                       $user->save();
+                   }
+
+                   $group = new User_Group_Model();
+                   if ($connection_name !== null) {
+                       $group->setConnection($connection_name);
+                   }
+                   $group->site_id = $site_id;
+                   $group->name = 'Administrators';
+                   $group->deletion_protection = 1;
+                   $group->save();
+
+                   $group->members()->attach($user->id);
+               }
+           }
+
+       The full converted file ships in the reference application:
+       system/app/RSpade/resource/reference_app/handlers/Initial_User_Handlers.php
+
+       Three rules for the handler body:
+         - THE EVENT NAME IS A LITERAL in #[OnEvent]. Never a class constant -
+           attribute arguments are resolved by reflection during the manifest scan,
+           before the autoloader can load the class.
+         - FOLLOW THE CONNECTION of the model you were handed
+           ($user->getConnectionName()). The test baseline seed writes on the 'test'
+           connection while the default connection is the developer database.
+         - IT MUST NOT THROW on a fresh database. Handlers run inline in whatever
+           created the account (a web request, migrate, or the test runner), and both
+           rows are already written when it runs.
+
+    4. YOUR EXISTING DATABASES ARE UNAFFECTED and need nothing. They already have
+       their user 1, the post-migrate step detects that and does nothing, and no
+       event fires. The handler is for NEW installs and for the test baseline. If an
+       existing install also wants the handler's rows, add them by hand or with a
+       one-off migration written against that KNOWN state.
+
+    5. IF YOUR TEST BASELINE MUST CARRY THE HANDLER'S ROWS, re-provision it once:
+
+           php artisan rsx:test --fresh
+
+       A cached test-database dump is otherwise reused as-is, and the old baseline
+       persists.
+
+VERIFICATION
+    - php artisan migrate                       (an existing install: the post-migrate
+                                                 step reports nothing; a fresh one
+                                                 prints "[OK] Initial user created")
+    - php artisan rsx:test --fresh              (baseline re-provisioned)
+    - Then confirm your handler's rows exist for user 1 in the test database, e.g.
+      php artisan db:query "SELECT * FROM user_group_members WHERE user_id = 1"
+    - grep -rn "user_id" rsx/resource/migrations/ should show no seed data about
+      user 1 remaining.
+    - php artisan rsx:man initial_user           the full contract

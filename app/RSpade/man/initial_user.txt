@@ -1,0 +1,248 @@
+NAME
+    initial_user - the first account an application ever has, and the event that
+    lets an application decorate it
+
+SYNOPSIS
+    Create it (all four framework paths call exactly this):
+
+        use App\RSpade\Core\Env\Rsx_Initial_User;
+
+        $user = Rsx_Initial_User::create($email, $password, [
+            'site_id'    => 1,                          // optional; resolved when absent
+            'role_id'    => User_Model::ROLE_DEVELOPER, // optional; null when absent
+            'first_name' => 'Test',                     // optional
+            'last_name'  => 'User',                     // optional
+            'source'     => Rsx_Initial_User::SOURCE_FIRST_RUN,
+            'connection' => 'test',                     // optional; a named DB connection
+        ]);
+
+    React to it (in the application, /rsx/handlers/):
+
+        #[OnEvent('user.initial.created', priority: 10)]
+        public static function make_founder_an_administrator($data)
+        {
+            $user = $data['user'];   // User_Model, id 1
+            ...
+        }
+
+DESCRIPTION
+    An RSpade application creates its first account exactly once. Before that account
+    exists there is a login page nobody can get past; after it exists the application
+    is somebody's.
+
+    THE ID IS ONE, AND IT IS ASSIGNED.
+
+    Both halves of the account carry id 1:
+
+        login_users.id = 1    the credential   (activated, verified, active)
+        users.id       = 1    the site profile (enabled, in the resolved site)
+
+    That is a CONTRACT an application may build on, which is exactly why it is
+    written explicitly instead of being left to AUTO_INCREMENT. The counter can
+    already have advanced past 1 - a hard-deleted earlier row leaves it there - and
+    "the first account happened to get id 1" is a different, weaker statement than
+    "the initial user IS id 1".
+
+    A row already occupying id 1 on EITHER table when create() is called is an
+    impossible condition, not a case to handle: it calls shouldnt_happen(). Every
+    caller has its own "does this application still need an initial user" check, and
+    reaching create() means that check was wrong. The framework's own check is
+    Rsx_Initial_User::is_needed(), which asks login_users - credentials and site
+    profiles are different tables, and asking the wrong one answers a different
+    question.
+
+THE THREE CREATION PATHS (plus a direct call)
+
+    All of them call Rsx_Initial_User::create(). There is no second implementation,
+    and an application must not write one.
+
+    first_run       Rsx_First_User_Setup - the development-only setup screen shown
+                    while login_users is EMPTY. It collects an email and a password
+                    and creates the account in the browser. Development mode, web
+                    requests, empty credential table: all three, so it is unreachable
+                    in normal operation.
+
+    post_migrate    Rsx_Initial_User::create_from_env_if_needed(), called by
+                    Maint_Migrate at the END of every `php artisan migrate` - after
+                    the final normalize pass - when the database still needs an
+                    account. It creates it from RSPADE_DEFAULT_EMAIL and
+                    RSPADE_DEFAULT_PASSWORD, and prints one line when it does. Both
+                    keys are REQUIRED and blank is fatal: RSpade ships no default
+                    credential, because a framework with one is a framework where
+                    every install in the world shares it. Blank is tolerated in
+                    exactly two places - development (the setup screen does the job
+                    instead) and the test database (a test run provisions a schema,
+                    not a person) - where nothing is created.
+
+                    Both migrate paths reach it (the snapshot-protected development
+                    path and the --production one), and a failure is reported and
+                    turned into a failed migrate, so the development path rolls the
+                    snapshot back. It is SKIPPED for a --framework-only run (the
+                    application's tables are not there) and by the framework-internal
+                    --_no-initial-user flag, which the test runner passes.
+
+    test_baseline   Rsx_Test_Command::seed_test_baseline_user() - the ONE account the
+                    framework test baseline carries, created as its OWN step right
+                    after the provisioning migrate finishes, against the 'test'
+                    connection: test-user-1@rspade.test, site 1, ROLE_DEVELOPER. The
+                    event fires here too (see TEST MODE below).
+
+    manual          An operator or an application command calling create() directly.
+                    The default source when none is given.
+
+WHY IT IS NOT A MIGRATION
+
+    Seeding the initial user looks like a job for a migration, and it is not.
+
+    A migration runs at ONE FIXED POINT in schema history and must replay identically
+    forever. This creation runs MODEL code, and - through user.initial.created - the
+    APPLICATION's own handler code. Both are CURRENT code that only works against the
+    CURRENT schema. In a migration, a from-scratch replay would execute today's models
+    and today's handlers against a months-old table shape, which is exactly the
+    coupling migrations are forbidden to have (the same rule that forbids referencing
+    a model class from a migration at all).
+
+    Running it as a post-migrate STEP instead means the schema is at the tip by
+    construction, every single time, with no ordering to reason about - and a fresh
+    install's `php artisan migrate` still ends with an account to log in as, which is
+    the only property the migration ever had going for it.
+
+    Two framework migrations used to create the two halves of this account
+    (create_admin_test_user, create_test_user_record) at two different points in
+    schema history. Both are now no-ops for the user; create_test_user_record still
+    seeds site 1.
+
+THE EVENT
+
+    user.initial.created (action)
+        Fired from: Rsx_Initial_User::create(), after both rows are written, before
+                    the function returns.
+        Data: {user: User_Model (id 1), login_user: Login_User_Model (id 1),
+               site_id: int, source: string}
+              source is one of first_run | post_migrate | test_baseline | manual - the
+              path that created the account (the SOURCE_* constants on
+              Rsx_Initial_User).
+        Return: ignored (it is an action).
+        Use for: everything an APPLICATION wants for its founder - a group
+                 membership, admin ACLs, a starter workspace, a welcome record.
+
+    Handlers run INLINE, in whatever request or command created the account: a web
+    request for first_run, the migrate process for post_migrate, the test runner for
+    test_baseline. Keep them cheap; hand heavy work to Task::dispatch().
+
+    A handler that THROWS takes the creation down with it - the two rows are already
+    written at that point, so the account exists but its decoration is incomplete.
+    Write handlers that cannot fail on a fresh database.
+
+THE HANDLER RECIPE
+
+    File: /rsx/handlers/Initial_User_Handlers.php
+
+        <?php
+
+        namespace Rsx\Handlers;
+
+        use App\RSpade\Core\Models\User_Model;
+        use Rsx\Models\User_Group_Model;
+
+        class Initial_User_Handlers
+        {
+            #[OnEvent('user.initial.created', priority: 10)]
+            public static function make_founder_an_administrator($data)
+            {
+                /** @var User_Model $user */
+                $user = $data['user'];
+                $site_id = (int) $data['site_id'];
+                $connection_name = $user->getConnectionName();
+
+                if ($user->role_id === null) {
+                    $user->role_id = User_Model::ROLE_ROOT_ADMIN;
+                    $user->save();
+                }
+
+                $group = new User_Group_Model();
+                if ($connection_name !== null) {
+                    $group->setConnection($connection_name);
+                }
+                $group->site_id = $site_id;
+                $group->name = 'Administrators';
+                $group->deletion_protection = 1;
+                $group->save();
+
+                $group->members()->attach($user->id);
+            }
+        }
+
+    Three details that are easy to get wrong:
+
+      - THE CONNECTION. The test baseline seed writes on the 'test' connection while
+        the default connection is still the developer database. A handler that
+        creates related records must follow the connection of the model it was
+        handed: $user->getConnectionName().
+
+      - AN EXPLICIT ROLE BELONGS TO THE CALLER. The reference handler fills in a role
+        only when the framework left it null, so the test baseline's deliberate
+        ROLE_DEVELOPER survives its own creation.
+
+      - THE EVENT NAME IS A LITERAL. Never write #[OnEvent(Rsx_Initial_User::
+        EVENT_CREATED)]: attribute arguments are read by reflection during the
+        manifest scan, before the autoloader can resolve a class constant.
+
+    The reference application ships exactly this handler - read it, complete, at
+    system/app/RSpade/resource/reference_app/handlers/Initial_User_Handlers.php.
+
+WHAT NOT TO DO
+
+    DO NOT WRITE A MIGRATION THAT INSERTS ROWS KEYED TO USER ID 1.
+
+        // WRONG - and the reason this event exists
+        DB::statement("INSERT INTO user_group_members (user_group_id, user_id)
+                       VALUES (1, 1)");
+
+    A migration is a forward-only historical record. It runs once per database, at a
+    fixed point in history, and it cannot know whether the account it is decorating
+    exists yet - on a fresh install the account is created AFTER the whole migration
+    chain has run, so a migration that assumes user 1 is either inserting against a
+    row that is not there or silently doing nothing. It also never runs for the test
+    baseline, so the rows it makes are missing from every test. And the rows it wants
+    to write are application rows, written by application code, which a migration must
+    not couple itself to - see WHY IT IS NOT A MIGRATION above.
+
+    A handler has none of those problems: it runs at creation time, on every new
+    install and in the test baseline, and it can read the records it is decorating.
+
+    Also do not:
+      - Re-implement account creation. Four paths already share one function; a fifth
+        one that hand-writes the INSERTs breaks the id contract and fires no event.
+      - Assume the id without asserting it. Read Rsx_Initial_User::INITIAL_USER_ID
+        rather than typing 1.
+      - Expect the event on an EXISTING database. It fires when the account is
+        CREATED. An install that already has its user 1 has already had its event; a
+        handler added later runs for new installs and for the test baseline, never
+        retroactively (see MIGRATING AN EXISTING APPLICATION).
+
+TEST MODE
+
+    The framework test baseline carries exactly one account, and it is created
+    through Rsx_Initial_User like any other - so user.initial.created FIRES during
+    test-database provisioning, and an application's handler rows are part of every
+    test's starting database. A test may rely on them.
+
+    The baseline is created on every re-provision path (a full migrate + seed, or a
+    restore from the dump cache). Changing what the baseline contains - including
+    changing what a handler does - requires bumping Rsx_Test_Command::CACHE_VERSION,
+    or running rsx:test --fresh: an existing cached dump is otherwise reused as-is
+    and the old baseline persists.
+
+MIGRATING AN EXISTING APPLICATION
+
+    An existing database already has its user 1 and is unaffected: the post-migrate
+    step detects the account and does nothing, and no event fires. If you add a handler
+    that an existing install also wants, apply its rows to that install by hand (or
+    with a one-off migration written against that KNOWN state) - the handler is for
+    NEW installs and for the test baseline.
+
+SEE ALSO
+    php artisan rsx:man event_hooks     the event system and the full event catalog
+    php artisan rsx:man session         Session, sign-in and account state
+    php artisan rsx:man acls            roles and the per-user permission layer

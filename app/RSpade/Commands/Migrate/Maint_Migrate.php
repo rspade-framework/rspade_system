@@ -18,6 +18,8 @@ use App\RSpade\Core\Database\SqlQueryTransformer;
 use App\RSpade\Core\Rsx;
 use App\RSpade\SchemaQuality\SchemaQualityChecker;
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Console\Rsx_Internal_Flags;
+use App\RSpade\Core\Env\Rsx_Initial_User;
 
 /**
  * Unified migration command with mode-aware behavior
@@ -450,7 +452,63 @@ class Maint_Migrate extends Command
         AppServiceProvider::disable_query_echo();
         SqlQueryTransformer::disable();
 
+        // THE INITIAL USER - after the FINAL normalize pass, so the schema is at the tip
+        // by construction. This is deliberately NOT a migration: it runs model code and,
+        // through user.initial.created, application HANDLER code, and both are current
+        // code that only works against the current schema. A migration replays at one
+        // fixed point in history, which is the coupling that forbids it. See
+        // Rsx_Initial_User and php artisan rsx:man initial_user.
+        //
+        // Shared by both paths - run_with_snapshot() and run_without_snapshot() both
+        // reach it here - so a fresh install's `php artisan migrate` yields its admin
+        // account in either. A failure returns non-zero like a normalization failure
+        // does, so the snapshot path performs its real rollback.
+        if (!$this->create_initial_user_if_needed()) {
+            return 1;
+        }
+
         return $exitCode;
+    }
+
+    /**
+     * Create the application's initial user from RSPADE_DEFAULT_* when this database
+     * still needs one. Silent when there is nothing to do, which is every run after the
+     * first; one line when an account is created.
+     *
+     * SKIPPED ENTIRELY by --_no-initial-user, the framework-internal flag the test
+     * runner passes when it provisions the test database: that database gets its
+     * baseline identity from Rsx_Test_Command as a separate step immediately after this
+     * migrate, and an env-seeded account would take the id 1 that identity requires.
+     *
+     * @return bool false when the seed failed (the caller turns that into a rollback)
+     */
+    protected function create_initial_user_if_needed(): bool
+    {
+        if (Rsx_Internal_Flags::has('--_no-initial-user')) {
+            return true;
+        }
+
+        // A framework-only run migrates a schema-only subset for tooling - the
+        // application's own tables are not there, so neither the account's site nor an
+        // application handler's tables can be assumed.
+        if ($this->option('framework-only')) {
+            return true;
+        }
+
+        try {
+            $user = Rsx_Initial_User::create_from_env_if_needed();
+        } catch (\Throwable $e) {
+            $this->error('');
+            $this->error('Creating the initial user failed: ' . $e->getMessage());
+
+            return false;
+        }
+
+        if ($user !== null) {
+            $this->info('[OK] Initial user created: ' . $user->email . ' (id ' . $user->id . ')');
+        }
+
+        return true;
     }
 
     /**

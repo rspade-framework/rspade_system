@@ -49,6 +49,107 @@ class Migrate_Normalize_Schema_Command extends Command
     protected $description = 'Normalizes database schema by standardizing data types, character encodings, and adding required columns';
 
     /**
+     * Pending ALTER TABLE clauses for the table currently being normalized.
+     *
+     * Every normalization used to be its own `ALTER TABLE t <clause>`, so a freshly created
+     * table took ~8 separate statements and every MODIFY / ADD INDEX / CONVERT was its own
+     * full pass over the rows. All of a table's clauses are collected here and issued as ONE
+     * `ALTER TABLE t clause, clause, ...` per table per pass instead.
+     *
+     * The three companion maps let a later check in the SAME pass see what earlier clauses
+     * are about to do: with an ADD pending, Schema::hasColumn() is still false, and an index
+     * or duplicate column would otherwise be planned against a stale picture.
+     *
+     * @var array<string, string[]>
+     */
+    private array $__pending_clauses = [];
+
+    /** @var array<string, array<string, true>> */
+    private array $__pending_columns_added = [];
+
+    /** @var array<string, array<string, true>> */
+    private array $__pending_columns_dropped = [];
+
+    /** @var array<string, array<string, true>> */
+    private array $__pending_indexes_added = [];
+
+    /**
+     * Queue one clause onto the table's pending ALTER TABLE.
+     */
+    private function __alter(string $tableName, string $clause): void
+    {
+        $this->__pending_clauses[$tableName][] = $clause;
+    }
+
+    /**
+     * Issue every pending clause for a table as a single ALTER TABLE. Nothing when empty.
+     *
+     * The pending state is cleared BEFORE the statement runs, so a failure cannot leave
+     * clauses behind to be replayed against a table that already refused them.
+     */
+    private function __flush_alter(string $tableName): void
+    {
+        $clauses = $this->__pending_clauses[$tableName] ?? [];
+
+        unset(
+            $this->__pending_clauses[$tableName],
+            $this->__pending_columns_added[$tableName],
+            $this->__pending_columns_dropped[$tableName],
+            $this->__pending_indexes_added[$tableName]
+        );
+
+        if (empty($clauses)) {
+            return;
+        }
+
+        // One spelling for the table name inside the statement; each clause keeps its own.
+        DB::statement("ALTER TABLE `$tableName` " . implode(', ', $clauses));
+    }
+
+    private function __add_column(string $tableName, string $columnName, string $clause): void
+    {
+        $this->__alter($tableName, $clause);
+        $this->__pending_columns_added[$tableName][$columnName] = true;
+        unset($this->__pending_columns_dropped[$tableName][$columnName]);
+    }
+
+    private function __drop_column(string $tableName, string $columnName): void
+    {
+        $this->__alter($tableName, "DROP COLUMN $columnName");
+        $this->__pending_columns_dropped[$tableName][$columnName] = true;
+        unset($this->__pending_columns_added[$tableName][$columnName]);
+    }
+
+    private function __rename_column(string $tableName, string $from, string $to): void
+    {
+        $this->__alter($tableName, "RENAME COLUMN $from TO $to");
+        $this->__pending_columns_added[$tableName][$to] = true;
+        $this->__pending_columns_dropped[$tableName][$from] = true;
+    }
+
+    private function __add_index(string $tableName, string $indexName, string $clause): void
+    {
+        $this->__alter($tableName, $clause);
+        $this->__pending_indexes_added[$tableName][$indexName] = true;
+    }
+
+    /**
+     * Does this column exist, counting clauses already queued for this table's ALTER?
+     */
+    private function __column_exists_or_pending(string $tableName, string $columnName): bool
+    {
+        if (isset($this->__pending_columns_added[$tableName][$columnName])) {
+            return true;
+        }
+
+        if (isset($this->__pending_columns_dropped[$tableName][$columnName])) {
+            return false;
+        }
+
+        return Schema::hasColumn($tableName, $columnName);
+    }
+
+    /**
      * Check if a model uses a specific trait
      *
      * @param string $modelClass The full class name of the model
@@ -164,6 +265,7 @@ class Migrate_Normalize_Schema_Command extends Command
 
             foreach ($tables as $table) {
                 $tableName = array_values((array) $table)[0];
+                $has_order_column = false;
 
                 if (!in_array($tableName, $excludedTables)) {
                     // Standard columns for all tables
@@ -174,7 +276,7 @@ class Migrate_Normalize_Schema_Command extends Command
 
                     // Check and update created_at column
                     if (!Schema::hasColumn($tableName, 'created_at')) {
-                        DB::statement("ALTER TABLE $tableName ADD COLUMN created_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)");
+                        $this->__add_column($tableName, 'created_at', "ADD COLUMN created_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)");
                     } else {
                         // Get current column info including precision
                         $column_info = DB::selectOne("SELECT COLUMN_DEFAULT, DATETIME_PRECISION FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$tableName' AND COLUMN_NAME = 'created_at'");
@@ -186,14 +288,14 @@ class Migrate_Normalize_Schema_Command extends Command
 
                             // Only update if precision is not 3 or default is not set
                             if ($precision !== 3 || !$has_default) {
-                                DB::statement("ALTER TABLE $tableName MODIFY COLUMN created_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)");
+                                $this->__alter($tableName, "MODIFY COLUMN created_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3)");
                             }
                         }
                     }
 
                     // Check and update updated_at column
                     if (!Schema::hasColumn($tableName, 'updated_at')) {
-                        DB::statement("ALTER TABLE $tableName ADD COLUMN updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)");
+                        $this->__add_column($tableName, 'updated_at', "ADD COLUMN updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)");
                     } else {
                         // Get current column info including precision and on update trigger
                         $column_info = DB::selectOne("SELECT COLUMN_DEFAULT, DATETIME_PRECISION, EXTRA FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$tableName' AND COLUMN_NAME = 'updated_at'");
@@ -208,19 +310,25 @@ class Migrate_Normalize_Schema_Command extends Command
 
                             // Only update if precision is not 3, default is not set, or on update is not set
                             if ($precision !== 3 || !$has_default || !$has_on_update) {
-                                DB::statement("ALTER TABLE $tableName MODIFY COLUMN updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)");
+                                $this->__alter($tableName, "MODIFY COLUMN updated_at TIMESTAMP(3) DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)");
                             }
                         }
                     }
 
                     // Create created_at index
-                    if (Schema::hasColumn($tableName, 'created_at') && !$this->columnHasIndex($tableName, 'created_at')) {
-                        DB::statement("ALTER TABLE $tableName ADD INDEX created_at(created_at)");
+                    //
+                    // __column_exists_or_pending() rather than Schema::hasColumn(): the ADD COLUMN
+                    // above is queued, not executed, so hasColumn() would still say false. Batching
+                    // therefore closes a LATENT GAP - before it, the index on a column this pass had
+                    // just added only landed on the NEXT pass, and for a table created by the LAST
+                    // migration of a run there is no next pass, so it never landed at all.
+                    if ($this->__column_exists_or_pending($tableName, 'created_at') && !$this->columnHasIndex($tableName, 'created_at')) {
+                        $this->__add_index($tableName, 'created_at', "ADD INDEX created_at(created_at)");
                     }
 
                     // Create updated_at index
-                    if (Schema::hasColumn($tableName, 'updated_at') && !$this->columnHasIndex($tableName, 'updated_at')) {
-                        DB::statement("ALTER TABLE $tableName ADD INDEX updated_at(updated_at)");
+                    if ($this->__column_exists_or_pending($tableName, 'updated_at') && !$this->columnHasIndex($tableName, 'updated_at')) {
+                        $this->__add_index($tableName, 'updated_at', "ADD INDEX updated_at(updated_at)");
                     }
 
                     // The deletion audit pair is NARROWER than the authorship pairs on purpose:
@@ -236,34 +344,50 @@ class Migrate_Normalize_Schema_Command extends Command
                     // Handle specific trait requirements
 
                     // Siteable trait - ensure site_id column exists
-                    if (in_array($tableName, $siteableTables) && !Schema::hasColumn($tableName, 'site_id')) {
-                        DB::statement("ALTER TABLE $tableName ADD COLUMN site_id INT(11) NOT NULL");
+                    if (in_array($tableName, $siteableTables) && !$this->__column_exists_or_pending($tableName, 'site_id')) {
+                        $this->__add_column($tableName, 'site_id', "ADD COLUMN site_id INT(11) NOT NULL");
 
                         // Add index on site_id
                         if (!$this->columnHasIndex($tableName, 'site_id')) {
-                            DB::statement("ALTER TABLE $tableName ADD INDEX site_id(site_id)");
+                            $this->__add_index($tableName, 'site_id', "ADD INDEX site_id(site_id)");
                         }
                     }
 
                     // Versionable trait - ensure version column exists
-                    if (in_array($tableName, $versionableTables) && !Schema::hasColumn($tableName, 'version')) {
-                        DB::statement("ALTER TABLE $tableName ADD COLUMN version INT(11) NOT NULL DEFAULT 1");
+                    if (in_array($tableName, $versionableTables) && !$this->__column_exists_or_pending($tableName, 'version')) {
+                        $this->__add_column($tableName, 'version', "ADD COLUMN version INT(11) NOT NULL DEFAULT 1");
 
                         // Add index on id+version
                         if (!$this->indexExists($tableName, 'id_version')) {
-                            DB::statement("ALTER TABLE $tableName ADD INDEX id_version(id, version)");
+                            $this->__add_index($tableName, 'id_version', "ADD INDEX id_version(id, version)");
                         }
                     }
 
                     // Ajaxable trait - ensure version column for cache invalidation
-                    if (in_array($tableName, $ajaxableTables) && !Schema::hasColumn($tableName, 'version')) {
-                        DB::statement("ALTER TABLE $tableName ADD COLUMN version INT(11) NOT NULL DEFAULT 1");
+                    // (__column_exists_or_pending: a model that is BOTH Versionable and Ajaxable
+                    // already queued this ADD above, and a duplicate clause in one statement is an
+                    // error where a duplicate STATEMENT was merely a no-op read away.)
+                    if (in_array($tableName, $ajaxableTables) && !$this->__column_exists_or_pending($tableName, 'version')) {
+                        $this->__add_column($tableName, 'version', "ADD COLUMN version INT(11) NOT NULL DEFAULT 1");
                     }
 
                     // Order column normalization
                     // Tables with `order` column get: BIGINT DEFAULT NULL, order_idx index, auto-increment triggers
-                    if (Schema::hasColumn($tableName, 'order')) {
+                    $has_order_column = Schema::hasColumn($tableName, 'order');
+                    if ($has_order_column) {
                         $this->normalizeOrderColumn($tableName);
+                    }
+
+                    // Datetime/timestamp columns to millisecond precision. This used to be a
+                    // second full pass over every table (updateDatetimePrecision()); folding it
+                    // in puts its MODIFYs in this table's one statement. Its own `_sessions`
+                    // exclusion is honoured by adding no precision clauses for that table, and
+                    // created_at/updated_at/deleted_at are still skipped (handled above, with
+                    // their defaults). Reading INFORMATION_SCHEMA before the pending clauses land
+                    // changes nothing: every column this pass adds or renames is BIGINT/INT or a
+                    // skipped audit timestamp, so none of them is precision work.
+                    if ($tableName !== '_sessions') {
+                        $this->collectDatetimePrecisionClauses($tableName);
                     }
                 }
 
@@ -271,12 +395,18 @@ class Migrate_Normalize_Schema_Command extends Command
                 // This is still necessary for tables created before transformer was implemented
                 $tableCollation = DB::selectOne("SELECT TABLE_COLLATION FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = '$tableName'");
                 if (!$tableCollation || strpos(strtolower($tableCollation->TABLE_COLLATION), 'utf8mb4') === false) {
-                    DB::statement("ALTER TABLE $tableName CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                    $this->__alter($tableName, "CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+                }
+
+                // Everything this table needs, in one statement, one pass over the rows.
+                $this->__flush_alter($tableName);
+
+                // Triggers LAST: CREATE TRIGGER cannot be an ALTER TABLE clause, and a trigger
+                // must not be created before the column and index clauses it depends on land.
+                if ($has_order_column) {
+                    $this->createOrderTriggers($tableName);
                 }
             }
-
-            // Update all datetime/timestamp columns to millisecond precision
-            $this->updateDatetimePrecision();
         } catch (Exception $e) {
             // Output the error so the developer knows what to fix, then fail loud.
             // Recovery is NOT this command's job. There is exactly one real, tested
@@ -301,45 +431,35 @@ class Migrate_Normalize_Schema_Command extends Command
     }
 
     /**
-     * Update datetime columns to millisecond precision
+     * Queue this table's datetime/timestamp columns onto its pending ALTER at millisecond
+     * precision (3), for better accuracy in time-sensitive operations.
      *
-     * Ensures all datetime and timestamp columns support millisecond precision (3)
-     * for better accuracy in time-sensitive operations.
+     * created_at/updated_at/deleted_at are skipped - the main loop handles those, with their
+     * defaults. `_migrations` never reaches here (excluded by the caller's own list) and
+     * `_sessions` is excluded at the call site.
      */
-    private function updateDatetimePrecision()
+    private function collectDatetimePrecisionClauses($tableName)
     {
-        $excludedTables = ['_sessions', '_migrations'];
-        $tables = DB::select('SHOW TABLES');
+        $columns = DB::select("SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '$tableName' AND TABLE_SCHEMA = DATABASE()");
 
-        foreach ($tables as $table) {
-            $tableName = array_values((array) $table)[0];
+        foreach ($columns as $column) {
+            $columnName = $column->COLUMN_NAME;
+            $dataType = $column->DATA_TYPE;
 
-            if (in_array($tableName, $excludedTables)) {
+            // Skip created_at, updated_at, and deleted_at as they're handled in the main loop with proper defaults
+            if ($columnName === 'created_at' || $columnName === 'updated_at' || $columnName === 'deleted_at') {
                 continue;
             }
 
-            // Update all datetime columns to millisecond precision
-            $columns = DB::select("SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = '$tableName' AND TABLE_SCHEMA = DATABASE()");
+            $precision = null;
+            if ($dataType == 'datetime' || $dataType == 'timestamp') {
+                $precision = $this->getPrecisionFromShowCreateTable($tableName, $columnName);
+            }
 
-            foreach ($columns as $column) {
-                $columnName = $column->COLUMN_NAME;
-                $dataType = $column->DATA_TYPE;
-
-                // Skip created_at, updated_at, and deleted_at as they're handled in the main loop with proper defaults
-                if ($columnName === 'created_at' || $columnName === 'updated_at' || $columnName === 'deleted_at') {
-                    continue;
-                }
-
-                $precision = null;
-                if ($dataType == 'datetime' || $dataType == 'timestamp') {
-                    $precision = $this->getPrecisionFromShowCreateTable($tableName, $columnName);
-                }
-
-                if ($dataType == 'datetime' && $precision != 3) {
-                    DB::statement("ALTER TABLE $tableName MODIFY COLUMN $columnName DATETIME(3)");
-                } elseif ($dataType == 'timestamp' && $precision != 3) {
-                    DB::statement("ALTER TABLE $tableName MODIFY COLUMN $columnName TIMESTAMP(3)");
-                }
+            if ($dataType == 'datetime' && $precision != 3) {
+                $this->__alter($tableName, "MODIFY COLUMN $columnName DATETIME(3)");
+            } elseif ($dataType == 'timestamp' && $precision != 3) {
+                $this->__alter($tableName, "MODIFY COLUMN $columnName TIMESTAMP(3)");
             }
         }
     }
@@ -410,9 +530,9 @@ class Migrate_Normalize_Schema_Command extends Command
         $type_column = $base . '_type';
         $legacy_user_column = $base . '_user_id';
 
-        $has_id = Schema::hasColumn($tableName, $id_column);
-        $has_base = Schema::hasColumn($tableName, $base);
-        $has_legacy = Schema::hasColumn($tableName, $legacy_user_column);
+        $has_id = $this->__column_exists_or_pending($tableName, $id_column);
+        $has_base = $this->__column_exists_or_pending($tableName, $base);
+        $has_legacy = $this->__column_exists_or_pending($tableName, $legacy_user_column);
 
         // DECIDE BEFORE MUTATING. This block used to rename first and complain later, and the
         // two halves disagreed: on a table carrying BOTH the framework's own pre-pair `{base}` and an app
@@ -434,7 +554,7 @@ class Migrate_Normalize_Schema_Command extends Command
             $populated = (int) DB::table($tableName)->whereNotNull($base)->count();
 
             if ($populated === 0) {
-                DB::statement("ALTER TABLE $tableName DROP COLUMN $base");
+                $this->__drop_column($tableName, $base);
                 $has_base = false;
             } else {
                 // Genuine data in both. Refuse HAVING CHANGED NOTHING, name which column is
@@ -459,21 +579,29 @@ class Migrate_Normalize_Schema_Command extends Command
 
         if (!$has_id) {
             if ($has_legacy) {
-                DB::statement("ALTER TABLE $tableName RENAME COLUMN $legacy_user_column TO $id_column");
+                $this->__rename_column($tableName, $legacy_user_column, $id_column);
             } elseif ($has_base) {
-                DB::statement("ALTER TABLE $tableName RENAME COLUMN $base TO $id_column");
+                $this->__rename_column($tableName, $base, $id_column);
             } else {
-                DB::statement("ALTER TABLE $tableName ADD COLUMN $id_column BIGINT NULL");
+                $this->__add_column($tableName, $id_column, "ADD COLUMN $id_column BIGINT NULL");
             }
         }
 
-        if (!Schema::hasColumn($tableName, $type_column)) {
-            DB::statement("ALTER TABLE $tableName ADD COLUMN $type_column BIGINT NULL AFTER $id_column");
+        // AFTER $id_column, whose own clause may still be pending in this same statement.
+        // Verified against MySQL 8.0.46: RENAME COLUMN a TO b / ADD COLUMN b, then
+        // ADD COLUMN c AFTER b in one ALTER TABLE is accepted and orders the columns as
+        // written, DROP COLUMN in the same statement included.
+        if (!$this->__column_exists_or_pending($tableName, $type_column)) {
+            $this->__add_column($tableName, $type_column, "ADD COLUMN $type_column BIGINT NULL AFTER $id_column");
         }
     }
 
     private function columnHasIndex($tableName, $columnName)
     {
+        if (isset($this->__pending_indexes_added[$tableName][$columnName])) {
+            return true;
+        }
+
         $indexes = DB::select("SHOW INDEXES FROM $tableName WHERE Key_name = ?", [$columnName]);
 
         return count($indexes) > 0;
@@ -488,6 +616,10 @@ class Migrate_Normalize_Schema_Command extends Command
      */
     private function indexExists($tableName, $indexName)
     {
+        if (isset($this->__pending_indexes_added[$tableName][$indexName])) {
+            return true;
+        }
+
         $indexes = DB::select("SHOW INDEXES FROM $tableName WHERE Key_name = ?", [$indexName]);
 
         return count($indexes) > 0;
@@ -509,10 +641,13 @@ class Migrate_Normalize_Schema_Command extends Command
     /**
      * Normalize order column for a table
      *
-     * Ensures:
+     * Queues onto the table's pending ALTER:
      * - Column is BIGINT DEFAULT NULL
      * - Index order_idx exists on (order)
-     * - Triggers exist for auto-incrementing NULL values on INSERT/UPDATE
+     *
+     * The auto-increment INSERT/UPDATE triggers are createOrderTriggers(), called by the main
+     * loop AFTER the flush - CREATE TRIGGER is not an ALTER TABLE clause, and the triggers
+     * must not exist before the column and index they read.
      *
      * @param string $tableName The name of the table
      */
@@ -547,16 +682,25 @@ class Migrate_Normalize_Schema_Command extends Command
             }
 
             if ($needs_modify) {
-                DB::statement("ALTER TABLE `$tableName` MODIFY COLUMN `order` BIGINT DEFAULT NULL");
+                $this->__alter($tableName, "MODIFY COLUMN `order` BIGINT DEFAULT NULL");
             }
         }
 
         // 2. Ensure order_idx index exists
         if (!$this->indexExists($tableName, 'order_idx')) {
-            DB::statement("ALTER TABLE `$tableName` ADD INDEX order_idx(`order`)");
+            $this->__add_index($tableName, 'order_idx', "ADD INDEX order_idx(`order`)");
         }
+    }
 
-        // 3. Ensure triggers exist for auto-incrementing NULL values
+    /**
+     * Ensure the `order` auto-increment triggers exist for a table.
+     *
+     * Called after the table's ALTER TABLE has been flushed.
+     *
+     * @param string $tableName The name of the table
+     */
+    private function createOrderTriggers($tableName)
+    {
         $insert_trigger_name = "{$tableName}_order_insert";
         $update_trigger_name = "{$tableName}_order_update";
 

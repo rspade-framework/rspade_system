@@ -392,7 +392,7 @@ NAMING CONVENTIONS
 FRAMEWORK EVENT CATALOG
 
     The framework fires these events automatically. This is the COMPLETE catalog
-    (14 events across five families). Each entry lists: the event kind
+    (15 events across six families). Each entry lists: the event kind
     (gate/filter/action/resolve), where it fires, its exact payload keys, the
     return contract (for gate/filter/resolve; actions ignore returns), and what
     to use it for.
@@ -517,6 +517,40 @@ FRAMEWORK EVENT CATALOG
                     (render the generic extension icon)
             Use for: producing custom thumbnail rasters for a mime the renderer
                      registry does not cover.
+
+    Initial User Events (action)
+
+        user.initial.created (action)
+            Fired from: Rsx_Initial_User::create(), after the initial account's two
+                        rows are written and before the function returns. That
+                        function is the ONE implementation of "create this
+                        application's first account", reached from the first-run
+                        setup screen, the RSPADE_DEFAULT_* post-migrate step (the END
+                        of a migrate, after the final normalize - deliberately NOT a
+                        migration), the test-suite baseline seed, and a direct call.
+                        It fires ONCE per database, ever.
+            Data: {user: User_Model, login_user: Login_User_Model, site_id: int,
+                   source: string}
+                  Both records carry id 1 - that is a CONTRACT, assigned explicitly
+                  rather than left to AUTO_INCREMENT. source names the path that
+                  created the account: first_run | post_migrate | test_baseline |
+                  manual (the SOURCE_* constants on Rsx_Initial_User).
+            Return: ignored (it is an action).
+            Use for: everything an APPLICATION wants for its founder - a group
+                     membership, admin ACLs, a starter workspace. This is the
+                     supported alternative to a migration that inserts rows keyed to
+                     user id 1, which cannot work: a migration runs once per
+                     database at a fixed point in history, never runs for the test
+                     baseline at all, and must not couple itself to the model and
+                     handler code these rows need.
+            Handlers run INLINE in whatever created the account - a web request, the
+            migrate process, or the test runner - and a throw takes the creation down
+            with it (both rows are already written). The event ALSO fires when the
+            test baseline is seeded, so an application's handler rows are part of
+            every test's starting database; changing what a handler does requires
+            bumping Rsx_Test_Command::CACHE_VERSION or running rsx:test --fresh.
+            Write the event name as a LITERAL in #[OnEvent] - never a class constant.
+            See: php artisan rsx:man initial_user
 
     Dispatch Events (action)
 

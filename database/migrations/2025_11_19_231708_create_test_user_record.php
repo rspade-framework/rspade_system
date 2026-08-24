@@ -6,15 +6,26 @@ use Illuminate\Support\Facades\DB;
 return new class extends Migration
 {
     /**
-     * Run the migrations.
-     *
-     * Creates a default site and user record for the test user.
+     * Create the default site (id 1).
      *
      * Assumptions:
-     * - Running in fresh/reset database
-     * - login_users table has record with id=1 (created by prior migration)
+     * - Running in a fresh/reset database
      * - sites table is empty
-     * - users table is empty
+     *
+     * THE USER HALF USED TO LIVE HERE. This migration also inserted the site profile
+     * for login_user 1 - the second of two account halves created at two different
+     * points in schema history, neither able to guarantee the id. The whole account is
+     * now created AFTER the migration chain, by a post-migrate step in Maint_Migrate
+     * calling Rsx_Initial_User, which assigns id 1 to both halves and fires
+     * user.initial.created - not from a migration, because it runs model and
+     * application handler code that only works against the current schema. An
+     * application that wants rows keyed to its founder registers a handler for that
+     * event instead of a migration like this one.
+     *
+     * The site insert stays: it is schema-shaped seed data every install needs, and the
+     * initial user's profile needs a site to belong to.
+     *
+     * See: php artisan rsx:man initial_user
      *
      * @return void
      */
@@ -34,46 +45,6 @@ return new class extends Migration
                 'test',
                 'Test Site',
                 1,
-                NOW(3),
-                NOW(3)
-            )
-        ");
-
-        // The site profile for login_user 1 - but ONLY when that credential exists.
-        //
-        // Its sibling migration (create_admin_test_user) creates login_user 1 from
-        // RSPADE_DEFAULT_EMAIL / RSPADE_DEFAULT_PASSWORD, and deliberately creates
-        // nothing when those are blank: development hands that job to the first-run
-        // setup screen, and a test database wants a schema rather than a person.
-        // Inserting this row regardless would then violate the foreign key and take
-        // the whole migration run down with it.
-        //
-        // A profile with no credential is not a lesser outcome worth forcing - it is
-        // a row nobody can log in as.
-        $login_user_exists = DB::table('login_users')->where('id', 1)->exists();
-
-        if (!$login_user_exists) {
-            return;
-        }
-
-        // Create user record for test user and associate with site
-        DB::statement("
-            INSERT INTO users (
-                id,
-                login_user_id,
-                site_id,
-                email,
-                first_name,
-                last_name,
-                created_at,
-                updated_at
-            ) VALUES (
-                1,
-                1,
-                1,
-                'test@example.com',
-                'Test',
-                'User',
                 NOW(3),
                 NOW(3)
             )

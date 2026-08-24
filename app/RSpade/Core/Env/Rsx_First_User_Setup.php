@@ -6,11 +6,8 @@
 
 namespace App\RSpade\Core\Env;
 
-use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Env\Rsx_Env_Writer;
-use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\Site_Model;
-use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Env\Rsx_Initial_User;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -37,7 +34,8 @@ use App\RSpade\Core\Rsx;
  * look like one flow and none of them depend on the asset pipeline.
  *
  * THE CHECK IS `login_users`, not `users`: credentials and site profiles are
- * different tables, and a seed migration puts a row in `users` regardless.
+ * different tables, and asking the wrong one answers a different question. The
+ * account itself is created by Rsx_Initial_User - see rsx:man initial_user.
  */
 class Rsx_First_User_Setup
 {
@@ -87,7 +85,7 @@ class Rsx_First_User_Setup
     private static function __needs_setup(): bool
     {
         try {
-            return Login_User_Model::query()->limit(1)->count() === 0;
+            return Rsx_Initial_User::is_needed();
         } catch (\Throwable $e) {
             return false;
         }
@@ -118,7 +116,7 @@ class Rsx_First_User_Setup
         }
 
         try {
-            self::__create_login_user($email, $password);
+            self::__create_initial_user($email, $password);
         } catch (\Throwable $e) {
             self::__render_form('Could not create the account: ' . $e->getMessage(), $email, $autofill);
             return;
@@ -155,59 +153,24 @@ class Rsx_First_User_Setup
     }
 
     /**
-     * Create the credential record.
+     * Create the initial account.
      *
-     * Through the model, so the framework's own save() path runs - audit stamps
-     * and every other hook a credential record is entitled to.
+     * ONE implementation of that job lives in Rsx_Initial_User: it assigns id 1 to
+     * both halves, creates the site profile the credential needs to be usable, and
+     * fires user.initial.created so the application can attach its own rows. The
+     * wizard's job is only to decide WHETHER the account is needed and to collect
+     * the two values - the shape of the account is not its business.
+     *
+     * A credential with no site profile was the old failure here: sign-in looks up
+     * the enabled User_Model rows for an identity, and with none it reports "your
+     * account is inactive", which is a confusing way of saying "you belong to no
+     * site" (2026-08-20).
      */
-    private static function __create_login_user(string $email, string $password): void
+    private static function __create_initial_user(string $email, string $password): void
     {
-        // Every field assigned explicitly - never mass assignment, so what this
-        // writes is visible here rather than inferred from a request.
-        $login_user = new Login_User_Model();
-        $login_user->email = $email;
-        $login_user->password = Hash::make($password);
-        $login_user->is_activated = 1;
-        $login_user->is_verified = 1;
-        $login_user->save();
-
-        self::__create_site_membership($login_user->id, $email);
-    }
-
-    /**
-     * Give the new credential a SITE MEMBERSHIP.
-     *
-     * A login_users row on its own is not an account anyone can use. Sign-in
-     * looks up the enabled User_Model rows for that identity, and with none it
-     * sends the person straight back out again - reported as "your account is
-     * inactive", which is a confusing way of saying "you belong to no site".
-     * Creating the credential without this produced exactly that: a wizard that
-     * cheerfully made an account you could not log into (2026-08-20).
-     *
-     * The site is the configured default when it exists, and otherwise the
-     * lowest-numbered site there is - a fresh install has one, and guessing an
-     * id that does not exist would recreate the same dead end.
-     */
-    private static function __create_site_membership(int $login_user_id, string $email): void
-    {
-        $site_id = (int) config('multi-tenant.default_site_id', 1);
-
-        if (Site_Model::query()->whereKey($site_id)->count() === 0) {
-            $first_site = Site_Model::query()->orderBy('id')->first();
-            if ($first_site === null) {
-                // No sites at all - nothing to belong to. The account still
-                // exists; the application's own setup decides what happens next.
-                return;
-            }
-            $site_id = (int) $first_site->id;
-        }
-
-        $user = new User_Model();
-        $user->login_user_id = $login_user_id;
-        $user->site_id = $site_id;
-        $user->email = $email;
-        $user->is_enabled = 1;
-        $user->save();
+        Rsx_Initial_User::create($email, $password, [
+            'source' => Rsx_Initial_User::SOURCE_FIRST_RUN,
+        ]);
     }
 
     /**
