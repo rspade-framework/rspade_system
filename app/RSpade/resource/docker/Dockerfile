@@ -36,7 +36,7 @@ RUN echo "$TZ" > /etc/timezone
 
 # OS packages. Grouped by why they are here, because an unexplained package list
 # is a list nobody can ever prune.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
     # web server, cache, process supervision
         nginx redis-server redis-tools supervisor \
     # talking to a database (the SERVER is a dev-target concern)
@@ -48,8 +48,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         imagemagick ghostscript optipng \
     # document preview and text extraction - RUNTIME features, both targets
         libreoffice poppler-utils fonts-liberation fonts-dejavu-core \
-    # the framework shells out to these
-        git rsync procps less nano \
+    # the framework shells out to these. openssh-client is git's transport for an
+    # ssh:// or git@host: remote - git only RECOMMENDS it, so it is named here
+    # rather than left to be pulled in by something else.
+        git openssh-client rsync procps less nano \
     # bin/mysqlpv, the dump/restore pipe viewer. BASE layer, not dev: the schema-cache
     # RESTORE runs on `migrate` in every target, not only in development. Its absence
     # degrades to a silent pipeline rather than a failure, but a progress-less restore of
@@ -82,7 +84,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # not. Listing it fails the whole apt-get and breaks the build. It is present:
 # `php -m` reports Zend OPcache without it.
 COPY php/ondrej-php.sources /etc/apt/sources.list.d/ondrej-php.sources
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
         php${PHP_VERSION} \
         php${PHP_VERSION}-fpm \
         php${PHP_VERSION}-cli \
@@ -118,7 +120,7 @@ RUN curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php \
 # >=26, so on node 23 an upgrade to latest aborts with EBADENGINE and takes the
 # whole image build down with it.
 RUN curl -fsSL https://deb.nodesource.com/setup_23.x | bash - \
-    && apt-get update && apt-get install -y --no-install-recommends nodejs \
+    && apt-get update && apt-get install -y nodejs \
     && npm install -g npm@11 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -240,7 +242,7 @@ ENV RSPADE_CONTAINER_TARGET=dev
 RUN sed -i "s/^target=.*/target=dev/" /.rspade_container \
     && printf '%s\n' "# This is the RSpade DEVELOPMENT container." > /.rspade_container_dev
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y \
     # the database, for a self-contained development environment
         mysql-server \
     # Playwright's headless browser dependencies - this is what makes
