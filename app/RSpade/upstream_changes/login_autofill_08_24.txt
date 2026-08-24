@@ -1,0 +1,106 @@
+CATEGORY: 2 - ACTION REQUIRED (remove one .env key; re-gate rsx/app/dev/ if you use it)
+TITLE: RSPADE_DEBUG_DOMAIN_SUFFIX and Rsx::is_debug_site() are REMOVED; login
+       credential auto-fill is now the boolean RSPADE_LOGIN_AUTOFILL
+DATE: 2026-08-24
+
+--------------------------------------------------------------------------------
+WHY YOU ARE READING THIS
+--------------------------------------------------------------------------------
+
+Two things you may have in your own code stop existing after this pull:
+
+    Rsx::is_debug_site()                  - the method is DELETED (fatal on call)
+    rsx.development.debug_domain_suffix   - the config key is DELETED
+    RSPADE_DEBUG_DOMAIN_SUFFIX            - the .env key is no longer read
+
+Neither of these fails at build time. A call to the deleted method fatals when the
+line RUNS, which on a login page or an admin-only screen can be a path you do not
+exercise locally. Audit for it now rather than finding out in production.
+
+    grep -rn 'is_debug_site\|debug_domain_suffix\|RSPADE_DEBUG_DOMAIN_SUFFIX' rsx/ .env .env.dist
+
+--------------------------------------------------------------------------------
+ACTION 1 - YOUR .env AND .env.dist
+--------------------------------------------------------------------------------
+
+Delete the RSPADE_DEBUG_DOMAIN_SUFFIX line from both files.
+
+Remember the .env.dist convention: a DELETED line comes back on the next boot, so
+if the key is in .env.dist, remove it THERE too - or the boot sync writes it back
+into .env, where it will sit forever meaning nothing.
+
+If you WANT the login form to keep pre-filling your development credentials, add:
+
+    RSPADE_LOGIN_AUTOFILL=true
+
+On or off, and nothing else decides it - not the hostname, not the RSX mode. It
+still requires RSPADE_DEFAULT_EMAIL and RSPADE_DEFAULT_PASSWORD to be set; either
+one alone fills in nothing. Blank is the default and the safe setting.
+
+Understand what you are turning on: it puts a working credential on a page that
+has not authenticated anybody, and your password is in .env in plain text. .env
+travels when you copy it to another machine, and so does this. The old key at
+least could not match a hostname you did not own; this one has no such property.
+Leave it off anywhere another person can reach the address.
+
+--------------------------------------------------------------------------------
+ACTION 2 - ANY #[Auth_Check] OF YOUR OWN BUILT ON is_debug_site()
+--------------------------------------------------------------------------------
+
+If your rsx/permission.php has a check like the one the template used to ship:
+
+    #[Auth_Check]
+    public static function dev_tools(): bool
+    {
+        return Rsx::is_debug_site();          // <- deleted method, fatals when run
+    }
+
+it must be re-gated on something that still exists. Decide deliberately - the
+concept you are replacing was a hostname suffix, and "which hosts are mine" is not
+what most of these checks actually meant. The usual honest answer is the mode:
+
+    #[Auth_Check]
+    public static function dev_tools(): bool
+    {
+        return !Rsx::is_production();
+    }
+
+RSX_MODE is the framework's single mode authority, so this cannot disagree with
+anything else, and a sealed production build closes the surface with no hostname
+to get wrong.
+
+There is also a new framework built-in for the case where you want a surface to
+ship UNREACHABLE - the always-false counterpart to 'public':
+
+    #[Auth('closed')]
+
+Nothing satisfies it, in any mode, for any identity. Use it when code should stay
+in the tree but be reachable by nobody; it says "switched off on purpose" in a way
+that commenting the routes out does not.
+
+--------------------------------------------------------------------------------
+WHAT THE TEMPLATE APP DID
+--------------------------------------------------------------------------------
+
+The reference app took the third option: its dev showcase under rsx/app/dev/ (13
+routes - modals, flash, ORM, SPA, ACL tester, attachments, document preview) now
+declares #[Auth('closed')] on every surface, and the dev_tools check is deleted.
+The code stays readable as a worked example of those framework surfaces; nobody
+can browse it.
+
+If your project forked that directory and you want it back, replace 'closed' with
+a check of your own per ACTION 2. See:
+
+    system/app/RSpade/resource/reference_app/app/dev/dev_index_controller.php
+    system/app/RSpade/resource/reference_app/permission.php
+
+--------------------------------------------------------------------------------
+WHAT DID NOT CHANGE
+--------------------------------------------------------------------------------
+
+Rsx::is_dev_site() is untouched - still "hostname contains .dev.", still what
+suppresses real email and SMS delivery. Only the DEBUG-site concept is gone.
+
+The first-run setup wizard still offers its "fill these credentials in
+automatically" checkbox and still writes .env for you when you tick it. It now
+writes RSPADE_LOGIN_AUTOFILL=true instead of a hostname. Nothing to do.

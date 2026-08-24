@@ -66,6 +66,23 @@ abstract class Portal_Permission_Abstract
     }
 
     /**
+     * The explicit closed marker: always false.
+     *
+     * The counterpart to public(). A surface gated on this one is reachable by
+     * nobody, in any mode, for any identity - which is a thing worth being able
+     * to SAY. Code that is shipped but deliberately unreachable otherwise has to
+     * be commented out or deleted, and both of those lose the declaration that it
+     * was switched off on purpose.
+     *
+     * @return bool Always false
+     */
+    #[Auth_Check]
+    public static function closed(): bool
+    {
+        return false;
+    }
+
+    /**
      * Whether a portal user is currently authenticated.
      *
      * Reads Portal_Session - never the staff Session. Marked #[Replaceable]: an

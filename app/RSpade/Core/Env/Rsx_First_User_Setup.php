@@ -174,31 +174,26 @@ class Rsx_First_User_Setup
     }
 
     /**
-     * Turn on credential auto-fill FOR THIS HOST.
+     * Turn on credential auto-fill.
      *
-     * The declaration written is the hostname, not a boolean. A boolean travels
-     * with .env - copy that file to staging and auto-fill follows it there - while
-     * a host only matches the machine it names. Same file elsewhere, no auto-fill,
-     * with nothing to remember to switch off.
+     * On or off, and nothing else decides it. The developer ticked a box on the
+     * setup screen; that answer is what gets written, and clearing the key is what
+     * takes it back. .env is the developer's own file - it is not the framework's
+     * place to infer from a hostname whether they meant it.
      *
      * @return string|null a note for the success screen, or null when nothing was written
      */
     private static function __enable_autofill(string $email, string $password): ?string
     {
-        $host = Rsx::get_hostname();
-        if ($host === '') {
-            return null;
-        }
-
         $written = Rsx_Env_Writer::set_many([
             'RSPADE_DEFAULT_EMAIL' => $email,
             'RSPADE_DEFAULT_PASSWORD' => $password,
-            'RSPADE_DEBUG_DOMAIN_SUFFIX' => $host,
+            'RSPADE_LOGIN_AUTOFILL' => 'true',
         ]);
 
         if (!$written) {
             return 'Could not write .env - set RSPADE_DEFAULT_EMAIL, RSPADE_DEFAULT_PASSWORD'
-                . ' and RSPADE_DEBUG_DOMAIN_SUFFIX by hand to enable auto-fill.';
+                . ' and RSPADE_LOGIN_AUTOFILL=true by hand to enable auto-fill.';
         }
 
         return null;
@@ -221,8 +216,6 @@ class Rsx_First_User_Setup
             'samesite' => 'Lax',
         ]);
 
-        $host = Rsx::get_hostname();
-
         $body = '';
 
         if ($error !== null) {
@@ -244,11 +237,12 @@ class Rsx_First_User_Setup
 
       <label class="check">
         <input type="checkbox" name="rsx_autofill" value="1"' . ($autofill ? ' checked' : '') . '>
-        <span>Fill these credentials in automatically on <strong>' . self::__e($host) . '</strong></span>
+        <span>Fill these credentials in automatically on the login form</span>
       </label>
       <div class="warn">
         Convenient while developing, and it stores this password in plain text in
-        your <code>.env</code> file. Leave it off if this host is reachable by
+        your <code>.env</code> file - and puts a working login on a page that has
+        not authenticated anybody. Leave it off if this install is reachable by
         anyone else.
       </div>
 
@@ -278,9 +272,8 @@ class Rsx_First_User_Setup
     </div>';
 
         if ($autofill && $env_note === null) {
-            $body .= '<p class="note">Auto-fill is on for <strong>' . self::__e(Rsx::get_hostname())
-                . '</strong>. The login form will arrive already filled in. Turn it off by clearing'
-                . ' <code>RSPADE_DEBUG_DOMAIN_SUFFIX</code> in <code>.env</code>.</p>';
+            $body .= '<p class="note">Auto-fill is on. The login form will arrive already filled in.'
+                . ' Turn it off by clearing <code>RSPADE_LOGIN_AUTOFILL</code> in <code>.env</code>.</p>';
         } elseif ($env_note !== null) {
             $body .= '<div class="error" style="margin-top:1.25rem">' . self::__e($env_note) . '</div>';
         } else {

@@ -225,7 +225,7 @@ function parse_args() {
 
     // Browse the APP_URL host (DNS-mapped to loopback via a Chromium resolver rule)
     // rather than a literal localhost, so everything that keys on the request host -
-    // Rsx::get_hostname(), Rsx::is_debug_site(), environment-scoped auth gates, the
+    // Rsx::get_hostname(), environment-scoped auth gates, the
     // dev-mode hostname guard - sees the same identity a real browser does. Plain
     // http: nginx serves the name on :80 (upstream SSL termination is a deployment
     // concern). Falls back to localhost when no APP_URL host can be resolved.

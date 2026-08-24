@@ -468,38 +468,6 @@ class Rsx
     }
 
     /**
-     * Check if this is a DEBUG SITE - a host the operator has declared as their
-     * own, where developer backdoors are permitted: login credential auto-fill,
-     * debug tools, test data access. Every debug site is also a dev site.
-     *
-     * The host is matched against rsx.development.debug_domain_suffix
-     * (RSPADE_DEBUG_DOMAIN_SUFFIX in .env). A host qualifies when it EQUALS the
-     * suffix or ends with '.' . suffix - so "dev.example.com" declares both
-     * dev.example.com and app.dev.example.com, and never notdev.example.com.
-     *
-     * NO SUFFIX DECLARED MEANS NO DEBUG SITE ANYWHERE. That is the shipped
-     * default and the reason this is configuration rather than a hardcoded
-     * domain: a framework that ships a debug host baked in is a framework whose
-     * backdoors are one DNS entry away from anybody. Declare it only for hosts
-     * you control.
-     */
-    public static function is_debug_site(): bool
-    {
-        try {
-            $suffix = strtolower(trim((string) config('rsx.development.debug_domain_suffix', '')));
-            if ($suffix === '') {
-                return false;
-            }
-
-            $hostname = strtolower(self::get_hostname());
-
-            return $hostname === $suffix || str_ends_with($hostname, '.' . $suffix);
-        } catch (\Exception $e) {
-            return false;
-        }
-    }
-
-    /**
      * Clear the current controller and action tracking
      */
     public static function _clear_current_controller_action()

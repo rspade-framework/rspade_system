@@ -482,16 +482,15 @@ return [
         // Show route matching details in error pages
         'show_route_details' => env('RSX_SHOW_ROUTE_DETAILS', env('RSX_MODE', 'development') !== 'production'),
 
-        // The hostname suffix that marks a DEBUG SITE - a host you control and
-        // where developer conveniences (login credential auto-fill) are allowed.
-        // Rsx::is_debug_site() is true when the browsed host equals this value or
-        // ends with '.' . this value.
+        // Whether the login form arrives with RSPADE_DEFAULT_EMAIL /
+        // RSPADE_DEFAULT_PASSWORD already filled in. On or off, nothing else.
         //
-        // EMPTY IS THE SECURE DEFAULT AND THE SHIPPED ONE: with no suffix declared
-        // NO host is ever a debug site, so a public install can never auto-fill a
-        // credential no matter what else is configured. Declare it only for hosts
-        // you own (RSPADE_DEBUG_DOMAIN_SUFFIX in .env) - never a public hostname.
-        'debug_domain_suffix' => env('RSPADE_DEBUG_DOMAIN_SUFFIX', ''),
+        // OFF IS THE SECURE DEFAULT AND THE SHIPPED ONE. The first-run setup
+        // wizard turns it on when the developer ticks the box, and clearing this
+        // value turns it off again. It is a developer convenience that puts a
+        // usable credential on an unauthenticated page, so leave it off anywhere
+        // another person can reach the address.
+        'login_autofill' => env('RSPADE_LOGIN_AUTOFILL', false),
     ],
 
     /*
@@ -500,8 +499,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | The credentials of the first user, created by the framework migration
-    | create_admin_test_user, and the pair a debug site may auto-fill into its
-    | login form.
+    | create_admin_test_user, and the pair the login form may auto-fill.
     |
     | BOTH ARE EMPTY BY DEFAULT AND MUST BE SET IN .env. They are deliberately
     | not given fallback values: a framework with a known default password is a
@@ -509,8 +507,8 @@ return [
     | is blank rather than inventing one, so a new project makes a deliberate
     | choice before it has a login at all. See .env.README.
     |
-    | Auto-fill additionally requires the request host to match
-    | rsx.development.debug_domain_suffix - credentials existing is not enough.
+    | Auto-fill additionally requires rsx.development.login_autofill to be on -
+    | credentials existing is not enough.
     |
     */
 

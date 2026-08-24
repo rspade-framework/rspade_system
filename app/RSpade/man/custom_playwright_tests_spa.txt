@@ -354,15 +354,13 @@ COMMON PITFALLS
 
     Browsing localhost changes what the HOST-derived helpers answer
         Rsx::get_hostname() reports the browsed host, so on localhost
-        Rsx::is_dev_site() and Rsx::is_debug_site() are both FALSE. Any
-        environment-scoped #[Auth] gate built on them (the template's
-        'dev_tools' is the shipped example) therefore DENIES under a
-        localhost test while passing in a real browser on the APP_URL host.
-        rsx:debug avoids this by browsing the APP_URL host with a Chromium
-        host-resolver rule pointing it at loopback; a hand-written test that
-        needs those gates to pass must do the same
-        (--host-resolver-rules="MAP <app-host> 127.0.0.1") instead of using
-        the bare loopback URL.
+        Rsx::is_dev_site() is FALSE. Any environment-scoped #[Auth] gate built
+        on it therefore DENIES under a localhost test while passing in a real
+        browser on the APP_URL host. rsx:debug avoids this by browsing the
+        APP_URL host with a Chromium host-resolver rule pointing it at
+        loopback; a hand-written test that needs those gates to pass must do
+        the same (--host-resolver-rules="MAP <app-host> 127.0.0.1") instead of
+        using the bare loopback URL.
 
     Session cookies and plain http
         Session cookies are Secure in every mode EXCEPT development, where the

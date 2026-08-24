@@ -176,7 +176,6 @@ DEV SITE EMAIL SAFETY
 
     Detection
         Rsx::is_dev_site()     - true if hostname contains .dev.
-        Rsx::is_debug_site()   - true if hostname ends in .dev.hanson.xyz
 
     Environment Variables (.env)
         EMAIL_DEV_CATCHALL_ADDRESS=dev@example.com
@@ -206,7 +205,7 @@ DEV SITE EMAIL SAFETY
 HOSTNAME DETECTION
 
     Rsx::get_hostname()
-        Returns the application hostname. Used by is_dev_site/is_debug_site.
+        Returns the application hostname. Used by is_dev_site.
 
         Resolution order:
         - Web mode: uses request hostname (HTTP_HOST)

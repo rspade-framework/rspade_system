@@ -193,7 +193,9 @@ WHAT IS - AND IS NOT - AN AUTH GATE
         - role floors (can_manage_users -> ROLE_SITE_ADMIN or better)
         - permission grants (can_view_billing -> PERM_MANAGE_SITE_BILLING)
         - composite functional rules (can_impersonate -> manager AND not
-          currently impersonating; dev_tools -> debug site only; plan tiers)
+          currently impersonating; plan tiers)
+        - the two explicit markers: 'public' always passes, 'closed' never
+          does (a surface shipped deliberately unreachable)
 
     IS NOT a gate (stays INSIDE the function body, after the gates pass):
         - record ownership          ("only your own profile")

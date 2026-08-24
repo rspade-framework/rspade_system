@@ -225,14 +225,14 @@ class Environment_Health_Checks
             ];
         }
 
-        // A prod mode (debug or production) on a hostname that resolves as a debug site
-        // means the developer backdoors (auto-fill login, debug tools) are live in prod.
-        if (Rsx::is_production() && Rsx::is_debug_site()) {
+        // Credential auto-fill on a production build puts a working login on an
+        // unauthenticated page. It is a development convenience and nothing else.
+        if (Rsx::is_production() && config('rsx.development.login_autofill')) {
             $rows[] = [
-                'label' => 'Debug Site Backdoors',
+                'label' => 'Login Auto-fill',
                 'status' => 'WARN',
-                'detail' => 'debug backdoors active on a production-mode box (the hostname matches RSPADE_DEBUG_DOMAIN_SUFFIX)',
-                'remediation' => 'clear RSPADE_DEBUG_DOMAIN_SUFFIX in .env, or serve production from a hostname that does not match it',
+                'detail' => 'the login form pre-fills RSPADE_DEFAULT_EMAIL / RSPADE_DEFAULT_PASSWORD on a production-mode box',
+                'remediation' => 'clear RSPADE_LOGIN_AUTOFILL in .env',
             ];
         }
 

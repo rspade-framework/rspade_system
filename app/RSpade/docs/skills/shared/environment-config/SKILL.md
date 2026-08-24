@@ -102,7 +102,9 @@ In **development mode only**, every web request verifies the browsed host matche
 
 Fix by making `.env` tell the truth about the host you are actually browsing (usually: restore the `$HOSTNAME` form). Cross-check what the framework thinks: `php artisan rsx:debug /` and `Rsx::get_hostname()`.
 
-`Rsx::is_dev_site()` (hostname contains `.dev.`) suppresses production behaviors - email/SMS go through catchall/whitelist instead of out the door. `Rsx::is_debug_site()` (ends in `.dev.hanson.xyz`) additionally enables developer backdoors: credential auto-fill, debug tools. **Every debug site is also a dev site.** Both derive from the hostname, so getting `APP_URL` wrong on a staging box can silently turn real email delivery on.
+`Rsx::is_dev_site()` (hostname contains `.dev.`) suppresses production behaviors - email/SMS go through catchall/whitelist instead of out the door. It derives from the hostname, so getting `APP_URL` wrong on a staging box can silently turn real email delivery on.
+
+Login credential auto-fill is NOT hostname-derived: it is `RSPADE_LOGIN_AUTOFILL`, on or off, written by the first-run setup wizard when the developer ticks its checkbox.
 
 ---
 
