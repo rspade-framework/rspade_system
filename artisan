@@ -45,6 +45,27 @@ require __DIR__.'/bootstrap/rsx_storage_link.php';
 
 /*
 |--------------------------------------------------------------------------
+| Boot-free intercepted commands
+|--------------------------------------------------------------------------
+|
+| The commands that exist to REPAIR a broken tree. They are intercepted below,
+| none of them boots Laravel, and every pre-boot guard from here down exempts
+| them - because a guard standing between the operator and the lever that fixes
+| the thing it is complaining about is not a guard, it is a deadlock.
+|
+| Computed here, before the first guard, so both can consult it.
+|
+*/
+
+$__rsx_boot_free = isset($argv[1]) && in_array($argv[1], [
+    'rsx:framework:pull',
+    'rsx:maintenance:enable',
+    'rsx:maintenance:disable',
+    'rsx:git',
+], true);
+
+/*
+|--------------------------------------------------------------------------
 | Submodule Sync Guard (pre-boot)
 |--------------------------------------------------------------------------
 |
@@ -56,9 +77,25 @@ require __DIR__.'/bootstrap/rsx_storage_link.php';
 | Silent when system/ is not a submodule (the monorepo, and any project not yet
 | migrated), and silent when it cannot tell.
 |
+| EXEMPT FOR THE BOOT-FREE COMMANDS, and rsx:git above all. `git` in a project
+| container IS `php artisan rsx:git` (bin/git-shim.sh execs it), so guarding
+| rsx:git here made the mismatch UNFIXABLE: the remedy this guard prints is
+| `git submodule update --init --recursive`, which routed straight back into the
+| guard that printed it. Every artisan command AND every git subcommand refused,
+| read-only ones included, leaving the real git binary or an unwrapped PATH -
+| defeating the guard - as the only way out. A downstream field report, 2026-08-24.
+|
+| A version mismatch is also the NORMAL state immediately after a pull that
+| carries a framework bump. The hazard it guards against is SERVING or RUNNING
+| against the wrong framework, which is why public/index.php stays unconditional
+| and every ordinary artisan command still refuses. Running git is not that
+| hazard - it is how you stop being in this state.
+|
 */
 
-require __DIR__.'/bootstrap/rsx_submodule_sync.php';
+if (!$__rsx_boot_free) {
+    require __DIR__.'/bootstrap/rsx_submodule_sync.php';
+}
 
 /*
 |--------------------------------------------------------------------------
@@ -85,13 +122,6 @@ require __DIR__.'/bootstrap/rsx_submodule_sync.php';
 | ordinary command heals or refuses as usual.
 |
 */
-
-$__rsx_boot_free = isset($argv[1]) && in_array($argv[1], [
-    'rsx:framework:pull',
-    'rsx:maintenance:enable',
-    'rsx:maintenance:disable',
-    'rsx:git',
-], true);
 
 if (!$__rsx_boot_free) {
     require __DIR__.'/bootstrap/rsx_env_heal.php';
