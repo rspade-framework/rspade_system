@@ -46,6 +46,7 @@ When you write there, match this tone: **terse, not verbose** (no filler words o
 @shared/72-paths-config-environment.md
 @shared/73-maintenance-and-operations.md
 @shared/80-git-and-conflicts.md
+@shared/85-project-skills.md
 @app/00-app-context.md
 @app/70-app-operations.md
 @app/80-framework-updates.md

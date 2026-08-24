@@ -1,8 +1,28 @@
 <!-- bucket: app — single-source, never duplicate. True ONLY in a downstream application. -->
 
+## FRAMEWORK STATUS AND REPORTING ISSUES
+
+**RSpade is at RELEASE CANDIDATE.** It is ready for production use, but expect some
+glitches and some changes going forward. Developers are encouraged to report anything
+that misbehaves, confuses, or blocks legitimate work - unexpected command behavior,
+confusing error messages, a workflow that fights you, an assumption that conflicts
+with real-world usage. Three channels, all equivalent:
+
+- email **brian@hanson.xyz**
+- **https://rspade.org**
+- the issue tracker at **https://github.com/rspade-framework/rspade**
+
 ## APPLICATION CONTEXT
 
 - **Delegation research artifacts** (audits, investigation reports) are persisted verbatim into your own project's documentation tree - e.g. `rsx/resource/` - before implementation begins.
+
+### The reference app — ground truth when your code has diverged
+
+Your `/rsx/` was **seeded from** the RSpade reference application and is yours from your first commit; it is not the reference any more. The pristine, **release-current** copy ships inside every framework release at **`system/app/RSpade/resource/reference_app/`**.
+
+**Read it whenever "follow an existing pattern" needs a pattern you cannot trust your own code for** — a feature the framework shipped after you diverged, or a wiring you suspect your app does the old way. RSpade wiring is largely implicit (no registration, attributes discovered by the manifest, forms binding by name), so a working example settles questions prose cannot, and this copy always matches the framework revision you are running. Your own code does not.
+
+**It is READ-ONLY.** All of `system/` is overwritten by `rsx:framework:pull`; edits there vanish. Copy OUT of it into your `/rsx/`, never work inside it. It is invisible to the manifest and to `rsx:check` (any directory named `resource/` is ignored **by name** — which is what stops its classes colliding with yours). Details: `rsx:man template_app`.
 
 ### Project documentation
 

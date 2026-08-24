@@ -22,8 +22,14 @@ SYNOPSIS
 
 DESCRIPTION
     RSpade runs in one of three modes. RSX_MODE (read from the project-root
-    .env) is the authoritative source of truth for the mode, independent of
-    Laravel's APP_ENV.
+    .env, and written only by rsx:mode:set) is the SINGLE source of truth for
+    the mode. Laravel's app.env and app.debug are DERIVED from it in
+    config/app.php; the APP_ENV and APP_DEBUG env keys are not read anywhere.
+
+        RSX_MODE       app.env      app.debug
+        development    local        true
+        debug          local        true    (the sealed DIAGNOSTIC build)
+        production     production   false
 
     development
         The default. Dev mode is production-worthy for low traffic: the
@@ -114,10 +120,11 @@ THE SEALED BUILD LIFECYCLE
     rsx:prod:verify
         The cluster / CI tool. Requires a seal. Recomputes the sha256 of
         every sealed asset, checks the build_key on disk against the seal,
-        checks environment sanity (APP_ENV/APP_DEBUG for a strict build),
         and reports OPcache posture (advisory only). Prints a table and
-        exits 0 when the build matches the seal and the environment is
-        sound, 1 otherwise. Run it in a deploy health check.
+        exits 0 when the build matches the seal, 1 otherwise. Run it in a
+        deploy health check. (It carries no environment-sanity rows: app.env
+        and app.debug derive from RSX_MODE, so nothing can disagree with the
+        seal except the mode itself, which the drift check already reports.)
 
     rsx:mode:set dev|debug|prod
         Kept for muscle memory. It is a thin delegator so there is exactly
@@ -198,27 +205,14 @@ STRICT PRODUCTION
                window.rsxapp, so even a call site that survived (there are
                none in app bundles) would no-op at runtime.
 
-    Strict production is gated on a real production environment: enable
-    refuses unless APP_ENV=production and APP_DEBUG=false (see ENVIRONMENT
-    VALIDATION).
-
 ENVIRONMENT VALIDATION
-    rsx:prod:enable validates APP_ENV / APP_DEBUG BEFORE it changes anything.
-
-    Strict production (no --debug) is a HARD requirement:
-        - APP_ENV must be 'production'
-        - APP_DEBUG must be false
-    If either is wrong, enable prints the exact fixes and exits without
-    touching the mode. This is intentional: a strict prod build is meant for
-    a real production host.
-
-    The debug variant (--debug) is a LOCAL test build, so an environment
-    mismatch is a warning, not an error - you can build and run the debug
-    variant on a development box.
-
-    rsx:prod:verify applies the same expectation: for a strict-prod seal it
-    FAILS when APP_ENV/APP_DEBUG are not production-ready; for a debug seal
-    the APP_ENV row is advisory.
+    There is none, and there is nothing to validate. app.env and app.debug
+    derive from RSX_MODE (see DESCRIPTION), so setting RSX_MODE=production IS
+    setting the production environment with debug off. rsx:prod:enable used
+    to refuse unless APP_ENV=production and APP_DEBUG=false; those checks
+    became tautological and were removed, along with the matching
+    rsx:prod:verify rows and the rsx:health "production but APP_DEBUG=true"
+    warning.
 
 DETERMINISM CONTRACT
     A sealed build is deterministic: two byte-identical codebases, checked
@@ -229,8 +223,8 @@ DETERMINISM CONTRACT
 
     How it holds:
 
-    1. File hashing branches on RSX_MODE, not APP_ENV
-       (_rsx_file_hash_for_build). In a prod mode the hash is computed over
+    1. File hashing branches on RSX_MODE (_rsx_file_hash_for_build), which
+       is the only mode switch there is. In a prod mode the hash is over
        the file's PROJECT-RELATIVE path plus its CONTENT (sha512), never the
        absolute path and never disk timestamps. The same logical file at two
        different checkout locations therefore hashes identically. (The
@@ -430,26 +424,78 @@ ENV FACTS VS INVOCATION FLAGS
         WRONG:  RSX_FORCE_BUILD=1 php artisan rsx:prod:build
         RIGHT:  php artisan rsx:prod:build --force
 
+ENV FILE PREPARATION (.env.dist -> .env)
+    .env is LOCAL configuration and is never distributed. .env.dist at the
+    PROJECT ROOT is the tracked, hand-curated canonical defaults, and is the
+    only file a missing .env is created from (whole-file, verbatim).
+    system/.env.dist NEVER seeds a .env - it feeds the key sync only. A
+    project with no root .env.dist refuses to boot in development and names
+    the recovery: cp system/.env.dist .env.dist
+
+    On every DEVELOPMENT boot, keys - never values - propagate downhill:
+
+        system/.env.dist  ->  .env.dist  ->  .env
+
+    A key missing from the lower file is appended verbatim under a dated
+    marker; a key already present is left exactly as it is, whatever its
+    value. Nothing is overwritten, deleted or reordered. Consequently a
+    setting is switched off by setting it EMPTY (SOME_FEATURE=): a deleted
+    line is a missing key, and the next boot restores it.
+
+    The same pass requires DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD and
+    REDIS_HOST to be PRESENT in .env (the first three non-empty; an empty
+    DB_PASSWORD and a passwordless Redis are legal), and mints an APP_KEY when
+    there is none - IN DEVELOPMENT ONLY. Outside development an empty APP_KEY
+    is refused, because a new key silently invalidates every encrypted value
+    and signed cookie made with the one that went missing.
+
+    ENCRYPTED ENV. Laravel's environmentPath() is anchored at the PROJECT ROOT
+    (bootstrap/app.php), so env:encrypt, env:decrypt and key:generate all
+    operate on the root .env and write .env.encrypted beside it - never inside
+    system/, which every framework pull resets and cleans. env:decrypt reaches
+    the root through App\RSpade\Commands\Rsx\Env_Decrypt_Command, which
+    overrides the stock base_path() output default.
+
+    If .env.encrypted is present and .env is ABSENT, the heal THROWS in every
+    mode and names env:decrypt. It never creates a .env from .env.dist over an
+    encrypted one: the box would boot looking configured while its real
+    configuration sat encrypted one filename away. With both present, .env
+    wins and the heal proceeds normally - but .env.encrypted is a snapshot
+    that nothing keeps in step, so rsx:health WARNs about one sitting on a
+    development box.
+
+    ONE implementation - App\RSpade\Core\Prod\Rsx_Env_Symlink::full_heal() -
+    behind rsx:env:heal, both entrypoints pre-boot (via
+    bootstrap/rsx_env_heal.php) and the container entrypoint. Development runs
+    it on every boot; the cost when nothing has changed is one stat against
+    storage/rsx-tmp/env_heal.stamp. Outside development it runs only when .env
+    is absent.
+
 ENV FILE INVARIANT (.env SYMLINK HEALER)
     RSX_MODE, and every other configuration key, is read from ONE
     authoritative file: the project-root .env
     (dirname(base_path())/.env; httpdocs/.env in deployed layouts).
 
-    Laravel/Dotenv actually loads base_path('.env') (system/.env). The
-    invariant is that system/.env is a SYMLINK to the root .env, so there is
-    exactly one file and an edit to either path is the same edit. The
-    prod-mode env writer (Rsx_Prod_Env) reads/writes only base_path('.env')
-    and is correct precisely because of this invariant.
+    Laravel/Dotenv loads that root file DIRECTLY: bootstrap/app.php calls
+    useEnvironmentPath(<project root>), so environmentPath() is the root and
+    environmentFilePath() is the root .env.
+
+    system/.env remains, as a SYMLINK to the root .env, because bash readers
+    still address it by name (the container entrypoint, the pull script) and
+    because the prod-mode env writer (Rsx_Prod_Env) reads/writes only
+    base_path('.env'). The invariant is what makes those two spellings one
+    file.
 
     Drift: a deploy or clone frequently MATERIALIZES the symlink into a real
-    file. After that the two files diverge - Laravel reads only system/.env,
-    so edits to the root .env become inert. A naive re-symlink would instead
-    DISCARD keys that live only in system/.env.
+    file. After that the two files diverge, and every writer addressing
+    system/.env is writing somewhere Laravel no longer reads. A naive
+    re-symlink would instead DISCARD keys that live only in system/.env.
 
-    Healer: rsx:env:heal restores the invariant safely.
+    Healer: rsx:env:heal restores the invariant safely (as part of the full
+    env preparation described above).
 
         php artisan rsx:env:heal            # heal now
-        php artisan rsx:env:heal --dry-run  # report drift, change nothing
+        php artisan rsx:env:heal --dry-run  # report SYMLINK drift only
 
     Merge rule (root is authoritative): keys unique to system/.env are
     APPENDED to the root .env under a dated marker; keys present in BOTH with
@@ -474,7 +520,7 @@ DEPLOYMENT WORKFLOW
        Readable, sealed build with working console_debug. Return with
        rsx:prod:disable.
 
-    3. On the production host (APP_ENV=production, APP_DEBUG=false):
+    3. On the production host:
            php artisan rsx:prod:enable
        Compiles + seals the strict build.
 

@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: Uploading files in RSX and attaching them to records - the mandatory file.upload.authorize gate, Ajax.upload(form_data) as the one client transport, the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, thumbnails, creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks.
+description: Uploading files in RSX and attaching them to records - the mandatory file.upload.authorize gate, Ajax.upload(form_data) as the one client transport, the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, showing a thumbnail or avatar, showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks.
 ---
 
 # File attachments
@@ -167,22 +167,54 @@ $attachment->get_download_url();   // "/_download/{key}" - forces the download d
 
 Two different routes. There is no `?download=1` query parameter.
 
-**Thumbnails** — two types only, `cover` (crop to fill) and `fit` (fit inside, aspect preserved, the default):
-
-```php
-$attachment->get_thumbnail_url('cover', 96, 96);   // dynamic: /_thumbnail/dynamic/{key}/cover/96/96
-$attachment->get_thumbnail_url('fit', 400);        // height optional
-$attachment->get_thumbnail_url_preset('profile');  // named: /_thumbnail/preset/{key}/profile
-```
-
-Presets live in `config('rsx.thumbnails.presets')` (`profile`, `gallery`, `icon_small`, `icon_large` ship with the framework) and **throw** if the name is undefined. Prefer a preset for anything used in more than one place — it is one edit later. `has_thumbnail()` is true iff a renderer is registered for the mime; otherwise fall back to `/_icon_by_extension/{ext}`.
-
 ```jqhtml
-<img src="<%= this.data.user.photo_url %>" alt="">
 <a href="<%= doc.download_url %>"><%= doc.file_name %></a>
 ```
 
-(Resolve URLs server-side in `fetch()`/an endpoint and pass them down — `get_url()` is PHP.)
+(Resolve those two URLs server-side in `fetch()`/an endpoint and pass them down — `get_url()` is PHP.)
+
+### Thumbnails: `<Attachment_Thumbnail>` is the way, and the only way
+
+```jqhtml
+<Attachment_Thumbnail $attachment_id=doc.file_attachment_id $width=160 />
+<Attachment_Thumbnail $attachment_id=id $type="cover" $width=96 $height=96 />
+<Attachment_Thumbnail $attachment_id=id $preset="profile" />
+```
+
+```javascript
+$el.component('Attachment_Thumbnail', {attachment_id: id, width: 160});
+```
+
+| Arg | |
+|---|---|
+| `$attachment_id` | **required** — throws without it. Never pass null; render your initials/empty branch instead. |
+| `$type` | `'fit'` (default) or `'cover'` |
+| `$width` | px, default 120 |
+| `$height` | px; omitted → a width-only variant |
+| `$preset` | a name from `config('rsx.thumbnails.presets')` — **mutually exclusive** with `$type`/`$width`/`$height`, passing both throws |
+| `$alt` | defaults to the attachment's file name |
+
+Extra classes go on the invocation as an ordinary HTML attribute (`class="me-2"`), which jqhtml keeps on the host element — there is no `$class` arg. Style the host and let the picture fill it:
+
+```scss
+&__thumb {
+    width: 36px;
+    height: 36px;
+
+    .Attachment_Thumbnail__img,
+    .Attachment_Thumbnail__placeholder { width: 100%; height: 100%; object-fit: contain; }
+}
+```
+
+**A producer ships `file_attachment_id`, never a URL** — and stops shipping `key`, `thumbnail_url` and render-state fields entirely. The component fetches the record itself through `File_Attachment_Model.fetch_or_null()`, which is **batched**, so a table of forty thumbnails costs one request.
+
+**Why a component and not a URL helper.** A URL is a value; a thumbnail is a live view of a record whose picture may not exist yet. An Office document has no thumbnail until the background worker has rendered it, so what first paints is an extension-icon placeholder; when the render lands, a realtime frame brings the component back for a fresh record and the image swaps in place. Only a component has the lifecycle to subscribe, refetch and repaint. That is why **nothing in an app builds a thumbnail URL** — and why the URLs carry `?v=<rendered_at>`, without which a browser would keep a year-cached placeholder forever. See `rspade:document-preview` and `rsx:man thumbnails`.
+
+The same component works unchanged on **portal** pages (`File_Attachment_Model` ships both `fetch()` and `portal_fetch()`). Your `file.thumbnail.authorize` handler is now load-bearing for the portal realm through `fetch` — **it must answer correctly when `'user'` is a `Portal_User_Model`**, or every portal thumbnail silently becomes an empty box.
+
+A record that cannot be fetched (deleted, or not visible to this caller) paints a quiet empty box, never an error.
+
+`File_Attachment_Model.thumbnail_url(record, {type, width, height, preset})` is the single JS builder the component calls. Reach for it directly only when a component genuinely cannot sit at that spot — a widget addressed by attachment **key** rather than id, say — and say why in a comment. Presets live in `config('rsx.thumbnails.presets')` (`profile`, `gallery`, `icon_small`, `icon_large` ship) and **throw** if undefined. `has_thumbnail()` is true iff a renderer is registered for the mime or the blob has rendered.
 
 ---
 

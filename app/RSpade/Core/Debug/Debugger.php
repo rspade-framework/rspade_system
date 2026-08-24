@@ -6,6 +6,7 @@ use Exception;
 use JsonSerializable;
 use Log;
 use stdClass;
+use App\RSpade\Core\Rsx;
 
 /**
  * Debugger - Development and debugging utilities for the RSpade framework
@@ -63,8 +64,8 @@ class Debugger
      */
     public static function logrotate(int $keep_versions = 5): void
     {
-        // Do nothing in production mode
-        if (env('APP_ENV') === 'production') {
+        // Do nothing outside development (a sealed debug/production build owns its logs)
+        if (!Rsx::is_development()) {
             return;
         }
 
@@ -765,7 +766,7 @@ class Debugger
     {
         // Suppressed only in strict production (RSX_MODE=production, not debug).
         // Development and debug both emit - mirrors the JS-side gate and the root
-        // CLAUDE.md mode table. Authority is RSX_MODE, not APP_ENV.
+        // CLAUDE.md mode table. RSX_MODE is the only mode switch there is.
         if (!static::_console_debug_enabled_for_mode()) {
             return;
         }

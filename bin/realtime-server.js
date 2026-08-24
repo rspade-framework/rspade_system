@@ -58,8 +58,17 @@ const REDIS_PREFIX = 'rsx_rt';
 // session_id, or realm + site_id + user_id) with NO topic/subscription. See route_control().
 const CONTROL_CHANNEL = `${REDIS_PREFIX}:control`;
 
-const HEARTBEAT_INTERVAL = 30000;  // 30 seconds
-const PONG_TIMEOUT = 10000;        // 10 seconds to respond
+// LIVENESS, NOT A WORK DEADLINE. These bound an EXTERNAL party - a browser that may
+// have vanished without TCP noticing (laptop lid, dead wifi, NAT drop) - and expiry
+// degrades to the working outcome the client already handles: the socket closes and
+// Rsx_Realtime reconnects, resyncing every subscription. That is the sanctioned shape.
+//
+// HEARTBEAT_INTERVAL is a CADENCE (how often we ask); PONG_TIMEOUT is the DEADLINE (how
+// long an answer may take). Until 2026-08-22 PONG_TIMEOUT was DEAD - declared, never
+// referenced - and death actually took up to two full heartbeat ticks (60s), so the
+// source claimed 10s while the behaviour was 6x that. It is now armed per ping.
+const HEARTBEAT_INTERVAL = 30000;  // ask every 30s
+const PONG_TIMEOUT = 10000;        // 10s to answer a ping before the socket is dead
 const AUTH_TIMEOUT = 5000;         // 5 seconds to authenticate after connect
 
 // Subscriber-change notify channel (relay -> PHP). Where PHP listens is a DEPLOYMENT
@@ -423,6 +432,10 @@ wss.on('connection', (ws) => {
 
     ws.on('pong', () => {
         conn.alive = true;
+        if (conn.pong_timer) {
+            clearTimeout(conn.pong_timer);
+            conn.pong_timer = null;
+        }
     });
 
     ws.on('message', (raw) => {
@@ -442,12 +455,14 @@ wss.on('connection', (ws) => {
 
     ws.on('close', () => {
         clearTimeout(auth_timer);
+        clearTimeout(conn.pong_timer);
         connections.delete(ws);
         rewrite_registry_async();
     });
 
     ws.on('error', () => {
         clearTimeout(auth_timer);
+        clearTimeout(conn.pong_timer);
         connections.delete(ws);
         rewrite_registry_async();
     });
@@ -541,19 +556,25 @@ function route_control(msg) {
 // ---------------------------------------------------------------------------
 
 const heartbeat = setInterval(() => {
-    let terminated = false;
     for (const [ws, conn] of connections) {
-        if (!conn.alive) {
-            ws.terminate();
-            connections.delete(ws);
-            terminated = true;
-            continue;
-        }
         conn.alive = false;
         ws.ping();
-    }
-    if (terminated) {
-        rewrite_registry_async();
+
+        // Arm the answer deadline for THIS ping. Waiting for the next tick to notice a
+        // missing pong is what made the real window up to 60s; the connection is dead
+        // PONG_TIMEOUT after we asked, and holding it open past that only delays the
+        // client's reconnect.
+        if (conn.pong_timer) {
+            clearTimeout(conn.pong_timer);
+        }
+        conn.pong_timer = setTimeout(() => {
+            if (conn.alive) {
+                return;
+            }
+            ws.terminate();
+            connections.delete(ws);
+            rewrite_registry_async();
+        }, PONG_TIMEOUT);
     }
 }, HEARTBEAT_INTERVAL);
 

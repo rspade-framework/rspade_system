@@ -4,6 +4,9 @@
  * See Document_Preview.jqhtml for the full contract. Loads the server's viewer resolution in
  * on_load, dispatches to the built-in viewers via the template, instantiates app-registered
  * viewers dynamically in on_ready, and re-triggers the active viewer's events outward.
+ *
+ * Also owns the async-render waiting states: it subscribes to its attachment id in on_create and
+ * swaps out of "Preparing preview..." when the background render worker finishes.
  */
 class Document_Preview extends Component {
     static BUILTIN_VIEWERS = ['Pdf_Viewer', 'Image_Viewer', 'Icon_Viewer'];
@@ -13,6 +16,15 @@ class Document_Preview extends Component {
         if (this.args.page === undefined || this.args.page === null) {
             this.args.page = 1;
         }
+
+        // A convertible document's rendition is produced by a background worker, so the preview
+        // this component paints first may be a waiting state. Subscribing HERE - before the first
+        // load, the canonical placement - is what closes the window in which the render could
+        // finish between the fetch and the subscription, stranding "Preparing preview..." on
+        // screen forever. refresh() refetches and repaints only when the info actually changed,
+        // which is exactly the PENDING -> RENDERED swap; reload() would tear down a live
+        // Pdf_Viewer on every unrelated frame.
+        this.subscribe(File_Attachment_Model, int(this.args.attachment_id), () => this.refresh());
     }
 
     async on_load() {

@@ -58,11 +58,6 @@ class Rsx_Composer_Command extends Command
     protected $description = 'Manage application-layer composer packages (framework-aware wrapper)';
 
     /**
-     * Real composer invocations can hit the network; give them room.
-     */
-    const PROCESS_TIMEOUT_SECONDS = 600;
-
-    /**
      * Accept arbitrary trailing composer args without Symfony validating them.
      */
     protected function configure()
@@ -348,12 +343,17 @@ class Rsx_Composer_Command extends Command
      */
     private function _run_composer(array $args): int
     {
+        // NO TIMEOUT (null). How long a composer run takes is a function of the
+        // dependency graph, Packagist and the network - never evidence of a hang. A cap
+        // here converts a working install into a failed one, and can leave vendor/
+        // partially written with a stale autoloader while the caller sees only a
+        // non-zero exit. See the no-timeout mandate in the engineering mandates.
         $process = new Process(
             array_merge(['composer'], $args),
             Dependency_Manager::project_root(),
             null,
             null,
-            self::PROCESS_TIMEOUT_SECONDS
+            null
         );
 
         $process->run(function ($type, $buffer) {

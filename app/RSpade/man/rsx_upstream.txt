@@ -97,12 +97,11 @@ REFUSALS
         overwrites all of system/, which is exactly what a fork prevents.
         See rsx:man framework_fork.
 
-    APP_ENV=production
-        Framework updates are reviewed in development and deployed, never
-        pulled into a live deployment.
-
     RSX_MODE is not development
-        Stricter than the APP_ENV check, which misses a sealed DEBUG build.
+        Framework updates are reviewed in development and deployed, never
+        pulled into a live deployment. This is the ONLY environment gate:
+        there used to be a separate APP_ENV=production check, which was both
+        redundant with this one and blind to a sealed DEBUG build.
         debug and production are compiled once and then immutable; replacing
         the framework under one leaves it serving assets that no longer match
         what it was built from. Absent RSX_MODE means development.

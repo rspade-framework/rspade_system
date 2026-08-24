@@ -99,10 +99,13 @@ class Task_Concurrency
     {
         $policy = static::get_policy($class, $method);
 
-        $lock = new Task_Lock(static::enqueue_lock_name($class, $method), 5);
-        if (!$lock->acquire()) {
-            return null;
-        }
+        // Waits forever. This previously waited 5 seconds and then RETURNED NULL - a
+        // silently dropped enqueue, no log, no error, on exactly the busy box where the
+        // work mattered most. Coalescing is cheap and the wait is short in practice;
+        // whatever holds the lock is another enqueue of the same identity, which is the
+        // thing this lock exists to serialize.
+        $lock = new Task_Lock(static::enqueue_lock_name($class, $method));
+        $lock->acquire();
 
         try {
             $existing = static::pending_row_id($class, $method, $queue);

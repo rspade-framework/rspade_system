@@ -16,28 +16,45 @@ class Framework_Post_Update_Dependency_Check_Command extends Command
     public function handle()
     {
         // Purely local, zero network - a framework pull must stay offline-capable.
-        // If there is no root composer.json this is not an RSpade-project layout
-        // (framework-only install); there is nothing to reconcile.
-        if (!file_exists(Dependency_Manager::root_composer_json_path())) {
-            return 0;
+        //
+        // THE TWO HALVES ARE INDEPENDENTLY OPTIONAL. The app dependency layer is two
+        // manifests, root composer.json and root package.json, and an app may legitimately
+        // carry either, both, or neither - a framework-only install has no layer at all,
+        // and an app that has never installed an npm package has no package.json even
+        // though it has a composer.json. Each half is therefore guarded on ITS OWN file.
+        //
+        // This used to be one guard on composer.json covering both halves, so an app with
+        // a composer.json and no package.json fell through it into
+        // Dependency_Manager::read_root_package_json(), whose "this file ships with the
+        // project; its absence is a broken install" assertion is true of a fresh
+        // provision and false of a real app that simply never adopted app-layer npm.
+        // A framework update must never fail on a configuration the framework supports.
+        // Reported downstream 2026-08-22.
+        if (file_exists(Dependency_Manager::root_composer_json_path())) {
+            // Refresh the app-layer replace map against the (possibly updated) framework
+            // installed set. A change here is routine after a framework update that moved
+            // framework deps - report it as information, not a warning.
+            if (Dependency_Manager::regenerate_replace_map()) {
+                $this->line('Framework dependency baseline refreshed (app-layer composer replace map regenerated).');
+            }
+
+            // Notices for recorded framework-provided packages that drifted. These are
+            // findings, not failures - never a non-zero exit.
+            foreach (Dependency_Manager::check_recorded_composer() as $problem) {
+                $this->_report_problem('composer', $problem);
+            }
         }
 
-        // Refresh the app-layer replace map against the (possibly updated) framework
-        // installed set. A change here is routine after a framework update that moved
-        // framework deps - report it as information, not a warning.
-        if (Dependency_Manager::regenerate_replace_map()) {
-            $this->line('Framework dependency baseline refreshed (app-layer composer replace map regenerated).');
+        if (file_exists(Dependency_Manager::root_package_json_path())) {
+            foreach (Dependency_Manager::check_recorded_npm() as $problem) {
+                $this->_report_problem('npm', $problem);
+            }
         }
 
-        // Notices for recorded framework-provided packages that drifted. These are
-        // findings, not failures - never a non-zero exit.
-        foreach (Dependency_Manager::check_recorded_composer() as $problem) {
-            $this->_report_problem('composer', $problem);
-        }
-
-        foreach (Dependency_Manager::check_recorded_npm() as $problem) {
-            $this->_report_problem('npm', $problem);
-        }
+        // A MISSING MANIFEST IS SILENT HERE - not an error, not a warning. A framework
+        // update reports on the update; whether this app ought to have an app dependency
+        // layer is a question for `php artisan rsx:health`, which raises it as a WARN row
+        // carrying `rsx:heal app-npm-layer` as its remedy (Dependency_Health_Checks).
 
         // All-clean with no map change: completely silent (Unix silent-success).
         return 0;

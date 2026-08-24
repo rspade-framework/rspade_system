@@ -32,11 +32,6 @@ class Prod_Enable_Command extends Command
         // the single healed file (a drifted real system/.env would swallow it).
         $this->_heal_env();
 
-        // Step 0: Validate the environment BEFORE changing anything.
-        if (!$this->_validate_environment($debug)) {
-            return 1;
-        }
-
         $this->info('Entering ' . ($debug ? 'debug' : 'production') . ' mode (sealed build)...');
         $this->newLine();
 
@@ -91,49 +86,6 @@ class Prod_Enable_Command extends Command
         if ($report['status'] !== 'already_healthy') {
             $this->line('.env symlink invariant restored (status: ' . $report['status'] . ').');
         }
-    }
-
-    /**
-     * Validate APP_ENV / APP_DEBUG for the requested mode.
-     *
-     * Strict production demands a real production environment. Debug is a
-     * production-like LOCAL test build, so environment mismatches are warnings.
-     */
-    private function _validate_environment(bool $debug): bool
-    {
-        $app_env = app()->environment();
-        $app_debug = (bool) config('app.debug');
-
-        if ($debug) {
-            if ($app_env !== 'production') {
-                $this->warn("Note: APP_ENV is '{$app_env}' (debug builds do not require 'production').");
-            }
-
-            return true;
-        }
-
-        $problems = [];
-        if ($app_env !== 'production') {
-            $problems[] = "APP_ENV is '{$app_env}' - set APP_ENV=production in .env";
-        }
-        if ($app_debug) {
-            $problems[] = 'APP_DEBUG is true - set APP_DEBUG=false in .env';
-        }
-
-        if (!empty($problems)) {
-            $this->error('Cannot enter strict production mode - environment is not production-ready:');
-            $this->newLine();
-            foreach ($problems as $problem) {
-                $this->line('  - ' . $problem);
-            }
-            $this->newLine();
-            $this->line('Fix the above, or build the debug variant instead:');
-            $this->line('  php artisan rsx:prod:enable --debug');
-
-            return false;
-        }
-
-        return true;
     }
 
     /**

@@ -4,15 +4,20 @@ NAME
     template_app - the RSpade reference application (the /rsx/ starter template)
 
 SYNOPSIS
-    Source in this repo:   /rsx/
-    Distributed standalone: git@git.internal.hanson.xyz:brianhansonxyz/rspade_template_app.git
-    View this page:        php artisan rsx:man template_app
+    In the framework monorepo:  /rsx/
+    In a downstream project:    system/app/RSpade/resource/reference_app/
+    View this page:             php artisan rsx:man template_app
 
 DESCRIPTION
-    Everything in /rsx/ is a working REFERENCE APPLICATION - a runnable, opinionated
-    B2B SaaS built ON TOP of the RSpade framework. It is NOT framework core. The
-    framework (everything under /system/, the App\RSpade\* classes) is the contract;
-    the reference app is one concrete build that exercises that contract end to end.
+    The reference application is a working, runnable, opinionated B2B SaaS built ON
+    TOP of the RSpade framework. It is NOT framework core. The framework (everything
+    under /system/, the App\RSpade\* classes) is the contract; the reference app is one
+    concrete build that exercises that contract end to end.
+
+    Every downstream project STARTS as a copy of it - so on day one your /rsx/ and the
+    reference app are the same tree, and from your first commit they diverge. Paths
+    written /rsx/... below describe the app's layout; read them against
+    system/app/RSpade/resource/reference_app/ when you want the pristine copy.
 
     Its point is twofold:
       1. BOOTSTRAP - clone it and you have a real, multi-tenant SaaS skeleton (auth,
@@ -27,8 +32,14 @@ DESCRIPTION
       /system/  framework core - ships as rspade_system; a git submodule of the app repo
                 as ordinary tracked files (no submodule) and updated via
                 rsx:framework:pull.
-      /rsx/     this reference app - ships as rspade_template_app (and inside the full
-                rspade_project). Yours to change; the framework is not.
+      /rsx/     DOWNSTREAM, this is YOUR APPLICATION - seeded from the reference app
+                at provisioning time and yours to change from that moment on. In this
+                monorepo it is the reference app itself.
+      system/app/RSpade/resource/reference_app/
+                the pristine, release-current copy of the reference app that every
+                release carries. Read-only (all of system/ is overwritten by
+                rsx:framework:pull). This is what docs cite when they say "the
+                reference app"; your /rsx/ is not it once you have diverged.
 
 WHAT IT INCLUDES
     Staff application (/rsx/app/, server-rendered + SPA):
@@ -64,20 +75,45 @@ WHAT IT DEMONSTRATES (RSpade API surface, by example)
       Tasks/services, email, type-safe URLs (Rsx::Route), the test framework.
 
 DISTRIBUTION
-    The reference app is published to its OWN repository so downstream users can browse
-    or clone it as a worked example:
+    The reference app has NO repository of its own. It ships INSIDE every framework
+    release, at:
 
-        git@git.internal.hanson.xyz:brianhansonxyz/rspade_template_app.git
+        system/app/RSpade/resource/reference_app/
 
-    bin/publish (the framework publish command) pushes the CONTENTS of /rsx/ to that
-    repo's master on every publish - the repo root IS the rsx/ tree (app/, portal/,
-    models/, theme/, resource/, ...), refreshed each time. The app developer's own
-    resource/CLAUDE.dist.md is shipped as CLAUDE.md at that repo's root.
+    bin/publish rsyncs the contents of /rsx/ there when it builds rspade_system, so the
+    copy in a release is always exactly the app that release's framework was developed
+    against. In THIS monorepo that path is a SYMLINK to /rsx/ - the template app IS the
+    reference app here - which is what makes one literal path correct in both worlds: a
+    man page, skill or upstream_changes document can cite
+    `system/app/RSpade/resource/reference_app/...` and be right everywhere. publish
+    excludes the symlink from its main system/ rsync and materializes real files in its
+    place (Step 3a).
 
-    In the RUNNABLE project (rspade_project) that same file lands as
-    rsx/resource/CLAUDE.md, and the framework's own always-on knowledge reaches it
-    through two wires - both installed by publish for a fresh clone and healed on every
-    box by system/bin/environment_updates/060_claude_docs.sh:
+    WHY resource/. Manifest::EXCLUDED_DIRS ignores any directory named `resource` by
+    NAME, path-agnostically. That is load-bearing, not incidental: classes resolve by
+    NAME, so a scanned second copy of the app would collide with the developer's own
+    classes and fail the manifest build outright. rsx:check iterates the manifest, so it
+    is blind to this tree for the same reason - neither needs a separate opt-out.
+
+    IT IS READ-ONLY. It lives under system/, which rsx:framework:pull overwrites in full
+    on every update. Edits there are destroyed without warning. Copy OUT of it into your
+    /rsx/; never work inside it.
+
+    Framework-developer-only material is EXCLUDED from the shipped copy (it stays in the
+    dev repo only):
+        resource/research    third-party reference apps + research scratch (multi-GB)
+        resource/archive     archived/superseded code
+        resource/incomplete  unfinished scratch work
+        resource/docs        internal research notes
+        temp, vendor, .git   regenerated/local metadata
+    Anything else under /rsx/ ships.
+
+    THE RUNNABLE PROJECT. rspade_project seeds a new app's own /rsx/ from the same tree,
+    and adds the Laravel scaffolding plus system/ as a submodule gitlink. The app
+    developer's resource/CLAUDE.dist.md lands there as rsx/resource/CLAUDE.md, and the
+    framework's always-on knowledge reaches it through two wires - both installed by
+    publish for a fresh clone and healed on every box by
+    system/bin/environment_updates/060_claude_docs.sh:
 
         rsx/resource/CLAUDE.md      first line is the import
                                     @../../system/app/RSpade/docs/claude/app.md
@@ -85,32 +121,72 @@ DISTRIBUTION
         .claude/skills/rspade   ->  ../../system/app/RSpade/docs, loaded by Claude Code
                                     as the namespaced `rspade` plugin
 
-    The knowledge tree itself lives at system/app/RSpade/docs/ (it was under
-    system/docs/ before the knowledge-tree restructure), and the container-era
-    ~/.claude/CLAUDE.md symlink it used to be reached through is RETIRED - 060 removes
-    any that survives.
+    The knowledge tree itself lives at system/app/RSpade/docs/.
 
-    Framework-developer-only material is EXCLUDED from the published app (it stays in the
-    dev repo only):
-        resource/research    third-party reference apps + research scratch (multi-GB)
-        resource/archive     archived/superseded code
-        resource/incomplete  unfinished scratch work
-        resource/docs        internal research notes
-        temp, vendor, .git   regenerated/local metadata
-    Anything else under /rsx/ ships. The same cleaned tree is also embedded in the full
-    runnable project, rspade_project (which adds the Laravel scaffolding + the system
-    tree recorded as a submodule gitlink); rspade_template_app is the app-only,
-    reference-only view.
+APPLICATION SKILLS
+    An application authors its own Claude Code skills at
+    rsx/resource/skills/<name>/SKILL.md (a directory without a SKILL.md is not a
+    skill and is ignored). The framework wires each one in as a RELATIVE symlink:
+
+        .claude/skills/<name>  ->  ../../rsx/resource/skills/<name>
+
+    THE SCRIPT. system/bin/environment_updates/070_app_skills.sh owns the links and
+    runs on every environment-update trigger (framework pull, `rsx:git pull`, a
+    development manifest build, the post-commit hook, container start). It:
+
+      REGISTERS  one link per authored skill. Absent -> created. Correct -> silent.
+                 Dangling and ours -> retargeted. A foreign symlink or a real
+                 file/dir on the name -> reported on stderr, NEVER clobbered; that
+                 skill stays unlinked until the operator moves it aside. The name
+                 `rspade` is RESERVED (060 owns .claude/skills/rspade, the framework
+                 plugin) and is refused with a rename instruction.
+      PRUNES     a symlink directly under .claude/skills/ whose LITERAL target begins
+                 ../../rsx/resource/skills/ or ../../system/app/RSpade/ AND which no
+                 longer resolves. Nothing else is ever removed: a foreign dead link,
+                 a real directory and a healthy link are all left alone. The literal
+                 target is what decides authorship - a resolved path says nothing
+                 about who wrote the link.
+
+    It never removes and recreates the .claude/skills PARENT (recreating a watched
+    top-level directory mid-session breaks Claude Code's file watcher).
+
+    WHY REGENERATION RATHER THAN A COMMITTED LINK. rsx/resource/ is manifest-ignored,
+    so a pull whose only change is a teammate's new skill triggers no rebuild and
+    would wire nothing. `rsx:git` therefore runs `post-update.sh --quiet` after a
+    pull/merge that moved HEAD, and committing the skill becomes the whole
+    distribution mechanism. Committing the link too is optional and harmless.
+
+    QUIET. post-update.sh --quiet exports RSPADE_ENV_UPDATE_QUIET=true; every
+    environment update suppresses its INFORMATIONAL lines when it is set. Problems
+    are never suppressed - a quiet run is a quiet success, never a silent failure.
+    The framework pull does not pass it: an update reports what it changed.
+
+    OPERATING IT. `rsx:health` carries a "Claude Skills" row - WARN per unlinked
+    skill, per framework-created dangling link, per blocked or reserved name, OK with
+    a count otherwise. `php artisan rsx:heal claude-skills` re-runs the script on a
+    box whose last build predates the skill; it creates and prunes only, and refuses
+    outside the RSpade container (every environment update is container-gated).
+
+    See rsx/resource/skills/CLAUDE.md in the reference app for the SKILL.md
+    frontmatter shape and the skill-vs-CLAUDE.md-vs-man-page routing test.
+
+    SEEDED SKILLS. The reference app ships two of its own, so a new project starts
+    with worked examples of the shape: `semantic-components` (building UI from the
+    app's widget vocabulary) and `action-log-and-notifications` (the app's activity
+    and notification primitives).
 
 USING IT
-    - As reference: clone rspade_template_app and read it alongside this framework's man
-      pages; copy the patterns into your own /rsx/.
-    - As a runnable app: use rspade_project (it bundles this app + the framework
-      core as a submodule + Laravel scaffolding), then customize /rsx/.
+    - As reference: read system/app/RSpade/resource/reference_app/ alongside these man
+      pages and copy the patterns into your own /rsx/. It is the answer to "follow an
+      existing pattern" when your own app has diverged, and it is the only in-repo
+      example guaranteed to match the framework revision you are running.
+    - As a starting point: a new project is provisioned from rspade_project, whose /rsx/
+      is already this app. Customize from there.
 
 NOTES
-    - The reference app is meant to be CHANGED. Treat the framework (/system/) as
-      upstream and your /rsx/ as yours; pull framework updates, keep your app.
+    - YOUR /rsx/ is meant to be CHANGED; the shipped reference_app copy is not.
+      Treat the framework (/system/) as upstream and your /rsx/ as yours; pull
+      framework updates, keep your app.
     - Dev-only conveniences (demo auto-share, debug login auto-fill, seeded demo data)
       are gated to dev sites and never run in production - see portal(3) "SAMPLE
       APPLICATION". Strip them when building a real product.
@@ -118,4 +194,4 @@ NOTES
 SEE ALSO
     portal(3), spa(3), crud(3), jqhtml(3), model_fetch(3), enum(3), coding_standards(3)
 
-RSX Framework              Last updated 2026-06-25              TEMPLATE_APP(3)
+RSX Framework              Last updated 2026-08-24              TEMPLATE_APP(3)

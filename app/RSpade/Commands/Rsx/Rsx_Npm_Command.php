@@ -61,11 +61,6 @@ class Rsx_Npm_Command extends Command
     protected $description = 'Manage application-layer npm packages (framework-aware wrapper)';
 
     /**
-     * Real npm invocations can hit the network; give them room.
-     */
-    const PROCESS_TIMEOUT_SECONDS = 600;
-
-    /**
      * Accept arbitrary trailing npm args without Symfony validating them.
      */
     protected function configure()
@@ -377,12 +372,17 @@ class Rsx_Npm_Command extends Command
      */
     private function _run_npm(array $args): int
     {
+        // NO TIMEOUT (null). How long an install takes is a function of the
+        // dependency graph, the registry and the network - never evidence of a hang.
+        // A cap here converts a working install into a failed one, and hands the
+        // caller a half-populated node_modules that is indistinguishable from a real
+        // npm error. See the no-timeout mandate in the engineering mandates.
         $process = new Process(
             array_merge(['npm'], $args),
             Dependency_Manager::project_root(),
             null,
             null,
-            self::PROCESS_TIMEOUT_SECONDS
+            null
         );
 
         $process->run(function ($type, $buffer) {

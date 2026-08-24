@@ -5,11 +5,10 @@ namespace App\RSpade\Core\Files;
 /**
  * Libreoffice - shared helpers for the headless LibreOffice (soffice) integration.
  *
- * Home of the single soffice-discovery routine used by BOTH the thumbnail renderer
- * (Libreoffice_Thumbnail_Renderer) and the text extractor (Libreoffice_Text_Extractor), so
- * binary discovery has exactly one implementation. The counting semaphore that bounds
- * concurrent soffice invocations cluster-wide is shared by name ('libreoffice_thumbnail')
- * across those callers - one soffice slot pool regardless of what the conversion targets.
+ * Home of the single soffice-discovery routine used by the render worker
+ * (Document_Render_Service) and the text extractor (Libreoffice_Text_Extractor), so binary
+ * discovery has exactly one implementation. Concurrency needs no primitive: the render worker
+ * is #[Exclusive] and is the only caller, so soffice invocations are serialized by construction.
  */
 class Libreoffice
 {
@@ -61,7 +60,7 @@ class Libreoffice
         if ($binary === null) {
             return [
                 'status' => 'FAIL',
-                'detail' => 'soffice not found (Office thumbnails, text extraction, and PDF renditions need it)',
+                'detail' => 'soffice not found (the document render worker needs it for PDF renditions, Office thumbnails and Office text extraction)',
                 'remediation' => 'apt-get install -y --no-install-recommends libreoffice',
             ];
         }

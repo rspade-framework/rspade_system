@@ -14,7 +14,7 @@ The RSpade framework enforces a forward-only migration strategy and other data s
 ## Implementation
 
 Each restricted command:
-- Extends `RestrictedDatabaseCommand` base class
+- Extends `Restricted_Database_Command` base class (the `down`/`up` stubs extend `Illuminate\Console\Command` directly - they guard a maintenance mechanism, not the database)
 - Overrides the original Laravel command signature
 - Returns informative error messages explaining the restriction
 - Suggests alternative approaches that align with framework policies
@@ -26,6 +26,8 @@ Each restricted command:
 - **migrate:refresh** - Would rollback and re-run all migrations
 - **migrate:reset** - Would rollback all database migrations
 - **db:wipe** - Would drop all tables, views, and types
+- **down** - Laravel's web-only maintenance mode; use `rsx:maintenance:enable --reason="..."`
+- **up** - the other half of it; use `rsx:maintenance:disable`
 
 ## Alternative Approaches
 

@@ -101,7 +101,6 @@ function downloadUrl(url) {
                 'User-Agent': 'RSpade/1.0',
                 'Accept': '*/*',
             },
-            timeout: 30000,
         }, (response) => {
             // Handle redirects
             if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {

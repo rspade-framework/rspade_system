@@ -1,157 +1,177 @@
 LIBREOFFICE(1)                    RSpade Manual                    LIBREOFFICE(1)
 
 NAME
-    LibreOffice Integration - document thumbnail rendering via headless soffice
+    LibreOffice Integration - headless soffice, invoked only by the render worker
 
 SYNOPSIS
-    Config: config('rsx.libreoffice.*')
-    Renderer: App\RSpade\Core\Files\Libreoffice_Thumbnail_Renderer
-    Registered in: config('rsx.thumbnails.renderers') for Office mime types
+    Config:    config('rsx.libreoffice.*')
+    Discovery: App\RSpade\Core\Files\Libreoffice::find_soffice()
+    Callers:   App\RSpade\Core\Files\Document_Render_Service      (document -> PDF)
+               App\RSpade\Core\Search\Libreoffice_Text_Extractor  (sheets/decks -> text)
 
 DESCRIPTION
-    The thumbnail pipeline's "produce a raster from bytes" step is a registry keyed
-    by mime type (see `rsx:man thumbnails` / `rsx:man file_upload`). For Office
-    documents (Word/Excel/PowerPoint/OpenDocument), that step is handled by
-    Libreoffice_Thumbnail_Renderer, which shells out to headless LibreOffice to
-    convert the document to PDF and then rasterizes page 1 with Imagick.
+    Headless LibreOffice turns an Office document (Word/Excel/PowerPoint/OpenDocument)
+    into something the rest of the framework can use: a PDF rendition, which feeds
+    BOTH the Document_Preview viewer and the document's thumbnail, and - for
+    spreadsheets and presentations - a flat-XML file the text extractor reads.
 
-    The result flows through the SAME downstream pipeline as image thumbnails:
-    same WebP encoding, same content-hash-keyed cache, same quota sweeps, same
-    endpoints, same authorization gates. Only the raster-production step differs.
+    SOFFICE IS INVOKED BY THE BACKGROUND WORKER AND BY NOTHING ELSE. A web request
+    never converts a document. Document_Render_Service::render_pending is #[Exclusive],
+    so at most one pass runs cluster-wide and its soffice calls are serialized by
+    construction; the text extractor's own fods/fodp conversions run inside that same
+    worker pass. See rsx:man documents for operating the pipeline and rsx:man thumbnails
+    for the render state machine.
 
-    This integration is GENERIC and framework-level; nothing application-specific
-    is involved. Any attachment whose mime type maps to the LibreOffice renderer
-    gets document previews automatically, and has_thumbnail() reports true for it.
+    THIS IS WHY THERE IS NO CONCURRENCY SECTION ANY MORE. Until 2026-08-22 three
+    callers (a thumbnail renderer, the text extractor, and the preview controller)
+    each shelled out to soffice from inside a web request, competing for a two-slot
+    cluster semaphore, and a single Word document was converted THREE times for three
+    artifacts of the same bytes. One worker replaced all three: one conversion, one
+    caller, nothing left to bound. The semaphore, rsx.libreoffice.max_concurrent and
+    rsx.libreoffice.slot_wait_timeout are GONE, as is Libreoffice_Thumbnail_Renderer.
 
-    ONE SOFFICE POOL, THREE CONSUMERS. The soffice-discovery routine
-    (Libreoffice::find_soffice) and the cluster-wide concurrency semaphore are SHARED
-    by three callers, so headless LibreOffice has exactly one binary-discovery path and
-    one slot pool regardless of what a conversion targets:
-      - Libreoffice_Thumbnail_Renderer   Office doc -> PDF -> rasterized thumbnail (here)
-      - Libreoffice_Text_Extractor       Office doc -> text, for full-text search
-      - File_Preview_Controller          Office doc -> cached PDF rendition, for the
-                                         Document_Preview component
-    The text extractor and PDF rendition pipeline are documented in
-    rsx:man document_search; only their shared soffice mechanics live here.
+    The integration is GENERIC and framework-level; nothing application-specific is
+    involved.
 
 HOW IT WORKS
-    0. The document.thumbnail_render resolve chain runs FIRST, ahead of the renderer
-       registry (rsx:man document_search / rsx:man event_hooks): an app #[OnEvent]
-       handler may return WebP bytes to take over, ['unsupported'=>true] to force the
-       extension icon, or null to decline to the framework registry below.
-    1. A thumbnail request resolves the attachment's bytes to a local blob
-       (materializing external/handler-backed attachments on demand).
-    2. renderer_class_for_mime($mime) matches the blob's mime against
-       config('rsx.thumbnails.renderers'); Office mimes map to
-       'Libreoffice_Thumbnail_Renderer' (unless the integration is disabled).
-    3. The renderer acquires a concurrency slot (see CONCURRENCY), then runs:
-           soffice --headless --convert-to pdf --outdir <tmp> <source>
-       inside a private per-invocation user profile
-       (-env:UserInstallation=file://<tmp>/profile), so concurrent renders never
-       collide on a shared LibreOffice profile.
-    4. Imagick reads page 1 of the produced PDF and returns the raster handle.
-    5. The pipeline resizes/crops/encodes to WebP and caches it.
+    1. An attachment whose pipeline mime matches config('rsx.preview.convertible')
+       flips its blob to PENDING on create and kicks the worker.
+    2. The worker stages the extensionless, content-addressed blob under its
+       representative extension (soffice detects the input format from the filename)
+       inside a private per-invocation work dir, then runs:
 
-    FAIL LOUD, SUBSTITUTE IN THE PIPELINE: the renderer THROWS on any failure
-    (missing soffice, conversion error, timeout). The thumbnail pipeline catches
-    the throw, logs an error line, and serves the generic extension icon instead.
-    The substitution lives in the pipeline, never inside the renderer.
+           soffice -env:UserInstallation=file://<tmp>/profile --headless \
+                   --convert-to pdf --outdir <tmp> <staged-source>
+
+       The private user profile is what lets a fresh invocation never collide with a
+       stale LibreOffice profile.
+    3. The produced PDF is published ATOMICALLY into the rendition cache: copied to a
+       temp file BESIDE storage/rsx-renditions/{blob-hash}.pdf (same filesystem) and
+       renamed over the destination. A half-written rendition is never observable.
+    4. The blob settles RENDERED, its poisoned thumbnail cache entries are purged, and
+       every attachment referencing it emits a realtime frame.
+    5. The thumbnail pipeline later rasterizes page 1 of that PDF with Imagick, through
+       the renderer registered for application/pdf - an ordinary PDF like any other.
+
+    Text extraction for word-processing documents (doc/docx/odt/rtf) does NOT run
+    soffice at all any more: it runs pdftotext over the rendition the same pass just
+    produced. Spreadsheets and presentations keep their own soffice conversion (to
+    fods/fodp), because the flat-XML route is the only one that reads every sheet and
+    every slide - see rsx:man document_search.
+
+    FAIL LOUD, RECORD, MOVE ON. __convert_to_pdf() throws on any failure (missing
+    soffice, non-zero exit, no output, timeout). render_storage() catches it, records
+    render_status_id = FAILED with the message in render_error, attempts the extraction
+    anyway so the failure is visible to rsx:search:reindex --failed as well, notifies
+    open pages, and continues to the next blob. FAILED IS TERMINAL - the sweeper never
+    retries it; php artisan rsx:documents:rerender --failed is the operator action.
 
 ENABLE / DISABLE
     config('rsx.libreoffice.enabled') is the master switch (env LIBREOFFICE_ENABLED,
     default true).
 
-    - Enabled + conversion succeeds  -> real document thumbnail.
-    - Enabled + conversion fails      -> error logged, extension icon served.
-    - Disabled                        -> Office mimes are treated as having NO
-                                         renderer: the extension icon is used
-                                         SILENTLY (no soffice call, no log noise),
-                                         and has_thumbnail() reports false.
+    - Enabled + conversion succeeds  -> rendition on disk, real document thumbnail,
+                                        Document_Preview shows the document.
+    - Enabled + conversion fails      -> FAILED recorded with its reason; the generic
+                                        extension icon is served (uncacheable).
+    - Disabled                        -> NO soffice call is ever made. Convertible
+                                        documents STAY PENDING (they are not lost - the
+                                        day it is switched back on the sweeper renders
+                                        them), the rendition endpoint has nothing to
+                                        serve, and thumbnails use the extension icon.
+                                        Text extraction of PDFs and plain text keeps
+                                        draining normally.
 
-    Disable on nodes where LibreOffice is not installed to avoid error logs:
+    Disable on nodes where LibreOffice is not installed:
         LIBREOFFICE_ENABLED=false   (in that node's .env)
 
-CONCURRENCY
-    LibreOffice is memory/CPU heavy (a conversion can use 100-300 MB). Simultaneous
-    renders are bounded cluster-wide by an RSpade counting semaphore (see
-    `rsx:man locks`), sized by config('rsx.libreoffice.max_concurrent') (default 2;
-    0 = unlimited). The bound spans processes and containers, so multiple app nodes
-    cannot collectively overwhelm a host.
-
-    The semaphore is shared by NAME ('libreoffice_thumbnail' - a historical name that
-    literally means "libreoffice slots") across all three soffice consumers
-    (thumbnails, text extraction, PDF renditions), so they draw from ONE pool and the
-    max_concurrent ceiling bounds total soffice invocations, not per-feature ones. The
-    PDF rendition pipeline uses its own hard timeout, config('rsx.preview.rendition_timeout')
-    (default 60s), rather than the thumbnail render timeout below.
-
-    If no slot frees within config('rsx.libreoffice.slot_wait_timeout') seconds, the
-    render degrades to the extension icon rather than queueing unboundedly.
-
-    KNOWN GRANULARITY LIMIT: the semaphore is served by rsx-lockd and is therefore
-    CLUSTER-wide, while soffice concurrency is really a per-box CPU/memory limit. On a
-    single-server deployment the two are identical; on a fleet, max_concurrent bounds
-    the whole cluster rather than each node. Per-server quotas are part of the
-    multi-web-server clustering epic in the backlog, not something to work around here.
-
 TIMEOUT
-    Each render is hard-capped at config('rsx.libreoffice.timeout') seconds
-    (default 30), measured from the moment the render ACQUIRES its concurrency slot
-    and actually starts (not including slot-wait time). A timeout throws, and the
-    pipeline serves the icon.
+    config('rsx.libreoffice.timeout') - default 120 seconds - is THE ONE SANCTIONED
+    TIMEOUT in this subsystem, and the only one in the document pipeline. The
+    justification is written out in full beside the key in config/rsx.php, because a
+    sanctioned timeout that is not justified in place is not sanctioned. In brief:
+
+    WHAT IT BOUNDS
+        ONE external document-binary invocation made by the render worker: soffice (a
+        rendition, or an fods/fodp text conversion) or pdftotext. It bounds the
+        EXTERNAL BINARY - never any work of ours, and never the worker's own pass.
+
+    WHY IT QUALIFIES
+        These binaries do not merely run slowly on malformed input; they WEDGE - the
+        process never returns and never will. The worker is single-threaded, so one
+        wedged document would stop every later document in the queue forever. Expiry
+        degrades to a WORKING OUTCOME: the blob is recorded FAILED with its reason, the
+        extension icon is served, and the queue moves on.
+
+    WHY 120
+        The number does not separate "fast" from "slow"; it separates "still working"
+        from "never coming back". A large, complex document on a loaded box legitimately
+        takes well over a minute, so 120 sits far above any honest render, while a
+        wedged soffice would sit there forever.
+
+    WHY ONE KEY FOR BOTH BINARIES
+        pdftotext is the same shape of risk with the same degradation. A second number
+        would have to be argued separately and would drift; one key, one number, every
+        site. (config('rsx.search.timeout') was that second number and is gone.)
+
+    Do NOT lower this because renders "should be faster" - that will start failing
+    legitimate renders.
 
 CONFIGURATION
     config/rsx.php -> 'libreoffice':
 
-        enabled            bool    Master switch. Default true (env LIBREOFFICE_ENABLED).
-        binary_path        ?string Absolute path to the soffice binary. Default null
-                                   (env LIBREOFFICE_BINARY_PATH) = auto-detect on
-                                   PATH and common install locations
-                                   (/usr/bin/soffice, /usr/local/bin/soffice,
-                                   /opt/libreoffice/program/soffice).
-        max_concurrent     int     Max simultaneous renders (semaphore). Default 2.
-                                   0 = unlimited.
-        timeout            int     Per-render hard cap in seconds. Default 30.
-        slot_wait_timeout  int     Max seconds to wait for a concurrency slot before
-                                   degrading to the icon. Default 30.
+        enabled      bool    Master switch. Default true (env LIBREOFFICE_ENABLED).
+        binary_path  ?string Absolute path to the soffice binary. Default null
+                             (env LIBREOFFICE_BINARY_PATH) = auto-detect on PATH and
+                             common install locations (/usr/bin/soffice,
+                             /usr/local/bin/soffice, /opt/libreoffice/program/soffice).
+        timeout      int     Per-invocation cap in seconds on the external binary.
+                             Default 120. See TIMEOUT above.
 
-    Registration (which mimes use LibreOffice) lives in
-    config('rsx.thumbnails.renderers') and is overridable/extendable in
-    rsx/resource/config/rsx.php using the same idiom as
-    config('rsx.attachments.handlers').
+    WHICH MIMES CONVERT is config('rsx.preview.convertible') - one list, read by the
+    attachment (to decide whether a new upload owes a render) and by the worker. It is
+    overridable in rsx/resource/config/rsx.php.
+
+    Office mimes are NOT registered in config('rsx.thumbnails.renderers'), by design:
+    a renderer entry would mean converting a document inside a web request.
 
 INSTALLING LIBREOFFICE
-    RSpade dev Docker images ship LibreOffice preinstalled with sensible defaults
-    (auto-detected binary, max_concurrent 2, 30s timeout). To provision another
-    environment on Debian/Ubuntu:
+    RSpade dev Docker images ship LibreOffice preinstalled with sensible defaults. To
+    provision another environment on Debian/Ubuntu:
 
         apt-get install -y --no-install-recommends \
             libreoffice-writer libreoffice-calc libreoffice-impress libreoffice-core \
-            ghostscript fonts-liberation fonts-dejavu-core
+            ghostscript poppler-utils fonts-liberation fonts-dejavu-core
 
     Notes:
-    - ghostscript is required for Imagick to rasterize the intermediate PDF (and for
+    - ghostscript is required for Imagick to rasterize the PDF rendition (and for
       direct PDF-attachment thumbnails via Imagick_Thumbnail_Renderer).
+    - poppler-utils (pdftotext) is what extracts text from renditions and PDFs.
     - Install at least one general-purpose font family; without fonts, LibreOffice
       substitutes poorly. Add fonts-noto-cjk etc. for non-Latin content.
     - The process user must be able to write to the system temp dir.
     - Some base images disable PDF reads in ImageMagick policy.xml; allow "read" for
       the PDF coder if PDF thumbnails come out blank.
 
+    rsx:health verifies soffice, poppler and the render backlog - run it as a
+    container-readiness gate.
+
     See docs.dev/reference/docker_container_additions_7_2_2026.md for the full container
     provisioning writeup.
 
 VERIFYING
-        php artisan rsx:test Thumbnail_Renderer_Test --framework
+        php artisan rsx:test --framework --group=documents
 
-    Includes test_libreoffice_real_render, which converts a document through soffice
-    and asserts a raster is returned (auto-skips if soffice is absent).
+    Includes the real-soffice render path (it auto-skips when soffice is absent), the
+    rendition-exists short-circuit, the terminal-FAILED behaviour and the thumbnail
+    cache purge.
 
 SEE ALSO
-    rsx:man file_upload      Attachment + thumbnail system, renderer registry
-    rsx:man thumbnails       Thumbnail generation and caching
-    rsx:man document_search  Text extraction + PDF renditions (shared soffice pool)
-    rsx:man locks            Cluster/system locks and the concurrency semaphore
+    rsx:man documents        Operating the render pipeline (status / failed / rerender)
+    rsx:man thumbnails       Render state machine, the thumbnail cache, the component
+    rsx:man document_search  Text extraction + PDF renditions (the same worker)
+    rsx:man file_upload      Attachment system, renderer registry
+    rsx:man tasks            #[Exclusive], #[Schedule] and the worker pool
     docs.dev/reference/docker_container_additions_7_2_2026.md
 
-LIBREOFFICE(1)                    RSpade Manual                    LIBREOFFICE(1)
+RSX Framework              Last updated 2026-08-22               LIBREOFFICE(1)

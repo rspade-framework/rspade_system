@@ -38,6 +38,10 @@
 # .claude/skills PARENT is never removed and recreated: recreating a watched top-level
 # directory mid-session breaks Claude Code's file watcher until it restarts.
 #
+# QUIET: RSPADE_ENV_UPDATE_QUIET=true suppresses the informational lines (linked,
+# repaired, retargeted, and the first-run advisories). Problems still print to stderr - a
+# quiet run is a quiet SUCCESS, never a silent failure. post-update.sh --quiet sets it.
+#
 # TEST SEAM: RSPADE_CLAUDE_HOME_DIR overrides the /root home used by the container-era
 # cleanup, so a simulation can exercise that branch without touching the real /root.
 #
@@ -58,8 +62,12 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && 
 SYSTEM_DIR="${SYSTEM_DIR:-$PROJECT_ROOT/system}"
 IS_FRAMEWORK_DEVELOPER="${IS_FRAMEWORK_DEVELOPER:-false}"
 CLAUDE_HOME_DIR="${RSPADE_CLAUDE_HOME_DIR:-/root}"
+QUIET="${RSPADE_ENV_UPDATE_QUIET:-false}"
 
 errored=false
+
+# Informational output. Gated on quiet; problems never are.
+info() { [ "$QUIET" = true ] || echo "[env] $*"; }
 
 docs_tree="$SYSTEM_DIR/app/RSpade/docs"
 skills_dir="$PROJECT_ROOT/.claude/skills"
@@ -82,7 +90,7 @@ if [ -d "$docs_tree" ]; then
         elif [ ! -e "$link" ]; then
             # Dead link: nothing is at stake, retarget it.
             if ln -sfn "$link_target" "$link" 2>/dev/null; then
-                echo "[env] Repaired the dead .claude/skills/rspade symlink -> $link_target (RSpade skills)."
+                info "Repaired the dead .claude/skills/rspade symlink -> $link_target (RSpade skills)."
             else
                 echo "[env] claude docs: cannot repair $link" >&2
                 errored=true
@@ -90,7 +98,7 @@ if [ -d "$docs_tree" ]; then
         elif [ "${resolved#"$PROJECT_ROOT/system/app/RSpade"}" != "$resolved" ]; then
             # Points somewhere else inside the rspade tree (an earlier spelling) - ours to fix.
             if ln -sfn "$link_target" "$link" 2>/dev/null; then
-                echo "[env] Retargeted .claude/skills/rspade -> $link_target (RSpade skills)."
+                info "Retargeted .claude/skills/rspade -> $link_target (RSpade skills)."
             else
                 echo "[env] claude docs: cannot retarget $link" >&2
                 errored=true
@@ -104,7 +112,7 @@ if [ -d "$docs_tree" ]; then
         echo "[env]   Move it aside if you want the RSpade skills, then re-run this update." >&2
     else
         if mkdir -p "$skills_dir" 2>/dev/null && ln -s "$link_target" "$link" 2>/dev/null; then
-            echo "[env] Linked .claude/skills/rspade -> $link_target (RSpade framework skills)."
+            info "Linked .claude/skills/rspade -> $link_target (RSpade framework skills)."
             link_created=true
         else
             echo "[env] claude docs: cannot create $link" >&2
@@ -127,7 +135,7 @@ if [ "$IS_FRAMEWORK_DEVELOPER" != true ]; then
             if { printf '%s\n\n' "$import_line"; cat "$app_claude"; } > "$tmp" 2>/dev/null \
                && cat "$tmp" > "$app_claude" 2>/dev/null; then
                 rm -f "$tmp"
-                echo "[env] Added the RSpade framework knowledge import to rsx/resource/CLAUDE.md ($import_line)."
+                info "Added the RSpade framework knowledge import to rsx/resource/CLAUDE.md ($import_line)."
             else
                 rm -f "$tmp"
                 echo "[env] claude docs: cannot rewrite $app_claude" >&2
@@ -137,7 +145,7 @@ if [ "$IS_FRAMEWORK_DEVELOPER" != true ]; then
     else
         if mkdir -p "$(dirname "$app_claude")" 2>/dev/null \
            && printf '%s\n\n# Application Notes\n\nYour own always-on instructions go here.\n' "$import_line" > "$app_claude" 2>/dev/null; then
-            echo "[env] Created rsx/resource/CLAUDE.md carrying the RSpade framework knowledge import."
+            info "Created rsx/resource/CLAUDE.md carrying the RSpade framework knowledge import."
         else
             echo "[env] claude docs: cannot create $app_claude" >&2
             errored=true
@@ -155,7 +163,7 @@ if [ "$IS_FRAMEWORK_DEVELOPER" != true ]; then
         [ "${home_resolved#"$PROJECT_ROOT/system/"}" != "$home_resolved" ] && ours=true
         if [ "$ours" = true ]; then
             if rm -f "$home_claude" 2>/dev/null; then
-                echo "[env] Removed the retired container-era symlink $home_claude (superseded by the rsx/resource/CLAUDE.md import)."
+                info "Removed the retired container-era symlink $home_claude (superseded by the rsx/resource/CLAUDE.md import)."
             else
                 echo "[env] claude docs: cannot remove $home_claude" >&2
                 errored=true
@@ -168,8 +176,8 @@ fi
 # Advisories, printed ONLY on the run that first created the plugin symlink.
 # ---------------------------------------------------------------------------
 if [ "$link_created" = true ]; then
-    echo "[env]   Claude Code will ask once to trust this workspace's plugin; accept it to load the rspade skills."
-    echo "[env]   The symlink is left uncommitted; committing it is your team's choice."
+    info "  Claude Code will ask once to trust this workspace's plugin; accept it to load the rspade skills."
+    info "  The symlink is left uncommitted; committing it is your team's choice."
 fi
 
 [ "$errored" = true ] && exit 1

@@ -52,7 +52,7 @@ php artisan rsx:mode:set dev|debug|prod   # thin delegator, kept for muscle memo
 
 ### The environment gate
 
-**Strict enable REQUIRES `APP_ENV=production` and `APP_DEBUG=false`.** If either is wrong, enable prints the exact fixes and exits **without touching the mode** - a strict prod build is meant for a real production host. `--debug` downgrades that to a warning so you can build the debug variant on a dev box. `rsx:prod:verify` applies the same expectation: for a strict seal it FAILS on a non-production env; for a debug seal the `APP_ENV` row is advisory.
+**There is no environment to validate.** `RSX_MODE` is the single mode switch and Laravel's `app.env` / `app.debug` derive from it (`config/app.php`); the `APP_ENV` / `APP_DEBUG` env keys are not read anywhere. Setting `RSX_MODE=production` IS the production environment with debug off, so `rsx:prod:enable` has no environment pre-check and `rsx:prod:verify` carries no environment rows - a mode that disagrees with the seal shows up as seal drift.
 
 ---
 
@@ -68,7 +68,6 @@ php artisan rsx:mode:set dev|debug|prod   # thin delegator, kept for muscle memo
 |---|---|---|
 | verify: asset hash mismatch | Someone wrote under `storage/rsx-build` outside the framework (raw `rm`, `cp`, a hand-edited bundle) | `rsx:prod:refresh` |
 | verify: build_key mismatch | The code on disk is not the code that was sealed (a `git pull` without a refresh) | `rsx:prod:refresh` |
-| verify: env row FAIL | `APP_ENV`/`APP_DEBUG` drifted on a strict seal | Fix `.env`, re-verify |
 | "Manifest not built for production mode" | Manifest cache missing/invalid while sealed | `rsx:prod:refresh` |
 | "Bundle 'X' not compiled for production mode" | A bundle is missing while sealed | `rsx:prod:refresh` |
 | "System is in prod mode (sealed build)." | You ran `rsx:clean` or a bare `rsx:prod:build` while sealed | `rsx:prod:refresh`, or `rsx:prod:disable` to leave |
@@ -101,7 +100,7 @@ They exist to stop the framework's OWN write paths, and they do not (and cannot)
 
 **Two byte-identical codebases, checked out at DIFFERENT absolute paths, produce an IDENTICAL build_key and IDENTICAL bundle filenames, byte-for-byte.** That is what lets one compile be trusted across a cluster, or cached by CI keyed on build_key.
 
-1. **File hashing branches on `RSX_MODE`, not `APP_ENV`.** In a prod mode the hash covers the file's PROJECT-RELATIVE path plus its CONTENT (sha512) - never the absolute path, never disk timestamps. (Development still uses a fast abspath+size+mtime hash; it only needs to notice local edits and is deliberately not portable.)
+1. **File hashing branches on `RSX_MODE`**, the single mode switch. In a prod mode the hash covers the file's PROJECT-RELATIVE path plus its CONTENT (sha512) - never the absolute path, never disk timestamps. (Development still uses a fast abspath+size+mtime hash; it only needs to notice local edits and is deliberately not portable.)
 2. **The manifest hash excludes per-file mtime/size.** They stay in the cache file for dev change-detection but are OUT of the hashed projection, and the prod cache file also drops the "generated" timestamp (that moved to the seal). So `manifest_data.php` is byte-stable and build_key is content-derived.
 3. **Bundle filenames are `{Bundle}__{app|vendor}.{hash8}.{ext}`**, the hash8 deriving from the same relative-path + content inputs plus the committed lockfile hashes and npm declarations. Minified output is reproducible given the pinned, committed `node_modules`.
 
@@ -137,7 +136,7 @@ Runs the authorized build and copies `system/`, `rsx/`, `node_modules/`, `vendor
 
 1. Develop (`RSX_MODE=development`) - changes are live on save.
 2. Reproduce a prod-only bug locally: `rsx:prod:enable --debug`, then `rsx:prod:disable` to return.
-3. On the production host (`APP_ENV=production`, `APP_DEBUG=false`): `rsx:prod:enable`.
+3. On the production host: `rsx:prod:enable`.
 4. `rsx:prod:verify`.
 5. After pulling new code onto that host: `rsx:prod:refresh`.
 6. Package for elsewhere: `rsx:prod:export`.

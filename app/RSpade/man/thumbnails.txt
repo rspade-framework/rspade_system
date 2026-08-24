@@ -4,9 +4,17 @@ NAME
     Thumbnails - Two-tier cached thumbnail system with named presets and dynamic sizes
 
 SYNOPSIS
-    Named Preset Thumbnails (Recommended)
-    -------------------------------------
-    // Define presets in config/rsx.php
+    Rendering a thumbnail (the ONLY way)
+    ------------------------------------
+    <Attachment_Thumbnail $attachment_id=record.file_attachment_id $width=160 />
+    <Attachment_Thumbnail $attachment_id=id $type="cover" $width=96 $height=96 />
+    <Attachment_Thumbnail $attachment_id=id $preset="profile" />
+
+    // From JavaScript
+    $el.component('Attachment_Thumbnail', {attachment_id: id, width: 160});
+
+    Defining named presets (config/rsx.php)
+    ---------------------------------------
     'thumbnails' => [
         'presets' => [
             'profile' => ['type' => 'cover', 'width' => 200, 'height' => 200],
@@ -14,19 +22,19 @@ SYNOPSIS
         ],
     ],
 
-    // Use in templates
-    <img src="<?= $attachment->get_thumbnail_url_preset('profile') ?>" />
-
-    Dynamic Thumbnails (Ad-hoc Sizes)
-    ----------------------------------
-    <img src="<?= $attachment->get_thumbnail_url('cover', 200, 200) ?>" />
-    <img src="<?= $attachment->get_thumbnail_url('fit', 400) ?>" />
+    URL builders (FRAMEWORK-INTERNAL - the component calls these, app code does not)
+    -------------------------------------------------------------------------------
+    $attachment->get_thumbnail_url('cover', 200, 200)                  // PHP
+    $attachment->get_thumbnail_url_preset('profile')                   // PHP
+    File_Attachment_Model.thumbnail_url(record, {type, width, height}) // JS
+    File_Attachment_Model.thumbnail_version(record)                    // JS (the ?v=)
 
     Artisan Commands
     ----------------
     php artisan rsx:thumbnails:stats
     php artisan rsx:thumbnails:clean [--preset] [--dynamic]
     php artisan rsx:thumbnails:generate [--preset=profile]
+    php artisan rsx:documents:status | :failed | :rerender   (the render pipeline)
 
 DESCRIPTION
     RSX provides a two-tier thumbnail caching system designed to prevent cache
@@ -87,14 +95,16 @@ PRESET THUMBNAILS
 
     Usage in Code
     -------------
-    // Get preset thumbnail URL
-    $url = $attachment->get_thumbnail_url_preset('profile');
+    A preset is selected by NAME on the component, and nowhere else:
 
-    // Use in Blade templates
-    <img src="<?= $user->get_attachment('profile_photo')->get_thumbnail_url_preset('profile') ?>" />
+    <Attachment_Thumbnail $attachment_id=id $preset="profile" />
 
-    // Use in jqhtml templates
-    <img src="<%= attachment.get_thumbnail_url_preset('gallery') %>" />
+    $preset is mutually exclusive with $type/$width/$height - passing both throws.
+
+    get_thumbnail_url_preset() still exists in PHP; it is the builder the component's
+    JavaScript twin mirrors, not an app-facing API. Shipping its return value in a
+    payload is exactly what this system exists to stop - see THE ATTACHMENT_THUMBNAIL
+    COMPONENT below.
 
     Quota Management
     ----------------
@@ -119,12 +129,11 @@ DYNAMIC THUMBNAILS
 
     Usage
     -----
-    For edge cases where preset sizes don't fit:
+    For edge cases where preset sizes don't fit, ask the component for an explicit
+    size instead of a preset name:
 
-    $url = $attachment->get_thumbnail_url('cover', 200, 200);
-    $url = $attachment->get_thumbnail_url('fit', 400);  // Height optional
-
-    <img src="<?= $attachment->get_thumbnail_url('cover', 150, 150) ?>" />
+    <Attachment_Thumbnail $attachment_id=id $type="cover" $width=150 $height=150 />
+    <Attachment_Thumbnail $attachment_id=id $width=400 />   // fit, height free
 
     Quota Enforcement
     -----------------
@@ -153,20 +162,65 @@ CACHING BEHAVIOR
 
     All thumbnails are WebP format for optimal size/quality balance.
 
+    THE FIRST BRANCH IS RENDER STATE, NOT THE CACHE
+    -----------------------------------------------
+    Before a cache path is even computed, the endpoint reads the blob's
+    render_status_id (see RENDER PIPELINE below):
+
+        PENDING or FAILED   Serve the extension-icon PLACEHOLDER, with
+                            Cache-Control: no-store, and touch the cache neither for
+                            reading nor for writing.
+        RENDERED            Rasterize page 1 of the PDF rendition (through the
+                            renderer registered for application/pdf) and cache the
+                            result under the real key.
+        NOT_REQUIRED        An image, a plain PDF, anything with nothing to convert:
+                            the historic path, rasterized straight from the blob.
+
+    A PLACEHOLDER IS NEVER WRITTEN TO THE CACHE, and that rule is the whole point.
+    The old pipeline wrote the extension icon under the SAME
+    {type}_{w}x{h}_{hash}.webp key a real render would use, so a document that failed
+    once served a poisoned icon until LRU eviction happened to remove it - a later
+    successful render could never replace it, because a cache hit is a cache hit. An
+    install upgraded onto this pipeline stops serving its pre-existing poisoned
+    entries, because a PENDING/FAILED blob no longer reads the cache at all, and a
+    blob reaching RENDERED purges every cache file for its hash (below).
+
     Cache Hits
     ----------
-    When thumbnail exists:
+    When the thumbnail exists (and the blob is not PENDING/FAILED):
     1. Attempt to open file (handles race condition if deleted)
     2. Touch mtime if enabled and >10 minutes old (LRU tracking)
     3. Serve from disk with 1-year cache headers
 
     Cache Misses
     ------------
-    When thumbnail doesn't exist:
-    1. Generate via Imagick (images) or icon-based (non-images)
+    When the thumbnail doesn't exist:
+    1. Generate from the rendition (RENDERED) or the blob (NOT_REQUIRED), via
+       Imagick, or icon-based when no renderer matches
     2. Save to cache directory
     3. Enforce quota (dynamic only)
     4. Serve from memory (don't re-read from disk)
+
+    Cache Purge on RENDERED
+    -----------------------
+    When Document_Render_Service settles a blob RENDERED it deletes every cached
+    thumbnail derived from those bytes - *_{hash}_*.webp in BOTH cache directories,
+    so every preset and every dynamic size goes at once. Required, not tidy-up:
+    backfilled blobs (documents uploaded before this pipeline existed) carry a
+    poisoned icon under the real key, and without the purge the real render would
+    never be seen.
+
+    ?v= - THE BROWSER'S CACHE KEY
+    -----------------------------
+    Real thumbnails are served with max-age=31536000, so a browser that once saw the
+    placeholder would keep showing it for a YEAR after the document rendered. Every
+    thumbnail URL therefore carries ?v=<the blob's rendered_at in unix seconds>, or
+    ?v=0 when nothing has rendered. The SERVER ACCEPTS AND IGNORES v - it is purely a
+    browser cache key, and it is why the swap is visible at all.
+
+    Both URL builders emit it (PHP get_thumbnail_url*(), JS
+    File_Attachment_Model.thumbnail_url()), so any thumbnail rendered through the
+    component has it and no app has to think about it.
 
     LRU Eviction
     ------------
@@ -246,10 +300,23 @@ ARTISAN COMMANDS
         php artisan rsx:thumbnails:generate --preset=profile
         php artisan rsx:thumbnails:generate --key=abc123def456
 
+    Options (full):
+        --preset=name        Generate specific preset for all attachments
+        --key=xyz            Generate thumbnails for one attachment key
+        --all                Generate all presets for all attachments (default)
+        --include-external   Also materialize + render external (handler-backed)
+                             attachments. Off by default so a cache-warming pass does
+                             not mass-materialize remote bytes.
+
+    Render-state awareness: a PENDING or FAILED blob is SKIPPED (its picture does not
+    exist yet, and warming it would only cache an icon), and a RENDERED blob is warmed
+    from its rendition. A RENDERED blob whose rendition has been evicted is skipped
+    too, rather than re-queued - warming must not create work as a side effect; the
+    serving path self-heals that case.
+
     Use cases:
     - Cache warming after deployment
     - Regenerating after changing preset dimensions
-    - Background generation for new uploads
 
 CONFIGURATION OPTIONS
 
@@ -264,6 +331,31 @@ CONFIGURATION OPTIONS
             'profile' => ['type' => 'cover', 'width' => 200, 'height' => 200],
             'gallery' => ['type' => 'fit', 'width' => 400, 'height' => 300],
         ],
+
+    thumbnails.renderers
+    --------------------
+    The "produce a raster from bytes" step, pluggable by mime. Ordered fnmatch map of
+    mime pattern -> renderer class (simple, manifest-resolved name); first match wins,
+    and a mime with no renderer gets the generic extension icon. Overridable and
+    extendable in rsx/resource/config/rsx.php.
+
+    Ships:
+        'image/*'         => 'Imagick_Thumbnail_Renderer'
+        'application/pdf' => 'Imagick_Thumbnail_Renderer'   (page 1; needs Ghostscript)
+
+    OFFICE DOCUMENT MIMES ARE DELIBERATELY ABSENT. Their pixels come from the PDF
+    rendition the background worker produced, which this pipeline rasterizes with the
+    application/pdf renderer like any other PDF. A renderer entry for .docx would mean
+    converting a document inside a web request - exactly what the worker exists to
+    stop. (This is where Libreoffice_Thumbnail_Renderer used to be registered; that
+    class no longer exists.)
+
+    thumbnails.renderer_max_bytes
+    -----------------------------
+    Skip the renderer (serve the extension icon) for source blobs larger than this, to
+    bound render cost. Images are never capped. null = no cap.
+
+    Default: 50 * 1024 * 1024 (50MB)
 
     thumbnails.quotas.preset_max_bytes
     ----------------------------------
@@ -361,15 +453,140 @@ DIMENSION LIMITS AND RESOLUTION SCALING
     However, the aspect ratio ALWAYS matches requested dimensions. Plan your
     layouts accordingly - use CSS to constrain display size if needed.
 
-NON-IMAGE FILES
+RENDER PIPELINE (non-image files)
 
-    Thumbnails for non-image files (PDFs, documents, etc.) use icon-based
-    rendering. The system generates a WebP thumbnail containing the
-    appropriate file type icon.
+    A PDF thumbnails directly (Imagick + Ghostscript rasterize page 1). An OFFICE
+    DOCUMENT does not: it has no pixels until headless LibreOffice has turned it into
+    a PDF rendition, and that conversion happens in the BACKGROUND, never inside the
+    web request that wants the picture.
 
-    Icons are provided by File_Attachment_Icons class and include:
-    - Brand-specific icons (PDF, Photoshop, Illustrator)
-    - Generic category icons (document, video, audio, archive)
+    The state machine lives on the BLOB (_file_storage.render_status_id), because both
+    products of a render - the rendition at storage/rsx-renditions/{hash}.pdf and the
+    thumbnail cache key - are already content-addressed on the blob hash, so N
+    attachments sharing one blob share one render.
+
+        NOT_REQUIRED (1)  Nothing to convert: an image, a plain PDF, a zip. THE
+                          DEFAULT - store_blob() sees only bytes and cannot know the
+                          mime.
+        PENDING      (2)  Queued. The queue IS this column; there is no side table.
+        RENDERED     (3)  Rendition on disk, rendered_at set, text extracted.
+        FAILED       (4)  TERMINAL. render_error carries the reason; the sweeper NEVER
+                          retries it. Re-rendering is an explicit operator action.
+
+    WHO SETS PENDING. The ATTACHMENT does, not the blob: on create and on
+    relink_storage(), if its pipeline_mime() matches config('rsx.preview.convertible')
+    and the blob is still NOT_REQUIRED, the attachment flips it to PENDING and kicks
+    the worker (File_Storage_Model::request_render()). Dedup falls out of the
+    condition - a blob already PENDING, RENDERED or FAILED is left alone, so
+    re-uploading the same bytes converts nothing and the thumbnail is immediate.
+
+    THE WORKER. Document_Render_Service::render_pending is #[Exclusive] and
+    #[Schedule('every 10 minutes')], kicked promptly on upload and swept on that
+    schedule so a killed worker resumes unnoticed. It drains ONE blob per iteration
+    (render_status_id = PENDING OR is_indexed = 0), and per blob: produces the PDF
+    rendition with ONE soffice run, extracts the text in the same pass, settles
+    RENDERED/rendered_at (or FAILED/render_error), purges the thumbnail cache for the
+    hash, and emits a realtime frame on every attachment referencing the blob. It is
+    the ONLY caller of soffice for renditions, which is why no concurrency semaphore
+    exists any more.
+
+    SELF-HEAL ON AN EVICTED RENDITION. The rendition cache is LRU-capped
+    (config('rsx.preview.quota_max_bytes'), 200MB), so a RENDERED blob's rendition can
+    be evicted while the row still says RENDERED. The thumbnail endpoint notices the
+    missing file, re-queues the blob (requeue_render()), and serves the placeholder -
+    never an error page. The NEXT worker pass reconverts it. rsx:thumbnails:generate
+    does NOT do this: a cache-warming pass skips such a blob rather than queueing work
+    as a side effect.
+
+    THE PLACEHOLDER is the file-type icon from File_Attachment_Icons (brand icons
+    for PDF/Photoshop/Illustrator, category icons for document/video/audio/archive),
+    rasterized to the requested geometry - the same picture a file with no renderer
+    at all gets, which is deliberate: "not rendered yet" and "never renders" look
+    identical to a user, and the difference is data-render-status, not pixels.
+
+    Operating the pipeline is rsx:man documents (rsx:documents:status / :failed /
+    :rerender). The conversion itself is rsx:man libreoffice; the text half is
+    rsx:man document_search.
+
+THE ATTACHMENT_THUMBNAIL COMPONENT
+
+    <Attachment_Thumbnail> is THE way a thumbnail is rendered in an RSX app - images
+    included, staff and portal alike. An app never builds a thumbnail URL and never
+    ships one in a payload.
+
+    Args
+    ----
+    $attachment_id  (required) File_Attachment_Model id. Throws if absent - never
+                    invoke it with null; render your initials/empty branch instead.
+    $type           'fit' (default) or 'cover'.
+    $width          px, default 120.
+    $height         px; omitted -> a width-only variant.
+    $preset         a named preset. MUTUALLY EXCLUSIVE with $type/$width/$height.
+    $alt            img alt text; defaults to the attachment's file name.
+
+    Extra classes go on the invocation as an ordinary HTML attribute -
+    <Attachment_Thumbnail class="me-2" $attachment_id=id /> - which jqhtml preserves
+    on the host element. There is no $class arg.
+
+    Behaviour
+    ---------
+    on_create() subscribes to the attachment (realtime) BEFORE the first load, so
+    there is no window in which a render could complete unseen. on_load() fetches the
+    record through File_Attachment_Model.fetch_or_null(), which is BATCHED - a table
+    of forty thumbnails costs one request. The template builds the src through the one
+    JS builder and stamps data-render-status on the element.
+
+    The record is fetched, not passed in, and that is the design: a producer ships
+    file_attachment_id and stops shipping key, thumbnail_url and render-state fields
+    entirely. A URL in a payload is a value; a thumbnail is a LIVE VIEW of a record
+    whose picture may not exist yet.
+
+    THE SWAP
+    --------
+    When the worker settles a blob RENDERED it emits a frame on every attachment
+    referencing it. Each mounted component refetches and repaints ONLY if the record
+    actually changed (refresh(), never reload()). The ?v= in the new URL differs, the
+    browser fetches the real image, and the picture replaces the extension icon in
+    place - no reload, no polling. On a box with realtime DISABLED the placeholder
+    simply persists until the next navigation; there is deliberately no polling
+    fallback path.
+
+    A record that cannot be fetched (deleted, or not visible to this user) paints a
+    quiet empty box with data-render-status="unavailable" - never an error.
+
+    PORTAL
+    ------
+    The same component, unchanged, on portal pages: File_Attachment_Model ships both
+    fetch() and portal_fetch(), each gated through the app's own
+    file.thumbnail.authorize handler with realm-honest user resolution, and a denial
+    is indistinguishable from a missing record. An app whose thumbnail gate only
+    considered staff users will now deny every portal thumbnail - the handler must
+    answer for a Portal_User_Model too.
+
+FUTURE POSSIBILITIES (unbuilt)
+
+    None of the following exists. They are recorded because routing every thumbnail
+    through one component is what puts them within reach, and because each one would
+    otherwise be re-invented per app.
+
+    A PENDING spinner
+        render_status_id is already on the host element as data-render-status, so an
+        animated progress affordance could replace the flat extension icon while the
+        worker converts.
+
+    Re-render on resize
+        A ResizeObserver on the host could notice the box grew and request a larger
+        variant, so a thumbnail dragged into a bigger slot stops looking soft.
+
+    Preset negotiation
+        The component could pick the named preset closest to its measured box instead
+        of taking a width from the caller, collapsing the long tail of one-off dynamic
+        variants that fill the dynamic cache.
+
+    Any thumbnail, replaced by the server at any time
+        The swap path is not specific to document rendering: a re-crop, a moderation
+        blur, a regenerated avatar - anything that emits on the attachment reaches
+        every mounted thumbnail of it.
 
 FILESYSTEM STRUCTURE
 
@@ -451,6 +668,32 @@ TROUBLESHOOTING
     - Directory writable? (storage/rsx-thumbnails/ permissions)
     - Check Laravel logs for exceptions
 
+    An Office Document Shows the Extension Icon Forever
+    --------------------------------------------------
+    The extension icon IS the correct picture for a PENDING or FAILED blob, so the
+    question is which one it is:
+
+        php artisan rsx:documents:status     # is anything PENDING? is the worker due?
+        php artisan rsx:documents:failed     # if FAILED, the reason is printed
+
+    PENDING that never moves means the worker is not running (check rsx:task:process,
+    and rsx:health "Document Render Backlog"), or rsx.libreoffice.enabled is false.
+    FAILED is terminal by design: fix the cause, then
+    php artisan rsx:documents:rerender --failed. Note that rerender DELETES the
+    rendition file first, so the worker truly reconverts rather than short-circuiting
+    on the file that is already there.
+
+    A Document Rendered, But the Old Icon Is Still on Screen
+    -------------------------------------------------------
+    Almost always a hand-built URL that predates <Attachment_Thumbnail>: it has no
+    ?v=, so the browser is serving a year-cached placeholder it fetched earlier.
+    Nothing errors - the picture is simply frozen. Route the thumbnail through the
+    component. Grep for the survivors: get_thumbnail_url, /_thumbnail/, thumbnail_url,
+    avatar_url.
+
+    If realtime is disabled on the box, the swap is not expected mid-page: the
+    placeholder persists until the next navigation, by design (there is no polling).
+
     Slow Initial Load
     -----------------
     Problem: First thumbnail request is slow
@@ -480,9 +723,11 @@ FUTURE ENHANCEMENTS
     Planned enhancement: JavaScript helpers that detect window.devicePixelRatio
     and automatically calculate display-appropriate dimensions.
 
-    Proposed API:
-        // JavaScript - automatically adjusts for devicePixelRatio
-        const url = attachment.get_thumbnail_url_for_display('cover', 200, 200);
+    Where it would live: inside <Attachment_Thumbnail>, which already measures
+    nothing and asks for exactly the width its caller named. It would read
+    window.devicePixelRatio and scale that width before calling
+    File_Attachment_Model.thumbnail_url() - so every thumbnail in every app would
+    gain it at once, with no template changing.
 
         // On 1x display: requests 200x200 (server generates 400x400)
         // On 2x display: requests 200x200 (server generates 400x400)
@@ -494,10 +739,14 @@ FUTURE ENHANCEMENTS
     - Sharper images on 3x displays
     - Smaller images for 1x displays
 
-    This would require client-side JavaScript helpers integrated with the
-    File_Attachment_Model fetch system.
+    See FUTURE POSSIBILITIES above for the rest of what one component makes reachable.
 
 SEE ALSO
-    file_upload.txt - File attachment and upload system
-    storage_directories.txt - Storage directory organization
-    config_rsx.txt - RSX configuration reference
+    rsx:man documents            Operating the render pipeline (status/failed/rerender)
+    rsx:man document_search      Text extraction, Document_Preview, the same worker
+    rsx:man libreoffice          The soffice invocation and its one sanctioned timeout
+    rsx:man file_upload          File attachment and upload system
+    rsx:man storage_directories  Storage directory organization
+    rsx:man config_rsx           RSX configuration reference
+
+RSX Framework              Last updated 2026-08-22                 THUMBNAILS(1)

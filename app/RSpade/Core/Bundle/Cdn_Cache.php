@@ -276,7 +276,15 @@ class Cdn_Cache
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_TIMEOUT => 30,
+            // NO TRANSFER TIMEOUT. This carried CURLOPT_TIMEOUT => 30, which capped the
+            // whole download - and expiry throws (see _download's caller), FAILING a
+            // sealed production build. A large vendor bundle on a slow link was
+            // indistinguishable from an outage, so expiry did not degrade to a working
+            // outcome and the cap failed even the sanctioned test.
+            //
+            // CONNECTTIMEOUT stays: it bounds only reaching an EXTERNAL host that may
+            // never answer, never the transfer, and a host that will not accept a
+            // connection in 10s is down rather than slow.
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_USERAGENT => 'RSpade/1.0',
             CURLOPT_SSL_VERIFYPEER => true,

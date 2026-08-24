@@ -70,10 +70,10 @@ class Rsx_Prod_Env
 
         $contents = file_get_contents($env_path);
 
+        // Insertion anchor: APP_URL, the one key every install has. (It used to be
+        // APP_DEBUG, which is no longer a key RSpade reads or expects to find.)
         if (preg_match('/^RSX_MODE=.*$/m', $contents)) {
             $contents = preg_replace('/^RSX_MODE=.*$/m', "RSX_MODE={$mode}", $contents);
-        } elseif (preg_match('/^APP_DEBUG=.*$/m', $contents)) {
-            $contents = preg_replace('/^(APP_DEBUG=.*)$/m', "$1\nRSX_MODE={$mode}", $contents, 1);
         } elseif (preg_match('/^APP_URL=.*$/m', $contents)) {
             $contents = preg_replace('/^(APP_URL=.*)$/m', "$1\nRSX_MODE={$mode}", $contents, 1);
         } else {

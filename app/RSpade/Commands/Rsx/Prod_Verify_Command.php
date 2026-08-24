@@ -3,7 +3,6 @@
 namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Prod\Rsx_Prod_Seal;
-use App\RSpade\Core\Rsx;
 use Illuminate\Console\Command;
 
 /**
@@ -43,29 +42,10 @@ class Prod_Verify_Command extends Command
             }
         }
 
-        // --- Environment sanity ---
+        // No environment-sanity rows: app.env and app.debug are DERIVED from RSX_MODE
+        // (see config/app.php), so there is no second switch that could disagree with
+        // the seal. The mode mismatch itself is reported by the seal drift check above.
         $sealed_mode = $seal['rsx_mode'] ?? 'unknown';
-        $strict_prod = ($sealed_mode === Rsx::MODE_PRODUCTION);
-        $app_env = app()->environment();
-        $app_debug = (bool) config('app.debug');
-
-        if ($strict_prod) {
-            if ($app_env === 'production') {
-                $rows[] = ['APP_ENV', 'OK', 'production'];
-            } else {
-                $rows[] = ['APP_ENV', 'FAIL', "'{$app_env}' (strict prod build expects 'production')"];
-                $failed = true;
-            }
-
-            if (!$app_debug) {
-                $rows[] = ['APP_DEBUG', 'OK', 'false'];
-            } else {
-                $rows[] = ['APP_DEBUG', 'FAIL', 'true (must be false in strict production)'];
-                $failed = true;
-            }
-        } else {
-            $rows[] = ['APP_ENV', 'INFO', "'{$app_env}' (debug build - advisory only)"];
-        }
 
         // --- OPcache posture (advisory, never affects exit) ---
         foreach ($this->_opcache_rows() as $row) {

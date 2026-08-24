@@ -143,6 +143,13 @@ COPY claude-run.sh     /usr/local/bin/claude
 # one project, it is just the project's git.
 COPY git-shim.sh       /usr/local/bin/git
 
+# npm, same arrangement and for the same reason: the project has TWO npm layers
+# (the framework's inside system/, the application's at the project root) and bare
+# npm silently gets the second one half-right. The shim routes to rsx:npm, which
+# knows the difference - and steps aside inside system/, where framework
+# dependency work legitimately uses plain npm. See the script's header.
+COPY npm-shim.sh       /usr/local/bin/npm
+
 # 755, not +x: the source tree these come from is world-writable, and `chmod +x`
 # would preserve that - a world-WRITABLE executable on PATH is a different thing
 # entirely from an executable one.
@@ -151,7 +158,8 @@ RUN chmod 755 /usr/local/bin/rspade-entrypoint \
               /usr/local/bin/rspade-task-run \
               /usr/local/bin/rspade-retry-run \
               /usr/local/bin/claude \
-              /usr/local/bin/git
+              /usr/local/bin/git \
+              /usr/local/bin/npm
 
 # Runtime directories the services expect to exist before they start.
 RUN mkdir -p /run/php /var/log/supervisor /var/run/redis /var/log/redis /var/lib/redis \

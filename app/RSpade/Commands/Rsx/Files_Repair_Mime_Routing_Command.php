@@ -47,7 +47,7 @@ class Files_Repair_Mime_Routing_Command extends Command
         }
 
         if ($counts['blobs'] > 0) {
-            Task::dispatch('Search_Index_Service', 'index_pending');
+            Task::dispatch('Document_Render_Service', 'render_pending');
         }
 
         $this->line('[OK] Mime-routing repair complete.');

@@ -1159,7 +1159,7 @@ class Manifest
         console_debug('MANIFEST', 'Phase 1: File Discovery - ' . count($files) . ' files, ' . count($files_to_process) . ' changed');
 
         // If any files have changed and we're not in production, run auto-reformat
-        if ($changes && env('APP_ENV') !== 'production') {
+        if ($changes && Rsx::is_development()) {
             $formatter_path = base_path('bin/rsx-format');
             // Lets rethink this before we enable iut again
             // if (file_exists($formatter_path)) {
@@ -1390,7 +1390,7 @@ class Manifest
 
         // Run manifest-time code quality checks (development only)
         // Skip during migrations - database may not be provisioned yet
-        if (env('APP_ENV') !== 'production' && $changes && !static::_is_migration_context()) {
+        if (Rsx::is_development() && $changes && !static::_is_migration_context()) {
             static::_verify_database_provisioned();
             static::_run_manifest_time_code_quality_checks($files_to_process);
         }

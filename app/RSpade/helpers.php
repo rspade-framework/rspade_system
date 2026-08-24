@@ -1453,7 +1453,7 @@ function safe_html(string $html): string
 /**
  * Generate a hash for a file suitable for build/cache invalidation.
  *
- * Strategy is selected by RSX_MODE (via Rsx::is_production()), NOT by APP_ENV:
+ * Strategy is selected by RSX_MODE (via Rsx::is_production()), the single mode switch:
  *
  * - Development mode: a fast hash of the ABSOLUTE path + size + mtime. This is a
  *   local JIT fast path - it never leaves the machine and only needs to notice
@@ -1477,8 +1477,8 @@ function _rsx_file_hash_for_build($file_path)
         shouldnt_happen("File does not exist for hashing: {$file_path}");
     }
 
-    // Branch on RSX_MODE, not APP_ENV: a prod/debug build must be deterministic
-    // regardless of the Laravel environment string.
+    // Branch on RSX_MODE - the single mode switch - so a prod/debug build is
+    // deterministic wherever it is compiled.
     if (\App\RSpade\Core\Rsx::is_production()) {
         return _rsx_file_hash_content_based($file_path);
     }

@@ -79,7 +79,7 @@ class Prod_Export_Command extends Command
             $this->line('[1/3] Running production build...');
             // Export is an authorized build context (it produces a deployable), so
             // the pipeline's optimize:cache step is permitted even off a production
-            // APP_ENV. Authorization travels as an INVOCATION FLAG, not an env prefix.
+            // app environment. Authorization travels as an INVOCATION FLAG, not an env prefix.
             $exit_code = Rsx_Artisan::passthru('rsx:prod:build', [Rsx_Prod_Seal::AUTHORIZED_FLAG]);
             if ($exit_code !== 0) {
                 $this->error('Production build failed');
@@ -371,7 +371,8 @@ class Prod_Export_Command extends Command
 
     /**
      * Generate a deployable env template from the real .env (stripping framework-dev flags
-     * and secrets, disabling debug), and create the system/.env symlink to ../.env. The
+     * and secrets, quieting console debug and log level), and create the system/.env symlink
+     * to ../.env. The
      * real .env is NEVER copied - the operator populates .env from .env.dist on the target.
      *
      * @param string $env_src Absolute path to the real (project-root) .env.

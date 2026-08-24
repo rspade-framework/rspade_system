@@ -71,8 +71,11 @@ class Rsx_SSR
      */
     public static function render_component(string $component, array $args = [], string $bundle_class = ''): array
     {
-        // SYSTEM lock: the SSR server is a node process on THIS box. Waits forever - the
-        // render itself is bounded by DEFAULT_TIMEOUT, so the queue always drains.
+        // SYSTEM lock: the SSR server is a node process on THIS box. Waits forever, and
+        // that is only safe BECAUSE the render itself is bounded (DEFAULT_TIMEOUT, the
+        // sanctioned timeout documented in bin/ssr-server.js) - the two are one design:
+        // an unbounded wait on a queue that is guaranteed to drain. Remove the bound and
+        // this wait becomes a permanent hang for every later caller.
         $lock_token = RsxLocks::system_lock(RsxLocks::LOCK_SSR_RENDER);
 
         try {

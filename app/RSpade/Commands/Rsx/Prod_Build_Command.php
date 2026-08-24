@@ -204,7 +204,8 @@ class Prod_Build_Command extends Command
 
             // Run LOUD - no stderr suppression - and treat a non-zero exit as a
             // build failure. The optimize:cache override accepts an authorized build
-            // context OR APP_ENV=production; a real failure here must not be
+            // context OR a production app environment (derived from RSX_MODE); a
+            // real failure here must not be
             // swallowed. Authorization is NOT inherited via env - we forward the
             // --authorized invocation flag explicitly to the child.
             $authorized_args = $this->option('authorized')

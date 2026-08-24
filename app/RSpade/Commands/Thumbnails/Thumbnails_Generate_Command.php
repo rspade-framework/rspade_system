@@ -5,6 +5,8 @@ namespace App\RSpade\Commands\Thumbnails;
 use Illuminate\Console\Command;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Attachment_Controller;
+use App\RSpade\Core\Files\File_Preview_Controller;
+use App\RSpade\Core\Files\File_Storage_Model;
 
 class Thumbnails_Generate_Command extends Command
 {
@@ -77,6 +79,7 @@ class Thumbnails_Generate_Command extends Command
         $generated_count = 0;
         $skipped_count = 0;
         $skipped_external_count = 0;
+        $skipped_render_count = 0;
         $error_count = 0;
 
         foreach ($attachments as $attachment) {
@@ -84,6 +87,17 @@ class Thumbnails_Generate_Command extends Command
             // materialize them. Avoids pulling remote bytes en masse during bulk cache warming.
             if (!$include_external && $attachment->handler_class !== null && $attachment->file_storage_id === null) {
                 $skipped_external_count++;
+                continue;
+            }
+
+            // A document whose render is queued or terminally failed has no real thumbnail to
+            // warm: the serving path answers it with an uncached placeholder, and generating here
+            // would write the extension icon under the real cache key - the exact poisoning this
+            // pipeline exists to prevent. The blob is warmed by the pass AFTER it renders.
+            $render_status = $attachment->get_render_status();
+            if ($render_status === File_Storage_Model::RENDER_STATUS_PENDING
+                || $render_status === File_Storage_Model::RENDER_STATUS_FAILED) {
+                $skipped_render_count++;
                 continue;
             }
 
@@ -96,6 +110,10 @@ class Thumbnails_Generate_Command extends Command
                     $error_count++;
                 }
             }
+        }
+
+        if ($skipped_render_count > 0) {
+            $this->warn("Skipped {$skipped_render_count} attachment(s) whose document render is pending or failed - check php artisan rsx:documents:status.");
         }
 
         if ($skipped_external_count > 0) {
@@ -116,7 +134,8 @@ class Thumbnails_Generate_Command extends Command
      */
     protected function generate_thumbnail($attachment, $preset_name, $preset_config)
     {
-        // Materialize external bytes on demand (only reached for resident or --include-external).
+        // Materialize external bytes on demand (only reached for resident or --include-external,
+        // and only for a blob whose render state is settled - see handle()).
         $storage = $attachment->resolve_storage();
         if (!file_exists($storage->get_full_path())) {
             throw new \Exception('File not found on disk');
@@ -139,13 +158,26 @@ class Thumbnails_Generate_Command extends Command
         $width = $preset_config['width'];
         $height = $preset_config['height'] ?? null;
 
+        // A rendered document's pixels come from its PDF rendition, not from the blob. A missing
+        // rendition (LRU-evicted) is left to the serving path to self-heal - a cache-warming pass
+        // must not queue work as a side effect.
+        $rendition_path = null;
+        if ((int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_RENDERED) {
+            $candidate = File_Preview_Controller::rendition_cache_path($storage);
+            if (!file_exists($candidate)) {
+                return;
+            }
+            $rendition_path = $candidate;
+        }
+
         // Produce thumbnail bytes via the renderer registry (icon substitution handled inside).
         $thumbnail_data = File_Attachment_Controller::_render_thumbnail_data(
             $attachment,
             $storage->get_full_path(),
             $type,
             $width,
-            $height
+            $height,
+            $rendition_path
         );
 
         // Save to cache

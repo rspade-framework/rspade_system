@@ -32,8 +32,9 @@ class Optimize_Cache_Command extends Command
         // Allowed ONLY in production, or from an authorized prod-build context
         // (rsx:prod:build forwards the --authorized invocation flag to this child
         // when it is itself authorized). This lets the sealed-build pipeline cache
-        // Laravel components even when APP_ENV is not literally 'production' (e.g.
+        // Laravel components even when the app environment is not 'production' (e.g.
         // a --debug build on a local box), while still blocking ad-hoc dev use.
+        // app()->environment() derives from RSX_MODE - see config/app.php.
         if (!app()->environment('production') && !Rsx_Prod_Seal::is_authorized()) {
             throw new \RuntimeException(
                 "The optimize:cache command should NEVER be called except in production\n" .

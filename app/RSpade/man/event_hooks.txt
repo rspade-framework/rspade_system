@@ -480,9 +480,12 @@ FRAMEWORK EVENT CATALOG
         terse catalog form:
 
         document.extract_text (resolve)
-            Fired from: Search_Index_Service (text-extraction pipeline), keyed on
-                        the deduplicated blob, before the framework extractor
-                        registry.
+            Fired from: Search_Index_Service::extract_storage, keyed on the
+                        deduplicated blob, before the framework extractor registry.
+                        Runs INSIDE the Document_Render_Service background worker
+                        (the same pass that produced the PDF rendition), never in a
+                        web request. 'path' is always the SOURCE BLOB - the
+                        rendition shortcut is applied only after the chain declines.
             Data: {storage: File_Storage_Model, path: string, mime: string}
             Return: null (decline) | string (extracted text) |
                     ['status'=>'unsupported'] | ['status'=>'failed','error'=>?]
@@ -490,16 +493,24 @@ FRAMEWORK EVENT CATALOG
 
         document.preview_rendition (resolve)
             Fired from: File_Preview_Controller, serving /_preview/pdf/:key, AFTER
-                        the auth gates.
+                        the auth gates. CONTRACT UNCHANGED, but the framework path
+                        behind it is now SERVE-ONLY: it serves the rendition the
+                        background worker already produced, or 404s naming the
+                        render state. A handler that converts on demand still works
+                        exactly as before.
             Data: {attachment: File_Attachment_Model, request: Request}
             Return: null (decline) | Response (takeover) | ['path'=>abs pdf]
                     (serve this file) | ['unsupported'=>true] (415)
             Use for: overriding how an attachment becomes the PDF pdf.js loads.
 
         document.thumbnail_render (resolve)
-            Fired from: File_Attachment_Controller::_render_thumbnail_data, at the
-                        top of the thumbnail pipeline, ahead of the renderer
-                        registry.
+            Fired from: File_Attachment_Controller::_render_thumbnail_data, STILL at
+                        the top of the thumbnail pipeline - ahead of both the
+                        rendition path and the renderer registry. 'path' is always
+                        the SOURCE BLOB, never the rendition, so a handler that takes
+                        over an Office mime behaves as it always did. Not fired at
+                        all for a PENDING or FAILED blob: those serve the
+                        extension-icon placeholder without entering the render path.
             Data: {attachment: File_Attachment_Model, path: string, type: string,
                    width: int, height: int|null}
             Return: null (decline) | string (WebP bytes) | ['unsupported'=>true]

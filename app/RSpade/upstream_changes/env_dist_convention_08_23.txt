@@ -1,0 +1,238 @@
+CATEGORY: 2 - ACTION REQUIRED (create .env.dist at your project root, once)
+TITLE: .env.dist is now a TRACKED, hand-curated file at the project root, and every
+       key in it reaches .env by itself; APP_ENV and APP_DEBUG are no longer read
+DATE: 2026-08-23
+
+--------------------------------------------------------------------------------
+WHY YOU ARE READING THIS
+--------------------------------------------------------------------------------
+
+After this pull, a project with no .env.dist at its ROOT refuses to boot - every
+development boot, web and CLI alike, with this message:
+
+    env heal: /path/to/project/.env.dist is missing.
+
+      It is RSpade convention that every RSpade project carries .env.dist at the
+      project root: the TRACKED set of default settings for .env, from which a
+      missing .env is created and into which every new configuration key is added.
+
+      Recover it from the framework copy, then review it:
+          cp system/.env.dist .env.dist
+
+That is the whole action. Run the copy, open the file, set what your project
+needs, and COMMIT it - it is tracked, and it is the file your next developer's
+.env is created from.
+
+--------------------------------------------------------------------------------
+THE CHANGE
+--------------------------------------------------------------------------------
+
+.env is local configuration: one machine's own settings, never distributed, never
+committed. .env.dist is its tracked counterpart - the canonical DEFAULTS, curated
+by hand, reviewed like code.
+
+Three things follow from that, and all three are new:
+
+1.  MISSING .env IS CREATED FROM THE ROOT .env.dist, whole-file and verbatim.
+    It is never created from system/.env.dist. The framework's copy seeding a
+    root .env is the shadowing bug that cost a field deployment: the application
+    then serves every request against a template while the operator's settings
+    sit in a file nobody loads.
+
+2.  KEYS PROPAGATE DOWNHILL ON EVERY DEVELOPMENT BOOT.
+
+        system/.env.dist  ->  .env.dist  ->  .env
+
+    A key MISSING from the file below arrives in it, carrying the line above
+    verbatim. A key already there is left completely alone, whatever its value.
+    Nothing is ever overwritten, deleted or reordered.
+
+    So a configuration key the framework introduces reaches your project's
+    .env.dist and your own .env without anybody being told to add it - and a key
+    YOU add to .env.dist reaches every developer's .env on their next boot.
+
+3.  DELETING A LINE DOES NOT STICK. To turn a setting off, set it EMPTY:
+
+        SOME_FEATURE=
+
+    A deleted line is a MISSING key, and a missing key is exactly what the sync
+    puts back on the next boot.
+
+The same pass also checks that DB_HOST, DB_DATABASE, DB_USERNAME, DB_PASSWORD and
+REDIS_HOST are present (and the first three non-empty - an empty DB_PASSWORD and a
+passwordless Redis are both legal), and mints an APP_KEY in development when there
+is none. Outside development an empty APP_KEY is refused rather than replaced: a
+fresh key silently invalidates every encrypted value and signed cookie made with
+the one that went missing.
+
+--------------------------------------------------------------------------------
+WHERE IT RUNS
+--------------------------------------------------------------------------------
+
+One implementation - App\RSpade\Core\Prod\Rsx_Env_Symlink::full_heal() - reached
+from every entrypoint:
+
+    php artisan rsx:env:heal      the manual entry point
+    system/artisan                pre-boot, before anything reads configuration
+    system/public/index.php       pre-boot, before the first-run screen
+    the container entrypoint      before it reads .env for anything
+
+In development it runs on EVERY boot and costs one filesystem stat when nothing
+has changed (a stamp under storage/rsx-tmp, compared against .env and the two
+.env.dist files). Outside development it runs only when .env is absent.
+
+--------------------------------------------------------------------------------
+ACTION REQUIRED
+--------------------------------------------------------------------------------
+
+1.  Create the file, if your project does not already have one at its root:
+
+        cp system/.env.dist .env.dist
+
+2.  REVIEW IT. It ships the development-container defaults. Correct anything that
+    is wrong for your project, and make sure every secret is EMPTY - this file is
+    tracked, and a value in it is a value every checkout of your project shares.
+
+3.  Commit it. .env.dist belongs in version control; .env never does.
+
+4.  From now on, when you add a configuration key to .env, ADD IT TO .env.dist
+    TOO, with a sensible default or an empty string. That is what carries it to
+    the rest of your team.
+
+--------------------------------------------------------------------------------
+VERIFICATION
+--------------------------------------------------------------------------------
+
+    php artisan rsx:env:heal
+
+Silent (beyond the status line) means there was nothing to do. Add a throwaway key
+to .env.dist, run it again, and the key appears at the end of .env under a dated
+marker comment - with its value untouched if it was already there.
+
+
+================================================================================
+ALSO IN THIS RELEASE: APP_ENV AND APP_DEBUG ARE NO LONGER READ
+================================================================================
+
+RSpade has ONE mode switch, and it is RSX_MODE - set only by
+
+    php artisan rsx:mode:set dev|debug|prod
+
+Laravel's app.env and app.debug are now DERIVED from it in config/app.php:
+
+    RSX_MODE       config('app.env')   config('app.debug')
+    development    local               true
+    debug          local               true    (the sealed DIAGNOSTIC build -
+                                                unminified, sourcemaps and
+                                                console_debug() survive by design)
+    production     production          false
+
+The APP_ENV and APP_DEBUG environment variables are read NOWHERE in the framework
+any more. Two switches for one concept could disagree, and every disagreement was
+a silent misconfiguration - the expensive one being a sealed production build
+serving debug detail because one .env line was never updated.
+
+--------------------------------------------------------------------------------
+WHAT YOU HAVE TO DO
+--------------------------------------------------------------------------------
+
+1.  YOUR .env NEEDS NO CHANGE. Keep the APP_ENV / APP_DEBUG lines or drop them -
+    either way nothing reads them and nothing breaks. (Remember that a DELETED
+    line comes back on the next boot if the key is still in .env.dist; set it
+    empty, or remove it from .env.dist too, if you want it gone.)
+
+2.  IF YOUR OWN CODE READS THEM, CONVERT IT. Find the call sites:
+
+        grep -rn "APP_DEBUG\|APP_ENV" rsx/
+
+    and rewrite each one:
+
+        env('APP_DEBUG')             ->  config('app.debug')
+        env('APP_ENV')               ->  config('app.env')
+        env('APP_ENV') === 'production'
+                                     ->  app()->environment('production')
+
+    In one of YOUR OWN config files - where config() cannot be called - repeat
+    the derivation instead, exactly as the framework's config files do:
+
+        env('RSX_MODE', 'development') !== 'production'      // the debug flag
+        env('RSX_MODE', 'development') === 'production' ? 'production' : 'local'
+
+    Watch the mode you actually mean. If the old check was really "am I running
+    the live production build", app()->environment('production') is right. If it
+    was "am I in development, where files are recompiled on the fly", the honest
+    spelling is App\RSpade\Core\Rsx::is_development() - a sealed DEBUG build is
+    not development, and the old APP_ENV=local test could not tell them apart.
+
+3.  NOTHING SETS THE ENVIRONMENT ANY MORE. rsx:prod:enable no longer refuses on
+    "APP_ENV is not production" / "APP_DEBUG is true" (both checks became
+    tautologies and were deleted), rsx:prod:verify prints no APP_ENV/APP_DEBUG
+    rows, and rsx:health no longer warns "RSX_MODE=production but APP_DEBUG=true"
+    - that state cannot exist. Setting RSX_MODE=production IS setting a
+    production environment with debug off.
+
+--------------------------------------------------------------------------------
+VERIFICATION
+--------------------------------------------------------------------------------
+
+    php artisan tinker --execute="echo config('app.env').' '.var_export(config('app.debug'), true);"
+
+Then switch modes and run it again - the two values follow RSX_MODE and nothing
+else.
+
+--------------------------------------------------------------------------------
+ALSO IN THIS RELEASE - FOUR SMALLER MANUAL ACTIONS
+--------------------------------------------------------------------------------
+
+4.  `artisan down` / `artisan up` NOW REFUSE. Both are hidden stubs that print
+    the RSpade equivalent and exit 1; the mechanism behind them (the
+    storage/framework/maintenance.php file, the PreventRequestsDuringMaintenance
+    middleware, the pre-render check in public/index.php) is deleted, so there is
+    one maintenance mode and it is RSpade's.
+
+    FIND YOUR CALL SITES - deploy scripts, cron entries, CI jobs, Makefiles:
+
+        grep -rn "artisan down\|artisan up" --exclude-dir=vendor --exclude-dir=node_modules .
+
+    CONVERT:
+
+        php artisan down --retry=60        ->  php artisan rsx:maintenance:enable --reason="deploy"
+        php artisan up                     ->  php artisan rsx:maintenance:disable
+
+    The reason is not optional decoration: it is quoted back in the 503 page, in
+    every CLI refusal, and in the flag file itself. A script that ignored a
+    non-zero exit from `down` will now silently NOT take the site down, so check
+    the exit status where it matters.
+
+5.  .env.encrypted NOW LIVES AT THE PROJECT ROOT. Laravel's environmentPath() is
+    anchored there (bootstrap/app.php), so env:encrypt, env:decrypt and
+    key:generate all read and write the root .env. Previously encrypt wrote
+    beside the loaded file while decrypt defaulted its OUTPUT to base_path() -
+    that is, into system/, a git submodule the pull resets and cleans.
+
+    IF YOU HAVE EVER RUN env:encrypt, RE-ENCRYPT FROM THE ROOT:
+
+        php artisan env:encrypt --force
+
+    The old system/.env.encrypted is inside the framework tree and is DELETED by
+    the next pull. Decrypt it first if it holds anything you still need.
+
+    New rule: .env.encrypted present with NO .env beside it makes the env heal
+    THROW, in every mode, naming env:decrypt. RSpade will not create a .env from
+    .env.dist over an encrypted one - a box booting on template credentials while
+    its real configuration sits encrypted one filename away is worse than not
+    booting. In development the file must be decrypted on disk.
+
+6.  key:generate:safe IS REMOVED. It had no callers.
+
+        development       ->  php artisan rsx:env:heal   (mints APP_KEY when empty)
+        rotate a real key ->  php artisan key:generate --force
+
+    key:generate itself is unchanged and still requires --force when a key exists.
+
+7.  THE LEGACY DOCKER GATE IN bootstrap/app.php IS GONE. It guessed "am I in the
+    container" from the base path and the uid, and read RSX_MODE from the process
+    environment BEFORE dotenv had loaded - so it could never see the value in your
+    .env. The gate that matters is bootstrap/rsx_container_gate.php, which reads
+    the /.rspade_container marker file the framework's Dockerfile writes. No action
+    unless you had hard-coded paths around the old gate.

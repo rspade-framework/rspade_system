@@ -1,0 +1,302 @@
+ATTACHMENT_THUMBNAIL - THUMBNAILS ARE A COMPONENT NOW, AND OFFICE DOCUMENTS RENDER ASYNCHRONOUSLY
+Date: 2026-08-22
+
+SUMMARY
+    Two contract changes land together, and they are the same change seen from two
+    sides.
+
+    1. A thumbnail is rendered with ONE component, <Attachment_Thumbnail
+       $attachment_id=...>, and nothing else. An app no longer builds a thumbnail URL
+       and no longer ships one in a payload; it ships the ATTACHMENT ID and the
+       component fetches the record itself.
+
+    2. All LibreOffice work - the PDF rendition, the Office-document thumbnail, and
+       text extraction - moved out of web requests into ONE background worker. So an
+       Office document's thumbnail and preview now appear a FEW SECONDS AFTER THE
+       UPLOAD rather than during it, showing an extension-icon placeholder until then.
+
+    The second is why the first is not optional. A URL in a payload is a value fixed
+    at render time; a thumbnail is a live view of a record whose picture may not exist
+    yet. Only a component can subscribe, refetch when the render lands, and swap the
+    image in place.
+
+    ACTION IS REQUIRED IF your app builds any thumbnail URL (an <img src> fed by
+    get_thumbnail_url(), a hand-built /_thumbnail/ path in JS, an avatar_url or
+    photo_url field in a payload), overrides any of the four removed config keys, or
+    referenced Search_Index_Service::index_pending, Libreoffice_Thumbnail_Renderer or
+    the libreoffice_thumbnail semaphore.
+
+    The /rsx/ template diff for this change is a SEPARATE document:
+    attachment_thumbnail_template_08_22.txt. This one is the core contract.
+
+THE CHANGE
+    Rendering pipeline
+        Document_Render_Service::render_pending is the single background worker -
+        #[Exclusive], #[Schedule('every 10 minutes')], kicked the moment a convertible
+        document is uploaded. Per blob, in one pass: one soffice run produces the PDF
+        rendition (which now feeds BOTH the Document_Preview viewer AND the thumbnail),
+        text is extracted from that same rendition for word-processing documents, and
+        the blob's render state is settled. A single Word document used to be converted
+        THREE times by three callers competing for a two-slot semaphore inside web
+        requests.
+
+    Render state on the blob (framework migration, applied automatically)
+        _file_storage gains render_status_id, rendered_at, render_error. States:
+
+            NOT_REQUIRED (1)  nothing to convert - an image, a plain PDF, a zip
+            PENDING      (2)  queued
+            RENDERED     (3)  rendition on disk, text extracted
+            FAILED       (4)  TERMINAL - render_error holds the reason, never retried
+
+        Existing Office-document blobs are BACKFILLED to PENDING by the migration, so
+        they render on the first worker pass after the update. Read it in PHP with
+        $attachment->get_render_status().
+
+    Serving
+        A PENDING or FAILED blob serves the extension-icon placeholder with
+        Cache-Control: no-store and touches the thumbnail cache neither for reading nor
+        for writing. That fixes a real defect: the old pipeline wrote the icon under
+        the SAME cache key a real render would use, so a document that failed once
+        served a poisoned icon that no later success could replace. Reaching RENDERED
+        purges every cached thumbnail for that blob hash.
+
+        /_preview/pdf/:key is now SERVE-ONLY - it never converts. It 404s (naming the
+        render state, never render_error) for a convertible document that is not
+        RENDERED yet. get_preview_info() carries render_status_id and returns
+        urls.rendition only when it would actually serve one.
+
+    ?v= on every thumbnail URL
+        get_thumbnail_url(), get_thumbnail_url_preset() and the new JS builder all
+        append ?v=<the blob's rendered_at in unix seconds, or 0>. The SERVER IGNORES
+        IT - it is purely a browser cache key. Without it, a browser that once saw the
+        placeholder would keep showing it for the full one-year max-age after the
+        document rendered. The route shape is otherwise unchanged.
+
+    File_Attachment_Model::fetch() and ::portal_fetch()
+        Both now exist, both gated through your own file.thumbnail.authorize handler
+        with realm-honest user resolution, and a denial is indistinguishable from a
+        missing record. The payload embeds the blob as `file_storage`
+        {id, hash, size, render_status_id, rendered_at} - render_error is never sent to
+        a browser. File_Attachment_Model is now $realtime, so the model emits on save.
+
+    POST /_upload response
+        The attachment block gains 'id'. A page that has just uploaded a file can now
+        mount <Attachment_Thumbnail> without a second round trip. Purely additive.
+
+    Health
+        The "Search Index Backlog" row is replaced by "Document Render Backlog" -
+        rendition and extraction are one worker and one queue, so two probes would have
+        been two ways of saying the same thing.
+
+    Removed
+        Config keys:  rsx.libreoffice.max_concurrent
+                      rsx.libreoffice.slot_wait_timeout
+                      rsx.preview.rendition_timeout
+                      rsx.search.timeout
+        Classes:      Libreoffice_Thumbnail_Renderer
+        Methods:      Search_Index_Service::index_pending
+                      File_Preview_Controller::__convert_to_pdf
+        Locks:        the 'libreoffice_thumbnail' counting semaphore
+
+        rsx.libreoffice.timeout (120s) is now THE single sanctioned bound in this
+        subsystem, and it covers pdftotext as well as soffice. Its justification is
+        written beside the key in config/rsx.php.
+
+ACTION REQUIRED
+
+    1. REPLACE EVERY HAND-BUILT THUMBNAIL URL WITH THE COMPONENT.
+
+       Find them:
+
+           grep -rn "get_thumbnail_url" rsx/
+           grep -rn "/_thumbnail/" rsx/
+           grep -rn "thumbnail_url" rsx/
+           grep -rn "avatar_url\|photo_url" rsx/
+
+       After the sweep, '/_thumbnail/' must not appear in rsx/ at all, and
+       get_thumbnail_url* must not appear outside a comment.
+
+       BEFORE - a template <img> fed by a URL in the payload:
+
+           <img src="<%= doc.thumbnail_url %>" alt="<%= doc.name %>"
+                class="Portal_Workspace_Documents_Action__thumb">
+
+       AFTER - the component, given the attachment id:
+
+           <Attachment_Thumbnail class="Portal_Workspace_Documents_Action__thumb"
+                                 $attachment_id=doc.attachment_id
+                                 $width=36 $height=36 $alt=doc.name />
+
+       Args: $attachment_id (REQUIRED - throws without it), $type ('fit' default, or
+       'cover'), $width (default 120), $height, $preset (a name from
+       rsx.thumbnails.presets - MUTUALLY EXCLUSIVE with $type/$width/$height, passing
+       both throws), $alt. Extra classes go on the invocation as an ordinary HTML
+       attribute; there is no $class arg. From JS:
+
+           $el.component('Attachment_Thumbnail', {attachment_id: id, width: 160});
+
+       NEVER invoke it with a null id - for an avatar with no photo, render your
+       existing initials/placeholder branch instead.
+
+       The class you were putting on the <img> now sizes the component's HOST element,
+       so move object-fit inside:
+
+           &__thumb {
+               width: 36px;
+               height: 36px;
+               border: $border-width solid $border-color;
+
+               .Attachment_Thumbnail__img,
+               .Attachment_Thumbnail__placeholder {
+                   width: 100%;
+                   height: 100%;
+                   object-fit: contain;
+               }
+           }
+
+    2. PAYLOADS SHIP THE ATTACHMENT ID, NOT A URL.
+
+       BEFORE - a controller producing a document row:
+
+           return [
+               'id' => $document->id,
+               'name' => $attachment->file_name,
+               'thumbnail_url' => $attachment->get_thumbnail_url('fit', 120, 120),
+               'download_url' => $attachment->get_download_url(),
+           ];
+
+       AFTER:
+
+           return [
+               'id' => $document->id,
+               'name' => $attachment->file_name,
+               'attachment_id' => (int) $attachment->id,
+               'download_url' => $attachment->get_download_url(),
+           ];
+
+       Use the field name your record already carries for that id if it has one (a
+       column named attachment_id stays attachment_id) - never invent an alias for a
+       name that already exists. If the row has no such field, add file_attachment_id.
+
+       Delete the URL field entirely, and delete `key` and any render-state fields you
+       were shipping only so a template could build a URL. The component fetches the
+       record itself, batched, so a table of forty thumbnails costs one request.
+
+       Keep get_url() / get_download_url() in payloads - those are unaffected.
+
+    3. DELETE OVERRIDES OF THE REMOVED CONFIG KEYS from rsx/resource/config/rsx.php:
+
+           grep -n "max_concurrent\|slot_wait_timeout\|rendition_timeout" rsx/resource/config/rsx.php
+           grep -n "'timeout'" rsx/resource/config/rsx.php     # under 'search'
+
+       They are silently inert now, which is exactly why they are worth removing.
+       Do NOT lower rsx.libreoffice.timeout to compensate - it is a sanctioned bound on
+       an external binary that WEDGES, and lowering it fails legitimate renders.
+
+       Also check rsx.thumbnails.renderers: if you registered Office mimes against
+       'Libreoffice_Thumbnail_Renderer', DELETE those entries. The class is gone, and
+       Office pixels now come from the rendition via the application/pdf renderer.
+
+    4. IF YOU DEPENDED ON ANY OF THE RETIRED PIECES:
+
+           Search_Index_Service::index_pending
+               -> Document_Render_Service::render_pending. If you dispatched it
+                  yourself (a custom import that wanted text promptly), dispatch that
+                  instead - or better, call Document_Render_Service::kick(), which is
+                  the one choke point and respects the rsx.search.enabled switch.
+                  Search_Index_Service::extract_storage($storage, ?$rendition_path)
+                  remains as the unit of work.
+
+           Libreoffice_Thumbnail_Renderer
+               -> Nothing replaces it, by design. An Office thumbnail is page 1 of the
+                  PDF rendition, rasterized through the renderer registered for
+                  application/pdf. If you had SUBCLASSED it or referenced it in
+                  rsx.thumbnails.renderers, remove the reference. If you genuinely need
+                  to take over an Office mime, that is what the
+                  document.thumbnail_render resolve chain is for - its contract is
+                  unchanged and it still runs FIRST.
+
+           the 'libreoffice_thumbnail' semaphore
+               -> Nothing replaces it. One #[Exclusive] worker is the only caller of
+                  soffice, so invocations are serialized by construction. If your own
+                  code acquired that semaphore to coordinate with the framework, drop
+                  the acquisition; if it was coordinating YOUR OWN soffice calls with
+                  each other, keep your own named semaphore (rsx:man locks) - just do
+                  not expect the framework to be sharing it.
+
+           File_Preview_Controller::__convert_to_pdf
+               -> The conversion moved into Document_Render_Service. Nothing calls it
+                  synchronously any more. If you were relying on /_preview/pdf/:key to
+                  convert on demand, note that it now 404s until the blob is RENDERED.
+
+    5. RETIRE ANY SINGLE-ATTACHMENT FETCH ENDPOINT YOU WROTE.
+
+       File_Attachment_Model::fetch() and ::portal_fetch() now exist, so a controller
+       endpoint that existed only to hand one attachment record to JavaScript is a
+       duplicate surface with its own separate authorization. Delete it and call
+       File_Attachment_Model.fetch(id) / fetch_or_null(id).
+
+       CHECK YOUR file.thumbnail.authorize HANDLER FIRST. It is now load-bearing for
+       the PORTAL realm through portal_fetch(), where previously only the thumbnail and
+       preview endpoints exercised that path. Confirm it answers correctly when
+       $data['user'] is a Portal_User_Model (or, like the template's handler, when it
+       reads Portal_Session directly rather than the payload). A handler that only ever
+       considered staff users will now make every portal thumbnail an empty box - and
+       because a denial is deliberately indistinguishable from a missing record, it
+       will do so silently.
+
+    6. RUN THE MIGRATION, THEN LOOK AT THE QUEUE.
+
+           php artisan migrate
+           php artisan rsx:documents:status
+
+       The migration adds the render columns and backfills existing Office blobs to
+       PENDING. Expect a Pending count immediately afterwards and expect it to fall as
+       the worker drains - one blob at a time, deliberately. The worker short-circuits
+       any blob whose rendition is already on disk, so documents converted by the old
+       synchronous pipeline settle to RENDERED without a soffice run.
+
+           php artisan rsx:documents:failed
+           php artisan rsx:documents:rerender --failed
+
+       are the triage pair. Note that a RENDER failure and an EXTRACTION failure are
+       different things with different remedies; both commands print the other's remedy
+       beside their own table.
+
+VERIFICATION
+    1. No hand-built URLs remain:
+
+           grep -rn "get_thumbnail_url\|/_thumbnail/\|thumbnail_url\|avatar_url" rsx/
+
+       Every hit should be a comment or a genuinely non-thumbnail URL.
+
+    2. php artisan rsx:check is clean (hardcoded-URL findings will name any survivors).
+
+    3. Upload a .docx and watch the whole story:
+
+           - immediately: the thumbnail is the extension icon, its <img> carries
+             data-render-status="2", and the response is Cache-Control: no-store
+           - php artisan rsx:documents:status shows 1 Pending
+           - after the worker runs (cron, or php artisan rsx:task:process): status
+             shows Rendered, and the OPEN TAB's image swaps to a page-1 render with no
+             reload
+           - <Document_Preview> moves from "Preparing preview…" to the document
+           - $attachment->get_extracted_text() returns text
+
+       Re-upload the same bytes under a different name: no new blob, no task, and the
+       thumbnail is immediate.
+
+    4. php artisan rsx:health shows "Document Render Backlog" OK.
+
+    5. On a portal page, confirm thumbnails render for a logged-in portal user. An
+       empty box where a picture belongs is your file.thumbnail.authorize handler
+       denying a Portal_User_Model (step 5 above).
+
+SEE ALSO
+    php artisan rsx:man thumbnails       the component contract, the state machine,
+                                         caching and placeholder rules
+    php artisan rsx:man documents        rsx:documents:status / :failed / :rerender
+    php artisan rsx:man document_search  the text half and Document_Preview states
+    php artisan rsx:man libreoffice      the one sanctioned timeout, and why
+    Skills: rspade:file-attachments (section 5, Displaying files),
+            rspade:document-preview

@@ -274,7 +274,7 @@ Who may impersonate is the app's call (the template gates it on `Permission::has
 
 ### Reference implementation (the shipped template) - your app may differ
 
-Everything below is the template app's model, not a framework contract. `Portal_Membership_Model`, `Portal_Invitation_Model` and the client concept are APP models.
+Everything below is the reference app's model, not a framework contract. `Portal_Membership_Model`, `Portal_Invitation_Model` and the client concept are APP models.
 
 **Account is not access.** The account is the login (with self-service password - the firm never manages portal passwords); a per-client **membership** is the access layer. One account can hold many client memberships, and authorization is membership-based. A clientless account may still sign in (the dashboard shows a "no active client access" empty state).
 

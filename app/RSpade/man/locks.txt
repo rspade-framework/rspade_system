@@ -91,8 +91,6 @@ DOMAIN ASSIGNMENT
                                          not race another box's upload
         FILE_BLOB_DISPOSAL      cluster  a box must not unlink a blob another
                                          box just referenced
-        libreoffice_thumbnail   cluster  a cluster-wide render quota (see
-                                         KNOWN GRANULARITY LIMIT below)
         MANIFEST_BUILD          system   build artifacts on local disk
         BUNDLE_BUILD            system   build artifacts on local disk
         SSR_RENDER              system   a per-box node process
@@ -320,29 +318,29 @@ COUNTING SEMAPHORES
 
     USAGE PATTERN (always release in finally):
 
-        $slot = RsxLocks::acquire_semaphore('libreoffice_thumbnail', 2, 30);
-        if ($slot === null) {
-            // No slot within the wait window - degrade deliberately.
-            throw new \Exception('no concurrency slot');
-        }
+        $slot = RsxLocks::acquire_semaphore('video_transcode', 2);   // waits forever
         try {
-            // ... bounded expensive work ...
+            // ... expensive work that must not run more than 2-wide ...
         } finally {
             RsxLocks::release_semaphore($slot);
         }
 
-    Semaphores are the mechanism behind config('rsx.libreoffice.max_concurrent')
-    (see rsx:man libreoffice): the LibreOffice renderer and the text extractor
-    take a slot named 'libreoffice_thumbnail' before shelling out, so at most N
-    conversions run at once.
+    Pass a $timeout only when bounding the WAIT is genuinely the design (a
+    caller that degrades to a working outcome when no slot frees up); the
+    no-timeout mandate applies to the wait exactly as it does everywhere else.
+
+    NO FRAMEWORK CODE HOLDS A SEMAPHORE TODAY. Until 2026-08-22 LibreOffice
+    conversions took a cluster-wide 'libreoffice_thumbnail' slot from three
+    callers; one #[Exclusive] background worker replaced all three
+    (rsx:man libreoffice), and a single-threaded worker has nothing to quota.
+    The API stays for application use.
 
 KNOWN GRANULARITY LIMIT
-    The semaphore is CLUSTER-WIDE, and for the LibreOffice quota that is
-    knowingly the wrong granularity: soffice concurrency is a per-box CPU and
-    memory limit, so N should be per-box, not per-fleet. On a single-server
-    deployment the two are identical, which is why it is acceptable today.
-    Per-server quotas are part of the multi-web-server clustering epic in the
-    backlog, not a defect to work around.
+    The semaphore is CLUSTER-WIDE. For a quota that is really a per-box CPU or
+    memory limit that is the wrong granularity: N should be per-box, not
+    per-fleet. On a single-server deployment the two are identical, which is
+    why it is acceptable today. Per-server quotas are part of the
+    multi-web-server clustering epic in the backlog, not a defect to work around.
 
 MAINTENANCE MODE
     A CLUSTER LOCK IS GRANTED AS A NO-OP (owner ruling 2026-08-11). Maintenance

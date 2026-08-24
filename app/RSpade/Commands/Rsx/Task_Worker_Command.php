@@ -106,13 +106,9 @@ class Task_Worker_Command extends Command
      */
     private function process_next_task(): bool
     {
-        $lock = new Task_Lock(self::DEQUEUE_LOCK, 5);
-
-        if (!$lock->acquire()) {
-            $this->warn('[WORKER] Could not acquire dequeue lock, retrying...');
-            sleep(1);
-            return true;
-        }
+        // Waits forever (see Task_Lock's header): the dequeue is assigned work.
+        $lock = new Task_Lock(self::DEQUEUE_LOCK);
+        $lock->acquire();
 
         try {
             // Tier 1: run-now tasks.

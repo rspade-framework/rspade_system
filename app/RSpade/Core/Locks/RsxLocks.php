@@ -822,10 +822,10 @@ class RsxLocks
      * until released or until the holder's connection dies - so a crashed holder frees its
      * slot immediately and no lease is involved.
      *
-     * Typical use: bound expensive external work (e.g. LibreOffice document rendering) to N
-     * at a time. Pair every successful acquire with release_semaphore() (use try/finally).
+     * Typical use: bound expensive external work (e.g. calls to a rate-limited third-party API)
+     * to N at a time. Pair every successful acquire with release_semaphore() (use try/finally).
      *
-     * @param string   $name      Semaphore identifier (e.g. 'libreoffice_thumbnail').
+     * @param string   $name      Semaphore identifier (e.g. 'vendor_api_calls').
      * @param int      $max_slots Maximum simultaneous holders. 0 or negative = UNLIMITED (no gating).
      * @param int|null $timeout   Seconds to wait for a free slot, or NULL to wait forever.
      * @return string|null Token for release_semaphore(), or NULL if a given $timeout elapsed

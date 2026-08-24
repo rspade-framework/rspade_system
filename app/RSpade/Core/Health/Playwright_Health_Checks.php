@@ -35,7 +35,10 @@ class Playwright_Health_Checks
     {
         // node is a prerequisite for every other probe here.
         $node = new Process(['node', '--version']);
-        $node->setTimeout(10);
+        // NO TIMEOUT (null). A probe that hangs means the thing it probes is wedged,
+        // and that is a fault to SEE, not to convert into a tidy FAIL row that reads the
+        // same as "not installed". See the no-timeout mandate.
+        $node->setTimeout(null);
         $node->run();
 
         if (!$node->isSuccessful()) {
@@ -51,7 +54,7 @@ class Playwright_Health_Checks
 
         // The playwright npm package must be require()-able from the framework root.
         $pkg = new Process(['node', '-e', "require('playwright')"], base_path());
-        $pkg->setTimeout(15);
+        $pkg->setTimeout(null);
         $pkg->run();
 
         if (!$pkg->isSuccessful()) {
@@ -77,7 +80,7 @@ class Playwright_Health_Checks
             . "process.exit(p && fs.existsSync(p) ? 0 : 1);";
 
         $chromium = new Process(['node', '-e', $script], base_path());
-        $chromium->setTimeout(15);
+        $chromium->setTimeout(null);
         $chromium->run();
 
         if (!$chromium->isSuccessful()) {

@@ -83,8 +83,8 @@ A CONFLICTED REVISION IS REPORTED, NEVER RESOLVED
     Then rsx:framework:pull brings system/ into line.
 
     The vendored-era proxy tried to settle this automatically by comparing
-    release dates in .rspade-release.json. That cleverness is what a submodule
-    makes unnecessary.
+    the two sides' release markers. That cleverness is what a submodule makes
+    unnecessary; the marker itself is retired.
 
 IT DOES NOT HAVE TO BE EXHAUSTIVE
     bootstrap/rsx_submodule_sync.php refuses to boot when the recorded
@@ -126,6 +126,13 @@ WHAT IT NO LONGER DOES
     A submodule makes all of that structural: the framework contributes ONE
     gitlink to the application's index, and `ignore = dirty` in .gitmodules
     hides the build's own churn without anyone hand-rolling a pathspec.
+
+    `dirty` hides the CHURN and not the POINTER: a framework update stays
+    visible in status, diff and `show --stat`, which is the one thing about
+    system/ anybody reviews. Do not add a repo-wide
+    `[diff] ignoreSubmodules = all` to .git/config - it hides the pointer too,
+    and every other gitlink with it. The 080 environment update unsets it and
+    the "Submodule Visibility" rsx:health row reports it.
 
 SEE ALSO
     rsx:man rsx_upstream       the framework update itself

@@ -37,9 +37,6 @@ class Spa {
     // Flag to track if SPA is enabled (can be disabled on errors or dirty forms)
     static _spa_enabled = true;
 
-    // Timer ID for 30-minute auto-disable
-    static _spa_timeout_timer = null;
-
     // Flag to track if initial load is complete (for session validation)
     static _initial_load_complete = false;
 
@@ -172,52 +169,6 @@ class Spa {
     }
 
     /**
-     * Start 30-minute timeout to auto-disable SPA
-     * Prevents users from working with stale code for more than 30 minutes
-     */
-    static _start_spa_timeout() {
-        // 30-minute timeout to auto-disable SPA navigation
-        //
-        // WHY: When the application is deployed with updated code, users who have the
-        // SPA already loaded in their browser will continue using the old JavaScript
-        // bundle indefinitely. This can cause:
-        // - API mismatches (stale client code calling updated server endpoints)
-        // - Missing features or UI changes
-        // - Bugs from stale client-side logic
-        //
-        // FUTURE: A future version of RSpade will use WebSockets to trigger all clients
-        // to automatically reload their pages on deploy. However, this timeout serves as
-        // a secondary line of defense against:
-        // - Failures in the WebSocket notification system
-        // - Memory leaks in long-running SPA sessions
-        // - Other unforeseen issues that may arise
-        // This ensures that users will eventually and periodically get a fresh state,
-        // regardless of any other system failures.
-        //
-        // SOLUTION: After 30 minutes, automatically disable SPA navigation. The next
-        // forward navigation (link click, manual dispatch) will do a full page reload,
-        // fetching the new bundle. Back/forward buttons continue to work via SPA
-        // (force: true) to preserve form state and scroll position.
-        //
-        // 30 MINUTES: Chosen as a balance between:
-        // - Short enough that users don't work with stale code for too long
-        // - Long enough that users aren't interrupted during active work sessions
-        //
-        // TODO: Make this timeout value configurable by developers via:
-        // - window.rsxapp.spa_timeout_minutes (set in PHP)
-        // - Default to 30 if not specified
-        // - Allow 0 to disable timeout entirely (for dev/testing)
-        const timeout_ms = 30 * 60 * 1000;
-
-        Spa._spa_timeout_timer = setTimeout(() => {
-            console.warn('[Spa] 30-minute timeout reached - disabling SPA navigation');
-            Spa.disable();
-        }, timeout_ms);
-
-        console_debug('Spa', '30-minute auto-disable timer started');
-    }
-
-    /**
      * Framework module initialization hook called during framework boot
      * Only runs when window.rsxapp.is_spa === true
      */
@@ -228,9 +179,6 @@ class Spa {
         }
 
         console_debug('Spa', 'Initializing Spa system');
-
-        // Start 30-minute auto-disable timer
-        Spa._start_spa_timeout();
 
         // Discover and register all action classes
         Spa.discover_actions();

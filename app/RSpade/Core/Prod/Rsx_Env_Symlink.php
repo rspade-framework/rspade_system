@@ -156,6 +156,396 @@ class Rsx_Env_Symlink
     }
 
     /**
+     * The DEVELOPER-BOOTSTRAP heal: get this environment's .env into a state the
+     * application can boot from, and keep it in step with .env.dist.
+     *
+     * This is the ONE implementation of .env recreation and key synchronisation.
+     * It is what `rsx:env:heal` runs, what both entrypoints run pre-boot, and
+     * what the container entrypoint invokes. heal() above remains the symlink
+     * invariant on its own (step 3 here calls it).
+     *
+     * The order matters and is fixed:
+     *
+     *   1. .env.dist missing            -> THROW (it is the tracked canonical file)
+     *   1b. .env.encrypted, no .env     -> THROW (never create a .env over an
+     *                                      encrypted one; decrypt it first)
+     *   2. .env missing                 -> whole-file copy of .env.dist
+     *   3. symlink invariant            -> heal()
+     *   4. read RSX_MODE                -> development vs debug/production
+     *   5. key sync (DEVELOPMENT ONLY)  -> system/.env.dist -> .env.dist -> .env,
+     *                                      missing KEYS only, values never touched.
+     *                                      Runs BEFORE validation so a newly
+     *                                      introduced required key can arrive here.
+     *   6. credential validation        -> DB_* / REDIS_HOST present (all modes)
+     *   7. APP_KEY                      -> minted in development, fatal outside it
+     *
+     * There is deliberately NO production-protection cleverness: this is the tool
+     * that makes a new developer environment work, and a production box that has
+     * lost its .env has an administrator problem, not a framework problem.
+     *
+     * @return array {
+     *   status: string,
+     *   actions: string[],
+     *   synced_keys: array{root_dist: string[], root_env: string[]},
+     *   app_key_minted: bool,
+     *   merged_keys: string[], overridden_keys: array, backup_path: ?string
+     * }
+     */
+    public static function full_heal(): array
+    {
+        $root_env = self::__root_env_path();
+        $root_dist = self::__root_dist_path();
+        $system_dist = self::__system_dist_path();
+
+        $report = [
+            'status' => 'already_healthy',
+            'actions' => [],
+            'synced_keys' => ['root_dist' => [], 'root_env' => []],
+            'app_key_minted' => false,
+            'merged_keys' => [],
+            'overridden_keys' => [],
+            'backup_path' => null,
+        ];
+
+        // 1. The tracked canonical defaults must exist.
+        if (!is_file($root_dist)) {
+            throw new RuntimeException(
+                'env heal: ' . $root_dist . ' is missing.' . "\n\n"
+                . '  It is RSpade convention that every RSpade project carries .env.dist at the' . "\n"
+                . '  project root: the TRACKED set of default settings for .env, from which a' . "\n"
+                . '  missing .env is created and into which every new configuration key is added.' . "\n\n"
+                . '  Recover it from the framework copy, then review it:' . "\n"
+                . '      cp system/.env.dist .env.dist' . "\n"
+            );
+        }
+
+        // 1b. An ENCRYPTED .env with no .env beside it. Creating one from
+        //     .env.dist here would be the worst possible outcome: the box boots,
+        //     looks configured, and quietly runs on default credentials while the
+        //     real configuration sits encrypted one filename away. This throws in
+        //     EVERY mode - with no .env there is no RSX_MODE to read, so the mode
+        //     is unknowable at this point.
+        if (is_file(self::__root_env_encrypted_path()) && !is_file($root_env)) {
+            throw new RuntimeException(
+                'env heal: .env is encrypted (' . self::__root_env_encrypted_path()
+                . ' present, ' . $root_env . ' absent).' . "\n\n"
+                . '  RSpade never creates a .env over an encrypted one. Decrypt it before' . "\n"
+                . '  booting:' . "\n\n"
+                . '      php artisan env:decrypt --key=<key>' . "\n\n"
+                . '  (or set LARAVEL_ENV_ENCRYPTION_KEY and run it with no --key). In' . "\n"
+                . '  development the file must be decrypted on disk.' . "\n"
+            );
+        }
+
+        // 2. No .env at all: this environment has never been set up. Copy the
+        //    whole file verbatim - values included, comments included.
+        if (!is_file($root_env)) {
+            if (!copy($root_dist, $root_env)) {
+                throw new RuntimeException('env heal: failed to create ' . $root_env . ' from ' . $root_dist . '.');
+            }
+            $report['status'] = 'created';
+            $report['actions'][] = 'Created .env from .env.dist.';
+        }
+
+        // 3. The symlink invariant, unchanged.
+        $link_report = self::heal();
+        $report['merged_keys'] = $link_report['merged_keys'];
+        $report['overridden_keys'] = $link_report['overridden_keys'];
+        $report['backup_path'] = $link_report['backup_path'];
+        foreach ($link_report['actions'] as $action) {
+            $report['actions'][] = $action;
+        }
+        if ($link_report['status'] !== 'already_healthy' && $report['status'] === 'already_healthy') {
+            $report['status'] = $link_report['status'];
+        }
+
+        // 4. Mode. An absent RSX_MODE is development, matching the framework default.
+        $is_development = self::__is_development_env($root_env);
+
+        // 5. Key sync - development only.
+        if ($is_development) {
+            self::__sync_keys($root_env, $root_dist, $system_dist, $report);
+        }
+
+        // 6. Credentials - every mode.
+        self::__validate_credentials($root_env);
+
+        // 7. APP_KEY.
+        self::__ensure_app_key($root_env, $is_development, $report);
+
+        if (!empty($report['actions']) && $report['status'] === 'already_healthy') {
+            $report['status'] = 'healed';
+        }
+
+        self::__touch_stamp();
+
+        return $report;
+    }
+
+    /**
+     * The PRE-BOOT entry point: full_heal(), skipped when nothing has changed.
+     *
+     * Development runs this on EVERY boot, so the common path must cost close to
+     * nothing. The stamp under storage/rsx-tmp is that: it records the size and
+     * mtime of every file the heal reads, and matching it exactly means the last
+     * heal already saw this input. A missing or differing stamp means the heal
+     * runs.
+     *
+     * Outside development the heal runs only when .env is absent - a configured
+     * box is not re-examined on every request.
+     *
+     * @return array The full_heal() report, or ['status' => 'skipped'].
+     */
+    public static function boot_heal(): array
+    {
+        $root_env = self::__root_env_path();
+
+        if (is_file($root_env) && self::__stamp_is_fresh()) {
+            return ['status' => 'skipped', 'actions' => []];
+        }
+
+        if (is_file($root_env) && !self::__is_development_env($root_env)) {
+            // Configured, non-development: nothing to do, and say so cheaply next boot.
+            self::__touch_stamp();
+
+            return ['status' => 'skipped', 'actions' => []];
+        }
+
+        return self::full_heal();
+    }
+
+    // -------------------------------------------------------------------------
+    // Bootstrap heal internals
+    // -------------------------------------------------------------------------
+
+    /**
+     * Is RSX_MODE in this file development? An absent key is development.
+     */
+    protected static function __is_development_env(string $root_env): bool
+    {
+        $data = self::__parse_env_lines((string) file_get_contents($root_env));
+        $mode = strtolower(trim($data['keys']['RSX_MODE'] ?? ''));
+
+        return $mode === '' || $mode === 'development' || $mode === 'dev';
+    }
+
+    /**
+     * Propagate KEYS - never values - down the chain:
+     *   system/.env.dist -> .env.dist  and  -> .env
+     *   .env.dist        -> .env
+     *
+     * A key already present anywhere is left exactly as it is, whatever its
+     * value; nothing is deleted, nothing is reordered, and the source line is
+     * appended verbatim. system/.env.dist exists downstream only (it is the
+     * framework's shipped copy); this monorepo has none and the first pass is
+     * simply skipped.
+     */
+    protected static function __sync_keys(string $root_env, string $root_dist, string $system_dist, array &$report): void
+    {
+        $root_dist_data = self::__parse_env_lines((string) file_get_contents($root_dist));
+        $root_env_data = self::__parse_env_lines((string) file_get_contents($root_env));
+
+        $to_dist = [];
+        $to_env = [];
+
+        if (is_file($system_dist)) {
+            $system_dist_data = self::__parse_env_lines((string) file_get_contents($system_dist));
+            foreach ($system_dist_data['lines'] as $key => $line) {
+                if (!array_key_exists($key, $root_dist_data['keys'])) {
+                    $to_dist[$key] = $line;
+                }
+                if (!array_key_exists($key, $root_env_data['keys'])) {
+                    $to_env[$key] = $line;
+                }
+            }
+        }
+
+        foreach ($root_dist_data['lines'] as $key => $line) {
+            if (!array_key_exists($key, $root_env_data['keys']) && !isset($to_env[$key])) {
+                $to_env[$key] = $line;
+            }
+        }
+
+        $marker = '# added by rsx env heal (' . date('Y-m-d') . ')';
+
+        if (!empty($to_dist)) {
+            self::__append_block($root_dist, array_values($to_dist), $marker);
+            $report['synced_keys']['root_dist'] = array_keys($to_dist);
+            $report['actions'][] = 'Added ' . count($to_dist) . ' key(s) to .env.dist: '
+                . implode(', ', array_keys($to_dist)) . '.';
+        }
+
+        if (!empty($to_env)) {
+            self::__append_block($root_env, array_values($to_env), $marker);
+            $report['synced_keys']['root_env'] = array_keys($to_env);
+            $report['actions'][] = 'Added ' . count($to_env) . ' key(s) to .env: '
+                . implode(', ', array_keys($to_env)) . '.';
+        }
+    }
+
+    /**
+     * The keys without which the application cannot connect to anything. Present
+     * is the requirement; a value is required only where an empty one is
+     * meaningless (an empty DB_PASSWORD and a passwordless Redis are both legal).
+     */
+    protected static function __validate_credentials(string $root_env): void
+    {
+        $data = self::__parse_env_lines((string) file_get_contents($root_env));
+
+        $missing = [];
+        foreach (['DB_HOST', 'DB_DATABASE', 'DB_USERNAME', 'DB_PASSWORD', 'REDIS_HOST'] as $key) {
+            if (!array_key_exists($key, $data['keys'])) {
+                $missing[] = $key;
+            }
+        }
+
+        $empty = [];
+        foreach (['DB_HOST', 'DB_DATABASE', 'DB_USERNAME'] as $key) {
+            if (array_key_exists($key, $data['keys']) && trim($data['keys'][$key]) === '') {
+                $empty[] = $key;
+            }
+        }
+
+        if (empty($missing) && empty($empty)) {
+            return;
+        }
+
+        $message = 'env heal: ' . $root_env . ' cannot connect this application to its services.' . "\n";
+        if (!empty($missing)) {
+            $message .= "\n  Missing key(s): " . implode(', ', $missing) . "\n";
+        }
+        if (!empty($empty)) {
+            $message .= "\n  Present but empty: " . implode(', ', $empty) . "\n";
+        }
+        $message .= "\n  Set them in .env. The defaults for the development container are in .env.dist.\n";
+
+        throw new RuntimeException($message);
+    }
+
+    /**
+     * APP_KEY: minted here in development, fatal outside it.
+     *
+     * An application key is 32 random bytes, base64-encoded - that is the whole
+     * definition, and it is generated directly rather than through
+     * `artisan key:generate`. The container entrypoint makes the same key the
+     * same way in shell, and for the same reason: key:generate boots the entire
+     * framework, which wants Redis, the database and a provisioned schema, while
+     * two services refuse to start WITHOUT a key. Generating it directly breaks
+     * that circle.
+     */
+    protected static function __ensure_app_key(string $root_env, bool $is_development, array &$report): void
+    {
+        $data = self::__parse_env_lines((string) file_get_contents($root_env));
+        $app_key = trim($data['keys']['APP_KEY'] ?? '');
+
+        if ($app_key !== '') {
+            return;
+        }
+
+        if (!$is_development) {
+            throw new RuntimeException(
+                'env heal: APP_KEY is empty in ' . $root_env . ' and this is not a development'
+                . ' environment.' . "\n\n"
+                . '  A key is never invented for a debug or production box: minting one here would'
+                . "\n" . '  silently invalidate every encrypted value and signed cookie made with the'
+                . "\n" . '  key that went missing. Restore the original key, or set a new one'
+                . "\n" . '  deliberately, knowing that cost.' . "\n"
+            );
+        }
+
+        self::__set_env_value($root_env, 'APP_KEY', 'base64:' . base64_encode(random_bytes(32)));
+        $report['app_key_minted'] = true;
+        $report['actions'][] = 'Minted APP_KEY (it was empty).';
+    }
+
+    /**
+     * Set ONE key in an environment file: replace every existing definition with
+     * a single line, or append the line when the key is absent.
+     */
+    protected static function __set_env_value(string $path, string $key, string $value): void
+    {
+        $contents = file_get_contents($path);
+        if ($contents === false) {
+            throw new RuntimeException('env heal: failed to read ' . $path);
+        }
+
+        $out = [];
+        $written = false;
+        foreach (explode("\n", $contents) as $line) {
+            if (strncmp($line, $key . '=', strlen($key) + 1) === 0) {
+                if (!$written) {
+                    $out[] = $key . '=' . $value;
+                    $written = true;
+                }
+
+                continue;
+            }
+            $out[] = $line;
+        }
+
+        if (!$written) {
+            $out[] = $key . '=' . $value;
+        }
+
+        self::__atomic_write($path, implode("\n", $out));
+    }
+
+    /**
+     * What the last heal saw: the size and modification time of every file it
+     * reads, as one line each.
+     *
+     * A mtime COMPARISON was the obvious implementation and is wrong: mtimes have
+     * one-second resolution, so an edit made in the same second as the heal that
+     * preceded it compares as "not newer" and is never picked up. Recording the
+     * observation and comparing it EXACTLY has no such window - any difference at
+     * all, in either direction, means look again.
+     */
+    protected static function __stamp_signature(): string
+    {
+        $lines = [];
+
+        foreach ([self::__root_env_path(), self::__root_dist_path(), self::__system_dist_path()] as $path) {
+            if (!is_file($path)) {
+                $lines[] = $path . ' absent';
+
+                continue;
+            }
+            $lines[] = $path . ' ' . filemtime($path) . ' ' . filesize($path);
+        }
+
+        return implode("\n", $lines) . "\n";
+    }
+
+    /**
+     * Has anything the heal reads changed since the last one?
+     */
+    protected static function __stamp_is_fresh(): bool
+    {
+        $stamp = self::__stamp_path();
+        if (!is_file($stamp)) {
+            return false;
+        }
+
+        return file_get_contents($stamp) === self::__stamp_signature();
+    }
+
+    /**
+     * Record that a heal has just seen the current files. Best effort by design:
+     * an unwritable storage directory costs a repeated heal, never a failure.
+     */
+    protected static function __touch_stamp(): void
+    {
+        $stamp = self::__stamp_path();
+        $dir = dirname($stamp);
+
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0777, true);
+        }
+
+        @file_put_contents($stamp, self::__stamp_signature());
+    }
+
+    /**
      * Detect the current state WITHOUT mutating anything (drift / doctor surface).
      *
      * @return array {
@@ -379,14 +769,14 @@ class Rsx_Env_Symlink
      * The root file's existing bytes are left untouched (root wins). Written via
      * temp+rename in the file's own directory for an atomic replace.
      */
-    protected static function __append_block(string $root_env, array $merged_lines): void
+    protected static function __append_block(string $root_env, array $merged_lines, ?string $marker = null): void
     {
         $root_contents = file_get_contents($root_env);
         if ($root_contents !== '' && !str_ends_with($root_contents, "\n")) {
             $root_contents .= "\n";
         }
 
-        $marker = '# merged from system/.env by rsx env healer (' . date('Y-m-d') . ')';
+        $marker = $marker ?? '# merged from system/.env by rsx env healer (' . date('Y-m-d') . ')';
         $block = "\n" . $marker . "\n" . implode("\n", $merged_lines) . "\n";
 
         self::__atomic_write($root_env, $root_contents . $block);
@@ -474,6 +864,54 @@ class Rsx_Env_Symlink
     }
 
     /**
+     * The project-root .env.encrypted - where `env:encrypt` writes, now that
+     * environmentFilePath() is the root .env. Its presence WITHOUT a .env means
+     * this environment's configuration is encrypted and must be decrypted, never
+     * regenerated from .env.dist.
+     */
+    protected static function __root_env_encrypted_path(): string
+    {
+        return self::__root_env_path() . '.encrypted';
+    }
+
+    /**
+     * Public reader for the encrypted-env path (rsx:health's Env Encryption row
+     * needs it, and reading it through this seam means a test that redirects the
+     * healer's paths redirects the health check with it).
+     */
+    public static function get_root_env_encrypted_path(): string
+    {
+        return self::__root_env_encrypted_path();
+    }
+
+    /**
+     * The project-root .env.dist: the TRACKED, hand-curated canonical defaults.
+     */
+    protected static function __root_dist_path(): string
+    {
+        return self::__root_env_path() . '.dist';
+    }
+
+    /**
+     * The framework's own shipped copy of .env.dist. It exists DOWNSTREAM only
+     * (publish writes it from the project-root file); this monorepo has none, and
+     * it never seeds a .env - it only feeds the key sync.
+     */
+    protected static function __system_dist_path(): string
+    {
+        return self::__system_env_path() . '.dist';
+    }
+
+    /**
+     * The boot-heal stamp. Under storage/rsx-tmp, which is volatile by design:
+     * losing it costs one heal.
+     */
+    protected static function __stamp_path(): string
+    {
+        return dirname(self::__root_env_path()) . '/storage/rsx-tmp/env_heal.stamp';
+    }
+
+    /**
      * Compute a RELATIVE symlink target from the link's own directory to the root
      * .env. Layout-agnostic: for the standard layout this yields "../.env".
      */
@@ -497,6 +935,33 @@ class Rsx_Env_Symlink
     }
 
     // -------------------------------------------------------------------------
+    // Path seams
+    // -------------------------------------------------------------------------
+
+    /**
+     * Declare the layout explicitly from the system directory.
+     *
+     * The PRE-BOOT caller (bootstrap/rsx_env_heal.php) needs this: base_path()
+     * is a Laravel helper and the whole point of running there is that Laravel
+     * has not booted - it cannot boot until the .env this class is about to
+     * create exists.
+     */
+    public static function _set_paths_from_system_dir(string $system_dir): void
+    {
+        self::$_system_env_override = $system_dir . '/.env';
+        self::$_root_env_override = dirname($system_dir) . '/.env';
+    }
+
+    /**
+     * Drop both path overrides, so the class resolves its own paths again.
+     */
+    public static function _clear_path_overrides(): void
+    {
+        self::$_system_env_override = null;
+        self::$_root_env_override = null;
+    }
+
+    // -------------------------------------------------------------------------
     // Test seams
     // -------------------------------------------------------------------------
 
@@ -515,7 +980,6 @@ class Rsx_Env_Symlink
      */
     public static function _testing_reset(): void
     {
-        self::$_system_env_override = null;
-        self::$_root_env_override = null;
+        self::_clear_path_overrides();
     }
 }

@@ -1,0 +1,13 @@
+.Attachment_Thumbnail {
+    display: inline-block;
+
+    &__img {
+        display: block;
+        max-width: 100%;
+    }
+
+    &__placeholder {
+        display: block;
+        max-width: 100%;
+    }
+}

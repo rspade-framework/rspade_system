@@ -1,6 +1,6 @@
 ---
 name: publishing-a-release
-description: Publishing an RSpade framework release from the monorepo with system/bin/publish - the pre-flight gates, changelog and release-subject assembly, the three published repositories (rspade_system, rspade_project, rspade_template_app), what gets stripped or transformed on the way out, the .dist to .sh renames, byte-fidelity and the release inventory, the tracked-but-ignored class assertion, and what to check when a publish fails. Use when running bin/publish, changing what a release ships, or diagnosing a refused publish.
+description: Publishing an RSpade framework release from the monorepo with system/bin/publish - the pre-flight gates, changelog and release-subject assembly, the two published repositories (rspade_system, rspade_project) and the reference app vendored into rspade_system, what gets stripped or transformed on the way out, the .dist to .sh renames, byte fidelity, the tracked-but-ignored class assertion, and what to check when a publish fails. Use when running bin/publish, changing what a release ships, or diagnosing a refused publish.
 ---
 
 # Publishing a release
@@ -18,7 +18,7 @@ The script itself (`system/bin/publish`, ~770 lines, heavily commented) is the a
 ## Pre-flight gates
 
 1. **`php artisan rsx:check`** must pass. A code-quality violation stops the publish.
-2. **The monorepo working directory must be CLEAN** (`git status --porcelain` empty). Everything ships from committed state, so the release inventory can name the source commit honestly.
+2. **The monorepo working directory must be CLEAN** (`git status --porcelain` empty). Everything ships from committed state, so the release commit and its changelog describe the source honestly.
 
 ## Changelog and release subject
 
@@ -42,28 +42,34 @@ That shape is load-bearing downstream: `rsx:framework:pull` reads `%s` for a rea
 |---|---|---|
 | **rspade_system** | the framework: `system/` with dev material stripped | `rsx:framework:pull` clones this |
 | **rspade_project** | the end-user starter project: root files + `rsx/`, with the published `rspade_system` tree **vendored into `system/` as ordinary files** | a new app is provisioned from this |
-| **rspade_template_app** | the reference application on its own (`rsx/` contents, minus research/archive/incomplete/docs scratch) | browsing the worked example |
 
-All three take the same commit message. Each has a separate git dir symlinked in, so the publish worktrees stay disposable.
+The reference application no longer has a repository of its own. `rsx/` is rsynced
+INTO `rspade_system` at `app/RSpade/resource/reference_app/` (minus
+research/archive/incomplete/docs scratch), so every release carries a pristine,
+release-current worked example that downstream docs can cite by path. In the
+monorepo that path is a SYMLINK to `/rsx/`, which is why the Step 3 rsync excludes
+it and Step 3a materializes it as real files.
+
+Both take the same commit message. Each has a separate git dir symlinked in, so the publish worktrees stay disposable.
 
 ## What leaves the tree on the way out
 
 - **Dev-only files**: `bin/publish` itself, `bin/CLAUDE.md`, `CLAUDE.md`, `docs/`, `.claude/`, `storage/*`, supervisord config, archives, caches, scratch dirs, `.rspade_last_commit_for_publish`.
 - **Framework-developer man pages**: `ast_sourcecode_parsers`, `code_quality`, `manifest_api`, `manifest_build`, `storage_directories`, `vs_code_extension`. **Never point a shipped fragment or skill at one of these** - it would resolve to nothing downstream.
-- **`.env` → `.env.dist`**: framework-developer flags dropped (`IS_FRAMEWORK_DEVELOPER`, `ENABLE_GET_TRACE`, `FORCE_REBUILD_EVERY_REQUEST`), `CONSOLE_DEBUG_ENABLED=false`, `APP_KEY` emptied, `LOG_LEVEL=info`, mail host neutralized, unused service blocks removed. The shipped `system/.env` is re-created as the symlink to `../.env`.
+- **`.env.dist`**: the TRACKED project-root `.env.dist` is copied **verbatim** to `system/.env.dist` and to the starter project - it is an authored file, not a scrub of anybody's live `.env`, so whether a key ships is an editorial decision made in that file (and a secret in it is a secret every install shares). A missing root `.env.dist` FAILS the publish. The shipped `system/.env` is re-created as the symlink to `../.env`.
 - **`.dist` renames**: every `bin/*.dist` is renamed to its real name in the release - this is how `framework-pull-upstream.sh.dist` becomes the downstream updater. `rspade.code-workspace` goes the other way (renamed TO `.dist`).
 
 ---
 
-## Byte fidelity, the inventory, and the class assertion
+## Byte fidelity and the class assertion
 
-These three steps are one mechanism and their ORDER is load-bearing.
+These steps are one mechanism and their ORDER is load-bearing.
 
-**Step 12a — `.gitattributes` with `* -text`.** The release inventory hashes the EXACT bytes of every file and `rsx:framework:verify` compares a downstream checkout against those hashes. If git normalized line endings, a checkout would materialize LF where a vendored package stored CRLF, and every such file would false-flag as tampered. Written BEFORE the inventory so it is itself inventoried, and it governs the vendored `rspade_project` copy and every converted downstream repo automatically.
+**Step 12a — `.gitattributes` with `* -text`.** A downstream checkout must materialize EXACTLY the bytes the monorepo committed. If git normalized line endings, a checkout would materialize LF where a vendored package stored CRLF, and every such file would read as modified on every pull - churn that is not a change. Written BEFORE the staging below, and it governs the `rspade_project` copy and every downstream repo automatically.
 
 **Step 12b — stage first, then `git add --renormalize .`.** Changing attributes does not make git re-examine stat-clean files; the renormalize is what re-runs the (now identity) clean filter so previously-normalized blobs finally stage byte-identical. `git add -A` must come FIRST (it stages deletions; renormalize fatals on a tracked-but-deleted path). One-time re-commit, a no-op thereafter. Downstream boxes that pulled before this fix need one `--force` pull to join the corrected cohort.
 
-**Step 12c — the inventory is generated from the GIT INDEX (`git ls-files`), never a filesystem `find`.** The publish worktree physically contains files the repo's own ignore rules exclude from the commit; a find-based inventory promised hashes for paths no checkout ever materializes - **63 permanent `[MISSING]` verify errors on every box**. Enumerating the index makes `inventory == committed set` by construction. Shape: `{release_id: <source monorepo SHA>, date: <ISO 8601 UTC>, files: {<path relative to system/>: <sha256>}}`.
+**There is no Step 12c.** The release inventory (`system/.rspade-release.json`, `{release_id, date, files:{path:sha256}}`) is RETIRED: its only consumer was `rsx:framework:verify`, which went away when downstream `system/` became a git submodule. The tracked copy leaves `rspade_system` by construction on the first publish without it - the Step 3 `rsync --delete` removes it from the worktree and the `git add -A` above stages that deletion. Do not reintroduce it.
 
 **Step 12d — the tracked-but-ignored class assertion.** The publish REFUSES if any tracked path is excluded by the shipped tree's own `.gitignore` (`git check-ignore --no-index`). Such a file ships fine in `rspade_system` but a downstream `git add system` DROPS it, so fresh clones silently lack it. The remedy is always to strip the offending ignore rule in publish (Step 7b does exactly that for the generated updater `.sh`), never to accept the hit.
 
@@ -71,7 +77,7 @@ These three steps are one mechanism and their ORDER is load-bearing.
 
 ## Changing what a release ships
 
-- **A new framework file must reach downstream** - nothing to do: everything tracked under `system/` ships, and the inventory is derived from the index. But if the monorepo `.gitignore` excludes it, the Step 12d assertion or a downstream `git add system` will drop it - check both.
+- **A new framework file must reach downstream** - nothing to do: everything tracked under `system/` ships. But if the monorepo `.gitignore` excludes it, the Step 12d assertion or a downstream `git add system` will drop it - check both.
 - **A new file or directory anywhere under `system/`** - nothing to declare. ALL of `system/` is framework property and is overwritten on every update; downstream it is a git submodule, so whatever is committed here is what arrives there.
 - **New durable "make the environment correct" behavior** - a numbered script in `system/bin/environment_updates/`, never the updater. The updater is a running bash script downstream; edits to its `.dist` also lag one pull.
 - **A dev-only file must NOT ship** - add it to the Step 7 removal list. A framework-developer man page goes in the man-strip list, and nothing shipped may then point at it.
@@ -86,9 +92,8 @@ The downstream pull commits its own `system/` changes BEFORE the rebuild, so the
 | Symptom | Cause / fix |
 |---|---|
 | "Code quality check failed" | Fix the `rsx:check` violations. Never bypass. |
-| "Git working directory is not clean" | Commit (or genuinely revert) first - the inventory names the HEAD commit. |
+| "Git working directory is not clean" | Commit (or genuinely revert) first - the release ships committed state only. |
 | "Tracked-but-ignored files present" | Read the printed list; strip the ignore rule that excludes each one. |
-| "Release inventory count mismatch" | The index and the hash pass disagree - re-run; if it persists, something mutated the worktree mid-run. |
 | Push rejected | Someone else published, or the remote moved. Inspect `/var/www/publish/<repo>_git` before forcing anything. |
 
 Publish is not idempotent-by-accident: it writes `.rspade_last_commit_for_publish` only after all three pushes succeed, so a failed run leaves the next changelog range intact.

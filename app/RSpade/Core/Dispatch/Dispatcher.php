@@ -13,6 +13,7 @@ use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
 use ReflectionClass;
 use RuntimeException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 use App\RSpade\Core\Api\Api_Dispatcher;
 use App\RSpade\Core\Auth\Auth_Gates;
@@ -417,8 +418,25 @@ class Dispatcher
             return static::__transform_response($response, $original_method);
         }
 
-        // Call the action method
-        $result = static::__call_action($handler_class, $handler_method, $params, $request);
+        // Call the action method.
+        //
+        // An RSX route is dispatched from INSIDE Laravel's exception handling: Laravel
+        // throws NotFoundHttpException for a URL its router does not know, and the
+        // bootstrapper catches that and calls this dispatcher. So a handler calling
+        // abort(404) throws a SECOND HttpException while the first is still being
+        // handled - it escapes as an uncaught fatal and the visitor gets a 500 instead
+        // of the status the code asked for. Honouring it here, at the seam that owns
+        // the call, is what makes abort() mean what it says inside an RSX action.
+        //
+        // Only HttpExceptionInterface is caught. Everything else propagates exactly as
+        // before, to the handler chain that is built to report it.
+        try {
+            $result = static::__call_action($handler_class, $handler_method, $params, $request);
+        } catch (HttpExceptionInterface $e) {
+            $response = static::__http_exception_response($e, $request);
+
+            return static::__transform_response($response, $original_method);
+        }
 
         // rsx.post_dispatch - fired immediately after the handler returns and before
         // response shaping, on the SUCCESS path only (never after an exception). Handlers
@@ -711,6 +729,56 @@ class Dispatcher
         }
 
         return null;
+    }
+
+    /**
+     * Turn a coded HTTP outcome raised by an action - abort(404), abort(403), abort(418) -
+     * into the response that outcome deserves.
+     *
+     * TWO CHANNELS, because these routes serve two audiences. A page a person browsed gets
+     * the themed Error_Screens page, and it is deliberately the SAME method Web_Exception_Handler
+     * calls, so there is one rendering of "not found" and one of "denied" no matter which layer
+     * decided it. The framework's file routes (/_thumbnail, /_preview, /_inline, /_download) are
+     * fetched by an <img> tag or fetch(), never browsed: a themed HTML document is not something
+     * they can use, so those get the bare status and one line of text.
+     *
+     * The framework has no other full-page-versus-asset predicate, so the test is the request's
+     * own declaration: a request whose Accept header does not prefer text/html is not asking for
+     * a page. A request with no Accept header at all (curl, a probe) counts as asking for one -
+     * that is Laravel's own reading of an absent Accept, and it keeps the browsed case correct.
+     *
+     * Only 404 and 403 have screens; every other status keeps its meaning and its plain body.
+     *
+     * @param HttpExceptionInterface $e
+     * @param Request|null $request
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    protected static function __http_exception_response(HttpExceptionInterface $e, ?Request $request = null)
+    {
+        $request = $request ?? request();
+        $status = $e->getStatusCode();
+
+        if ($request->acceptsHtml()) {
+            if ($status === 404) {
+                return Error_Screens::not_found($request);
+            }
+
+            if ($status === 403) {
+                return Error_Screens::unauthorized($request);
+            }
+        }
+
+        $headers = $e->getHeaders();
+        if (!isset($headers['Content-Type']) && !isset($headers['content-type'])) {
+            $headers['Content-Type'] = 'text/plain; charset=UTF-8';
+        }
+
+        $body = $e->getMessage();
+        if ($body === '') {
+            $body = \Symfony\Component\HttpFoundation\Response::$statusTexts[$status] ?? '';
+        }
+
+        return new Response($body, $status, $headers);
     }
 
     /**

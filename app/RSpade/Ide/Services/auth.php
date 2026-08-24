@@ -72,7 +72,7 @@ function ide_auth_env_normalize($value) {
 }
 
 // Resolve an environment key the way a pre-boot gate must: the PROCESS environment
-// wins (a container or vhost can supply APP_ENV without touching .env), then the
+// wins (a container or vhost can supply RSX_MODE without touching .env), then the
 // .env file parsed line by line - optional "export ", optional single/double quotes,
 // surrounding whitespace and CRLF endings all normalize away. Returns null when the
 // key is set nowhere.
@@ -107,7 +107,8 @@ $env_file = IDE_AUTH_BASE_PATH . '/.env';
 $env_content = file_exists($env_file) ? file_get_contents($env_file) : '';
 
 $ide_services_flag = strtolower((string) ide_auth_env('RSX_IDE_SERVICES_ENABLED', $env_content));
-$is_production = strtolower((string) ide_auth_env('APP_ENV', $env_content)) === 'production';
+// RSX_MODE is the single mode switch; APP_ENV is not read anywhere. Absent means development.
+$is_production = strtolower((string) ide_auth_env('RSX_MODE', $env_content)) === 'production';
 
 // Explicit kill switch: RSX_IDE_SERVICES_ENABLED=false refuses the bridge entirely,
 // in any mode (belt to the dev-only token creation on the framework side).

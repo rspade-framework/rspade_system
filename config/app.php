@@ -36,26 +36,38 @@ return [
     | Application Environment
     |--------------------------------------------------------------------------
     |
-    | This value determines the "environment" your application is currently
-    | running in. This may determine how you prefer to configure various
-    | services the application utilizes. Set this in your ".env" file.
+    | DERIVED FROM RSX_MODE. RSpade has exactly ONE mode switch - RSX_MODE, set
+    | only by `php artisan rsx:mode:set dev|debug|prod` - and Laravel's notion of
+    | an environment is a projection of it. APP_ENV is NOT read anywhere in the
+    | framework any more: two independent switches for one concept could disagree,
+    | and every disagreement was a silent misconfiguration (a sealed production
+    | build serving debug output because one .env line was never updated).
+    |
+    |   development -> local
+    |   debug       -> local        (a sealed DIAGNOSTIC build, run locally)
+    |   production  -> production
     |
     */
 
-    'env' => env('APP_ENV', 'production'),
+    'env' => env('RSX_MODE', 'development') === 'production' ? 'production' : 'local',
 
     /*
     |--------------------------------------------------------------------------
     | Application Debug Mode
     |--------------------------------------------------------------------------
     |
-    | When your application is in debug mode, detailed error messages with
-    | stack traces will be shown on every error that occurs within your
-    | application. If disabled, a simple generic error page is shown.
+    | DERIVED FROM RSX_MODE, for the same reason as 'env' above. APP_DEBUG is NOT
+    | read anywhere in the framework any more.
+    |
+    |   development -> true         (write code with full detail)
+    |   debug       -> true         (the sealed DIAGNOSTIC build - unminified,
+    |                                sourcemaps and console_debug() survive BY
+    |                                DESIGN; debug output is the whole point)
+    |   production  -> false
     |
     */
 
-    'debug' => (bool) env('APP_DEBUG', false),
+    'debug' => env('RSX_MODE', 'development') !== 'production',
 
     /*
     |--------------------------------------------------------------------------

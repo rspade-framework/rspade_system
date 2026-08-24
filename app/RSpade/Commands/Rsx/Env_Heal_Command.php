@@ -6,19 +6,25 @@ use App\RSpade\Core\Prod\Rsx_Env_Symlink;
 use Illuminate\Console\Command;
 
 /**
- * Restore the .env symlink invariant (system/.env -> the authoritative root .env).
+ * Prepare this environment's .env: create it from the tracked project-root
+ * .env.dist, restore the system/.env symlink invariant, sync in keys .env.dist
+ * has grown, check the credentials nothing can connect without, and mint an
+ * APP_KEY in development when there is none.
  *
- * Runs automatically after a framework pull, on rsx:clean, and before every
- * prod-mode transition. This command is the manual entry point + the drift check
- * (--dry-run). Root value wins on a merge conflict; discarded system values are
- * always reported, never silently dropped.
+ * ONE implementation, in Rsx_Env_Symlink::full_heal() - the same code both
+ * entrypoints run pre-boot and the container entrypoint invokes directly. This
+ * command is the manual entry point.
+ *
+ * --dry-run reports SYMLINK drift only: it is a read-only surface, and the rest
+ * of the heal is defined by what it writes. Root value wins on a merge conflict;
+ * discarded system values are always reported, never silently dropped.
  */
 class Env_Heal_Command extends Command
 {
     protected $signature = 'rsx:env:heal
                             {--dry-run : Report drift without changing anything}';
 
-    protected $description = 'Heal the .env symlink invariant (root .env is authoritative)';
+    protected $description = 'Prepare .env from .env.dist and heal the .env symlink invariant';
 
     public function handle(): int
     {
@@ -29,7 +35,7 @@ class Env_Heal_Command extends Command
             return 0;
         }
 
-        $report = Rsx_Env_Symlink::heal();
+        $report = Rsx_Env_Symlink::full_heal();
         $this->_print_report($report, false);
 
         return 0;

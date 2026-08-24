@@ -385,6 +385,11 @@ class Route_Debug_Command extends Command
         if (!$playwright_check->isSuccessful()) {
             $this->warn('[WARNING]  Playwright not installed. Installing now...');
             $npm_install = new Process(['npm', 'install', 'playwright'], base_path());
+            // NO TIMEOUT (null). Symfony's Process defaults to 60 SECONDS when you say
+            // nothing, so silence here was a package install capped at a minute - it
+            // fails on a cold cache or a slow link, and :393 reads that as "playwright
+            // unavailable". An inherited default is still a deadline.
+            $npm_install->setTimeout(null);
             $npm_install->run(function ($type, $buffer) {
                 echo $buffer;
             });
@@ -412,7 +417,10 @@ class Route_Debug_Command extends Command
                 
                 $this->info('Installing/updating Chromium browser...');
                 $browser_install = new Process(['npx', 'playwright', 'install', 'chromium'], base_path());
-                $browser_install->setTimeout(300); // 5 minute timeout for download
+                // NO TIMEOUT (null). A cold chromium download over a slow link
+                // legitimately runs long; capping it aborts a working download and
+                // leaves a partial browser install behind. See the no-timeout mandate.
+                $browser_install->setTimeout(null);
                 $browser_install->run(function ($type, $buffer) {
                     // Silent - downloads can be verbose
                 });

@@ -214,12 +214,17 @@ RECOVERY
         rm storage/rsx-framework/.maintenance.mode.framework.update
 
 RSX VS LARAVEL
-    Laravel's `php artisan down` / `up` write storage/framework/maintenance.php and gate the
-    WEB only. They still exist and still run, but they are HIDDEN from `php artisan list` so
-    there is one obvious mechanism. RSpade's maintenance mode additionally: gates the CLI
-    (allow-most), kills running background tasks, stops and restarts the runtime services
-    including the lock daemon and redis, carries an operator reason through to every message,
-    and keeps the framework functional without either of them for the duration.
+    Laravel's `php artisan down` / `up` REFUSE. Both are replaced by hidden stubs in
+    Commands/Restricted/ that print the rsx:maintenance:enable / :disable equivalent and
+    exit 1. The mechanism they drove is gone with them: storage/framework/maintenance.php
+    is written by nothing and read by nothing (the PreventRequestsDuringMaintenance
+    middleware and public/index.php's pre-render require were both removed), so there is
+    exactly ONE maintenance mode.
+
+    RSpade's: gates the CLI (allow-most) as well as the web, kills running background
+    tasks, stops and restarts the runtime services including the lock daemon and redis,
+    carries an operator reason through to every message, and keeps the framework
+    functional without any of those services for the duration.
 
 TROUBLESHOOTING
     "Command not found" for rsx:maintenance:enable

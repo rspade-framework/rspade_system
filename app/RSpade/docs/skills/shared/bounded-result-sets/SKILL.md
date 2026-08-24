@@ -93,7 +93,7 @@ class Invoice_Model extends Rsx_Site_Model_Abstract {
 
 **Do NOT mark**: human-authored low-volume tables (announcements, groups), fixtures, join tables you always narrow to one parent, 1:1 detail tables.
 
-The test is **"could a reasonable query here return thousands?"** - and **over-marking dilutes the signal.** It is a declaration, not a gate: it changes no behavior, and a small well-narrowed query on a marked model is still fine. It marks where a bare `->get()` deserves a second look. The template app ships marked examples.
+The test is **"could a reasonable query here return thousands?"** - and **over-marking dilutes the signal.** It is a declaration, not a gate: it changes no behavior, and a small well-narrowed query on a marked model is still fine. It marks where a bare `->get()` deserves a second look. The reference app ships marked examples - `system/app/RSpade/resource/reference_app/models/` downstream, `/rsx/models/` in the monorepo.
 
 ## The two enforcement surfaces
 

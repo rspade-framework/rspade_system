@@ -8,41 +8,20 @@ define('LARAVEL_START', microtime(true));
 
 /*
 |--------------------------------------------------------------------------
-| Environment File Initialization
+| Environment Preparation
 |--------------------------------------------------------------------------
 |
 | system/.env is FRAMEWORK SPACE: always a symlink to the project-root .env,
-| which is where a developer's configuration actually lives. The guard below
+| which is where a developer's configuration actually lives. The first guard
 | repairs that link before anything reads configuration.
 |
-| This replaces an earlier block that copied system/.env.dist to system/.env
-| whenever the latter was missing. That looked like a courtesy and was a trap:
-| on a clone without the symlink it created a REAL file which then SHADOWED the
-| root .env, so the application read the template forever while every value the
-| operator had set sat in a file nobody loaded (field failure, 2026-08-20).
-|
-| Seeding an initial .env is still done - but for the ROOT .env, the one that
-| is genuinely the developer's.
+| Creating the root .env itself, from the tracked project-root .env.dist, is the
+| env HEAL - required a few blocks below, once the storage tree and the framework
+| checkout have been verified.
 |
 */
 
 require __DIR__.'/bootstrap/rsx_env_link.php';
-
-if (!file_exists(__DIR__.'/../.env')) {
-    if (file_exists(__DIR__.'/../.env.dist')) {
-        copy(__DIR__.'/../.env.dist', __DIR__.'/../.env');
-        echo "Created .env from .env.dist template.\n";
-        echo "Please review .env and update configuration as needed.\n\n";
-    } elseif (file_exists(__DIR__.'/.env.dist')) {
-        copy(__DIR__.'/.env.dist', __DIR__.'/../.env');
-        echo "Created .env from the framework's .env.dist template.\n";
-        echo "Please review .env and update configuration as needed.\n\n";
-    } else {
-        echo "ERROR: No .env or .env.dist file found.\n";
-        echo "Cannot start application without environment configuration.\n";
-        exit(1);
-    }
-}
 
 /*
 |--------------------------------------------------------------------------
@@ -80,6 +59,44 @@ require __DIR__.'/bootstrap/rsx_storage_link.php';
 */
 
 require __DIR__.'/bootstrap/rsx_submodule_sync.php';
+
+/*
+|--------------------------------------------------------------------------
+| Environment Heal (pre-boot)
+|--------------------------------------------------------------------------
+|
+| Creates the root .env from the TRACKED project-root .env.dist when it is
+| absent, and in development keeps it in step with the keys .env.dist declares -
+| so a configuration key added upstream reaches this machine by itself. ONE
+| implementation, shared with `php artisan rsx:env:heal` and the container
+| entrypoint: App\RSpade\Core\Prod\Rsx_Env_Symlink::full_heal().
+|
+| Placed after the storage guard (the boot stamp lives under storage/rsx-tmp)
+| and after the submodule guard (a wrong-version framework must not get as far
+| as writing this project's configuration), and BEFORE the container gate, which
+| reads RSX_MODE out of the file this may have just created.
+|
+| The BOOT-FREE intercepted commands are exempt. rsx:framework:pull,
+| rsx:maintenance:enable/disable and rsx:git (all intercepted below) exist
+| precisely to work on a broken tree - the maintenance flag must be lowerable
+| and the pull runnable however incoherent this box's .env layer is, and none
+| of them boot Laravel. A heal refusal (missing .env.dist, missing credentials)
+| must never stand between the operator and those levers; the very next
+| ordinary command heals or refuses as usual.
+|
+*/
+
+$__rsx_boot_free = isset($argv[1]) && in_array($argv[1], [
+    'rsx:framework:pull',
+    'rsx:maintenance:enable',
+    'rsx:maintenance:disable',
+    'rsx:git',
+], true);
+
+if (!$__rsx_boot_free) {
+    require __DIR__.'/bootstrap/rsx_env_heal.php';
+}
+unset($__rsx_boot_free);
 
 /*
 |--------------------------------------------------------------------------

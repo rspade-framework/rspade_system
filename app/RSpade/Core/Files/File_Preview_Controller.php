@@ -2,16 +2,12 @@
 
 namespace App\RSpade\Core\Files;
 
-use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Response;
-use Symfony\Component\Process\Process;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
-use App\RSpade\Core\Files\Libreoffice;
 use App\RSpade\Core\Files\Rsx_File_Paths;
-use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
 
@@ -34,7 +30,8 @@ use App\RSpade\Core\Session\Session;
  * GET /_preview/pdf/:key       - PDF rendition of the attachment (application/pdf, inline)
  * GET /_preview/pdfjs.mjs       - pdf.js main module bytes (lazy-loaded; NOT in any bundle)
  * GET /_preview/pdf_worker.mjs  - pdf.js worker module bytes (lazy-loaded)
- * POST (Ajax) get_preview_info  - {viewer, mime, file_name, extension, preview_unavailable, urls} for a Document_Preview
+ * POST (Ajax) get_preview_info  - {viewer, mime, file_name, extension, preview_unavailable,
+ *                                  render_status_id, urls{rendition|null, inline, icon}} for a Document_Preview
  *
  * ================================================================================================
  * FILTER / GATE CHAINS
@@ -69,21 +66,20 @@ use App\RSpade\Core\Session\Session;
  * FRAMEWORK RENDITION PIPELINE (when the resolve chain declines):
  *   - mime application/pdf                              -> serve the resident blob as-is.
  *   - mime in rsx.preview.convertible AND LibreOffice enabled
- *                                                       -> cached soffice->PDF rendition
- *                                                          (storage/rsx-renditions/{hash}.pdf).
+ *                                                       -> serve the rendition Document_Render_Service
+ *                                                          already produced (storage/rsx-renditions/
+ *                                                          {hash}.pdf) when the blob is RENDERED;
+ *                                                          404 naming the render state otherwise. A
+ *                                                          RENDERED blob whose file was LRU-evicted
+ *                                                          is re-queued and 404s as Pending.
+ *                                                          Renditions are NEVER converted inside a
+ *                                                          web request.
  *   - anything else                                     -> 415.
  */
 #[Auth('public')]
 #[Auth_Realm('any')]
 class File_Preview_Controller extends Rsx_Controller_Abstract
 {
-    /**
-     * Shared cluster-wide soffice slot pool. HISTORICAL name - it means "libreoffice slots"
-     * cluster-wide, shared with Libreoffice_Thumbnail_Renderer and Libreoffice_Text_Extractor
-     * (one soffice invocation pool regardless of what the conversion targets).
-     */
-    protected const SEMAPHORE_NAME = 'libreoffice_thumbnail';
-
     // ============================================================================================
     // PDF RENDITION
     // ============================================================================================
@@ -205,9 +201,14 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     }
 
     /**
-     * Resolve (converting + caching on miss) the PDF rendition of a convertible document, returning
-     * the absolute path to the cached PDF. Content-addressed on the blob hash so identical bytes
-     * convert exactly once; touch()'d on a cache hit for LRU freshness.
+     * Return the absolute path of this attachment's already-rendered PDF, or abort with a body
+     * naming the render state.
+     *
+     * NOTHING CONVERTS HERE ANY MORE. The soffice run belongs to Document_Render_Service, which
+     * produces the rendition in the background and publishes it atomically into this same
+     * content-addressed cache path. A web request that finds no rendition is a request that
+     * arrived before the worker finished (or after it failed), and the honest answer is to say so
+     * rather than to spend 30 seconds of somebody's page load converting a document.
      *
      * @param File_Attachment_Model $attachment
      * @return string Absolute path to the cached PDF rendition.
@@ -215,12 +216,15 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     protected static function __resolve_rendition(File_Attachment_Model $attachment): string
     {
         $storage = $attachment->resolve_storage();
-        $source_path = $storage->get_full_path();
-        if (!file_exists($source_path)) {
-            abort(404, 'File not found on disk');
+
+        // Only a RENDERED blob has a rendition to serve. PENDING means "not ready" and FAILED
+        // means "never"; both answer with the state LABEL and nothing else - render_error is
+        // operator information (soffice's stderr, a path on the box) and never leaves the server.
+        if ((int) $storage->render_status_id !== File_Storage_Model::RENDER_STATUS_RENDERED) {
+            $state = $storage->render_status_id__label;
+            abort(404, "No PDF rendition available yet for this document (render state: {$state}).");
         }
 
-        $dir = Rsx_File_Paths::renditions_root();
         $cache_path = static::rendition_cache_path($storage);
 
         if (file_exists($cache_path)) {
@@ -230,14 +234,16 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             return $cache_path;
         }
 
-        // Lazy-create the rendition cache directory.
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
+        // RENDERED, but the file is gone: the rendition cache is LRU-evicted under quota while the
+        // row keeps saying RENDERED. Same self-heal as the thumbnail path - back in the queue, and
+        // this request tells the truth rather than showing an error over a cache eviction.
+        error_log(
+            "Rendition missing for RENDERED storage #{$storage->id} ({$storage->hash}) - re-queued for rendering"
+        );
+        $storage->requeue_render();
 
-        static::__convert_to_pdf($source_path, (string) $attachment->file_extension, $cache_path);
-
-        return $cache_path;
+        $state = $storage->render_status_id__label;
+        abort(404, "No PDF rendition available yet for this document (render state: {$state}).");
     }
 
     /**
@@ -251,95 +257,6 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     public static function rendition_cache_path(File_Storage_Model $storage): string
     {
         return Rsx_File_Paths::renditions_root() . '/' . $storage->hash . '.pdf';
-    }
-
-    /**
-     * Convert a source document to PDF via headless LibreOffice, publishing atomically into the
-     * rendition cache. Shares the soffice binary-discovery routine and the cluster-wide concurrency
-     * semaphore with the thumbnail renderer and text extractor (one soffice slot pool). Fail loud.
-     *
-     * @param string $source_path Resident blob path (extensionless, content-addressed).
-     * @param string $extension The attachment's real extension (staged so soffice detects the format).
-     * @param string $cache_path Destination path for the published PDF rendition.
-     * @return void
-     * @throws Exception
-     */
-    protected static function __convert_to_pdf(string $source_path, string $extension, string $cache_path): void
-    {
-        $soffice = Libreoffice::find_soffice();
-        if ($soffice === null) {
-            throw new Exception('LibreOffice (soffice) is not installed or not configured');
-        }
-
-        $timeout = (int) config('rsx.preview.rendition_timeout', 60);
-        $max_concurrent = (int) config('rsx.libreoffice.max_concurrent', 2);
-        $slot_wait = (int) config('rsx.libreoffice.slot_wait_timeout', 30);
-
-        // One shared cluster-wide soffice slot pool (name shared with the thumbnail renderer + text
-        // extractor). A crashed conversion's slot is freed the instant its process dies.
-        $slot = RsxLocks::acquire_semaphore(static::SEMAPHORE_NAME, $max_concurrent, $slot_wait);
-        if ($slot === null) {
-            throw new Exception('LibreOffice concurrency slot unavailable');
-        }
-
-        // Private work dir - LibreOffice needs an isolated user profile and an output dir.
-        $work_dir = sys_get_temp_dir() . '/rsx_soffice_pdf_' . bin2hex(random_bytes(8));
-        if (!mkdir($work_dir, 0700, true) && !is_dir($work_dir)) {
-            RsxLocks::release_semaphore($slot);
-            throw new Exception("Failed to create LibreOffice work dir: {$work_dir}");
-        }
-
-        try {
-            // Stage the extensionless blob under its real extension so soffice reliably detects the
-            // input format; soffice names its output after this basename.
-            $safe_ext = preg_replace('/[^a-z0-9]/i', '', $extension);
-            if ($safe_ext === '') {
-                $safe_ext = 'bin';
-            }
-            $staged = $work_dir . '/source.' . $safe_ext;
-            if (!copy($source_path, $staged)) {
-                throw new Exception('Failed to stage source document for PDF rendition');
-            }
-
-            $process = new Process([
-                $soffice,
-                '-env:UserInstallation=file://' . $work_dir . '/profile',
-                '--headless',
-                '--convert-to',
-                'pdf',
-                '--outdir',
-                $work_dir,
-                $staged,
-            ]);
-
-            // Hard cap the conversion, measured from now (after slot acquisition).
-            $process->setTimeout($timeout);
-            $process->run();
-
-            if (!$process->isSuccessful()) {
-                throw new Exception('LibreOffice PDF conversion failed: ' . trim($process->getErrorOutput()));
-            }
-
-            $pdf_path = $work_dir . '/source.pdf';
-            if (!file_exists($pdf_path)) {
-                throw new Exception('LibreOffice produced no PDF rendition');
-            }
-
-            // Atomic publish: copy into a temp file BESIDE the cache path (same filesystem), then
-            // rename over the destination. The work dir may be on a different filesystem, so a
-            // direct rename from there is not guaranteed atomic.
-            $tmp = $cache_path . '.tmp.' . bin2hex(random_bytes(4));
-            if (!copy($pdf_path, $tmp)) {
-                throw new Exception('Failed to write rendition temp file');
-            }
-            if (!rename($tmp, $cache_path)) {
-                @unlink($tmp);
-                throw new Exception('Failed to publish rendition file');
-            }
-        } finally {
-            RsxLocks::release_semaphore($slot);
-            static::__rmdir_recursive($work_dir);
-        }
     }
 
     /**
@@ -367,17 +284,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      */
     protected static function __is_convertible(?string $mime): bool
     {
-        if ($mime === null || $mime === '') {
-            return false;
-        }
-
-        foreach (config('rsx.preview.convertible', []) as $pattern) {
-            if (fnmatch($pattern, $mime)) {
-                return true;
-            }
-        }
-
-        return false;
+        return File_Attachment_Model::is_convertible_mime($mime);
     }
 
     /**
@@ -500,6 +407,26 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to preview this file');
         }
 
+        // The rendition URL is present ONLY when the endpoint behind it would actually serve
+        // bytes, so the viewer never has to request it "early" to find out:
+        //   - a PDF serves its own resident blob (its blob is NOT_REQUIRED - nothing to render);
+        //   - a convertible document serves the rendition, which exists only once the background
+        //     render finished AND the LRU cache still holds the file.
+        // Anything else is null, and Document_Preview renders its preparing / failed / icon state
+        // from render_status_id instead. The id is exported raw - the JS enum helpers on
+        // File_Storage_Model turn it into a label; a *_label field here would be an alias.
+        $render_status = $attachment->get_render_status();
+        $rendition_url = null;
+
+        if ($attachment->pipeline_mime() === 'application/pdf') {
+            $rendition_url = Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]);
+        } elseif ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED) {
+            $storage = File_Storage_Model::find($attachment->file_storage_id);
+            if ($storage && file_exists(static::rendition_cache_path($storage))) {
+                $rendition_url = Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]);
+            }
+        }
+
         return [
             // Viewer routes on the PIPELINE mime (extension-first for documents) so a zip-sniffed
             // docx resolves to Pdf_Viewer, not Icon_Viewer. 'mime' echoes the raw sniff (metadata).
@@ -511,8 +438,11 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             // Icon_Viewer (pipeline_mime -> octet-stream), but this lets Document_Preview render an
             // explicit "Preview unavailable" state rather than a bare file icon.
             'preview_unavailable' => $attachment->preview_unavailable,
+            // File_Storage_Model::RENDER_STATUS_* on this attachment's blob, or null when there is
+            // no resident blob at all (an external attachment never materialized).
+            'render_status_id' => $render_status,
             'urls' => [
-                'rendition' => Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]),
+                'rendition' => $rendition_url,
                 'inline' => $attachment->get_url(),
                 'icon' => Rsx::Route('File_Attachment_Controller::icon_by_extension', ['extension' => $attachment->file_extension]),
             ],
@@ -538,41 +468,5 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
 
         // The config ships a terminal '*' entry, so this is only reached on a misconfigured map.
         return 'Icon_Viewer';
-    }
-
-    // ============================================================================================
-    // INTERNAL
-    // ============================================================================================
-
-    /**
-     * Recursively remove a directory tree (best-effort cleanup of the temp work dir).
-     *
-     * @param string $dir
-     * @return void
-     */
-    protected static function __rmdir_recursive(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-
-        $items = scandir($dir);
-        if ($items === false) {
-            return;
-        }
-
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $path = $dir . '/' . $item;
-            if (is_dir($path)) {
-                static::__rmdir_recursive($path);
-            } else {
-                @unlink($path);
-            }
-        }
-
-        @rmdir($dir);
     }
 }

@@ -10,6 +10,8 @@ use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Attachment_Model;
+use App\RSpade\Core\Files\File_Preview_Controller;
+use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
 use App\RSpade\Core\Files\Zip_Download_Request_Model;
@@ -390,6 +392,9 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         $response_data = [
             'success' => true,
             'attachment' => [
+                // The id is what <Attachment_Thumbnail> is addressed by, so a page that has
+                // just uploaded a file can render its picture without a second round trip.
+                'id' => (int) $attachment->id,
                 'key' => $attachment->key,
                 'file_name' => $attachment->file_name,
                 'file_type' => $attachment->file_type_id__label,
@@ -987,9 +992,32 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     // ============================================================================================
 
     /**
-     * Generate and serve thumbnail with caching
+     * Generate and serve thumbnail with caching, aware of the blob's DOCUMENT RENDER STATE.
      *
      * Common logic for both preset and dynamic thumbnails.
+     *
+     * THE RENDER-STATE BRANCH, resolved once per request from the blob:
+     *
+     *   NOT_REQUIRED  Nothing to wait for - an image, a PDF, a zip. Exactly the historic path:
+     *                 rasterize the resident blob through the renderer registry (or substitute the
+     *                 extension icon), cache under the real key, serve with a one-year max-age.
+     *
+     *   PENDING /     No real thumbnail exists YET (PENDING) or ever will (FAILED). The extension
+     *   FAILED        icon is served as an explicit PLACEHOLDER: Cache-Control: no-store, and
+     *                 NOTHING is written to the cache. This is the whole point of the branch. The
+     *                 cache key is {type}_{w}x{h}_{hash}_{ext}.webp - the key a real render will
+     *                 want - so writing an icon under it poisons it permanently: a later cache hit
+     *                 is a cache hit, and no success ever replaces it. The cache is not READ here
+     *                 either, so a stale entry left by an older install is bypassed rather than
+     *                 served for a year.
+     *
+     *   RENDERED      The pixels come from the PDF rendition the background worker produced, not
+     *                 from the blob (the blob is a .docx - unreadable to Imagick). Page 1 of the
+     *                 rendition is rasterized and cached under the real key.
+     *                 A MISSING rendition file is not an error: the rendition cache is LRU-evicted
+     *                 under quota while the row still says RENDERED. The blob goes back in the
+     *                 queue and this request serves the placeholder - self-healing, and the browser
+     *                 is told no-store so it comes back.
      *
      * @param File_Attachment_Model $attachment
      * @param string $type Thumbnail type: 'cover' or 'fit'
@@ -1014,6 +1042,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             abort(404, 'File not found on disk');
         }
 
+        $render_status = (int) $storage->render_status_id;
+
+        // Queued or terminally failed: placeholder, uncached and uncacheable.
+        if ($render_status === File_Storage_Model::RENDER_STATUS_PENDING
+            || $render_status === File_Storage_Model::RENDER_STATUS_FAILED) {
+            return static::__serve_thumbnail_placeholder($attachment, $width, $height);
+        }
+
         // Build cache path
         $cache_path = static::_get_cache_path($cache_type, $cache_filename);
 
@@ -1026,13 +1062,30 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             // If null, file was deleted (race condition) - fall through to regeneration
         }
 
+        // A rendered document rasterizes from its rendition; everything else from the blob itself.
+        $rendition_path = null;
+        if ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED) {
+            $rendition_path = File_Preview_Controller::rendition_cache_path($storage);
+
+            if (!file_exists($rendition_path)) {
+                error_log(
+                    "Thumbnail: rendition missing for RENDERED storage #{$storage->id} ({$storage->hash})"
+                    . ' - re-queued for rendering, serving placeholder'
+                );
+                $storage->requeue_render();
+
+                return static::__serve_thumbnail_placeholder($attachment, $width, $height);
+            }
+        }
+
         // Produce the thumbnail bytes via the renderer registry (icon substitution lives inside).
         $thumbnail_data = static::_render_thumbnail_data(
             $attachment,
             $storage->get_full_path(),
             $type,
             $width,
-            $height
+            $height,
+            $rendition_path
         );
 
         // Save to cache
@@ -1047,6 +1100,35 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         return Response::make($thumbnail_data, 200, [
             'Content-Type' => 'image/webp',
             'Cache-Control' => 'public, max-age=31536000', // 1 year
+        ]);
+    }
+
+    /**
+     * Serve the generic extension icon as a THROWAWAY thumbnail: the picture of this file does not
+     * exist yet (or never will), so the browser gets something to draw and an explicit instruction
+     * not to keep it.
+     *
+     * no-store, not max-age=0: the thumbnail routes are otherwise served for a year, and a
+     * placeholder that lingers in any cache - browser, proxy or the framework's own disk cache -
+     * outlives the render it is standing in for. Nothing is written to the thumbnail cache here,
+     * ever: those filenames are keyed on the blob hash and belong to the real render.
+     *
+     * @param File_Attachment_Model $attachment
+     * @param int $width
+     * @param int|null $height
+     * @return Response
+     */
+    protected static function __serve_thumbnail_placeholder($attachment, int $width, ?int $height)
+    {
+        $icon_data = File_Attachment_Icons::render_icon_as_thumbnail(
+            $attachment->file_extension,
+            $width,
+            $height ?? $width
+        );
+
+        return Response::make($icon_data, 200, [
+            'Content-Type' => 'image/webp',
+            'Cache-Control' => 'no-store',
         ]);
     }
 
@@ -1206,9 +1288,9 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * none - in which case the pipeline falls back to a generic extension icon.
      *
      * Reads config('rsx.thumbnails.renderers') (an ordered map of fnmatch mime pattern => simple
-     * renderer class; first match wins). Also enforces the LibreOffice master switch: when
-     * rsx.libreoffice.enabled is false, the LibreOffice renderer is treated as unregistered so
-     * document thumbnails silently use the icon (and has_thumbnail() reports false).
+     * renderer class; first match wins). Office documents are deliberately NOT in that map - their
+     * pixels come from the background-produced PDF rendition, so "is there a picture of this file"
+     * is answered by File_Attachment_Model::has_thumbnail(), which also consults the render state.
      *
      * @param string|null $mime
      * @return string|null Simple renderer class name, or null.
@@ -1233,11 +1315,6 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             return null;
         }
 
-        // Master switch: LibreOffice disabled => no renderer for its mimes (silent icon).
-        if ($matched === 'Libreoffice_Thumbnail_Renderer' && !config('rsx.libreoffice.enabled', true)) {
-            return null;
-        }
-
         return $matched;
     }
 
@@ -1255,9 +1332,15 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * @param string   $type        'cover' or 'fit'
      * @param int      $width
      * @param int|null $height
+     * @param string|null $rendition_path Absolute path to this blob's PDF rendition when the
+     *                                    document render is complete - the pixel source for an
+     *                                    Office document, which has no renderer of its own. The
+     *                                    caller (the serving path / the cache-warming command) is
+     *                                    what knows the render state; null means "rasterize the
+     *                                    blob itself", the historic behavior.
      * @return string WebP binary data.
      */
-    public static function _render_thumbnail_data($attachment, string $source_path, string $type, int $width, ?int $height): string
+    public static function _render_thumbnail_data($attachment, string $source_path, string $type, int $width, ?int $height, ?string $rendition_path = null): string
     {
         // App thumbnail resolve chain (document.thumbnail_render). Contract:
         //   null                     = decline (fall through to the framework renderer registry)
@@ -1288,6 +1371,33 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             shouldnt_happen(
                 'document.thumbnail_render handler returned an out-of-contract value for attachment '
                 . "{$attachment->key}: expected null | string | [unsupported=>true], got " . gettype($resolved)
+            );
+        }
+
+        // A rendered document: page 1 of its PDF rendition IS the thumbnail. It goes through the
+        // renderer registered for application/pdf - the rendition is an ordinary PDF, and an app
+        // that replaced the PDF renderer means to replace this too. The resolve chain above still
+        // ran first, so a handler may take over an Office mime exactly as before.
+        if ($rendition_path !== null) {
+            $pdf_renderer = static::renderer_class_for_mime('application/pdf');
+
+            if ($pdf_renderer !== null) {
+                try {
+                    $fqcn = static::__resolve_renderer_fqcn($pdf_renderer);
+                    $max = config('rsx.thumbnails.max_dynamic_size', 800) * 2;
+                    $image = $fqcn::render($rendition_path, $max, $max);
+
+                    return static::__generate_thumbnail($image, $type, $width, $height);
+                } catch (\Throwable $e) {
+                    error_log("Thumbnail rendition render failed for attachment {$attachment->key}: " . $e->getMessage());
+                    // Explicit extension-icon substitution below.
+                }
+            }
+
+            return File_Attachment_Icons::render_icon_as_thumbnail(
+                $attachment->file_extension,
+                $width,
+                $height ?? $width
             );
         }
 

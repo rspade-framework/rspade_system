@@ -14,8 +14,12 @@ use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
+use App\RSpade\Core\Portal\Portal_Authorizable;
+use App\RSpade\Core\Portal\Portal_Session;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
+use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
 /**
  * File_Attachment_Model - Logical file upload record
@@ -114,6 +118,12 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
     use SoftDeletes;
 
     /**
+     * Portal record-read contract (portal_can_read()); portal_fetch() is overridden below so the
+     * portal payload matches the staff one exactly.
+     */
+    use Portal_Authorizable;
+
+    /**
      * Enum field definitions
      * @var array
      */
@@ -149,6 +159,23 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
             ],
         ],
     ];
+
+    /**
+     * REALTIME: every committed save()/delete() publishes a Model_Changed_Topic frame for this
+     * attachment id.
+     *
+     * WHAT LIVE-REFRESHES ON IT: <Attachment_Thumbnail>, the single component through which every
+     * thumbnail in an RSX app renders. A convertible document's thumbnail cannot exist until the
+     * background render finishes, so the component paints an extension-icon placeholder, subscribes
+     * to its attachment id, and swaps to the real raster when the frame arrives. The render state
+     * lives on the BLOB (_file_storage.render_status_id), and _file_storage has no site_id - a
+     * realtime frame from a CLI task carries the row's site_id - so Document_Render_Service emits
+     * on the referencing ATTACHMENTS instead (realtime_emit()), which is why the flag belongs here
+     * and not on the storage model.
+     *
+     * @var bool
+     */
+    public static $realtime = true;
 
     /**
      * UNBOUNDED: this table's row count grows with customer activity, not with the
@@ -190,6 +217,28 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
      * @var array
      */
     protected static $type_ref_columns = ['fileable_type'];
+
+    /**
+     * Queue the render pipeline for every newly created attachment whose bytes are a convertible
+     * document.
+     *
+     * WHY THE ATTACHMENT AND NOT THE BLOB: File_Storage_Model::store_blob() sees a temp file and
+     * nothing else - no filename, no extension, and the byte sniff of an OOXML document is
+     * application/zip. Only the attachment knows the pipeline mime. So a new blob is inserted
+     * NOT_REQUIRED and the attachment adds the rendition half of the work here.
+     *
+     * request_render() is idempotent (NOT_REQUIRED -> PENDING only), which is the whole dedup
+     * story: the second attachment over the same deduplicated bytes finds the blob already
+     * PENDING / RENDERED / FAILED and leaves it alone.
+     */
+    protected static function boot()
+    {
+        parent::boot();
+
+        static::created(function ($attachment) {
+            $attachment->__request_render_if_convertible();
+        });
+    }
 
     /**
      * Get the physical file storage record
@@ -247,6 +296,107 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
         $index = Search_Index_Model::forModel('File_Storage_Model', $this->file_storage_id)->first();
 
         return $index ? $index->status_id : null;
+    }
+
+    /**
+     * Get the render status_id of this attachment's blob WITHOUT materializing external bytes.
+     *
+     * Mirrors get_extraction_status(): reads file_storage_id directly rather than routing through
+     * resolve_storage(), which would fetch external bytes and stamp blob_accessed_at just to
+     * answer a display question. Returns null when there is no resident blob at all (an external
+     * attachment whose bytes have never been materialized) - the caller treats that exactly like
+     * "no render yet". A non-null value is one of File_Storage_Model::RENDER_STATUS_*.
+     *
+     * @return int|null render_status_id, or null when there is no resident blob.
+     */
+    public function get_render_status(): ?int
+    {
+        if ($this->file_storage_id === null) {
+            return null;
+        }
+
+        $status = File_Storage_Model::where('id', $this->file_storage_id)->value('render_status_id');
+
+        return $status === null ? null : (int) $status;
+    }
+
+    /**
+     * True when this mime is a document the render pipeline converts to a PDF rendition
+     * (rsx.preview.convertible, fnmatch globs).
+     *
+     * THE one implementation of "is this convertible" - the rendition endpoint, the render
+     * worker's queueing decision and the thumbnail pipeline all route through it, so there is
+     * never a screen that thinks a file is convertible while the worker thinks it is not.
+     *
+     * @param string|null $mime A PIPELINE mime (never the raw sniff).
+     * @return bool
+     */
+    public static function is_convertible_mime(?string $mime): bool
+    {
+        if ($mime === null || $mime === '') {
+            return false;
+        }
+
+        foreach (config('rsx.preview.convertible', []) as $pattern) {
+            if (fnmatch($pattern, $mime)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Ask this attachment's blob to render, when the attachment's bytes are a convertible
+     * document. No-op for an image, a PDF, a zip, or an attachment with no resident blob.
+     *
+     * @return void
+     */
+    protected function __request_render_if_convertible(): void
+    {
+        if ($this->file_storage_id === null) {
+            return;
+        }
+
+        if (!static::is_convertible_mime($this->pipeline_mime())) {
+            return;
+        }
+
+        $storage = File_Storage_Model::find($this->file_storage_id);
+        if (!$storage) {
+            // A non-null FK with no row is a dangling reference, the same impossible state
+            // resolve_storage() refuses - never a condition to step around quietly.
+            shouldnt_happen("File_Attachment #{$this->id} references missing _file_storage #{$this->file_storage_id}");
+        }
+
+        $storage->request_render();
+    }
+
+    /**
+     * The cache-buster appended to this attachment's thumbnail URLs: its blob's rendered_at as a
+     * unix timestamp, or 0 when nothing has rendered.
+     *
+     * Thumbnails are served max-age=31536000. A convertible document that has not rendered yet
+     * serves an extension-icon placeholder, so WITHOUT a version token the browser would pin that
+     * placeholder for a year and never see the real page-1 raster. rendered_at changes exactly
+     * when the image behind the URL changes, which is precisely what a cache key wants.
+     *
+     * @return int Unix seconds, or 0.
+     */
+    protected function __thumbnail_version(): int
+    {
+        if ($this->file_storage_id === null) {
+            return 0;
+        }
+
+        $rendered_at = File_Storage_Model::where('id', $this->file_storage_id)->value('rendered_at');
+        if ($rendered_at === null || $rendered_at === '') {
+            return 0;
+        }
+
+        $ms = Rsx_Time::to_ms($rendered_at);
+
+        return $ms === null ? 0 : intdiv($ms, 1000);
     }
 
     /**
@@ -387,10 +537,15 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
      */
     public function get_thumbnail_url($type = 'fit', $width = 400, $height = null)
     {
+        // ?v= is the render cache-buster (see __thumbnail_version). The server ignores it; it
+        // exists so a placeholder served under a one-year max-age is replaced the moment the
+        // document actually renders.
+        $version = $this->__thumbnail_version();
+
         if ($height === null) {
-            return "/_thumbnail/dynamic/{$this->key}/{$type}/{$width}";
+            return "/_thumbnail/dynamic/{$this->key}/{$type}/{$width}?v={$version}";
         }
-        return "/_thumbnail/dynamic/{$this->key}/{$type}/{$width}/{$height}";
+        return "/_thumbnail/dynamic/{$this->key}/{$type}/{$width}/{$height}?v={$version}";
     }
 
     /**
@@ -411,7 +566,8 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
             throw new Exception("Thumbnail preset '{$preset_name}' not defined in config");
         }
 
-        return "/_thumbnail/preset/{$this->key}/{$preset_name}";
+        // ?v= is the render cache-buster - see get_thumbnail_url().
+        return "/_thumbnail/preset/{$this->key}/{$preset_name}?v=" . $this->__thumbnail_version();
     }
 
     /**
@@ -465,15 +621,173 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
     }
 
     /**
-     * Whether the thumbnail pipeline can render a real preview for this attachment's mime type
-     * (i.e. a renderer is registered in config('rsx.thumbnails.renderers')). image/* returns
-     * true. When false, thumbnails use a generic extension icon.
+     * Whether a REAL raster thumbnail is available for this attachment right now (as opposed to
+     * the generic extension icon).
+     *
+     * Two ways to be true, because there are two sources of pixels:
+     *   - a renderer is registered for the pipeline mime (rsx.thumbnails.renderers - images and
+     *     PDFs, rasterized straight from the resident blob) AND the blob needs no document
+     *     render. An Office document has NO registered renderer any more: its pixels come from
+     *     the rendition, which is why the second clause exists.
+     *   - the blob is RENDERED, i.e. the background worker has produced its PDF rendition and the
+     *     thumbnail pipeline can rasterize page 1 of it.
+     *
+     * A convertible document that is PENDING or FAILED is therefore false: the icon is what will
+     * be served, and a caller asking "is there a picture of this file" must be told the truth.
      *
      * @return bool
      */
     public function has_thumbnail(): bool
     {
+        $render_status = $this->get_render_status();
+
+        if ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED) {
+            return true;
+        }
+
+        if ($render_status !== null && $render_status !== File_Storage_Model::RENDER_STATUS_NOT_REQUIRED) {
+            return false;
+        }
+
         return File_Attachment_Controller::renderer_class_for_mime($this->pipeline_mime()) !== null;
+    }
+
+    // ============================================================================================
+    // AJAX FETCH (JavaScript ORM)
+    // ============================================================================================
+
+    /**
+     * The staff-realm record read behind File_Attachment_Model.fetch(id) in JavaScript.
+     *
+     * WHY THIS EXISTS: <Attachment_Thumbnail> is the one component through which every thumbnail
+     * in an RSX app renders, and it is identified by an attachment id alone - it builds its own
+     * URL and reads its own render state, so a template never ships a thumbnail URL string. That
+     * needs the attachment record on the client, which needs this.
+     *
+     * SECURITY: two layers, in the framework's usual order.
+     *   1. #[Auth('is_logged_in')] - evaluated by the ORM seam BEFORE any model code runs.
+     *   2. This body: the app's file.thumbnail.authorize gate, the same gate the thumbnail and
+     *      preview-info endpoints run, so "may I see this attachment's picture" has exactly one
+     *      answer wherever it is asked.
+     * A gate denial returns false, which the ORM reports as not-found - identical to a missing
+     * row, so this endpoint cannot be used to enumerate attachment ids.
+     *
+     * 'user' is realm-honest for the same reason File_Preview_Controller::get_preview_info is:
+     * a portal page reaching a staff-facade read would hand the app's gate the STAFF user in
+     * prefix mode. This method is the STAFF path; portal_fetch() below is the portal one.
+     *
+     * SHAPE: toArray() plus the blob embedded under its own relationship name, file_storage,
+     * carrying ONLY the five fields the client has any business with. Embedded rather than
+     * fetched separately because relationship loads are NOT batched (one HTTP request each),
+     * while Model.fetch(id) is - so a list of 40 thumbnails costs one request, not 41. The blob
+     * rides the ATTACHMENT's gate, which is the correct gate: a blob is only ever reachable
+     * through an attachment you are allowed to see. render_error NEVER crosses the wire - it is
+     * an operator diagnostic (soffice stderr) and belongs in rsx:documents:failed.
+     *
+     * NEVER resolve_storage() here: it materializes external bytes and stamps blob_accessed_at,
+     * which is a byte-access side effect on what is only a metadata read.
+     *
+     * @param int $id
+     * @return array|false
+     */
+    #[Ajax_Endpoint_Model_Fetch]
+    #[Auth('is_logged_in')]
+    public static function fetch($id)
+    {
+        $attachment = static::find($id);
+
+        if (!$attachment) {
+            return false;
+        }
+
+        $authorized = Rsx::trigger_gate('file.thumbnail.authorize', [
+            'attachment' => $attachment,
+            'user' => Rsx_Portal::is_portal_request()
+                ? Portal_Session::get_portal_user()
+                : Session::get_user(),
+            'request' => request(),
+        ]);
+
+        if ($authorized !== true) {
+            return false;
+        }
+
+        return $attachment->__fetch_payload();
+    }
+
+    /**
+     * The portal-realm twin of fetch(), for the same component rendering on a portal page.
+     *
+     * Portal_Authorizable's default portal_fetch() returns a bare toArray(), so it is OVERRIDDEN
+     * here: <Attachment_Thumbnail> is realm-agnostic - one component, one payload shape - and
+     * without the embedded file_storage a portal thumbnail could never know its render state.
+     * The trait is still adopted for its contract (and PORTAL-MODEL-FETCH-01 still requires the
+     * portal_can_read() below, which this body calls).
+     *
+     * @param int $id
+     * @return array|false
+     */
+    #[Ajax_Endpoint_Model_Fetch]
+    #[Auth('is_logged_in')]
+    public static function portal_fetch($id)
+    {
+        $attachment = static::find($id);
+
+        if (!$attachment || !$attachment->portal_can_read()) {
+            return false;
+        }
+
+        return $attachment->__fetch_payload();
+    }
+
+    /**
+     * Record-level portal visibility: the app's file.thumbnail.authorize gate, answered for the
+     * CURRENT PORTAL USER.
+     *
+     * Fail-closed in the framework's strongest sense - a gate with no handlers returns true only
+     * because trigger_gate() is open by default, so an app that registers no thumbnail gate has
+     * declared every attachment visible; every app ships one (the upload gate is mandatory and
+     * the same handler file carries this one). Anything other than a literal true denies.
+     *
+     * @return bool
+     */
+    public function portal_can_read(): bool
+    {
+        $authorized = Rsx::trigger_gate('file.thumbnail.authorize', [
+            'attachment' => $this,
+            'user' => Portal_Session::get_portal_user(),
+            'request' => request(),
+        ]);
+
+        return $authorized === true;
+    }
+
+    /**
+     * The wire shape both fetch() and portal_fetch() return, so the two realms can never drift.
+     *
+     * @return array
+     */
+    private function __fetch_payload(): array
+    {
+        $data = $this->toArray();
+
+        $data['file_storage'] = null;
+
+        if ($this->file_storage_id !== null) {
+            $storage = File_Storage_Model::find($this->file_storage_id);
+
+            if ($storage) {
+                $data['file_storage'] = [
+                    'id' => (int) $storage->id,
+                    'hash' => $storage->hash,
+                    'size' => (int) $storage->size,
+                    'render_status_id' => (int) $storage->render_status_id,
+                    'rendered_at' => $storage->rendered_at,
+                ];
+            }
+        }
+
+        return $data;
     }
 
     // ============================================================================================
@@ -572,6 +886,12 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
 
         // Re-extract dimensions / animation (may upgrade image -> animated_image). Saves if dirty.
         $this->process_file();
+
+        // The attachment now points at DIFFERENT bytes, so the new blob needs its own render.
+        // Materialization of an external document lands here (create_external() leaves
+        // file_storage_id null, and the bytes arrive on first demand), and this is the only
+        // moment those bytes are known to be a convertible document.
+        $this->__request_render_if_convertible();
     }
 
     /**

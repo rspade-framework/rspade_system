@@ -11,8 +11,7 @@ RSpade uses this repo for two things:
   releases from here and applies them to a project's vendored `system/` tree.
 
 Each commit on `master` is one framework release, published as a unit by the RSpade
-release process. The `.rspade-release.json` inventory in each release identifies it
-and hashes every shipped file.
+release process; a project's `system/` submodule points at exactly one of them.
 
 ## Looking for RSpade?
 

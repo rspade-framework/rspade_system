@@ -82,7 +82,7 @@ When component template contains ONLY slots (no HTML), it automatically inherits
 **OWNER RULING (do not reintroduce):** the parameters of a program invocation are
 ALWAYS `--flags`, NEVER `KEY=VALUE` env prefixes. An environment variable describes
 the ENVIRONMENT — a PATH-like, deployment-pertaining, `.env`-worthy fact about the
-system the program runs in (`RSX_MODE`, `APP_URL`, `DB_*`, `APP_DEBUG`). It is
+system the program runs in (`RSX_MODE`, `APP_URL`, `DB_*`, `REDIS_HOST`). It is
 NOT a channel for telling a single invocation what to do. The owner has expressed
 explicit displeasure at env-as-params; it must not reappear.
 

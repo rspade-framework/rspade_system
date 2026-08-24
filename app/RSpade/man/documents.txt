@@ -1,0 +1,209 @@
+DOCUMENTS(1)                      RSpade Manual                      DOCUMENTS(1)
+
+NAME
+    documents - operating the document render pipeline (rsx:documents:*)
+
+SYNOPSIS
+    php artisan rsx:documents:status
+    php artisan rsx:documents:failed [--limit=50]
+    php artisan rsx:documents:rerender --all | --failed
+                                       | --storage=ID | --attachment=ID
+
+DESCRIPTION
+    Three operator commands over Document_Render_Service - the single background
+    worker that turns an Office document into a PDF rendition (which feeds both the
+    thumbnail and <Document_Preview>) and extracts its text in the same pass.
+
+    The pipeline itself needs no operating: an attachment queues its blob on upload,
+    the worker is kicked immediately and sweeps every 10 minutes, and FAILED is
+    terminal. These commands answer the three questions an operator actually has -
+    what is the queue doing, what failed and why, and how do I make it try again.
+
+    Nothing here converts anything itself. rerender re-queues; the worker renders.
+
+    The state machine, the component and the caching rules are rsx:man thumbnails.
+    The text half is rsx:man document_search. The binary is rsx:man libreoffice.
+
+    RENDER FAILURE VS EXTRACTION FAILURE - the distinction that matters
+        They are different failures on different columns with different remedies,
+        and one document can have either, both, or neither.
+
+            RENDER      soffice could not turn the document into a PDF.
+                        _file_storage.render_status_id = FAILED, reason in
+                        render_error. Listed by rsx:documents:failed. Re-queued by
+                        rsx:documents:rerender --failed.
+            EXTRACTION  an extractor could not pull text out. A _search_indexes row
+                        with status FAILED, reason in its error column. Re-queued by
+                        rsx:search:reindex --failed.
+
+        rsx:documents:failed prints BOTH tables, each with its own remedy line
+        underneath, so a wrong guess costs nothing.
+
+RSX:DOCUMENTS:STATUS
+    Render-state counts, extraction counts, the rendition cache, and when the worker
+    next runs. Read-only; always exits 0.
+
+        $ php artisan rsx:documents:status
+
+        Document render pipeline status
+          rendering enabled  : yes  (rsx.libreoffice.enabled)
+          extraction enabled : yes  (rsx.search.enabled)
+
+        Blob render state (_file_storage.render_status_id):
+        +--------------+-------+
+        | State        | Blobs |
+        +--------------+-------+
+        | Not Required | 21    |
+        | Pending      | 0     |
+        | Rendered     | 2     |
+        | Failed       | 0     |
+        +--------------+-------+
+
+        Text extraction (_search_indexes):
+        +-----------------------+-------+
+        | State                 | Blobs |
+        +-----------------------+-------+
+        | Queued (is_indexed=0) | 0     |
+        | Extracted             | 12    |
+        | Failed                | 1     |
+        | Unsupported           | 10    |
+        +-----------------------+-------+
+
+        PDF rendition cache (storage/rsx-renditions):
+        +--------+---------------------------------------+
+        | Metric | Value                                 |
+        +--------+---------------------------------------+
+        | Files  | 2                                     |
+        | Size   | 407.17 KB                             |
+        | Quota  | 200 MB                                |
+        | Usage  | 0.2%                                  |
+        | Oldest | Aug 22, 2026 5:01 AM (12 minutes ago) |
+        | Newest | Aug 22, 2026 5:01 AM (12 minutes ago) |
+        +--------+---------------------------------------+
+
+        Worker schedule: every 10 minutes, next run Aug 22, 2026 5:10 AM
+
+    Reading it
+        Every enum label appears in the render table even at zero, so a state can
+        never be missing merely because nothing is in it.
+
+        "Not Required" is the healthy majority: images, PDFs and anything else with
+        nothing to convert. It is not a backlog.
+
+        A Pending count that does not fall between runs means the worker is not
+        running (check the cron behind rsx:task:process, and rsx:health "Document
+        Render Backlog"), or rendering is disabled - which the two enabled lines at
+        the top say plainly.
+
+        The extraction table counts _search_indexes rows; "Queued" counts blobs whose
+        is_indexed is still 0, which is the ABSENCE of a row, so it is reported
+        separately rather than as a status.
+
+        Unsupported is normal and large: an image or a zip has no extractor at all.
+
+RSX:DOCUMENTS:FAILED
+    Every blob whose RENDER failed, with the reason, plus - in a second table - every
+    FAILED text extraction. Read-only; always exits 0, because "there are failures"
+    is a report, not a command failure. rsx:health is what turns a failure count into
+    a non-zero exit.
+
+        --limit=N   rows per table. Default 50. 0 = ALL rows (the one place a limit
+                    is the operator's to choose).
+
+        $ php artisan rsx:documents:failed
+
+        [OK] No failed documents.
+
+        1 failed text extraction(s):
+        +---------+--------------+-------------+------------------------------+---------------------+
+        | Storage | Hash         | File name   | Error                        | Indexed at          |
+        +---------+--------------+-------------+------------------------------+---------------------+
+        | 1       | b679cb5021b8 | w2_2025.pdf | pdftotext failed for b679... | Aug 8, 2026 2:32 AM |
+        +---------+--------------+-------------+------------------------------+---------------------+
+          Re-queue with: php artisan rsx:search:reindex --failed
+
+    A content-addressed blob has no name of its own, so "File name" is borrowed from
+    a representative attachment referencing it - preferring one whose extension is a
+    known document type, read across sites and including soft-deleted rows, because
+    the question is about BYTES, not about any one attachment's visibility. An orphan
+    blob shows no name.
+
+    Errors are truncated for the table; the full text is in _file_storage.render_error
+    (or the index row's error column). It is never sent to a browser.
+
+RSX:DOCUMENTS:RERENDER
+    Put documents back in the queue. EXACTLY ONE selector, fail loud otherwise.
+
+        --all            every blob that has ever entered the pipeline - PENDING,
+                         RENDERED or FAILED. NEVER the NOT_REQUIRED images and text
+                         files, which soffice could only fail on.
+        --failed         blobs whose last RENDER failed (see the distinction above).
+        --storage=ID     one blob by _file_storage id.
+        --attachment=ID  the blob backing one attachment id.
+
+    What it does, in order: resolves the selector to a set of rows, DELETES each
+    one's PDF rendition, sets the rows back to PENDING with rendered_at and
+    render_error cleared (in keyset chunks, so the resident-row count is bounded
+    however large the match), notifies open pages where that is meaningful, and kicks
+    the worker once.
+
+    DELETING THE RENDITION IS THE POINT. render_storage() short-circuits on a
+    rendition that is already on disk - correct for the normal path, and it would
+    make a rerender a no-op. Without the delete, "re-render" would only re-record
+    the state it already had.
+
+        $ php artisan rsx:documents:rerender
+        [ERROR] Exactly one selector is required: --all | --failed | --storage=ID | --attachment=ID
+        # exit 1
+
+        $ php artisan rsx:documents:rerender --attachment=30
+        [OK] Re-queued 1 document(s) for rendering; worker dispatched.
+
+        $ php artisan rsx:documents:rerender --failed
+          Open pages will pick the new render up on their next frame (no bulk notification sent).
+        [OK] Re-queued 4 document(s) for rendering; worker dispatched.
+
+    OPEN PAGES. A SINGLE-blob selector (--storage / --attachment) emits a realtime
+    frame on every attachment referencing that blob, so a page showing it falls back
+    to the placeholder immediately - the bulk UPDATE itself emits nothing, because
+    _file_storage is not a realtime model. A SET selector (--all / --failed) says so
+    on stdout instead and emits nothing: one emission per referencing attachment
+    across the whole install is not what an operator asked for, and the pages pick
+    the new render up on their next frame anyway.
+
+    EXIT CODES
+        0   re-queued (including "no blobs matched - nothing re-queued")
+        1   no selector, more than one selector, or an id that resolves to nothing
+            (the message names which)
+
+WHEN TO REACH FOR WHICH
+    A document shows the extension icon forever
+        rsx:documents:status - is it Pending (worker not running / rendering
+        disabled) or Failed? If Failed, rsx:documents:failed names the reason. Fix
+        the cause, then rsx:documents:rerender --failed.
+
+    A preview says "Preparing preview..." and stays there
+        Same answer: the blob is PENDING. rsx:documents:status.
+
+    You changed something about how documents convert
+        rsx:documents:rerender --all, then let the worker drain. Expect it to take a
+        while: the worker is deliberately single-threaded (rsx:man libreoffice).
+
+    Text is missing but the picture is fine
+        That is an EXTRACTION problem, not a render one - rsx:search:reindex
+        (rsx:man document_search).
+
+    A rendition was evicted by the LRU cache
+        Nothing to do. The thumbnail endpoint and the rendition endpoint each notice
+        and re-queue the blob themselves, serving a placeholder / 404 for that one
+        request while the worker reconverts.
+
+SEE ALSO
+    rsx:man thumbnails       Render state machine, caching, <Attachment_Thumbnail>
+    rsx:man document_search  Text extraction, search, Document_Preview
+    rsx:man libreoffice      Headless soffice and its one sanctioned timeout
+    rsx:man file_upload      Attachments and the deduplicated blob store
+    rsx:man health           rsx:health and the Document Render Backlog row
+    rsx:man tasks            #[Exclusive], #[Schedule] and the worker pool
+
+RSX Framework              Last updated 2026-08-22                DOCUMENTS(1)

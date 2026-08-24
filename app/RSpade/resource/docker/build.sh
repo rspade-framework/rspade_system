@@ -74,17 +74,17 @@ docker info >/dev/null 2>&1 \
     || die "no Dockerfile in $SCRIPT_DIR - this script must live beside it."
 
 # -----------------------------------------------------------------------------
-# Version tag, when the tree carries a release marker.
+# Version tag, when the tree is a framework CHECKOUT.
 #
-# Best effort: a monorepo checkout has no marker, and that is not an error - the
-# image simply gets :latest and nothing else. Parsed with grep/sed rather than a
-# JSON tool so this has no dependency beyond coreutils.
+# Downstream, system/ is a git submodule and its HEAD IS the installed release, so
+# that revision is the version tag. Best effort: in the framework monorepo system/
+# is authored source with no .git of its own, and that is not an error - the image
+# simply gets :latest and nothing else.
 # -----------------------------------------------------------------------------
 RELEASE_TAG=""
-MARKER="$SCRIPT_DIR/../../../../.rspade-release.json"
-if [ -f "$MARKER" ]; then
-    RELEASE_TAG="$(grep -o '"release_id"[[:space:]]*:[[:space:]]*"[^"]*"' "$MARKER" 2>/dev/null \
-        | sed 's/.*"\([^"]*\)"$/\1/' | cut -c1-12)"
+SYSTEM_DIR="$SCRIPT_DIR/../../../.."
+if [ -e "$SYSTEM_DIR/.git" ]; then
+    RELEASE_TAG="$(git -C "$SYSTEM_DIR" rev-parse HEAD 2>/dev/null | cut -c1-12)"
 fi
 
 # -----------------------------------------------------------------------------

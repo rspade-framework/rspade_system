@@ -1,6 +1,6 @@
 ---
 name: git-operations
-description: Running git in a downstream RSpade app through the php artisan rsx:git proxy - why bare git loses a race it cannot see, what the proxy does per subcommand (pathspec exclusion, commit unstaging, the maintenance cycle, passthrough), how system/ and app-file conflicts are handled, the stash-failed evidence classification and the scratch-worktree escape, the override flags, and troubleshooting a refusal. Use for any git operation on an app checkout, or when git refuses with overwritten-by-merge, stash failed, or unauthorized framework modifications.
+description: Running git in a downstream RSpade app through the php artisan rsx:git proxy - why bare git loses a race it cannot see, what the proxy does per subcommand (pathspec exclusion, commit unstaging, the maintenance cycle, passthrough), how system/ and app-file conflicts are handled, the stash-failed evidence classification and the scratch-worktree escape, the override flags, and troubleshooting a refusal. Use for any git operation on an app checkout, or when git refuses with overwritten-by-merge or stash failed, or when system/ is conflicted.
 ---
 
 # Git operations on an RSpade app
@@ -37,7 +37,7 @@ rsx:maintenance:enable --reason="rsx:git <op>"
 ```
 The disable runs from an EXIT/INT/TERM trap, so a failure or Ctrl-C never leaves maintenance stuck on; the rebuild happens BEFORE services return. **Ops that rewrite nothing are deliberately excluded** - `checkout -b` / `switch -c`, `clean -n`, `restore --staged` alone, a plain `reset`.
 
-Before discarding drift the proxy runs `rsx:framework:verify`, and REFUSES the whole operation if `system/` carries unauthorized (hand-made) modifications, pointing at `rsx:clean --force` as the deliberate discard. **That refusal is the proxy's only one** - it is fail-open everywhere else.
+The `system/` reset is UNCONDITIONAL - `rsx:clean` runs `git reset --hard` + `git clean -fdx` inside the submodule. There is no integrity gate and nothing to override (`--force` is accepted and does nothing), so **an edit under `system/` that you have not committed is gone**. It is fail-open everywhere else.
 
 **4. Passthrough — `push fetch remote tag config log show branch blame rev-parse apply`, and anything unknown**
 Ref-only and remote ops touch no working tree. **`log` and `show` are deliberately NOT filtered**: they display COMMITS, not working-tree churn, and hiding framework-update history is the opposite of helpful.
@@ -46,17 +46,18 @@ Ref-only and remote ops touch no working tree. **`log` and `show` are deliberate
 
 ## Conflicts
 
-**`system/` is decided by the RELEASE, BEFORE the merge runs (Phase 0).** `pull`/`merge` read `system/.rspade-release.json` on both refs - one `git show` + one `sed` per side, no checkout, no php - and the newer ISO-8601 date wins. The merge is then held open with `--no-commit` and the winner's `system/` tree is restated WHOLESALE (`rm -r --cached` + `checkout <winner> -- system` + `clean -fdq` with no `-x` + `add -A`), so conflicts under `system/` are discarded with everything else and the merge commit carries one side's framework tree, not a blend. A fast-forward or rebase gets its own restate commit.
+**`system/` is a submodule, so a conflict there is ONE gitlink** - both sides recorded a different framework revision. That is a choice, not a merge, and the proxy makes it for nobody: it prints the recipe and stops.
 
-  - same `release_id` -> your tree is kept and the restate says NOTHING (a routine merge is not an event; it is still what erases a peer's stray `system/` deletions, which downstream are drift, never a release)
-  - **equal date + DIFFERENT `release_id` -> REFUSED, and you are asked.** Nothing can order two releases stamped at the same instant and the wrong guess loses one; nothing is left half-done
-  - marker missing/unparseable on either side -> plain git merge with a loud warning, and `system/` conflicts then reach YOU like any others
+```bash
+git checkout --theirs -- system    # take the incoming revision
+git checkout --ours   -- system    # keep yours
+git add system
+php artisan rsx:framework:pull     # bring the checkout into line
+```
 
-**When your side wins, the stale box is named** (release, days behind, the committer of its newest `system/`-touching commit) - it will keep re-sending its tree until somebody runs `rsx:framework:pull` there.
+Take the NEWER revision unless you have a reason not to; a release can carry migrations, so run `php artisan migrate` afterwards. `bootstrap/rsx_submodule_sync.php` refuses to boot while the recorded revision and the checkout disagree, so a wrong or half-finished choice is loud rather than silent.
 
-**What this replaced:** per-file "resolve to INCOMING", its rebase `--ours/--theirs` inversion, and its keep-local patch. All answered a whole-tree question one file at a time, and none could see the shape that actually loses code - a NON-conflicting incoming deletion, which git applies silently. That shape cost framework files on 2026-08-11 and moved a box back a full release on 2026-08-18.
-
-**Already regressed?** Do NOT run `rsx:git pull` (its `clean -fdq -- system` deletes the untracked new-release files a bad repair left behind). Recover with `php artisan rsx:framework:pull --resync` after the bootstrap in `upstream_changes/backwards_merge_recovery_08_18.txt`.
+**Release reconciliation is retired.** The vendored-era proxy read a per-release marker on both refs and restated the winner's whole `system/` tree; a submodule makes that structural - git contributes one gitlink and knows where the boundary is.
 
 **App-file conflicts HALT, with maintenance left ON** - services are down specifically so you can resolve the merge without traffic hitting a half-merged tree:
 
@@ -125,7 +126,7 @@ A pull through the proxy ends with the same pending-migration notice the framewo
 ## Troubleshooting
 
 - **"your local changes would be overwritten by merge"** on a bare `git` - stop using bare git; re-run through `rsx:git`. **NEVER resolve it with `git stash`** or by committing `system/` into an app commit.
-- **"unauthorized framework modifications"** - `system/` carries hand-made edits. Inspect (`rsx:framework:pull --diff-system-changes`), then revert them, commit them deliberately (committed drift never blocks), or discard with `rsx:clean --force`.
+- **`system/` is conflicted after a merge** - both sides chose a framework revision. Pick one with `git checkout --ours|--theirs -- system`, `git add system`, then `php artisan rsx:framework:pull`.
 - **Maintenance stuck on after a halt** - resolve and commit the merge first; `rsx:maintenance:disable` refuses while unmerged (`--force` overrides, and leaves you serving a half-merged tree).
 - **Framework files missing after a merge** - `php artisan rsx:framework:pull` restores them, no flag.
 - **In the RSpade monorepo `rsx:git` is exactly git** - no exclusion, no cycle, nothing announced; there `system/` is authored source.

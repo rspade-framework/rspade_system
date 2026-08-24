@@ -227,7 +227,7 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
      * Framework-internal seam: may this build run the environment updates?
      *
      * Two gates, in order:
-     *   1. DEVELOPMENT mode only (the RSX mode, never APP_DEBUG). debug/production are
+     *   1. DEVELOPMENT mode only (RSX_MODE, the single mode switch). debug/production are
      *      SEALED, immutable builds - they must not self-modify the environment.
      *   2. NOT under maintenance. rsx:framework:pull raises that window around its own
      *      sync + rebuild and invokes post-update.sh itself afterwards, so this gate is

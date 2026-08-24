@@ -200,14 +200,24 @@ FILE-SUBSYSTEM & FEATURE CACHES
                             never ships in a deployment.
     rsx-thumbnails/         generated WebP thumbnails (rsx:man thumbnails), LRU-
                             swept.
-    rsx-renditions/         cached soffice->PDF renditions served by
-                            /_preview/pdf/:key for <Document_Preview>
-                            (rsx:man document_search); {blob-hash}.pdf, LRU-swept
-                            to config('rsx.preview.quota_max_bytes').
+    rsx-renditions/         cached soffice->PDF renditions, {blob-hash}.pdf,
+                            LRU-swept to config('rsx.preview.quota_max_bytes').
+                            Produced by the Document_Render_Service background
+                            worker and read by TWO consumers: /_preview/pdf/:key
+                            for <Document_Preview> (rsx:man document_search) AND
+                            the thumbnail pipeline, which rasterizes page 1 of the
+                            rendition for any Office document (rsx:man thumbnails).
 
-    Thumbnails and renditions are regenerable on demand (safe to omit from a
-    deploy; rebuilt on first request). The blob store is NOT regenerable and is
-    dev-local data - it must never be copied into a deployment package.
+    Thumbnails and renditions are regenerable, but NOT on the next request the way
+    they once were - a rendition is produced by the background worker, never inside
+    a web request. Eviction SELF-HEALS: a RENDERED blob whose rendition file is gone
+    is re-queued by whichever consumer noticed, which serves the extension-icon
+    placeholder (thumbnail) or a 404 (rendition endpoint) for that one request while
+    the worker reconverts. Safe to omit from a deploy; the first request after that
+    queues the work rather than doing it.
+
+    The blob store is NOT regenerable and is dev-local data - it must never be
+    copied into a deployment package.
 
 DEPLOYMENT
     The one deployment tool is rsx:prod:export. It is a strict WHITELIST: it ships
@@ -222,7 +232,8 @@ DEPLOYMENT
         - rsx/ (application) minus tests and resource/research|archive|incomplete
         - artisan + root composer/package manifests; root vendor/node_modules only
           if a real app-layer install exists
-        - a scrubbed .env.dist and a system/.env -> ../.env symlink
+        - the project's own .env.dist, copied verbatim, and a system/.env ->
+          ../.env symlink
 
     NEVER shipped (excluded by the whitelist, automatically): the blob store
     (storage/storage/), thumbnails, renditions, rsx-ide-bridge (dev grant token),

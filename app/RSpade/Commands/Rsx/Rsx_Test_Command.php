@@ -12,6 +12,9 @@ use App\RSpade\Core\Database\MigrationPaths;
 use App\RSpade\Core\Manifest\Manifest;
 use Exception;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Models\User_Model;
 use ReflectionClass;
 use App\RSpade\Core\Console\Rsx_Artisan;
 
@@ -23,7 +26,32 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * test-database schema differ from an existing cached dump even though the
      * migration files themselves are unchanged. Bumping invalidates all caches.
      */
-    const CACHE_VERSION = 1;
+    const CACHE_VERSION = 2;
+
+    /**
+     * The single user the migrated TEST baseline carries.
+     *
+     * WHY THE BASELINE CARRIES A USER AT ALL. The first-user migration creates an
+     * account only when RSPADE_DEFAULT_EMAIL / RSPADE_DEFAULT_PASSWORD are configured,
+     * which is correct for a real install (a framework must not invent a credential)
+     * and leaves a freshly migrated database with nobody in it. Tests, however, are
+     * written against an application that HAS an identity: __acting_as_user(1) is how
+     * a test says "somebody is signed in", and the audit-stamp, actor and auth-gate
+     * suites all assume that user resolves. So the runner provisions it - in the test
+     * database only, never in a real one.
+     *
+     * WHY ID 1. Nothing chooses the id: the seed runs against a freshly migrated,
+     * empty `users` table, so AUTO_INCREMENT hands out 1. That is why it is asserted
+     * rather than requested - if the row lands on any other id, the assumption behind
+     * the whole baseline (an empty table at seed time) is already false, and every
+     * test that hardcodes user 1 would fail later and further away. shouldnt_happen()
+     * makes it fail here instead.
+     */
+    const BASELINE_USER_ID = 1;
+
+    const BASELINE_SITE_ID = 1;
+
+    const BASELINE_USER_EMAIL = 'test-user-1@rspade.test';
 
     /**
      * The name and signature of the console command.
@@ -401,6 +429,14 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             }
         }
 
+        // Every path into this method lands here with a migrated test schema - freshly
+        // provisioned, restored from cache, or pre-existing with pending migrations just
+        // applied. The baseline user is provisioned once for all of them (the seed is
+        // idempotent, so the paths that already produced it are a no-op).
+        if (!$this->seed_test_baseline_user()) {
+            return false;
+        }
+
         // Swap the default connection to the test database for the whole run.
         config(['database.default' => 'test']);
         DB::purge('test');
@@ -485,7 +521,12 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             if ($this->restore_test_db_from_cache($test_db, $cache_file)) {
                 $this->line('[OK] Test database restored from cache.');
 
-                return true;
+                // The connection still points at the dropped database.
+                DB::purge('test');
+
+                // The cached dump already carries the baseline user; this is the
+                // re-provision guarantee, not a second insert (the seed is idempotent).
+                return $this->seed_test_baseline_user();
             }
 
             // Corrupt/unusable cache - discard it, recreate the database, and
@@ -499,6 +540,14 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $this->line('Running migrations against test database...');
 
         if (!$this->run_migrate_subprocess($test_db)) {
+            return false;
+        }
+
+        // Seed the baseline user BEFORE the dump is taken, so the cached dump - which
+        // every later re-provision restores instead of re-migrating - carries it too.
+        // The 'test' connection may still hold a PDO for the database we just dropped.
+        DB::purge('test');
+        if (!$this->seed_test_baseline_user()) {
             return false;
         }
 
@@ -555,6 +604,84 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             $this->line(implode("\n", $output), 'fg=red');
 
             return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Provision the ONE user the test baseline carries (see BASELINE_USER_ID).
+     *
+     * Structurally identical to what the first-run setup screen produces: an activated,
+     * verified, active login_users credential plus an enabled users site profile in site
+     * 1 - so a test signing in as it exercises the same shape a real first account has.
+     * The role is the highest one there is (ROLE_DEVELOPER), because a baseline identity
+     * that fails an auth gate would make every gated surface untestable by default; a
+     * test that needs a WEAKER identity creates its own.
+     *
+     * Idempotent: a baseline that already carries the user (restored from the dump cache,
+     * or created by the first-user migration when credentials are configured) is left
+     * exactly as it is.
+     *
+     * Written through the 'test' connection with raw SQL rather than models: this runs
+     * while the default connection may still be the developer database, and a model save
+     * would target that instead.
+     *
+     * @return bool
+     */
+    protected function seed_test_baseline_user(): bool
+    {
+        $connection_name = 'test';
+        $test_db = (string) config('database.connections.test.database');
+
+        // SAFETY: this writes rows, so it proves WHERE it is writing before it does.
+        // Both halves are checked - the connection we are about to use, and the database
+        // that connection is actually bound to - because either alone could be made to
+        // agree with a mistake. Anything else is an impossible condition, not a case to
+        // handle: there is no correct way to seed a test fixture into a live database.
+        $connection = DB::connection($connection_name);
+        $bound_database = (string) $connection->getDatabaseName();
+
+        if ($test_db === '' || $bound_database !== $test_db) {
+            shouldnt_happen(
+                'Refusing to seed the test baseline user: connection "' . $connection_name
+                . '" is bound to database "' . $bound_database . '", not the configured test database "'
+                . $test_db . '".'
+            );
+        }
+
+        if ($connection->table('users')->where('id', self::BASELINE_USER_ID)->exists()) {
+            return true;
+        }
+
+        $login_user_id = $connection->table('login_users')->insertGetId([
+            'email' => self::BASELINE_USER_EMAIL,
+            'password' => Hash::make('rspade-test-user-password'),
+            'is_activated' => 1,
+            'is_verified' => 1,
+            'status_id' => Login_User_Model::STATUS_ACTIVE,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        $user_id = $connection->table('users')->insertGetId([
+            'login_user_id' => $login_user_id,
+            'site_id' => self::BASELINE_SITE_ID,
+            'email' => self::BASELINE_USER_EMAIL,
+            'first_name' => 'Test',
+            'last_name' => 'User',
+            'role_id' => User_Model::ROLE_DEVELOPER,
+            'is_enabled' => 1,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+
+        if ((int) $user_id !== self::BASELINE_USER_ID) {
+            shouldnt_happen(
+                'The test baseline user was created as id ' . $user_id . ', not '
+                . self::BASELINE_USER_ID . ' - the users table was not empty at seed time, '
+                . 'so the baseline every test assumes no longer holds.'
+            );
         }
 
         return true;

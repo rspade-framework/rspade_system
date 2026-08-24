@@ -18,9 +18,17 @@ $process->setTimeout(null);
 
 Picture that `cp -r` capped at 30 seconds. It does not finish — and the next line, written by someone who never imagined a timeout existed, deletes the source directory. **That is the shape of every timeout bug**, and it has already bitten this framework twice (narratives in skills `rspade:migrations` and `rspade:locks-and-subprocesses`).
 
+**THE 599/601 TEST — apply it to every timeout, existing or proposed.** A timeout of N seconds asserts that the operation is *correct* at N-1 seconds and *broken* at N+1. So answer the question out loud: **why is 599 seconds acceptable here but 601 seconds is not?** If you cannot give a reason grounded in what the operation actually does — not "it felt generous", not "it can hit the network so give it room", not "just in case" — **the number is arbitrary and the timeout must not exist.** An arbitrary number is not a safety net; it is a randomly-timed failure injector aimed at your slowest, most loaded, most important runs.
+
+Two corollaries follow:
+- **"Give it room" is self-refuting.** If you are widening the number because the operation is legitimately slow, you have already conceded that slowness is normal here — which is the argument for having no cap at all, not for a bigger one.
+- **A copied number is always arbitrary.** The same constant appearing in two files is proof nobody derived it the second time.
+
+**A sanctioned timeout is WRITTEN DOWN where it lives.** If you cannot articulate the justification in a comment beside the value, you have not justified it. The house example is `rsx.javascript.rpc_server_ready_wait_ms` in `system/config/rsx.php` — it names the mandate, states that it bounds a wait on an external party that may never come up, states that it caps the READINESS WAIT and never the work itself, states that expiry degrades to a loud evidence-carrying error, and explains why the value is a config key rather than a literal. **Meet that bar or remove the timeout.**
+
 **Slowness is normal and is never evidence of a hang.** How long a copy, query, build or critical section takes is a function of data size and machine load, and your code does not get an opinion about it. A genuine hang is a fault to SEE and diagnose, not to paper over.
 
-**The one narrow legitimate case is still a PROPOSAL, never your decision**: bounding a wait on an EXTERNAL party that may never answer, where expiry degrades to a working outcome. Say what you want to bound, why, and what happens on expiry — then wait. **Bounding your own work is never legitimate.**
+**The one narrow legitimate case is still a PROPOSAL, never your decision**: bounding a wait on an EXTERNAL party that may never answer, where expiry degrades to a working outcome — a blocking HTTP/curl call in the realtime relay is the archetype the owner accepts. Say what you want to bound, why, and what happens on expiry — then wait. **Bounding your own work is never legitimate**, and a third-party binary you invoked is only "external" when it can genuinely hang forever AND expiry leaves a coherent result; a slow one is just slow.
 
 **Your own tool calls follow the same rule**: the only timeout you set unprompted is the standard ~2-minute backgrounding of a long-running command; never shorten it to "check on" something, and never cap an operation you were told to run to completion.
 

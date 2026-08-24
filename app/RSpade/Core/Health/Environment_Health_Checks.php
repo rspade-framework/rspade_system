@@ -8,11 +8,12 @@
 namespace App\RSpade\Core\Health;
 
 use Symfony\Component\Process\Process;
+use App\RSpade\Core\Prod\Rsx_Env_Symlink;
 use App\RSpade\Core\Rsx;
 
 /**
- * Environment_Health_Checks - the PHP runtime, Node binary, storage writability, and
- * application-mode posture checks for rsx:health.
+ * Environment_Health_Checks - the PHP runtime, Node binary, storage writability,
+ * env-encryption posture and application-mode posture checks for rsx:health.
  *
  * These are cross-cutting environment invariants with no single feature file to hang
  * them on, so they live together in the Health domain. Each method is a public static
@@ -90,7 +91,10 @@ class Environment_Health_Checks
     public static function node_binary(): array
     {
         $process = new Process(['node', '--version']);
-        $process->setTimeout(10);
+        // NO TIMEOUT (null). A probe that hangs means the thing it probes is wedged,
+        // and that is a fault to SEE, not to convert into a tidy FAIL row that reads the
+        // same as "not installed". See the no-timeout mandate.
+        $process->setTimeout(null);
         $process->run();
 
         if (!$process->isSuccessful()) {
@@ -166,8 +170,37 @@ class Environment_Health_Checks
     }
 
     /**
-     * Application-mode sanity: the active RSX_MODE, plus warnings for risky prod-mode
-     * postures (APP_DEBUG on in production; debug-site backdoors active on a prod-mode box).
+     * An encrypted copy of the environment file beside a decrypted one.
+     *
+     * .env.encrypted is a SNAPSHOT, not a live file: nothing keeps it in step with
+     * .env, so every key sync the heal performs and every APP_KEY it mints leaves it
+     * further behind. On a production box that is the point - the encrypted file is
+     * what was deployed - so it is only INFO there. On a development box, where the
+     * heal rewrites .env routinely, a stale snapshot is a trap worth naming.
+     *
+     * @return array
+     */
+    #[Health_Check('Env Encryption')]
+    public static function env_encryption(): array
+    {
+        if (!is_file(Rsx_Env_Symlink::get_root_env_encrypted_path())) {
+            return ['status' => 'OK', 'detail' => 'no encrypted copy'];
+        }
+
+        if (Rsx::is_production()) {
+            return ['status' => 'INFO', 'detail' => '.env.encrypted present at the project root'];
+        }
+
+        return [
+            'status' => 'WARN',
+            'detail' => '.env.encrypted present beside a decrypted .env on a development box',
+            'remediation' => 'it goes stale after every heal sync or APP_KEY mint - re-run php artisan env:encrypt --force, or delete it',
+        ];
+    }
+
+    /**
+     * Application-mode sanity: the active RSX_MODE, plus a warning for a risky prod-mode
+     * posture (debug-site backdoors active on a prod-mode box).
      *
      * @return array
      */
@@ -177,8 +210,6 @@ class Environment_Health_Checks
         $rows = [];
 
         $mode = Rsx::get_mode();
-        $app_env = app()->environment();
-        $app_debug = (bool) config('app.debug');
 
         if ($mode === Rsx::MODE_DEVELOPMENT) {
             $rows[] = [
@@ -190,17 +221,7 @@ class Environment_Health_Checks
             $rows[] = [
                 'label' => 'RSX Mode',
                 'status' => 'INFO',
-                'detail' => $mode . ' (sealed build); APP_ENV=' . $app_env,
-            ];
-        }
-
-        // Production RSX_MODE with APP_DEBUG on: a leaky production posture.
-        if ($mode === Rsx::MODE_PRODUCTION && $app_debug) {
-            $rows[] = [
-                'label' => 'Production Debug Flag',
-                'status' => 'WARN',
-                'detail' => 'RSX_MODE=production but APP_DEBUG=true',
-                'remediation' => 'set APP_DEBUG=false in .env for a production box',
+                'detail' => $mode . ' (sealed build)',
             ];
         }
 

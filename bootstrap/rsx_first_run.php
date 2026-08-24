@@ -27,11 +27,124 @@
  *      value by hand.
  *   3. Web requests only. The CLI has no browser to ask.
  *
+ * WHEN IT DOES NOT ASK AT ALL. If the host the browser arrived on IS this machine's
+ * own hostname, there is nothing to decide: the answer the screen would offer is the
+ * only answer there is. That case is written straight to .env and the request
+ * redirected, so a box reached under its own name never sees a setup screen.
+ *
+ * What gets written then is the LITERAL token - `APP_URL=https://$HOSTNAME`, not the
+ * resolved name. RSpade already expresses "this machine" that way (Rsx_App_Url
+ * resolves the token at every boot through gethostname()), so a container or VM that
+ * is later renamed, rebuilt or cloned keeps working instead of generating links for a
+ * name it no longer answers to. A non-default port is part of the address rather than
+ * the machine, so it is appended after the token; resolution is a plain str_replace
+ * and leaves it untouched.
+ *
  * Runs pre-boot, with no autoloader, no config and no session, because a blank
  * APP_URL is precisely what prevents the framework from booting. That also means
  * the CSRF defence here is a self-contained double-submit token rather than the
  * framework's own.
+ *
+ * The two decisions this file makes - what address the request arrived on, and
+ * whether that address is this machine itself - are pure functions at the top of the
+ * file so they can be exercised directly.
  */
+
+/**
+ * The URL this request arrived on: scheme, host and port exactly as the browser used
+ * them. Returns null when the Host header is absent or not a plausible host, in which
+ * case there is nothing to offer and the normal boot reports its own error.
+ *
+ * @param array $server the request environment ($_SERVER)
+ */
+function rsx_first_run_detected_url(array $server): ?string
+{
+    $forwarded = strtolower(trim((string) ($server['HTTP_X_FORWARDED_PROTO'] ?? '')));
+    if ($forwarded === 'https' || $forwarded === 'http') {
+        $scheme = $forwarded;
+    } else {
+        $https = strtolower(trim((string) ($server['HTTPS'] ?? '')));
+        $scheme = ($https !== '' && $https !== 'off') ? 'https' : 'http';
+    }
+
+    $host = trim((string) ($server['HTTP_HOST'] ?? ''));
+    if ($host === '' || !preg_match('/^[A-Za-z0-9._\-]+(:[0-9]{1,5})?$/', $host)) {
+        return null;
+    }
+
+    return $scheme . '://' . $host;
+}
+
+/**
+ * The APP_URL value to write WITHOUT asking, or null when the screen should be shown.
+ *
+ * The one case that needs no question: the browsed host is this machine's own
+ * hostname. Compared case-insensitively (hostnames are), and on the host alone - a
+ * port belongs to the address, not to the identity of the machine, so it is carried
+ * through onto the written value rather than being part of the comparison.
+ *
+ * @param string $detected_url scheme://host[:port] from rsx_first_run_detected_url()
+ * @param string $os_hostname this machine's name (gethostname())
+ */
+function rsx_first_run_auto_app_url(string $detected_url, string $os_hostname): ?string
+{
+    $os_hostname = trim($os_hostname);
+    if ($os_hostname === '') {
+        return null;
+    }
+
+    $separator = strpos($detected_url, '://');
+    if ($separator === false) {
+        return null;
+    }
+
+    $scheme = substr($detected_url, 0, $separator);
+    $authority = substr($detected_url, $separator + 3);
+
+    $port = '';
+    $colon = strrpos($authority, ':');
+    if ($colon !== false) {
+        $port = substr($authority, $colon);
+        $authority = substr($authority, 0, $colon);
+    }
+
+    if (strcasecmp($authority, $os_hostname) !== 0) {
+        return null;
+    }
+
+    // The literal token, never the resolved name - see the header docblock.
+    return $scheme . '://$HOSTNAME' . $port;
+}
+
+/**
+ * Set one key in an environment file, replacing every existing definition of it with a
+ * single line. Returns false when the file cannot be read or written.
+ */
+function rsx_first_run_write_env_value(string $path, string $key, string $value): bool
+{
+    $lines = @file($path, FILE_IGNORE_NEW_LINES);
+    if ($lines === false) {
+        return false;
+    }
+
+    $out = [];
+    $written = false;
+    foreach ($lines as $line) {
+        if (strncmp($line, $key . '=', strlen($key) + 1) === 0) {
+            if (!$written) {
+                $out[] = $key . '=' . $value;
+                $written = true;
+            }
+            continue; // drop any duplicate definitions
+        }
+        $out[] = $line;
+    }
+    if (!$written) {
+        $out[] = $key . '=' . $value;
+    }
+
+    return @file_put_contents($path, implode("\n", $out) . "\n") !== false;
+}
 
 (static function (): void {
     if (PHP_SAPI === 'cli') {
@@ -40,8 +153,6 @@
 
     $system_dir = dirname(__DIR__);
     $root_env = $system_dir . '/../.env';
-    $root_dist = $system_dir . '/../.env.dist';
-    $system_dist = $system_dir . '/.env.dist';
 
     // ------------------------------------------------------------------
     // Read the environment file directly. Dotenv has not run yet.
@@ -72,13 +183,13 @@
         return $found;
     };
 
-    // Seed the root .env if this is a web-first boot and artisan has never run.
+    // Creating .env is not this file's job: bootstrap/rsx_env_heal.php runs first
+    // and is the ONE implementation of it (from the project-root .env.dist, and
+    // never from the framework's own copy - a system/.env.dist that seeded a root
+    // .env is precisely the shadowing bug that cost a field deployment). If .env
+    // is absent here the heal already refused loudly and this is unreachable.
     if (!is_file($root_env)) {
-        $seed = is_file($root_dist) ? $root_dist : (is_file($system_dist) ? $system_dist : null);
-        if ($seed === null) {
-            return; // Nothing to work with; the normal boot will report it.
-        }
-        @copy($seed, $root_env);
+        return;
     }
 
     $app_url = $read_env_value($root_env, 'APP_URL');
@@ -98,53 +209,43 @@
     // ------------------------------------------------------------------
     // The URL this request arrived on - the whole point of this screen.
     // ------------------------------------------------------------------
-    $forwarded = strtolower(trim((string) ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '')));
-    if ($forwarded === 'https' || $forwarded === 'http') {
-        $scheme = $forwarded;
-    } else {
-        $https = strtolower(trim((string) ($_SERVER['HTTPS'] ?? '')));
-        $scheme = ($https !== '' && $https !== 'off') ? 'https' : 'http';
-    }
-
-    $host = trim((string) ($_SERVER['HTTP_HOST'] ?? ''));
-    if ($host === '' || !preg_match('/^[A-Za-z0-9._\-]+(:[0-9]{1,5})?$/', $host)) {
+    $detected_url = rsx_first_run_detected_url($_SERVER);
+    if ($detected_url === null) {
         // No usable Host header - nothing to offer. Let the normal boot fail
         // with its own message rather than inventing a value.
         return;
     }
 
-    $detected_url = $scheme . '://' . $host;
+    // ------------------------------------------------------------------
+    // NOTHING TO ASK: the browsed host IS this machine. Write it and go.
+    //
+    // No CSRF token here, and none is needed - unlike the POST branch this writes
+    // nothing the visitor supplied. The value is a constant (the $HOSTNAME token),
+    // and the scheme and port come from the request itself, which is the same
+    // source the screen already trusts to compose the address it offers. A visitor
+    // can influence this only by being able to reach the box under its own name,
+    // which is the condition being recognised.
+    // ------------------------------------------------------------------
+    $auto_app_url = rsx_first_run_auto_app_url($detected_url, (string) gethostname());
+
+    if ($auto_app_url !== null) {
+        if (!rsx_first_run_write_env_value($root_env, 'APP_URL', $auto_app_url)) {
+            http_response_code(500);
+            header('Content-Type: text/plain; charset=UTF-8');
+            echo "Could not write .env. Set APP_URL={$auto_app_url} by hand.\n";
+            exit;
+        }
+
+        header('Location: ' . $detected_url . '/');
+        http_response_code(302);
+        exit;
+    }
 
     // ------------------------------------------------------------------
     // Double-submit CSRF token. No session exists yet, so the form carries a
     // random value that must match a cookie set alongside it.
     // ------------------------------------------------------------------
     $cookie_name = 'rsx_first_run';
-
-    $write_env_value = static function (string $path, string $key, string $value): bool {
-        $lines = @file($path, FILE_IGNORE_NEW_LINES);
-        if ($lines === false) {
-            return false;
-        }
-
-        $out = [];
-        $written = false;
-        foreach ($lines as $line) {
-            if (strncmp($line, $key . '=', strlen($key) + 1) === 0) {
-                if (!$written) {
-                    $out[] = $key . '=' . $value;
-                    $written = true;
-                }
-                continue; // drop any duplicate definitions
-            }
-            $out[] = $line;
-        }
-        if (!$written) {
-            $out[] = $key . '=' . $value;
-        }
-
-        return @file_put_contents($path, implode("\n", $out) . "\n") !== false;
-    };
 
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && isset($_POST['rsx_set_app_url'])) {
         $submitted = (string) ($_POST['rsx_token'] ?? '');
@@ -157,7 +258,7 @@
             exit;
         }
 
-        if (!$write_env_value($root_env, 'APP_URL', $detected_url)) {
+        if (!rsx_first_run_write_env_value($root_env, 'APP_URL', $detected_url)) {
             http_response_code(500);
             header('Content-Type: text/plain; charset=UTF-8');
             echo "Could not write .env. Set APP_URL={$detected_url} by hand.\n";

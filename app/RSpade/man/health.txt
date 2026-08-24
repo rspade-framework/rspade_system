@@ -99,6 +99,16 @@ FRAMEWORK INVENTORY
     The framework declares these checks (each in the feature that owns it):
 
         Application Mode         active RSX_MODE + risky prod-posture warnings
+        Claude Skills            every rsx/resource/skills/<name>/SKILL.md is linked
+                                 into .claude/skills/. WARN per unlinked skill,
+                                 framework-created dangling link, or blocked/reserved
+                                 name; OK with a count otherwise. Remediation:
+                                 rsx:heal claude-skills. See template_app(3).
+        Document Render Backlog  render + extraction queue depth and failed
+                                 counts (pending/failed/unindexed/extract_failed).
+                                 ONE probe for one worker and one queue; it
+                                 replaced "Search Index Backlog" on 2026-08-22.
+                                 Remediation points at rsx:documents:status.
         Env Symlink              system/.env symlink to root .env intact
         LibreOffice (soffice)    headless soffice present (or disabled)
         Lock Server              rsx-lockd listening (INFO under maintenance)
@@ -110,7 +120,6 @@ FRAMEWORK INVENTORY
         Playwright / Chromium    Playwright package + browser installed (rsx:debug)
         Realtime Relay           WebSocket relay reachable when enabled
         Redis Connectivity       Redis reachable (cache, realtime, task slots)
-        Search Index Backlog     extraction queue depth + failed count
         Storage Writable         storage/ + feature subdirs writable
         Task Scheduler Liveness  rsx:task:process cron ticking
         Turnstile                INFO when disabled; FAIL when enabled with a

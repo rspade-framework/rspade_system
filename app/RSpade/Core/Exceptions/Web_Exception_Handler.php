@@ -28,12 +28,17 @@ use App\RSpade\Core\Rsx;
  * the RSX Dispatcher. A handler that claimed 404s ahead of it would take every RSX
  * route offline. By the time this one runs, RSX has already declined the URL.
  *
- * DEVELOPMENT KEEPS ITS DEBUG PAGE. In development mode with APP_DEBUG on, this
- * handler declines and Laravel renders the interactive debug error page (Ignition)
- * - by far the most useful thing to see while writing code. Every other
+ * DEVELOPMENT KEEPS ITS DEBUG PAGE. In development mode with config('app.debug')
+ * on, this handler declines and Laravel renders the interactive debug error page
+ * (Ignition) - by far the most useful thing to see while writing code. Every other
  * combination gets the themed screen: debug/production mode always (redacted, per
- * Error_Screens), and development with APP_DEBUG off (detail included - the
- * environment is not production).
+ * Error_Screens), and development with debug off (detail included - the environment
+ * is not production).
+ *
+ * app.debug is DERIVED from RSX_MODE (config/app.php); there is no APP_DEBUG env
+ * key any more. In development it is therefore always on unless something sets it
+ * at runtime - the second half of the condition is kept because that runtime
+ * spelling is what makes the "development, debug off" branch reachable and tested.
  *
  * IT SPEAKS FOR THE FULL-PAGE CHANNEL ONLY, and does not re-test for that: the
  * Cli/Ajax/Api/Playwright handlers own their channels at priorities 10-30, so a
@@ -64,6 +69,14 @@ class Web_Exception_Handler extends Rsx_Exception_Handler_Abstract
         // Coded HTTP outcomes raised by application code (abort(404), abort(403))
         // land on the same screens the dispatchers use, so a page never depends on
         // WHICH layer decided it was missing or denied.
+        //
+        // WHERE ABORT() IS ACTUALLY HONOURED depends on where it was called. Inside an
+        // RSX-dispatched action, Dispatcher::__http_exception_response() answers it at
+        // the seam that invoked the action - it has to, because that action runs inside
+        // the handling of Laravel's own NotFoundHttpException, and a second throw there
+        // escapes as a fatal 500 rather than reaching this handler. What arrives here is
+        // an abort() from everywhere else: a Laravel route, middleware, a view, or the
+        // framework itself.
         if ($e instanceof HttpExceptionInterface) {
             $status = $e->getStatusCode();
 

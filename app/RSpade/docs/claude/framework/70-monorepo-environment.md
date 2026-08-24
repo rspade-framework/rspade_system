@@ -17,6 +17,10 @@ Two physical layers, one logical environment; **the framework wins all overlaps*
 
 Skill `rspade:framework-dependencies`. Details: `rsx:man dependencies`.
 
+### `.env.dist` is authored here, and ships verbatim
+
+The project-root `.env.dist` is a TRACKED, hand-curated file, and `bin/publish` copies it **verbatim** to `system/.env.dist` and into the starter project. The old scrub-from-the-live-`.env` generation (a `cp` plus a list of `sed` rules) is GONE — so **whether a key ships is now an editorial decision made in `.env.dist`**, not a question of whether somebody remembered to add a scrub rule. **Never put a secret in it**: it ships to every install in the world. A publish with no root `.env.dist` fails loudly.
+
 ### Framework-internal flags: the `--_` convention
 
 **Framework-INTERNAL flags use the `--_` convention** (`--_framework-update-override`, `--_no-system-reset`, `--_no-check-schema-updates-pending`): `--_` prefix + hyphens, **declared as NO `InputOption`**, lifted out of argv into `$GLOBALS['__rsx_internal_flags']` and stripped pre-boot by `system/artisan`, read via `Rsx_Internal_Flags::has()` — or `::get('--_name')` for the VALUED form (`::set()` is the narrow seam for an in-process `Artisan::call` that cannot pass a stripped token). **Consequence: they render in no `php artisan list`/`help` output and can never raise an unknown-option error.** `--_lock-group=<id>` is the valued one that matters: `Rsx_Artisan` attaches it to every synchronous spawn so a child inherits the parent's cluster locks.

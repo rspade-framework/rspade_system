@@ -14,110 +14,23 @@ use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Rsx_Extraction_Unsupported_Exception;
 use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
-use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
- * Search_Index_Service - the background document-text extraction pipeline (framework core).
+ * Search_Index_Service - document text extraction (framework core).
  *
- * Drives off the _file_storage.is_indexed flag: ONE blob per iteration (is_indexed=0, ordered by
- * id), extract its text into _search_indexes keyed on the deduplicated blob, ALWAYS set
- * is_indexed=1 afterward so work never repeats and the loop terminates. Because the key is the
- * dedup blob, identical bytes are extracted exactly once regardless of how many attachments
- * reference them.
+ * The unit of work, not the queue. Document_Render_Service owns the queue and the worker: it
+ * drains _file_storage.is_indexed = 0 alongside the rendition queue and calls extract_storage()
+ * per blob, so one soffice-era document is handled by ONE pass instead of by two competing
+ * background jobs. Extraction is keyed on the deduplicated blob, so identical bytes are extracted
+ * exactly once regardless of how many attachments reference them.
  *
  * There is NO stored PENDING state: the absence of a _search_indexes row (with is_indexed=0) IS
- * the queue. A row is written only AFTER an attempt, always EXTRACTED / FAILED / UNSUPPORTED.
- *
- * #[Exclusive]: at most one extraction pass runs at a time cluster-wide (coalesced). The 5-minute
- * cron backstops; a prompt kick (Task::dispatch) fires on find_or_create() so uploads/
- * materializations drain quickly.
+ * the queue. A row is written only AFTER an attempt, always EXTRACTED / FAILED / UNSUPPORTED, and
+ * is_indexed is ALWAYS set afterward so work never repeats and the worker's loop terminates.
  */
 class Search_Index_Service extends Rsx_Service_Abstract
 {
-    /**
-     * Process every un-indexed blob, one at a time, until the queue is empty.
-     *
-     * @param Task_Instance $task
-     * @param array $params
-     * @return array
-     */
-    #[Task('Extract document text for full-text search (one blob at a time)')]
-    #[Exclusive]
-    #[Schedule('*/5 * * * *')]
-    public static function index_pending(Task_Instance $task, array $params = []): array
-    {
-        // Master switch: when disabled, the cron does nothing (and no kick is fired on upload).
-        if (!config('rsx.search.enabled', true)) {
-            $task->info('Document text extraction disabled (rsx.search.enabled=false) - nothing to do');
-            return ['processed' => 0];
-        }
-
-        $processed = 0;
-
-        // Drain one at a time. extract_storage() sets is_indexed=1 on every attempt, so
-        // get-next-unindexed terminates the loop.
-        while (true) {
-            $storage = File_Storage_Model::where('is_indexed', 0)->orderBy('id')->first();
-            if (!$storage) {
-                break;
-            }
-
-            $task->heartbeat();
-
-            $index = static::extract_storage($storage);
-            $processed++;
-
-            $task->info("Indexed storage #{$storage->id} [{$index->status_id__label}]");
-        }
-
-        if ($processed > 0) {
-            $task->info("Extraction pass complete: {$processed} blob(s) processed");
-        }
-
-        return ['processed' => $processed];
-    }
-
-    /**
-     * rsx:health probe: how much extraction work is queued or has failed.
-     *
-     * A public static `#[Health_Check('label')]` (bare marker attribute - never a defined
-     * class) returning a row per Health_Check_Runner's contract. Read-only: it only counts
-     * the queue (is_indexed=0 blobs) and failed index rows.
-     *
-     * @return array
-     */
-    #[Health_Check('Search Index Backlog')]
-    public static function index_backlog(): array
-    {
-        if (!config('rsx.search.enabled', true)) {
-            return ['status' => 'INFO', 'detail' => 'disabled by config (rsx.search.enabled=false)'];
-        }
-
-        $queued = File_Storage_Model::where('is_indexed', 0)->count();
-        $failed = Search_Index_Model::where('status_id', Search_Index_Model::STATUS_FAILED)->count();
-        $summary = "queued={$queued}, failed={$failed}";
-
-        // A large queue means the one-at-a-time extraction cron is not keeping up (or not running).
-        if ($queued > 500) {
-            return [
-                'status' => 'WARN',
-                'detail' => $summary . ' - large backlog',
-                'remediation' => 'the extraction cron may not be running - check rsx:task:process and rsx:search:reindex --status',
-            ];
-        }
-
-        if ($failed > 0) {
-            return [
-                'status' => 'WARN',
-                'detail' => $summary,
-                'remediation' => 'inspect and re-queue with rsx:search:reindex --failed',
-            ];
-        }
-
-        return ['status' => 'OK', 'detail' => $summary];
-    }
-
     /**
      * Extract (or record the non-extraction of) a single blob, writing its _search_indexes row
      * and marking the blob is_indexed=1. This is the unit of work - callable directly (tests,
@@ -125,13 +38,22 @@ class Search_Index_Service extends Rsx_Service_Abstract
      *
      * Resolution order:
      *   1. App filter chain document.extract_text (first non-null handler wins).
-     *   2. Framework extractor registry (config rsx.search.extractors, fnmatch by mime).
-     *   3. No match -> UNSUPPORTED (NOT failed - e.g. an image, a zip; OCR is out of scope).
+     *   2. The PDF rendition shortcut, when the worker has one (see $rendition_path).
+     *   3. Framework extractor registry (config rsx.search.extractors, fnmatch by mime).
+     *   4. No match -> UNSUPPORTED (NOT failed - e.g. an image, a zip; OCR is out of scope).
      *
      * @param File_Storage_Model $storage
+     * @param string|null $rendition_path Absolute path to this blob's PDF rendition when the render
+     *                                    worker has just produced (or found) one. Word-processing
+     *                                    documents are then extracted from the PDF with pdftotext
+     *                                    instead of paying for a SECOND soffice run - the rendition
+     *                                    is the same document and it is already on disk. Sheets and
+     *                                    decks are NOT: their text lives in a grid or on slides
+     *                                    that a PDF flattens badly, so they keep their dedicated
+     *                                    fods/fodp conversion (spreadsheet_extraction_fix_07_21).
      * @return Search_Index_Model The written index row.
      */
-    public static function extract_storage(File_Storage_Model $storage): Search_Index_Model
+    public static function extract_storage(File_Storage_Model $storage, ?string $rendition_path = null): Search_Index_Model
     {
         $path = $storage->get_full_path();
 
@@ -175,10 +97,25 @@ class Search_Index_Service extends Rsx_Service_Abstract
             return static::__apply_resolved($storage, $resolved);
         }
 
-        // 2) Framework extractor registry (fnmatch by mime).
-        $extractor_class = static::__extractor_for_mime($mime);
+        // What we actually hand the extractor. Normally the blob itself; the rendition shortcut
+        // below swaps in the already-produced PDF.
+        $extract_path = $path;
+        $extract_mime = $mime;
+
+        // 2) The rendition shortcut: a word-processing document whose PDF the render worker has
+        // already produced. Extracting from that PDF with pdftotext is the SAME document without a
+        // second soffice run - the expensive half of the old three-conversions-per-document story.
+        if ($rendition_path !== null && file_exists($rendition_path) && static::__is_word_processing_mime($mime)) {
+            $extractor_class = 'Pdftotext_Text_Extractor';
+            $extract_path = $rendition_path;
+            $extract_mime = 'application/pdf';
+        } else {
+            // 3) Framework extractor registry (fnmatch by mime).
+            $extractor_class = static::__extractor_for_mime($mime);
+        }
+
         if ($extractor_class === null) {
-            // 3) Nothing handles this mime -> UNSUPPORTED (not a failure).
+            // 4) Nothing handles this mime -> UNSUPPORTED (not a failure).
             return static::__write_result($storage, Search_Index_Model::STATUS_UNSUPPORTED, '', null, 'none');
         }
 
@@ -197,7 +134,7 @@ class Search_Index_Service extends Rsx_Service_Abstract
         $fqcn = static::__resolve_extractor_fqcn($extractor_class);
 
         try {
-            $text = (string) $fqcn::extract($path, $mime);
+            $text = (string) $fqcn::extract($extract_path, $extract_mime);
         } catch (Rsx_Extraction_Unsupported_Exception $e) {
             // Structurally unextractable by design (encrypted / password-protected): UNSUPPORTED
             // with the reason, NOT FAILED - a retry can never help, so it must not pollute the
@@ -236,7 +173,7 @@ class Search_Index_Service extends Rsx_Service_Abstract
             $text = mb_strcut($text, 0, $max_bytes, 'UTF-8');
             $metadata = ['truncated' => true, 'original_bytes' => $original_bytes];
         } elseif ($extractor_class === 'Plain_Text_Extractor') {
-            $source_size = filesize($path);
+            $source_size = filesize($extract_path);
             if ($source_size !== false && $source_size > $max_bytes) {
                 $metadata = ['truncated' => true, 'original_bytes' => (int) $source_size];
             }
@@ -329,6 +266,23 @@ class Search_Index_Service extends Rsx_Service_Abstract
         $storage->save();
 
         return $index;
+    }
+
+    /**
+     * True for the Writer (word-processing) mime family: .doc, .docx, .odt (incl. -template) and
+     * .rtf. These are the documents whose text survives a PDF flattening intact, which is what
+     * makes the rendition shortcut in extract_storage() correct for them and wrong for a
+     * spreadsheet (a grid) or a presentation (slides).
+     *
+     * @param string $mime
+     * @return bool
+     */
+    protected static function __is_word_processing_mime(string $mime): bool
+    {
+        return $mime === 'application/msword'
+            || $mime === 'application/rtf'
+            || str_contains($mime, 'wordprocessingml')
+            || str_contains($mime, 'opendocument.text');
     }
 
     /**

@@ -471,13 +471,16 @@ return [
     */
     'development' => [
         // Show detailed error messages
-        'debug' => env('RSX_DEBUG', env('APP_DEBUG', false)),
+        // APP_DEBUG is not read anywhere: the fallback derives from RSX_MODE, the
+        // single mode switch (see config/app.php). Config files cannot call config(),
+        // so the derivation is spelled out rather than read from app.debug.
+        'debug' => env('RSX_DEBUG', env('RSX_MODE', 'development') !== 'production'),
 
         // Log all dispatches for debugging
         'log_dispatches' => env('RSX_LOG_DISPATCHES', false),
 
         // Show route matching details in error pages
-        'show_route_details' => env('RSX_SHOW_ROUTE_DETAILS', env('APP_DEBUG', false)),
+        'show_route_details' => env('RSX_SHOW_ROUTE_DETAILS', env('RSX_MODE', 'development') !== 'production'),
 
         // The hostname suffix that marks a DEBUG SITE - a host you control and
         // where developer conveniences (login credential auto-fill) are allowed.
@@ -578,7 +581,7 @@ return [
         // unless explicitly opted in). Governs whether the grant token is created. The
         // pre-boot auth gate (auth.php) also refuses the bridge outright when
         // RSX_IDE_SERVICES_ENABLED=false, and in production without =true.
-        'enabled' => env('RSX_IDE_SERVICES_ENABLED', env('APP_ENV', 'local') !== 'production'),
+        'enabled' => env('RSX_IDE_SERVICES_ENABLED', env('RSX_MODE', 'development') !== 'production'),
     ],
 
     /*
@@ -870,34 +873,55 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | LibreOffice Integration (document thumbnail rendering)
+    | LibreOffice Integration (the document render worker)
     |--------------------------------------------------------------------------
     |
-    | Libreoffice_Thumbnail_Renderer shells out to headless LibreOffice to render
-    | Office documents (docx/xlsx/pptx/odt/...) to a raster preview for the thumbnail
-    | pipeline. RSpade dev Docker images ship LibreOffice preinstalled.
+    | Document_Render_Service shells out to headless LibreOffice to convert Office
+    | documents (docx/xlsx/pptx/odt/...) into the PDF rendition that feeds BOTH the
+    | Document_Preview viewer and the document thumbnail, and (for Writer documents)
+    | the text that pdftotext then extracts from it. RSpade dev Docker images ship
+    | LibreOffice preinstalled.
     |
-    | - enabled: master switch. When FALSE, document thumbnails silently use the generic
-    |   extension icon (no error, no soffice call). When TRUE, a conversion failure logs an
-    |   error and the pipeline falls back to the extension icon.
+    | The worker is #[Exclusive], so it is the only caller of soffice and invocations
+    | are serialized by construction. There is no concurrency semaphore and no slot
+    | wait: nothing is competing for a pool any more.
+    |
+    | - enabled: master switch for RENDERING. When FALSE, no soffice call is ever made:
+    |   convertible documents stay PENDING (and render the day it is switched back on),
+    |   the rendition endpoint has nothing to serve, and thumbnails use the generic
+    |   extension icon. Text extraction of non-LibreOffice formats keeps draining.
     | - binary_path: absolute path to the `soffice` binary. NULL = auto-detect on PATH and
     |   common install locations.
-    | - max_concurrent: max simultaneous LibreOffice renders, enforced cluster-wide via an
-    |   RSpade semaphore (RsxLocks::acquire_semaphore). 0 = unlimited. LibreOffice is heavy;
-    |   the default keeps a small ceiling.
-    | - timeout: hard cap (seconds) on a single render, measured from when the task acquires
-    |   its concurrency slot and actually starts rendering. Exceeding it fails the render (then
-    |   the extension icon is used).
-    | - slot_wait_timeout: max seconds to wait for a free concurrency slot before giving up
-    |   (degrading to the icon) rather than piling up under load.
+    | - timeout: SANCTIONED TIMEOUT (owner ruling 2026-08-22). This is the narrow case the
+    |   no-timeout mandate allows, and it is written down here because a sanctioned timeout
+    |   that is not justified in place is not sanctioned:
+    |
+    |     WHAT IT BOUNDS - ONE external document-binary invocation by the render worker:
+    |     `soffice` (rendition or fods/fodp text conversion) or `pdftotext`. It bounds the
+    |     EXTERNAL BINARY, never any work of ours, and never the worker's own pass.
+    |     WHY IT QUALIFIES - these binaries do not merely run slowly on malformed input,
+    |     they WEDGE: the process never returns and never will. The render worker is
+    |     single-threaded, so one wedged document would stop every later document in the
+    |     queue forever. Expiry degrades to a WORKING OUTCOME - the blob is recorded FAILED
+    |     with its reason, the generic extension icon is served, and the queue moves on.
+    |     WHY 120 AND NOT AN ARBITRARY NUMBER - the value does not separate "fast" from
+    |     "slow"; it separates "still working" from "never coming back". A large, complex
+    |     document on a loaded box legitimately takes well over a minute, so the number sits
+    |     far above any honest render, while a wedged soffice would sit here forever. That is
+    |     the 599/601 answer: 119s might still be a real render, and nothing that has not
+    |     answered by 121s is going to answer at all.
+    |     WHY ONE KEY FOR BOTH BINARIES - pdftotext is the same shape of risk with the same
+    |     degradation. A second number would have to be argued separately and would drift;
+    |     one key, one number, every site.
+    |
+    |   If you are tempted to LOWER this because renders "should be faster", do not - that is
+    |   the "give it room" fallacy inverted, and it will start failing legitimate renders.
     |
     */
     'libreoffice' => [
         'enabled' => env('LIBREOFFICE_ENABLED', true),
         'binary_path' => env('LIBREOFFICE_BINARY_PATH', null),
-        'max_concurrent' => 2,
-        'timeout' => 30,
-        'slot_wait_timeout' => 30,
+        'timeout' => 120,
     ],
 
     /*
@@ -905,13 +929,15 @@ return [
     | Document Text Extraction / Full-text Search
     |--------------------------------------------------------------------------
     |
-    | The background extraction pipeline pulls text out of documents (PDF, Office,
-    | plain text) into _search_indexes, keyed on the deduplicated _file_storage blob
-    | so identical bytes are extracted exactly once. Search_Index_Service drives off
-    | the _file_storage.is_indexed flag, one blob per iteration.
+    | Text extraction pulls text out of documents (PDF, Office, plain text) into
+    | _search_indexes, keyed on the deduplicated _file_storage blob so identical bytes
+    | are extracted exactly once. Search_Index_Service::extract_storage() is the unit of
+    | work; Document_Render_Service owns the queue and drains _file_storage.is_indexed=0
+    | in the same pass that produces PDF renditions.
     |
-    | - enabled: master switch. When FALSE, no extraction is kicked on upload/
-    |   materialization and the cron does nothing. Existing rows are untouched.
+    | - enabled: master switch for EXTRACTION, and the kick switch for the render worker.
+    |   When FALSE, no pipeline kick is fired on upload/materialization and the worker
+    |   skips the extraction half of its queue. Existing rows are untouched.
     | - extractor_version: the current pipeline generation. Bump this when an extractor
     |   changes in a way that should re-produce existing text; then
     |   `rsx:search:reindex --below-version=N` re-queues everything older.
@@ -921,7 +947,6 @@ return [
     |   intercept per-file with an #[OnEvent('document.extract_text')] handler.
     | - pdftotext_binary_path: absolute path to `pdftotext` (poppler-utils). NULL = auto-
     |   detect on PATH and common install locations.
-    | - timeout: hard cap (seconds) on a single extractor invocation.
     | - max_text_bytes: extracted text is capped at this many bytes. Over-cap extraction is
     |   TRUNCATED and RECORDED (index-row metadata truncated=true + original_bytes), never
     |   silently dropped and never FAILED - a partial index is discoverable, not a wrong answer.
@@ -947,7 +972,6 @@ return [
         ],
 
         'pdftotext_binary_path' => env('PDFTOTEXT_BINARY_PATH', null),
-        'timeout' => 30,
         'max_text_bytes' => 2 * 1024 * 1024,  // 2MB
     ],
 
@@ -956,22 +980,22 @@ return [
     | Document Preview (Document_Preview component + rendition endpoint)
     |--------------------------------------------------------------------------
     |
-    | Server-side viewer resolution + the cached soffice->PDF rendition pipeline for
-    | the Document_Preview component. get_preview_info() resolves a viewer by mime; the
+    | Server-side viewer resolution + the cached PDF rendition pipeline for the
+    | Document_Preview component. get_preview_info() resolves a viewer by mime; the
     | /_preview/pdf/:key route serves a PDF rendition of the attachment (the blob itself
-    | when it is already a PDF, else a cached soffice conversion of an Office document).
+    | when it is already a PDF, else the rendition Document_Render_Service produced in the
+    | background - a web request never converts anything).
     |
     | - viewers: ordered fnmatch map of mime pattern (glob) => viewer component (simple
     |   name). First match wins; the trailing '*' entry is the terminal Icon_Viewer so
     |   every mime resolves to something. Apps may override/extend in
     |   rsx/resource/config/rsx.php. Viewer components ship in Batch 4.
-    | - convertible: mimes the rendition endpoint will convert to PDF via headless
-    |   LibreOffice (fnmatch globs). A convertible mime is only converted when
+    | - convertible: mimes the render worker converts to a PDF rendition via headless
+    |   LibreOffice (fnmatch globs). This list is also what makes a new attachment queue
+    |   its blob for rendering. A convertible mime is only converted when
     |   rsx.libreoffice.enabled is true; otherwise the rendition endpoint returns 415.
     | - quota_max_bytes: LRU cap (bytes) on storage/rsx-renditions, enforced by the
     |   File_Rendition_Service scheduled cleanup task (oldest mtime evicted first).
-    | - rendition_timeout: hard cap (seconds) on a single soffice->PDF conversion,
-    |   measured from when the conversion acquires its concurrency slot.
     |
     */
     'preview' => [
@@ -999,7 +1023,6 @@ return [
         ],
 
         'quota_max_bytes' => 200 * 1024 * 1024,  // 200MB (enforced via scheduled LRU cleanup)
-        'rendition_timeout' => 60,
     ],
 
     'thumbnails' => [
@@ -1020,16 +1043,15 @@ return [
         //
         // Imagick_Thumbnail_Renderer: raster images (byte-identical to the historic path)
         //   and PDFs (first page, requires Imagick + Ghostscript).
-        // Libreoffice_Thumbnail_Renderer: Office documents via `soffice --headless`.
+        //
+        // OFFICE DOCUMENTS ARE NOT LISTED HERE, and that is the design: their pixels come
+        // from the PDF rendition Document_Render_Service produced in the background, which
+        // the thumbnail pipeline rasterizes with Imagick like any other PDF. A renderer
+        // entry would mean converting a document inside a web request, which is exactly
+        // what the render worker exists to stop.
         'renderers' => [
             'image/*' => 'Imagick_Thumbnail_Renderer',
             'application/pdf' => 'Imagick_Thumbnail_Renderer',
-            'application/msword' => 'Libreoffice_Thumbnail_Renderer',
-            'application/vnd.ms-excel' => 'Libreoffice_Thumbnail_Renderer',
-            'application/vnd.ms-powerpoint' => 'Libreoffice_Thumbnail_Renderer',
-            'application/vnd.openxmlformats-officedocument.*' => 'Libreoffice_Thumbnail_Renderer',
-            'application/vnd.oasis.opendocument.*' => 'Libreoffice_Thumbnail_Renderer',
-            'application/rtf' => 'Libreoffice_Thumbnail_Renderer',
         ],
 
         // Skip the renderer (use the extension icon) for source blobs larger than this,

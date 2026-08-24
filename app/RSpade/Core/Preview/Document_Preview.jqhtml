@@ -6,6 +6,19 @@ server (File_Preview_Controller::get_preview_info) and dispatching to it. The fr
 viewers (Pdf_Viewer, Image_Viewer, Icon_Viewer); an app may register additional viewers in
 config('rsx.preview.viewers'), which are instantiated dynamically in on_ready.
 
+A convertible document (Word, Excel, PowerPoint, ...) has no PDF rendition until the background
+render worker has produced one, so this component also owns the WAITING states: it subscribes to
+its attachment id and swaps from "Preparing preview..." to the real Pdf_Viewer when the render
+lands - no reload, no polling.
+
+States, in the order the template tests them:
+  preview_unavailable  - a degraded upload (unparseable image bytes). No viewer.
+  render_status_id 2   - PENDING: queued for render. "Preparing preview..." + the extension icon.
+  render_status_id 4   - FAILED: terminal. "Preview could not be generated" + the extension icon.
+                         The operator reason (render_error) is deliberately NOT exported here.
+  urls.rendition       - a PDF (its own blob) or a RENDERED convertible document -> Pdf_Viewer.
+  otherwise            - Image_Viewer / Icon_Viewer / an app-registered viewer.
+
 Args:
   $attachment_id  (required) - the File_Attachment_Model id to preview. Throws if absent.
   $page           (optional) - initial page for paginated viewers (default 1).
@@ -37,10 +50,34 @@ Public methods (delegate to the active viewer; no-op before it is ready):
                     <div class="Document_Preview__unavailable-name"><%= this.data.info.file_name %></div>
                 <% } %>
             </div>
+        <% } else if (this.data.info && this.data.info.render_status_id === 2) { %>
+            <%-- PENDING: the render worker has the document queued. The realtime subscription in
+                 on_create brings us back here the moment it finishes. --%>
+            <div class="Document_Preview__preparing">
+                <img class="Document_Preview__state-icon" src="<%= this.data.info.urls.icon %>" alt="">
+                <div class="Document_Preview__state-title">Preparing preview...</div>
+                <% if (this.data.info.file_name) { %>
+                    <div class="Document_Preview__state-name"><%= this.data.info.file_name %></div>
+                <% } %>
+            </div>
+        <% } else if (this.data.info && this.data.info.render_status_id === 4) { %>
+            <%-- FAILED is terminal - nothing retries it but an operator (rsx:documents:rerender). --%>
+            <div class="Document_Preview__failed">
+                <img class="Document_Preview__state-icon" src="<%= this.data.info.urls.icon %>" alt="">
+                <div class="Document_Preview__state-title">Preview could not be generated</div>
+                <% if (this.data.info.file_name) { %>
+                    <div class="Document_Preview__state-name"><%= this.data.info.file_name %></div>
+                <% } %>
+            </div>
         <% } else if (this.data.info) { %>
             <% const _v = this.data.info.viewer; %>
-            <% if (_v === 'Pdf_Viewer') { %>
+            <% if (_v === 'Pdf_Viewer' && this.data.info.urls.rendition) { %>
                 <Pdf_Viewer $sid="viewer" $url=this.data.info.urls.rendition $page=(this.args.page||1) />
+            <% } else if (_v === 'Pdf_Viewer') { %>
+                <%-- Resolves to Pdf_Viewer but has no rendition and is in no render state that
+                     explains why (a blob that was never materialized). Fall through to the icon
+                     rather than handing the viewer a null URL. --%>
+                <Icon_Viewer $sid="viewer" $url=this.data.info.urls.icon $extension=this.data.info.extension $file_name=this.data.info.file_name />
             <% } else if (_v === 'Image_Viewer') { %>
                 <Image_Viewer $sid="viewer" $url=this.data.info.urls.inline />
             <% } else if (_v === 'Icon_Viewer') { %>

@@ -35,6 +35,18 @@ if (!socketPath) {
     socketPath = path.join(STORAGE_ROOT, 'rsx-tmp', 'ssr-server.sock');
 }
 
+// SANCTIONED TIMEOUT (owner ruling 2026-08-22). Written down here because a sanctioned
+// timeout that is not justified in place is not sanctioned:
+//
+//   WHAT IT BOUNDS - one component render inside the SSR server, and nothing else.
+//   WHY IT QUALIFIES - the SSR server is a SINGLETON behind a system lock, and callers
+//   queue on it waiting forever (Rsx_SSR::render_component). A render that never returns
+//   is therefore not one slow request: it wedges the queue for every later caller, with
+//   no other drain. This bound IS the drain guarantee that makes waiting forever safe.
+//   WHY 30s - it separates "still rendering" from "never coming back", not fast from
+//   slow. Server-side rendering of a component tree is CPU-bound local work measured in
+//   tens of milliseconds; nothing honest is still going at 30 seconds.
+//   ON EXPIRY - the render fails loudly with its component name and the queue advances.
 const server = new SSRServer({
     maxBundles: 10,
     defaultTimeout: 30000

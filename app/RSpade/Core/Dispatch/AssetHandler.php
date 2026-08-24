@@ -9,12 +9,13 @@ namespace App\RSpade\Core\Dispatch;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\File;
-use Illuminate\Support\Facades\Redis;
-use Symfony\Component\HttpFoundation\Response;
-use Symfony\Component\HttpFoundation\BinaryFileResponse;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
-use Symfony\Component\HttpKernel\Exception\HttpException;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Redis;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Exception\HttpException;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use App\RSpade\Core\Rsx;
 
 /**
  * AssetHandler serves static files from RSX public directories
@@ -26,7 +27,7 @@ use Illuminate\Support\Facades\Log;
  * =============================================
  * When the framework is more complete, create comprehensive unit tests for:
  * 
- * Development Mode (env('APP_ENV') !== 'production'):
+ * Development Mode (RSX_MODE=development):
  * -------------------------------------------------------------
  * 1. Bundle filenames are predictable: app.(hash).js where hash = substr(sha256(FQCN), 0, 32)
  *    - Example: FrontendBundle -> app.053cded429c46421aea774afff5fbd8b.js
@@ -36,7 +37,7 @@ use Illuminate\Support\Facades\Log;
  * 4. Cache headers set to no-cache: "Cache-Control: no-cache, no-store, must-revalidate"
  * 5. storage/rsx directory cleared on each request EXCEPT during bundle serving
  * 
- * Production Mode (env('APP_ENV') === 'production'):
+ * Production Mode (a sealed RSX_MODE=debug/production build):
  * ----------------------------------------------------------
  * 1. Bundle filenames include manifest hash: app.(hash).js where hash = substr(sha256(manifest_hash . '|' . FQCN), 0, 32)
  *    - Changes when manifest OR bundle content changes
@@ -661,7 +662,7 @@ class AssetHandler
         $file_path = storage_path("rsx-build/bundles/{$filename}");
 
         // In development mode, compile bundle on-the-fly if it doesn't exist
-        if (env('APP_ENV') !== 'production' && !file_exists($file_path)) {
+        if (Rsx::is_development() && !file_exists($file_path)) {
             // Try to compile the bundle on-demand
             static::__compile_bundle_on_demand($bundle_name, $type, $hash, $extension);
         }

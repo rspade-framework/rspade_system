@@ -20,8 +20,27 @@
 # update itself already succeeded). See system/bin/environment_updates/CLAUDE.md.
 #
 # Context passed to each script via env: PROJECT_ROOT, SYSTEM_DIR, IS_FRAMEWORK_DEVELOPER.
+#
+# --quiet: suppress this script's own informational output and export
+# RSPADE_ENV_UPDATE_QUIET=true, which every environment update honors for ITS informational
+# lines. Problems are never suppressed - WARNING lines and the failure count still go to
+# stderr, so a quiet run is a quiet SUCCESS and never a silent failure. It exists for the
+# rsx:git post-pull hook, where the environment updates are a side effect of somebody's
+# `git pull` rather than the thing they asked for. The FRAMEWORK pull deliberately does NOT
+# pass it: an update reports what it changed.
 
 set -uo pipefail
+
+QUIET=false
+for arg in "$@"; do
+    case "$arg" in
+        --quiet) QUIET=true ;;
+    esac
+done
+
+if [ "$QUIET" = true ]; then
+    export RSPADE_ENV_UPDATE_QUIET=true
+fi
 
 # Resolve context. The updater exports these; the fallbacks let post-update.sh be run by hand.
 SYSTEM_DIR="${SYSTEM_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"

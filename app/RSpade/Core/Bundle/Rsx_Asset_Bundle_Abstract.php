@@ -15,7 +15,7 @@ use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
  * CAPABILITIES:
  * - CDN asset declarations (cdn_assets)
  * - NPM module declarations (npm)
- * - Watch directories for cache invalidation (watch)
+ * - Watch targets for cache invalidation (watch)
  * - Direct file path includes (no directory scanning)
  * - Can include other Asset Bundles by class name
  * - Config declarations
@@ -47,7 +47,8 @@ use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
  *                     'rsx/theme/vendor/bootstrap5/dist/js/bootstrap.bundle.js',
  *                 ],
  *                 'watch' => [
- *                     'rsx/theme/vendor/bootstrap5/scss',  // Watch for changes
+ *                     'rsx/theme/vendor/bootstrap5/scss',   // Directory - scanned recursively
+ *                     'rsx/theme/bootstrap_variables.scss', // File - watched directly
  *                 ],
  *                 'cdn_assets' => [
  *                     'css' => [['url' => 'https://cdn.jsdelivr.net/...']],
@@ -55,6 +56,23 @@ use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
  *             ];
  *         }
  *     }
+ *
+ * THE 'watch' CONTRACT:
+ *
+ * A watch entry is a cache-invalidation input. It is never compiled into the output; it only
+ * has to make the output rebuild when it changes - the SCSS partial a compiled entry point
+ * imports, the config file a generator reads.
+ *
+ * - It takes the SAME kinds of path as 'include': a FILE or a DIRECTORY, relative to
+ *   base_path(). A directory is scanned recursively; a file is watched directly.
+ * - It MUST EXIST. A target that is neither an existing file nor an existing directory fails
+ *   the build, naming this bundle class and the path. A watch list that silently watches
+ *   nothing is indistinguishable from a correct one right up until it serves a stale artifact.
+ * - Bucket membership follows the DECLARING BUNDLE, never the watched path. A watch target of
+ *   a vendor-bucket bundle invalidates the vendor output no matter where the file lives -
+ *   which is what makes "compile a vendored source tree, parameterised by a first-party
+ *   variables file" work. Registration is additive: one path may be a watch target of one
+ *   bucket and an include of the other, and an edit invalidates both.
  *
  * @see Rsx_Module_Bundle_Abstract for top-level compiled bundles
  */
@@ -118,7 +136,7 @@ abstract class Rsx_Asset_Bundle_Abstract extends Rsx_Bundle_Abstract
                     "  - Direct file paths (e.g., 'rsx/lib/file.js')\n" .
                     "  - CDN assets (cdn_assets key)\n" .
                     "  - NPM modules (npm key)\n" .
-                    "  - Watch directories (watch key - for cache invalidation only)\n" .
+                    "  - Watch targets, files or directories (watch key - cache invalidation only)\n" .
                     "  - Other Asset Bundles by class name\n\n" .
                     "If this bundle requires directory scanning, include it explicitly\n" .
                     "in the parent module bundle's include array:\n\n" .

@@ -35,10 +35,12 @@ class Pdftotext_Text_Extractor extends Rsx_Text_Extractor_Abstract
             throw new Exception('pdftotext (poppler-utils) is not installed or not configured');
         }
 
-        $timeout = (int) config('rsx.search.timeout', 30);
-
+        // ONE sanctioned timeout bounds every external document binary this pipeline invokes -
+        // soffice and pdftotext alike. Both are the same shape (an external process that can wedge
+        // on malformed input and never return), so they share one number rather than carrying a
+        // second, separately-argued one. Justified in full at the config key.
         $process = new Process([$binary, '-enc', 'UTF-8', $source_path, '-']);
-        $process->setTimeout($timeout);
+        $process->setTimeout((int) config('rsx.libreoffice.timeout', 120));
         $process->run();
 
         if (!$process->isSuccessful()) {

@@ -62,7 +62,7 @@ Phase 4: Build process streaming and shared execution
 ## Security
 
 Development-only feature:
-- Only runs when `APP_ENV=local` or `APP_DEBUG=true`
+- Only runs in development mode (`RSX_MODE=development`)
 - Not deployed to production
 - No privileged command execution
 - Read-only build process output

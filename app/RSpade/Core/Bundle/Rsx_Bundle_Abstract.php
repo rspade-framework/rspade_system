@@ -711,7 +711,7 @@ abstract class Rsx_Bundle_Abstract
             $url = '/_compiled/' . $filename;
 
             // In development mode, add ?v= parameter for cache-busting
-            if (env('APP_ENV') !== 'production') {
+            if (Rsx::is_development()) {
                 $manifest_hash = Manifest::get_build_key();
                 $url .= '?v=' . $manifest_hash;
             }

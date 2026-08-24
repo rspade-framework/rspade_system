@@ -71,9 +71,13 @@ class Minifier extends Rpc_Client_Abstract
 
         $socket_path = static::_rpc_socket_path();
 
-        // 30s connect budget: this is REQUEST marshaling, not lifecycle - a minify request
-        // can queue behind a large one already in flight.
-        $socket = @stream_socket_client('unix://' . $socket_path, $errno, $errstr, 30);
+        // NO TIMEOUT. This carried a 30s connect budget whose own comment gave the reason
+        // to remove it: "a minify request can queue behind a large one already in flight."
+        // Queueing behind real work is exactly the slowness that is normal, and its six
+        // sibling RPC clients connect at 0.5s precisely because they are NOT waiting on a
+        // queue - the 30 was copy-paste drift dressed as a decision. Passing null waits for
+        // the local socket, and every read after it has always been unbounded.
+        $socket = @stream_socket_client('unix://' . $socket_path, $errno, $errstr, null);
         if (!$socket) {
             throw new RuntimeException("Failed to connect to minify RPC server: {$errstr}");
         }

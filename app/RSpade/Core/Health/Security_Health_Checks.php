@@ -25,8 +25,16 @@ use Illuminate\Support\Facades\Http;
  */
 class Security_Health_Checks
 {
-    /** HTTP timeout (seconds) for each probe. */
-    private const PROBE_TIMEOUT = 6;
+    /**
+     * NO TIMEOUT on a probe (owner ruling 2026-08-22). Guzzle reads 0 as "no limit", and
+     * it is passed EXPLICITLY rather than omitted because Laravel's PendingRequest
+     * defaults every call to 30s - saying nothing here would silently reinstate a cap.
+     *
+     * These probe our own APP_URL for served sensitive files. A probe that never returns
+     * means the web server is wedged, which is a fault to SEE and diagnose - not something
+     * to convert after 6 seconds into a row that reads identically to "not reachable".
+     */
+    private const PROBE_TIMEOUT = 0;
 
     /**
      * Probe our own APP_URL for served sensitive files. One row per target; a served

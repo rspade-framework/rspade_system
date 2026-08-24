@@ -67,9 +67,9 @@ class Framework_Maintenance
 
     /**
      * The cached bare clone of the rspade_system distribution repository - the SINGLE
-     * source of truth for its location (rsx:framework:status, rsx:framework:verify's
-     * pristine provider, and the pull script's CACHE all resolve here; the shell copy
-     * carries the same literal with a comment pointing back at this method).
+     * source of truth for its location (rsx:framework:status and the pull script's
+     * CACHE both resolve here; the shell copy carries the same literal with a comment
+     * pointing back at this method).
      *
      * It lives in /tmp, NOT under storage/: it is pure re-derivable data (the updater
      * creates it when absent and fetch-updates it when present), so keeping a ~100MB

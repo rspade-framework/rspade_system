@@ -8,6 +8,7 @@ use RuntimeException;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Rsx;
 
 // Ensure helpers are loaded since we may run early in bootstrap
 require_once __DIR__ . '/../../helpers.php';
@@ -109,7 +110,7 @@ class RsxCache
      */
     private static function _redis_bypass()
     {
-        if (is_ide() && !class_exists('\Redis') && env('APP_ENV') != 'production') {
+        if (is_ide() && !class_exists('\Redis') && Rsx::is_development()) {
             return true;
         }
 

@@ -94,7 +94,7 @@ php artisan rsx:maintenance:disable
 
 Only unmerged entries block; a resolved-but-uncommitted merge passes. `--no-services` is unaffected by the guard (it starts nothing) but still clears the flag, so it is not a way around it.
 
-Laravel's own `down`/`up` still exist but are hidden from the command list - **RSpade has one maintenance mode**.
+Laravel's own `down`/`up` REFUSE - hidden stubs that name the `rsx:maintenance:*` equivalent and exit 1. The mechanism behind them (`storage/framework/maintenance.php`, the `PreventRequestsDuringMaintenance` middleware, the pre-render check in `public/index.php`) is gone - **RSpade has one maintenance mode**.
 
 ---
 

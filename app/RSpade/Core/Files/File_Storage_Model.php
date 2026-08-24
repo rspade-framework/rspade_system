@@ -3,9 +3,9 @@
 namespace App\RSpade\Core\Files;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Files\Document_Render_Service;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Search\Search_Index_Model;
-use App\RSpade\Core\Task\Task;
 
 /**
  * File_Storage_Model - Physical file storage with deduplication
@@ -25,6 +25,9 @@ use App\RSpade\Core\Task\Task;
  * @property string $hash
  * @property int $size
  * @property bool $is_indexed
+ * @property int $render_status_id
+ * @property string $rendered_at
+ * @property string $render_error
  * @property string $created_at
  * @property string $updated_at
  * @property int $created_by_id
@@ -32,12 +35,51 @@ use App\RSpade\Core\Task\Task;
  * @property int $updated_by_id
  * @property int $updated_by_type
  *
+ * @property-read string $render_status_id__label
+ * @property-read string $render_status_id__constant
+ *
+ * @method static array render_status_id__enum() Get all enum definitions with full metadata
+ * @method static array render_status_id__enum_select() Get [{value, label}] array for dropdowns
+ * @method static array render_status_id__enum_labels() Get simple id => label map
+ * @method static array render_status_id__enum_ids() Get array of all valid enum IDs
+ *
  * @mixin \Eloquent
  */
 class File_Storage_Model extends Rsx_Model_Abstract
                      {
-    // Required static properties from parent abstract class
-    public static $enums = [];
+    /**
+     * _AUTO_GENERATED_ Enum constants
+     */
+    const RENDER_STATUS_NOT_REQUIRED = 1;
+    const RENDER_STATUS_PENDING = 2;
+    const RENDER_STATUS_RENDERED = 3;
+    const RENDER_STATUS_FAILED = 4;
+    /**
+     * Enum field definitions.
+     *
+     * render_status_id is the DOCUMENT RENDER lifecycle, driven by Document_Render_Service. It
+     * lives on the blob rather than the attachment because both products of a render - the PDF
+     * rendition (storage/rsx-renditions/{hash}.pdf) and the thumbnail cache key - are already
+     * content-addressed on the blob hash, so N attachments sharing one blob share one render.
+     *
+     *   NOT_REQUIRED  nothing to render (an image, a zip, a plain PDF). The DEFAULT: store_blob()
+     *                 sees only bytes and cannot know the mime, so the ATTACHMENT flips the blob
+     *                 to PENDING when its pipeline mime is convertible.
+     *   PENDING       queued. The worker's queue IS this value - there is no separate table.
+     *   RENDERED      rendition on disk, rendered_at set, text extraction done.
+     *   FAILED        TERMINAL. render_error carries the reason and the sweeper never retries;
+     *                 re-rendering is an explicit operator action (rsx:documents:rerender).
+     *
+     * @var array
+     */
+    public static $enums = [
+        'render_status_id' => [
+            1 => ['constant' => 'RENDER_STATUS_NOT_REQUIRED', 'label' => 'Not Required', 'badge' => 'bg-secondary', 'order' => 1],
+            2 => ['constant' => 'RENDER_STATUS_PENDING', 'label' => 'Pending', 'badge' => 'bg-warning', 'order' => 2],
+            3 => ['constant' => 'RENDER_STATUS_RENDERED', 'label' => 'Rendered', 'badge' => 'bg-success', 'order' => 3],
+            4 => ['constant' => 'RENDER_STATUS_FAILED', 'label' => 'Failed', 'badge' => 'bg-danger', 'order' => 4],
+        ],
+    ];
     public static $rel = [];
 
     /**
@@ -203,6 +245,26 @@ class File_Storage_Model extends Rsx_Model_Abstract
     }
 
     /**
+     * Put a temp file's bytes at an absolute blob path, creating the directory it lives in.
+     *
+     * The one place bytes enter the store, shared by the create path and the reuse-the-row
+     * repair above so both write them identically.
+     *
+     * @param string $temp_file_path
+     * @param string $full_path
+     * @return void
+     */
+    private static function __write_blob_bytes(string $temp_file_path, string $full_path): void
+    {
+        $directory = dirname($full_path);
+        if (!file_exists($directory)) {
+            mkdir($directory, 0755, true);
+        }
+
+        copy($temp_file_path, $full_path);
+    }
+
+    /**
      * Find or create a file storage record with collision handling
      *
      * Algorithm:
@@ -211,7 +273,9 @@ class File_Storage_Model extends Rsx_Model_Abstract
      * 3. If exists: byte-by-byte compare with uploaded file
      *    - Match: return existing record
      *    - No match: increment hash, repeat from step 2
-     * 4. If doesn't exist: save file to disk, create record
+     * 4. If the record exists but its file does not: rewrite the bytes at that record's
+     *    own path and return it - the row and its attachments stay valid
+     * 5. If no record exists: save file to disk, create record
      *
      * @param string $temp_file_path Path to uploaded temporary file
      * @return static
@@ -246,9 +310,33 @@ class File_Storage_Model extends Rsx_Model_Abstract
                         continue;
                     }
                 } else {
-                    // Record exists but file is missing - should not happen
-                    // Reuse this hash slot
-                    break;
+                    // The row is here and its bytes are not. Something outside the framework
+                    // removed the blob from disk - the row's id, and every attachment pointing
+                    // at it, are still perfectly valid.
+                    //
+                    // So this REUSES the row: write the bytes back at its own path and return
+                    // it. Falling through to the create path instead would insert a second row
+                    // carrying the same hash and die on uk_file_hashes_hash, turning a
+                    // recoverable disk problem into a failed upload.
+                    //
+                    // render_status_id is deliberately left alone. The restored bytes hash to
+                    // the same value, so a RENDERED blob's rendition and thumbnail caches still
+                    // describe them exactly; re-queueing would redo work whose output is already
+                    // correct. For the same reason Document_Render_Service::kick() is not called
+                    // here - no new blob entered the store.
+                    error_log(
+                        '[RSX] File storage id ' . $existing_record->id . ' (hash ' . $current_hash
+                        . ') had no file on disk; rewriting its bytes from the incoming copy.'
+                    );
+
+                    static::__write_blob_bytes($temp_file_path, $existing_record->get_full_path());
+
+                    if ((int) $existing_record->size !== (int) $file_size) {
+                        $existing_record->size = $file_size;
+                    }
+                    $existing_record->save();
+
+                    return $existing_record;
                 }
             } else {
                 // No record for this hash - available slot
@@ -260,14 +348,7 @@ class File_Storage_Model extends Rsx_Model_Abstract
         // so a test run writes into its isolated storage root (B-38).
         $full_path = Rsx_File_Paths::blob_root() . '/' . static::__hash_subpath($current_hash);
 
-        // Create directory if needed
-        $directory = dirname($full_path);
-        if (!file_exists($directory)) {
-            mkdir($directory, 0755, true);
-        }
-
-        // Copy file to storage
-        copy($temp_file_path, $full_path);
+        static::__write_blob_bytes($temp_file_path, $full_path);
 
         // Create record
         $file_storage = new static();
@@ -275,16 +356,73 @@ class File_Storage_Model extends Rsx_Model_Abstract
         $file_storage->size = $file_size;
         $file_storage->save();
 
-        // Prompt kick for document text extraction. This is the single choke point for a NEW
-        // unique blob entering the store (covers upload, create_from_*, external
-        // materialization); a dedup hit returns earlier and never reaches here. The blob starts
-        // is_indexed=0, so even without this kick the 5-minute cron would eventually pick it up;
-        // the dispatch just drains promptly. #[Exclusive] coalesces concurrent kicks.
-        if (config('rsx.search.enabled', true)) {
-            Task::dispatch('Search_Index_Service', 'index_pending');
-        }
+        // Prompt kick for the document render worker (PDF rendition + text extraction). This is
+        // the single choke point for a NEW unique blob entering the store (covers upload,
+        // create_from_*, external materialization); a dedup hit returns earlier and never reaches
+        // here. The blob starts is_indexed=0, so even without this kick the 10-minute sweeper
+        // would eventually pick it up; the dispatch just drains promptly. #[Exclusive] coalesces
+        // concurrent kicks. The blob is NOT_REQUIRED at this point - the attachment adds the
+        // rendition half of the work by calling request_render() once it knows the mime.
+        Document_Render_Service::kick();
 
         return $file_storage;
+    }
+
+    /**
+     * Queue this blob for document rendering: NOT_REQUIRED -> PENDING, then kick the worker.
+     *
+     * IDEMPOTENT BY DESIGN, and that is the whole dedup story. Only NOT_REQUIRED moves; a blob
+     * already PENDING (queued), RENDERED (done) or FAILED (terminal) is left exactly as it is.
+     * So the second, tenth and hundredth attachment created over the same deduplicated bytes
+     * call this freely and cost nothing - and a FAILED blob is never silently retried by an
+     * upload, which is what makes FAILED mean something.
+     *
+     * Called by File_Attachment_Model when its pipeline mime matches rsx.preview.convertible -
+     * the attachment is the only layer that knows the filename and extension.
+     *
+     * @return void
+     */
+    public function request_render(): void
+    {
+        if ((int) $this->render_status_id !== static::RENDER_STATUS_NOT_REQUIRED) {
+            return;
+        }
+
+        $this->requeue_render();
+    }
+
+    /**
+     * Put this blob back in the render queue UNCONDITIONALLY: -> PENDING, artifacts of any earlier
+     * attempt cleared, worker kicked.
+     *
+     * The difference from request_render() is the absence of the state guard, so this is the ONE
+     * way a RENDERED or FAILED blob re-enters the queue - and every caller of it is an explicit
+     * decision that the previous outcome is no longer valid:
+     *   - a serving path that finds the rendition GONE from disk (the LRU cache evicted it while
+     *     the row still says RENDERED). Self-healing: the request serves a placeholder and the
+     *     worker rebuilds the rendition, rather than showing anyone an error page over a cache
+     *     eviction.
+     *   - the operator command rsx:documents:rerender.
+     *
+     * $kick is the ONE knob: pass false to record the queued state WITHOUT spawning a worker. The
+     * only callers that want that are the ones which will run the render themselves and need to
+     * observe each step (the /dev/attachment_thumbnail page, which resets a document to PENDING so
+     * a human - or Playwright - can watch the placeholder swap when the render is triggered by
+     * hand). The row is still queued either way, so the 10-minute sweeper is the backstop.
+     *
+     * @param bool $kick Whether to ask for a render pass now.
+     * @return void
+     */
+    public function requeue_render(bool $kick = true): void
+    {
+        $this->render_status_id = static::RENDER_STATUS_PENDING;
+        $this->rendered_at = null;
+        $this->render_error = null;
+        $this->save();
+
+        if ($kick) {
+            Document_Render_Service::kick();
+        }
     }
 
     /**

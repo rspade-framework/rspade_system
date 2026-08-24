@@ -15,9 +15,10 @@ SYNOPSIS
             $file->attach_to($user, 'profile_photo');
         }
 
-        // Read it back on any model
+        // Read it back on any model; the BROWSER renders it through the component
         $photo = $user->get_attachment('profile_photo');
-        echo $photo->get_thumbnail_url('cover', 128, 128);
+        return ['profile_photo_attachment_id' => $photo?->id];
+        // <Attachment_Thumbnail $attachment_id=... $type="cover" $width=128 $height=128 />
 
 DESCRIPTION
     The RSpade file subsystem separates PHYSICAL bytes from LOGICAL uploads.
@@ -308,11 +309,15 @@ THE CLAIM WINDOW
             return ['user_id' => $user->id];
         }
 
-        // 3. Display:
+        // 3. Display - ship the id; the component owns the picture (THUMBNAILS below):
         $photo = $user->get_attachment('profile_photo');
-        if ($photo) {
-            echo '<img src="' . $photo->get_thumbnail_url('cover', 128, 128) . '">';
-        }
+        return ['profile_photo_attachment_id' => $photo?->id];
+
+        // in the template:
+        // <% if (this.data.profile_photo_attachment_id) { %>
+        //   <Attachment_Thumbnail $attachment_id=this.data.profile_photo_attachment_id
+        //                         $type="cover" $width=128 $height=128 />
+        // <% } %>
 
 ATTACHMENT METADATA
 
@@ -856,8 +861,23 @@ MULTI-FILE ZIP DOWNLOAD
 
 THUMBNAILS
 
+    A THUMBNAIL IS RENDERED WITH ONE COMPONENT, and no app code builds a URL:
+
+        <Attachment_Thumbnail $attachment_id=record.file_attachment_id $width=160 />
+        <Attachment_Thumbnail $attachment_id=id $type="cover" $width=96 $height=96 />
+        <Attachment_Thumbnail $attachment_id=id $preset="profile" />
+
+    A producer ships file_attachment_id, never a URL; the component fetches the
+    record itself (batched) and owns the picture from there, including the swap
+    when a document finishes rendering in the background. Full contract, the
+    render state machine and the FUTURE POSSIBILITIES the component opens up:
+    rsx:man thumbnails.
+
+    The routes and builders below are what the component uses. They are
+    documented because they are the wire format, not because app code calls them.
+
     Dynamic thumbnails
-        GET /_thumbnail/dynamic/:key/:type/:width/:height?
+        GET /_thumbnail/dynamic/:key/:type/:width/:height?[?v=]
 
         type    'cover' (fill + center-crop) or 'fit' (letterbox, transparent)
         width   10 .. config('rsx.thumbnails.max_dynamic_size') (default 800)
@@ -867,13 +887,18 @@ THUMBNAILS
         2x for retina (a 300x200 request produces a 600x400 image), never
         upscaling past the source and never past the configured max. Output is
         WebP; results are cached in the filesystem thumbnail cache (there is no
-        database thumbnail model). Cache-Control: public, max-age=31536000.
+        database thumbnail model). Cache-Control: public, max-age=31536000 for a
+        real raster, and no-store for a placeholder.
 
-            <img src="<?= $file->get_thumbnail_url('cover', 96, 96) ?>">
-            <img src="<?= $file->get_thumbnail_url('fit', 240, 180) ?>">
+        ?v= rides every generated URL: the blob's rendered_at in unix seconds, or
+        0. The SERVER IGNORES IT - it is purely a browser cache key, and it is
+        what makes a year-cached placeholder give way when the render lands.
+
+            $file->get_thumbnail_url('cover', 96, 96)    // -> /_thumbnail/... ?v=N
+            $file->get_thumbnail_url('fit', 240, 180)
 
     Preset thumbnails (recommended for fixed sizes)
-        GET /_thumbnail/preset/:key/:preset_name
+        GET /_thumbnail/preset/:key/:preset_name[?v=]
 
         Define named presets once in config, then reference them by name.
         get_thumbnail_url_preset($name) throws if the preset is undefined.
@@ -894,10 +919,21 @@ THUMBNAILS
         enforced max dimension.
 
     Non-image files
-        For any type with no registered renderer, the pipeline serves a
-        file-type icon instead of erroring (small requests scale the icon;
-        larger requests center a 64x64 icon). has_thumbnail() reports whether a
-        real raster can be produced.
+        A PDF rasterizes directly. An OFFICE DOCUMENT has no pixels until the
+        background render worker has produced its PDF rendition, so the endpoint
+        branches on the blob's render_status_id first:
+
+            PENDING / FAILED  the extension-icon PLACEHOLDER, Cache-Control:
+                              no-store, and the cache is neither read nor
+                              written - a placeholder never lands under the real
+                              cache key
+            RENDERED          page 1 of the rendition, rasterized and cached
+            NOT_REQUIRED      the historic path, straight from the blob
+
+        For any type with no registered renderer the pipeline serves a file-type
+        icon instead of erroring (small requests scale the icon; larger requests
+        center a 64x64 icon). has_thumbnail() reports whether a real raster can
+        be produced. Full state machine: rsx:man thumbnails, RENDER PIPELINE.
 
     Thumbnail renderer registry
         The "produce a raster from bytes" step is pluggable by mime via
@@ -909,8 +945,13 @@ THUMBNAILS
         Shipped renderers:
             Imagick_Thumbnail_Renderer      image/* and application/pdf
                                             (PDF needs Ghostscript)
-            Libreoffice_Thumbnail_Renderer  Office docs via headless soffice
-                                            (rsx:man libreoffice)
+
+        OFFICE MIMES ARE DELIBERATELY UNREGISTERED. Their pixels come from the
+        PDF rendition the background worker produced, rasterized through the
+        application/pdf renderer like any other PDF. A renderer entry for .docx
+        would mean converting a document inside a web request, which is what the
+        worker exists to stop. (Libreoffice_Thumbnail_Renderer was that entry and
+        no longer exists.)
 
         A renderer throw (or a source above renderer_max_bytes for non-image
         types) makes the PIPELINE log and serve the extension icon - the
@@ -1084,12 +1125,20 @@ DOCUMENT TEXT EXTRACTION AND PREVIEW
     the DEDUPLICATED blob, so identical bytes are processed once. Full
     reference: rsx:man document_search.
 
+    One worker, two products
+        Document_Render_Service::render_pending (#[Exclusive], every 10 minutes,
+        kicked on upload) converts a document to a PDF rendition ONCE and
+        extracts its text in the same pass; the thumbnail pipeline then
+        rasterizes that same rendition. Render state lives on the blob
+        (_file_storage.render_status_id: NOT_REQUIRED / PENDING / RENDERED /
+        FAILED, terminal), read as $file->get_render_status(). Operating it is
+        rsx:man documents (rsx:documents:status / :failed / :rerender).
+
     Text extraction
         Every new blob is queued via the File_Storage_Model.is_indexed flag
         (0 = queued, 1 = attempted); the ABSENCE of a _search_indexes row IS the
-        queue (no stored PENDING). Search_Index_Service::index_pending
-        (#[Exclusive], */5 cron, plus a prompt kick on blob creation/
-        materialization) drains one blob at a time. Rows are terminal:
+        queue (no stored PENDING). The render worker above drains it one blob at
+        a time. Rows are terminal:
         STATUS_EXTRACTED / STATUS_FAILED / STATUS_UNSUPPORTED (an image/zip is
         UNSUPPORTED, not FAILED - no OCR). Formats: PDF text layer (pdftotext),
         Office (headless LibreOffice), plain text.
@@ -1105,8 +1154,10 @@ DOCUMENT TEXT EXTRACTION AND PREVIEW
 
     Preview
         <Document_Preview $attachment_id=this.args.id /> resolves a viewer
-        server-side (PDF / image / icon). Office docs render via a cached
-        soffice->PDF rendition. See rsx:man document_search.
+        server-side (PDF / image / icon). An Office document is served from the
+        cached rendition once it is RENDERED; until then the component shows
+        "Preparing preview..." and swaps itself when the realtime frame arrives.
+        See rsx:man document_search.
 
 CLI COMMANDS
 
@@ -1141,6 +1192,21 @@ CLI COMMANDS
     rsx:file:delete {key} [--force]
         Delete the attachment; if no other attachment references the same blob,
         delete the physical file and its storage row too.
+
+    Document pipeline commands (rsx:documents:*) - always visible. Full
+    treatment, with output: rsx:man documents.
+
+    rsx:documents:status
+        Render-state counts, extraction counts, the rendition cache, and when
+        the worker next runs.
+
+    rsx:documents:failed [--limit=50]
+        Render failures with their reason (--limit=0 for all). Extraction
+        failures are listed in a second table with their own remedy.
+
+    rsx:documents:rerender --all | --failed | --storage=ID | --attachment=ID
+        Exactly one selector. Deletes each rendition file so the worker truly
+        reconverts, flips the blobs to PENDING and dispatches the worker once.
 
     Storage commands (rsx:storage:*) - hidden unless IS_FRAMEWORK_DEVELOPER=true
     in .env. Low-level access to the physical blob store.
@@ -1180,7 +1246,8 @@ EXAMPLES
             // attach_to REPLACES any existing 'avatar' - no manual delete needed
             $file->attach_to($user, 'avatar');
 
-            return ['url' => $file->get_thumbnail_url('cover', 128, 128)];
+            // The id, never a URL - the caller mounts <Attachment_Thumbnail> with it.
+            return ['avatar_attachment_id' => $file->id];
         }
 
     Multiple project documents (multi-file; ownership checked)
@@ -1305,15 +1372,17 @@ COMMON PITFALLS
 
 SEE ALSO
     rsx:man droppable          Global drag-and-drop file interception
+    rsx:man thumbnails         <Attachment_Thumbnail>, caching, render pipeline
+    rsx:man documents          Operating the render pipeline (status/failed/rerender)
     rsx:man document_search    Text extraction, full-text search, preview
-    rsx:man libreoffice        Office document thumbnails/renditions
+    rsx:man libreoffice        Headless soffice, invoked only by the render worker
     rsx:man event_hooks        #[OnEvent] and the Rsx::trigger_* families
     rsx:man polymorphic        Integer type-ref columns (fileable_type)
-    rsx:man locks              Cluster/system locks and the concurrency semaphore
+    rsx:man locks              Cluster/system locks and counting semaphores
     rsx:man model              Model system, enums, fetch()
 
 VERSION
     RSpade Framework 1.0
-    Last Updated: 2026-08-09
+    Last updated 2026-08-22
 
 FILE_UPLOAD(1)                   RSpade Manual                   FILE_UPLOAD(1)

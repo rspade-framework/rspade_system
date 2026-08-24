@@ -456,6 +456,11 @@
             "created_at": "2026-08-18T14:56:43+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_timezone_auto_to_login_users_table"
+        },
+        "2026_08_22_090059_add_render_status_to_file_storage.php": {
+            "created_at": "2026-08-22T09:00:59+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe add_render_status_to_file_storage"
         }
     }
 }

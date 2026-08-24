@@ -1,0 +1,46 @@
+.Portal_Document_Detail_Modal_Body {
+    text-align: center;
+
+    &__thumb-wrap {
+        display: flex;
+        justify-content: center;
+        margin-bottom: $spacing-md;
+    }
+
+    &__thumb {
+        max-width: 220px;
+        max-height: 220px;
+        border: 1px solid $border-color;
+        border-radius: $border-radius-sm;
+        background-color: $gray-100;
+        padding: $spacing-sm;
+
+        // The picture is an <Attachment_Thumbnail>: this class sizes the component's host
+        // box, and the image inside it is already requested at this size, so it only has
+        // to stay inside the box. The placeholder box (an unfetchable record) has no
+        // intrinsic size, so it is given one.
+        .Attachment_Thumbnail__img {
+            max-width: 100%;
+            height: auto;
+        }
+
+        .Attachment_Thumbnail__placeholder {
+            width: 220px;
+            height: 220px;
+        }
+    }
+
+    &__name {
+        font-weight: $font-weight-semibold;
+        color: $gray-900;
+        word-break: break-word;
+    }
+
+    &__meta {
+        margin-top: $spacing-xs;
+    }
+
+    &__reason {
+        text-align: left;
+    }
+}

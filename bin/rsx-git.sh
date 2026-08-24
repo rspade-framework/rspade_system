@@ -6,6 +6,11 @@
 # revision of the system/ submodule, it makes the submodule agree with it.
 # Everything else is passthrough.
 #
+# (One rider, at the very bottom: a pull/merge that succeeded and moved HEAD also
+# re-applies the environment updates, quietly. rsx/resource/ is manifest-ignored, so
+# a pull carrying only a teammate's new application skill triggers no rebuild - and
+# the rebuild is what normally runs them. See run_post_update.)
+#
 # THE PROBLEM. system/ is a git submodule. When a colleague updates the framework
 # and you pull their commit, git updates the RECORDED revision and does not touch
 # the submodule's working tree. Nothing fails, nothing is printed, and you are now
@@ -332,9 +337,35 @@ sync_submodule() {
 }
 
 # =============================================================================
+# post_update - re-apply the environment updates after a pull/merge landed code.
+#
+# WHY A PULL NEEDS THIS. The environment updates normally ride on a manifest build,
+# and rsx/resource/ is manifest-IGNORED. So a pull whose only change is a teammate's
+# new rsx/resource/skills/<name>/SKILL.md changes nothing the build watches, no
+# rebuild is triggered, and the skill is never wired into .claude/skills/. Running
+# the updates here makes "commit the skill" the whole distribution mechanism.
+#
+# --quiet: the developer asked for a pull, not for an environment report. Problems
+# still print (post-update.sh never suppresses its WARNING lines).
+#
+# NON-FATAL, ALWAYS. The pull already succeeded; a failing environment update may
+# not colour its outcome, and may not touch $GIT_RC.
+#
+# The monorepo never reaches this - check 1 above execs plain git there, which is
+# the same IS_FRAMEWORK_DEVELOPER gate everything else in this file uses.
+# =============================================================================
+run_post_update() {
+    local script="$SYSTEM_DIR/bin/post-update.sh"
+    [ -f "$script" ] || return 0
+    bash "$script" --quiet || warn "post-update.sh reported a problem after the pull; the pull itself succeeded."
+    return 0
+}
+
+# =============================================================================
 # Run the operation, then reconcile.
 # =============================================================================
 BEFORE="$(recorded_revision)"
+HEAD_BEFORE="$("${ROOT_GIT_RO[@]}" rev-parse HEAD 2>/dev/null || true)"
 
 git "${ARGS[@]}"
 GIT_RC=$?
@@ -367,6 +398,20 @@ fi
 
 if [ "$AFTER" != "$ACTUAL" ]; then
     sync_submodule "$AFTER" "$ACTUAL" || true
+fi
+
+# A successful pull/merge that actually moved HEAD brought code in - re-apply the
+# environment updates so anything it delivered outside the manifest's view (an
+# application skill, a hook) is wired before the developer's next command.
+if [ "$GIT_RC" -eq 0 ]; then
+    case "$SUBCMD" in
+        pull|merge)
+            HEAD_AFTER="$("${ROOT_GIT_RO[@]}" rev-parse HEAD 2>/dev/null || true)"
+            if [ -n "$HEAD_AFTER" ] && [ "$HEAD_AFTER" != "$HEAD_BEFORE" ]; then
+                run_post_update
+            fi
+            ;;
+    esac
 fi
 
 exit "$GIT_RC"

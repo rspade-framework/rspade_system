@@ -39,15 +39,6 @@ class Clean_Command extends Command
     protected $description = 'Clean RSX caches, build artifacts, and temp files';
 
     /**
-     * Set when the downstream system/ reset was REFUSED by the integrity gate
-     * (unauthorized framework modifications found). Carries rsx:framework:verify's
-     * output for the final error report; handle() exits 1 when non-null so callers
-     * (the pre-commit hook, scripts) get a capturable failure.
-     *
-     * @var string|null
-     */
-
-    /**
      * Execute the console command.
      *
      * @return int

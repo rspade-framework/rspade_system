@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\DB;
  * rsx:search:reindex - re-queue document text extraction, or report the index state.
  *
  * Re-queuing is uniform: resolve a set of _file_storage ids, set their is_indexed flag back to
- * 0 (chunked), then kick Search_Index_Service::index_pending. The cron/kick then re-extracts
+ * 0 (chunked), then kick Document_Render_Service::render_pending. The worker then re-extracts
  * them one at a time. Exactly ONE selector must be given (fail loud otherwise).
  *
  * Selectors:
@@ -80,7 +80,7 @@ class Search_Reindex_Command extends Command
             return 0;
         }
 
-        Task::dispatch('Search_Index_Service', 'index_pending');
+        Task::dispatch('Document_Render_Service', 'render_pending');
 
         $this->line("[OK] Re-queued {$queued} blob(s) for extraction; extraction task dispatched.");
         return 0;

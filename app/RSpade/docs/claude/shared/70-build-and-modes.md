@@ -4,7 +4,9 @@
 
 Three modes: `development`, `debug`, `production` — switched with `php artisan rsx:mode:set dev|debug|prod`. **Development** is production-worthy for low traffic: auto-rebuild on file change, JIT compile, unminified, full debugging.
 
-**`debug` and `production` are SEALED builds — compiled ONCE by an explicit command, then IMMUTABLE.** No auto-rebuild; a missing artifact fails loud. `debug` is the sealed production-LIKE local build (unminified, sourcemaps and `console_debug()` survive) for reproducing a prod-only issue; `production` is minified with sourcemaps gone and `console_debug()` stripped, and strict enable REQUIRES `APP_ENV=production` + `APP_DEBUG=false`.
+**`debug` and `production` are SEALED builds — compiled ONCE by an explicit command, then IMMUTABLE.** No auto-rebuild; a missing artifact fails loud. `debug` is the sealed production-LIKE local build (unminified, sourcemaps and `console_debug()` survive) for reproducing a prod-only issue; `production` is minified with sourcemaps gone and `console_debug()` stripped.
+
+**`RSX_MODE` is the ONLY mode source: Laravel's `app.env` and `app.debug` DERIVE from it (`config/app.php`), and the `APP_ENV`/`APP_DEBUG` env keys are not read anywhere** — so there is no second switch to set, and no way for the two to disagree.
 
 **Lifecycle**: `rsx:prod:enable [--debug]`, `rsx:prod:refresh` (rebuild + re-seal in place — **run this after pulling code onto a prod host**, or nothing served changes), `rsx:prod:disable`, `rsx:prod:verify` (asset hashes vs the seal — the cluster/CI drift check), `rsx:prod:export` (deployable package).
 

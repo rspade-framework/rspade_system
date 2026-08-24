@@ -23,7 +23,9 @@ use App\RSpade\Core\Rsx;
 * Process flow:
 * 1. Resolve all bundle includes to get flat file list
 * 2. In production: check if output files exist, return immediately if yes
-* 3. Split all files into vendor/app based on path containing "vendor/"
+* 3. Split include files into vendor/app based on path containing "vendor/"
+*    (watch files are bucketed at REGISTRATION, from the declaring bundle - see
+*    _add_watch_target())
 * 4. Check individual vendor/app bundle caches
 * 5. Process files through bundle processors
 * 6. Add JS stubs from manifest
@@ -43,8 +45,40 @@ class BundleCompiler
 
     /**
     * Watch files organized by vendor/app
+    *
+    * Unlike bundle_files these are bucketed at REGISTRATION time, from the bundle that
+    * declared them - never re-derived from the path afterwards. See _add_watch_target().
     */
-    protected array $watch_files = [];
+    protected array $watch_files = ['vendor' => [], 'app' => []];
+
+    /**
+    * Per-bucket de-dup index for watch_files
+    * ['vendor' => ['/abs/path' => true], 'app' => [...]]
+    */
+    protected array $watch_registered = ['vendor' => [], 'app' => []];
+
+    /**
+    * Buckets each resolved bundle contributes COMPILED files to
+    * ['Some\Bundle_Class' => ['vendor' => true, 'app' => true]]
+    *
+    * This is a bundle's bucket membership as a FACT about the bundle, recorded while its
+    * include list is being resolved and consumed when its watch list is registered.
+    */
+    protected array $bundle_buckets = [];
+
+    /**
+    * Buckets each included file was registered into
+    * ['/abs/path' => ['app' => true]]
+    *
+    * Bucket-aware twin of included_files: a path can be a compiled input of one bucket and a
+    * watch target of the OTHER, and both facts must survive.
+    */
+    protected array $included_file_buckets = [];
+
+    /**
+    * Stack of bundle classes currently being resolved (innermost last)
+    */
+    protected array $bundle_stack = [];
 
     /**
     * CDN assets from bundles
@@ -569,18 +603,36 @@ class BundleCompiler
 
         $definition = $bundle_class::define();
 
-        // Process bundle includes
-        if (!empty($definition['include'])) {
-            foreach ($definition['include'] as $item) {
-                $this->_process_include_item($item);
-            }
-        }
+        // PROVENANCE: everything this bundle contributes - directly, or through a sub-bundle it
+        // includes - is attributed to THIS class while this class is on the stack. _add_file()
+        // records which bucket each contributed file lands in, for every bundle on the stack,
+        // which is what makes this bundle's own bucket membership a known fact by the time its
+        // watch list is registered below.
+        // Keyed by SIMPLE class name: the same bundle can be named by simple name in one
+        // include list and by FQCN in another, and resolved_includes keys on the include STRING,
+        // so it is resolved twice. The second resolution finds every file already de-duped and
+        // would record no buckets at all. Keying the fact by the class itself lets the two
+        // resolutions share one bucket set. (A simple-name collision across namespaces merges
+        // two bundles' buckets, which can only ever over-invalidate - it costs a rebuild, never
+        // a stale artifact.)
+        $this->bundle_stack[] = class_basename($bundle_class);
 
-        // Process watch directories
-        if (!empty($definition['watch'])) {
-            foreach ($definition['watch'] as $dir) {
-                $this->_add_watch_directory($dir);
+        try {
+            // Process bundle includes
+            if (!empty($definition['include'])) {
+                foreach ($definition['include'] as $item) {
+                    $this->_process_include_item($item);
+                }
             }
+
+            // Process watch targets (files or directories) - bucketed by THIS bundle
+            if (!empty($definition['watch'])) {
+                foreach ($definition['watch'] as $target) {
+                    $this->_add_watch_target($target, $bundle_class);
+                }
+            }
+        } finally {
+            array_pop($this->bundle_stack);
         }
 
         // Store CDN assets
@@ -805,6 +857,19 @@ class BundleCompiler
             return;
         }
 
+        // Record provenance BEFORE the de-dup return: a file another bundle already claimed
+        // is still a contribution of THIS bundle, and dropping that fact would leave a bundle
+        // looking like it contributes to no bucket at all.
+        // Attribution runs the WHOLE stack, not just the innermost bundle: a bundle whose
+        // vendor content arrives through an included sub-bundle contributes to the vendor
+        // bucket just as surely as one that names the file itself, and a watch target it
+        // declares has to be able to invalidate that bucket.
+        $bucket = $this->_bucket_for_path($normalized);
+        $this->included_file_buckets[$normalized][$bucket] = true;
+        foreach ($this->bundle_stack as $declaring_bundle) {
+            $this->bundle_buckets[$declaring_bundle][$bucket] = true;
+        }
+
         // Deduplicate
         if (isset($this->included_files[$normalized])) {
             return;
@@ -911,13 +976,78 @@ class BundleCompiler
     }
 
     /**
-    * Add a watch directory
+    * Which bucket a compiled input belongs to.
+    *
+    * THE one vendor/app decision in the compiler. It answers a question about the FILE - in
+    * which of the two compiled outputs do these bytes end up - and for an `include` entry the
+    * file's own path is the answer, not a guess at one: an included file IS the content of
+    * exactly one output. It is emphatically NOT a way to discover who declared a file; that is
+    * provenance, and provenance is carried (bundle_buckets / included_file_buckets), never
+    * re-derived from a path.
     */
-    protected function _add_watch_directory(string $dir): void
+    protected function _bucket_for_path(string $path): string
     {
-        $path = base_path($dir);
-        if (!is_dir($path)) {
+        return strpos($path, '/vendor/') !== false ? 'vendor' : 'app';
+    }
+
+    /**
+    * Register a `watch` target of a bundle.
+    *
+    * A watch target is a cache-invalidation input: it is never compiled into the output, it
+    * only has to make the output rebuild when it changes. It may be a DIRECTORY (recursively
+    * scanned) or a FILE, and it must exist - a watch list that silently watches nothing is
+    * precisely the failure "fail loud" exists to prevent, because a stale bundle and a correct
+    * bundle are indistinguishable from the build output.
+    *
+    * Bucketing is by PROVENANCE, not by path. The watched file's own path says nothing about
+    * which output it feeds - the normal shape of "compile a vendor source tree parameterised by
+    * first-party configuration" puts the knobs in application space on purpose - so the target
+    * is registered under the bucket(s) the DECLARING bundle contributes to.
+    *
+    * Registration is ADDITIVE. One path may legitimately be a compiled input of the app bucket
+    * and a watch target of the vendor bucket at the same time, and an edit must invalidate both;
+    * a path is therefore never moved between buckets and the two facts never collapse into one.
+    *
+    * @param string $target       base_path()-relative file or directory, exactly like `include`
+    * @param string $bundle_class the bundle whose define() declared this target
+    * @throws RuntimeException when the target is neither an existing file nor an existing directory
+    */
+    protected function _add_watch_target(string $target, string $bundle_class): void
+    {
+        $path = base_path($target);
+
+        // The declaring bundle's include list has already been resolved (see _resolve_bundle),
+        // so its bucket membership is known here.
+        $buckets = array_keys($this->bundle_buckets[class_basename($bundle_class)] ?? []);
+        if (empty($buckets)) {
+            // The bundle contributes no compiled files of its own (watch-only, cdn-only, or a
+            // module bundle whose includes are all sub-bundles), so there is no bucket to
+            // inherit. Register into both: over-invalidation costs a rebuild, while
+            // under-invalidation is the silent stale artifact this method exists to prevent.
+            $buckets = ['vendor', 'app'];
+        }
+
+        if (is_file($path)) {
+            $normalized = rsxrealpath($path);
+            if ($normalized) {
+                $this->_register_watch_file($normalized, $buckets);
+            }
+
             return;
+        }
+
+        if (!is_dir($path)) {
+            throw new RuntimeException(
+                "Bundle 'watch' target does not exist.\n\n" .
+                "Bundle: {$bundle_class}\n" .
+                "Watch target: {$target}\n" .
+                "Resolved path: {$path}\n\n" .
+                "A 'watch' entry is a cache-invalidation input and takes the same kinds of path\n" .
+                "as 'include': an existing FILE or an existing DIRECTORY, relative to the project\n" .
+                "base path. A target that does not exist would watch nothing, and the bundle would\n" .
+                "keep serving a stale artifact with no error.\n\n" .
+                "Fix the path in {$bundle_class}::define(), or remove the entry."
+            );
         }
 
         // Get excluded directories from config
@@ -942,23 +1072,61 @@ class BundleCompiler
         foreach ($iterator as $file) {
             if ($file->isFile()) {
                 $normalized = rsxrealpath($file->getPathname());
-                if (!isset($this->included_files[$normalized])) {
-                    if (!isset($this->watch_files['all'])) {
-                        $this->watch_files['all'] = [];
-                    }
-                    $this->watch_files['all'][] = $normalized;
+                if ($normalized) {
+                    $this->_register_watch_file($normalized, $buckets);
                 }
             }
         }
     }
 
     /**
-    * Split files into vendor and app buckets
+    * Record one watch path under each of the given buckets.
+    *
+    * The de-dup is BUCKET-AWARE on both counts: a path already hashed as a compiled input of
+    * bucket X is not hashed again as a watch entry of bucket X, but the same path is still
+    * registered as a watch entry of bucket Y. A bucket-blind de-dup here silently drops the
+    * dual-membership case (an app-bucket include that a vendor-bucket bundle watches) purely
+    * on bundle resolution ORDER.
+    */
+    protected function _register_watch_file(string $normalized, array $buckets): void
+    {
+        foreach ($buckets as $bucket) {
+            if (isset($this->included_file_buckets[$normalized][$bucket])) {
+                continue;
+            }
+            if (isset($this->watch_registered[$bucket][$normalized])) {
+                continue;
+            }
+
+            $this->watch_registered[$bucket][$normalized] = true;
+            $this->watch_files[$bucket][] = $normalized;
+        }
+    }
+
+    /**
+    * Split include files into vendor and app buckets
     *
     * IMPORTANT: Files remain as FLAT ARRAYS at this stage.
     * We are extension-agnostic throughout processing.
     * Files could be .php, .blade, .scss, .jqhtml, .xml, .coffee, or ANY future type.
     * Only at final compilation do we filter by .js and .css extensions.
+    *
+    * WATCH FILES ARE NOT SPLIT HERE. They arrive already bucketed by the bundle that declared
+    * them (_add_watch_target) and are never re-derived from a path.
+    *
+    * WHY THE INCLUDE HALF STILL ASKS THE PATH, deliberately and not as a leftover heuristic:
+    * an included file IS the bytes of exactly one compiled output, so "which bucket" is a
+    * question about the FILE, and _bucket_for_path() answers it directly rather than guessing.
+    * The declaring bundle cannot answer it: a module bundle's `include` is normally a DIRECTORY
+    * scan that sweeps up first-party sources and vendored trees in one pass (rsx/theme, which
+    * contains rsx/theme/vendor/...), so attributing every scanned file to the declaring bundle
+    * would drain the vendor bucket into the app bucket and destroy the split's whole purpose -
+    * a separately-cached output that app edits do not rebuild. Provenance is the right answer
+    * for a watch entry (which feeds an output it is not part of) and the wrong answer for an
+    * include entry (which IS the output). Both halves therefore route through ONE decision:
+    * _bucket_for_path() places includes, and a bundle's own bucket membership - what
+    * _add_watch_target() consumes - is nothing but the set of buckets that same call placed its
+    * includes into.
     */
     protected function _split_vendor_app(): void
     {
@@ -967,7 +1135,7 @@ class BundleCompiler
 
         // Split bundle files - flat array, ALL file types mixed together
         foreach ($this->bundle_files['all'] ?? [] as $file) {
-            if (strpos($file, '/vendor/') !== false) {
+            if ($this->_bucket_for_path($file) === 'vendor') {
                 $vendor_files[] = $file;
             } else {
                 $app_files[] = $file;
@@ -980,24 +1148,12 @@ class BundleCompiler
             'app' => $app_files,        // Flat array of ALL app files
         ];
 
-        // Split watch files - also flat arrays
-        $vendor_watch = [];
-        $app_watch = [];
-
-        foreach ($this->watch_files['all'] ?? [] as $file) {
-            if (strpos($file, '/vendor/') !== false) {
-                $vendor_watch[] = $file;
-            } else {
-                $app_watch[] = $file;
-            }
-        }
-
-        $this->watch_files = [
-            'vendor' => $vendor_watch,  // Flat array of ALL vendor watch files
-            'app' => $app_watch,        // Flat array of ALL app watch files
-        ];
-
-        console_debug('BUNDLE', 'Split files - vendor: ' . count($vendor_files) . ', app: ' . count($app_files));
+        console_debug(
+            'BUNDLE',
+            'Split files - vendor: ' . count($vendor_files) . ', app: ' . count($app_files) .
+            ' (watch - vendor: ' . count($this->watch_files['vendor']) .
+            ', app: ' . count($this->watch_files['app']) . ')'
+        );
     }
 
     /**
@@ -3154,6 +3310,17 @@ JS;
             }
 
             $relative = str_replace(base_path() . '/', '', $file_path);
+
+            // A bundle's realm is a statement about the APPLICATION's controllers. Framework
+            // core controllers are realm-agnostic infrastructure that serves both channels
+            // by design (File_Attachment_Controller answers /_upload for staff AND the portal
+            // from one handler) and, through Core_Bundle, they are present in every bundle -
+            // so a #[Portal_Route] on one of them says nothing about which realm THIS bundle
+            // is for. Without this skip, Core/Files joining Core_Bundle baked "Realm: portal"
+            // into every staff bundle.
+            if (str_starts_with($relative, 'app/RSpade/Core/')) {
+                continue;
+            }
 
             if (!isset($manifest_files[$relative])) {
                 continue;

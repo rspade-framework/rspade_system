@@ -38,6 +38,7 @@ in this monorepo). Populated during Phase 2 of the knowledge restructure
 @shared/72-paths-config-environment.md
 @shared/73-maintenance-and-operations.md
 @shared/80-git-and-conflicts.md
+@shared/85-project-skills.md
 @framework/00-development-context.md
 @framework/10-ide-tooling.md
 @framework/11-framework-testing.md

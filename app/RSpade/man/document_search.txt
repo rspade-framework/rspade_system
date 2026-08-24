@@ -5,8 +5,11 @@ NAME
     document preview (Document_Preview + pdf.js + PDF renditions)
 
 SYNOPSIS
-    Extraction (background, framework-internal):
-        config('rsx.search.*')   Search_Index_Service::index_pending  (#[Exclusive] cron)
+    The pipeline (background, framework-internal):
+        Document_Render_Service::render_pending   ONE worker: PDF rendition + text
+                                                  (#[Exclusive], every 10 minutes,
+                                                   kicked on upload)
+        config('rsx.search.*')  config('rsx.preview.*')  config('rsx.libreoffice.*')
 
     Search (app-facing):
         File_Attachment_Model::search_text($query [, $mode])   // Eloquent Builder
@@ -21,6 +24,7 @@ SYNOPSIS
         php artisan rsx:search:reindex --status
         php artisan rsx:search:reindex --all | --failed | --below-version=N
                                        | --storage=ID | --attachment=ID
+        php artisan rsx:documents:status | :failed | :rerender    (rsx:man documents)
         php artisan rsx:health         # verifies soffice / poppler / fonts
 
 DESCRIPTION
@@ -39,9 +43,16 @@ DESCRIPTION
     viewer, and health inventory through the manifest and exposes three #[OnEvent]
     resolve chains so an app can override any stage without touching core.
 
-    The two systems are independent (search does not need preview, and vice versa) but
-    share the headless-LibreOffice slot pool (see rsx:man libreoffice) and the same
-    binary dependencies.
+    ONE WORKER OWNS BOTH. As of 2026-08-22 text extraction and PDF renditions are not
+    two systems sharing a slot pool - they are two products of a single background
+    pass. Document_Render_Service::render_pending converts a document to PDF ONCE and
+    extracts its text in the same iteration; the thumbnail pipeline then rasterizes
+    that same rendition. Before this, one Word document was converted three times (a
+    thumbnail, a rendition, a text pass) by three callers competing for a two-slot
+    semaphore inside web requests. See rsx:man libreoffice.
+
+    The consequence a page must know about: an Office document's text AND its picture
+    AND its preview all appear a few seconds AFTER the upload, not during it.
 
 EXTRACTION PIPELINE
     The queue IS a flag. Every File_Storage_Model blob carries is_indexed:
@@ -73,13 +84,26 @@ EXTRACTION PIPELINE
                       document) - that reason is stored in the row's error column,
                       because a retry can never help (unlike FAILED)
 
-    Draining. Search_Index_Service::index_pending is #[Exclusive] (at most one pass
-    runs cluster-wide) and #[Schedule('*/5 * * * *')]. It processes ONE blob per
-    iteration (lowest is_indexed=0 id first) until the queue is empty; each attempt
-    sets is_indexed = 1 so work never repeats and the loop terminates. A prompt kick
-    (Task::dispatch on blob creation/materialization) drains uploads without waiting
-    for the 5-minute cron. Master switch: config('rsx.search.enabled') - when false,
-    no kick is fired and the cron is a no-op (existing rows untouched).
+    Draining. Document_Render_Service::render_pending is #[Exclusive] (at most one
+    pass runs cluster-wide) and #[Schedule('every 10 minutes')]. It processes ONE blob
+    per iteration - the lowest id owing EITHER a rendition (render_status_id = PENDING)
+    or an extraction (is_indexed = 0) - until nothing is owed; each attempt moves the
+    row out of the queue (RENDERED/FAILED, is_indexed = 1) so work never repeats and
+    the loop terminates. A prompt kick (Task::dispatch on blob creation/materialization
+    and on a blob entering PENDING) drains uploads without waiting for the sweep.
+
+    (Search_Index_Service::index_pending was the extraction-only worker and NO LONGER
+    EXISTS. Search_Index_Service::extract_storage($storage, ?$rendition_path) remains
+    as the unit of work, called by the render worker.)
+
+    Two master switches, governed separately, and this is the subtle part.
+    config('rsx.search.enabled') governs EXTRACTION and is also the kick switch; when
+    false, no worker is spawned on upload and the extraction half of the queue is
+    skipped (existing rows untouched). config('rsx.libreoffice.enabled') governs
+    RENDERING. A box with LibreOffice off must still extract PDFs and plain text, so
+    the queue narrows to "is_indexed = 0" and PENDING rows simply WAIT - they are
+    still queued, and the day soffice is installed the sweeper renders them. (If both
+    are off the worker returns immediately.)
 
     Re-extraction. Bump config('rsx.search.extractor_version') when an extractor
     changes in a way that should re-produce existing text, then:
@@ -89,15 +113,25 @@ EXTRACTION PIPELINE
     re-queues every blob indexed by an older generation (sets is_indexed = 0). The
     cron/kick re-extracts them one at a time.
 
-    Office documents route by FAMILY inside Libreoffice_Text_Extractor, because no
-    single LibreOffice filter covers them all:
+    Office documents route by FAMILY, because no single route covers them all:
 
-        Writer   (doc/docx/odt/rtf/...)  --convert-to 'txt:Text (encoded):UTF8'
+        Writer   (doc/docx/odt/rtf/...)  pdftotext over the PDF RENDITION the same
+                                         worker pass just produced - no soffice run of
+                                         its own. With no rendition available (the LRU
+                                         cleanup evicted it) it falls back to the
+                                         registry's Libreoffice_Text_Extractor and its
+                                         Writer-only 'txt:Text (encoded):UTF8' filter;
+                                         with LibreOffice disabled that route records
+                                         UNSUPPORTED rather than calling soffice.
         Calc     (xls/xlsx/ods/...)      --convert-to fods (flat XML, ONE file, ALL
                                          sheets), then a STREAMING XMLReader pass
                                          emits each sheet's name + every cell's text
         Impress  (ppt/pptx/odp/...)      --convert-to fodp (flat XML), same pass over
                                          each slide's text
+
+    Net soffice runs per document: ONE for a Writer document (the rendition, reused for
+    text and for the thumbnail), TWO for a spreadsheet or presentation (the rendition
+    plus its flat-XML pass). It was three for all of them.
 
     The 'Text (encoded)' filter is Writer-ONLY: it silently produces NO output for a
     Calc or Impress document (so every spreadsheet/presentation used to FAIL). The
@@ -127,6 +161,10 @@ FILTER CHAINS (the app extension surface)
     terminal default. See rsx:man event_hooks (RESOLVE EVENTS).
 
     document.extract_text  (Search_Index_Service::extract_storage)
+        Now runs INSIDE the render worker's pass, not in a worker of its own. The
+        payload and contract are unchanged, and 'path' is still the SOURCE BLOB - the
+        rendition shortcut is applied after the chain declines, so a handler always
+        sees the original document.
         Payload:  ['storage' => File_Storage_Model, 'path' => string, 'mime' => string]
         Return:
             null                                decline -> framework extractor registry
@@ -143,7 +181,12 @@ FILTER CHAINS (the app extension surface)
 
     document.preview_rendition  (File_Preview_Controller::pdf_rendition)
         Runs AFTER the authorization gates (below). Overrides how an attachment becomes
-        a PDF rendition for pdf.js.
+        a PDF rendition for pdf.js. CONTRACT UNCHANGED, but the framework path behind
+        it is now SERVE-ONLY: it serves a PDF blob as-is, or the rendition the
+        background worker already produced, and 404s (naming the render state) for a
+        convertible document that is not RENDERED yet. It never converts. A handler
+        that DOES convert on demand still works exactly as before - it simply no longer
+        has a framework twin doing the same thing.
         Payload:  ['attachment' => File_Attachment_Model, 'request' => Request]
         Return:
             null                       decline -> framework rendition pipeline
@@ -159,8 +202,15 @@ FILTER CHAINS (the app extension surface)
             }
 
     document.thumbnail_render  (File_Attachment_Controller::_render_thumbnail_data)
-        Sits at the TOP of the thumbnail pipeline, ahead of the renderer registry
-        (rsx:man libreoffice, rsx:man thumbnails). Overrides the "bytes -> raster" step.
+        STILL RUNS FIRST - ahead of the rendition path and ahead of the renderer
+        registry (rsx:man thumbnails). Overrides the "bytes -> raster" step. Note the
+        rendition case: for a RENDERED document the framework would rasterize page 1
+        of the PDF rendition, but the chain runs BEFORE that decision and 'path' is
+        always the SOURCE BLOB, never the rendition - so a handler that takes over an
+        Office mime behaves exactly as it did, and one that declines gets the
+        rendition path automatically. The chain is not consulted at all for a PENDING
+        or FAILED blob: those serve the extension-icon placeholder without entering
+        the render path.
         Payload:  ['attachment' => File_Attachment_Model, 'path' => string,
                    'type' => string, 'width' => int, 'height' => ?int]
         Return:
@@ -230,6 +280,23 @@ DOCUMENT_PREVIEW COMPONENT
     Methods (delegate to the active viewer; no-op before it is ready):
         set_page(n) / get_page() / get_pages()
 
+    RENDER STATES. get_preview_info() carries the blob's render_status_id, and
+    <Document_Preview> subscribes to the attachment in on_create() exactly as
+    <Attachment_Thumbnail> does, so it repaints itself when the render lands:
+
+        PENDING       "Preparing preview..." - the worker has not converted it yet.
+                      No rendition URL is returned, so the viewer is never asked to
+                      load one early.
+        FAILED        A failed state. The render_error is NEVER sent to the browser;
+                      the operator reads it with rsx:documents:failed.
+        RENDERED      urls.rendition is present and Pdf_Viewer loads it.
+        NOT_REQUIRED  A PDF or an image: served directly, as always.
+
+    When the worker settles the blob it emits a realtime frame on every attachment
+    referencing it, and the open preview swaps from "Preparing preview..." to the
+    document with no reload. On a realtime-disabled box the preparing state persists
+    until the next navigation - there is deliberately no polling.
+
     Preview-unavailable state. An attachment degraded at upload (an image whose bytes
     could not be parsed - see rsx:man file_upload, UNPARSEABLE IMAGE DEGRADE) carries
     preview_unavailable=true. get_preview_info() surfaces the flag and <Document_Preview>
@@ -258,17 +325,26 @@ SERVER SURFACES
         exposes the full document, so BOTH file.thumbnail.authorize AND
         file.download.authorize must return true (identical to inline()/download).
         After auth, the document.preview_rendition chain may override. Framework
-        default: a PDF blob is served as-is; a convertible Office mime
-        (config('rsx.preview.convertible')) with LibreOffice enabled is converted to a
-        cached PDF at storage/rsx-renditions/{blob-hash}.pdf (content-addressed, so
-        identical bytes convert once); anything else is 415. Served inline with an
-        immutable one-year cache.
+        default: SERVE-ONLY, never convert. A PDF blob is served as-is. A convertible
+        Office mime (config('rsx.preview.convertible')) is served from
+        storage/rsx-renditions/{blob-hash}.pdf - the rendition the background worker
+        produced, content-addressed so identical bytes convert once - but ONLY when the
+        blob is RENDERED; otherwise it 404s with a body naming the render state (never
+        render_error). Anything else is 415. Served inline with an immutable one-year
+        cache.
+
+        A RENDERED blob whose rendition file has been LRU-evicted re-queues itself and
+        404s for this one request rather than showing an error over a cache eviction -
+        the same self-heal the thumbnail path performs.
 
     POST get_preview_info  (#[Ajax_Endpoint])
         Server-side viewer resolution consumed by <Document_Preview>: returns
-        {viewer, mime, file_name, extension, urls:{rendition, inline, icon}}. Gated by
-        file.thumbnail.authorize only (metadata, not full content). No config is
-        exported to the client - resolution is server-side.
+        {viewer, mime, file_name, extension, preview_unavailable, render_status_id,
+        urls:{rendition, inline, icon}}. render_status_id is the blob's
+        File_Storage_Model::RENDER_STATUS_*, or null when there is no resident blob at
+        all; urls.rendition is present ONLY when the endpoint would actually serve one.
+        Gated by file.thumbnail.authorize only (metadata, not full content). No config
+        is exported to the client - resolution is server-side.
 
     GET /_preview/pdfjs.mjs, GET /_preview/pdf_worker.mjs
         Stream the pdf.js module + worker bytes from the committed system/node_modules
@@ -299,7 +375,6 @@ CONFIGURATION
                                          text/*, application/csv,
                                          application/json             -> Plain_Text_Extractor
         pdftotext_binary_path  ?string poppler pdftotext path (env). null = auto-detect.
-        timeout                int     Per-extractor-invocation cap (seconds). Default 30.
         max_text_bytes         int     Extracted text is capped at this many bytes.
                                        Over-cap extraction is TRUNCATED to the cap and
                                        RECORDED on the row (metadata truncated=true +
@@ -315,11 +390,16 @@ CONFIGURATION
                                        headless LibreOffice (fnmatch globs). Only
                                        converted when rsx.libreoffice.enabled; else 415.
         quota_max_bytes        int     LRU cap on storage/rsx-renditions. Default 200 MB.
-        rendition_timeout      int     Cap (seconds) on one soffice->PDF conversion,
-                                       from slot acquisition. Default 60.
 
-    The LibreOffice slot pool, binary path, and concurrency are config('rsx.libreoffice.*')
-    (rsx:man libreoffice) - shared by text extraction, PDF renditions, and thumbnails.
+    REMOVED 2026-08-22 - delete any override you carry: rsx.search.timeout,
+    rsx.preview.rendition_timeout, rsx.libreoffice.max_concurrent and
+    rsx.libreoffice.slot_wait_timeout. With one #[Exclusive] worker as the only caller
+    of soffice there is no pool to size and no slot to wait for, and ONE sanctioned
+    bound - config('rsx.libreoffice.timeout'), 120s - now covers every external
+    document-binary call (soffice AND pdftotext). See rsx:man libreoffice, TIMEOUT.
+
+    The soffice binary path and master switch are config('rsx.libreoffice.*')
+    (rsx:man libreoffice).
 
 BINARY DEPENDENCIES
     The pipeline shells out to external binaries. Provision on Debian/Ubuntu:
@@ -333,8 +413,11 @@ BINARY DEPENDENCIES
     - fonts: without at least one general font family soffice substitutes poorly. Add
       fonts-noto-cjk etc. for non-Latin content.
 
-    rsx:health verifies all of these (LibreOffice, poppler-utils, and the search-index
-    backlog) - run it as a container-readiness gate. See rsx:man health.
+    rsx:health verifies all of these (LibreOffice, poppler-utils, and the
+    "Document Render Backlog" row - which replaced "Search Index Backlog", because
+    rendition and extraction are one worker and one queue, so two probes would be two
+    ways of saying the same thing). Run it as a container-readiness gate. See
+    rsx:man health.
 
 REINDEX COMMAND
     php artisan rsx:search:reindex <selector>   (exactly one selector; fails loud otherwise)
@@ -350,7 +433,15 @@ REINDEX COMMAND
                                (materializes external bytes first)
 
     Re-queuing is uniform: it sets is_indexed = 0 on the resolved blobs and dispatches
-    Search_Index_Service::index_pending; the cron/kick then re-extracts one at a time.
+    Document_Render_Service::render_pending; the sweep/kick then re-extracts one blob
+    at a time.
+
+    REINDEX IS THE TEXT HALF ONLY. --failed here means an EXTRACTION failure (a
+    _search_indexes row with status FAILED). A RENDER failure - soffice could not
+    convert the document - is a different thing on a different column, listed by
+    php artisan rsx:documents:failed and re-queued with
+    php artisan rsx:documents:rerender --failed. Both commands print the other's
+    remedy beside their own table, so a wrong guess costs nothing. See rsx:man documents.
 
 DEMO
     /dev/document_preview - a template SPA page that previews the seeded sample
@@ -375,12 +466,23 @@ RSX VS LARAVEL
 
 TROUBLESHOOTING
     Text never appears for a document
-        Check get_extraction_status(): null = still pending (is the cron/worker
-        running? rsx:health "Task Scheduler Liveness"). FAILED = read the row's error
+        Check get_extraction_status(): null = still pending (is the worker running?
+        rsx:health "Task Scheduler Liveness" and "Document Render Backlog";
+        php artisan rsx:documents:status). FAILED = read the row's error
         (rsx:search:reindex --failed after fixing the binary). UNSUPPORTED = no
         extractor for that mime, LibreOffice disabled, or the document is
         password-protected/encrypted (the row's error names the reason - a reindex
         will not help, it is unextractable by design).
+
+        Right after an upload, "pending" is the CORRECT answer, not a symptom: the
+        whole pipeline is asynchronous now.
+
+    The preview says "Preparing preview..." and stays there
+        The blob is PENDING. php artisan rsx:documents:status says whether anything is
+        queued and when the sweeper next runs; if the count never falls, the worker is
+        not running (rsx:task:process) or rsx.libreoffice.enabled is false. If the
+        document is FAILED the preview shows a failed state instead - the reason is in
+        php artisan rsx:documents:failed.
 
     Office docs extract/convert but PDFs do not (or vice versa)
         Different binaries: PDFs need poppler-utils (pdftotext); Office needs soffice.
@@ -391,15 +493,21 @@ TROUBLESHOOTING
         system/node_modules) and that the dual auth gates allow /_preview/pdf/:key.
 
     A convertible document returns 415 from /_preview/pdf/:key
-        LibreOffice is disabled (config('rsx.libreoffice.enabled')) or the mime is not
-        in config('rsx.preview.convertible').
+        The mime is not in config('rsx.preview.convertible').
+
+    A convertible document returns 404 from /_preview/pdf/:key
+        Not an error condition - the blob is not RENDERED yet (the body names the
+        state). The viewer never requests the rendition in that state; a 404 here means
+        something asked for it directly. php artisan rsx:documents:status.
 
 SEE ALSO
+    rsx:man documents        Operating the render pipeline (status / failed / rerender)
     rsx:man file_upload      Attachments, dedup store, thumbnail pipeline
-    rsx:man libreoffice      Headless soffice slot pool (extraction / rendition / thumbnails)
-    rsx:man thumbnails       Thumbnail generation and caching
+    rsx:man libreoffice      Headless soffice, invoked only by the render worker
+    rsx:man thumbnails       Render state machine, caching, <Attachment_Thumbnail>
     rsx:man event_hooks      trigger_resolve and the resolve-event contract
     rsx:man health           rsx:health dependency verification
     rsx:man enums            Search_Index_Model status_id lifecycle
+    rsx:man tasks            #[Exclusive], #[Schedule] and the worker pool
 
-DOCUMENT_SEARCH(1)                RSpade Manual                DOCUMENT_SEARCH(1)
+RSX Framework              Last updated 2026-08-22           DOCUMENT_SEARCH(1)

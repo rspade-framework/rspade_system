@@ -1,9 +1,16 @@
 #!/bin/bash
 # RSpade Build UI Service Starter with Exponential Backoff
-# Retries infinitely with exponential backoff capped at 10 minutes
+# Retries infinitely with exponential backoff capped at 30 seconds.
+#
+# The ceiling matches bin/retry-run.sh, the framework's general retry runner, which is
+# the newer and fully-reasoned one. This script had 600 and that one has 30 - a 20x
+# divergence between two backoff runners in one repo, neither referencing the other.
+# Reconciled to 30 on 2026-08-22: a 10-minute ceiling means a service that recovers can
+# still sit dead for ten more minutes, which is indistinguishable from staying broken.
+# Retry DELAYS are sanctioned; the retry count remains unbounded.
 
 RETRY_COUNT=0
-MAX_DELAY=600  # 10 minutes in seconds
+MAX_DELAY=30  # seconds - matches bin/retry-run.sh
 SERVICE_DIR="/var/www/html/system/app/RSpade/BuildUI/resource/build-service"
 
 log() {

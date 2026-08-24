@@ -56,13 +56,17 @@ fi
 cd "$APP_DIR" || die "Cannot enter $APP_DIR"
 
 # -----------------------------------------------------------------------------
-# 1. .env - create it from the template on first boot
+# 1. .env - prepared by the framework's own env heal
 # -----------------------------------------------------------------------------
-if [ ! -f "$APP_DIR/.env" ]; then
-    [ -f "$APP_DIR/.env.dist" ] || die ".env is missing and there is no .env.dist to create it from."
-    cp "$APP_DIR/.env.dist" "$APP_DIR/.env" || die "Could not create .env"
-    say "Created .env from .env.dist"
-fi
+# Creating .env from .env.dist, adding keys that appeared in .env.dist since the
+# last boot, checking the credentials nothing can connect without, and minting an
+# APP_KEY when there is none are ONE operation with ONE implementation, and this
+# is it. The same file runs pre-boot from both entrypoints and behind
+# `php artisan rsx:env:heal`; it deliberately needs no autoloader, no config and
+# no database, because the framework cannot boot until it has done its work.
+#
+# Everything below this line reads .env, so it has to happen here, first.
+php "$APP_DIR/system/bootstrap/rsx_env_heal.php" || die "The environment configuration could not be prepared (see above)."
 
 # Read a key's current value from .env (empty when absent or blank).
 #
@@ -107,10 +111,10 @@ env_set() {
 }
 
 # -----------------------------------------------------------------------------
-# 2. APP_KEY - a random key, generated here rather than by artisan
+# 2. APP_KEY - made by the env heal above, not here
 # -----------------------------------------------------------------------------
-# An application key is 32 random bytes, base64-encoded. That is all it is - so
-# it is generated in ten characters of shell, BEFORE anything else runs.
+# An application key is 32 random bytes, base64-encoded, and it is generated in
+# step 1 by the env heal - BEFORE anything else runs, which is the requirement.
 #
 # The alternative was `artisan key:generate`, and it was a trap: writing a random
 # string into a file looks local, but artisan boots the entire framework to do
@@ -119,13 +123,12 @@ env_set() {
 # those services (rsx-lockd, the realtime relay) refuse to start WITHOUT a key.
 # A circle with no entry point, and on a fresh install it failed exactly there.
 #
-# Doing it in shell breaks the circle: by the time supervisor starts anything,
-# the key exists.
-if [ -z "$(env_value APP_KEY)" ]; then
-    new_key="base64:$(head -c 32 /dev/urandom | base64 | tr -d '\n')"
-    env_set APP_KEY "$new_key"
-    say "Generated APP_KEY"
-fi
+# It was generated HERE in shell for a while, which broke the circle but left two
+# implementations of one rule. The heal is autoloader-free for exactly the same
+# reason this shell was, so the shell copy is gone and the rule has one home.
+# Note that the heal MINTS a key only in development: on a debug or production
+# box an empty APP_KEY is refused loudly, because a new key silently invalidates
+# every encrypted value and signed cookie made with the one that went missing.
 
 # -----------------------------------------------------------------------------
 # 3. APP_URL - the container cannot discover its own published port

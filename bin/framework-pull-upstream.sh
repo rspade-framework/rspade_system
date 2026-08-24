@@ -113,7 +113,6 @@ OLD_SHA=""
 NEW_SHA=""
 FRAMEWORK_CHANGELOG=""
 CONVERTED=false
-LOCK_EXHAUSTED_RC=97
 
 # -----------------------------------------------------------------------------
 # Output
@@ -300,20 +299,10 @@ run_gates() {
     fi
 
     # -------------------------------------------------------------------------
-    # PRODUCTION. Framework updates are reviewed somewhere else and deployed, not
-    # pulled into a live deployment.
-    # -------------------------------------------------------------------------
-    if __env_says '^APP_ENV=production[[:space:]]*$'; then
-        err "Framework updates are disabled in production."
-        say ""
-        say "  Incorporate and test framework updates in a development environment, then"
-        say "  deploy the reviewed result."
-        exit 1
-    fi
-
-    # -------------------------------------------------------------------------
-    # SEALED BUILDS. Stricter than the APP_ENV check above, which misses a sealed
-    # DEBUG build. debug and production are compiled once and then immutable;
+    # SEALED BUILDS. This is the ONLY environment gate: RSX_MODE is the single
+    # mode switch (there used to be a separate APP_ENV=production check here,
+    # which was both redundant with this one and blind to a sealed DEBUG build).
+    # debug and production are compiled once and then immutable;
     # swapping the framework underneath one breaks the seal, and the application
     # then serves assets that no longer match what it was built from.
     #
@@ -471,6 +460,34 @@ No application code is touched: everything under system/ is framework-owned." \
         fi
         exit 1
     fi
+
+    # -- ignore = dirty, recorded in the TRACKED .gitmodules --------------------
+    #
+    # `git submodule add` writes path/url/branch and nothing else, so a converted
+    # project would inherit the default `none` and report ` M system` on every
+    # status forever: the manifest build renames .php <-> .php.upstream inside
+    # system/ to apply class overrides, and that churn regenerates itself within a
+    # second of any clean. Operators answer that noise with a repo-wide
+    # `[diff] ignoreSubmodules = all` in .git/config, which suppresses submodule
+    # reporting ENTIRELY - including the recorded pointer, which IS the framework
+    # version and the single most consequential fact in an update commit.
+    #
+    #   none/false -> pointer visible, churn visible (constant noise)
+    #   all        -> pointer HIDDEN, churn hidden (a silent framework update)
+    #   dirty      -> pointer visible, churn hidden                  <- this
+    #
+    # It goes in .gitmodules, not .git/config: .gitmodules is TRACKED, so every
+    # present and future clone inherits it with no per-machine setup. This mirrors
+    # exactly what bin/publish writes into the starter, so a converted project and
+    # a freshly cloned one are the same shape. Boxes converted BEFORE this landed
+    # are healed by system/bin/environment_updates/080_submodule_ignore_dirty.sh
+    # (this generated script lags one pull; that one does not).
+    #
+    # die, not `|| true`: .gitmodules is about to be committed, and committing a
+    # half-written one is worse than stopping here with the submodule staged.
+    git -C "$PROJECT_ROOT" config --file "$PROJECT_ROOT/.gitmodules" \
+        "submodule.${SUBMODULE_PATH}.ignore" dirty \
+        || die "The submodule was added but writing 'ignore = dirty' into .gitmodules failed; nothing has been committed - fix it and re-run."
 
     git -C "$PROJECT_ROOT" add .gitmodules "$SUBMODULE_PATH" 2>/dev/null || true
     if ! git -C "$PROJECT_ROOT" diff --cached --quiet 2>/dev/null; then
@@ -904,15 +921,29 @@ enter_maintenance() {
 
 # =============================================================================
 # run_artisan_lock_retry - a live box boots artisan continuously (cron, supervisor,
-# web), and each boot may take the build lock. Losing that race is contention, not
-# failure, so the enumerated steps retry instead of aborting the update. A NON-lock
+# web), and each boot may take the BUILD lock. Losing that race is contention, not
+# failure, so the enumerated steps wait instead of aborting the update. A NON-lock
 # failure surfaces immediately with its real exit code.
+#
+# IT WAITS FOREVER, AND THE CAP THAT USED TO BE HERE WAS A BUG. This retried 10
+# times at 5s and then gave up, and the caller for framework migrations WARNED AND
+# CONTINUED - finishing an update that had installed new code against a schema the
+# migrations never touched. If losing the lock is survivable, the lock was pointless;
+# if it is not survivable, giving up after an arbitrary 50 seconds is the worst of
+# both. So there is no cap: the 5s pause between attempts is a retry DELAY, not a
+# deadline, and this loop cannot end by running out of patience.
+#
+# Waiting is cheap here for a reason worth knowing: the update raises maintenance
+# mode, which BLOCKS rsx:task:process - the every-minute cron that is the single
+# largest source of incidental artisan boots. The usual contender is already stopped
+# before this function ever runs.
 # =============================================================================
 run_artisan_lock_retry() {
     local label="$1"; shift
     local -a maint=(); [ "$MAINT_ACTIVE" = true ] && maint=(--_framework-update-override)
-    local attempt rc out
-    for (( attempt = 1; attempt <= 10; attempt++ )); do
+    local attempt=0 rc out
+    while true; do
+        attempt=$(( attempt + 1 ))
         out="$(php "$SYSTEM_DIR/artisan" "$@" "${maint[@]}" 2>&1)"
         rc=$?
         printf '%s\n' "$out"
@@ -920,12 +951,9 @@ run_artisan_lock_retry() {
         if ! printf '%s' "$out" | grep -qi 'Failed to acquire.*lock'; then
             return "$rc"
         fi
-        if [ "$attempt" -lt 10 ]; then
-            warn "$label is waiting for a concurrent manifest rebuild to finish (attempt $attempt/10)..."
-            sleep 5
-        fi
+        warn "$label is waiting for a concurrent manifest rebuild to finish (attempt $attempt)..."
+        sleep 5
     done
-    return "$LOCK_EXHAUSTED_RC"
 }
 
 # =============================================================================
@@ -963,32 +991,20 @@ do_rebuild() {
     # manifest can be trusted to be incrementally valid.
     # --_no-check-schema-updates-pending: main() emits the pending-migration notice
     # once as the pull's final line; without this it would fire twice.
-    run_artisan_lock_retry "rsx:manifest:build --force" rsx:manifest:build --force --_no-check-schema-updates-pending
-    rc=$?
-    if [ "$rc" -eq "$LOCK_EXHAUSTED_RC" ]; then
-        warn "rsx:manifest:build could not obtain the build lock after 10 attempts; a concurrent rebuild is holding it and thereby keeping the manifest current, so continuing."
-    elif [ "$rc" -ne 0 ]; then
-        die "rsx:manifest:build failed"
-    fi
+    # Each of these waits for the build lock rather than giving up on it, so the only
+    # way past them is success - there is no "finished the update without running this"
+    # branch any more. See run_artisan_lock_retry's header.
+    run_artisan_lock_retry "rsx:manifest:build --force" rsx:manifest:build --force --_no-check-schema-updates-pending \
+        || die "rsx:manifest:build failed"
 
     run_artisan_lock_retry "framework migrations" migrate --framework-only --force
-    rc=$?
-    if [ "$rc" -eq "$LOCK_EXHAUSTED_RC" ]; then
-        say ""
-        warn "framework migrations could not obtain the build lock after 10 attempts (a concurrent rebuild held it). This is lock contention, NOT a migration failure. Re-run once the box is quiet to be certain the schema is current: php artisan migrate --framework-only --force"
-        say ""
-    elif [ "$rc" -ne 0 ]; then
+    if [ $? -ne 0 ]; then
         say ""
         die "Framework migrations FAILED. The update is incomplete - resolve the migration error above and re-run."
     fi
 
-    run_artisan_lock_retry "rsx:bundle:compile" rsx:bundle:compile
-    rc=$?
-    if [ "$rc" -eq "$LOCK_EXHAUSTED_RC" ]; then
-        warn "rsx:bundle:compile could not obtain the build lock after 10 attempts; bundles JIT-compile on web request, so continuing."
-    elif [ "$rc" -ne 0 ]; then
-        die "rsx:bundle:compile failed"
-    fi
+    run_artisan_lock_retry "rsx:bundle:compile" rsx:bundle:compile \
+        || die "rsx:bundle:compile failed"
 
     # post_update carries the dependency, env and UPSTREAM_CHANGES checks - the
     # pending-documents report is emitted from in there.

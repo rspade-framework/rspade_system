@@ -1,6 +1,6 @@
 ---
 name: bundles
-description: RSX module bundles - defining a Rsx_Bundle_Abstract with its include list, the SCSS include-ordering rule, rendering the bundle into a Blade head, JIT compilation, output filenames, npm packages, and auto-discovered Asset Bundles. Use when creating a new module and its bundle, adding a directory or npm package to a bundle's includes, wondering why a component's JS or SCSS is not reaching the browser, or reading compiled bundle filenames.
+description: RSX module bundles - defining a Rsx_Bundle_Abstract with its include list, the SCSS include-ordering rule, rendering the bundle into a Blade head, JIT compilation, output filenames, npm packages, auto-discovered Asset Bundles, and the 'watch' cache-invalidation key. Use when creating a new module and its bundle, adding a directory or npm package to a bundle's includes, declaring a 'watch' target for a compiled source tree, wondering why a component's JS or SCSS is not reaching the browser, when editing an SCSS partial does not change the compiled output, or when a build fails with "Bundle 'watch' target does not exist".
 ---
 
 # Bundle System
@@ -70,6 +70,32 @@ class Chart_JS_Bundle extends Rsx_Asset_Bundle_Abstract
 ```
 
 Each entry creates one global accessible from your JavaScript. Details: `php artisan rsx:man npm`.
+
+## `watch`: inputs that are not includes
+
+A file can change a compiled artifact without being compiled into it - the SCSS partial that a vendored entry point `@import`s, the config a generator reads. The compiler keys each artifact on the content of its inputs, so such a file must be declared or its edits produce no rebuild. That declaration is **`watch`**:
+
+```php
+class Bootstrap5_Src_Bundle extends Rsx_Asset_Bundle_Abstract
+{
+    public static function define(): array
+    {
+        return [
+            'include' => ['rsx/theme/vendor/bootstrap_custom.scss'],
+            'watch' => [
+                'rsx/theme/vendor/bootstrap5/scss',  // Directory - scanned recursively
+                'rsx/theme/variables.scss',          // File - watched directly
+            ],
+        ];
+    }
+}
+```
+
+**`watch` takes the same kinds of path as `include`**: a file or a directory, relative to `base_path()`. **Every target must exist** - one that is neither fails the build naming the declaring bundle class and the path, because a watch list that silently watches nothing is indistinguishable from a correct one until it serves a stale artifact.
+
+**Bucket membership follows the DECLARING BUNDLE, never the watched path.** A `watch` target of a vendor-bucket bundle invalidates the vendor artifact wherever the file lives - which is exactly what makes "compile a vendored source tree, parameterised by a first-party variables file" work. Registration is additive: the same path can be a `watch` target of one bucket and an `include` of the other, and one edit invalidates both.
+
+Note the asymmetry, which is deliberate: an `include` entry IS the bytes of one artifact, so its bucket is a fact about the file's own path; a `watch` entry only feeds an artifact it is not part of, so its bucket is a fact about the bundle that declared it.
 
 ## External URLs: `cdn_assets` vs the externals registry
 

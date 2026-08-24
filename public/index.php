@@ -57,6 +57,24 @@ require __DIR__ . '/../bootstrap/rsx_submodule_sync.php';
 
 /*
 |--------------------------------------------------------------------------
+| Environment Heal
+|--------------------------------------------------------------------------
+|
+| Creates the root .env from the TRACKED project-root .env.dist when it is
+| absent, and in development keeps it in step with the keys .env.dist declares.
+| ONE implementation, shared with `php artisan rsx:env:heal` and the container
+| entrypoint: App\RSpade\Core\Prod\Rsx_Env_Symlink::full_heal().
+|
+| Before the first-run screen, which reads APP_URL out of the .env this may have
+| just created. In development it runs on EVERY request and costs one stat when
+| nothing has changed (see bootstrap/rsx_env_heal.php).
+|
+*/
+
+require __DIR__ . '/../bootstrap/rsx_env_heal.php';
+
+/*
+|--------------------------------------------------------------------------
 | First-Run Setup
 |--------------------------------------------------------------------------
 |
@@ -195,21 +213,6 @@ if (RSPADE_MAINT_MODE) {
     exit;
 }
 
-
-/*
-|--------------------------------------------------------------------------
-| Check If The Application Is Under Maintenance
-|--------------------------------------------------------------------------
-|
-| If the application is in maintenance / demo mode via the "down" command
-| we will load this file so that any pre-rendered content can be shown
-| instead of starting the framework, which could cause an exception.
-|
-*/
-
-if (file_exists($maintenance = $__rsx_storage.'/framework/maintenance.php')) {
-    require $maintenance;
-}
 
 /*
 |--------------------------------------------------------------------------

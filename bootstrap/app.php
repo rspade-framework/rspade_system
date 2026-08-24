@@ -21,16 +21,16 @@ if (php_sapi_name() === 'cli') {
 
 /*
 |--------------------------------------------------------------------------
-| Docker-Only Enforcement for Development Mode
+| Base Path
 |--------------------------------------------------------------------------
 |
-| Ensure the framework is only executed within the Docker container
-| when running in development mode. This prevents accidental execution
-| of framework code on developer machines for security reasons.
+| The container gate is NOT here. Development's "artisan runs inside the
+| RSpade container or not at all" rule lives in bootstrap/rsx_container_gate.php
+| and is decided by the /.rspade_container MARKER FILE the framework's own
+| Dockerfile writes - not by guessing from the base path and the uid.
 |
 */
 
-$app_env = $_ENV['APP_ENV'] ?? getenv('APP_ENV') ?: 'production';
 $base_path = realpath($_ENV['APP_BASE_PATH'] ?? dirname(__DIR__));
 
 // App-layer composer autoloader (project root). Downstream applications may
@@ -67,41 +67,6 @@ if (str_contains($base_path, ' ')) {
     exit(1);
 }
 
-if ($app_env !== 'production' && $app_env !== 'prod') {
-    // Check if we're not in the expected Docker environment
-    // Allow root OR devuser (UID 1000) when /docker exists (autonomous Claude mode)
-    /** @phpstan-ignore-next-line */
-    $is_root = posix_getuid() === 0 || posix_geteuid() === 0;
-    $is_devuser = posix_getuid() === 1000 && trim(shell_exec('whoami') ?? '') === 'devuser' && is_dir('/docker');
-    $is_docker = ($base_path === '/var/www/html' || $base_path === '/var/www/html/system') && ($is_root || $is_devuser);
-
-    if (!$is_docker) {
-        // Determine if this is a CLI or web request
-        $sapi = php_sapi_name();
-        $is_cli = ($sapi === 'cli' || $sapi === 'cli-server');
-
-        $error_message = "SECURITY ERROR: The RSX framework must be run from within the Docker container in development mode.\n\n";
-        $error_message .= "Environment: {$app_env}\n";
-        $error_message .= "Base path: {$base_path} (expected: /var/www/html or /var/www/html/system)\n";
-        /** @phpstan-ignore-next-line */
-        $error_message .= 'User ID: ' . posix_getuid() . " (expected: 0/root)\n";
-        $error_message .= "SAPI: {$sapi}\n\n";
-
-        if ($is_cli) {
-            $error_message .= "This CLI request was blocked for security reasons.\n";
-            $error_message .= "Please run commands from within the Docker container.\n";
-            fwrite(STDERR, $error_message);
-            exit(1);
-        }
-        $error_message .= "This web request was blocked for security reasons.\n";
-        $error_message .= "Please access the application through the Docker container.\n";
-        header('HTTP/1.1 403 Forbidden');
-        header('Content-Type: text/plain');
-        echo $error_message;
-        exit(1);
-    }
-}
-
 /*
 |--------------------------------------------------------------------------
 | Create The Application
@@ -133,6 +98,19 @@ $app = new Illuminate\Foundation\Application(
 // storage_path() consumer follows from here; nothing else needs per-call edits.
 $rsx_storage_root = dirname(__DIR__, 2) . '/storage';
 $app->useStoragePath($rsx_storage_root);
+
+// RSpade env: the project-root .env is the ONE authoritative environment file, so
+// Laravel is pointed straight at it rather than at base_path('.env'). Same bytes
+// either way - the system/.env symlink already resolved there - but now
+// environmentPath() is the project root and environmentFilePath() is the root .env,
+// which is what env:encrypt (writes beside environmentFilePath()), env:decrypt (see
+// App\RSpade\Commands\Rsx\Env_Decrypt_Command) and key:generate all address. Without
+// this, those three write inside system/ - a git submodule the framework pull cleans.
+//
+// The system/.env symlink is NOT retired: bash readers (the container entrypoint, the
+// pull script) and Rsx_Env_Symlink::heal() still address that path, and the invariant
+// keeps the two spellings one file.
+$app->useEnvironmentPath(dirname(__DIR__, 2));
 
 /*
 |--------------------------------------------------------------------------

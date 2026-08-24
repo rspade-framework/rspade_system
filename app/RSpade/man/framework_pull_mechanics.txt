@@ -60,15 +60,9 @@ PUBLISHING A RELEASE
         directory would see nothing and drop the gitlink straight back out,
         publishing a starter with no framework at all.
 
-    rspade_template_app
-        The reference application (rsx/) on its own, for browsing.
-
-THE RELEASE MARKER
-    system/.rspade-release.json is still written - a release_id and a per-file
-    sha256 inventory - and is still useful as a record of what a release
-    contained. NOTHING READS IT ANY MORE. The update resolves everything from
-    git revisions; the marker outlived the tamper gate and the pull resolution
-    that once depended on it.
+    (There is no third repository. The reference application used to ship
+    standalone as rspade_template_app; it now rides inside rspade_system at
+    app/RSpade/resource/reference_app - see template_app(3).)
 
 WHAT A DOWNSTREAM UPDATE DOES
     See rsx:man rsx_upstream for the full sequence. In summary: reset the
@@ -116,7 +110,21 @@ TROUBLESHOOTING A RELEASE
         that push precisely to prevent this.
 
     Downstream reports ` M system` constantly
-        ignore = dirty is missing from .gitmodules.
+        ignore = dirty is missing from .gitmodules. Publish writes it into the
+        starter and the vendored -> submodule conversion sets it (git submodule
+        add writes path/url/branch only), so this is a project converted before
+        that landed. The environment update
+        bin/environment_updates/080_submodule_ignore_dirty.sh heals it, as does
+        `php artisan rsx:heal submodule-ignore-dirty`; commit the .gitmodules
+        change, it is tracked.
+
+    A framework update lands with no trace in status, diff or the commit
+        A repo-wide `[diff] ignoreSubmodules = all` in the app's .git/config -
+        the usual answer to the noise above - suppresses submodule reporting
+        entirely, the recorded pointer included. `dirty` is the only value that
+        shows a moved pointer while hiding the build's churn, and it belongs
+        per-submodule in the tracked .gitmodules. The same 080 update unsets the
+        blanket key; the "Submodule Visibility" rsx:health row reports both.
 
 SEE ALSO
     rsx:man rsx_upstream        the update, from a downstream perspective

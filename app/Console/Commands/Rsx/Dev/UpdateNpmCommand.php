@@ -34,7 +34,10 @@ class UpdateNpmCommand extends FrameworkDeveloperCommand
         $this->info('Running npm update...');
         $this->newLine();
 
-        $npm_process = new Process(['npm', 'update'], $system_dir, null, null, 300);
+        // NO TIMEOUT (null) - same reasoning as rsx:npm and rsx:composer, which this
+        // command was simply missed by. How long an npm update takes is a function of the
+        // dependency graph and the registry, never evidence of a hang.
+        $npm_process = new Process(['npm', 'update'], $system_dir, null, null, null);
         $npm_process->run(function ($type, $buffer) {
             echo $buffer;
         });

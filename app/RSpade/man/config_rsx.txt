@@ -261,13 +261,16 @@ ANALYTICS (template app)
 
 DEVELOPMENT AND CODE QUALITY
     'development' => [
-        'debug' => env('RSX_DEBUG', env('APP_DEBUG', false)),
+        'debug' => env('RSX_DEBUG', env('RSX_MODE', 'development') !== 'production'),
         'log_dispatches' => env('RSX_LOG_DISPATCHES', false),
-        'show_route_details' => env('RSX_SHOW_ROUTE_DETAILS', env('APP_DEBUG', false)),
+        'show_route_details' => env('RSX_SHOW_ROUTE_DETAILS', env('RSX_MODE', 'development') !== 'production'),
     ]
 
     Diagnostic flags for debugging (detailed errors, dispatch logging,
-    route-match detail on error pages).
+    route-match detail on error pages). The two debug flags fall back to the
+    RSX_MODE derivation - the same one config/app.php uses for app.debug.
+    APP_DEBUG is not read anywhere; a config file cannot call config(), so the
+    expression is spelled out rather than read back from app.debug.
 
     'code_quality' => [
         'is_framework_developer' => env('IS_FRAMEWORK_DEVELOPER', false),
@@ -282,7 +285,7 @@ DEVELOPMENT AND CODE QUALITY
 
     'ide_integration' => [
         'bridge_path' => 'storage/rsx-ide-bridge',
-        'enabled' => env('RSX_IDE_SERVICES_ENABLED', APP_ENV !== 'production'),
+        'enabled' => env('RSX_IDE_SERVICES_ENABLED', env('RSX_MODE', 'development') !== 'production'),
     ]
 
     bridge_path   Where the IDE local-file grant token lives (OUTSIDE the
@@ -343,37 +346,55 @@ FILE SUBSYSTEM
     'libreoffice' => [
         'enabled' => env('LIBREOFFICE_ENABLED', true),
         'binary_path' => env('LIBREOFFICE_BINARY_PATH', null),  # null = autodetect
-        'max_concurrent' => 2,        # 0 = unlimited
-        'timeout' => 30,              # seconds per render
-        'slot_wait_timeout' => 30,    # seconds to wait for a slot
+        'timeout' => 120,             # THE one sanctioned timeout (see below)
     ]
 
-    Headless LibreOffice rendering of Office documents to raster previews.
-    Off/failure degrades to the generic extension icon.
+    Headless LibreOffice, invoked ONLY by Document_Render_Service's background
+    worker - never inside a web request. Off, or a failed conversion, degrades
+    to the generic extension icon.
+
+    timeout is a SANCTIONED TIMEOUT (owner ruling 2026-08-22), justified in full
+    beside the key in config/rsx.php: it bounds ONE external document-binary
+    invocation (soffice or pdftotext), which WEDGES rather than merely running
+    slowly, and expiry degrades to a working outcome (FAILED + extension icon).
+    One key covers both binaries. Do not lower it.
+
+    REMOVED 2026-08-22 - delete any override you carry: max_concurrent and
+    slot_wait_timeout. One #[Exclusive] worker is now the only caller of soffice,
+    so there is no pool to size and no slot to wait for.
+    See: php artisan rsx:man libreoffice
 
     'search' => [
         'enabled' => env('SEARCH_ENABLED', true),
         'extractor_version' => 2,
         'extractors' => [ mime-glob => Extractor_Class, ... ],
         'pdftotext_binary_path' => env('PDFTOTEXT_BINARY_PATH', null),
-        'timeout' => 30,
         'max_text_bytes' => 2 * 1024 * 1024,   # 2MB, over-cap truncated
     ]
 
-    Background full-text extraction pipeline into _search_indexes (keyed on
-    the deduplicated blob). Bump extractor_version then
-    rsx:search:reindex --below-version=N to re-extract.
+    Background full-text extraction into _search_indexes (keyed on the
+    deduplicated blob), drained by the SAME worker that produces PDF renditions.
+    'enabled' is also the kick switch for that worker. Bump extractor_version
+    then rsx:search:reindex --below-version=N to re-extract.
+
+    REMOVED 2026-08-22 - delete any override you carry: search.timeout. The one
+    sanctioned rsx.libreoffice.timeout now bounds pdftotext too.
     See: php artisan rsx:man document_search
 
     'preview' => [
         'viewers' => [ mime-glob => Viewer_Component, ... ],  # '*' => Icon_Viewer
         'convertible' => [ ...office mimes... ],
         'quota_max_bytes' => 200 * 1024 * 1024,   # 200MB LRU cap
-        'rendition_timeout' => 60,                # seconds per soffice->PDF
     ]
 
-    Server-side viewer resolution + cached soffice->PDF rendition pipeline
-    for the Document_Preview component. First matching viewer glob wins.
+    Server-side viewer resolution + the cached PDF rendition for the
+    Document_Preview component. First matching viewer glob wins. 'convertible'
+    is read TWICE: it decides whether a new attachment queues its blob for
+    rendering, and it decides what the rendition endpoint will serve. The
+    endpoint is serve-only - a web request never converts anything.
+
+    REMOVED 2026-08-22 - delete any override you carry: rendition_timeout.
+    See: php artisan rsx:man document_search
 
     'thumbnails' => [
         'presets' => [ name => ['type'=>'cover'|'fit','width'=>int,'height'=>int] ],
@@ -390,6 +411,13 @@ FILE SUBSYSTEM
 
     Two-tier thumbnail cache: named presets + ad-hoc dynamic sizes, both
     LRU-evicted. presets ship profile/gallery/icon_small/icon_large.
+
+    'renderers' ships image/* and application/pdf, both Imagick_Thumbnail_Renderer.
+    OFFICE MIMES ARE DELIBERATELY ABSENT: their pixels come from the PDF rendition
+    the background worker produced, rasterized through the application/pdf entry.
+    A renderer entry for .docx would convert a document inside a web request.
+    Libreoffice_Thumbnail_Renderer no longer exists.
+    See: php artisan rsx:man thumbnails
 
 TASK SYSTEM
     'tasks' => [

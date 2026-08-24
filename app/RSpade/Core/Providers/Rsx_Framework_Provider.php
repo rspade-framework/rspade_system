@@ -172,25 +172,6 @@ class Rsx_Framework_Provider extends ServiceProvider
             $this->app->register($provider_class);
         }
 
-        // Hide Laravel's own down/up commands from `php artisan list`.
-        //
-        // RSpade has ONE maintenance mode (rsx:maintenance:enable / :disable - flag + reason,
-        // task kill, service quiesce, allow-most CLI gate). Laravel's down/up drive a
-        // completely different mechanism (storage/framework/maintenance.php, checked further
-        // down public/index.php) and offering both in the listing invites an operator to reach
-        // for the one that does almost nothing here. They stay RUNNABLE by name - hidden, not
-        // blocked - so nothing that already calls them breaks.
-        foreach ([
-            \Illuminate\Foundation\Console\DownCommand::class,
-            \Illuminate\Foundation\Console\UpCommand::class,
-        ] as $hidden_command) {
-            $this->app->extend($hidden_command, function ($command) {
-                $command->setHidden(true);
-
-                return $command;
-            });
-        }
-
         // Note: All other RSX core classes are now static and don't need registration
     }
 

@@ -12,7 +12,9 @@ php artisan rsx:npm install <pkg>        # JS package  -> /node_modules
 - **Framework-provided packages record instead of duplicating** — requiring one the framework already ships records it as provided-by-framework rather than installing a second copy (`rsx:composer provides` / `rsx:npm provides` lists them).
 - **After a framework update** the reconciler runs automatically and names anything you rely on that changed, with the exact adopt/re-record command. Silent otherwise.
 - **JS packages reach the browser** via the Asset Bundle `'npm' => [...]` key, identical for app-layer and framework packages.
-- **Commit your root `composer.json`/`package.json` + lock files.** **The `"replace"` block is machine-generated and MUST NOT be hand-edited** — any manual edit is overwritten.
+- **Commit your root `composer.json`/`package.json` + lock files.** **The `"replace"` block is machine-generated and MUST NOT be hand-edited** — any manual edit is overwritten. **An untracked manifest is absent from a fresh clone and from every deploy** — `.gitignore`-ing root npm silently removes your ability to add a package at all.
+- **In the container, bare `npm` already routes here.** `/usr/local/bin/npm` shims to `rsx:npm`, so `npm install foo` does the right thing; it steps aside inside `system/`, outside the project, and when php cannot start. Nothing changes for you — it just stops muscle memory from bypassing the layer.
+- **No root `package.json`?** That is a valid configuration and nothing at runtime needs one, so a framework update stays silent about it — but `rsx:health` raises a WARN, and `php artisan rsx:heal app-npm-layer` creates the manifest a fresh provision ships.
 
 ### Local conventions
 

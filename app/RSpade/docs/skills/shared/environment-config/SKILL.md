@@ -44,7 +44,7 @@ Keys that are application PREFERENCES rather than framework requirements already
 |---|---|---|
 | Holds | Application behavior | System-specific values |
 | Version-controlled | Yes | No |
-| Examples | `max_file_size`, `thumbnails.presets`, retention days, worker counts, viewer registries | `DB_PASSWORD`, `APP_DEBUG`, `APP_URL`, `REALTIME_*` |
+| Examples | `max_file_size`, `thumbnails.presets`, retention days, worker counts, viewer registries | `DB_PASSWORD`, `REDIS_HOST`, `APP_URL`, `REALTIME_*` |
 
 **Rule: use `env()` only for deployment-specific values. Application logic belongs in config files.** The decision test is "would this be the same on every host running this app?" - if yes it is config, even if it feels like a setting. Many config keys legitimately wrap `env()` so one value can be tuned per host; that is the sanctioned way to expose a knob, and the config file stays the place the key is *named*.
 
@@ -106,15 +106,29 @@ Fix by making `.env` tell the truth about the host you are actually browsing (us
 
 ---
 
-## The `.env` symlink invariant, and `rsx:env:heal`
+## `.env`, `.env.dist`, and `rsx:env:heal`
 
-`system/.env` (the file Laravel actually loads) is a **symlink** to the project-root `.env`. **The root file is authoritative**; edits to either are the same edit.
+`.env` is LOCAL configuration - one machine's settings, never committed, never distributed. **`.env.dist` at the project ROOT is its tracked counterpart**: the hand-curated canonical defaults, reviewed like code, and the file a missing `.env` is created from (whole-file, verbatim). **`system/.env.dist` never seeds a `.env`** - it only feeds the key sync below. A project with no root `.env.dist` REFUSES to boot in development, naming `cp system/.env.dist .env.dist` as the recovery.
+
+**Keys propagate downhill, values never do**: `system/.env.dist` -> `.env.dist` -> `.env`, on every development boot. A key MISSING from the lower file is appended verbatim; a key already present is left exactly as it is. So:
+
+- a config key added upstream reaches your `.env.dist` and your `.env` by itself;
+- **to switch a setting off, set it EMPTY** (`SOME_FEATURE=`) - deleting the line makes it a missing key, and the next boot puts it back;
+- **any new config key you introduce belongs in `.env.dist`**, with a sensible default or an empty string, and never a secret.
+
+The same pass checks that `DB_HOST`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` and `REDIS_HOST` are present (the first three non-empty; an empty `DB_PASSWORD` and a passwordless Redis are legal), and mints an `APP_KEY` when there is none - **in development only**. Outside development an empty `APP_KEY` is refused rather than replaced: a new key silently invalidates every encrypted value and signed cookie made with the one that went missing.
+
+**One implementation** - `Rsx_Env_Symlink::full_heal()` - behind `php artisan rsx:env:heal`, both entrypoints pre-boot (`system/artisan`, `system/public/index.php`, via `bootstrap/rsx_env_heal.php`), and the container entrypoint. In development it runs on EVERY boot and costs one stat when nothing changed (a stamp under `storage/rsx-tmp` compared against `.env` and both `.env.dist` files).
+
+## The `.env` symlink invariant
+
+**Laravel loads the project-root `.env` directly** - `bootstrap/app.php` calls `useEnvironmentPath(<project root>)`, so `environmentPath()` is the root and `environmentFilePath()` is the root `.env`. `system/.env` survives as a **symlink** to it, because bash readers (the container entrypoint, the pull script) and the prod-mode env writer still address that path by name. **The root file is authoritative**; edits to either are the same edit.
 
 **The failure mode**: a deploy, clone or file-copy materializes the symlink into a real file. The two drift, and **edits to the root become inert** - you change `.env`, nothing happens, and nothing announces it. That is the symptom to recognize ("my config change did nothing, and there is no error").
 
 ```bash
-php artisan rsx:env:heal --dry-run     # report drift, change nothing
-php artisan rsx:env:heal               # repair
+php artisan rsx:env:heal --dry-run     # report SYMLINK drift, change nothing
+php artisan rsx:env:heal               # the full heal (above), symlink included
 ```
 
 The healer: backs up a real `system/.env` to `system/.env.replaced_by_healer` (0600, gitignored), replaces it with a relative symlink (`../.env`), appends keys unique to `system/.env` to the root, and on a conflicting key **keeps the ROOT value while REPORTING each discarded `system/.env` value** - never a silent drop.
@@ -122,6 +136,20 @@ The healer: backs up a real `system/.env` to `system/.env.replaced_by_healer` (0
 **It runs automatically** on framework pull, at the start of `rsx:clean` (unsealed path), and FIRST in every prod-mode transition (`enable`/`refresh`/`disable`) so the `RSX_MODE` write lands in the single healed file.
 
 **Verified 2026-08-17**: the heal in `rsx:clean` runs before any of the reset logic and is **not** conditioned on `--_no-system-reset` - so the programmatic variant every build tool uses (`rsx:manifest:build`, `rsx:bundle:compile`, the updater) still heals the symlink. The only `rsx:clean` path that skips it is the sealed-build refusal, which exits before doing anything at all.
+
+---
+
+## An encrypted `.env`
+
+`env:encrypt`, `env:decrypt` and `key:generate` all operate at the **project root** (a framework override, `Env_Decrypt_Command`, fixes stock decrypt's `base_path()` output default - otherwise the recovered `.env` lands inside `system/`, which every framework pull cleans).
+
+**`.env.encrypted` present with NO `.env` is a hard refusal**: the heal throws in every mode and names the fix, rather than creating a `.env` from `.env.dist` over it - a box booting on default credentials while its real configuration sits encrypted one filename away is the worst outcome available.
+
+```bash
+php artisan env:decrypt --key=<key>     # or set LARAVEL_ENV_ENCRYPTION_KEY and omit --key
+```
+
+With BOTH present, `.env` wins and the heal proceeds normally. Nothing keeps `.env.encrypted` in step with `.env`, though, so every key sync and every minted `APP_KEY` makes it staler - `rsx:health`'s **Env Encryption** row WARNs about one sitting on a development box (`env:encrypt --force` to refresh it, or delete it).
 
 ---
 

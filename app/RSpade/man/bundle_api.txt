@@ -168,7 +168,7 @@ BUNDLE TYPES
     ASSET BUNDLES (Rsx_Asset_Bundle_Abstract)
         Dependency declaration bundles co-located with components.
         - NO directory scanning - only direct file paths
-        - Declares CDN assets, NPM modules, watch directories
+        - Declares CDN assets, NPM modules, watch targets
         - Auto-discovered when Module Bundles scan directories
         - Never built standalone - metadata consumed by Module Bundles
         - Can include other Asset Bundles by class name
@@ -569,11 +569,86 @@ LOAD_RSXAPP_DATA HOOK
     - On an FPC-cached route the printed value is cached with the page like
       all rsxapp data; do not return per-user data on FPC routes.
 
+WATCH TARGETS
+    The 'watch' key declares CACHE-INVALIDATION INPUTS: files that can change a
+    compiled artifact without being compiled into it. The canonical case is a
+    vendored SCSS entry point in 'include' that @imports a first-party partial
+    which is not itself an include.
+
+        class Bootstrap5_Src_Bundle extends Rsx_Asset_Bundle_Abstract {
+            public static function define(): array {
+                return [
+                    'include' => ['rsx/theme/vendor/bootstrap_custom.scss'],
+                    'watch' => [
+                        'rsx/theme/vendor/bootstrap5/scss',  // Directory
+                        'rsx/theme/variables.scss',          // File
+                    ],
+                ];
+            }
+        }
+
+    ACCEPTED PATHS
+        A watch entry takes the same kinds of path as an include entry: an
+        existing FILE or an existing DIRECTORY, relative to base_path(). A
+        directory is scanned recursively (honouring config
+        rsx.manifest.excluded_dirs); a file is registered directly.
+
+        A watch entry is NEVER compiled into any artifact. It contributes only
+        its content hash to the cache key.
+
+    MUST EXIST - FAIL LOUD
+        A target that is neither an existing file nor an existing directory
+        throws a RuntimeException naming the declaring bundle class and the
+        path. A typo, or a path deleted since the definition was written, is a
+        build failure and not a silent no-op:
+
+            Bundle 'watch' target does not exist.
+
+            Bundle: Rsx\Theme\Bootstrap5_Src_Bundle
+            Watch target: rsx/theme/varables.scss
+            ...
+
+        Rationale: a watch list that silently watches nothing is
+        indistinguishable from a correct one from the build output. The bundle
+        compiles, reports success, and serves a stale artifact.
+
+    BUCKET MEMBERSHIP FOLLOWS THE DECLARING BUNDLE
+        Each artifact is cached per bucket ('vendor' / 'app') and keyed on
+        bundle_files[bucket] + watch_files[bucket]. A watch target is registered
+        under the bucket(s) the DECLARING BUNDLE contributes compiled files to -
+        never inferred from the watched path.
+
+        So a watch target of a vendor-bucket bundle invalidates the VENDOR
+        artifact no matter where the watched file lives. This is what makes the
+        normal shape of "compile a third-party source tree, parameterised by
+        first-party configuration" work: the knobs deliberately live in
+        application space while the vendor tree stays pristine.
+
+        A bundle that contributes no compiled files of its own (watch-only,
+        cdn-only, or a module bundle whose includes are all sub-bundles)
+        registers its watch targets into BOTH buckets. Over-invalidation costs a
+        rebuild; under-invalidation is a stale artifact.
+
+        REGISTRATION IS ADDITIVE. One path may be a watch target of one bucket
+        and a direct include of the other at the same time; both facts are kept
+        and one edit invalidates both artifacts. A path is never moved between
+        buckets, and the same path appearing in both is a correct state.
+
+        The asymmetry with 'include' is deliberate. An include entry IS the
+        bytes of exactly one artifact, so its bucket is a property of the file's
+        own path. A watch entry feeds an artifact it is not part of, so its
+        bucket is a property of the bundle that declared it. (Include entries
+        must stay path-derived: a module bundle's include is normally a
+        directory scan sweeping first-party sources and vendored trees in one
+        pass - rsx/theme contains rsx/theme/vendor/ - so attributing every
+        scanned file to the declaring bundle would drain the vendor bucket.)
+
 CACHING
     Development:
         - Vendor files cached until dependencies change
         - App files rebuilt on any change
-        - Cache keys based on file hashes
+        - Cache keys based on file hashes, per bucket, over
+          bundle_files[bucket] + watch_files[bucket] (see WATCH TARGETS)
 
     Production:
         - All files concatenated and minified

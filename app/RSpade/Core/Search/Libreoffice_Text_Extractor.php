@@ -5,7 +5,6 @@ namespace App\RSpade\Core\Search;
 use Exception;
 use Symfony\Component\Process\Process;
 use App\RSpade\Core\Files\Libreoffice;
-use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Search\Rsx_Text_Extractor_Abstract;
 
 /**
@@ -27,25 +26,18 @@ use App\RSpade\Core\Search\Rsx_Text_Extractor_Abstract;
  * reader stops once the assembled text passes the byte cap (plus a small margin) and the service
  * truncates precisely.
  *
- * Shares the soffice-discovery routine (Libreoffice::find_soffice) AND the concurrency semaphore
- * with the thumbnail renderer. The semaphore name 'libreoffice_thumbnail' is HISTORICAL - it
- * literally means "libreoffice slots" cluster-wide, so text extraction and thumbnail rendering
- * draw from ONE shared pool of soffice invocations regardless of what the conversion targets.
+ * Shares the soffice-discovery routine (Libreoffice::find_soffice) with the render worker. There
+ * is no concurrency semaphore any more: Document_Render_Service is #[Exclusive] and is the only
+ * caller of soffice, so invocations are serialized by construction rather than by a slot pool.
  *
  * The master enable/disable switch (rsx.libreoffice.enabled) is checked by the caller
  * (Search_Index_Service) BEFORE invoking this extractor - a disabled LibreOffice yields an
  * UNSUPPORTED row, never a call here.
  *
- * Fail loud: throws on missing binary, no free slot, non-zero exit, or missing output.
+ * Fail loud: throws on missing binary, non-zero exit, or missing output.
  */
 class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
 {
-    /**
-     * Semaphore name for the max-concurrency quota. HISTORICAL name - it means "libreoffice
-     * slots" cluster-wide, shared with Libreoffice_Thumbnail_Renderer (one soffice pool).
-     */
-    protected const SEMAPHORE_NAME = 'libreoffice_thumbnail';
-
     /**
      * @param string $source_path
      * @param string $mime
@@ -59,21 +51,13 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
             throw new Exception('LibreOffice (soffice) is not installed or not configured');
         }
 
-        $timeout = (int) config('rsx.libreoffice.timeout', 30);
-        $max_concurrent = (int) config('rsx.libreoffice.max_concurrent', 2);
-        $slot_wait = (int) config('rsx.libreoffice.slot_wait_timeout', 30);
-
-        // One shared cluster-wide soffice slot pool (name shared with the thumbnail renderer).
-        // A crashed conversion's slot is freed the instant its process dies.
-        $slot = RsxLocks::acquire_semaphore(static::SEMAPHORE_NAME, $max_concurrent, $slot_wait);
-        if ($slot === null) {
-            throw new Exception('LibreOffice concurrency slot unavailable');
-        }
+        // The one sanctioned timeout: it bounds the EXTERNAL soffice binary, which wedges rather
+        // than merely running slowly on malformed input. Justified in full at its config key.
+        $timeout = (int) config('rsx.libreoffice.timeout', 120);
 
         // Private work dir - LibreOffice needs an isolated user profile and an output dir.
         $work_dir = sys_get_temp_dir() . '/rsx_soffice_txt_' . bin2hex(random_bytes(8));
         if (!mkdir($work_dir, 0700, true) && !is_dir($work_dir)) {
-            RsxLocks::release_semaphore($slot);
             throw new Exception("Failed to create LibreOffice work dir: {$work_dir}");
         }
 
@@ -100,7 +84,6 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
             // even if a locale edge case slips past the :UTF8 filter.
             return mb_convert_encoding($raw, 'UTF-8', 'UTF-8');
         } finally {
-            RsxLocks::release_semaphore($slot);
             static::__rmdir_recursive($work_dir);
         }
     }
@@ -169,7 +152,7 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
             $source_path,
         ]);
 
-        // Hard cap the conversion, measured from now (after slot acquisition).
+        // Hard cap the external binary (see the timeout note above).
         $process->setTimeout($timeout);
         $process->run();
 

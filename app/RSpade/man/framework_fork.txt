@@ -131,12 +131,17 @@ Notes for forked trees:
   (Php_Fixer use-header rewrites, class-override `.php.upstream` renames,
   composer classmap regeneration). This churn is normal and harmless; it
   is the same machinery that runs in managed mode.
-- `php artisan rsx:framework:verify` still works and is now your "what
-  have I changed?" tool: it diffs the live tree against the last
-  installed release inventory (`system/.rspade-release.json`), with
-  legitimate framework churn subtracted. `--diff` shows the changed
-  lines. This replaces digging through git history to reconstruct your
-  divergence.
+- "What have I changed?" is ordinary git, inside the submodule. There is
+  no framework-side verifier and no release inventory - a fork owns the
+  tree, and git already knows what it owns:
+
+      git -C system status
+      git -C system log --oneline <upstream_tip>..HEAD
+      git -C system diff <upstream_tip>..HEAD -- app/RSpade/
+
+  `php artisan rsx:framework:status` names the revision running, the
+  revision recorded by the project, and the remote it tracks; the
+  installed-release log is `rsx/resource/framework_update_history.dat`.
 
 ## UPDATING FROM UPSTREAM
 
@@ -151,8 +156,9 @@ distribution repository:
     # Clone the distribution once (or fetch an existing clone)
     git clone --bare ssh://git@git.internal.hanson.xyz/brianhansonxyz/rspade_system.git /tmp/rspade_system.git
 
-    # Your installed baseline is recorded in the release inventory
-    grep release_id system/.rspade-release.json
+    # Your baseline is the upstream revision you forked from - the last
+    # entry in rsx/resource/framework_update_history.dat, or:
+    php artisan rsx:framework:status
 
     # Browse upstream commits and diffs
     git --git-dir=/tmp/rspade_system.git log --oneline
@@ -213,8 +219,8 @@ separate framework install step in either mode.
    each core modification and why it exists.
 2. **Minimize divergence** - prefer tier-1 changes (outside app/RSpade/)
    or an upstream feature request over forking.
-3. **Use rsx:framework:verify** - run it before and after porting
-   upstream changes to keep an exact picture of your divergence.
+3. **Diff against upstream** - `git -C system diff <upstream_tip>..HEAD`
+   before and after porting, to keep an exact picture of your divergence.
 4. **Port upstream regularly** - the further you drift, the harder each
    manual merge becomes.
 5. **Test after every port** - `rsx:check` plus the framework test suite
@@ -231,10 +237,12 @@ The marker exists. If forking was unintentional:
 
 ### Lost track of modifications
 
-    php artisan rsx:framework:verify --diff
+    git -C system fetch origin
+    git -C system diff origin/master...HEAD
 
-Shows every divergence from the installed release, with framework-authored
-churn already subtracted.
+Shows every divergence from the upstream tip. Build churn (`.php.upstream`
+renames, regenerated use-headers and classmaps) appears alongside your real
+changes; `git -C system log` separates the two by commit.
 
 ## SEE ALSO
 

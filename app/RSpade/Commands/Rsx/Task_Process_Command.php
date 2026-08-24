@@ -347,11 +347,10 @@ class Task_Process_Command extends Command
      */
     private function process_one_task(): void
     {
-        $lock = new Task_Lock('task_queue', 5);
-        if (!$lock->acquire()) {
-            $this->warn('[ONCE MODE] Could not acquire dequeue lock');
-            return;
-        }
+        // Waits forever. A tick that skipped its work because a 5-second clock expired
+        // was declining assigned work, silently - see Task_Lock's header.
+        $lock = new Task_Lock('task_queue');
+        $lock->acquire();
 
         try {
             $task_row = DB::table('_tasks')

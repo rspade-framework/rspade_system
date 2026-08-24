@@ -89,4 +89,4 @@ Then set `csp.report_only => false`. Report-only is a silent state; the flip is 
 - **`mirror:true` on a dynamic vendor endpoint** - works in development, breaks in a sealed build.
 - **Inventing a timeout** because a load "hangs" - the loader has none by design.
 
-Full contract: `php artisan rsx:man external_resources` and `php artisan rsx:man csp`. Worked examples: `system/app/RSpade/Core/Js/turnstile.externals.php` (framework), `rsx/lib/analytics/` (template app).
+Full contract: `php artisan rsx:man external_resources` and `php artisan rsx:man csp`. Worked examples: `system/app/RSpade/Core/Js/turnstile.externals.php` (framework), and `lib/analytics/` in the reference app (`system/app/RSpade/resource/reference_app/lib/analytics/` downstream, `/rsx/lib/analytics/` in the monorepo).

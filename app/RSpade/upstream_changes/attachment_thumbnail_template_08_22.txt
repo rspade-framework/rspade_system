@@ -1,0 +1,306 @@
+TEMPLATE APP CONVERTED TO <ATTACHMENT_THUMBNAIL>
+Date: 2026-08-22
+
+SUMMARY
+    Every thumbnail and every avatar in the /rsx/ template now renders through
+    <Attachment_Thumbnail $attachment_id=...>. No template builds a thumbnail URL, no
+    controller ships one, and the two theme components that took an image URL
+    (Person_Avatar, Author_Meta_Row) now take an ATTACHMENT ID.
+
+    This is the worked template diff. The CORE contract behind it - why the component
+    exists, what changed in /system/, and the config keys and classes that were
+    retired - is a separate document you should read FIRST:
+
+        attachment_thumbnail_component_08_22.txt
+
+    THE REFERENCE APP SHIPS WITH YOUR RELEASE, so every converted file below can be
+    opened in full rather than reconstructed from this document. They live under:
+
+        system/app/RSpade/resource/reference_app/<the /rsx/ path>
+
+    e.g. system/app/RSpade/resource/reference_app/theme/components/view/person_avatar/person_avatar.jqhtml
+
+AFFECTED FILES
+
+    Controllers / models that stopped shipping URLs
+        /rsx/app/frontend/clients/clients_controller.php
+        /rsx/app/frontend/settings/profile_display/settings_profile_display_controller.php
+        /rsx/app/frontend/settings/user_management/settings_user_management_controller.php
+        /rsx/models/portal_request_thread_model.php
+        /rsx/portal/workspaces/documents/portal_documents_controller.php
+        /rsx/portal/workspaces/requests/portal_request_threads_controller.php
+
+    Templates whose <img> became the component
+        /rsx/app/frontend/Frontend_Spa_Layout.jqhtml
+        /rsx/app/frontend/clients/portal/Clients_Portal_Panel.jqhtml
+        /rsx/app/frontend/clients/portal/request_thread/Clients_Request_Thread_Action.jqhtml
+        /rsx/app/frontend/clients/portal/request_thread/document_detail_modal_body.jqhtml
+        /rsx/portal/workspaces/documents/Portal_Workspace_Documents_Action.jqhtml
+        /rsx/portal/workspaces/requests/thread/Portal_Request_Thread_Action.jqhtml
+        /rsx/portal/workspaces/requests/thread/portal_document_detail_modal_body.jqhtml
+
+    Theme components whose ARG CHANGED ($avatar_url -> $attachment_id)
+        /rsx/theme/components/view/person_avatar/person_avatar.jqhtml
+        /rsx/theme/components/view/person_avatar/person_avatar.scss
+        /rsx/theme/components/view/people_list/people_list.jqhtml
+        /rsx/theme/components/view/author_meta_row/author_meta_row.jqhtml
+        /rsx/app/frontend/clients/portal/request_thread/request_participant_card_modal_body.jqhtml
+        /rsx/portal/workspaces/requests/thread/portal_participant_card_modal_body.jqhtml
+
+    SCSS - the class now sizes the component's HOST, so object-fit moved inside
+        /rsx/app/frontend/frontend_spa_layout.scss
+        /rsx/app/frontend/clients/portal/clients_portal_panel.scss
+        /rsx/app/frontend/clients/portal/request_thread/Clients_Request_Thread_Action.scss
+        /rsx/app/frontend/clients/portal/request_thread/document_detail_modal_body.scss
+        /rsx/portal/workspaces/documents/Portal_Workspace_Documents_Action.scss
+        /rsx/portal/workspaces/requests/thread/Portal_Request_Thread_Action.scss
+        /rsx/portal/workspaces/requests/thread/portal_document_detail_modal_body.scss
+
+    Other
+        /rsx/theme/components/inputs/photo/profile_photo_input.js
+        /rsx/app/dev/attachments/dev_attachments.blade.php
+        /rsx/app/dev/attachments/dev_attachments.js
+        /rsx/app/frontend/settings/profile_display/settings_profile_display_action.js
+        /rsx/app/frontend/settings/user_management/view/settings_user_management_view_action.js
+        /rsx/app/frontend/clients/portal/request_thread/document_detail_modal.js
+        /rsx/app/frontend/clients/portal/request_thread/request_participant_card_modal.js
+        /rsx/portal/workspaces/requests/thread/portal_document_detail_modal.js
+        /rsx/portal/workspaces/requests/thread/portal_participant_card_modal.js
+        /rsx/resource/conventions/semantic_component_registry.md
+
+CHANGES REQUIRED
+
+    File: /rsx/portal/workspaces/documents/portal_documents_controller.php
+          (and identically: portal_request_threads_controller.php,
+           clients_controller.php in both its document rows)
+    ---------------------------------------------------------------------------
+    A producer ships the id, never a URL.
+
+    BEFORE
+        $documents[] = [
+            'shared_item_id' => $share->id,
+            'name' => $attachment->file_name,
+            'thumbnail_url' => $attachment->get_thumbnail_url('fit', 120, 120),
+            'download_url' => $attachment->get_download_url(),
+            ...
+        ];
+
+    AFTER
+        $documents[] = [
+            'shared_item_id' => $share->id,
+            'name' => $attachment->file_name,
+            'attachment_id' => (int) $attachment->id,
+            'download_url' => $attachment->get_download_url(),
+            ...
+        ];
+
+    In clients_controller.php the client-document row ALREADY carried
+    'attachment_id', so there the change is a pure DELETION of the 'thumbnail_url'
+    line. Use the field name the row already has; do not add a second spelling of
+    the same id.
+
+    File: /rsx/portal/workspaces/documents/Portal_Workspace_Documents_Action.jqhtml
+    ---------------------------------------------------------------------------
+    BEFORE
+        <img src="<%= doc.thumbnail_url %>" alt="<%= doc.name %>"
+             class="Portal_Workspace_Documents_Action__thumb">
+
+    AFTER
+        <Attachment_Thumbnail class="Portal_Workspace_Documents_Action__thumb"
+                              $attachment_id=doc.attachment_id
+                              $width=36 $height=36 $alt=doc.name />
+
+    The same one-line swap applies to Clients_Portal_Panel.jqhtml ($width=32
+    $height=32), both thread actions ($width=36 $height=36, twice each) and both
+    document-detail modal bodies ($width=220 $height=220).
+
+    File: /rsx/portal/workspaces/documents/Portal_Workspace_Documents_Action.scss
+    ---------------------------------------------------------------------------
+    The class now sizes the component's HOST element, and a div ignores object-fit.
+
+    BEFORE
+        &__thumb {
+            width: 36px;
+            height: 36px;
+            object-fit: contain;
+            border: $border-width solid $border-color;
+            border-radius: $border-radius-sm;
+            background-color: $gray-100;
+            flex-shrink: 0;
+        }
+
+    AFTER
+        &__thumb {
+            width: 36px;
+            height: 36px;
+            border: $border-width solid $border-color;
+            border-radius: $border-radius-sm;
+            background-color: $gray-100;
+            flex-shrink: 0;
+
+            .Attachment_Thumbnail__img,
+            .Attachment_Thumbnail__placeholder {
+                width: 100%;
+                height: 100%;
+                object-fit: contain;
+            }
+        }
+
+    For a box sized by max-width/max-height instead (the modal bodies), let the
+    image keep its natural size and give the placeholder an explicit one:
+
+            .Attachment_Thumbnail__img { max-width: 100%; height: auto; }
+            .Attachment_Thumbnail__placeholder { width: 220px; height: 220px; }
+
+    File: /rsx/theme/components/view/person_avatar/person_avatar.jqhtml
+    ---------------------------------------------------------------------------
+    $avatar_url is GONE; the arg is $attachment_id.
+
+    BEFORE
+        <% if (this.args.avatar_url) { %>
+          <span class="Person_Avatar__disc">
+            <img src="<%= this.args.avatar_url %>" alt="<%= _name %>"
+                 class="Person_Avatar__img">
+          </span>
+        <% } else { %>
+
+    AFTER
+        <% const _px = _size === 'sm' ? 28 : (_size === 'lg' ? 72 : 36); %>
+        <% if (this.args.attachment_id) { %>
+          <span class="Person_Avatar__disc">
+            <Attachment_Thumbnail class="Person_Avatar__photo"
+                                  $attachment_id=int(this.args.attachment_id)
+                                  $type="cover" $width=_px $height=_px $alt=_name />
+          </span>
+        <% } else { %>
+
+    The null branch is UNCHANGED and it is load-bearing: the component throws on a
+    null id, so a person with no photo must still take the initials-disc path.
+
+    In person_avatar.scss, &__img becomes &__photo and fills the disc:
+
+        &__photo {
+            display: block;
+            width: 100%;
+            height: 100%;
+
+            .Attachment_Thumbnail__img,
+            .Attachment_Thumbnail__placeholder {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+            }
+        }
+
+    Its two consumers pass the id through:
+
+        people_list.jqhtml
+            <Person_Avatar $name="<%= str(_p.name) %>"
+                           $attachment_id=_p.avatar_attachment_id ... />
+            ($people rows are now {name, avatar_attachment_id?, initials?, subtitle?})
+
+        author_meta_row.jqhtml
+            $avatar_url -> $attachment_id, passed straight to Person_Avatar.
+
+    File: /rsx/models/portal_request_thread_model.php
+    ---------------------------------------------------------------------------
+    participants() builds the rows People_List renders.
+
+    BEFORE
+        $avatar_url = null;
+        if ($user) {
+            $photo = $user->get_attachment('profile_photo');
+            if ($photo) {
+                $avatar_url = $photo->get_thumbnail_url('cover', 96, 96);
+            }
+        }
+        ...
+        'avatar_url' => $avatar_url,
+
+    AFTER
+        $avatar_attachment_id = null;
+        if ($user) {
+            $photo = $user->get_attachment('profile_photo');
+            if ($photo) {
+                $avatar_attachment_id = (int) $photo->id;
+            }
+        }
+        ...
+        'avatar_attachment_id' => $avatar_attachment_id,
+
+    The portal-member rows ship 'avatar_attachment_id' => null (they have no photo),
+    which is exactly the null case Person_Avatar handles.
+
+    File: /rsx/theme/components/inputs/photo/profile_photo_input.js
+    ---------------------------------------------------------------------------
+    THE ONE PLACE THE TEMPLATE DOES NOT MOUNT THE COMPONENT, and the reason is worth
+    understanding before you copy the pattern anywhere else: this input's VALUE is the
+    attachment KEY (that is what the form posts and what _set_value() receives), while
+    <Attachment_Thumbnail> is addressed by attachment ID. There is no id at that spot.
+
+    It is safe here because the widget only ever holds an IMAGE, whose thumbnail is
+    rendered straight from the blob (render state NOT_REQUIRED) - there is no pending
+    state to wait for and nothing that would later swap. The URL still goes through the
+    single builder, so no app code spells '/_thumbnail/'.
+
+    BEFORE
+        this.state.thumbnail_url =
+            `/_thumbnail/dynamic/${this.state.attachment_key}/cover/${width}/${height}`;
+
+    AFTER
+        this.state.thumbnail_url = File_Attachment_Model.thumbnail_url(
+            { key: this.state.attachment_key },
+            { type: 'cover', width: width, height: height }
+        );
+
+    File: /rsx/app/dev/attachments/dev_attachments.js (+ .blade.php)
+    ---------------------------------------------------------------------------
+    Mounting the component from JavaScript, using the id the /_upload response now
+    returns. The three <img id="thumb-*"> tags became sized <div>s.
+
+    BEFORE
+        $('#thumb-profile').attr('src', `/_thumbnail/dynamic/${key}/cover/96/96`);
+
+    AFTER
+        const attachment_id = response.attachment.id;
+        $('#thumb-profile').component('Attachment_Thumbnail',
+            { attachment_id: attachment_id, type: 'cover', width: 96, height: 96 });
+
+    The /_icon_by_extension/ tags on that page are NOT thumbnails and were left alone.
+
+    File: /rsx/app/frontend/settings/.../settings_*_controller.php
+    ---------------------------------------------------------------------------
+    'profile_photo_url' => $profile_photo->get_thumbnail_url('cover', 128, 128)
+    became
+    'profile_photo_attachment_id' => (int) $profile_photo->id
+
+    with the matching rename in each action's this.data.user stub. Frontend_Spa_Layout
+    reads the same field name for its header avatar.
+
+VERIFICATION
+    1. The grep gate - after the sweep this should return nothing but comments:
+
+           grep -rn "get_thumbnail_url\|/_thumbnail/\|thumbnail_url\|avatar_url" rsx/
+
+    2. php artisan rsx:check is clean.
+
+    3. Render the converted pages and confirm zero console errors, e.g.
+
+           php artisan rsx:debug "/clients/view/1#tab=portal" --user=<id> \
+               --screenshot-path=/tmp/panel.png
+           php artisan rsx:debug "/workspace/1/documents" --portal \
+               --portal-user=<email> --screenshot-path=/tmp/portal_docs.png
+
+       An image document should show a real thumbnail; a freshly uploaded Office
+       document shows the extension icon until the render worker has run, then swaps
+       without a reload.
+
+    4. On any page using People_List or Author_Meta_Row, confirm that a person WITHOUT
+       a profile photo still shows their initials disc. If it throws
+       "Attachment_Thumbnail requires $attachment_id", a null id reached the component
+       and the guard branch was lost in conversion.
+
+SEE ALSO
+    attachment_thumbnail_component_08_22.txt   the core contract (read this first)
+    php artisan rsx:man thumbnails
+    php artisan rsx:man documents

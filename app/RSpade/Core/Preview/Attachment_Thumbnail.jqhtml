@@ -1,0 +1,54 @@
+<%--
+Attachment_Thumbnail
+
+THE way a thumbnail renders in an RSX app - images, PDFs, Office documents, everything. A caller
+supplies an attachment id and a size; the component fetches the record, builds the URL, and keeps
+the picture correct for as long as it is on screen.
+
+It matters that this is a component and not a URL string in a payload: an Office document has no
+thumbnail until the background render worker has produced its PDF rendition, so what the browser
+first paints is an extension-icon placeholder. When the render lands, a realtime frame on the
+attachment brings the component back for a fresh record and the picture swaps in place - no reload,
+no polling, and no stale placeholder pinned by a one-year cache header.
+
+Args:
+  $attachment_id  (required) - the File_Attachment_Model id. Throws if absent.
+  $type           (optional) - dynamic variant: 'fit' (default) or 'cover'.
+  $width          (optional) - dynamic variant width in px (default 120).
+  $height         (optional) - dynamic variant height in px; omitted -> width-only variant.
+  $preset         (optional) - named preset from rsx.thumbnails.presets. MUTUALLY EXCLUSIVE with
+                               $type/$width/$height - passing both throws.
+  $alt            (optional) - img alt text; defaults to the attachment's file name.
+
+Extra classes go on the invocation as an ordinary HTML attribute - <Attachment_Thumbnail class="me-2"
+$attachment_id=id /> - which jqhtml preserves on the host element; there is no $class arg.
+
+States (data-render-status, on the rendered <img> or placeholder, carries the blob's
+File_Storage_Model::RENDER_STATUS_*, or 'none' when there is no resident blob):
+  1 NOT_REQUIRED - an image or PDF: the picture is rasterized straight from the blob.
+  2 PENDING      - queued for render: the extension icon is served, uncacheable.
+  3 RENDERED     - the real page-1 raster.
+  4 FAILED       - terminal: the extension icon, permanently.
+  unavailable    - the record could not be fetched (deleted, or not visible to this user).
+--%>
+<Define:Attachment_Thumbnail tag="div">
+    <% if (!this.args.attachment_id) { throw new Error('Attachment_Thumbnail requires $attachment_id'); } %>
+    <% if (this.args.preset && (this.args.type || this.args.width || this.args.height)) { throw new Error('Attachment_Thumbnail: $preset and $type/$width/$height are mutually exclusive'); } %>
+    <%
+        const _record = this.data.attachment;
+        const _status = (_record && _record.file_storage) ? int(_record.file_storage.render_status_id) : 'none';
+        const _alt = this.args.alt || (_record ? _record.file_name : '');
+        const _src = _record ? File_Attachment_Model.thumbnail_url(_record, {
+            type: this.args.type,
+            width: this.args.width || 120,
+            height: this.args.height,
+            preset: this.args.preset,
+        }) : null;
+    %>
+    <% if (_src) { %>
+        <img class="Attachment_Thumbnail__img" src="<%= _src %>" alt="<%= _alt %>" data-render-status="<%= _status %>" data-attachment-id="<%= int(this.args.attachment_id) %>">
+    <% } else { %>
+        <%-- No record: deleted, or not visible to this user. A quiet empty box, never an error. --%>
+        <div class="Attachment_Thumbnail__placeholder" data-render-status="unavailable" data-attachment-id="<%= int(this.args.attachment_id) %>"></div>
+    <% } %>
+</Define:Attachment_Thumbnail>

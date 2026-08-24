@@ -27,6 +27,7 @@ class Core_Bundle extends Rsx_Bundle_Abstract
                 'app/RSpade/Core/Database',
                 'app/RSpade/Core/Time',  // Timezone preference endpoints (Rsx_Timezone_Controller proxy)
                 'app/RSpade/Core/Models',  // Framework models (User_Model, Site_Model, etc.)
+                'app/RSpade/Core/Files',  // File_Attachment_Model + its JS class (thumbnail_url) - <Attachment_Thumbnail> is a Core component, so its model must reach every bundle
                 'app/RSpade/Core/SPA',
                 'app/RSpade/Core/Debug',  // Debug components (JS_Tree_Debug_*)
                 'app/RSpade/Core/Preview',  // Document preview components (Document_Preview + viewers)

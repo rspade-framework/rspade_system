@@ -62,6 +62,14 @@ abstract class Rsx_Test_Abstract
     protected static $requires_db_reset = false;
 
     /**
+     * The staff site id the test process booted with (see run()); restored at every
+     * class boundary so one class's __reset_session() cannot re-scope the classes that follow.
+     *
+     * @var int|null
+     */
+    private static $__boot_site_id = null;
+
+    /**
      * Runner-facing accessor for the per-class reset flag.
      * @return bool
      */
@@ -109,11 +117,40 @@ abstract class Rsx_Test_Abstract
         static::$results = [];
         static::$current_test = null;
 
+        // The staff site this process BOOTED with. The template's Main::init() declares the
+        // tenant (rsx/main.php: Session::set_site_id(1)) before any test runs, so every
+        // site-scoped query in the suite is answered against that site - until a test calls
+        // __reset_session(), which nulls the CLI override and leaves get_site_id() at 0 for
+        // every class that runs after it in the same process. Site-1 rows then vanish from
+        // queries that never asked for a site at all (Preview_Sample_Import_Test after the
+        // Portal_Session classes). Remember the boot site once, restore it between classes.
+        if (self::$__boot_site_id === null) {
+            self::$__boot_site_id = (int) Session::get_site_id();
+        }
+
         try {
             return static::_run_tests();
         } finally {
             static::$results = $outer_results;
             static::$current_test = $outer_current_test;
+
+            // A CLASS boundary is always the boot site. Deliberately NOT per test: a class
+            // may create its own site in setup() (once per class) and scope every test to
+            // it - Realtime_User_Refresh_Test does exactly that - so restoring between
+            // tests would silently re-scope the class's own fixtures out of view. Between
+            // classes there is no such expectation, and that is where the leak did damage.
+            static::__restore_boot_site();
+        }
+    }
+
+    /**
+     * Re-establish the staff site the process booted with (see run()). A no-op when the
+     * site is already the boot site, or when no boot site was ever recorded.
+     */
+    private static function __restore_boot_site(): void
+    {
+        if (self::$__boot_site_id !== null && (int) Session::get_site_id() !== self::$__boot_site_id) {
+            Session::set_site_id(self::$__boot_site_id);
         }
     }
 

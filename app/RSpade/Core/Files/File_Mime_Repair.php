@@ -24,7 +24,7 @@ use App\RSpade\Core\Files\Rsx_File_Paths;
  *     text extraction, and delete the cached PDF rendition + thumbnails (stale icon artifacts
  *     produced while the document was mis-routed).
  *
- * The re-queued extraction is drained by the normal Search_Index_Service::index_pending task
+ * The re-queued extraction is drained by the normal Document_Render_Service::render_pending task
  * (its every-5-minutes cron). Callers that want an immediate drain dispatch that task after a
  * run() with a non-zero blob count - run() itself never dispatches, so it is safe to call from
  * a migration (which must not assume a task worker is available mid-migrate).

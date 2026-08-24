@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Manifest;
 
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Rsx;
 
 /**
  * _Manifest_Quality_Helper - Code quality and IDE support
@@ -21,7 +22,7 @@ class _Manifest_Quality_Helper
     public static function _process_code_quality_metadata(array $changed_files): void
     {
         // Only run in development mode
-        if (env('APP_ENV') === 'production') {
+        if (!Rsx::is_development()) {
             return;
         }
 

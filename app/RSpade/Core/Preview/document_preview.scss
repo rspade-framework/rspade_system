@@ -16,6 +16,8 @@
         width: 100%;
     }
 
+    &__preparing,
+    &__failed,
     &__unavailable {
         display: flex;
         flex-direction: column;
@@ -27,6 +29,7 @@
         text-align: center;
     }
 
+    &__state-icon,
     &__unavailable-icon {
         width: 72px;
         height: 72px;
@@ -34,6 +37,7 @@
         opacity: 0.55;
     }
 
+    &__state-title,
     &__unavailable-title {
         margin-top: 16px;
         font-size: 15px;
@@ -41,6 +45,7 @@
         color: #6c757d;
     }
 
+    &__state-name,
     &__unavailable-name {
         margin-top: 4px;
         font-size: 13px;

@@ -3,6 +3,8 @@
 Self-detecting, idempotent scripts that configure/repair the target environment AFTER a
 framework update. `system/bin/post-update.sh` (invoked by `framework-pull-upstream.sh` at the
 end of a successful pull) runs every `*.sh` in this directory, in sorted order, on every pull.
+It accepts `--quiet`, which exports `RSPADE_ENV_UPDATE_QUIET=true` for the scripts it runs
+(see contract rule 2).
 
 Because `post-update.sh` runs these as a subprocess reading the FRESHLY-SYNCED copies, a new
 or changed environment update takes effect on the SAME pull that ships it — no two-pull lag.
@@ -13,7 +15,7 @@ minimal (editing a running bash script is unsafe, and its edits lag one pull).
 ## Triggers
 
 `system/` is vendored, so a plain `git pull` DELIVERS a new script here but executes nothing.
-Four triggers converge on `post-update.sh` — it is the single entry point, and every script
+Five triggers converge on `post-update.sh` — it is the single entry point, and every script
 must tolerate being run by any of them:
 
 1. **`rsx:framework:pull`** — the updater's `run_post_update()` at the end of a successful pull.
@@ -33,6 +35,11 @@ must tolerate being run by any of them:
    which leaves the blob store and logs inside the framework-owned `system/` tree). It runs
    before supervisor because `030` MOVES the tree the helper daemons hold sockets in, and
    takes no `ENVIRONMENT_UPDATES` lock because nothing else in the container is alive yet.
+5. **`rsx:git pull` / `merge`** — after an operation that succeeded and moved HEAD, the git
+   proxy runs `post-update.sh --quiet` (downstream only; the monorepo path is inert). It
+   exists because `rsx/resource/` is manifest-ignored: a pull whose only change is a
+   teammate's new application skill triggers no rebuild, so trigger 2 never fires. Non-fatal
+   and quiet — the developer asked for a pull, not for an environment report.
 
 ## The contract every script here MUST follow
 
@@ -56,6 +63,11 @@ must tolerate being run by any of them:
    NOTHING and print NOTHING — exit 0 silently. The pull output stays quiet on a healthy env.
 2. **Speak only when acting.** Print to stdout ONLY when you detect an unapplied change and
    apply it (one concise line or short block: what you applied). Errors go to stderr.
+   **INFORMATIONAL lines gate on `RSPADE_ENV_UPDATE_QUIET`; problems never do.** When that
+   variable is `true` (exported by `post-update.sh --quiet`, which the `rsx:git` post-pull
+   hook passes), suppress the "created / repaired / retargeted / pruned" lines and keep every
+   stderr report. A quiet run is a quiet SUCCESS, never a silent failure. The house spelling
+   is one helper at the top: `info() { [ "$QUIET" = true ] || echo "[env] $*"; }`.
 3. **Idempotent.** Running twice is a no-op the second time. These run on EVERY pull.
 4. **Non-fatal.** A failure is reported by `post-update.sh` but never fails the pull (the
    framework update already succeeded). Do not `exit` non-zero for a benign "nothing to do".
@@ -141,9 +153,41 @@ signal over inferring from side effects.
   symlink when — and only when — it points into the rspade tree. Prints the one-time
   workspace-trust note only on the run that first creates the symlink.
   Test seam: `RSPADE_CLAUDE_HOME_DIR` overrides the `/root` home for simulations.
+- `070_app_skills.sh` — wires the APPLICATION's own Claude Code skills into the
+  environment. BOTH contexts (the template app carries skills exactly as a downstream app
+  does). For every `rsx/resource/skills/<name>/SKILL.md` it ensures
+  `.claude/skills/<name> -> ../../rsx/resource/skills/<name>` (RELATIVE, never absolute — the
+  link is committable and must be correct in every clone); a directory without a `SKILL.md`
+  is not a skill and is ignored. `rspade` is RESERVED (060 owns that entry, the framework
+  plugin) and is refused with a rename instruction. It also PRUNES a symlink directly under
+  `.claude/skills/` whose LITERAL target starts `../../rsx/resource/skills/` or
+  `../../system/app/RSpade/` and which no longer resolves — nothing else is ever removed, and
+  a foreign entry blocking a skill's name is reported and left in place. The parent directory
+  is never removed/recreated (Claude Code's file watcher). It exists as an environment update
+  rather than a committed link because `rsx/resource/` is manifest-ignored: a pull carrying
+  only a teammate's new skill triggers no rebuild, which is why `rsx:git` runs
+  `post-update.sh --quiet` after a pull/merge that moved HEAD. `rsx:health` reports the same
+  state ("Claude Skills"); `rsx:heal claude-skills` re-runs this script.
 - `061_system_rsx_symlink.sh` — ensures the `system/rsx -> ../rsx` app-tree symlink exists
   (every manifest build depends on it via `base_path('rsx')`). Heals boxes broken by the
   2026-08-18 foreign-path-untracking incident: the symlink is tracked but structurally
   uninventoriable (the publish inventory drops non-regular-files), so the first cut untracked
   it and the proxy clean deleted it. Recreates when missing, retargets a wrong symlink; a real
   file/dir squatting on the path is reported and left alone.
+- `080_submodule_ignore_dirty.sh` — makes the framework's submodule POINTER visible in
+  ordinary git output (downstream only; the monorepo has no `system` submodule). Two
+  fixes, both self-detecting: sets `submodule.system.ignore = dirty` in the TRACKED
+  `.gitmodules` when it is anything else, and UNSETS a repo-wide
+  `diff.ignoreSubmodules` from `.git/config` whatever its value. `dirty` is the only
+  value that shows a moved pointer (a framework update) while hiding the build's
+  permanent `.php` <-> `.php.upstream` churn inside `system/`; `none` reports ` M system`
+  forever, and the blanket `all` operators reach for in response hides the pointer too —
+  the framework version then lands with no trace in `status`, `diff` or the commit
+  summary (field report, 2026-08-22). `bin/publish` already writes `ignore = dirty` into
+  the starter and `framework-pull-upstream.sh` sets it during the vendored -> submodule
+  conversion, so this slot serves boxes converted BEFORE that landed (the generated
+  updater lags one pull) plus anyone who added the blanket setting by hand. A
+  `.gitmodules` with no `system` entry is not a submodule project and is skipped
+  silently. The `.gitmodules` edit is a TRACKED-file change, so the informational line
+  asks the developer to commit it. `rsx:health` reports the same state ("Submodule
+  Visibility"); `rsx:heal submodule-ignore-dirty` re-runs this script.

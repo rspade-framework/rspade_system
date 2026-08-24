@@ -73,6 +73,11 @@ class File_Disposal_Service extends Rsx_Service_Abstract
             // ON DELETE RESTRICT. This IS "releasing the claim on the blob": the tombstone
             // rows persist forever as audit records, with their metadata intact and
             // file_storage_id nulled. Raw update (these are destroyed rows; no lifecycle).
+            //
+            // @REALTIME-BULK-01-EXCEPTION - every row this touches is a DESTROYED tombstone: the
+            // retention window has elapsed, the attachment is unreachable from every screen, and
+            // nothing can be subscribed to it. A change frame here would tell a subscriber that
+            // does not exist to refetch a record it may no longer read.
             DB::table('_file_attachments')->where('file_storage_id', $storage_id)->update(['file_storage_id' => null]);
 
             // Physical blob (resolved through the Rsx_File_Paths choke point).
