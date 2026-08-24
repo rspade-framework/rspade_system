@@ -123,6 +123,38 @@ DISTRIBUTION
 
     The knowledge tree itself lives at system/app/RSpade/docs/.
 
+    THE STARTER README'S CLONE LINE. rspade_project's root README.md is authored at
+    system/bin/publish_assets/README.rspade_starter.md, and its quick start says
+    `git clone --depth 1 --recurse-submodules https://github.com/rspade-framework/rspade
+    my-app`. That is correct on the framework's own GitHub page and wrong in a project
+    made from it: "Use this template" produces a NEW repository with one squashed initial
+    commit and the developer's own origin, so the README would send that project's
+    teammates to somebody else's repository. GitHub Markdown has no repo-URL variable, so
+    the fix is post-clone - system/bin/environment_updates/090_readme_clone_url.sh, which
+    runs on the first container start (and every environment-update trigger after it).
+
+    It rewrites exactly that one line to `git clone --recurse-submodules <origin> my-app`
+    - `--depth 1` dropped, because a teammate joining a project wants the history - and
+    adjusts the single sentence in the requirements <details> block that recommended it.
+
+    THE ONLY AUTHORIZATION TO REWRITE IS BYTE IDENTITY. publish places a pristine copy of
+    the shipped README inside the release at:
+
+        system/app/RSpade/resource/starter/README.md
+
+    (in this monorepo, a symlink back to the publish asset; excluded from the main system/
+    rsync and materialized as a real file, exactly as reference_app is). The script rewrites
+    only while the project's README.md is cmp-identical to that copy. An edited README, an
+    already-personalized one, or a release too old to carry the pristine copy is a silent
+    no-op - forever, and with no git-history heuristics anywhere in the decision.
+
+    THE ORIGIN. `git remote get-url origin`, verbatim. No origin (or no repository) is a
+    no-op: the file stays pristine, so the window stays open until a remote exists and
+    the next container start personalizes it then. An origin that IS the starter itself - path suffix
+    rspade-framework/rspade(.git) or /rspade_project(.git) - is a no-op: a checkout of the
+    starter is not a project yet, and the shipped line is already right there. README.md is
+    tracked, so the rewrite is a working-tree change the developer commits like any other.
+
 APPLICATION SKILLS
     An application authors its own Claude Code skills at
     rsx/resource/skills/<name>/SKILL.md (a directory without a SKILL.md is not a

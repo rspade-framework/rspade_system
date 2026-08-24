@@ -15,6 +15,7 @@ with real-world usage. Three channels, all equivalent:
 ## APPLICATION CONTEXT
 
 - **Delegation research artifacts** (audits, investigation reports) are persisted verbatim into your own project's documentation tree - e.g. `rsx/resource/` - before implementation begins.
+- **The starter `README.md`'s quick-start clone line is rewritten to your project's own `origin` on first container start** - only while the file is still byte-identical to the pristine copy shipped at `system/app/RSpade/resource/starter/README.md`, so any edit of your own ends the personalization for good (`rsx:man template_app`).
 
 ### The reference app — ground truth when your code has diverged
 

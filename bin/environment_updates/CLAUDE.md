@@ -191,3 +191,21 @@ signal over inferring from side effects.
   silently. The `.gitmodules` edit is a TRACKED-file change, so the informational line
   asks the developer to commit it. `rsx:health` reports the same state ("Submodule
   Visibility"); `rsx:heal submodule-ignore-dirty` re-runs this script.
+- `090_readme_clone_url.sh` — personalizes the starter README's quick-start clone line
+  (downstream only). The shipped `README.md` tells the reader to
+  `git clone --depth 1 --recurse-submodules https://github.com/rspade-framework/rspade my-app`,
+  which is right on the framework's own GitHub page and wrong in a project made from it
+  ("Use this template" gives a new repo with one squashed commit and the developer's own
+  origin). It rewrites that one line to `git clone --recurse-submodules <origin> my-app`
+  (`--depth 1` dropped — a teammate joining a project wants the history) and adjusts the
+  one sentence in the requirements `<details>` block that recommended `--depth 1`. THE ONLY
+  AUTHORIZATION IS BYTE IDENTITY: the project's `README.md` must `cmp -s` equal to the
+  pristine copy shipped in the release at
+  `system/app/RSpade/resource/starter/README.md` (placed by `bin/publish`; a monorepo
+  symlink back to `bin/publish_assets/README.rspade_starter.md`). Anything else — an edited
+  README, an already-personalized one, an older release with no pristine copy — is a silent
+  no-op forever; there are no git-history heuristics. No origin is a no-op that keeps the
+  pristine window open until a remote exists; an origin that IS the starter
+  (`rspade-framework/rspade`, or the internal `rspade_project`) is a no-op, since a checkout
+  of the starter is not a project yet. The write is atomic (temp + `mv`) and verified.
+  `README.md` is TRACKED, so the informational line asks for the commit.

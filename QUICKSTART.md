@@ -8,108 +8,77 @@ argument to list every topic).
 
 ```
 <project>/            your application repository
-├── rsx/              YOUR code — modules, models, theme, services
-├── system/           the RSpade framework — vendored, machine-owned
+├── rsx/              YOUR code - modules, models, theme, services
+├── system/           the RSpade framework - a git SUBMODULE, machine-owned
 ├── storage/          volatile state (build artifacts, caches, locks)
-└── .env              configuration
+├── .env.dist         the TRACKED default settings (yours to curate)
+└── .env              this machine's configuration (never committed)
 ```
 
-`system/` is **ordinary tracked files**, not a git submodule and not a package
-manager dependency. `rsx:framework:pull` rewrites it in place from the published
-framework release. **Never hand-edit anything under `system/`** — the updater
-detects the drift and refuses to sync until it is resolved. Your work lives in
-`rsx/`.
+`system/` is a **git submodule** tracking the published framework repository.
+`rsx:framework:pull` moves that pointer to a newer release and commits the move
+as one line. **Never hand-edit anything under `system/`** - every update resets
+the whole tree. Your work lives in `rsx/`; a framework class you need to change
+is changed by a class override in `rsx/` (`rsx:man class_override`).
 
 ## Installation
 
-### 1. Clone
+Development runs **inside the RSpade container** - the framework refuses to run
+development mode anywhere else. You need Docker and git; no PHP, Node or MySQL
+on your machine.
 
 ```bash
-git clone <your-project-remote> /path/to/project
-cd /path/to/project
+git clone --recurse-submodules <your-project-remote> my-app
+cd my-app
+bash system/app/RSpade/resource/docker/build.sh
+docker compose up
 ```
 
-No `--recurse-submodules`, no submodule init, no extra remote to configure. The
-framework arrives as part of the checkout.
+`<your-project-remote>` is this application's own repository - the URL your
+team pushes to. Starting a brand-new application instead? Clone the starter:
+`git clone --depth 1 --recurse-submodules https://github.com/rspade-framework/rspade my-app`.
 
-### 2. Configure
+**`--recurse-submodules` is not optional.** The framework is the `system/`
+submodule; a plain clone leaves it empty and nothing runs. Already cloned
+without it? `git submodule update --init --recursive`.
+
+Then open **http://localhost:8080** and follow the setup screens: the
+application asks for its own address (`APP_URL`) and for the first account.
+There is no `.env` to prepare and no install step:
+
+- `.env` is created from `.env.dist` on first boot, and every key you later add
+  to `.env.dist` reaches `.env` on the next development boot (`rsx:man app_mode`).
+- `APP_KEY` is minted in development when it is empty.
+- The framework's Composer and npm dependencies are **committed inside
+  `system/`** and arrive with the submodule. Your own application packages are
+  added through `rsx:composer` / `rsx:npm` (see Dependencies below), never by
+  running `composer` or `npm` by hand.
+
+Everything else - `migrate`, the schema, the first user - happens through those
+screens and through `php artisan` inside the container:
 
 ```bash
-cp .env.dist .env
-```
-
-Then set your database credentials in `.env`:
-
-```
-DB_CONNECTION=mysql
-DB_HOST=127.0.0.1
-DB_PORT=3306
-DB_DATABASE=your_database
-DB_USERNAME=your_username
-DB_PASSWORD=your_password
-```
-
-Also set `APP_URL`. It must be **https** (RSpade assumes SSL terminates
-upstream) and it is the single source of the application hostname. On any
-non-production host you can use the literal token form, which resolves to the
-machine's own hostname at boot so every dev box ships the same line:
-
-```
-APP_URL=https://$HOSTNAME
-```
-
-A real production host sets its actual hostname instead.
-
-### 3. Install dependencies
-
-There are two dependency layers. The framework's set is committed inside
-`system/`; your application's set lives at the project root.
-
-```bash
-cd system
-composer install
-npm install
-cd ..
-composer install
-```
-
-The first two materialize the framework layer. The final root `composer install`
-builds your application's `/vendor` and its autoload chain from the shipped
-lock. No root `npm install` is needed until your app adds its first JS package.
-
-Those three commands are the **only** time you run `composer`/`npm` by hand.
-From then on, add packages through the wrappers (see Dependencies below).
-
-### 4. Key, schema, build
-
-```bash
-php artisan key:generate
-php artisan migrate
-php artisan rsx:manifest:build
-```
-
-`migrate` is safe to run whenever schema work needs it — in development it
-snapshots the database first and rolls back automatically on failure.
-
-### 5. Check your work
-
-```bash
+docker compose exec app bash
 php artisan rsx:health
 ```
 
-Verifies dependencies, services, and environment. Exit code 1 means a genuine
-FAIL; WARN and INFO lines are advisory.
+`rsx:health` verifies dependencies, services and environment. Exit code 1 means
+a genuine FAIL; WARN and INFO lines are advisory, and a WARN row names the
+`rsx:heal <target>` that fixes it.
+
+A production or debug host runs a **sealed build** outside the container:
+`rsx:man app_mode` and `rsx:man prelaunch_checklist` are the path there.
 
 ## Updating the framework
 
 ```bash
-php artisan rsx:git pull      # bring in your team's application changes
-php artisan rsx:framework:pull # bring in a new framework release
-php artisan migrate            # apply any schema the release added
+php artisan rsx:git pull         # bring in your team's application changes
+php artisan rsx:framework:pull   # bring in a new framework release
+php artisan migrate              # apply any schema the release added
 ```
 
-`rsx:framework:pull` raises a maintenance window, rsyncs the framework's owned
-zones, three-way-reconciles the rest, commits `system/` as one dedicated
+`rsx:framework:pull` raises a maintenance window, checks the new release out
+into the `system/` submodule, commits the pointer move as one dedicated
 framework-update commit, rebuilds, and runs any environment updates the release
 shipped. It is not a merge and not a stash. If it reports pending
 `upstream_changes` documents, those are manual actions the release needs from
@@ -123,9 +92,10 @@ php artisan rsx:framework:upstream_changes:show <name>
 Full contract: `php artisan rsx:man rsx_upstream`.
 
 **Use `php artisan rsx:git <any git command>` instead of bare `git`.** It is a
-transparent proxy — same subcommands, flags, exit codes, stdin and TTY — that
-keeps framework churn out of your application commits and wraps tree-rewriting
-operations in a maintenance window. Details: `rsx:man rsx_git`.
+transparent proxy - same subcommands, flags, exit codes, stdin and TTY - that
+keeps the checked-out framework in step with the submodule pointer your
+repository records (a teammate's framework update lands on your box the moment
+you pull it). Details: `rsx:man rsx_git`.
 
 ## Your first module
 
