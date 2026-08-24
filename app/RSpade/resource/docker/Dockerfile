@@ -41,8 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         nginx redis-server redis-tools supervisor \
     # talking to a database (the SERVER is a dev-target concern)
         mysql-client \
-    # fetching, unpacking, and the PPA machinery below
-        ca-certificates curl wget gnupg2 software-properties-common unzip \
+    # fetching and unpacking. No software-properties-common: it exists to provide
+    # add-apt-repository, and the PHP apt source is now shipped as a file instead.
+        ca-certificates curl wget gnupg2 unzip \
     # image handling: thumbnails, uploads, optimisation
         imagemagick ghostscript optipng \
     # document preview and text extraction - RUNTIME features, both targets
@@ -59,12 +60,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # PHP from the ondrej PPA, which is where a current PHP for Ubuntu lives.
 #
+# THE APT SOURCE IS SHIPPED, NOT RESOLVED AT BUILD TIME. This used to be
+# `add-apt-repository -y ppa:ondrej/php`, which asks LAUNCHPAD'S API to resolve the
+# PPA and hand back its signing key - so every build of this image depended on that
+# API being healthy at that moment. It is not always: a build failed here with
+# Launchpad returning `GPGKeyTemporarilyNotFoundError` (2026-08-24), minutes after
+# an identical build had downloaded packages from the same archive perfectly well.
+#
+# php/ondrej-php.sources is that PPA in deb822 form with the signing key inline
+# (B8DC7E53946656EFBCE4C1DD71DAEAAB4AD4CAB6, "Launchpad PPA for Ondrej Sury"). The
+# ARCHIVE host is unchanged - ppa.launchpadcontent.net, the same place the packages
+# always came from - so this removes one third-party service from the build without
+# changing where a single byte originates.
+#
+# NOTE the suite is pinned to `noble` inside that file, matching this image's
+# ubuntu:24.04 base. Changing the base image means changing the suite too, and apt
+# will say so loudly rather than silently installing nothing.
+#
 # NOTE: no php${PHP_VERSION}-opcache. OPcache is BUILT INTO the PHP 8.5 core and
 # sury publishes no such package - every release from 5.6 to 8.4 has one, 8.5 does
 # not. Listing it fails the whole apt-get and breaks the build. It is present:
 # `php -m` reports Zend OPcache without it.
-RUN add-apt-repository -y ppa:ondrej/php \
-    && apt-get update && apt-get install -y --no-install-recommends \
+COPY php/ondrej-php.sources /etc/apt/sources.list.d/ondrej-php.sources
+RUN apt-get update && apt-get install -y --no-install-recommends \
         php${PHP_VERSION} \
         php${PHP_VERSION}-fpm \
         php${PHP_VERSION}-cli \
