@@ -165,6 +165,11 @@ class Rsx_First_User_Setup
      * the enabled User_Model rows for an identity, and with none it reports "your
      * account is inactive", which is a confusing way of saying "you belong to no
      * site" (2026-08-20).
+     *
+     * The screen asks for an email and a password and nothing else - the shortest
+     * path from a fresh install to a usable login. No name is passed: create()
+     * supplies Rsx_Initial_User::DEFAULT_FIRST_NAME / DEFAULT_LAST_NAME, so the
+     * account is never nameless however it was created.
      */
     private static function __create_initial_user(string $email, string $password): void
     {

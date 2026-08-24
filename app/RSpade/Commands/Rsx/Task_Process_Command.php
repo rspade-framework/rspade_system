@@ -49,10 +49,19 @@ class Task_Process_Command extends Command
 
     protected $description = 'Scheduler/dispatcher tick: reconcile schedules and spawn workers (run via cron every minute)';
 
+    /**
+     * SILENT ON AN IDLE TICK. This runs from cron every minute, so anything printed
+     * unconditionally is printed 1,440 times a day into the service log, burying the
+     * lines that matter. There is deliberately no "starting"/"complete" pair.
+     *
+     * Everything below still speaks up, because everything below is CONDITIONAL: a
+     * stuck task, a timeout, a stranded schedule and an unreadable worker registry
+     * all warn; a schedule actually registered, changed or removed says so; a spawn
+     * says so when there was work to spawn for. --once is a testing flag and narrates
+     * itself. Keep it that way - problems and real events, never a heartbeat.
+     */
     public function handle()
     {
-        $this->info('[TASK PROCESSOR] Starting task processor');
-
         // Step 1: recover stuck tasks (task-level, not worker accounting)
         $this->detect_stuck_tasks();
 
@@ -69,8 +78,6 @@ class Task_Process_Command extends Command
         if ($this->option('once')) {
             $this->process_one_task();
         }
-
-        $this->info('[TASK PROCESSOR] Task processor complete');
 
         return 0;
     }

@@ -56,6 +56,23 @@ class Rsx_Initial_User
     public const INITIAL_USER_ID = 1;
 
     /**
+     * The name the initial account gets when the caller does not supply one.
+     *
+     * users.first_name / last_name are nullable with NO database default, so an
+     * account created without them has no name at all - and every screen that
+     * prints a user then falls through to showing the raw email address, which is
+     * how a founding account ends up displaying as "you@example.com" forever.
+     *
+     * Defaulted HERE rather than at each call site because there are three ways in
+     * (the first-run screen, the RSPADE_DEFAULT_* post-migrate seed, and the test
+     * baseline) and only the test baseline has any reason to name its own account.
+     * A default per caller is a default that gets forgotten by the next caller.
+     */
+    public const DEFAULT_FIRST_NAME = 'William';
+
+    public const DEFAULT_LAST_NAME = 'Adama';
+
+    /**
      * The event fired once the initial user exists.
      *
      * THE SESSION REFLECTS THE NEW ACCOUNT'S SITE WHEN YOUR HANDLER RUNS.
@@ -103,6 +120,9 @@ class Rsx_Initial_User
      * @param string $email    the login email; also the profile email
      * @param string $password the PLAIN password - hashed here, so no caller hashes it twice
      * @param array  $options  site_id, role_id, first_name, last_name, source, connection
+     *                          (first_name/last_name default to DEFAULT_FIRST_NAME /
+     *                          DEFAULT_LAST_NAME - the columns are nullable, but a
+     *                          nameless account renders as its email address)
      * @return User_Model the site profile (id 1); its credential is $user->login_user
      */
     public static function create(string $email, string $password, array $options = []): User_Model
@@ -157,8 +177,8 @@ class Rsx_Initial_User
         $user->login_user_id = $login_user->id;
         $user->site_id = $site_id;
         $user->email = $email;
-        $user->first_name = $options['first_name'] ?? null;
-        $user->last_name = $options['last_name'] ?? null;
+        $user->first_name = $options['first_name'] ?? self::DEFAULT_FIRST_NAME;
+        $user->last_name = $options['last_name'] ?? self::DEFAULT_LAST_NAME;
         $user->role_id = array_key_exists('role_id', $options) ? $options['role_id'] : null;
         $user->is_enabled = 1;
         $user->save();
