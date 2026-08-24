@@ -365,6 +365,30 @@ class Db_Dump_Cache_Command extends Command
         $this->info('[4/7] Migrating from zero...');
         $this->info('');
 
+        // DELETE THE OLD CACHE FIRST, or this is not a rebuild.
+        //
+        // migrate restores the shipped cache whenever it finds no tables at all - and no
+        // tables at all is exactly the state step 3 just created. Left in place, the build
+        // restored the artifact it exists to replace and then applied only the migrations
+        // newer than it, so THE CACHE REGENERATED FROM ITSELF: whatever was baked in stayed
+        // baked in forever, deleting the migration that seeded a row changed nothing
+        // (the row arrived in the restore, not from the chain), and the deleted migration
+        // stayed marked as already-run in the restored _migrations table. A successful
+        // build silently wrote a stale artifact. Field report, 2026-08-24.
+        //
+        // Safe to delete outright: these two files are COMMITTED, so a build that fails
+        // before writing the new ones leaves them one `git checkout` away, and the live
+        // database and blob store are already backed up by steps 1-2 either way.
+        foreach ([self::SCHEMA_CACHE_FILE, self::UPLOADS_CACHE_FILE] as $file) {
+            $path = $this->cache_dir . '/' . $file;
+            if (is_file($path) && !@unlink($path)) {
+                throw new \RuntimeException(
+                    'Could not delete the existing cache at ' . $path . '. The rebuild would have '
+                    . 'restored it instead of replaying the migrations, so it was not attempted.'
+                );
+            }
+        }
+
         $exit_code = Rsx_Artisan::passthru('migrate', ['--force', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG]);
         if ($exit_code !== 0) {
             throw new \RuntimeException('The migration run failed (exit ' . $exit_code . '). The cache was NOT written.');
