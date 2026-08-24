@@ -49,6 +49,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libreoffice poppler-utils fonts-liberation fonts-dejavu-core \
     # the framework shells out to these
         git rsync procps less nano \
+    # bin/mysqlpv, the dump/restore pipe viewer. BASE layer, not dev: the schema-cache
+    # RESTORE runs on `migrate` in every target, not only in development. Its absence
+    # degrades to a silent pipeline rather than a failure, but a progress-less restore of
+    # a large database is exactly the wait an operator should not have to sit through
+    # blind. python3 (not python3-minimal) - the script needs re and shutil.
+        python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # PHP from the ondrej PPA, which is where a current PHP for Ubuntu lives.

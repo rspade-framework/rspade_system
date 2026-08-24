@@ -993,6 +993,11 @@ CONNECTION STATE
     then again on every transition. Call the returned function to stop
     listening.
 
+    A tab holds exactly ONE socket. Connecting is single-flight: N subscribers
+    racing in the same tick (the ordinary shape when N components each subscribe
+    in their own on_create()) share the ONE in-flight connect and then share the
+    ONE connection it produces.
+
     There is no connection at all until something calls watch()/subscribe()
     (see SETUP) -- before that, the state is 'disconnected' by definition,
     which is correct: nothing is being watched, so there is nothing to be

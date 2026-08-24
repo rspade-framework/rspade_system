@@ -49,7 +49,8 @@ WHAT ENABLE DOES (in order - the order is load-bearing)
     programs, simply skips that unit - maintenance mode still works, it just controls nothing.
 
 WHAT DISABLE DOES
-    0. REFUSE if the repository has unmerged paths (unless --force). See below.
+    0. REFUSE if a schema-cache build left live backups on disk, or if the repository has
+       unmerged paths (unless --force in either case). See both guards below.
     1. supervisorctl start, in the reverse order: redis FIRST (everything else expects it),
        then rsx-lockd, then php-fpm, realtime, fpc-proxy.
     1a. WAIT FOR rsx-lockd TO ANSWER before starting php-fpm. Spawning is not readiness:
@@ -91,6 +92,33 @@ WHY THE RPC DAEMONS ARE A SPECIAL CASE
     post-window daemon is running post-window code. Belt and braces: the client also records
     the sha1 of the server script it spawned in <socket>.meta and refuses to reuse a daemon
     whose provenance no longer matches (rsx:man storage_directories).
+
+THE SCHEMA-CACHE GUARD ON DISABLE
+    Disable refuses while a live backup from `php artisan rsx:db:dump_cache` is still on
+    disk. That command backs the live database and blob store up, wipes both, builds the
+    shipped schema cache from zero, and restores them - and BETWEEN those two points the
+    database this application serves is cache-build scratch and the blob store is empty.
+    Starting php-fpm over that serves an application that has lost its data, and invites
+    writes into a database that is about to be dropped.
+
+    Two paths are checked, and either one alone refuses:
+
+        storage/rsx-tmp/db_cache/live_db.sql.gz     the live database dump
+        <blob_root>_tmp                            the live blob store, moved aside
+
+    The blob root is not derivable pre-boot, so the command writes it into
+
+        storage/rsx-tmp/db_cache/.in_progress
+
+    as the marker's first line, and removes the marker only once no backup remains.
+
+    THE HAPPY PATH NEVER MEETS THIS GUARD. The command's step 7 deletes both backups
+    BEFORE it lowers the window, so the refusal condition is already false by the time
+    disable runs. There is deliberately no override token: what the guard catches is the
+    INTERRUPTED build - a Ctrl-C, or a recovery that could not finish. Re-running
+    rsx:db:dump_cache completes the restore from exactly those backups (it refuses to
+    overwrite them). --force is the deliberate operator override, as it is for the
+    conflict guard. Full treatment in rsx:man migrations, THE SCHEMA CACHE.
 
 THE CONFLICT GUARD ON DISABLE
     Disable refuses while the repository has UNMERGED index entries, listing them and naming

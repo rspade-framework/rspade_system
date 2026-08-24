@@ -13,6 +13,7 @@
 | `rsx:health [--json]` | Verify dependencies, services, environment. **Exit 1 iff a FAIL; WARN/INFO advisory.** |
 | `rsx:heal <target>` · `--list` | Run the remedy a `rsx:health` row names. **Creates only what is definitionally absent**; anything present-but-wrong is REFUSED, never overwritten. |
 | `db:query "SQL" [--json] [--table]` | Execute MySQL directly. A SELECT with no `LIMIT` is capped at 25 rows. |
+| `rsx:db:dump_cache` | Rebuild the shipped schema cache a fresh database restores instead of replaying every migration. Development only; backs up and restores the live data. Skill/details: `rsx:man migrations`. |
 | `rsx:refactor:rename_php_class` · `:rename_php_class_function` · `:sort_php_class_functions` | The three AST-based editor refactors. |
 | Owned elsewhere | `migrate` · `rsx:app:module:create` · `rsx:search:reindex` · `rsx:maintenance:enable`/`:disable` · `rsx:ajax` |
 

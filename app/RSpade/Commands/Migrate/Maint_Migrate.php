@@ -20,6 +20,8 @@ use App\RSpade\SchemaQuality\SchemaQualityChecker;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Env\Rsx_Initial_User;
+use App\RSpade\Core\Files\Rsx_File_Paths;
+use App\RSpade\Commands\Database\Db_Dump_Cache_Command;
 
 /**
  * Unified migration command with mode-aware behavior
@@ -45,6 +47,13 @@ class Maint_Migrate extends Command
     protected $signature = 'migrate {--force} {--seed} {--step} {--path=*} {--framework-only : Run only framework migrations (system/database/migrations)} {--rsx-storage-root= : INTERNAL - test-isolation seam. Roots the file subsystem (blob/thumbnail/rendition store) at this absolute path so a data-seed migration writing blobs stays in the test-scoped store. Set only by rsx:test provisioning; never used in normal migrations. See backlog B-38.}';
 
     protected $description = 'Run migrations with automatic snapshot protection in development mode';
+
+    /**
+     * Framework-internal: skip the datadir snapshot (see handle()). Passed by
+     * rsx:db:dump_cache, which holds a full dump of the live database and is migrating a
+     * database it just created empty.
+     */
+    public const NO_SNAPSHOT_FLAG = '--_no-snapshot';
 
     protected $flag_file = '/var/www/html/.migrating';
     protected $mysql_data_dir = '/var/lib/mysql';
@@ -97,7 +106,16 @@ class Maint_Migrate extends Command
 
         // Framework-only runs never snapshot: they are a schema-only subset used
         // by tooling, and the snapshot exists to protect a developer's data.
-        if ($in_container && !$is_framework_only) {
+        //
+        // --_no-snapshot is the same statement made by a caller that has ALREADY taken a
+        // better backup and knows this database is empty: rsx:db:dump_cache holds a full
+        // gzipped dump of the live database on disk and has just dropped and recreated the
+        // database this run migrates. Stopping MySQL to copy an empty datadir would
+        // protect nothing and cost the whole stop/copy/start. Framework-internal (the `--_`
+        // convention): no InputOption, stripped from argv pre-boot, invisible to help.
+        $no_snapshot = Rsx_Internal_Flags::has(self::NO_SNAPSHOT_FLAG);
+
+        if ($in_container && !$is_framework_only && !$no_snapshot) {
             return $this->run_with_snapshot();
         }
 
@@ -303,6 +321,23 @@ class Maint_Migrate extends Command
         // Enable full query logging to stdout for migrations
         AppServiceProvider::set_query_log_mode(AppServiceProvider::QUERY_LOG_ALL_STDOUT);
 
+        // THE INITIAL PROVISION. Before anything creates a table - ensure_migrations_table_exists()
+        // included, since the migrations table is itself a table and would make the database
+        // look non-empty. A no-op on every run but the first.
+        //
+        // A failed restore returns non-zero rather than throwing past this method, so the
+        // caller's migration-failure branch handles it the way it handles every other
+        // pre-migration failure (the snapshot path rolls back and clears migration mode).
+        try {
+            $this->maybe_restore_schema_cache();
+        } catch (\Throwable $e) {
+            $this->error('Restoring the cached schema failed: ' . $e->getMessage());
+            AppServiceProvider::disable_query_echo();
+            SqlQueryTransformer::disable();
+
+            return 1;
+        }
+
         // Ensure migrations table exists (create it if needed)
         $this->ensure_migrations_table_exists();
 
@@ -343,8 +378,14 @@ class Maint_Migrate extends Command
         }
 
         // Run normalize_schema BEFORE migrations to fix existing tables
-        // Use --production flag if not using snapshots (framework-only or non-development mode)
-        $use_snapshot = $is_development && !$is_framework_only;
+        // Use --production flag if not using snapshots (framework-only, non-development
+        // mode, or --_no-snapshot). normalize_schema without --production REQUIRES the
+        // .migrating flag the snapshot path writes, so this must track the same condition
+        // handle() used to choose the path - otherwise a --_no-snapshot run fails on a
+        // snapshot it was told not to take.
+        $use_snapshot = $is_development
+            && !$is_framework_only
+            && !Rsx_Internal_Flags::has(self::NO_SNAPSHOT_FLAG);
         $requiredColumnsArgs = $use_snapshot ? [] : ['--production' => true];
 
         $this->info("\n Pre-migration normalization (fixing existing tables)...\n");
@@ -1128,6 +1169,146 @@ class Maint_Migrate extends Command
         }
 
         return true;
+    }
+
+    /**
+     * THE INITIAL PROVISION: restore the shipped schema cache into an EMPTY database.
+     *
+     * A fresh install replays every migration ever written to arrive at a schema that is
+     * already known. rsx:db:dump_cache records that known end state - a gzipped mysqldump
+     * plus an archive of whatever blobs the data-seed migrations wrote - into
+     * rsx/resource/db/, which ships with the application. This restores it, and the normal
+     * migration run then continues on top: migrations NEWER than the cache apply, both
+     * normalize passes run, and the initial user is created exactly as always.
+     *
+     * TWO CONDITIONS, both required:
+     *
+     *   - THE DATABASE HAS NO TABLES AT ALL. Not "no migrations table", not "no rows" -
+     *     zero tables. That is the only state in which restoring a whole database over
+     *     the top of it can be right, and it is precisely the fresh-clone state.
+     *   - THE CACHE EXISTS. No cache is not an error; it is every application that has
+     *     never run the dump command, and they migrate exactly as they always did.
+     *
+     * A --framework-only run is excluded: it migrates a schema-only subset for tooling,
+     * and the cache is the whole application's schema.
+     *
+     * The blob archive is EXTRACTED OVER the store, never after clearing it. The store is
+     * content-addressed, so a file already present under a given hash has identical bytes
+     * by construction and there is nothing a collision could destroy.
+     */
+    protected function maybe_restore_schema_cache(): void
+    {
+        if ($this->option('framework-only')) {
+            return;
+        }
+
+        $table_count = (int) DB::selectOne(
+            'SELECT COUNT(*) AS c FROM information_schema.tables WHERE table_schema = DATABASE()'
+        )->c;
+
+        if ($table_count > 0) {
+            return;
+        }
+
+        // --_cache-dir is the same test seam rsx:db:dump_cache honours, so a test can
+        // produce a cache into a sandbox and prove this restores it - without ever writing
+        // into the shipped rsx/resource/db.
+        $cache_dir_override = Rsx_Internal_Flags::get(Db_Dump_Cache_Command::CACHE_DIR_FLAG);
+        $cache_dir = !empty($cache_dir_override)
+            ? rtrim($cache_dir_override, '/')
+            : rsx_project_file_path(Db_Dump_Cache_Command::CACHE_DIR_RELATIVE);
+
+        $schema_cache = $cache_dir . '/' . Db_Dump_Cache_Command::SCHEMA_CACHE_FILE;
+
+        if (!is_file($schema_cache)) {
+            return;
+        }
+
+        $this->info('[..] Restoring cached schema from ' . $schema_cache . '...');
+
+        $connection = config('database.default');
+        $db = config('database.connections.' . $connection);
+
+        $client_flags = '-h' . escapeshellarg((string) $db['host'])
+            . ' -P' . escapeshellarg((string) $db['port'])
+            . ' -u' . escapeshellarg((string) $db['username']);
+
+        // pipefail so a corrupt archive is the pipeline's exit status rather than mysql's
+        // cheerful success on a truncated stream. Streamed through mysqlpv (line-log mode)
+        // so a large restore names each table as it lands instead of sitting silent - and
+        // mysqlpv_pipe_segment() returns nothing on a box with no python3, where the plain
+        // pipeline moves identical bytes with no progress reporting.
+        $this->stream_shell_pipeline(
+            'set -o pipefail; cat ' . escapeshellarg($schema_cache)
+            . ' | gunzip'
+            . Db_Dump_Cache_Command::mysqlpv_pipe_segment()
+            . ' | mysql ' . $client_flags . ' ' . escapeshellarg((string) $db['database']),
+            (string) $db['password'],
+            'restoring the cached schema'
+        );
+
+        // The connection may hold a handle opened against the database as it was before
+        // the restore; make the next query reconnect.
+        DB::purge($connection);
+
+        $uploads_cache = $cache_dir . '/' . Db_Dump_Cache_Command::UPLOADS_CACHE_FILE;
+
+        if (is_file($uploads_cache)) {
+            // Rsx_File_Paths is the ONE resolver for the blob store, so this honours the
+            // test-isolated root that --rsx-storage-root selected earlier in handle().
+            $blob_root = Rsx_File_Paths::blob_root();
+            ensure_directory($blob_root);
+
+            $this->info('[..] Restoring cached uploads into ' . $blob_root . '...');
+            $this->stream_shell_pipeline(
+                'tar -xzf ' . escapeshellarg($uploads_cache) . ' -C ' . escapeshellarg($blob_root),
+                '',
+                'restoring the cached uploads'
+            );
+        }
+
+        $this->info('[OK] Cached schema restored. Applying any migrations newer than the cache...');
+        $this->info('');
+    }
+
+    /**
+     * Run a shell pipeline with its output STREAMED to our own stdout.
+     *
+     * \exec_safe() is the framework's CAPTURED-output wrapper and is the wrong tool for a
+     * restore: it buffers to EOF, so a multi-minute stream would print nothing until it
+     * finished. passthru() is the streaming counterpart, wrapped in an EXPLICIT `bash -c`
+     * because it otherwise hands the line to /bin/sh, which is dash here (project policy).
+     *
+     * The MySQL password rides in the ENVIRONMENT for the duration of the call, never in
+     * argv, where `ps` would show it to every user on the box.
+     *
+     * NO TIMEOUT: how long a restore takes is a function of the dump's size.
+     */
+    protected function stream_shell_pipeline(string $pipeline, string $mysql_password, string $context): void
+    {
+        $had_password = $mysql_password !== '';
+        $previous = getenv('MYSQL_PWD');
+
+        if ($had_password) {
+            putenv('MYSQL_PWD=' . $mysql_password);
+        }
+
+        try {
+            $exit_code = 0;
+            \passthru('bash -c ' . escapeshellarg($pipeline), $exit_code);
+        } finally {
+            if ($had_password) {
+                if ($previous === false) {
+                    putenv('MYSQL_PWD');
+                } else {
+                    putenv('MYSQL_PWD=' . $previous);
+                }
+            }
+        }
+
+        if ($exit_code !== 0) {
+            throw new \RuntimeException('Failed while ' . $context . ' (exit ' . $exit_code . ').');
+        }
     }
 
     /**

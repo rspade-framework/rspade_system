@@ -1,0 +1,177 @@
+#!/usr/bin/env python3
+"""mysqlpv - pipe viewer for mysqldump streams with table/row progress"""
+
+import sys
+import time
+import re
+import shutil
+import signal
+
+def format_bytes(b):
+    for unit in ('B', 'KB', 'MB', 'GB', 'TB'):
+        if b < 1024:
+            return f'{b:.1f} {unit}' if unit != 'B' else f'{int(b)} B'
+        b /= 1024
+    return f'{b:.1f} PB'
+
+def format_time(seconds):
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f'{h}:{m:02d}:{s:02d}'
+    return f'{m}:{s:02d}'
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ('-h', '--help'):
+        print("""mysqlpv - pipe viewer for mysqldump streams
+
+Pipe mysqldump output through mysqlpv to see live progress with
+table names, per-table row counts, and overall throughput.
+
+Usage:
+  mysqldump -u root mydb | mysqlpv | gzip > backup.sql.gz
+  mysqldump -u root mydb | mysqlpv | mysql -u root otherdb
+  db dump | mysqlpv | db shell
+
+Options:
+  -l, --log     Line-log mode: instead of a single overwriting status line,
+                emit one plain line per table as it is seen, e.g.
+                  create table users
+                  insert into users
+                Each unique table is reported at most once per event type.
+                Suitable for logs and non-tty output.
+
+Output (on stderr, single overwriting line):
+  / 10.7 MB  5.2 MB/s  0:03  [users] 4,200 rows  (128,300 total)
+  ^  ^        ^         ^      ^       ^             ^
+  |  bytes    rate      time   table   table rows    all rows""")
+        sys.exit(0)
+
+    log_mode = any(a in ('-l', '--log') for a in sys.argv[1:])
+
+    signal.signal(signal.SIGINT, lambda *_: sys.exit(1))
+
+    spinner = ('/', '-', '\\', '|')
+    spin_idx = 0
+
+    current_table = ''
+    table_rows = 0
+    total_rows = 0
+    total_bytes = 0
+
+    start_time = time.monotonic()
+    last_update = 0.0
+
+    seen_create = set()
+    seen_insert = set()
+
+    table_re = re.compile(rb'^-- Dumping data for table `([^`]+)`')
+    insert_re = re.compile(rb'^INSERT INTO `([^`]+)`')
+    create_re = re.compile(rb'^CREATE TABLE (?:IF NOT EXISTS )?`([^`]+)`', re.I)
+
+    stdin = sys.stdin.buffer
+    stdout = sys.stdout.buffer
+    stderr = sys.stderr
+
+    cols = shutil.get_terminal_size().columns
+
+    try:
+        while True:
+            line = stdin.readline()
+            if not line:
+                break
+
+            stdout.write(line)
+            total_bytes += len(line)
+
+            # parsing and display are best-effort — never stop passing data
+            try:
+                if log_mode:
+                    m = create_re.match(line)
+                    if m:
+                        tbl = m.group(1).decode('utf-8', errors='replace')
+                        if tbl not in seen_create:
+                            seen_create.add(tbl)
+                            stderr.write(f'create table {tbl}\n')
+                            stderr.flush()
+
+                m = table_re.match(line)
+                if m:
+                    current_table = m.group(1).decode('utf-8', errors='replace')
+                    table_rows = 0
+
+                m = insert_re.match(line)
+                if m:
+                    tbl = m.group(1).decode('utf-8', errors='replace')
+                    if tbl != current_table:
+                        current_table = tbl
+                        table_rows = 0
+                    if log_mode and tbl not in seen_insert:
+                        seen_insert.add(tbl)
+                        stderr.write(f'insert into {tbl}\n')
+                        stderr.flush()
+                    rows = line.count(b'),(') + 1
+                    table_rows += rows
+                    total_rows += rows
+            except Exception:
+                pass
+
+            try:
+                if log_mode:
+                    continue
+
+                now = time.monotonic()
+                if now - last_update >= 0.08:
+                    last_update = now
+                    elapsed = now - start_time
+                    rate = total_bytes / elapsed if elapsed > 0 else 0
+
+                    spin_char = spinner[spin_idx % 4]
+                    spin_idx += 1
+
+                    if current_table:
+                        status = (
+                            f' {spin_char}  {format_bytes(total_bytes)}'
+                            f'  {format_bytes(rate)}/s'
+                            f'  {format_time(elapsed)}'
+                            f'  [{current_table}] {table_rows:,} rows'
+                            f'  ({total_rows:,} total)'
+                        )
+                    else:
+                        status = (
+                            f' {spin_char}  {format_bytes(total_bytes)}'
+                            f'  {format_bytes(rate)}/s'
+                            f'  {format_time(elapsed)}'
+                        )
+
+                    cols = shutil.get_terminal_size().columns
+                    stderr.write('\r' + status[:cols].ljust(cols) + '\r')
+                    stderr.flush()
+            except Exception:
+                pass
+
+        stdout.flush()
+    except BrokenPipeError:
+        pass
+    except KeyboardInterrupt:
+        pass
+
+    elapsed = time.monotonic() - start_time
+    rate = total_bytes / elapsed if elapsed > 0 else 0
+    summary = (
+        f' done  {format_bytes(total_bytes)}'
+        f'  {format_bytes(rate)}/s'
+        f'  {format_time(elapsed)}'
+        f'  {total_rows:,} rows'
+    )
+    try:
+        if log_mode:
+            stderr.write(summary + '\n')
+        else:
+            stderr.write('\r' + summary.ljust(cols) + '\n')
+        stderr.flush()
+    except:
+        pass
+
+if __name__ == '__main__':
+    main()

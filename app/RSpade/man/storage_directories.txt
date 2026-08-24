@@ -45,8 +45,8 @@ LIVE TREE (<project>/storage/)
     rsx-thumbnails/   generated WebP thumbnails (content-addressed).        [omit]
     rsx-renditions/   cached soffice->PDF renditions (content-addressed).   [omit]
     rsx-ide-bridge/   IDE bridge local-file grant token + passive guards.   [omit]
-    storage/          Laravel local disk; storage/storage/files/ is the
-                      content-addressed file-attachment BLOB STORE.         [omit]
+    uploads/          the content-addressed file-attachment BLOB STORE
+                      (Rsx_File_Paths::blob_root()).                        [omit]
     framework/        Laravel cache/, sessions/, testing/, views/.          [omit]
     app/              Laravel "public"/"temp" local disk roots.             [omit]
     logs/             laravel.log*, ide-formatter.log, ssr-fpc-errors.log.  [omit]
@@ -195,7 +195,7 @@ FILE-SUBSYSTEM & FEATURE CACHES
     The file attachment subsystem and its caches are content-addressed (keyed on
     the deduplicated blob hash) and resolved through Rsx_File_Paths:
 
-    storage/storage/files/  the BLOB STORE - every uploaded file's deduplicated
+    uploads/                the BLOB STORE - every uploaded file's deduplicated
                             bytes (Rsx_File_Paths::blob_root()). Real user data;
                             never ships in a deployment.
     rsx-thumbnails/         generated WebP thumbnails (rsx:man thumbnails), LRU-
@@ -236,7 +236,7 @@ DEPLOYMENT
           ../.env symlink
 
     NEVER shipped (excluded by the whitelist, automatically): the blob store
-    (storage/storage/), thumbnails, renditions, rsx-ide-bridge (dev grant token),
+    (uploads/), thumbnails, renditions, rsx-ide-bridge (dev grant token),
     rsx-framework, db_backups, logs, rsx-tmp, and the real .env. A whitelist means a
     newly-added runtime directory is left out by default instead of leaking.
 
@@ -272,6 +272,6 @@ MAINTENANCE
 SEE ALSO
     app_mode      the sealed-build lifecycle that owns rsx-build immutability
     locks         RsxLocks - cluster locks (rsx-lockd) and flock system locks
-    file_upload   the file subsystem whose blob store lives at storage/storage/files
+    file_upload   the file subsystem whose blob store lives at storage/uploads
     document_search  the rendition cache and preview pipeline
     rsx_upstream  the framework update, whose state lives in rsx-framework

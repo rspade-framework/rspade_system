@@ -56,7 +56,7 @@ class Prod_Export_Command extends Command
         'rsx-locks',
         'rsx-thumbnails',
         'rsx-renditions',
-        'storage/files',
+        'uploads',
     ];
 
     public function handle(): int

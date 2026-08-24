@@ -6,6 +6,8 @@
 
 **`migrate` is fine to run whenever schema work needs it** — expected and encouraged after creating or changing a migration; treat it as one command (press the button), not "heavy machinery." **Always run `migrate` with its FULL output — never pipe it through `| tail`/`| head`, grep it, or truncate it in any way**: the snapshot/rollback narrative IS the diagnostic, and a truncated run hides which step failed. A migrate CANCELLED mid-run leaves its snapshot behind — `php artisan migrate:restore` performs the same restore a failed run performs automatically (and says so when no migration is in progress).
 
+**A fresh database restores the shipped schema cache before migrating**: when a database has NO TABLES AT ALL and `rsx/resource/db/schema_cache.sql.gz` exists, `migrate` streams it in (plus `uploads_cache.tar.gz` into the blob store) and then **continues with the ordinary run** — it is a PRE-MIGRATE step, not a replacement, so migrations newer than the cache apply on top exactly as always. **A stale cache is therefore never a bug, and you NEVER regenerate it on your own initiative**: `php artisan rsx:db:dump_cache` takes the app down, wipes and restores the developer's database and blob store, and rewrites ~500KB of committed binary — it runs every few months, only when the operator asks for it by name.
+
 **No defensive coding in a migration.** No `IF EXISTS`, no `information_schema` queries, no fallbacks. **Know the current state, write the exact transformation.** Failures fail loud — the snapshot rollback is what handles recovery.
 
 ### Audit authorship

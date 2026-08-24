@@ -61,7 +61,8 @@ THE UPDATE, IN FULL
     4.  git reset --hard + git clean -fdx inside the submodule.
         Unconditional. No checks, no report, no prompt.
 
-    5.  Fetch and check out the upstream tip.
+    5.  Fetch and check out the upstream tip. The range this update covers is
+        THE RECORDED GITLINK .. THE FETCHED TIP - see THE RANGE below.
 
     6.  Commit the new submodule pointer - one commit changing one gitlink,
         with the concatenated upstream changelog as its body and two
@@ -140,6 +141,38 @@ CONVERSION FROM THE VENDORED TREE
     Reachability is proven before anything is deleted, and a failed submodule
     add rolls the removal commit back, so an interrupted conversion cannot
     leave an application with no framework.
+
+THE RANGE
+    An update runs from the revision THE APPLICATION'S HISTORY RECORDS (the
+    gitlink in the parent repository's HEAD) to the fetched upstream tip. It
+    never starts from the submodule's checked-out HEAD.
+
+    The changelog and the "(N upstream commits)" count are statements about
+    what the application's history moved, so both ends have to come from that
+    history. The checkout is a working tree, and an update deliberately puts it
+    ahead of the record for the moment between checking the new revision out
+    and committing the pointer.
+
+    A PULL INTERRUPTED IN THAT MOMENT IS COMPLETED BY THE NEXT PULL, with the
+    whole changelog it owed. A run that dies after the checkout and before the
+    pointer commit (a git index lock that never clears, a kill, a box going
+    down) leaves the tree at the new revision while the record still names the
+    old one. The next pull reads the record, computes the full range, finds the
+    checkout already in place, and commits the pointer with the complete
+    changelog. "Framework is up to date" means the RECORDED pointer is already
+    at the tip, and nothing else.
+
+    A SHALLOW system/ IS DEEPENED FIRST. The recorded revision may sit behind a
+    shallow clone's graft boundary, where `git log old..new` would print an
+    empty changelog that reads exactly like "nothing changed". The updater
+    fetches the missing history; if it genuinely cannot be obtained, the
+    changelog says so in the commit and in the history file, loudly, and the
+    pointer is still recorded.
+
+    The one case with no recorded previous revision is a project whose parent
+    repository holds no gitlink yet - a conversion, or a repository with no
+    commits. There the submodule's checkout is read, and a conversion records
+    from=BASELINE.
 
 THE COMMIT
     Subject:

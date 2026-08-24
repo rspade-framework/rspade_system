@@ -153,10 +153,10 @@ class File_Storage_Model extends Rsx_Model_Abstract
      */
     public function get_storage_path()
     {
-        // RELATIVE display/back-compat path (e.g. "storage/files/ab/c1/abc123...").
-        // The absolute on-disk path is get_full_path(), which routes through
-        // Rsx_File_Paths so a test run relocates the blob store (B-38).
-        return 'storage/files/' . static::__hash_subpath($this->hash);
+        // RELATIVE display path (e.g. "uploads/ab/c1/abc123..."), derived on every call
+        // and persisted nowhere. The absolute on-disk path is get_full_path(), which
+        // routes through Rsx_File_Paths so a test run relocates the blob store (B-38).
+        return 'uploads/' . static::__hash_subpath($this->hash);
     }
 
     /**

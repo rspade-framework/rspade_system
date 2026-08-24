@@ -68,6 +68,12 @@ WHAT A DOWNSTREAM UPDATE DOES
     See rsx:man rsx_upstream for the full sequence. In summary: reset the
     submodule hard, fetch, check out the tip, commit the gitlink, rebuild.
 
+    THE RANGE RUNS FROM THE RECORDED GITLINK, NOT FROM THE CHECKOUT. The
+    changelog and the commit count describe what the application's history
+    moved, so a pull interrupted between the checkout and the pointer commit is
+    completed by the next pull with the full changelog - the checkout sitting
+    ahead of the record is the recovery case, never an up-to-date one.
+
     The updater COPIES ITSELF TO /tmp AND RE-EXECS before touching anything.
     It lives at system/bin/framework-pull-upstream.sh, inside the tree it is
     about to replace, and git offers no guarantee that a checkout leaves a

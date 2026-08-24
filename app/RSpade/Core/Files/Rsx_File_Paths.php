@@ -9,15 +9,15 @@ namespace App\RSpade\Core\Files;
  * content-addressed blob store, the thumbnail cache, and the PDF-rendition cache.
  *
  * INVARIANT: every file-subsystem disk path resolves through this class. Adding a
- * storage_path('storage/files' | 'rsx-thumbnails' | 'rsx-renditions') call for blobs,
+ * storage_path('uploads' | 'rsx-thumbnails' | 'rsx-renditions') call for blobs,
  * thumbnails, or renditions ANYWHERE else reintroduces the B-38 test-isolation hole
  * (a test-DB attachment delete unlinking a blob shared with the developer database).
  *
  * The storage ROOT is normally storage_path() (the live environment). The test runner
  * (Rsx_Test_Command) sets the INTERNAL config key rsx.files.storage_root to a
  * test-scoped directory so a test run's file writes/deletes can never reach the real
- * store. Normal deployments never set that key; default-mode paths are byte-identical
- * to the historic storage_path('...') layout.
+ * store. Normal deployments never set that key, and default-mode paths are exactly
+ * storage_path('...') for each of the three roots.
  */
 class Rsx_File_Paths
 {
@@ -41,14 +41,13 @@ class Rsx_File_Paths
     }
 
     /**
-     * Root of the content-addressed blob store (matches the historic
-     * storage_path('storage/files') layout exactly in default mode).
+     * Root of the content-addressed blob store (storage_path('uploads') in default mode).
      *
      * @return string
      */
     public static function blob_root(): string
     {
-        return static::storage_root() . '/storage/files';
+        return static::storage_root() . '/uploads';
     }
 
     /**

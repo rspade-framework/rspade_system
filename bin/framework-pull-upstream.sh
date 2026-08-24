@@ -524,11 +524,33 @@ reset_submodule() {
 }
 
 # =============================================================================
-# fetch_upstream - bring the submodule to the upstream tip.
+# recorded_pointer - the submodule revision THE APPLICATION'S HISTORY records.
 #
-# Sets OLD_SHA (where we were) and NEW_SHA (where we are going) - the range the
-# changelog is computed over.
+# This, not the submodule's checked-out HEAD, is where an update starts FROM.
+#
+# The changelog range and the "(N upstream commits)" count in the pointer commit
+# are a statement about what the APPLICATION'S HISTORY moved - so both ends of that
+# range have to come from that history. The checkout is not part of it: it is a
+# working tree, and an update deliberately puts it AHEAD of the record for the
+# moment between checkout_new and commit_pointer.
+#
+# Reading the checkout instead lost whole releases. If a run dies in that moment -
+# a git index lock that never clears, git_retry giving up, a kill - the tree sits at
+# NEW while the parent still records OLD. The next run then read the checkout, found
+# OLD == NEW, called the framework "up to date" and exited 0 WITHOUT ever committing
+# the pointer: the range's changelog never reached the application's history, and the
+# recorded gitlink stayed stale forever. A checkout already sitting at NEW is exactly
+# the RECOVERY case, never an up-to-date one.
+#
+# Empty output means the parent records no gitlink for system/ at all - a project
+# with no commits yet, or one converted in this same run before its conversion commit
+# exists. That is the only case with no recorded previous revision, and the only case
+# in which the checkout is the right thing to read.
 # =============================================================================
+recorded_pointer() {
+    git -C "$PROJECT_ROOT" rev-parse -q --verify "HEAD:$SUBMODULE_PATH" 2>/dev/null
+}
+
 # =============================================================================
 # resolve_upstream - work out WHERE this pull fetches from, and never change it.
 #
@@ -582,15 +604,22 @@ resolve_upstream() {
 # =============================================================================
 # fetch_upstream - bring the submodule to the tip of whatever it tracks.
 #
-# Sets OLD_SHA (where we were) and NEW_SHA (where we are going) - the range the
-# changelog is computed over. Fetches BY URL rather than by remote name, so a
+# Sets OLD_SHA (what the application's HISTORY records - see recorded_pointer) and
+# NEW_SHA (where we are going): the range the changelog is computed over. Fetches BY URL rather than by remote name, so a
 # --upstream-url= override needs no configuration change to take effect and a
 # submodule with an oddly-named remote still works.
 # =============================================================================
 fetch_upstream() {
     local sm="$PROJECT_ROOT/$SUBMODULE_PATH"
 
-    OLD_SHA="$(git -C "$sm" rev-parse HEAD 2>/dev/null || echo '')"
+    # THE RECORDED GITLINK, never the checkout - see recorded_pointer's header.
+    OLD_SHA="$(recorded_pointer)"
+    if [ -z "$OLD_SHA" ]; then
+        # No gitlink in the parent's HEAD: a project with no commits yet, or one
+        # this run has just converted (CONVERTED=true) whose conversion commit is
+        # the thing that establishes the record. Nothing else can be read here.
+        OLD_SHA="$(git -C "$sm" rev-parse HEAD 2>/dev/null || echo '')"
+    fi
 
     say "Fetching $UPSTREAM_URL ($UPSTREAM_BRANCH)..."
     GIT_TERMINAL_PROMPT=0 git -C "$sm" fetch --quiet "$UPSTREAM_URL" "$UPSTREAM_BRANCH" \
@@ -624,7 +653,34 @@ compute_changelog() {
     [ -n "$OLD_SHA" ] || return 0
     [ "$OLD_SHA" = "$NEW_SHA" ] && return 0
 
-    FRAMEWORK_CHANGELOG="$(git -C "$PROJECT_ROOT/$SUBMODULE_PATH" log --date=short \
+    local sm="$PROJECT_ROOT/$SUBMODULE_PATH"
+
+    # OLD is read from the application's history, so it is not automatically an
+    # object system/ HOLDS. A shallow submodule (the starter's own recommended
+    # `git clone --depth 1 --recurse-submodules`) carries only as far back as its
+    # graft boundary, and `git log OLD..NEW` against a missing OLD prints nothing at
+    # all - an EMPTY changelog that looks exactly like "nothing changed". Deepen
+    # first; if the history genuinely cannot be recovered, SAY SO in the changelog.
+    if ! git -C "$sm" cat-file -e "${OLD_SHA}^{commit}" 2>/dev/null; then
+        warn "The recorded framework revision ${OLD_SHA:0:12} is not in system/'s object store - deepening the clone to recover the changelog."
+        if [ "$(git -C "$sm" rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+            GIT_TERMINAL_PROMPT=0 git -C "$sm" fetch --quiet --unshallow "$UPSTREAM_URL" "$UPSTREAM_BRANCH" 2>/dev/null || true
+        else
+            GIT_TERMINAL_PROMPT=0 git -C "$sm" fetch --quiet "$UPSTREAM_URL" "$UPSTREAM_BRANCH" 2>/dev/null || true
+        fi
+    fi
+
+    if ! git -C "$sm" cat-file -e "${OLD_SHA}^{commit}" 2>/dev/null; then
+        FRAMEWORK_CHANGELOG="[CHANGELOG UNAVAILABLE] History before $OLD_SHA is not present in this
+clone of system/ (a shallow clone that could not be deepened), so the
+$OLD_SHA..$NEW_SHA changelog could not be read. The revisions themselves
+are correct; only the text of this range is missing. Recover it with:
+    git -C system fetch --unshallow"
+        warn "The ${OLD_SHA:0:12}..${NEW_SHA:0:12} changelog could not be read; the update continues and says so in the record."
+        return 0
+    fi
+
+    FRAMEWORK_CHANGELOG="$(git -C "$sm" log --date=short \
         --pretty=format:'%h %ad %s%n%n%b' "$OLD_SHA..$NEW_SHA" 2>/dev/null \
         | grep -vE 'Claude Code|Co-Authored-By:' || true)"
 }
@@ -845,7 +901,10 @@ commit_pointer() {
         git -C "$PROJECT_ROOT" add -- "${to_stage[@]}" \
         || die "Could not stage the framework revision: the git index is locked and did not clear."
 
-    # Nothing staged means the pointer did not move - an up-to-date run.
+    # Nothing staged means the recorded gitlink already equals the checkout, so
+    # there is no pointer change to commit. With OLD read from the record that is
+    # only ever a genuinely-current install; the interrupted-run case DOES stage a
+    # real gitlink change here, which is how its lost changelog gets committed.
     if git -C "$PROJECT_ROOT" diff --cached --quiet -- "$SUBMODULE_PATH" 2>/dev/null; then
         return 0
     fi
@@ -1020,7 +1079,10 @@ do_rebuild() {
 preview() {
     local sm="$PROJECT_ROOT/$SUBMODULE_PATH"
     resolve_upstream
-    OLD_SHA="$(git -C "$sm" rev-parse HEAD 2>/dev/null || echo '')"
+    # The same rule as fetch_upstream: --diff previews what an UPDATE would bring,
+    # and an update starts from the recorded gitlink.
+    OLD_SHA="$(recorded_pointer)"
+    [ -n "$OLD_SHA" ] || OLD_SHA="$(git -C "$sm" rev-parse HEAD 2>/dev/null || echo '')"
     say "Fetching $UPSTREAM_URL ($UPSTREAM_BRANCH)..."
     GIT_TERMINAL_PROMPT=0 git -C "$sm" fetch --quiet "$UPSTREAM_URL" "$UPSTREAM_BRANCH" \
         || die "Failed to fetch $UPSTREAM_BRANCH from $UPSTREAM_URL."
@@ -1183,8 +1245,15 @@ main() {
     fetch_upstream
 
     if [ "$OLD_SHA" = "$NEW_SHA" ] && [ "$CONVERTED" != true ]; then
-        # The pointer is current, but a rebuild is still worth doing: the marker
+        # OLD is the RECORDED gitlink, so this branch means what it says: the
+        # application's history already points at the upstream tip. It is NOT
+        # reached by a checkout that ran ahead of the record when a previous run
+        # died mid-update - that is a recovery, and it takes the ordinary path
+        # below, where the full range is computed and the pointer is committed.
+        #
+        # The pointer is current, but a rebuild is still worth doing: the record
         # agrees, and that is a claim about the commit, not about the build state.
+        # checkout_new is what re-syncs a working tree that lags the record.
         ok "Framework is up to date (${NEW_SHA:0:12})."
         checkout_new
         do_rebuild

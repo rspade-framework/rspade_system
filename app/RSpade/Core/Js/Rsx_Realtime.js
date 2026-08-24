@@ -30,6 +30,15 @@ class Rsx_Realtime {
 
     static _ws = null;
 
+    // Diagnostic: how many WebSocket objects this tab has constructed since page load.
+    // One tab holding one live connection is the invariant (see _connect); a test or a dev
+    // page reads this to prove it rather than inferring it from relay-side counts.
+    static _sockets_opened = 0;
+
+    // The in-flight connect attempt, or null. See _connect() — this is what makes N
+    // same-tick subscribers share ONE socket.
+    static _connect_promise = null;
+
     // canonical_key -> { topic, filter, token, callbacks: Set<Function> }
     static _watches = new Map();
 
@@ -593,11 +602,47 @@ class Rsx_Realtime {
 
     /**
      * Connect to the WebSocket server. Idempotent — safe to call when already
-     * connected/connecting.
+     * connected/connecting, and SINGLE-FLIGHT: N callers in the same tick share ONE
+     * attempt and therefore ONE socket.
+     *
+     * The claim is `_connect_promise`, and it is assigned SYNCHRONOUSLY here, before any
+     * await, because the guard has to be a claim about "a connect is HAPPENING", not about
+     * "a socket EXISTS". `_ws` cannot be that guard: it is only assignable after the token
+     * round-trip, so every subscriber that arrived while the first token request was in
+     * flight walked straight past `if (_ws) return` and opened a socket of its own. That is
+     * exactly what a page does — N components each subscribing in their own on_create() run
+     * in one tick — and it is how one tab with one page open came to make the relay report
+     * `Connections: 10, Subscriptions: 11`: ten authenticated sockets, nine of them orphaned
+     * the moment the next one overwrote `_ws`, with every subscription riding the last.
+     *
+     * Cleared on settle so a later reconnect starts a fresh attempt. Callers may await it.
      */
     static async _connect() {
         if (Rsx_Realtime._ws) return;
+        if (Rsx_Realtime._connect_promise) return Rsx_Realtime._connect_promise;
 
+        let settle;
+        Rsx_Realtime._connect_promise = new Promise((resolve) => { settle = resolve; });
+
+        try {
+            await Rsx_Realtime._open_socket();
+        } finally {
+            Rsx_Realtime._connect_promise = null;
+            settle();
+        }
+    }
+
+    /**
+     * One connect attempt: mint a connection token, open the socket, wire its handlers.
+     * Only ever called through _connect(), which serializes it.
+     *
+     * Every handler below begins with an own-socket check. A socket that is no longer
+     * `_ws` is an ORPHAN, and an orphan must never touch shared state: its close would
+     * otherwise null out a perfectly healthy live socket's `_ws`, drop `_connected` /
+     * `_authenticated` under it, and schedule a reconnect nothing asked for — a late close
+     * from a previous connection silently killing the current one.
+     */
+    static async _open_socket() {
         Rsx_Realtime._set_state('connecting');
 
         try {
@@ -609,14 +654,26 @@ class Rsx_Realtime {
             const token = response.token;
 
             const ws = new WebSocket(Rsx_Realtime._connect_url());
+            Rsx_Realtime._sockets_opened++;
+
+            // Superseded while the token was in flight: something else already installed a
+            // live socket, so this one has no owner. Close it rather than leak an open,
+            // about-to-be-authenticated connection at the relay.
+            if (Rsx_Realtime._ws) {
+                ws.close();
+                return;
+            }
+
             Rsx_Realtime._ws = ws;
 
             ws.onopen = () => {
+                if (Rsx_Realtime._ws !== ws) return;
                 console_debug('Realtime', 'Connected, authenticating...');
                 ws.send(JSON.stringify({ type: 'auth', token: token }));
             };
 
             ws.onmessage = (e) => {
+                if (Rsx_Realtime._ws !== ws) return;
                 let msg;
                 try {
                     msg = JSON.parse(e.data);
@@ -627,6 +684,9 @@ class Rsx_Realtime {
             };
 
             ws.onclose = () => {
+                // An orphan closing is just garbage being collected — let it go silently.
+                if (Rsx_Realtime._ws !== ws) return;
+
                 console_debug('Realtime', 'Connection closed');
                 Rsx_Realtime._ws = null;
                 Rsx_Realtime._connected = false;
@@ -650,6 +710,7 @@ class Rsx_Realtime {
             };
 
             ws.onerror = () => {
+                if (Rsx_Realtime._ws !== ws) return;
                 // onclose will fire after this
             };
         } catch (e) {

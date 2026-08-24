@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Commands\Database\Db_Dump_Cache_Command;
 use App\Console\Commands\FrameworkDeveloperCommand;
 use App\RSpade\Core\Database\MigrationPaths;
 use App\RSpade\Core\Manifest\Manifest;
@@ -738,6 +739,14 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * format version. A cached dump is only reused when this hash matches, so
      * any change to a migration file (or the server version) forces a rebuild.
      *
+     * THE SHIPPED SCHEMA CACHE IS PART OF THE INPUT. Test provisioning drops the test
+     * database and migrates it from empty, which is exactly the fresh-clone state that
+     * restores rsx/resource/db/schema_cache.sql.gz before migrating - deliberately, so
+     * the suite exercises what a real install does. That makes the cache an INPUT to the
+     * provisioned schema, and an input that is not in this hash is a stale dump waiting
+     * to happen: rebuilding the cache with rsx:db:dump_cache would otherwise leave the
+     * previous dump matching. Absent (no cache shipped) hashes as the literal 'none'.
+     *
      * @return string
      */
     protected function compute_migration_hash(): string
@@ -750,9 +759,35 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         }
         sort($entries);
 
-        array_unshift($entries, 'cache_version:' . self::CACHE_VERSION, 'mysql:' . $version);
+        array_unshift(
+            $entries,
+            'cache_version:' . self::CACHE_VERSION,
+            'mysql:' . $version,
+            'schema_cache:' . $this->schema_cache_fingerprint()
+        );
 
         return md5(implode("\n", $entries));
+    }
+
+    /**
+     * Content hash of the two shipped schema-cache artifacts, or 'none' when the
+     * application ships no cache. See compute_migration_hash().
+     *
+     * @return string
+     */
+    protected function schema_cache_fingerprint(): string
+    {
+        $cache_dir = rsx_project_file_path(Db_Dump_Cache_Command::CACHE_DIR_RELATIVE);
+
+        $parts = [];
+        foreach ([Db_Dump_Cache_Command::SCHEMA_CACHE_FILE, Db_Dump_Cache_Command::UPLOADS_CACHE_FILE] as $file) {
+            $path = $cache_dir . '/' . $file;
+            if (is_file($path)) {
+                $parts[] = $file . ':' . md5_file($path);
+            }
+        }
+
+        return empty($parts) ? 'none' : md5(implode("\n", $parts));
     }
 
     /**

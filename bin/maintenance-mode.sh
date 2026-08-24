@@ -318,6 +318,51 @@ do_enable() {
 # operator and the proxy, rather than two that can disagree. --force overrides.
 # --no-services is unaffected (it never starts anything).
 # -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Schema-cache guard - refuse to bring services back up while a live backup exists.
+#
+# `php artisan rsx:db:dump_cache` backs the live database and blob store up, wipes
+# both, builds the shipped schema cache from zero, and restores them. Between those
+# two points the DATABASE THIS APPLICATION SERVES IS NOT THE DEVELOPER'S DATABASE -
+# it is a scratch copy - and the blob store is empty. Starting php-fpm over that
+# serves an application that has lost its data, and worse, invites writes into a
+# database that is about to be dropped.
+#
+# The command's own step 7 deletes the backups BEFORE it lowers the window, so this
+# refusal is already false by the time it runs; there is no override token, and none
+# is needed. What the guard catches is the INTERRUPTED build: an operator who Ctrl-C'd
+# it, or a recovery that could not finish. Re-running rsx:db:dump_cache completes the
+# restore from exactly these backups (it refuses to overwrite them).
+#
+# The blob root is not derivable pre-boot, so the command writes it into the marker
+# file at the very start and removes the marker only once no backup remains.
+# -----------------------------------------------------------------------------
+DB_CACHE_DIR="$(storage_base)/rsx-tmp/db_cache"
+DB_CACHE_MARKER="$DB_CACHE_DIR/.in_progress"
+DB_CACHE_LIVE_DUMP="$DB_CACHE_DIR/live_db.sql.gz"
+
+# Echoes each backup path that exists, one per line. Empty output = nothing in flight.
+db_cache_backups() {
+    local blob_backup=''
+
+    [ -f "$DB_CACHE_LIVE_DUMP" ] && printf '%s\n' "$DB_CACHE_LIVE_DUMP"
+
+    if [ -f "$DB_CACHE_MARKER" ]; then
+        # Line 1 of the marker is the ABSOLUTE blob root; its sibling _tmp is the backup.
+        blob_backup="$(head -n1 "$DB_CACHE_MARKER" 2>/dev/null)"
+        blob_backup="${blob_backup%$'\r'}"
+        if [ -n "$blob_backup" ] && [ -d "${blob_backup}_tmp" ]; then
+            printf '%s\n' "${blob_backup}_tmp"
+        fi
+    fi
+
+    return 0
+}
+
+db_cache_in_progress() {
+    [ -n "$(db_cache_backups | head -n 1)" ]
+}
+
 repo_is_conflicted() {
     command -v git >/dev/null 2>&1 || return 1
 
@@ -337,6 +382,23 @@ repo_is_conflicted() {
 # disable
 # -----------------------------------------------------------------------------
 do_disable() {
+    if [ "$FORCE" != true ] && db_cache_in_progress; then
+        err "Refusing to leave maintenance mode: a schema-cache build is in progress or was interrupted."
+        say ""
+        say "  Live backups still on disk:"
+        db_cache_backups | sed 's/^/    /'
+        say ""
+        say "  While those exist, this database and blob store hold cache-build scratch data,"
+        say "  not your own. Complete the build - it refuses to overwrite the backups and"
+        say "  restores your live data from them:"
+        say "    php artisan rsx:db:dump_cache"
+        say ""
+        say "  Bringing services up now would serve an application that has lost its data,"
+        say "  which is why this is refused. Override deliberately:"
+        say "    php artisan rsx:maintenance:disable --force"
+        exit 1
+    fi
+
     if [ "$FORCE" != true ] && repo_is_conflicted; then
         err "Refusing to leave maintenance mode: the repository has unresolved conflicts."
         say ""

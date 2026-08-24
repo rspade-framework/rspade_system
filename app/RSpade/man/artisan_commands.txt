@@ -1,0 +1,155 @@
+ARTISAN_COMMANDS(7)              RSX Framework Manual              ARTISAN_COMMANDS(7)
+
+NAME
+       artisan_commands - how RSpade artisan commands are registered, intercepted,
+       stubbed and restricted, and why this directory is unlike the rest of the
+       framework
+
+SYNOPSIS
+       php artisan list
+       php artisan help <command>
+       php artisan <command> [--flags]
+
+DESCRIPTION
+       Framework commands live in app/RSpade/Commands/; the application's own live in
+       app/Console/Commands/. Both are registered by app/Console/Kernel.php:
+
+           $this->load(__DIR__.'/Commands');           // Application commands
+           $this->load(__DIR__.'/../RSpade/Commands'); // Framework commands
+
+       Laravel's load() walks the directory recursively and registers every class
+       extending Illuminate\Console\Command. Subdirectories are organisational only -
+       they carry no meaning to the loader.
+
+       COMMANDS ARE NOT MANIFEST-INDEXED. app/RSpade/Commands is absent from
+       config('rsx.manifest.scan_directories'), and deliberately so. Everything the
+       manifest provides to the rest of the framework - attribute discovery, namespace
+       regeneration, class-name reflection, auth-gate validation, the code-quality pass -
+       therefore does not apply here. A command is a Laravel object registered by a
+       Laravel loader, and the framework's conventions stop at this directory's edge.
+
+       This is the single fact that explains everything else on this page.
+
+THE FOUR KINDS OF COMMAND
+
+   1. Ordinary commands
+       A class with a $signature, a $description and a handle(). Nothing unusual: it is
+       registered by Kernel, it appears in `php artisan list`, and handle() runs it.
+       The large majority of this directory.
+
+   2. PRE-BOOT INTERCEPTED commands (with a STUB here)
+       Four commands never reach Laravel at all. system/artisan matches $argv[1] before
+       Composer's autoloader is required and shells straight to a bash script:
+
+           rsx:framework:pull        -> bin/framework-pull-upstream.sh
+           rsx:maintenance:enable    -> bin/maintenance-mode.sh enable
+           rsx:maintenance:disable   -> bin/maintenance-mode.sh disable
+           rsx:git                   -> bin/rsx-git.sh
+
+       WHY THEY ARE INTERCEPTED. Each must work on a tree too broken to boot - a
+       half-synced vendor/, an incoherent .env, a framework being replaced underneath
+       itself - and the maintenance pair additionally must never be refusable by the gate
+       it is itself raising and lowering. Booting Laravel to run them would make the
+       thing they repair a prerequisite for repairing it.
+
+       WHY A STUB CLASS STILL EXISTS HERE. `php artisan list` is built by Symfony from
+       REGISTERED COMMAND OBJECTS. A command that only exists as a string comparison in
+       system/artisan is invisible: it appears in no listing, has no `php artisan help`
+       output, and documents none of its own flags. So each intercepted command keeps a
+       class in this directory whose only jobs are:
+
+           - registration, so the command appears in `php artisan list`;
+           - $signature, so its flags render in `php artisan help <command>`;
+           - $description, the one-line summary in the listing;
+           - a handle() that is a LOUD ERROR, because reaching it means the
+             interception failed.
+
+       See Commands/Rsx/Maintenance_Enable_Command.php for the shape.
+
+       THE STUB'S FLAGS ARE NOT ENFORCED AGAINST THE SCRIPT. The stub never runs, so
+       nothing checks that its $signature matches the bash script's argument loop. A flag
+       added to the script and not to the stub is simply invisible in help output, and a
+       flag in the stub that the script rejects is a lie. Both are documentation bugs
+       that no test will catch; change them together.
+
+   3. RESTRICTED commands
+       Overrides of Laravel commands that RSpade forbids - migrate:fresh, migrate:refresh,
+       migrate:reset, db:wipe, down, up and the cache-related ones. They register under
+       the original name, are HIDDEN from the listing via $hidden, and their handle()
+       exits non-zero naming the sanctioned replacement. They are not merely hidden: the
+       underlying mechanism is gone, so a refused command cannot leave a convincing no-op
+       behind. See Commands/Restricted/CLAUDE.md.
+
+   4. FRAMEWORK-INTERNAL FLAGS (the `--_` convention)
+       A flag whose only caller is the framework itself is spelled `--_<name>` and is
+       NEVER declared as an InputOption. system/artisan lifts every `--_`-prefixed argv
+       token into $GLOBALS['__rsx_internal_flags'] and STRIPS it from argv before Symfony
+       parses. Consequences:
+
+           - it renders in no `php artisan list` / `help` output;
+           - passing one can never raise an unknown-option error;
+           - a command reads it via Rsx_Internal_Flags::has() / ::get(), not $this->option();
+           - it survives an interception, because the strip runs BEFORE the interception
+             block - which is how Rsx_Artisan's --_lock-group token can be attached to
+             every spawn without bin/maintenance-mode.sh ever seeing it.
+
+       Valued form is `--_name=value`. Use `--_` for any switch whose only caller is the
+       updater or another framework command; a user-facing flag stays an ordinary option.
+       Full treatment: App\RSpade\Core\Console\Rsx_Internal_Flags.
+
+SPAWNING A COMMAND FROM PHP
+       ALWAYS through App\RSpade\Core\Console\Rsx_Artisan - never passthru/exec_safe/
+       shell_exec/proc_open with an artisan command line (ARTISAN-SPAWN-01).
+
+           Rsx_Artisan::passthru($cmd, $args)   streams the child's output through
+           Rsx_Artisan::run($cmd, $args, $out, $env)  captures it
+           Rsx_Artisan::dispatch_detached($cmd, $args) fire and forget
+
+       The synchronous forms attach --_lock-group=<id> so the child JOINS the parent's
+       lock group instead of queueing behind locks the blocked parent holds. In-process
+       Artisan::call() needs none of this and the lint rule ignores it.
+
+WHY rsx:check DOES NOT LINT THIS DIRECTORY
+       `php artisan rsx:check app/RSpade/Commands/...` REFUSES with "is not in an allowed
+       directory". This is deliberate, not an oversight.
+
+       rsx:check scans config('rsx.manifest.scan_directories'), and commands are not in
+       it - see DESCRIPTION. The rules that pass would be the trivial ones; the rules that
+       matter assume framework objects the manifest indexes, which a Symfony command
+       object is not. Beyond that, the conventions in this directory are legitimately
+       atypical in ways the checker would flag as violations:
+
+           - a stub's handle() is unreachable by design;
+           - a restricted command deliberately overrides a vendor class's name;
+           - `--_` flags are read from a global, not from $this->option();
+           - the pre-boot interception means some "commands" have no runtime behaviour
+             in PHP at all;
+           - naming is inconsistent for historical reasons (Rsx_Check_Command alongside
+             RsxFileAttachCommand) and normalising it is a rename nobody has asked for.
+
+       Nothing here is exempt from the house rules a human applies - snake_case methods,
+       no emoji, [OK]/[ERROR] ASCII output, no timeouts, explicit bash. They are simply
+       not machine-enforced in this directory.
+
+OUTPUT CONVENTIONS
+       Professional ASCII only - [OK], [ERROR], [WARNING], '*', '-'. No emoji, no unicode
+       box drawing. Silent on success where silence is meaningful; a command's PRIMARY
+       result is always printed. Multi-step commands print one bracketed progress line per
+       step ([1/7], [2/7], ...) so an operator can see where a long run is.
+
+       NEVER prompt. "Are you sure?" is forbidden - a command either refuses with a
+       reason, or does the thing. A destructive operation is gated by a flag the caller
+       passes, never by an interactive question.
+
+SEE ALSO
+       rsx:man maintenance_mode - the intercepted pair, and what the stubs stand in for
+       rsx:man rsx_git - the intercepted git proxy
+       rsx:man rsx_upstream - the intercepted framework pull
+       rsx:man locks - Rsx_Artisan and lock-group inheritance
+       app/RSpade/Commands/CLAUDE.md - the working notes for this directory
+       app/RSpade/Commands/Restricted/CLAUDE.md - the restricted-command policy
+
+AUTHORS
+       RSX Framework Team
+
+RSX Framework                     August 2026                    ARTISAN_COMMANDS(7)

@@ -7,6 +7,7 @@ SYNOPSIS
        php artisan make:migration:safe <name>
        php artisan migrate
        php artisan migrate:status
+       php artisan rsx:db:dump_cache
 
 DESCRIPTION
        The RSX framework enforces a forward-only migration strategy using raw SQL
@@ -212,6 +213,133 @@ MIGRATION WORKFLOW
 
        This skips snapshot protection regardless of mode.
 
+THE SCHEMA CACHE
+
+       A fresh install replays every migration ever written to arrive at a schema
+       that is, by definition, already known. The schema cache records that known
+       end state once, so an empty database RESTORES it and then applies only the
+       migrations newer than the cache.
+
+   The two artifacts
+
+           rsx/resource/db/schema_cache.sql.gz    a gzipped mysqldump of a database
+                                                  migrated from zero. NO user rows -
+                                                  the first-run screen creates user 1
+                                                  after the restore.
+           rsx/resource/db/uploads_cache.tar.gz   the content-addressed blob store's
+                                                  contents at that same point (what
+                                                  the data-seed migrations wrote).
+                                                  Relative paths inside the archive,
+                                                  so it extracts into any blob root.
+           rsx/resource/db/README.md              regenerated with them.
+
+       resource/ is manifest-invisible and SHIPS with the application, so the cache
+       travels with the code whose migrations produced it.
+
+   Building it - php artisan rsx:db:dump_cache
+
+       DEVELOPMENT MODE ONLY. It refuses in debug and production: a sealed build's
+       source tree is immutable and its services are serving traffic, and neither
+       the wipe nor the rewritten artifacts belong there.
+
+       The build runs against an EMPTY database and an EMPTY blob store, which are
+       this developer's own - so it backs them up first:
+
+           [1/7]  Enter maintenance mode (reason "schema cache build"). The real
+                  mechanism: task workers are killed, then realtime, fpc-proxy,
+                  php-fpm, rsx-lockd and redis stop. MySQL deliberately does not.
+           [2/7]  Dump the live database to
+                  storage/rsx-tmp/db_cache/live_db.sql.gz, and MOVE the blob store
+                  to its sibling <blob_root>_tmp, leaving an empty store behind.
+           [3/7]  DROP and CREATE the database.
+           [4/7]  migrate, with --_no-initial-user (the cache carries no account)
+                  and --_no-snapshot (see below).
+           [5/7]  Write the two artifacts (and the README) into rsx/resource/db.
+           [6/7]  DROP and CREATE again; empty the cache-build blob store.
+           [7/7]  Restore the live database from the dump, move <blob_root>_tmp
+                  back, DELETE THE DUMP LAST, and lower maintenance.
+
+       migrate's own .migrating flag is NOT raised: it belongs to the datadir
+       snapshot path, which step 4 skips, and the maintenance window already
+       provides everything it would buy.
+
+       WHY NO DATADIR SNAPSHOT. The snapshot exists to make a bad migration
+       undoable. Step 4 migrates a database created empty one step earlier, and the
+       only data worth protecting is already in the live dump - so the snapshot
+       would stop MySQL and copy the whole datadir to protect nothing.
+
+   The safety rules
+
+       THE BACKUP IS COMPLETE BEFORE ANYTHING IS DESTROYED. The dump is written to
+       a .partial and renamed on success; the blob store is MOVED (a rename), not
+       copied. No destructive step runs until its own backup is in place, so an
+       interrupt before that point has nothing to recover.
+
+       THE BACKUP IS DELETED LAST. Every restore action is idempotent and
+       re-runnable for exactly as long as the dump is still on disk.
+
+       EXISTING BACKUPS ARE NEVER OVERWRITTEN. A backup already sitting in
+       storage/rsx-tmp/db_cache/ was left by an interrupted run and holds the LIVE
+       data; whatever is in the database and blob store now is that run's build
+       residue. So the command prints that it found them, uses them as the restore
+       source, and takes only the MISSING half - the two halves are independent.
+
+       CTRL-C AND EXCEPTIONS RUN THE SAME RECOVERY. A SIGINT/SIGTERM handler turns
+       the interrupt into a throw; the recovery recreates the database, restores the
+       dump, clears the build store, moves the backup back, and only then deletes
+       the dump. If recovery itself fails it leaves the backups in place, names
+       them, keeps the maintenance window UP, and tells you that re-running
+       rsx:db:dump_cache completes the restore from exactly those backups.
+
+       MAINTENANCE MODE STAYS DOWN WHILE A BACKUP EXISTS. php artisan
+       rsx:maintenance:disable REFUSES while storage/rsx-tmp/db_cache/live_db.sql.gz
+       or the blob backup named by storage/rsx-tmp/db_cache/.in_progress is present -
+       bringing php-fpm up over cache-build scratch data would serve an application
+       that has lost its data. Step 7 deletes the backups BEFORE it lowers the
+       window, so the refusal is already false on the happy path and no override
+       token exists. --force is the deliberate operator override. See
+       rsx:man maintenance_mode.
+
+   Restoring it - the initial provision
+
+       php artisan migrate restores the cache when BOTH are true:
+
+           - the database has NO TABLES AT ALL (not "no migrations table", not "no
+             rows" - zero tables), which is precisely the fresh-clone state, and
+           - rsx/resource/db/schema_cache.sql.gz exists.
+
+       It streams the dump back (progress visible via bin/mysqlpv), extracts the
+       uploads archive OVER the blob root - never clearing it first, because the
+       store is content-addressed and identical hashes cannot collide - and then
+       CONTINUES with the ordinary run: pending migrations newer than the cache
+       apply, both normalize passes run, and the initial user is created as usual.
+
+       Any other state is exactly the historic behaviour. A non-empty database is
+       never restored over. A missing cache is not an error - it is every
+       application that has never run the dump command.
+
+       --framework-only is excluded: it migrates a schema-only subset for tooling,
+       and the cache is the whole application's schema.
+
+   When to regenerate
+
+       RARELY, AND ONLY WHEN THE OPERATOR ASKS FOR IT BY NAME. Every few months is
+       the expected cadence.
+
+       A STALE CACHE IS NOT A BUG. Migrations newer than the cache apply on top of
+       it, which is the designed behaviour - the cache is a speed optimisation, never
+       a correctness requirement. "The cache is out of date" is not a reason to
+       rebuild it, and rebuilding is never a step inside some other task.
+
+       Two reasons it is deliberate rather than routine: the build takes the
+       application down, drops and recreates the developer's database and empties the
+       blob store (restoring both afterwards); and each run rewrites roughly half a
+       megabyte of committed binary, so casual regeneration churns history for no
+       benefit.
+
+       AI AGENTS: do not run rsx:db:dump_cache, and do not propose it as a step. See
+       app/RSpade/Commands/CLAUDE.md.
+
 MIGRATION EXAMPLES
 
    Creating a Table (Simple Version - Recommended)
@@ -389,6 +517,10 @@ DEBUGGING
        - "Duplicate column" - Check if column already exists before adding
 
 SEE ALSO
+       rsx:man maintenance_mode - The window rsx:db:dump_cache raises, and the
+                                  disable refusal that protects an interrupted build
+       rsx:man artisan_commands - How framework commands are registered, intercepted
+                                  and stubbed, and why that directory is not linted
        rsx:man database - Database system overview
        rsx:man coding_standards - General coding standards
        rsx:man error_handling - Error handling patterns
