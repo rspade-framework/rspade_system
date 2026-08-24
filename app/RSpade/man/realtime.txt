@@ -1003,25 +1003,39 @@ CONNECTION STATE
     which is correct: nothing is being watched, so there is nothing to be
     connected for.
 
-    STATE SEMANTICS (critical -- get this wrong and the indicator lies):
-    - 'disconnected' means idle / lazy / realtime-disabled -- the socket is
-      not open because nothing needs it (lazy connect) or the last watch
-      stopped (intentional idle close, no reconnect). It does NOT mean
-      "unreachable" and must NEVER be treated as an error.
-    - An UNINTENTIONAL drop always passes through 'reconnecting'
-      (onclose -> schedule reconnect); a fresh attempt is 'connecting'.
-    - A "backend unreachable" warning must therefore ARM A GRACE TIMER only
-      on 'connecting'/'reconnecting', SHOW the warning if 'connected' has not
-      arrived by the time the timer fires, and HIDE on 'connected' or a
-      TERMINAL 'disconnected'. Warning on a bare 'disconnected' is a bug -- it
-      would fire on every ordinary lazy/idle page.
+    THE OFFLINE ANNOUNCEMENT IS DELAYED. Losing the link no longer tells the
+    app 'disconnected' the instant the socket closes; a 300ms blip (a relay
+    restart, a wifi handoff) used to flash an offline state at every listener.
+    An unintentional close announces 'reconnecting' IMMEDIATELY, and
+    'disconnected' only if no reconnect has landed within
+    Rsx_Realtime.OFFLINE_ANNOUNCE_GRACE_MS (5s). A reconnect inside the window
+    means the app never hears 'disconnected' at all.
 
-    During a reconnect loop the socket briefly reports 'disconnected' and then
-    SYNCHRONOUSLY 'reconnecting' in the same onclose frame. Because
-    on_state_change delivers those two transitions synchronously, a deferred
-    (setTimeout 0) check reads the LATEST state as 'reconnecting' for a
-    transient drop and 'disconnected' for a terminal one -- that is how to hide
-    on a real idle disconnect without killing the grace timer mid-reconnect.
+    The delay is in what LISTENERS are told, never in what the client knows:
+    _ws / _connected / _authenticated go false the moment the socket closes,
+    and nothing inside Rsx_Realtime reads the announced state to decide
+    anything. State is a projection for the app; the flags are the truth.
+
+    STATE SEMANTICS (critical -- get this wrong and the indicator lies):
+    - 'disconnected' carries two meanings, told apart by WHAT PRECEDED IT:
+      * after 'connecting'/'reconnecting' it is the CONFIRMED offline
+        announcement -- the grace window expired with no reconnect. A real
+        outage; surface it.
+      * otherwise it is idle / lazy / realtime-disabled -- the socket is not
+        open because nothing needs it (lazy connect) or the last watch stopped
+        (intentional idle close, no reconnect). NOT an error, and it must never
+        raise a warning.
+    - An UNINTENTIONAL drop always passes through 'reconnecting' at once
+      (onclose -> schedule reconnect); a fresh attempt is 'connecting'.
+    - A "backend unreachable" warning therefore ARMS A GRACE TIMER on
+      'connecting'/'reconnecting', SHOWS on a 'disconnected' that followed one
+      of those (or when its own timer fires first), and HIDES on 'connected'
+      or an idle 'disconnected'. Warning on an idle 'disconnected' is a bug --
+      it would fire on every ordinary lazy page.
+
+    There is no longer a transient 'disconnected' flash on the way into a
+    reconnect, so the old deferred (setTimeout 0) re-check that used to tell
+    transient from terminal is gone: read the PREVIOUS state instead.
 
     REFERENCE IMPLEMENTATION: the shipped Realtime_Status_Badge theme component
     (rsx/theme/components/realtime/) is the living example of this pattern -- a
@@ -1047,18 +1061,21 @@ CONNECTION STATE
             }
 
             _on_state_change(state) {
+                const previous = this._last_state;
                 this._last_state = state;
                 if (state === 'connecting' || state === 'reconnecting') {
                     this._arm_grace_timer();      // arm ONLY here
                 } else if (state === 'connected') {
                     this._hide();                 // clear + hide
                 } else if (state === 'disconnected') {
-                    // Defer: a transient drop advances _last_state to
-                    // 'reconnecting' synchronously; only a terminal disconnect
-                    // is still 'disconnected' on the next tick.
-                    setTimeout(() => {
-                        if (this._last_state === 'disconnected') this._hide();
-                    }, 0);
+                    // Confirmed outage if it followed a trying state; idle
+                    // otherwise. No deferral needed -- the client no longer
+                    // flashes a transient 'disconnected'.
+                    if (previous === 'connecting' || previous === 'reconnecting') {
+                        this._show();
+                    } else {
+                        this._hide();
+                    }
                 }
             }
 
@@ -1085,14 +1102,46 @@ AUTO-RECONNECT
     Component subscriptions survive reconnection -- no special handling
     needed. The framework manages the full lifecycle.
 
-    Idle disconnect: when the last active watch stops, the socket itself
-    closes after a short grace period (a few seconds) if nothing new starts
-    watching in that window -- the connection exists only while something is
-    actually being watched, and closing intentionally does NOT trigger the
-    reconnect logic above. EXCEPTION: when realtime is enabled the client also
-    holds a system ANCHOR connection for the whole page lifetime (see SESSION
-    REFRESH PUSH) -- the anchor suppresses idle disconnect, so an enabled page
-    stays connected even with zero app subscriptions.
+    Idle disconnect: when the last active watch stops, the socket itself closes
+    after 10 SECONDS if nothing new starts watching in that window -- the
+    connection exists only while something is actually being watched. The window
+    is 10s rather than a couple of seconds because an SPA navigation drains the
+    outgoing page's subscriptions and establishes the next page's a moment
+    later; a short window would turn every navigation into a close, token round
+    trip, handshake and full resync for nothing. EXCEPTION: when realtime is
+    enabled the client also holds a system ANCHOR connection for the whole page
+    lifetime (see SESSION REFRESH PUSH) -- the anchor suppresses idle
+    disconnect, so an enabled page stays connected even with zero app
+    subscriptions.
+
+    Intentionality is decided AT CLOSE TIME, not when close() was called.
+    ws.close() is asynchronous, so a watch() (or the anchor) can arrive while
+    the socket is still in CLOSING; if anything wants the connection by the time
+    the close completes, the client reconnects regardless of why it was closed.
+    For the same reason a socket in CLOSING or CLOSED counts as ABSENT, never as
+    a connection to reuse.
+
+    FORCED RECONNECTS. Two conditions make an apparently-open socket untrusted,
+    and both are recovered the same way -- tear it down, reconnect, and let the
+    auth_ok resync re-establish and refetch every watch:
+
+    - CLOCK DRIFT. The 60s drift tick observing a gap much larger than its own
+      cadence means the machine (or tab) was frozen. A socket that came back
+      from a suspend routinely still reports OPEN while being a half-open TCP
+      connection the network dropped, and anything published during the gap is
+      gone (the relay keeps no log). Resync is the only correct recovery.
+    - AN UNANSWERED LIVENESS PING. The relay pings and reaps a client that stops
+      answering, but that is the SERVER's view: the browser answers protocol
+      pings below JS, so a tab whose path died silently while the machine stayed
+      awake keeps a socket reporting OPEN and simply receives nothing. On the
+      drift timer's existing cadence (no separate timer), a client that has seen
+      no inbound frame for a full cadence sends {type:'ping'} and expects
+      {type:'pong'}; nothing inbound by the next tick forces the reconnect.
+      A link carrying any traffic at all is never probed.
+
+    Neither is treated as an intentional close: both reconnect. The stale-code
+    reload below runs on the auth_ok they produce, so a long suspend now reaches
+    it more reliably than when the drift gap was only recorded.
 
     STALE-RECONNECT RELOAD. Resync brings the DATA current; it cannot fix stale
     CODE. An open tab keeps whatever bundle it loaded forever, so a deploy during
@@ -1121,6 +1170,45 @@ AUTO-RECONNECT
     click -- touch and scroll are required, not extras: without them a touch
     device never marks activity at all and reads as permanently idle, so a reload
     could yank a phone user mid-scroll.
+
+WIRE FORMAT (CLIENT -> RELAY)
+    Every message the browser sends the relay is BATCHED. Messages are queued
+    and flushed as ONE frame containing an ARRAY of messages -- ten components
+    subscribing in one tick used to send ten frames. The window is fixed from
+    the first enqueue and never extended by a later one (Rsx_Realtime's
+    OUTBOX_FLUSH_MS, 50ms), so nothing waits longer than that however long the
+    burst runs.
+
+    AN ARRAY IS THE ONLY SHAPE THE RELAY ACCEPTS. A frame that is not an array,
+    or that carries more than MAX_MESSAGES_PER_FRAME (25) messages, is REFUSED:
+    the relay logs the violation with the connection's identity and closes the
+    connection with a stated reason naming the limit. Nothing is ever silently
+    dropped -- a subscribe that vanishes without a word is the exact failure
+    class this protocol is shaped to eliminate. Both ends enforce the same 25
+    (the client CHUNKS a longer burst into ceil(N/25) frames, in order, never
+    dropping a remainder), and the cap bounds the relay's EVENT-LOOP WORK PER
+    FRAME -- every element costs an HMAC verification in a process shared by
+    every connected user -- not frame size.
+
+    CONSEQUENCE OF A VERSION SKEW: a browser tab still running a pre-batching
+    bundle sends bare objects, so the relay refuses its connection and that tab
+    must reload. This is already the ordinary outcome of a framework update --
+    the update raises a maintenance window that 503s the app and restarts the
+    relay, so an open tab is reconnecting into a restarted service either way,
+    and a long-lived tab is covered by the stale-code reload. There is no
+    tolerance path for the old shape and none is wanted.
+
+    A message queued while the link is down is DROPPED, not replayed. That is
+    the delivery contract, not an omission: every watch is re-established from
+    scratch on every auth_ok, so a subscribe lost to a closed socket is reissued
+    moments later by the resync. A replay queue would be a second mechanism
+    doing the resync's job.
+
+    Ajax batching interacts with this. In debug/production the N subscribe-token
+    calls of one tick return in ONE batched response, so N subscriptions leave
+    as one frame. In DEVELOPMENT Ajax batching is off, the replies arrive spread
+    out, and the outbox coalesces only what is ready together -- more frames
+    than one, still far fewer than N. Nothing is lost either way.
 
 SESSION REFRESH PUSH
     A second delivery path over the same relay: a targeted CONTROL FRAME that

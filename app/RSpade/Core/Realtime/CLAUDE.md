@@ -233,9 +233,28 @@ HEADLESS (no session — everything from `$site_id`/`$filter`).
   `!window.rsxapp?.realtime_url`) wraps `watch()` and pushes the handle into
   `this._realtime_subs`; the existing `on_stop` patch calls `.stop()` on each.
 - `on_state_change(callback)` — `connecting | connected | disconnected | reconnecting`.
+  The names are a public contract. `disconnected` is DELAYED by
+  `OFFLINE_ANNOUNCE_GRACE_MS` (5s) on an unintentional close (`reconnecting` is announced
+  immediately) so a blip never flashes offline; a reconnect inside the window means
+  listeners never hear it. The delay is in the ANNOUNCEMENT only — `_ws`/`_connected`/
+  `_authenticated` update synchronously and nothing in the class reads `_state`.
 - Lazy connect: no connection exists until the first `watch()`/`subscribe()` call. When the
-  last watch stops, the socket closes after a short grace period if nothing new starts
-  watching — an intentional idle close, which does NOT trigger reconnect logic.
+  last watch stops, the socket closes after 10s if nothing new starts watching (the window
+  spans an SPA navigation, which drains and re-establishes subscriptions) — an intentional
+  idle close, which does NOT trigger reconnect logic. Intentionality is re-evaluated AT
+  CLOSE TIME: if `_watches` is non-empty or the anchor is held when the close lands, the
+  client reconnects anyway. A socket in `CLOSING`/`CLOSED` counts as ABSENT.
+- Outgoing messages are BATCHED: `_send()` queues, `_flush_outbox()` emits ONE array frame
+  (`OUTBOX_FLUSH_MS` 50ms window fixed from the first enqueue, chunked at
+  `MAX_MESSAGES_PER_FRAME` = 25 — the relay enforces the same 25 and REFUSES + closes on a
+  non-array or oversized frame, naming the limit). Auth is sent directly (array-wrapped),
+  never queued. A message queued while down is DROPPED — auth_ok resync is the one
+  catch-up mechanism; never turn this into a replay queue.
+- Forced reconnect (`_force_reconnect()`): a drift-tick gap observed while a socket is held
+  (suspend/resume — the socket may be half-open and messages are gone) and an unanswered
+  application-level liveness ping (`{type:'ping'}`/`{type:'pong'}`, run on the drift
+  timer's cadence, no separate timer). Both orphan the socket and reconnect; the resulting
+  `auth_ok` is also where the 60-minute stale-code reload check runs.
 
 ## Configuration
 

@@ -71,6 +71,17 @@ const HEARTBEAT_INTERVAL = 30000;  // ask every 30s
 const PONG_TIMEOUT = 10000;        // 10s to answer a ping before the socket is dead
 const AUTH_TIMEOUT = 5000;         // 5 seconds to authenticate after connect
 
+// Maximum messages one inbound frame may carry. THE CLIENT ENFORCES THE SAME LIMIT
+// (Rsx_Realtime.MAX_MESSAGES_PER_FRAME) by chunking its outgoing queue at this number, and
+// the refusal below NAMES the limit, so a client/relay skew is a diagnosable disconnect
+// rather than a mystery one - changing one end without the other is a loud failure by design.
+//
+// What the cap bounds is EVENT-LOOP WORK PER FRAME, not frame size: every element costs an
+// HMAC signature verification, and this relay is one shared process for every connected
+// user, so a frame may demand 25 verifications before it is somebody else's turn. (Size is
+// not the reason - 25 subscribes is 7-20KB.)
+const MAX_MESSAGES_PER_FRAME = 25;
+
 // Subscriber-change notify channel (relay -> PHP). Where PHP listens is a DEPLOYMENT
 // fact about this box (the precedent is fpc-proxy's BACKEND_HOST), never invocation
 // intent, so it is an .env value. A relay host with no co-located HTTP simply gets no
@@ -439,17 +450,38 @@ wss.on('connection', (ws) => {
     });
 
     ws.on('message', (raw) => {
-        const msg = parse_json_frame(raw);
-        if (msg === null) return;
+        const frame = parse_json_frame(raw);
 
-        if (msg.type === 'auth') {
-            handle_auth(ws, conn, msg, auth_timer);
-        } else if (!conn.authenticated) {
-            ws.close(4001, 'Not authenticated');
-        } else if (msg.type === 'subscribe') {
-            handle_subscribe(ws, conn, msg);
-        } else if (msg.type === 'unsubscribe') {
-            handle_unsubscribe(conn, msg);
+        // The client -> relay wire format is an ARRAY of messages. Anything else is a
+        // protocol violation and the connection is REFUSED, loudly and with a stated
+        // reason - never silently ignored. A subscribe that vanishes without a word is
+        // exactly the silent-death class of bug this protocol exists to eliminate.
+        if (!Array.isArray(frame)) {
+            console.warn(`[realtime] Protocol violation from ${describe_conn(conn)}: ` +
+                `frame is ${frame === null ? 'unparseable/null' : typeof frame}, expected an array ` +
+                `(${raw.length} bytes) - closing connection`);
+            ws.close(4002, 'Protocol error: frame must be an array of messages');
+            return;
+        }
+
+        if (frame.length > MAX_MESSAGES_PER_FRAME) {
+            console.warn(`[realtime] Protocol violation from ${describe_conn(conn)}: ` +
+                `${frame.length} messages in one frame, max ${MAX_MESSAGES_PER_FRAME} - closing connection`);
+            ws.close(4002, `Protocol error: max ${MAX_MESSAGES_PER_FRAME} messages per frame`);
+            return;
+        }
+
+        for (const msg of frame) {
+            // Per-element hardening, same reason parse_json_frame drops the JSON literal
+            // null: a property-less element would TypeError on msg.type and kill the single
+            // shared relay process for every connected user.
+            if (msg === null || typeof msg !== 'object' || Array.isArray(msg)) continue;
+
+            handle_message(ws, conn, msg, auth_timer);
+
+            // A handler closed this connection (auth failure, protocol violation) - the
+            // rest of the batch belongs to a connection that no longer exists.
+            if (!connections.has(ws)) return;
         }
     });
 
@@ -467,6 +499,34 @@ wss.on('connection', (ws) => {
         rewrite_registry_async();
     });
 });
+
+/**
+ * Short identification of a connection for a log line. Never includes a token.
+ */
+function describe_conn(conn) {
+    if (!conn.authenticated) return 'unauthenticated connection';
+    return `${conn.realm} user=${conn.user_id} site=${conn.site_id}`;
+}
+
+/**
+ * Dispatch ONE message out of an inbound batch.
+ */
+function handle_message(ws, conn, msg, auth_timer) {
+    if (msg.type === 'auth') {
+        handle_auth(ws, conn, msg, auth_timer);
+    } else if (!conn.authenticated) {
+        ws.close(4001, 'Not authenticated');
+    } else if (msg.type === 'subscribe') {
+        handle_subscribe(ws, conn, msg);
+    } else if (msg.type === 'unsubscribe') {
+        handle_unsubscribe(conn, msg);
+    } else if (msg.type === 'ping') {
+        // Application-level liveness. The browser answers PROTOCOL pings below JS, so the
+        // client cannot use them to tell a quiet link from a dead one; this answer is the
+        // one liveness signal it can actually observe.
+        ws.send(JSON.stringify({ type: 'pong' }));
+    }
+}
 
 function handle_auth(ws, conn, msg, auth_timer) {
     if (conn.authenticated) return;

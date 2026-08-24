@@ -25,6 +25,20 @@
  *     Rsx_Realtime.on_state_change((state) => {
  *         // state: 'connecting' | 'connected' | 'disconnected' | 'reconnecting'
  *     });
+ *
+ * Connection model, in one place:
+ *   - ONE socket per tab. Connecting is single-flight (_connect), and a socket in
+ *     CLOSING/CLOSED is treated as ABSENT, never as a connection to reuse.
+ *   - Outgoing messages are BATCHED: every client -> relay message is queued and
+ *     flushed as one array frame (_send/_flush_outbox). The relay accepts nothing
+ *     else. A message queued while the link is down is DROPPED, never replayed —
+ *     auth_ok resync is the one and only catch-up mechanism.
+ *   - Losing the link is announced to listeners on a DELAY (OFFLINE_ANNOUNCE_GRACE_MS)
+ *     so a blip never flashes an offline state at the app; internal state is updated
+ *     immediately regardless.
+ *   - A large wall-clock gap (laptop resume) or an unanswered liveness ping forces a
+ *     disconnect/reconnect, because resync is the only correct recovery from a link
+ *     that may have missed messages or died without telling the browser.
  */
 class Rsx_Realtime {
 
@@ -48,9 +62,10 @@ class Rsx_Realtime {
     static _reconnect_delay = 1000;
     static _max_reconnect_delay = 30000;
 
-    // True only while we are intentionally closing an idle connection (no active
-    // watches) — suppresses the auto-reconnect that would otherwise undo it.
-    static _intentional_close = false;
+    // Diagnostic: how many BATCH frames this tab has put on the wire since page load.
+    // The batching invariant (N same-tick messages -> one frame) is proven by reading
+    // this, not by inferring it.
+    static _frames_sent = 0;
 
     // System anchor: when realtime is enabled the connection is established at app boot
     // and HELD for the page lifetime (independent of app watches), so a page with zero
@@ -98,7 +113,64 @@ class Rsx_Realtime {
 
     // How long to wait, after the last watch stops, before actually closing the
     // socket (re-checked at fire time, so a new watch() in the meantime cancels it).
-    static _idle_disconnect_delay = 5000;
+    //
+    // 10s, not a couple of seconds: an SPA navigation DRAINS every subscription of the
+    // outgoing page and establishes the next page's a moment later, so a short window
+    // turns an ordinary navigate into a close + token round trip + handshake + full
+    // resync for nothing. Holding an idle socket open costs the relay one map entry;
+    // closing it too eagerly costs a reconnect on every navigation. (Owner, 2026-08-24.)
+    static _idle_disconnect_delay = 10000;
+
+    // The pending idle-disconnect timer, or null. One at a time — the fire-time re-check
+    // is what cancels it logically, so stacking timers only wastes them.
+    static _idle_timer = null;
+
+    // Grace window between LOSING the link and TELLING the app about it. Internal state
+    // (_ws / _connected / _authenticated) is updated the instant the socket closes; this
+    // bounds only the listener-facing 'disconnected' announcement, so a 300ms blip — a
+    // relay restart, a wifi handoff — never flashes an offline banner at the user. A
+    // reconnect inside the window means the app never hears 'disconnected' at all.
+    //
+    // 5s because that is the shipped Realtime_Status_Badge's own GRACE_MS: shorter and no
+    // consumer has reacted yet anyway, longer and a genuine outage stays hidden from the
+    // user past the point they would notice the page has gone quiet.
+    static OFFLINE_ANNOUNCE_GRACE_MS = 5000;
+    static _offline_timer = null;
+    static _offline_announced = false;
+
+    // Outgoing batch queue. Every client -> relay message goes through _send(); the wire
+    // format is an ARRAY of messages and the relay accepts nothing else.
+    static _outbox = [];
+    static _outbox_timer = null;
+
+    // Coalescing window for the outbox. Fixed from the FIRST enqueue and never reset by a
+    // later one, so a message waits at most this long however long the burst runs (a
+    // resetting debounce — the stdlib debounce() included — can defer a frame indefinitely
+    // under a steady trickle, which is why this is a plain one-shot timer instead).
+    // 50ms because what is being coalesced is the replies to a burst of subscribe-token
+    // Ajax calls issued in a single tick, which land within a few tens of ms of each other;
+    // a lone subscribe pays at most 50ms on top of the token round trip it already waited
+    // for, which is invisible against that round trip.
+    static OUTBOX_FLUSH_MS = 50;
+
+    // Hard cap on how many messages ride ONE frame. THE RELAY ENFORCES THE SAME LIMIT and
+    // refuses (and closes) a longer frame naming this number, so the two ends can never
+    // drift apart quietly — a skew is a loud, diagnosable disconnect by design.
+    //
+    // The cost being bounded is the RELAY'S EVENT-LOOP WORK PER FRAME, not frame size: every
+    // element costs an HMAC signature verification, so the cap answers "how many verifications
+    // may one frame demand before it is another connection's turn". (Size is a non-issue —
+    // a subscribe measures ~280 bytes typical and ~800 worst case with a large filter in the
+    // token, so 25 is 7-20KB, nowhere near any WebSocket constraint.) 25 also carries a
+    // realistic screen of 10-40 subscribing components in one or two frames, which is the
+    // efficiency batching exists for. A longer burst is SPLIT across frames, in order, never
+    // truncated. (Owner, 2026-08-24.)
+    static MAX_MESSAGES_PER_FRAME = 25;
+
+    // Application-level liveness. Piggybacks the drift timer's existing cadence — no new
+    // timer and no new interval constant. See _liveness_tick().
+    static _last_inbound_ts = 0;
+    static _liveness_ping_ts = 0;
 
     // Trailing-debounce window for LIVE message dispatch (per watch entry). A burst
     // of publishes within this window collapses to ONE callback invocation carrying
@@ -177,7 +249,59 @@ class Rsx_Realtime {
 
         if (elapsed > Rsx_Realtime.DRIFT_TICK_MS * 2) {
             Rsx_Realtime._suspend_gap_ms = Math.max(Rsx_Realtime._suspend_gap_ms, elapsed);
+
+            // A gap this size means the machine (or the tab) was frozen, and a socket that
+            // came back from one is not to be trusted: the browser routinely still reports
+            // OPEN for a half-open TCP connection the network dropped while we slept, and
+            // anything published during the gap is GONE (the relay keeps no log). Force the
+            // link down and reconnect — auth_ok resync (fresh token, resubscribe, refetch
+            // for every watch) is the only correct recovery. Explicitly NOT an intentional
+            // close: this must reconnect.
+            if (Rsx_Realtime._has_live_socket()) {
+                console_debug('Realtime', 'Observed a ' + Math.round(elapsed / 1000) +
+                    's wall-clock gap while connected — forcing a reconnect to resync');
+                Rsx_Realtime._force_reconnect();
+            }
         }
+
+        Rsx_Realtime._liveness_tick(now);
+    }
+
+    /**
+     * Application-level liveness probe, run on the drift timer's existing cadence.
+     *
+     * The relay pings and reaps a client that stops answering, but that is the SERVER's
+     * view of the link. The browser answers protocol pings below JS, so a tab whose path
+     * has died silently (NAT drop, wifi handoff, a router that went away while the machine
+     * stayed awake) keeps a socket reporting OPEN forever and simply receives nothing —
+     * indistinguishable, from JS, from a quiet connection. The drift detector covers the
+     * SLEPT machine; this covers the awake one.
+     *
+     * A tick that has seen no inbound frame for a full cadence sends one ping. If the next
+     * tick still shows nothing inbound since that ping went out, the link is dead however
+     * it looks, and the same forced reconnect + resync recovers it. Detection costs at most
+     * two ticks, and a link carrying any traffic at all is never probed.
+     */
+    static _liveness_tick(now) {
+        if (!Rsx_Realtime._is_ready_to_send()) {
+            Rsx_Realtime._liveness_ping_ts = 0;
+            return;
+        }
+
+        if (Rsx_Realtime._liveness_ping_ts) {
+            if (Rsx_Realtime._last_inbound_ts < Rsx_Realtime._liveness_ping_ts) {
+                console_debug('Realtime', 'Liveness ping went unanswered — forcing a reconnect');
+                Rsx_Realtime._liveness_ping_ts = 0;
+                Rsx_Realtime._force_reconnect();
+                return;
+            }
+            Rsx_Realtime._liveness_ping_ts = 0;
+        }
+
+        if (now - Rsx_Realtime._last_inbound_ts < Rsx_Realtime.DRIFT_TICK_MS) return;
+
+        Rsx_Realtime._liveness_ping_ts = now;
+        Rsx_Realtime._send({ type: 'ping' });
     }
 
     /**
@@ -354,6 +478,13 @@ class Rsx_Realtime {
         return () => Rsx_Realtime._state_listeners.delete(callback);
     }
 
+    /**
+     * Announce a state to LISTENERS. This is a projection for the app, never the class's
+     * own source of truth: nothing here reads _state to decide behavior (_ws, _connected,
+     * _authenticated and _watches are the truth, and they are updated the instant anything
+     * happens). That separation is what lets the offline announcement be delayed without
+     * the class ever lying to itself — see _announce_offline_after_grace().
+     */
     static _set_state(state) {
         if (Rsx_Realtime._state === state) return;
         Rsx_Realtime._state = state;
@@ -532,9 +663,7 @@ class Rsx_Realtime {
 
         Rsx_Realtime._watches.delete(key);
 
-        if (Rsx_Realtime._ws?.readyState === WebSocket.OPEN && Rsx_Realtime._authenticated) {
-            Rsx_Realtime._ws.send(JSON.stringify({ type: 'unsubscribe', sub_id: key }));
-        }
+        Rsx_Realtime._send({ type: 'unsubscribe', sub_id: key });
 
         if (Rsx_Realtime._watches.size === 0) {
             Rsx_Realtime._schedule_idle_disconnect();
@@ -601,6 +730,24 @@ class Rsx_Realtime {
     }
 
     /**
+     * Is there a socket worth reusing?
+     *
+     * CONNECTING and OPEN are live. CLOSING and CLOSED are ABSENT even though `_ws` is
+     * still assigned — close() is ASYNCHRONOUS, and a socket lingers in CLOSING for as
+     * long as the round trip takes. Treating that window as "connected" is what used to
+     * kill a page for good: a watch() arriving during an idle close took the fast path
+     * (no connection attempted), its subscribe frame was dropped for a non-OPEN socket,
+     * and the close that followed had already decided it was intentional and did not
+     * reconnect — leaving a live watch entry with no socket and nothing scheduled to
+     * make one.
+     */
+    static _has_live_socket() {
+        const ws = Rsx_Realtime._ws;
+        if (!ws) return false;
+        return ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN;
+    }
+
+    /**
      * Connect to the WebSocket server. Idempotent — safe to call when already
      * connected/connecting, and SINGLE-FLIGHT: N callers in the same tick share ONE
      * attempt and therefore ONE socket.
@@ -618,7 +765,7 @@ class Rsx_Realtime {
      * Cleared on settle so a later reconnect starts a fresh attempt. Callers may await it.
      */
     static async _connect() {
-        if (Rsx_Realtime._ws) return;
+        if (Rsx_Realtime._has_live_socket()) return;
         if (Rsx_Realtime._connect_promise) return Rsx_Realtime._connect_promise;
 
         let settle;
@@ -659,7 +806,7 @@ class Rsx_Realtime {
             // Superseded while the token was in flight: something else already installed a
             // live socket, so this one has no owner. Close it rather than leak an open,
             // about-to-be-authenticated connection at the relay.
-            if (Rsx_Realtime._ws) {
+            if (Rsx_Realtime._has_live_socket()) {
                 ws.close();
                 return;
             }
@@ -669,7 +816,12 @@ class Rsx_Realtime {
             ws.onopen = () => {
                 if (Rsx_Realtime._ws !== ws) return;
                 console_debug('Realtime', 'Connected, authenticating...');
-                ws.send(JSON.stringify({ type: 'auth', token: token }));
+                // Sent DIRECTLY, not through the outbox: auth must be the first message on
+                // the wire, and the outbox only accepts messages once authenticated, so auth
+                // can never ride a batch by construction. Array-wrapped like everything else
+                // — the relay accepts exactly one frame shape.
+                ws.send(JSON.stringify([{ type: 'auth', token: token }]));
+                Rsx_Realtime._frames_sent++;
             };
 
             ws.onmessage = (e) => {
@@ -688,25 +840,26 @@ class Rsx_Realtime {
                 if (Rsx_Realtime._ws !== ws) return;
 
                 console_debug('Realtime', 'Connection closed');
-                Rsx_Realtime._ws = null;
-                Rsx_Realtime._connected = false;
-                Rsx_Realtime._authenticated = false;
+                const was_intentional = ws._rsx_intentional_close === true;
+                Rsx_Realtime._handle_link_down();
 
-                // Start the downtime clock (consumed by _check_stale_reconnect on the next
-                // auth_ok). Only the FIRST close of a disconnected stretch counts, so a
-                // failed reconnect attempt does not restart the measurement.
-                if (!Rsx_Realtime._disconnected_since) {
-                    Rsx_Realtime._disconnected_since = Date.now();
+                // Re-evaluated HERE, at close time — never trusted from a flag set when
+                // close() was CALLED. An idle close is only still correct if the connection
+                // is still unwanted by the time it completes, and up to a full round trip
+                // elapses in CLOSING. A watch() (or the anchor) arriving in that window is
+                // exactly the case that used to strand a live watch entry with no socket:
+                // the intent was right, the condition was stale.
+                const still_needed = Rsx_Realtime._watches.size > 0 || Rsx_Realtime._anchored;
+
+                if (was_intentional && !still_needed) {
+                    // Terminal by intent: nothing wants the socket, nothing will reconnect.
+                    // Tell listeners immediately — there is no blip to wait out.
+                    Rsx_Realtime._set_state('disconnected');
+                    return;
                 }
 
-                const was_intentional = Rsx_Realtime._intentional_close;
-                Rsx_Realtime._intentional_close = false;
-
-                Rsx_Realtime._set_state('disconnected');
-
-                if (!was_intentional) {
-                    Rsx_Realtime._schedule_reconnect();
-                }
+                Rsx_Realtime._announce_offline_after_grace();
+                Rsx_Realtime._schedule_reconnect();
             };
 
             ws.onerror = () => {
@@ -720,13 +873,96 @@ class Rsx_Realtime {
     }
 
     /**
-     * Close the socket because nothing is watching anymore. Distinguished from a
-     * failure close so it does NOT trigger auto-reconnect.
+     * The link is down. Updates the INTERNAL truth immediately — socket, connection flags,
+     * downtime clock, outgoing queue — and says nothing to listeners: what the app is told,
+     * and when, is the caller's decision (see _announce_offline_after_grace).
+     *
+     * The outbox is discarded here rather than held: its tokens belong to the connection
+     * that just died, and every watch is re-established from scratch on the next auth_ok.
+     */
+    static _handle_link_down() {
+        Rsx_Realtime._ws = null;
+        Rsx_Realtime._connected = false;
+        Rsx_Realtime._authenticated = false;
+        Rsx_Realtime._liveness_ping_ts = 0;
+
+        Rsx_Realtime._outbox = [];
+        if (Rsx_Realtime._outbox_timer) {
+            clearTimeout(Rsx_Realtime._outbox_timer);
+            Rsx_Realtime._outbox_timer = null;
+        }
+
+        // Start the downtime clock (consumed by _check_stale_reconnect on the next auth_ok).
+        // Only the FIRST close of a disconnected stretch counts, so a failed reconnect
+        // attempt does not restart the measurement.
+        if (!Rsx_Realtime._disconnected_since) {
+            Rsx_Realtime._disconnected_since = Date.now();
+        }
+    }
+
+    /**
+     * Tell listeners we are offline — but only if we are STILL offline once the grace
+     * window has passed. A reconnect inside the window means the app never hears
+     * 'disconnected' at all, which is the point: a 300ms blip is not an outage.
+     *
+     * Once an outage HAS been announced, further closes in the same outage skip the grace
+     * and announce immediately — the delay exists to avoid crying wolf, and we are already
+     * known to be offline.
+     */
+    static _announce_offline_after_grace() {
+        if (Rsx_Realtime._offline_announced) {
+            Rsx_Realtime._set_state('disconnected');
+            return;
+        }
+        if (Rsx_Realtime._offline_timer) return;
+
+        Rsx_Realtime._offline_timer = setTimeout(() => {
+            Rsx_Realtime._offline_timer = null;
+            if (Rsx_Realtime._connected) return;
+            Rsx_Realtime._offline_announced = true;
+            Rsx_Realtime._set_state('disconnected');
+        }, Rsx_Realtime.OFFLINE_ANNOUNCE_GRACE_MS);
+    }
+
+    /**
+     * Cancel a pending offline announcement and end the outage. Called on auth_ok.
+     */
+    static _cancel_offline_announcement() {
+        if (Rsx_Realtime._offline_timer) {
+            clearTimeout(Rsx_Realtime._offline_timer);
+            Rsx_Realtime._offline_timer = null;
+        }
+        Rsx_Realtime._offline_announced = false;
+    }
+
+    /**
+     * Tear the current socket down and immediately reconnect, because the link cannot be
+     * trusted (a wall-clock gap, or a liveness ping that went unanswered). The socket is
+     * ORPHANED first, so its own close handler cannot run the ordinary close path
+     * underneath the replacement we are about to open — and this is deliberately NOT an
+     * intentional close: reconnecting, and the auth_ok resync it produces, IS the recovery.
+     */
+    static _force_reconnect() {
+        const ws = Rsx_Realtime._ws;
+        Rsx_Realtime._handle_link_down();
+        if (ws) {
+            ws.close();
+        }
+        Rsx_Realtime._announce_offline_after_grace();
+        Rsx_Realtime._connect();
+    }
+
+    /**
+     * Close the socket because nothing is watching anymore. Marked on the SOCKET, not on
+     * the class: with one flag shared by every socket, a close that completes after its
+     * successor has been installed leaves the flag set and the next real drop reads as
+     * intentional.
      */
     static _close_idle() {
-        if (!Rsx_Realtime._ws) return;
-        Rsx_Realtime._intentional_close = true;
-        Rsx_Realtime._ws.close();
+        const ws = Rsx_Realtime._ws;
+        if (!ws) return;
+        ws._rsx_intentional_close = true;
+        ws.close();
     }
 
     /**
@@ -738,11 +974,13 @@ class Rsx_Realtime {
         // The system anchor holds the connection open for the page lifetime (refresh pushes
         // arrive with no app subscription), so never idle-close while anchored.
         if (Rsx_Realtime._anchored) return;
+        if (Rsx_Realtime._idle_timer) return;
 
-        setTimeout(() => {
-            if (Rsx_Realtime._watches.size === 0) {
-                Rsx_Realtime._close_idle();
-            }
+        Rsx_Realtime._idle_timer = setTimeout(() => {
+            Rsx_Realtime._idle_timer = null;
+            if (Rsx_Realtime._anchored) return;
+            if (Rsx_Realtime._watches.size > 0) return;
+            Rsx_Realtime._close_idle();
         }, Rsx_Realtime._idle_disconnect_delay);
     }
 
@@ -750,12 +988,25 @@ class Rsx_Realtime {
      * Handle incoming WebSocket messages.
      */
     static _on_message(msg) {
+        // Any inbound frame proves the link is carrying traffic (see _liveness_tick).
+        Rsx_Realtime._last_inbound_ts = Date.now();
+
         if (msg.type === 'auth_ok') {
             console_debug('Realtime', 'Authenticated');
             Rsx_Realtime._connected = true;
             Rsx_Realtime._authenticated = true;
             Rsx_Realtime._reconnect_delay = 1000;
+            Rsx_Realtime._cancel_offline_announcement();
             Rsx_Realtime._set_state('connected');
+
+            // Nothing wanted this connection by the time it finished opening — the idle
+            // timer may have fired while the token request was in flight, when there was
+            // no socket for it to close. Without this the socket would stay open forever
+            // with nothing watching, since idle disconnect is otherwise only scheduled
+            // from the release path.
+            if (Rsx_Realtime._watches.size === 0 && !Rsx_Realtime._anchored) {
+                Rsx_Realtime._schedule_idle_disconnect();
+            }
 
             // Long gap => the tab's CODE may be stale; schedule an idle-gated reload. Never
             // returns early — the resync below must still run (the reload is minutes out at
@@ -800,6 +1051,12 @@ class Rsx_Realtime {
             // Targeted control frame (session/user refresh) — routed by connection stamps,
             // not tied to any subscription.
             Rsx_Realtime._handle_refresh();
+            return;
+        }
+
+        if (msg.type === 'pong') {
+            // Liveness answer. The timestamp recorded at the top of this method IS the
+            // signal; nothing else to do.
             return;
         }
 
@@ -854,12 +1111,60 @@ class Rsx_Realtime {
      * are).
      */
     static _send_subscribe(key, token) {
-        if (Rsx_Realtime._ws?.readyState === WebSocket.OPEN && Rsx_Realtime._authenticated) {
-            Rsx_Realtime._ws.send(JSON.stringify({
-                type: 'subscribe',
-                token: token,
-                sub_id: key,
-            }));
+        Rsx_Realtime._send({
+            type: 'subscribe',
+            token: token,
+            sub_id: key,
+        });
+    }
+
+    /**
+     * Is the link ready to carry a message right now?
+     */
+    static _is_ready_to_send() {
+        return Rsx_Realtime._ws?.readyState === WebSocket.OPEN && Rsx_Realtime._authenticated;
+    }
+
+    /**
+     * Queue ONE outgoing message for the next batch flush. This is the only way anything
+     * reaches the relay after auth.
+     *
+     * A message queued while the link is down is DROPPED, not replayed, and that is the
+     * delivery contract rather than an omission: every entry in _watches is re-established
+     * from scratch on every auth_ok, so a subscribe lost to a closed socket is reissued
+     * moments later by the resync. Turning this into a replay queue would put a SECOND
+     * mechanism on the same job, and the two would have to agree about ordering, tokens
+     * and expiry forever. Do not "fix" it into one.
+     */
+    static _send(msg) {
+        if (!Rsx_Realtime._is_ready_to_send()) return;
+
+        Rsx_Realtime._outbox.push(msg);
+
+        // One-shot: the window is measured from the FIRST enqueue and never extended by a
+        // later one (see OUTBOX_FLUSH_MS).
+        if (Rsx_Realtime._outbox_timer) return;
+        Rsx_Realtime._outbox_timer = setTimeout(() => {
+            Rsx_Realtime._outbox_timer = null;
+            Rsx_Realtime._flush_outbox();
+        }, Rsx_Realtime.OUTBOX_FLUSH_MS);
+    }
+
+    /**
+     * Put everything queued on the wire as array frames, in order, chunked at
+     * MAX_MESSAGES_PER_FRAME. Anything queued for a link that died in the meantime is dropped —
+     * the auth_ok resync reissues it.
+     */
+    static _flush_outbox() {
+        const queued = Rsx_Realtime._outbox;
+        Rsx_Realtime._outbox = [];
+
+        if (queued.length === 0) return;
+        if (!Rsx_Realtime._is_ready_to_send()) return;
+
+        for (let i = 0; i < queued.length; i += Rsx_Realtime.MAX_MESSAGES_PER_FRAME) {
+            Rsx_Realtime._ws.send(JSON.stringify(queued.slice(i, i + Rsx_Realtime.MAX_MESSAGES_PER_FRAME)));
+            Rsx_Realtime._frames_sent++;
         }
     }
 
