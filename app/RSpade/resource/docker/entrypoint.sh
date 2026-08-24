@@ -22,33 +22,47 @@ warn() { echo "[rspade] WARNING: $*" >&2; }
 die()  { echo "[rspade] ERROR: $*" >&2; exit 1; }
 
 # -----------------------------------------------------------------------------
-# 0. Sanity: is a project actually mounted here?
+# 0. Is a framework checkout present?
 # -----------------------------------------------------------------------------
-if [ ! -f "$APP_DIR/system/artisan" ]; then
+# THIS IS A QUESTION, NOT A GATE. The container is a working stack in its own
+# right - nginx, php-fpm, MySQL, Redis, supervisor - and it must come up and serve
+# whatever is in the docroot even when there is no RSpade checkout at all. An
+# empty mount, a bare PHP file, a project mid-clone: all of those are a container
+# that starts, not a container that refuses.
+#
+# Refusing here used to be the behaviour and it was wrong in both directions: it
+# denied a perfectly good stack to anyone who wanted one, and it turned every
+# framework-side mishap into "the container will not start", which is the least
+# informative symptom available.
+#
+# So: detect, say something useful, and carry on. Everything framework-shaped
+# below is conditional on HAS_FRAMEWORK; everything service-shaped is not.
+HAS_FRAMEWORK=0
+if [ -f "$APP_DIR/system/artisan" ]; then
+    HAS_FRAMEWORK=1
+elif [ -d "$APP_DIR/rsx" ] && [ -d "$APP_DIR/system" ] && [ -z "$(ls -A "$APP_DIR/system" 2>/dev/null)" ]; then
     # THE COMMON CASE IS A CLONE WITHOUT SUBMODULES, not a missing project. system/
     # is a git submodule, so `git clone` on its own leaves an empty directory there
     # and every symptom - no artisan, a 500 from the web server - points nowhere near
-    # the cause. Distinguish the two: a project directory that exists with an empty
-    # system/ is an uninitialised submodule and nothing else.
-    if [ -d "$APP_DIR/rsx" ] && [ -d "$APP_DIR/system" ] && [ -z "$(ls -A "$APP_DIR/system" 2>/dev/null)" ]; then
-        die "The framework is not checked out: $APP_DIR/system is empty.
+    # the cause. Naming it is the whole value of this branch.
+    warn "The framework is not checked out: $APP_DIR/system is empty.
 
   system/ is a git submodule, and a plain 'git clone' does not populate it. From
   your project directory on the HOST:
 
       git submodule update --init --recursive
 
-  Then start the container again. (Cloning with --recurse-submodules avoids this.)"
-    fi
+  Then restart the container. (Cloning with --recurse-submodules avoids this.)
+  Starting the services anyway - the web server will serve what is there."
+else
+    say "No RSpade checkout at $APP_DIR - starting the services only.
 
-    die "No RSpade project found at $APP_DIR (system/artisan is missing).
-
-  This image runs YOUR project - it does not contain one. Mount a checkout:
+  This image runs YOUR project; it does not contain one. To run an RSpade project,
+  mount a checkout:
 
       docker run -v \"\$(pwd)\":$APP_DIR -p 8080:80 <image>
 
-  If you have not created a project yet, start from the RSpade starter
-  repository: https://github.com/rspade-framework/rspade
+  Starting from scratch:
 
       git clone --recurse-submodules https://github.com/rspade-framework/rspade"
 fi
@@ -66,7 +80,22 @@ cd "$APP_DIR" || die "Cannot enter $APP_DIR"
 # no database, because the framework cannot boot until it has done its work.
 #
 # Everything below this line reads .env, so it has to happen here, first.
-php "$APP_DIR/system/bootstrap/rsx_env_heal.php" || die "The environment configuration could not be prepared (see above)."
+#
+# SKIPPED WHEN THE FILE IS NOT THERE, and that is version skew rather than an
+# error. THIS SCRIPT IS BAKED INTO THE IMAGE; system/ is a git submodule the
+# project pins independently. So a container built today can legitimately start
+# against no checkout at all, or one pinned to a release that predates the env
+# heal - and dying on a missing file would make a newer image unable to boot an
+# older project, the exact combination somebody hits bisecting or rolling back.
+#
+# If the file EXISTS it must SUCCEED. A heal that runs and fails has found a real
+# problem - unreadable .env, missing credentials - and the container must not
+# paper over it. The tolerance is for ABSENCE only, never for failure.
+if [ -f "$APP_DIR/system/bootstrap/rsx_env_heal.php" ]; then
+    php "$APP_DIR/system/bootstrap/rsx_env_heal.php" || die "The environment configuration could not be prepared (see above)."
+elif [ "$HAS_FRAMEWORK" = "1" ]; then
+    warn "system/bootstrap/rsx_env_heal.php is absent - this system/ checkout predates the env heal. Continuing with .env as it stands."
+fi
 
 # Read a key's current value from .env (empty when absent or blank).
 #
@@ -180,7 +209,10 @@ esac
 # PRODUCTION has no such screen - the wizard is development-only by design - so
 # the credentials remain REQUIRED there, and refusing early beats failing inside
 # the migration with the database half-built.
-if [ "$TARGET" = "prod" ]; then
+# Gated on HAS_FRAMEWORK: with no checkout there is nothing to migrate and no
+# account to create, so demanding credentials would refuse a stack that is not
+# being asked to run an application at all.
+if [ "$TARGET" = "prod" ] && [ "$HAS_FRAMEWORK" = "1" ]; then
     if [ -z "$(env_value RSPADE_DEFAULT_EMAIL)" ] || [ -z "$(env_value RSPADE_DEFAULT_PASSWORD)" ]; then
         die "RSPADE_DEFAULT_EMAIL and RSPADE_DEFAULT_PASSWORD must be set in .env before this container can migrate.
 
@@ -480,7 +512,10 @@ fi
 #
 #     docker exec <container> php system/artisan migrate
 #
-if [ "$TARGET" = "dev" ]; then
+# Skipped entirely without a checkout - artisan is the thing that is missing.
+if [ "$HAS_FRAMEWORK" != "1" ]; then
+    :
+elif [ "$TARGET" = "dev" ]; then
     say "Running migrations..."
     if ! php system/artisan migrate --force; then
         warn "Migrations did not complete. The application may not work until this is resolved."
@@ -509,8 +544,13 @@ fi
 # 12. Ready
 # -----------------------------------------------------------------------------
 echo ""
-say "RSpade is up. ${APP_URL_NOW:-(APP_URL unset)}"
-say "      framework $(cd "$APP_DIR/system" 2>/dev/null && /usr/bin/git rev-parse --short=12 HEAD 2>/dev/null || echo 'unknown')"
+if [ "$HAS_FRAMEWORK" = "1" ]; then
+    say "RSpade is up. ${APP_URL_NOW:-(APP_URL unset)}"
+    say "      framework $(cd "$APP_DIR/system" 2>/dev/null && /usr/bin/git rev-parse --short=12 HEAD 2>/dev/null || echo 'unknown')"
+else
+    # Say what IS running rather than announcing an application that is not here.
+    say "Services are up (nginx, php-fpm, MySQL, Redis). No RSpade checkout at $APP_DIR."
+fi
 echo ""
 
 # -----------------------------------------------------------------------------
