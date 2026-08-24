@@ -26,6 +26,7 @@ use PhpCsFixer\FixerDefinition\FixerDefinition;
 use PhpCsFixer\FixerDefinition\FixerDefinitionInterface;
 use PhpCsFixer\FixerDefinition\VersionSpecification;
 use PhpCsFixer\FixerDefinition\VersionSpecificCodeSample;
+use PhpCsFixer\Future;
 use PhpCsFixer\Tokenizer\CT;
 use PhpCsFixer\Tokenizer\Token;
 use PhpCsFixer\Tokenizer\Tokens;
@@ -46,6 +47,8 @@ use PhpCsFixer\Tokenizer\TokensAnalyzer;
  * @author Sebastiaan Stok <s.stok@rollerscapes.net>
  * @author Dariusz Rumiński <dariusz.ruminski@gmail.com>
  * @author Kuba Werłos <werlos@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class TrailingCommaInMultilineFixer extends AbstractFixer implements ConfigurableFixerInterface
 {
@@ -88,11 +91,11 @@ final class TrailingCommaInMultilineFixer extends AbstractFixer implements Confi
                             ];
 
                         SAMPLE,
-                    ['after_heredoc' => true]
+                    ['after_heredoc' => true],
                 ),
                 new CodeSample("<?php\nfoo(\n    1,\n    2\n);\n", ['elements' => [self::ELEMENTS_ARGUMENTS]]),
                 new VersionSpecificCodeSample("<?php\nfunction foo(\n    \$x,\n    \$y\n)\n{\n}\n", new VersionSpecification(8_00_00), ['elements' => [self::ELEMENTS_PARAMETERS]]),
-            ]
+            ],
         );
     }
 
@@ -108,7 +111,7 @@ final class TrailingCommaInMultilineFixer extends AbstractFixer implements Confi
 
     public function isCandidate(Tokens $tokens): bool
     {
-        return $tokens->isAnyTokenKindsFound([\T_ARRAY, CT::T_ARRAY_SQUARE_BRACE_OPEN, '(', CT::T_DESTRUCTURING_SQUARE_BRACE_OPEN]);
+        return $tokens->isAnyTokenKindsFound([\T_ARRAY, CT::T_ARRAY_BRACKET_OPEN, '(', CT::T_DESTRUCTURING_BRACKET_OPEN]);
     }
 
     protected function createConfigurationDefinition(): FixerConfigurationResolverInterface
@@ -116,7 +119,7 @@ final class TrailingCommaInMultilineFixer extends AbstractFixer implements Confi
         return new FixerConfigurationResolver([
             (new FixerOptionBuilder('after_heredoc', 'Whether a trailing comma should also be placed after heredoc end.'))
                 ->setAllowedTypes(['bool'])
-                ->setDefault(false) // @TODO 4.0: set to true
+                ->setDefault(Future::getV4OrV3(true, false))
                 ->getOption(),
             (new FixerOptionBuilder('elements', \sprintf('Where to fix multiline trailing comma (PHP >= 8.0 for `%s` and `%s`).', self::ELEMENTS_PARAMETERS, self::MATCH_EXPRESSIONS))) // @TODO: remove text when PHP 8.0+ is required
                 ->setAllowedTypes(['string[]'])
@@ -144,7 +147,7 @@ final class TrailingCommaInMultilineFixer extends AbstractFixer implements Confi
         $fixDestructuring = \in_array(self::ARRAY_DESTRUCTURING, $configuredElements, true);
 
         for ($index = $tokens->count() - 1; $index >= 0; --$index) {
-            if ($tokens[$index]->isGivenKind(CT::T_DESTRUCTURING_SQUARE_BRACE_OPEN)) {
+            if ($tokens[$index]->isGivenKind(CT::T_DESTRUCTURING_BRACKET_OPEN)) {
                 if ($fixDestructuring) { // array destructing short syntax
                     $this->fixBlock($tokens, $index);
                 }
@@ -152,7 +155,7 @@ final class TrailingCommaInMultilineFixer extends AbstractFixer implements Confi
                 continue;
             }
 
-            if ($tokens[$index]->isGivenKind(CT::T_ARRAY_SQUARE_BRACE_OPEN)) {
+            if ($tokens[$index]->isGivenKind(CT::T_ARRAY_BRACKET_OPEN)) {
                 if ($fixArrays) { // array short syntax
                     $this->fixBlock($tokens, $index);
                 }
@@ -231,7 +234,8 @@ final class TrailingCommaInMultilineFixer extends AbstractFixer implements Confi
 
         // if there is some item between braces then add `,` after it
         if (
-            $startIndex !== $beforeEndIndex && !$beforeEndToken->equals(',')
+            $startIndex !== $beforeEndIndex
+            && !$beforeEndToken->equalsAny([',', [CT::T_FIRST_CLASS_CALLABLE]])
             && (true === $this->configuration['after_heredoc'] || !$beforeEndToken->isGivenKind(\T_END_HEREDOC))
         ) {
             $tokens->insertAt($beforeEndIndex + 1, new Token(','));

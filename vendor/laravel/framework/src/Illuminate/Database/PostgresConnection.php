@@ -2,17 +2,49 @@
 
 namespace Illuminate\Database;
 
+use DateTimeInterface;
 use Exception;
-use Illuminate\Database\PDO\PostgresDriver;
 use Illuminate\Database\Query\Grammars\PostgresGrammar as QueryGrammar;
 use Illuminate\Database\Query\Processors\PostgresProcessor;
 use Illuminate\Database\Schema\Grammars\PostgresGrammar as SchemaGrammar;
 use Illuminate\Database\Schema\PostgresBuilder;
 use Illuminate\Database\Schema\PostgresSchemaState;
 use Illuminate\Filesystem\Filesystem;
+use PDO;
 
 class PostgresConnection extends Connection
 {
+    /**
+     * {@inheritdoc}
+     */
+    public function getDriverTitle()
+    {
+        return 'PostgreSQL';
+    }
+
+    /**
+     * Prepare the query bindings for execution.
+     *
+     * @param  array  $bindings
+     * @return array
+     */
+    public function prepareBindings(array $bindings)
+    {
+        $grammar = $this->getQueryGrammar();
+
+        foreach ($bindings as $key => $value) {
+            if ($value instanceof DateTimeInterface) {
+                $bindings[$key] = $value->format($grammar->getDateFormat());
+            } elseif (is_bool($value)) {
+                $bindings[$key] = $this->usesEmulatedPrepares()
+                    ? ($value ? 'true' : 'false')
+                    : (int) $value;
+            }
+        }
+
+        return $bindings;
+    }
+
     /**
      * Escape a binary value for safe SQL embedding.
      *
@@ -49,15 +81,34 @@ class PostgresConnection extends Connection
     }
 
     /**
+     * Extract the index and columns that caused a unique constraint violation.
+     *
+     * @param  Exception  $exception
+     * @return array{index: string|null, columns: list<string>}
+     */
+    protected function parseUniqueConstraintViolation(Exception $exception): array
+    {
+        [$index, $columns] = [null, []];
+
+        if (preg_match('#unique constraint "([^"]+)"#i', $message = $exception->getMessage(), $matches)) {
+            $index = $matches[1];
+        }
+
+        if (preg_match('#Key \(([^)]+)\)=#i', $message, $matches)) {
+            $columns = array_map(trim(...), explode(',', $matches[1]));
+        }
+
+        return ['columns' => $columns, 'index' => $index];
+    }
+
+    /**
      * Get the default query grammar instance.
      *
      * @return \Illuminate\Database\Query\Grammars\PostgresGrammar
      */
     protected function getDefaultQueryGrammar()
     {
-        ($grammar = new QueryGrammar)->setConnection($this);
-
-        return $this->withTablePrefix($grammar);
+        return new QueryGrammar($this);
     }
 
     /**
@@ -81,9 +132,7 @@ class PostgresConnection extends Connection
      */
     protected function getDefaultSchemaGrammar()
     {
-        ($grammar = new SchemaGrammar)->setConnection($this);
-
-        return $this->withTablePrefix($grammar);
+        return new SchemaGrammar($this);
     }
 
     /**
@@ -109,12 +158,19 @@ class PostgresConnection extends Connection
     }
 
     /**
-     * Get the Doctrine DBAL driver.
+     * Determine if the active PDO configuration uses emulated prepares.
      *
-     * @return \Illuminate\Database\PDO\PostgresDriver
+     * @return bool
      */
-    protected function getDoctrineDriver()
+    protected function usesEmulatedPrepares()
     {
-        return new PostgresDriver;
+        // Binding preparation runs after query routing has selected the PDO variant...
+        $config = match ($this->latestReadWriteTypeUsed()) {
+            'read' => $this->readPdoConfig,
+            'direct' => $this->directPdoConfig,
+            default => $this->config,
+        };
+
+        return (bool) ($config['options'][PDO::ATTR_EMULATE_PREPARES] ?? false);
     }
 }

@@ -24,6 +24,8 @@ use PhpCsFixer\Tokenizer\TokensAnalyzer;
 
 /**
  * @author Filippo Tessarotto <zoeslam@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class StaticPrivateMethodFixer extends AbstractFixer
 {
@@ -43,27 +45,29 @@ final class StaticPrivateMethodFixer extends AbstractFixer
             'Converts private methods to `static` where possible.',
             [
                 new CodeSample(
-                    '<?php
-class Foo
-{
-    public function bar()
-    {
-        return $this->baz();
-    }
+                    <<<'PHP'
+                        <?php
+                        class Foo
+                        {
+                            public function bar()
+                            {
+                                return $this->baz();
+                            }
 
-    private function baz()
-    {
-        return 1;
-    }
-}
-'
+                            private function baz()
+                            {
+                                return 1;
+                            }
+                        }
+
+                        PHP,
                 ),
             ],
             null,
             'Risky when the method:'
             .' contains dynamic generated calls to the instance,'
             .' is dynamically referenced,'
-            .' is referenced inside a Trait the class uses.'
+            .' is referenced inside a Trait the class uses.',
         );
     }
 
@@ -102,7 +106,7 @@ class Foo
                 }
 
                 $classOpen = $tokens->getNextTokenOfKind($index, ['{']);
-                $classClose = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_CURLY_BRACE, $classOpen);
+                $classClose = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_BRACE, $classOpen);
 
                 $anythingChanged |= $this->fixClass($tokens, $tokensAnalyzer, $classOpen, $classClose);
             }
@@ -130,7 +134,7 @@ class Foo
             return false;
         }
 
-        $classClose = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_CURLY_BRACE, $classOpen);
+        $classClose = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_BRACE, $classOpen);
         foreach ($this->getClassMethods($tokens, $classOpen, $classClose) as $methodData) {
             [, $methodOpen, $methodClose] = $methodData;
 
@@ -164,7 +168,7 @@ class Foo
         for ($index = $methodOpen + 1; $index < $methodClose - 1; ++$index) {
             if ($tokens[$index]->isGivenKind(\T_CLASS) && $tokensAnalyzer->isAnonymousClass($index)) {
                 $anonymousClassOpen = $tokens->getNextTokenOfKind($index, ['{']);
-                $index = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_CURLY_BRACE, $anonymousClassOpen);
+                $index = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_BRACE, $anonymousClassOpen);
 
                 continue;
             }
@@ -204,7 +208,7 @@ class Foo
             if ($tokens[$index]->isGivenKind(\T_FUNCTION)) {
                 $prevIndex = $tokens->getPrevMeaningfulToken($index);
                 $closureStart = $tokens->getNextTokenOfKind($index, ['{']);
-                $closureEnd = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_CURLY_BRACE, $closureStart);
+                $closureEnd = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_BRACE, $closureStart);
                 if (!$tokens[$prevIndex]->isGivenKind(\T_STATIC)) {
                     $this->fixReferencesInFunction($tokens, $tokensAnalyzer, $closureStart, $closureEnd, $fixedMethods);
                 }
@@ -216,7 +220,7 @@ class Foo
 
             if ($tokens[$index]->isGivenKind(\T_CLASS) && $tokensAnalyzer->isAnonymousClass($index)) {
                 $anonymousClassOpen = $tokens->getNextTokenOfKind($index, ['{']);
-                $index = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_CURLY_BRACE, $anonymousClassOpen);
+                $index = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_BRACE, $anonymousClassOpen);
 
                 continue;
             }
@@ -247,14 +251,15 @@ class Foo
     }
 
     /**
-     * @return list<array{int, int, int}>
+     * @return iterable<array{int, int, int}>
      */
-    private function getClassMethods(Tokens $tokens, int $classOpen, int $classClose): array
+    private function getClassMethods(Tokens $tokens, int $classOpen, int $classClose): iterable
     {
-        $methods = [];
+        $tokensAnalyzer = new TokensAnalyzer($tokens);
+
         for ($index = $classClose - 1; $index > $classOpen + 1; --$index) {
             if ($tokens[$index]->equals('}')) {
-                $index = $tokens->findBlockStart(Tokens::BLOCK_TYPE_CURLY_BRACE, $index);
+                $index = $tokens->findBlockStart(Tokens::BLOCK_TYPE_BRACE, $index);
 
                 continue;
             }
@@ -263,19 +268,14 @@ class Foo
                 continue;
             }
 
-            $functionKeywordIndex = $index;
-            $prevTokenIndex = $tokens->getPrevMeaningfulToken($functionKeywordIndex);
-            $prevPrevTokenIndex = $tokens->getPrevMeaningfulToken($prevTokenIndex);
-            if ($tokens[$prevTokenIndex]->isGivenKind(\T_ABSTRACT) || $tokens[$prevPrevTokenIndex]->isGivenKind(\T_ABSTRACT)) {
+            if ($tokensAnalyzer->getMethodAttributes($index)['abstract']) {
                 continue;
             }
 
-            $methodOpen = $tokens->getNextTokenOfKind($functionKeywordIndex, ['{']);
-            $methodClose = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_CURLY_BRACE, $methodOpen);
+            $methodOpen = $tokens->getNextTokenOfKind($index, ['{']);
+            $methodClose = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_BRACE, $methodOpen);
 
-            $methods[] = [$functionKeywordIndex, $methodOpen, $methodClose];
+            yield [$index, $methodOpen, $methodClose];
         }
-
-        return $methods;
     }
 }

@@ -18,6 +18,8 @@ namespace PhpCsFixer\Tokenizer\Analyzer\Analysis;
  * @readonly
  *
  * @internal
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class ArgumentAnalysis
 {
@@ -45,8 +47,8 @@ final class ArgumentAnalysis
     {
         $this->name = $name;
         $this->nameIndex = $nameIndex;
-        $this->default = $default ?? null;
-        $this->typeAnalysis = $typeAnalysis ?? null;
+        $this->default = $default;
+        $this->typeAnalysis = $typeAnalysis;
     }
 
     public function getDefault(): ?string

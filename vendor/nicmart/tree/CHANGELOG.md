@@ -6,7 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## Unreleased
 
-For a full diff see [`0.9.0...master`][0.9.0...master].
+For a full diff see [`0.10.1...master`][0.10.1...master].
+
+## [`0.10.1`][0.10.1]
+
+For a full diff see [0.9.0...0.10.0`][0.10.0...0.10.1].
+
+### Added
+
+- Added template/generic annotations for node values ([#333]), by [@smoench]
+
+## [`0.10.0`][0.10.0]
+
+For a full diff see [0.9.0...0.10.0`][0.9.0...0.10.0].
+
+### Added
+
+- Added support for PHP 8.5 ([#370]), by [@dwightwatson]
 
 ## [`0.9.0`][0.9.0]
 
@@ -224,6 +240,8 @@ For a full diff see [`fcfd14e...v0.1.1`][fcfd14e...0.1.1].
 [0.7.2]: https://github.com/nicmart/Tree/releases/tag/0.7.2
 [0.8.0]: https://github.com/nicmart/Tree/releases/tag/0.8.0
 [0.9.0]: https://github.com/nicmart/Tree/releases/tag/0.9.0
+[0.10.0]: https://github.com/nicmart/Tree/releases/tag/0.10.0
+[0.10.1]: https://github.com/nicmart/Tree/releases/tag/0.10.1
 
 [fcfd14e...0.1.1]: https://github.com/nicmart/Tree/compare/fcfd14e...v0.1.1
 [0.1.1...0.1.2]: https://github.com/nicmart/Tree/compare/v0.1.1...v0.1.2
@@ -245,7 +263,9 @@ For a full diff see [`fcfd14e...v0.1.1`][fcfd14e...0.1.1].
 [0.7.1...0.7.2]: https://github.com/nicmart/Tree/compare/0.7.1...0.7.2
 [0.7.2...0.8.0]: https://github.com/nicmart/Tree/compare/0.7.2...0.8.0
 [0.8.0...0.9.0]: https://github.com/nicmart/Tree/compare/0.8.0...0.9.0
-[0.9.0...master]: https://github.com/nicmart/Tree/compare/0.9.0...master
+[0.9.0...0.10.0]: https://github.com/nicmart/Tree/compare/0.9.0...0.10.0
+[0.10.0...0.10.1]: https://github.com/nicmart/Tree/compare/0.10.0...0.10.1
+[0.10.1...master]: https://github.com/nicmart/Tree/compare/0.10.1...master
 
 [#3]: https://github.com/nicmart/Tree/issues/3
 [#4]: https://github.com/nicmart/Tree/issues/4
@@ -283,11 +303,14 @@ For a full diff see [`fcfd14e...v0.1.1`][fcfd14e...0.1.1].
 [#209]: https://github.com/nicmart/Tree/pull/209
 [#236]: https://github.com/nicmart/Tree/pull/236
 [#331]: https://github.com/nicmart/Tree/pull/331
+[#370]: https://github.com/nicmart/Tree/pull/370
 
 [@asalazar-pley]: https://github.com/asalazar-pley
 [@Djuki]: https://github.com/Djuki
+[@dwightwatson]: https://github.com/dwightwatson
 [@jdeniau]: https://github.com/jdeniau
 [@localheinz]: https://github.com/localheinz
 [@mdwheele]: https://github.com/mdwheele
 [@nicmart]: https://github.com/nicmart
 [@pascalbaljet]: https://github.com/pascalbaljet
+[@smoench]: https://github.com/smoench

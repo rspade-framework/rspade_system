@@ -227,13 +227,33 @@ ROLLOUT
        stays clean through a full pass. The policy now blocks.
 
     THE 'unsafe-eval' DECISION GATE. The framework ships NO 'unsafe-eval', and
-    that is deliberate: whether compiled jqhtml templates ever reach the
-    runtime expression evaluator (which uses new Function) has not been proven
-    either way, and the violation log is what answers it. If triage shows
-    script-src violations naming eval or a Function constructor from framework
-    code, STOP and escalate before enforcing - adding 'unsafe-eval' to the
-    policy gives back a large part of what CSP is for and is a framework-level
-    decision, not an application one.
+    that is deliberate: adding it gives back a large part of what CSP is for.
+    If triage shows script-src violations naming eval or a Function constructor
+    from FRAMEWORK code, STOP and escalate before enforcing - that is a
+    framework-level decision, not an application one.
+
+    JS-EVAL-01 IS THE GATE YOU CAN RUN BEFORE DEPLOYING. `php artisan rsx:check`
+    flags eval() and new Function() in bundled JavaScript, so readiness is a
+    command rather than a log-watching exercise. The rule matches BOTH
+    constructs, because the browser reports them identically as
+    `blocked-uri: eval` - a check that caught only eval() would call a page
+    clean while it still violated.
+
+    Nearly every instance is one thing: resolving a class from its NAME as a
+    string, reached because RSpade classes are top-level `class` declarations
+    (lexical bindings), so window['Task_Model'] is undefined and eval() is the
+    first thing that appears to work. The supported API is a registry lookup:
+
+        const cls = Manifest.get_class_by_name(name);   // the class, or null
+
+    It executes nothing and cannot throw, so the identifier-guarding regex and
+    the try/catch that usually surround an eval() go away with it.
+
+    A dynamic import() needs no wrapper. The babel transform declares
+    caller.supportsDynamicImport, so import(url) survives as native syntax;
+    new Function('u','return import(u)') was the workaround for an older
+    transform that rewrote it into a require() shim, and is now both unnecessary
+    and a violation.
 
     In development the browser's own error is followed by an [RSX CSP] console
     warning naming the directive, the blocked URI and the remedy, and saying

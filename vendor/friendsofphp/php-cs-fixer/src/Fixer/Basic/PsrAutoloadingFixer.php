@@ -45,6 +45,8 @@ use PhpCsFixer\Tokenizer\TokensAnalyzer;
  * @author Bram Gotink <bram@gotink.me>
  * @author Graham Campbell <hello@gjcampbell.co.uk>
  * @author Kuba Werłos <werlos@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class PsrAutoloadingFixer extends AbstractFixer implements ConfigurableFixerInterface
 {
@@ -57,23 +59,27 @@ final class PsrAutoloadingFixer extends AbstractFixer implements ConfigurableFix
             'Classes must be in a path that matches their namespace, be at least one namespace deep and the class name should match the file name.',
             [
                 new FileSpecificCodeSample(
-                    '<?php
-namespace PhpCsFixer\FIXER\Basic;
-class InvalidName {}
-',
-                    new \SplFileInfo(__FILE__)
+                    <<<'PHP'
+                        <?php
+                        namespace PhpCsFixer\FIXER\Basic;
+                        class InvalidName {}
+
+                        PHP,
+                    new \SplFileInfo(__FILE__),
                 ),
                 new FileSpecificCodeSample(
-                    '<?php
-namespace PhpCsFixer\FIXER\Basic;
-class InvalidName {}
-',
+                    <<<'PHP'
+                        <?php
+                        namespace PhpCsFixer\FIXER\Basic;
+                        class InvalidName {}
+
+                        PHP,
                     new \SplFileInfo(__FILE__),
-                    ['dir' => './src']
+                    ['dir' => './src'],
                 ),
             ],
             null,
-            'This fixer may change your class name, which will break the code that depends on the old name.'
+            'This fixer may change your class name, which will break the code that depends on the old name.',
         );
     }
 
@@ -112,6 +118,13 @@ class InvalidName {}
             return false;
         }
 
+        $realPath = $file->getRealPath();
+
+        // ignore file that cannot be resolved on disk, since its location is what gets compared to the namespace
+        if (false === $realPath) {
+            return false;
+        }
+
         try {
             $tokens = Tokens::fromCode(\sprintf('<?php class %s {}', $file->getBasename('.php')));
 
@@ -125,7 +138,7 @@ class InvalidName {}
         }
 
         // ignore stubs/fixtures, since they typically contain invalid files for various reasons
-        return !Preg::match('{[/\\\](stub|fixture)s?[/\\\]}i', $file->getRealPath());
+        return !Preg::match('{[/\\\](stub|fixture)s?[/\\\]}i', $realPath);
     }
 
     protected function configurePostNormalisation(): void

@@ -4,8 +4,14 @@ namespace Illuminate\Foundation\Console;
 
 use Illuminate\Console\Concerns\CreatesMatchingTest;
 use Illuminate\Console\GeneratorCommand;
+use Illuminate\Support\Str;
+use Illuminate\Support\Stringable;
 use Symfony\Component\Console\Attribute\AsCommand;
-use Symfony\Component\Console\Input\InputOption;
+use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Output\OutputInterface;
+
+use function Laravel\Prompts\confirm;
+use function Laravel\Prompts\text;
 
 #[AsCommand(name: 'make:notification')]
 class NotificationMakeCommand extends GeneratorCommand
@@ -13,11 +19,14 @@ class NotificationMakeCommand extends GeneratorCommand
     use CreatesMatchingTest;
 
     /**
-     * The console command name.
+     * The name and signature of the console command.
      *
      * @var string
      */
-    protected $name = 'make:notification';
+    protected $signature = 'make:notification
+                    {name : The name of the notification}
+                    {--f|force : Create the class even if the notification already exists}
+                    {--m|markdown= : Create a new Markdown template for the notification}';
 
     /**
      * The console command description.
@@ -56,8 +65,14 @@ class NotificationMakeCommand extends GeneratorCommand
      */
     protected function writeMarkdownTemplate()
     {
+        $separator = '/';
+
+        if (windows_os()) {
+            $separator = '\\';
+        }
+
         $path = $this->viewPath(
-            str_replace('.', '/', $this->option('markdown')).'.blade.php'
+            str_replace('.', $separator, $this->option('markdown')).'.blade.php'
         );
 
         if (! $this->files->isDirectory(dirname($path))) {
@@ -65,6 +80,8 @@ class NotificationMakeCommand extends GeneratorCommand
         }
 
         $this->files->put($path, file_get_contents(__DIR__.'/stubs/markdown.stub'));
+
+        $this->components->info(sprintf('%s [%s] created successfully.', 'Markdown', $path));
     }
 
     /**
@@ -121,15 +138,29 @@ class NotificationMakeCommand extends GeneratorCommand
     }
 
     /**
-     * Get the console command options.
+     * Perform actions after the user was prompted for missing arguments.
      *
-     * @return array
+     * @param  \Symfony\Component\Console\Input\InputInterface  $input
+     * @param  \Symfony\Component\Console\Output\OutputInterface  $output
+     * @return void
      */
-    protected function getOptions()
+    protected function afterPromptingForMissingArguments(InputInterface $input, OutputInterface $output)
     {
-        return [
-            ['force', 'f', InputOption::VALUE_NONE, 'Create the class even if the notification already exists'],
-            ['markdown', 'm', InputOption::VALUE_OPTIONAL, 'Create a new Markdown template for the notification'],
-        ];
+        if ($this->didReceiveOptions($input)) {
+            return;
+        }
+
+        $wantsMarkdownView = confirm('Would you like to create a markdown view?');
+
+        if ($wantsMarkdownView) {
+            $defaultMarkdownView = (new Stringable($this->argument('name')))->replace('\\', '/')->explode('/')
+                ->map(fn ($path) => Str::kebab($path))
+                ->prepend('mail')
+                ->implode('.');
+
+            $markdownView = text('What should the markdown view be named?', default: $defaultMarkdownView);
+
+            $input->setOption('markdown', $markdownView);
+        }
     }
 }

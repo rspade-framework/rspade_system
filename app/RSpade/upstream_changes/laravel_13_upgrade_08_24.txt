@@ -1,0 +1,119 @@
+CATEGORY: 2 - ACTION REQUIRED (PHP 8.3 on your host; audit your own rsx/ code)
+TITLE: The framework moved from Laravel 10 to Laravel 13 (10 -> 11 -> 12 -> 13)
+DATE: 2026-08-24
+
+--------------------------------------------------------------------------------
+WHAT ARRIVES BY ITSELF
+--------------------------------------------------------------------------------
+
+Laravel itself. system/vendor is committed and ships in the submodule, so the
+pull delivers Laravel 13.26.1 with no composer step on your side.
+
+The RSpade application structure is UNCHANGED. We did not adopt Laravel 11's slim
+skeleton - the upgrade guide explicitly recommends against migrating structure
+when upgrading, and bootstrap/app.php, public/index.php and Http/Kernel.php are
+framework files carrying RSpade's pre-boot guards. Nothing about how you write an
+RSpade application changed.
+
+--------------------------------------------------------------------------------
+ACTION 1 - PHP 8.3 MINIMUM (this one will stop you booting)
+--------------------------------------------------------------------------------
+
+Laravel 13 requires PHP 8.3.0 or greater. Check your host:
+
+    php -v
+
+The shipped RSpade container already runs PHP 8.4, so if you use it you are done -
+rebuild it from the current Dockerfile and move on. If you run RSpade on a host
+you manage yourself and it is below 8.3, upgrade PHP BEFORE pulling.
+
+--------------------------------------------------------------------------------
+ACTION 2 - AUDIT YOUR OWN rsx/ CODE
+--------------------------------------------------------------------------------
+
+Four things broke in OUR code during this upgrade. Each is something an
+application can plausibly have too, and none of them fails at build time - they
+fail when the line runs, or at boot.
+
+  A. CUSTOM ARTISAN COMMANDS THAT OVERRIDE configure()
+
+     Symfony Console 8 added a `: void` return type. An untyped override is a
+     FATAL at boot - every artisan command stops working, including the ones you
+     would use to diagnose it. This is not in Laravel's upgrade guide; it arrives
+     with the Symfony major.
+
+         grep -rn 'function configure()' rsx/
+
+         // BEFORE
+         protected function configure()
+         // AFTER
+         protected function configure(): void
+
+  B. CUSTOM DATABASE GRAMMARS
+
+     Illuminate\Database\Grammar::__construct() now requires a Connection, and
+     setConnection() - which used to supply it afterwards - was removed.
+
+         grep -rn 'new .*Grammar(\|setConnection(' rsx/
+
+         // BEFORE
+         $connection->setQueryGrammar(new My_Grammar());
+         // AFTER
+         $connection->setQueryGrammar(new My_Grammar($connection));
+
+     (Eloquent's Model::setConnection() is a DIFFERENT method and is unaffected.)
+
+  C. array_first() / array_last()
+
+     Removed. See upstream_changes/array_first_last_removed_08_24.txt - PHP 8.5
+     and Laravel 13 claim those names. Use Arr::first() / Arr::last().
+
+  D. REFERENCES TO VerifyCsrfToken
+
+     Laravel renamed its CSRF middleware to PreventRequestForgery and added
+     Sec-Fetch-Site origin checking. VerifyCsrfToken survives as a DEPRECATED
+     alias, so this does not break - but update direct references:
+
+         grep -rn 'VerifyCsrfToken\|ValidateCsrfToken' rsx/
+
+     RSpade's own CSRF (Rsx_Csrf, covering Ajax, uploads and @csrf) is unaffected
+     and unchanged; Laravel's middleware is not in the RSpade middleware stack at
+     all. If you never touched Laravel's CSRF directly, there is nothing to do.
+
+--------------------------------------------------------------------------------
+ACTION 3 - YOUR APP-LAYER COMPOSER PACKAGES, IF YOU HAVE ANY
+--------------------------------------------------------------------------------
+
+If your project added packages through `php artisan rsx:composer`, any that
+declare `laravel/framework: ^10` or `^11` will now be unsatisfiable. Check their
+constraints and update them before assuming the pull is clean.
+
+--------------------------------------------------------------------------------
+WHAT WE CHECKED SO YOU DO NOT HAVE TO
+--------------------------------------------------------------------------------
+
+These are the upgrade-guide items that turned out NOT to matter for an RSpade
+application, with the reason:
+
+  - Schema builder changes (column modifiers dropped on change(), floating-point
+    and spatial type rewrites): RSpade PROHIBITS the Schema builder; migrations
+    are raw SQL. Not applicable.
+  - doctrine/dbal removal: no longer a dependency. If you imported it through
+    ours, require it explicitly in your own app layer.
+  - Carbon 3: Rsx_Time and Rsx_Date pass $absolute explicitly, so the changed
+    default does not reach them, and their return types absorb the new floats.
+    Verified by test. If YOUR code calls diffIn*() without a second argument, the
+    sign flipped - Carbon 2 defaulted to absolute, Carbon 3 does not.
+  - Password rehashing, per-second rate limiting, Eloquent casts() collisions,
+    HasUuids/UUIDv7, Storage::disk('local') root, image validation excluding
+    SVGs, upsert() uniqueBy validation, MySQL DELETE ... JOIN, queue event
+    property renames, cache serializable_classes, session serialization: none
+    reached RSpade core. Grep your own rsx/ for them only if you use those
+    Laravel features directly.
+
+--------------------------------------------------------------------------------
+SEE ALSO
+--------------------------------------------------------------------------------
+
+    laravel.com/docs/13.x/upgrade      - the full guide (and 11.x / 12.x)
+    upstream_changes/array_first_last_removed_08_24.txt

@@ -26,6 +26,8 @@ use PhpCsFixer\Tokenizer\Tokens;
  * @author Dariusz Rumiński <dariusz.ruminski@gmail.com>
  *
  * @internal
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class NullableTypeTransformer extends AbstractTransformer
 {
@@ -62,7 +64,12 @@ final class NullableTypeTransformer extends AbstractTransformer
         return 7_01_00;
     }
 
-    public function process(Tokens $tokens, Token $token, int $index): void
+    public function isCandidate(Tokens $tokens): bool
+    {
+        return $tokens->isTokenKindFound('?');
+    }
+
+    public function processToken(Tokens $tokens, Token $token, int $index): void
     {
         if (!$token->equals('?')) {
             return;

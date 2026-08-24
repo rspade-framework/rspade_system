@@ -60,7 +60,7 @@ class Rsx_Composer_Command extends Command
     /**
      * Accept arbitrary trailing composer args without Symfony validating them.
      */
-    protected function configure()
+    protected function configure(): void
     {
         parent::configure();
 

@@ -20,6 +20,8 @@ use PhpCsFixer\Tokenizer\Tokens;
  * @internal
  *
  * @TODO 4.0 remove this analyzer and move this logic into a transformer
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class AlternativeSyntaxAnalyzer
 {
@@ -49,7 +51,7 @@ final class AlternativeSyntaxAnalyzer
             return false;
         }
 
-        $openParenthesisIndex = $tokens->findBlockStart(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $prevIndex);
+        $openParenthesisIndex = $tokens->findBlockStart(Tokens::BLOCK_TYPE_PARENTHESIS, $prevIndex);
         $beforeOpenParenthesisIndex = $tokens->getPrevMeaningfulToken($openParenthesisIndex);
 
         return $tokens[$beforeOpenParenthesisIndex]->isGivenKind([
@@ -112,7 +114,7 @@ final class AlternativeSyntaxAnalyzer
 
         if ($tokens[$index]->equals('(')) {
             $index = $tokens->getNextMeaningfulToken(
-                $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $index)
+                $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $index),
             );
         }
 

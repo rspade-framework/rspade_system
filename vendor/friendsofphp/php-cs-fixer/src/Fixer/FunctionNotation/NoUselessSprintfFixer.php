@@ -22,6 +22,9 @@ use PhpCsFixer\Tokenizer\Analyzer\ArgumentsAnalyzer;
 use PhpCsFixer\Tokenizer\Analyzer\FunctionsAnalyzer;
 use PhpCsFixer\Tokenizer\Tokens;
 
+/**
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
+ */
 final class NoUselessSprintfFixer extends AbstractFixer
 {
     public function getDefinition(): FixerDefinitionInterface
@@ -30,11 +33,11 @@ final class NoUselessSprintfFixer extends AbstractFixer
             'There must be no `sprintf` calls with only the first argument.',
             [
                 new CodeSample(
-                    "<?php\n\$foo = sprintf('bar');\n"
+                    "<?php\n\$foo = sprintf('bar');\n",
                 ),
             ],
             null,
-            'Risky when if the `sprintf` function is overridden.'
+            'Risky when if the `sprintf` function is overridden.',
         );
     }
 
@@ -82,7 +85,7 @@ final class NoUselessSprintfFixer extends AbstractFixer
                 continue;
             }
 
-            $closeParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $openParenthesisIndex);
+            $closeParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $openParenthesisIndex);
 
             if (1 !== $argumentsAnalyzer->countArguments($tokens, $openParenthesisIndex, $closeParenthesisIndex)) {
                 continue;

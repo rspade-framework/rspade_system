@@ -26,6 +26,8 @@ use PhpCsFixer\Tokenizer\TokensAnalyzer;
 
 /**
  * @author Filippo Tessarotto <zoeslam@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class ProtectedToPrivateFixer extends AbstractFixer
 {
@@ -38,18 +40,20 @@ final class ProtectedToPrivateFixer extends AbstractFixer
             'Converts `protected` variables and methods to `private` where possible.',
             [
                 new CodeSample(
-                    '<?php
-final class Sample
-{
-    protected $a;
+                    <<<'PHP'
+                        <?php
+                        final class Sample
+                        {
+                            protected $a;
 
-    protected function test()
-    {
-    }
-}
-'
+                            protected function test()
+                            {
+                            }
+                        }
+
+                        PHP,
                 ),
-            ]
+            ],
         );
     }
 
@@ -166,7 +170,7 @@ final class Sample
         }
 
         $classOpenIndex = $tokens->getNextTokenOfKind($classNameIndex, ['{']);
-        $classCloseIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_CURLY_BRACE, $classOpenIndex);
+        $classCloseIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_BRACE, $classOpenIndex);
         $useIndex = $tokens->getNextTokenOfKind($classOpenIndex, [[CT::T_USE_TRAIT]]);
 
         return null === $useIndex || $useIndex > $classCloseIndex;

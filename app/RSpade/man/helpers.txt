@@ -40,9 +40,16 @@ DESCRIPTION
     shouldnt_happen(). See rsx:man js_functions for the JavaScript side.
 
     Some names deliberately SHADOW a Laravel or Illuminate concept
-    (array_get/array_set/array_first/array_last mirror Arr::, is_blank mirrors
-    blank()). That is intentional: one vocabulary, in one style, callable from
-    anywhere including a Blade template.
+    (array_get/array_set mirror Arr::, is_blank mirrors blank()). That is
+    intentional: one vocabulary, in one style, callable from anywhere including
+    a Blade template.
+
+    THE SHADOWING STOPS AT NAMES PHP ITSELF TAKES. array_first() and
+    array_last() were removed: PHP 8.5 defines both as native functions taking
+    only the array, and Laravel 13 pulls in symfony/polyfill-php85, which
+    defines them on earlier versions too. A duplicate global declaration is a
+    fatal redeclare at boot. Use Arr::first() / Arr::last(), which take the same
+    optional callback and default the removed helpers took.
 
     Functions prefixed with a single underscore (_rsx_file_hash_for_build,
     _linkify_content, _paths_on_same_filesystem, ...) are framework-internal.
@@ -82,10 +89,6 @@ API REFERENCE
 
     array_set(array &$array, string $key, $value): void
         Dot-path write, BY REFERENCE, creating intermediate arrays as needed.
-
-    array_first(array $array, ?callable $callback = null, $default = null)
-    array_last(array $array, ?callable $callback = null, $default = null)
-        First/last element, optionally the first/last matching the callback.
 
     array_pluck($array, ?string $key = null): array
         Extract one key's value from a collection of arrays/objects.
@@ -366,7 +369,7 @@ RSX VS LARAVEL
         Laravel                     RSX
         Arr::get()/set()            array_get()/array_set()
         Arr::only()/except()        array_only()/array_except()
-        Arr::first()/last()         array_first()/array_last()
+        Arr::first()/last()         (no RSX alias - use Arr:: directly)
         blank()                     is_blank()
         Str::snake()/camel()        camel_to_snake()/snake_to_camel()
         realpath()                  rsxrealpath() (does not follow symlinks)

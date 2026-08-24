@@ -11,8 +11,10 @@ use NunoMaduro\Collision\Contracts\RenderlessTrace;
 use NunoMaduro\Collision\Contracts\SolutionsRepository;
 use NunoMaduro\Collision\Exceptions\TestException;
 use NunoMaduro\Collision\SolutionsRepositories\NullSolutionsRepository;
+use Spatie\Ignition\Contracts\Solution;
 use Symfony\Component\Console\Output\ConsoleOutput;
 use Symfony\Component\Console\Output\OutputInterface;
+use Tests\Unit\WriterTest;
 use Throwable;
 use Whoops\Exception\Frame;
 use Whoops\Exception\Inspector;
@@ -20,7 +22,7 @@ use Whoops\Exception\Inspector;
 /**
  * @internal
  *
- * @see \Tests\Unit\WriterTest
+ * @see WriterTest
  */
 final class Writer
 {
@@ -226,13 +228,13 @@ final class Writer
 
         $solutions = $throwable instanceof Throwable
             ? $this->solutionsRepository->getFromThrowable($throwable)
-            : []; // @phpstan-ignore-line
+            : [];
 
         foreach ($solutions as $solution) {
-            /** @var \Spatie\Ignition\Contracts\Solution $solution */
-            $title = $solution->getSolutionTitle();
-            $description = $solution->getSolutionDescription();
-            $links = $solution->getDocumentationLinks();
+            /** @var Solution $solution */
+            $title = $solution->getSolutionTitle();  // @phpstan-ignore-line
+            $description = $solution->getSolutionDescription();  // @phpstan-ignore-line
+            $links = $solution->getDocumentationLinks();  // @phpstan-ignore-line
 
             $description = trim((string) preg_replace("/\n/", "\n    ", $description));
 

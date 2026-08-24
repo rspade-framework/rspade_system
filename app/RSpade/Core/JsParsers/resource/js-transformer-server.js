@@ -299,6 +299,23 @@ function transformFileContent(content, filePath, target, hashPath, jsonOutput) {
             filename: relativeFilePath,
             sourceFileName: relativeFilePath,  // Explicitly set source filename for sourcemap
             sourceMaps: 'inline',
+
+            // RSpade JS is concatenated into a CLASSIC SCRIPT, never a CommonJS
+            // module - nothing here uses static import/export, because classes are
+            // global lexical bindings the manifest discovers. Left at its default,
+            // preset-env's modules:'auto' assumes a CJS target anyway and rewrites
+            // a dynamic import(url) into a require() shim, which is undefined in a
+            // browser ("require is not defined").
+            //
+            // Declaring the caller supports dynamic import keeps import() intact as
+            // native syntax. Without this, the only way to reach a real dynamic
+            // import was new Function('u','return import(u)') - hiding the token
+            // from the transform - and that is an eval-family construct the CSP
+            // blocks on every page (JS-EVAL-01).
+            caller: {
+                name: 'rsx-js-transformer',
+                supportsDynamicImport: true,
+            },
             presets: [
                 ['@babel/preset-env', targetPresets[target] || targetPresets.modern]
             ],

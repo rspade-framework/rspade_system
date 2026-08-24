@@ -67,7 +67,6 @@ class Kernel extends HttpKernel
             // Session middleware removed for custom session handler
             // \Illuminate\Session\Middleware\StartSession::class,
             // \Illuminate\View\Middleware\ShareErrorsFromSession::class,
-            // \App\Http\Middleware\VerifyCsrfToken::class,
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
             \Jqhtml\LaravelBridge\Middleware\JqhtmlErrorMiddleware::class,
         ],

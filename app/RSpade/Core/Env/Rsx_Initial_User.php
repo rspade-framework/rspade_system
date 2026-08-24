@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Session\Session;
 
 /**
  * THE INITIAL USER - the one account an application is born with.
@@ -56,6 +57,23 @@ class Rsx_Initial_User
 
     /**
      * The event fired once the initial user exists.
+     *
+     * THE SESSION REFLECTS THE NEW ACCOUNT'S SITE WHEN YOUR HANDLER RUNS.
+     * Session::get_site_id() returns the founding account's site_id (site 1 on a
+     * stock install) and Session::has_session() answers true, in EVERY source -
+     * the first-run web screen, the post-migrate seed, and the test baseline
+     * alike. Declared by Session::set_temporary_site_id() immediately before the
+     * account is written, so a handler can create site-scoped records without
+     * passing a site around or resolving one itself.
+     *
+     * Nothing was persisted to make that true: no session row exists, no cookie
+     * was set, and any row that did exist is untouched. It is a declaration for
+     * the remainder of this script.
+     *
+     * There is still NO LOGGED-IN USER - get_login_user_id() and get_user_id()
+     * are null, and is_logged_in() is false. Nobody has signed in; the account
+     * has only just come into existence. Use the payload's 'user' for authorship
+     * rather than reading it from the session.
      */
     public const EVENT_CREATED = 'user.initial.created';
 
@@ -96,6 +114,23 @@ class Rsx_Initial_User
             : self::resolve_site_id($connection_name);
 
         self::__assert_no_initial_user($connection_name);
+
+        // DECLARE the tenant for the rest of this script, before anything is written.
+        //
+        // The account being created IS the first account, so nobody is signed in and
+        // there is no session to read a tenant from - in a first-run web request the
+        // visitor has no cookie, and in the migrate/test CLI path there is no cookie
+        // to have. Without this, site-scoped code reached from here (the model writes
+        // below, and every user.initial.created handler) sees site_id 0 and
+        // has_session() false, and either scopes to nothing or refuses outright.
+        //
+        // set_temporary_site_id() is what makes that safe to fix in ONE call for both
+        // modes: it writes no session row, emits no cookie, and touches no existing
+        // row - a browser that somehow does have a session keeps its own tenant. It is
+        // NOT cleared afterwards, deliberately: the declaration is meant to hold for
+        // the remainder of the script, which is the request or command that just
+        // created the founding account.
+        Session::set_temporary_site_id($site_id);
 
         // Every field assigned explicitly - never mass assignment, so what this
         // writes is visible here rather than inferred from an array.

@@ -19,6 +19,8 @@ use PhpCsFixer\Tokenizer\Tokens;
 
 /**
  * @internal
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class RangeAnalyzer
 {
@@ -59,8 +61,8 @@ final class RangeAnalyzer
             $rightEnd = $tokens->getPrevMeaningfulToken($rightEnd);
         }
 
-        $arrayOpenTypes = ['[', [CT::T_ARRAY_INDEX_CURLY_BRACE_OPEN]];
-        $arrayCloseTypes = [']', [CT::T_ARRAY_INDEX_CURLY_BRACE_CLOSE]];
+        $arrayOpenTypes = ['[', [CT::T_ARRAY_INDEX_BRACE_OPEN]];
+        $arrayCloseTypes = [']', [CT::T_ARRAY_INDEX_BRACE_CLOSE]];
 
         while (true) {
             $leftToken = $tokens[$leftStart];

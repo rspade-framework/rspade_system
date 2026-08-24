@@ -9,27 +9,33 @@ use Illuminate\Support\Collection;
 
 class Macro extends Method
 {
+    protected static $macroDefaults = [];
+
     /**
      * Macro constructor.
      *
      * @param \ReflectionFunctionAbstract $method
-     * @param string              $alias
      * @param \ReflectionClass    $class
      * @param null                $methodName
      * @param array               $interfaces
      * @param array               $classAliases
+     * @param array               $returnTypeNormalizers
      */
     public function __construct(
         $method,
-        $alias,
         $class,
         $methodName = null,
         $interfaces = [],
-        $classAliases = []
+        $classAliases = [],
+        $returnTypeNormalizers = []
     ) {
-        parent::__construct($method, $alias, $class, $methodName, $interfaces, $classAliases);
+        parent::__construct($method, $class, $methodName, $interfaces, $classAliases, $returnTypeNormalizers);
     }
 
+    public static function setDefaultReturnTypes(array $map = [])
+    {
+        static::$macroDefaults = array_merge(static::$macroDefaults, $map);
+    }
     /**
      * @param \ReflectionFunctionAbstract $method
      */
@@ -67,27 +73,64 @@ class Macro extends Method
 
             $type = $this->concatReflectionTypes($return);
 
-            /** @psalm-suppress UndefinedClass */
             if (!$return instanceof \ReflectionUnionType) {
+                /** @phpstan-ignore method.notFound */
                 $type .= $this->root === "\\{$builder}" && $return->getName() === $builder ? '|static' : '';
                 $type .= $return->allowsNull() ? '|null' : '';
             }
 
             $this->phpdoc->appendTag(Tag::createInstance("@return {$type}"));
         }
+
+        $class = ltrim($this->declaringClassName, '\\');
+        if (!$this->phpdoc->hasTag('return') && isset(static::$macroDefaults[$class])) {
+            $type = static::$macroDefaults[$class];
+            $this->phpdoc->appendTag(Tag::createInstance("@return {$type}"));
+        }
     }
 
     protected function concatReflectionTypes(?\ReflectionType $type): string
     {
-        /** @psalm-suppress UndefinedClass */
-        $returnTypes = $type instanceof \ReflectionUnionType
-            ? $type->getTypes()
-            : [$type];
+        if ($type instanceof \ReflectionNamedType) {
+            return $type->getName();
+        }
 
-        return Collection::make($returnTypes)
+        if ($type instanceof \ReflectionIntersectionType) {
+            return $this->formatIntersectionType($type);
+        }
+
+        if ($type instanceof \ReflectionUnionType) {
+            return $this->formatUnionType($type);
+        }
+
+        // Unknown or null type
+        return '';
+    }
+
+    protected function formatUnionType(\ReflectionUnionType $type): string
+    {
+        return Collection::make($type->getTypes())
+            ->map(function (\ReflectionType $inner) {
+                if ($inner instanceof \ReflectionNamedType) {
+                    return $inner->getName();
+                }
+                if ($inner instanceof \ReflectionIntersectionType) {
+                    return $this->formatIntersectionType($inner);
+                }
+                // ReflectionUnionType cannot be nested per PHP's DNF rules
+                return null;
+            })
             ->filter()
-            ->map->getName()
             ->implode('|');
+    }
+
+    protected function formatIntersectionType(\ReflectionIntersectionType $type): string
+    {
+        $parts = Collection::make($type->getTypes())
+            ->map(fn (\ReflectionNamedType $t) => $t->getName())
+            ->toArray();
+
+        return '(' . implode('&', $parts) . ')';
     }
 
     protected function addLocationToPhpDoc()

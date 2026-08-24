@@ -23,6 +23,8 @@ use PhpCsFixer\Tokenizer\Tokens;
 
 /**
  * @author Vladimir Reznichenko <kalessil@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class DirConstantFixer extends AbstractFunctionReferenceFixer
 {
@@ -32,7 +34,7 @@ final class DirConstantFixer extends AbstractFunctionReferenceFixer
             'Replaces `dirname(__FILE__)` expression with equivalent `__DIR__` constant.',
             [new CodeSample("<?php\n\$a = dirname(__FILE__);\n")],
             null,
-            'Risky when the function `dirname` is overridden.'
+            'Risky when the function `dirname` is overridden.',
         );
     }
 
@@ -55,7 +57,7 @@ final class DirConstantFixer extends AbstractFunctionReferenceFixer
     {
         $currIndex = 0;
 
-        do {
+        while (true) {
             $boundaries = $this->find('dirname', $tokens, $currIndex, $tokens->count() - 1);
             if (null === $boundaries) {
                 return;
@@ -124,6 +126,6 @@ final class DirConstantFixer extends AbstractFunctionReferenceFixer
             // replace constant and remove function name
             $tokens[$fileCandidateLeftIndex] = new Token([\T_DIR, '__DIR__']);
             $tokens->clearTokenAndMergeSurroundingWhitespace($functionNameIndex);
-        } while (null !== $currIndex);
+        }
     }
 }

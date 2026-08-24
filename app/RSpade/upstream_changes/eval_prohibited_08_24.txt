@@ -1,0 +1,107 @@
+CATEGORY: 2 - ACTION REQUIRED (find and convert eval() / new Function() in your own JS)
+TITLE: eval() and new Function() are now rsx:check violations (JS-EVAL-01); the
+       class-by-name lookup they were usually doing has a supported API
+DATE: 2026-08-24
+
+--------------------------------------------------------------------------------
+WHY YOU ARE READING THIS
+--------------------------------------------------------------------------------
+
+After this pull, `php artisan rsx:check` reports JS-EVAL-01 for every eval() and
+new Function() in bundled JavaScript. If your app has any, your next check run
+goes red - it did not before.
+
+Find them now:
+
+    php artisan rsx:check
+    grep -rn "eval(\|new Function(" rsx/ --include=*.js
+
+This is not a style rule. The Content-Security-Policy the framework emits carries
+no 'unsafe-eval', deliberately, so each of these lines is a CSP violation on every
+page that loads the bundle. If you have been running CSP in report-only mode and
+wondering what was in your log, this is very likely all of it.
+
+--------------------------------------------------------------------------------
+THE FIX, FOR THE CASE THAT IS ALMOST ALWAYS YOURS
+--------------------------------------------------------------------------------
+
+Nearly every eval() in an RSpade app is doing ONE thing: resolving a class from
+its name as a string. The reasoning that leads there is sound, and it is usually
+written out in a comment next to the call:
+
+    RSpade classes compile to top-level `class` declarations, which are LEXICAL
+    bindings, so window['Task_Model'] is undefined and eval('Task_Model') is the
+    first thing that works.
+
+That is true. What it misses is that there is a registry for exactly this:
+
+    const cls = Manifest.get_class_by_name(name);   // the class, or null
+
+It is a map lookup against Manifest._classes. It does not execute the string, it
+cannot throw, and it returns null for an unknown name.
+
+  BEFORE
+      let cls = null;
+      if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(model)) {
+          try { cls = eval(model); } catch (e) { cls = null; }
+      }
+
+  AFTER
+      const cls = Manifest.get_class_by_name(model);
+
+Delete the identifier-guarding regex and the try/catch along with it. Both exist
+only to make eval() survivable - a map lookup executes nothing and throws nothing,
+so neither has anything left to do. Check the null the same way you checked it
+before.
+
+Three shapes seen in the field, all the same fix:
+
+  - a model class from a $model / $parent_type component arg
+  - the controller half of an "Controller.method" string
+    (`eval(source.split('.')[0])` -> `Manifest.get_class_by_name(source.split('.')[0])`)
+  - a bare `eval(this.args.some_type)`
+
+--------------------------------------------------------------------------------
+IF YOU ARE DOING SOMETHING ELSE
+--------------------------------------------------------------------------------
+
+DYNAMIC import(). Write the bare `import(url)`. It is preserved through the build
+now - the babel transform declares caller.supportsDynamicImport, so import() is no
+longer rewritten into a require() shim. If you wrote
+new Function('u', 'return import(u)') to hide the token from the transform, that
+workaround is obsolete: delete the wrapper and call import(url) directly.
+
+A STANDALONE NODE SCRIPT. The rule scopes itself to bundled JavaScript by
+consulting rsx.manifest.scan_directories, so a build tool or a Playwright driver
+is out of scope already - and any directory named resource/ is excluded from the
+scan entirely. If a genuinely unbundled script is being flagged, report it rather
+than suppressing it; that is a scoping bug on our side.
+
+ANYTHING ELSE. There is no legitimate use of eval() in bundled code, and both
+constructs are equally blocked - the browser reports new Function() as
+`blocked-uri: eval` too. If you believe you have a case, add the marker WITH a
+written rationale:
+
+    // @JS-EVAL-01-EXCEPTION <why this is unavoidable>
+
+and understand you are also declaring that this page cannot enforce CSP.
+
+--------------------------------------------------------------------------------
+WHAT THE FRAMEWORK FIXED ON ITS OWN SIDE
+--------------------------------------------------------------------------------
+
+Core/Preview/Pdf_Viewer.js carried the new Function('u','return import(u)') form,
+which meant NO app could enforce CSP on any page that previewed a PDF, however
+clean its own code was. It now calls import(module_url) directly.
+
+No exemption was added for it. An exemption there would have hidden the one
+instance that blocked every downstream app.
+
+Nothing to do on your side for this - it arrives with the submodule.
+
+--------------------------------------------------------------------------------
+SEE ALSO
+--------------------------------------------------------------------------------
+
+    php artisan rsx:man csp          - the policy, the rollout, the decision gate
+    php artisan rsx:check            - the rule, with its full remediation text

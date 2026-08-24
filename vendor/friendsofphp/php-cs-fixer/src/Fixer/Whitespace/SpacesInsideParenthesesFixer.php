@@ -41,6 +41,8 @@ use PhpCsFixer\Tokenizer\Tokens;
  *
  * @author Marc Aubé
  * @author Dariusz Rumiński <dariusz.ruminski@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class SpacesInsideParenthesesFixer extends AbstractFixer implements ConfigurableFixerInterface
 {
@@ -52,27 +54,47 @@ final class SpacesInsideParenthesesFixer extends AbstractFixer implements Config
         return new FixerDefinition(
             'Parentheses must be declared using the configured whitespace.',
             [
-                new CodeSample("<?php\nif ( \$a ) {\n    foo( );\n}\n"),
                 new CodeSample(
-                    "<?php
-function foo( \$bar, \$baz )
-{
-}\n",
-                    ['space' => 'none']
+                    <<<'PHP'
+                        <?php
+                        if ( $a ) {
+                            foo( );
+                        }
+
+                        PHP,
                 ),
                 new CodeSample(
-                    "<?php\nif (\$a) {\n    foo( );\n}\n",
-                    ['space' => 'single']
+                    <<<'PHP'
+                        <?php
+                        function foo( $bar, $baz )
+                        {
+                        }
+
+                        PHP,
+                    ['space' => 'none'],
                 ),
                 new CodeSample(
-                    "<?php
-function foo(\$bar, \$baz)
-{
-}\n",
-                    ['space' => 'single']
+                    <<<'PHP'
+                        <?php
+                        if ($a) {
+                            foo( );
+                        }
+
+                        PHP,
+                    ['space' => 'single'],
+                ),
+                new CodeSample(
+                    <<<'PHP'
+                        <?php
+                        function foo($bar, $baz)
+                        {
+                        }
+
+                        PHP,
+                    ['space' => 'single'],
                 ),
             ],
-            'By default there are not any additional spaces inside parentheses, however with `space=single` configuration option whitespace inside parentheses will be unified to single space.'
+            'By default there are not any additional spaces inside parentheses, however with `space=single` configuration option whitespace inside parentheses will be unified to single space.',
         );
     }
 
@@ -89,14 +111,14 @@ function foo(\$bar, \$baz)
 
     public function isCandidate(Tokens $tokens): bool
     {
-        return $tokens->isAnyTokenKindsFound(['(', CT::T_BRACE_CLASS_INSTANTIATION_OPEN]);
+        return $tokens->isAnyTokenKindsFound(['(', CT::T_CLASS_INSTANTIATION_PARENTHESIS_OPEN]);
     }
 
     protected function applyFix(\SplFileInfo $file, Tokens $tokens): void
     {
         if ('none' === $this->configuration['space']) {
             foreach ($tokens as $index => $token) {
-                if (!$token->equalsAny(['(', [CT::T_BRACE_CLASS_INSTANTIATION_OPEN]])) {
+                if (!$token->equalsAny(['(', [CT::T_CLASS_INSTANTIATION_PARENTHESIS_OPEN]])) {
                     continue;
                 }
 
@@ -124,7 +146,7 @@ function foo(\$bar, \$baz)
 
         if ('single' === $this->configuration['space']) {
             foreach ($tokens as $index => $token) {
-                if (!$token->equalsAny(['(', [CT::T_BRACE_CLASS_INSTANTIATION_OPEN]])) {
+                if (!$token->equalsAny(['(', [CT::T_CLASS_INSTANTIATION_PARENTHESIS_OPEN]])) {
                     continue;
                 }
 
@@ -150,7 +172,7 @@ function foo(\$bar, \$baz)
 
                 if ($afterParenthesisToken->isGivenKind(CT::T_USE_LAMBDA)) {
                     $useStartParenthesisIndex = $tokens->getNextTokenOfKind($afterParenthesisIndex, ['(']);
-                    $useEndParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $useStartParenthesisIndex);
+                    $useEndParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $useStartParenthesisIndex);
 
                     // add single-line edge whitespaces inside use parentheses
                     $this->fixParenthesisInnerEdge($tokens, $useStartParenthesisIndex, $useEndParenthesisIndex);

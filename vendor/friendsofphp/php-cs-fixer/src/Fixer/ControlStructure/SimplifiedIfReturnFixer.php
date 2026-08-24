@@ -22,12 +22,16 @@ use PhpCsFixer\Tokenizer\Token;
 use PhpCsFixer\Tokenizer\Tokens;
 
 /**
+ * @phpstan-import-type _PhpTokenPrototypePartial from Token
+ *
  * @author Filippo Tessarotto <zoeslam@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class SimplifiedIfReturnFixer extends AbstractFixer
 {
     /**
-     * @var list<array{isNegative: bool, sequence: non-empty-list<array{0: int, 1?: string}|string>}>
+     * @var list<array{isNegative: bool, sequence: non-empty-list<_PhpTokenPrototypePartial>}>
      */
     private array $sequences = [
         [
@@ -64,7 +68,7 @@ final class SimplifiedIfReturnFixer extends AbstractFixer
     {
         return new FixerDefinition(
             'Simplify `if` control structures that return the boolean result of their condition.',
-            [new CodeSample("<?php\nif (\$foo) { return true; } return false;\n")]
+            [new CodeSample("<?php\nif (\$foo) { return true; } return false;\n")],
         );
     }
 
@@ -86,6 +90,9 @@ final class SimplifiedIfReturnFixer extends AbstractFixer
 
     protected function applyFix(\SplFileInfo $file, Tokens $tokens): void
     {
+        $slices = [];
+        $nextIfIndex = null;
+
         for ($ifIndex = $tokens->count() - 1; 0 <= $ifIndex; --$ifIndex) {
             if (!$tokens[$ifIndex]->isGivenKind([\T_IF, \T_ELSEIF])) {
                 continue;
@@ -96,11 +103,11 @@ final class SimplifiedIfReturnFixer extends AbstractFixer
             }
 
             $startParenthesisIndex = $tokens->getNextTokenOfKind($ifIndex, ['(']);
-            $endParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $startParenthesisIndex);
+            $endParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $startParenthesisIndex);
             $firstCandidateIndex = $tokens->getNextMeaningfulToken($endParenthesisIndex);
 
             foreach ($this->sequences as $sequenceSpec) {
-                $sequenceFound = $tokens->findSequence($sequenceSpec['sequence'], $firstCandidateIndex);
+                $sequenceFound = $tokens->findSequence($sequenceSpec['sequence'], $firstCandidateIndex, $nextIfIndex);
 
                 if (null === $sequenceFound) {
                     continue;
@@ -131,8 +138,16 @@ final class SimplifiedIfReturnFixer extends AbstractFixer
                     $newTokens[] = new Token([\T_BOOL_CAST, '(bool)']);
                 }
 
-                $tokens->overrideRange($ifIndex, $ifIndex, $newTokens);
+                $slices[$ifIndex] = $newTokens;
+                $tokens->clearAt($ifIndex);
+
+                // Limit the search to this branch by stopping at the next if/elseif.
+                $nextIfIndex = $ifIndex;
             }
+        }
+
+        if ([] !== $slices) {
+            $tokens->insertSlices($slices);
         }
     }
 }

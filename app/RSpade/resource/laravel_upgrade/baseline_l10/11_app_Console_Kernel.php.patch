@@ -1,0 +1,40 @@
+--- /tmp/claude-0/-var-www-html/efd0598f-98d2-4197-bd85-5cc36a1e6e1d/scratchpad/skeleton/laravel-10.x/app/Console/Kernel.php	2024-03-12 14:46:13.000000000 +0000
++++ app/Console/Kernel.php	2026-08-10 06:57:34.837170514 +0000
+@@ -2,26 +2,26 @@
+ 
+ namespace App\Console;
+ 
+-use Illuminate\Console\Scheduling\Schedule;
+ use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
+ 
++/**
++ * Laravel's scheduler is NOT the framework's scheduling story - there is no
++ * schedule() override here on purpose. Recurring work is declared with
++ * #[Schedule] on a #[Task] method and driven by the rsx:task:process cron.
++ */
+ class Kernel extends ConsoleKernel
+ {
+     /**
+-     * Define the application's command schedule.
+-     */
+-    protected function schedule(Schedule $schedule): void
+-    {
+-        // $schedule->command('inspire')->hourly();
+-    }
+-
+-    /**
+      * Register the commands for the application.
++     *
++     * @return void
+      */
+-    protected function commands(): void
++    protected function commands()
+     {
+-        $this->load(__DIR__.'/Commands');
++        $this->load(__DIR__.'/Commands');           // Application commands
++        $this->load(__DIR__.'/../RSpade/Commands'); // Framework commands
+ 
+         require base_path('routes/console.php');
+     }
++
+ }

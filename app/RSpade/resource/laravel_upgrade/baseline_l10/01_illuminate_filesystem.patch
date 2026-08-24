@@ -1,0 +1,16 @@
+--- /tmp/claude-0/-var-www-html/efd0598f-98d2-4197-bd85-5cc36a1e6e1d/scratchpad/pristine_l10/vendor/laravel/framework/src/Illuminate/Filesystem/Filesystem.php	2025-03-12 14:42:01.000000000 +0000
++++ vendor/laravel/framework/src/Illuminate/Filesystem/Filesystem.php	2025-12-25 23:29:26.820208279 +0000
+@@ -222,10 +222,11 @@
+         $tempPath = tempnam(dirname($path), basename($path));
+ 
+         // Fix permissions of tempPath because `tempnam()` creates it with permissions set to 0600...
++        // Note: @ added to suppress chmod errors in Docker environments where chmod is not permitted
+         if (! is_null($mode)) {
+-            chmod($tempPath, $mode);
++            @chmod($tempPath, $mode);
+         } else {
+-            chmod($tempPath, 0777 - umask());
++            @chmod($tempPath, 0777 - umask());
+         }
+ 
+         file_put_contents($tempPath, $content);

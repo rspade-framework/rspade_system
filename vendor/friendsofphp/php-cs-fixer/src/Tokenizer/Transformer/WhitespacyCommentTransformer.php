@@ -24,6 +24,8 @@ use PhpCsFixer\Tokenizer\Tokens;
  * @author Dariusz Rumiński <dariusz.ruminski@gmail.com>
  *
  * @internal
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class WhitespacyCommentTransformer extends AbstractTransformer
 {
@@ -32,7 +34,12 @@ final class WhitespacyCommentTransformer extends AbstractTransformer
         return 5_00_00;
     }
 
-    public function process(Tokens $tokens, Token $token, int $index): void
+    public function isCandidate(Tokens $tokens): bool
+    {
+        return $tokens->isAnyTokenKindsFound([\T_COMMENT, \T_DOC_COMMENT]);
+    }
+
+    public function processToken(Tokens $tokens, Token $token, int $index): void
     {
         if (!$token->isComment()) {
             return;

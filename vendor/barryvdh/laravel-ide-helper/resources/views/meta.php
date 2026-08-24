@@ -1,4 +1,16 @@
 <?= '<?php' ?>
+<?php
+/**
+ * @var array $bindings
+ * @var string[] $methods
+ * @var string[] $configMethods
+ * @var Illuminate\Support\Collection $configValues
+ * @var array<string, array> $expectedArgumentSets
+ * @var array $expectedArguments
+ * @var string[] $userMethods
+ * @var string $userModel/
+ * */
+?>
 
 /* @noinspection ALL */
 // @formatter:off
@@ -21,14 +33,19 @@ namespace PHPSTORM_META {
     ]));
 <?php endforeach; ?>
 
-<?php if (count($factories)) : ?>
-    override(\factory(0), map([
-        '' => '@FactoryBuilder',
-    <?php foreach ($factories as $factory) : ?>
-        '<?= $factory->getName() ?>' => \<?= $factory->getName() ?>FactoryBuilder::class,
+<?php foreach ($userMethods as $method) : ?>
+    override(<?= $method ?>, map([
+        '' => \<?= $userModel ?>::class,
+    ]));
+<?php endforeach; ?>
+
+<?php foreach ($configMethods as $method) : ?>
+    override(<?= $method ?>, map([
+    <?php foreach ($configValues as $name => $value) : ?>
+        '<?= $name ?>' => '<?= $value ?>',
     <?php endforeach; ?>
     ]));
-<?php endif; ?>
+<?php endforeach; ?>
 
     override(\Illuminate\Foundation\Testing\Concerns\InteractsWithContainer::mock(0), map(["" => "@&\Mockery\MockInterface"]));
     override(\Illuminate\Foundation\Testing\Concerns\InteractsWithContainer::partialMock(0), map(["" => "@&\Mockery\MockInterface"]));
@@ -64,5 +81,32 @@ namespace PHPSTORM_META {
     override(\with(0), type(0));
     override(\tap(0), type(0));
     override(\optional(0), type(0));
+
+    <?php if ($expectedArgumentSets): ?>
+    <?php foreach ($expectedArgumentSets as $name => $argumentsList) : ?>
+    registerArgumentsSet('<?= $name ?>', <?php foreach ($argumentsList as $i => $arg) : ?><?php if ($i % 5 == 0) {
+        echo "\n";
+    } ?><?= var_export($arg, true); ?>,<?php endforeach; ?>);
+    <?php endforeach; ?>
+    <?php endif ?>
+
+    <?php if ($expectedArguments) : ?>
+    <?php foreach ($expectedArguments as $arguments) : ?>
+    <?php
+        $classes = isset($arguments['class']) ? (array) $arguments['class'] : [null];
+        $index = $arguments['index'] ?? 0;
+        $argumentSet = $arguments['argumentSet'];
+        $functions = [];
+        foreach ($classes as $class) {
+            foreach ((array) $arguments['method'] as $method) {
+                $functions[] = '\\' . ($class ? ltrim($class, '\\') . '::' : '') . $method . '()';
+            }
+        }
+        ?>
+    <?php foreach ($functions as $function) : ?>
+expectedArguments(<?= $function ?>, <?= $index ?>, argumentsSet('<?= $argumentSet ?>'));
+    <?php endforeach; ?>
+    <?php endforeach; ?>
+    <?php endif; ?>
 
 }

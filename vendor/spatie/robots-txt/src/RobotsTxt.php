@@ -46,12 +46,18 @@ class RobotsTxt
 
     public static function readFrom(string $source): self
     {
-        $content = @file_get_contents($source);
+        $context = stream_context_create([
+            'http' => [
+                'user_agent' => 'spatie/robots-txt',
+            ],
+        ]);
+
+        $content = @file_get_contents($source, false, $context);
 
         return new self($content !== false ? $content : '');
     }
 
-    public function __construct(string $content)
+    public function __construct(public string $content)
     {
         $this->disallowsPerUserAgent = $this->getDisallowsPerUserAgent($content);
         $this->allowsPerUserAgent = $this->getAllowsPerUserAgent($content);

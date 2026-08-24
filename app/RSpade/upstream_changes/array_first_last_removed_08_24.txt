@@ -1,0 +1,79 @@
+CATEGORY: 2 - ACTION REQUIRED (replace array_first() / array_last() calls in your app)
+TITLE: The global array_first() and array_last() helpers are REMOVED - PHP 8.5 and
+       Laravel 13 claim those names; use Arr::first() / Arr::last()
+DATE: 2026-08-24
+
+--------------------------------------------------------------------------------
+WHY YOU ARE READING THIS
+--------------------------------------------------------------------------------
+
+RSpade shipped two global helpers that no longer exist after this pull:
+
+    array_first($array, $callback = null, $default = null)
+    array_last($array, $callback = null, $default = null)
+
+Find your call sites:
+
+    grep -rn '\barray_first(\|\barray_last(' rsx/ --include=*.php
+
+Every hit fatals with "Call to undefined function" once this release is applied.
+It fatals when the LINE RUNS, not at build time, so audit rather than waiting to
+find out.
+
+--------------------------------------------------------------------------------
+THE REPLACEMENT IS A DIRECT SWAP
+--------------------------------------------------------------------------------
+
+Illuminate\Support\Arr::first() and Arr::last() take the SAME arguments in the
+SAME order - the RSpade helpers were a copy of them.
+
+  BEFORE
+      $row   = array_first($rows);
+      $match = array_first($rows, fn ($r) => $r['id'] === $id);
+      $end   = array_last($rows, fn ($r) => $r['active'], $fallback);
+
+  AFTER
+      use Illuminate\Support\Arr;
+
+      $row   = Arr::first($rows);
+      $match = Arr::first($rows, fn ($r) => $r['id'] === $id);
+      $end   = Arr::last($rows, fn ($r) => $r['active'], $fallback);
+
+One behavioural difference, in your favour: Arr:: passes $default through
+value(), so a CLOSURE default is invoked and its result returned. The removed
+helpers returned the closure itself. If you passed a closure as $default and
+wanted the closure back, wrap it: Arr::first($rows, $cb, fn () => $theClosure).
+
+In a Blade template where importing is awkward, the facade root works the same:
+\Illuminate\Support\Arr::first(...).
+
+--------------------------------------------------------------------------------
+WHY THEY WERE REMOVED RATHER THAN RENAMED
+--------------------------------------------------------------------------------
+
+PHP 8.5 defines array_first() and array_last() as NATIVE functions taking only
+the array. Laravel 13 depends on symfony/polyfill-php85, which defines the same
+two functions on earlier PHP versions.
+
+Composer loads a dependency's autoloaded files BEFORE the root package's, so the
+polyfill wins the race and RSpade's declaration becomes a fatal redeclare at
+boot - the application does not start at all.
+
+Guarding the declaration with function_exists() was considered and rejected. It
+stops the fatal and replaces it with something worse: our callback-taking
+implementation silently becomes the one-argument native version, so every
+array_first($rows, $callback) call fails with an argument error at a line that
+looks correct, far from the cause.
+
+Since the helpers were a verbatim copy of Arr::first()/Arr::last(), keeping a
+renamed duplicate would have meant carrying two spellings of one function
+forever. They are gone instead.
+
+--------------------------------------------------------------------------------
+WHAT IS UNAFFECTED
+--------------------------------------------------------------------------------
+
+The other array helpers are untouched and keep their names: array_only,
+array_except, array_get, array_set, array_merge_deep, array_pluck.
+
+    php artisan rsx:man helpers      - the current helper catalog

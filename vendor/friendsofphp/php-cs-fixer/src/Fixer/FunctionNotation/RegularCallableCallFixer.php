@@ -25,6 +25,8 @@ use PhpCsFixer\Tokenizer\Tokens;
 
 /**
  * @author Dariusz Rumiński <dariusz.ruminski@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class RegularCallableCallFixer extends AbstractFixer
 {
@@ -34,24 +36,28 @@ final class RegularCallableCallFixer extends AbstractFixer
             'Callables must be called without using `call_user_func*` when possible.',
             [
                 new CodeSample(
-                    '<?php
-    call_user_func("var_dump", 1, 2);
+                    <<<'PHP'
+                        <?php
+                            call_user_func("var_dump", 1, 2);
 
-    call_user_func("Bar\Baz::d", 1, 2);
+                            call_user_func("Bar\Baz::d", 1, 2);
 
-    call_user_func_array($callback, [1, 2]);
-'
+                            call_user_func_array($callback, [1, 2]);
+
+                        PHP,
                 ),
                 new CodeSample(
-                    '<?php
-call_user_func(function ($a, $b) { var_dump($a, $b); }, 1, 2);
+                    <<<'PHP'
+                        <?php
+                        call_user_func(function ($a, $b) { var_dump($a, $b); }, 1, 2);
 
-call_user_func(static function ($a, $b) { var_dump($a, $b); }, 1, 2);
-'
+                        call_user_func(static function ($a, $b) { var_dump($a, $b); }, 1, 2);
+
+                        PHP,
                 ),
             ],
             null,
-            'Risky when the `call_user_func` or `call_user_func_array` function is overridden or when are used in constructions that should be avoided, like `call_user_func_array(\'foo\', [\'bar\' => \'baz\'])` or `call_user_func($foo, $foo = \'bar\')`.'
+            'Risky when the `call_user_func` or `call_user_func_array` function is overridden or when are used in constructions that should be avoided, like `call_user_func_array(\'foo\', [\'bar\' => \'baz\'])` or `call_user_func($foo, $foo = \'bar\')`.',
         );
     }
 
@@ -91,7 +97,7 @@ call_user_func(static function ($a, $b) { var_dump($a, $b); }, 1, 2);
             }
 
             $openParenthesis = $tokens->getNextMeaningfulToken($index);
-            $closeParenthesis = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $openParenthesis);
+            $closeParenthesis = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $openParenthesis);
             $arguments = $argumentsAnalyzer->getArguments($tokens, $openParenthesis, $closeParenthesis);
 
             if (1 > \count($arguments)) {
@@ -108,7 +114,7 @@ call_user_func(static function ($a, $b) { var_dump($a, $b); }, 1, 2);
     private function processCall(Tokens $tokens, int $index, array $arguments): void
     {
         $firstArgIndex = $tokens->getNextMeaningfulToken(
-            $tokens->getNextMeaningfulToken($index)
+            $tokens->getNextMeaningfulToken($index),
         );
 
         $firstArgToken = $tokens[$firstArgIndex];
@@ -141,8 +147,8 @@ call_user_func(static function ($a, $b) { var_dump($a, $b); }, 1, 2);
             )
         ) {
             $firstArgEndIndex = $tokens->findBlockEnd(
-                Tokens::BLOCK_TYPE_CURLY_BRACE,
-                $tokens->getNextTokenOfKind($firstArgIndex, ['{'])
+                Tokens::BLOCK_TYPE_BRACE,
+                $tokens->getNextTokenOfKind($firstArgIndex, ['{']),
             );
 
             $newCallTokens = $this->getTokensSubcollection($tokens, $firstArgIndex, $firstArgEndIndex);
@@ -178,7 +184,7 @@ call_user_func(static function ($a, $b) { var_dump($a, $b); }, 1, 2);
 
                 $blockType = Tokens::detectBlockType($newCallTokens[$newCallIndex]);
 
-                if (null !== $blockType && (Tokens::BLOCK_TYPE_ARRAY_INDEX_CURLY_BRACE === $blockType['type'] || Tokens::BLOCK_TYPE_INDEX_SQUARE_BRACE === $blockType['type'])) {
+                if (null !== $blockType && (Tokens::BLOCK_TYPE_INDEX_BRACE === $blockType['type'] || Tokens::BLOCK_TYPE_INDEX_BRACKET === $blockType['type'])) {
                     $newCallIndex = $newCallTokens->findBlockStart($blockType['type'], $newCallIndex);
 
                     continue;

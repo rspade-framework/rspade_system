@@ -26,6 +26,8 @@ use PhpCsFixer\Tokenizer\Tokens;
 
 /**
  * @author John Paul E. Balandan, CPA <paulbalandan@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class GetClassToClassKeywordFixer extends AbstractFixer
 {
@@ -36,15 +38,15 @@ final class GetClassToClassKeywordFixer extends AbstractFixer
             [
                 new VersionSpecificCodeSample(
                     "<?php\nget_class(\$a);\n",
-                    new VersionSpecification(8_00_00)
+                    new VersionSpecification(8_00_00),
                 ),
                 new VersionSpecificCodeSample(
                     "<?php\n\n\$date = new \\DateTimeImmutable();\n\$class = get_class(\$date);\n",
-                    new VersionSpecification(8_00_00)
+                    new VersionSpecification(8_00_00),
                 ),
             ],
             null,
-            'Risky if the `get_class` function is overridden.'
+            'Risky if the `get_class` function is overridden.',
         );
     }
 
@@ -85,7 +87,7 @@ final class GetClassToClassKeywordFixer extends AbstractFixer
             }
 
             $braceOpenIndex = $tokens->getNextMeaningfulToken($index);
-            $braceCloseIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $braceOpenIndex);
+            $braceCloseIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $braceOpenIndex);
 
             if ($braceCloseIndex === $tokens->getNextMeaningfulToken($braceOpenIndex)) {
                 continue; // get_class with no arguments
@@ -126,7 +128,7 @@ final class GetClassToClassKeywordFixer extends AbstractFixer
     }
 
     /**
-     * @return list<Token>
+     * @return non-empty-list<Token>
      */
     private function getReplacementTokenSlices(Tokens $tokens, int $variableIndex): array
     {

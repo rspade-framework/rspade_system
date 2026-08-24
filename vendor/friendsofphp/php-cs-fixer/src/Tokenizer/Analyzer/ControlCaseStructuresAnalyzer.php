@@ -23,6 +23,11 @@ use PhpCsFixer\Tokenizer\Analyzer\Analysis\SwitchAnalysis;
 use PhpCsFixer\Tokenizer\FCT;
 use PhpCsFixer\Tokenizer\Tokens;
 
+/**
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
+ *
+ * @TODO 4.0: mark @internal
+ */
 final class ControlCaseStructuresAnalyzer
 {
     private const SUPPORTED_TYPES_WITH_CASE_OR_DEFAULT = [
@@ -32,11 +37,11 @@ final class ControlCaseStructuresAnalyzer
     ];
 
     /**
-     * @param list<int> $types Token types of interest of which analyzes must be returned
+     * @param list<int> $types Token types of interest of which analyses must be returned
      *
-     * @return \Generator<int, AbstractControlCaseStructuresAnalysis>
+     * @return iterable<int, AbstractControlCaseStructuresAnalysis>
      */
-    public static function findControlStructures(Tokens $tokens, array $types): \Generator
+    public static function findControlStructures(Tokens $tokens, array $types): iterable
     {
         if (\count($types) < 1) {
             return; // quick skip
@@ -62,6 +67,8 @@ final class ControlCaseStructuresAnalyzer
          *     cases: list<array{index: int, open: int}>,
          *     default: null|array{index: int, open: int},
          *     alternative_syntax: bool,
+         *     open?: int,
+         *     end?: int,
          * }> $stack
          */
         $stack = [];
@@ -84,13 +91,13 @@ final class ControlCaseStructuresAnalyzer
 
                 if ($token->isGivenKind(\T_SWITCH)) {
                     $index = $tokens->getNextMeaningfulToken($index);
-                    $index = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $index);
+                    $index = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $index);
 
                     $stack[$depth]['open'] = $tokens->getNextMeaningfulToken($index);
                     $stack[$depth]['alternative_syntax'] = $tokens[$stack[$depth]['open']]->equals(':');
                 } elseif ($token->isGivenKind(FCT::T_MATCH)) {
                     $index = $tokens->getNextMeaningfulToken($index);
-                    $index = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $index);
+                    $index = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $index);
 
                     $stack[$depth]['open'] = $tokens->getNextMeaningfulToken($index);
                 } elseif ($token->isGivenKind(FCT::T_ENUM)) {
@@ -103,6 +110,8 @@ final class ControlCaseStructuresAnalyzer
             if ($depth < 0) {
                 continue;
             }
+
+            \assert(isset($stack[$depth]));
 
             if ($token->equals('{')) {
                 ++$stack[$depth]['brace_count'];
@@ -120,6 +129,8 @@ final class ControlCaseStructuresAnalyzer
 
                     if ($isTypeOfInterest) {
                         $stack[$depth]['end'] = $index;
+
+                        \assert(isset($stack[$depth]['open']));
 
                         yield $stack[$depth]['index'] => self::buildControlCaseStructureAnalysis($stack[$depth]);
                     }
@@ -157,6 +168,8 @@ final class ControlCaseStructuresAnalyzer
                 if ($isTypeOfInterest) {
                     $stack[$depth]['end'] = $index;
 
+                    \assert(isset($stack[$depth]['open']));
+
                     yield $stack[$depth]['index'] => self::buildControlCaseStructureAnalysis($stack[$depth]);
                 }
 
@@ -173,12 +186,16 @@ final class ControlCaseStructuresAnalyzer
             }
 
             if (!$isTypeOfInterest) {
-                continue; // don't bother to analyze stuff that caller is not interested in
+                continue; // don't bother to analyse stuff that caller is not interested in
             }
 
             if ($token->isGivenKind(\T_CASE)) {
+                \assert(isset($stack[$depth]['kind']));
+
                 $stack[$depth]['cases'][] = ['index' => $index, 'open' => self::findCaseOpen($tokens, $stack[$depth]['kind'], $index)];
             } elseif ($token->isGivenKind(\T_DEFAULT)) {
+                \assert(isset($stack[$depth]['kind']));
+
                 if (null !== $stack[$depth]['default']) {
                     throw new \RuntimeException('Analysis multiple "default" found.');
                 }
@@ -192,10 +209,12 @@ final class ControlCaseStructuresAnalyzer
      * @param array{
      *     kind: int,
      *     index: int,
-     *     open: int,
-     *     end: int,
+     *     brace_count: int,
      *     cases: list<array{index: int, open: int}>,
      *     default: null|array{index: int, open: int},
+     *     alternative_syntax: bool,
+     *     open: int,
+     *     end: int,
      * } $analysis
      */
     private static function buildControlCaseStructureAnalysis(array $analysis): AbstractControlCaseStructuresAnalysis
@@ -218,7 +237,7 @@ final class ControlCaseStructuresAnalyzer
                 $analysis['open'],
                 $analysis['end'],
                 $cases,
-                $default
+                $default,
             );
         }
 
@@ -227,7 +246,7 @@ final class ControlCaseStructuresAnalyzer
                 $analysis['index'],
                 $analysis['open'],
                 $analysis['end'],
-                $cases
+                $cases,
             );
         }
 
@@ -236,7 +255,7 @@ final class ControlCaseStructuresAnalyzer
                 $analysis['index'],
                 $analysis['open'],
                 $analysis['end'],
-                $default
+                $default,
             );
         }
 

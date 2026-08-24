@@ -1,0 +1,15 @@
+--- /tmp/claude-0/-var-www-html/efd0598f-98d2-4197-bd85-5cc36a1e6e1d/scratchpad/pristine_l10/vendor/spatie/ignition/src/Ignition.php	2025-02-21 14:31:39.000000000 +0000
++++ vendor/spatie/ignition/src/Ignition.php	2025-11-03 05:34:37.330846328 +0000
+@@ -323,6 +323,12 @@
+ 
+     public static function viewPath(string $viewName): string
+     {
++        // Check for custom view in resources/views/vendor/ignition/ first
++        $customPath = base_path("resources/views/vendor/ignition/{$viewName}.php");
++        if (file_exists($customPath)) {
++            return $customPath;
++        }
++
+         return __DIR__ . "/../resources/views/{$viewName}.php";
+     }
+ 

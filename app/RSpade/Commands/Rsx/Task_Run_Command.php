@@ -78,7 +78,7 @@ class Task_Run_Command extends Command
     /**
      * Configure the command to accept any options
      */
-    protected function configure()
+    protected function configure(): void
     {
         parent::configure();
 

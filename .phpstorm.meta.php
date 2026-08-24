@@ -2243,8 +2243,6 @@ namespace PHPSTORM_META {
     override(\Illuminate\Support\Arr::where(0), type(0));
     override(\array_add(0), type(0));
     override(\array_except(0), type(0));
-    override(\array_first(0), elementType(0));
-    override(\array_last(0), elementType(0));
     override(\array_get(0), elementType(0));
     override(\array_only(0), type(0));
     override(\array_prepend(0), type(0));

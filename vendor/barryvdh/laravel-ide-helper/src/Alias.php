@@ -13,12 +13,16 @@ namespace Barryvdh\LaravelIdeHelper;
 
 use Barryvdh\Reflection\DocBlock;
 use Barryvdh\Reflection\DocBlock\Context;
+use Barryvdh\Reflection\DocBlock\ContextFactory;
 use Barryvdh\Reflection\DocBlock\Serializer as DocBlockSerializer;
 use Barryvdh\Reflection\DocBlock\Tag\MethodTag;
+use Barryvdh\Reflection\DocBlock\Tag\TemplateTag;
 use Closure;
 use Illuminate\Config\Repository as ConfigRepository;
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Facades\Facade;
+use Illuminate\Support\Traits\Macroable;
 use ReflectionClass;
 use Throwable;
 
@@ -33,6 +37,7 @@ class Alias
     protected $classType = 'class';
     protected $short;
     protected $namespace = '__root';
+    protected $parentClass;
     protected $root = null;
     protected $classes = [];
     protected $methods = [];
@@ -45,6 +50,9 @@ class Alias
 
     /** @var ConfigRepository  */
     protected $config;
+
+    /** @var string[] */
+    protected $templateNames;
 
     /**
      * @param ConfigRepository $config
@@ -78,16 +86,22 @@ class Alias
         $this->detectNamespace();
         $this->detectClassType();
         $this->detectExtendsNamespace();
+        $this->detectParentClass();
 
         if (!empty($this->namespace)) {
-            $this->classAliases = (new UsesResolver())->loadFromClass($this->root);
+            try {
+                $this->classAliases = (new ContextFactory())->createFromReflector(new ReflectionClass($this->root))->getNamespaceAliases();
+            } catch (Throwable $e) {
+                $this->classAliases = [];
+            }
+
 
             //Create a DocBlock and serializer instance
             $this->phpdoc = new DocBlock(new ReflectionClass($alias), new Context($this->namespace, $this->classAliases));
         }
 
         if ($facade === '\Illuminate\Database\Eloquent\Model') {
-            $this->usedMethods = ['decrement', 'increment'];
+            $this->usedMethods = ['decrement' => true, 'increment' => true];
         }
     }
 
@@ -158,6 +172,25 @@ class Alias
     }
 
     /**
+     * Get the parent class of the class which this alias extends
+     *
+     * @return null|string
+     */
+    public function getParentClass()
+    {
+        return $this->parentClass;
+    }
+
+    /**
+     * Check if this class should extend the parent class
+     */
+    public function shouldExtendParentClass()
+    {
+        return $this->parentClass
+            && !is_subclass_of($this->extends, Facade::class);
+    }
+
+    /**
      * Get the Alias by which this class is called
      *
      * @return string
@@ -215,11 +248,17 @@ class Alias
             return;
         }
 
+        $reflection = new \ReflectionMethod($facade, 'fake');
+        if ($reflection->getNumberOfRequiredParameters() > 0) {
+            return;
+        }
+
         $real = $facade::getFacadeRoot();
 
         try {
             $facade::fake();
             $fake = $facade::getFacadeRoot();
+
             if ($fake !== $real) {
                 $this->addClass(get_class($fake));
             }
@@ -255,6 +294,18 @@ class Alias
     }
 
     /**
+     * Detect the parent class
+     */
+    protected function detectParentClass()
+    {
+        $reflection = new ReflectionClass($this->root);
+
+        $parentClass = $reflection->getParentClass();
+
+        $this->parentClass = $parentClass ? '\\' . $parentClass->getName() : null;
+    }
+
+    /**
      * Detect the class type
      */
     protected function detectClassType()
@@ -274,9 +325,8 @@ class Alias
     /**
      * Get the real root of a facade
      *
-     * @return bool|string
      */
-    protected function detectRoot()
+    protected function detectRoot(): void
     {
         $facade = $this->facade;
 
@@ -331,11 +381,19 @@ class Alias
             $method = new \ReflectionMethod($className, $name);
             $class = new ReflectionClass($className);
 
-            if (!in_array($magic, $this->usedMethods)) {
+            if (!isset($this->usedMethods[$magic])) {
                 if ($class !== $this->root) {
-                    $this->methods[] = new Method($method, $this->alias, $class, $magic, $this->interfaces, $this->classAliases);
+                    $this->methods[] = new Method(
+                        $method,
+                        $class,
+                        $magic,
+                        $this->interfaces,
+                        $this->classAliases,
+                        $this->getReturnTypeNormalizers($class),
+                        $this->getTemplateNames()
+                    );
                 }
-                $this->usedMethods[] = $magic;
+                $this->usedMethods[$magic] = true;
             }
         }
     }
@@ -343,7 +401,6 @@ class Alias
     /**
      * Get the methods for one or multiple classes.
      *
-     * @return string
      */
     protected function detectMethods()
     {
@@ -353,46 +410,67 @@ class Alias
             $methods = $reflection->getMethods(\ReflectionMethod::IS_PUBLIC);
             if ($methods) {
                 foreach ($methods as $method) {
-                    if (!in_array($method->name, $this->usedMethods)) {
+                    if (!isset($this->usedMethods[$method->name])) {
                         // Only add the methods to the output when the root is not the same as the class.
                         // And don't add the __*() methods
                         if ($this->extends !== $class && substr($method->name, 0, 2) !== '__') {
                             $this->methods[] = new Method(
                                 $method,
-                                $this->alias,
                                 $reflection,
                                 $method->name,
                                 $this->interfaces,
-                                $this->classAliases
+                                $this->classAliases,
+                                $this->getReturnTypeNormalizers($reflection),
+                                $this->getTemplateNames(),
                             );
                         }
-                        $this->usedMethods[] = $method->name;
+                        $this->usedMethods[$method->name] = true;
                     }
                 }
             }
 
             // Check if the class is macroable
             // (Eloquent\Builder is also macroable but doesn't use Macroable trait)
-            $traits = collect($reflection->getTraitNames());
-            if ($traits->contains('Illuminate\Support\Traits\Macroable') || $class === EloquentBuilder::class) {
+            if ($class === EloquentBuilder::class || in_array(Macroable::class, $reflection->getTraitNames())) {
                 $properties = $reflection->getStaticProperties();
                 $macros = isset($properties['macros']) ? $properties['macros'] : [];
                 foreach ($macros as $macro_name => $macro_func) {
-                    if (!in_array($macro_name, $this->usedMethods)) {
+                    if (!isset($this->usedMethods[$macro_name])) {
+                        try {
+                            $method = $this->getMacroFunction($macro_func);
+                        } catch (Throwable $e) {
+                            // Invalid method, skip
+                            continue;
+                        }
                         // Add macros
                         $this->methods[] = new Macro(
-                            $this->getMacroFunction($macro_func),
-                            $this->alias,
+                            $method,
                             $reflection,
                             $macro_name,
                             $this->interfaces,
-                            $this->classAliases
+                            $this->classAliases,
+                            $this->getReturnTypeNormalizers($reflection)
                         );
-                        $this->usedMethods[] = $macro_name;
+                        $this->usedMethods[$macro_name] = true;
                     }
                 }
             }
         }
+    }
+
+    /**
+     * @param ReflectionClass $class
+     * @return array<string, string>
+     */
+    protected function getReturnTypeNormalizers($class)
+    {
+        if ($this->alias === 'Eloquent' && in_array($class->getName(), [EloquentBuilder::class, QueryBuilder::class])) {
+            return [
+                '$this' => '\\' . EloquentBuilder::class . ($this->config->get('ide-helper.use_generics_annotations') ? '<static>' : '|static'),
+            ];
+        }
+
+        return [];
     }
 
     /**
@@ -443,6 +521,67 @@ class Alias
     }
 
     /**
+     * @param $prefix
+     * @return string
+     */
+    public function getPhpDocTemplates($prefix = "\t\t")
+    {
+        $templateDoc = new DocBlock('');
+        $serializer = new DocBlockSerializer(1, $prefix);
+
+        foreach ($this->getTemplateNames() as $templateName) {
+            $template = new TemplateTag('template', $templateName);
+            $template->setBound('static');
+            $template->setDocBlock($templateDoc);
+            $templateDoc->appendTag($template);
+        }
+
+        return $serializer->getDocComment($templateDoc);
+    }
+
+    /**
+     * @return string[]
+     */
+    public function getTemplateNames()
+    {
+        if (!isset($this->templateNames)) {
+            $this->detectTemplateNames();
+        }
+        return $this->templateNames;
+    }
+
+    /**
+     * @return void
+     * @throws \ReflectionException
+     */
+    protected function detectTemplateNames()
+    {
+        $templateNames = [];
+        foreach ($this->classes as $class) {
+            $reflection = new ReflectionClass($class);
+            $traits = collect($reflection->getTraitNames());
+
+            $phpdoc = new DocBlock($reflection);
+            $templates = $phpdoc->getTagsByName('template');
+            /** @var TemplateTag $template */
+            foreach ($templates as $template) {
+                $templateNames[] = $template->getTemplateName();
+            }
+
+            foreach ($traits as $trait) {
+                $phpdoc = new DocBlock(new ReflectionClass($trait));
+                $templates = $phpdoc->getTagsByName('template');
+
+                /** @var TemplateTag $template */
+                foreach ($templates as $template) {
+                    $templateNames[] = $template->getTemplateName();
+                }
+            }
+        }
+        $this->templateNames = $templateNames;
+    }
+
+    /**
      * Removes method tags from the doc comment that already appear as functions inside the class.
      * This prevents duplicate function errors in the IDE.
      *
@@ -450,12 +589,13 @@ class Alias
      */
     protected function removeDuplicateMethodsFromPhpDoc()
     {
-        $methodNames = array_map(function (Method $method) {
-            return $method->getName();
-        }, $this->getMethods());
+        $methodNames = [];
+        foreach ($this->getMethods() as $method) {
+            $methodNames[$method->getName()] = true;
+        }
 
         foreach ($this->phpdoc->getTags() as $tag) {
-            if ($tag instanceof MethodTag && in_array($tag->getMethodName(), $methodNames)) {
+            if ($tag instanceof MethodTag && isset($methodNames[$tag->getMethodName()])) {
                 $this->phpdoc->deleteTag($tag);
             }
         }

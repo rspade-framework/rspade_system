@@ -26,6 +26,8 @@ use PhpCsFixer\Tokenizer\Tokens;
 
 /**
  * @author John Paul E. Balandan, CPA <paulbalandan@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class NoUselessPrintfFixer extends AbstractFixer
 {
@@ -35,11 +37,11 @@ final class NoUselessPrintfFixer extends AbstractFixer
             'There must be no `printf` calls with only the first argument.',
             [
                 new CodeSample(
-                    "<?php\n\nprintf('bar');\n"
+                    "<?php\n\nprintf('bar');\n",
                 ),
             ],
             null,
-            'Risky when the `printf` function is overridden.'
+            'Risky when the `printf` function is overridden.',
         );
     }
 
@@ -89,7 +91,7 @@ final class NoUselessPrintfFixer extends AbstractFixer
                 continue;
             }
 
-            $closeParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $openParenthesisIndex);
+            $closeParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $openParenthesisIndex);
 
             if (1 !== $argumentsAnalyzer->countArguments($tokens, $openParenthesisIndex, $closeParenthesisIndex)) {
                 continue;
@@ -121,7 +123,7 @@ final class NoUselessPrintfFixer extends AbstractFixer
 
         $tokens->insertSlices(array_combine(
             $printfIndices,
-            array_fill(0, \count($printfIndices), [new Token([\T_PRINT, 'print']), new Token([\T_WHITESPACE, ' '])])
+            array_fill(0, \count($printfIndices), [new Token([\T_PRINT, 'print']), new Token([\T_WHITESPACE, ' '])]),
         ));
     }
 }

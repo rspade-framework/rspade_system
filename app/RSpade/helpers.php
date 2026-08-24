@@ -925,52 +925,6 @@ function array_flatten($array, $depth = INF)
 }
 
 /**
- * Get the first element of an array that matches a condition
- *
- * @param array $array Source array
- * @param callable|null $callback Optional filter callback
- * @param mixed $default Default value if not found
- * @return mixed First element or default
- */
-function array_first($array, $callback = null, $default = null)
-{
-    if (is_null($callback)) {
-        if (empty($array)) {
-            return $default;
-        }
-
-        foreach ($array as $item) {
-            return $item;
-        }
-    }
-
-    foreach ($array as $key => $value) {
-        if ($callback($value, $key)) {
-            return $value;
-        }
-    }
-
-    return $default;
-}
-
-/**
- * Get the last element of an array that matches a condition
- *
- * @param array $array Source array
- * @param callable|null $callback Optional filter callback
- * @param mixed $default Default value if not found
- * @return mixed Last element or default
- */
-function array_last($array, $callback = null, $default = null)
-{
-    if (is_null($callback)) {
-        return empty($array) ? $default : end($array);
-    }
-
-    return array_first(array_reverse($array, true), $callback, $default);
-}
-
-/**
  * Create a temporary directory
  *
  * @param string $prefix Directory prefix

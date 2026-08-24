@@ -63,7 +63,7 @@ class Rsx_Npm_Command extends Command
     /**
      * Accept arbitrary trailing npm args without Symfony validating them.
      */
-    protected function configure()
+    protected function configure(): void
     {
         parent::configure();
 

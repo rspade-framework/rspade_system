@@ -1,0 +1,8 @@
+Only in vendor: _laravel_ide
+Files vendor/bin/sail and /tmp/claude-0/-var-www-html/efd0598f-98d2-4197-bd85-5cc36a1e6e1d/scratchpad/pristine_l10/vendor/bin/sail differ
+Files vendor/hamcrest/hamcrest-php/.gitattributes and /tmp/claude-0/-var-www-html/efd0598f-98d2-4197-bd85-5cc36a1e6e1d/scratchpad/pristine_l10/vendor/hamcrest/hamcrest-php/.gitattributes differ
+Files vendor/laravel/framework/src/Illuminate/Filesystem/Filesystem.php and /tmp/claude-0/-var-www-html/efd0598f-98d2-4197-bd85-5cc36a1e6e1d/scratchpad/pristine_l10/vendor/laravel/framework/src/Illuminate/Filesystem/Filesystem.php differ
+Only in vendor/spatie/ignition: node_modules
+Files vendor/spatie/ignition/src/Ignition.php and /tmp/claude-0/-var-www-html/efd0598f-98d2-4197-bd85-5cc36a1e6e1d/scratchpad/pristine_l10/vendor/spatie/ignition/src/Ignition.php differ
+Only in /tmp/claude-0/-var-www-html/efd0598f-98d2-4197-bd85-5cc36a1e6e1d/scratchpad/pristine_l10/vendor/spatie/laravel-sitemap: .phpunit.cache
+Only in vendor/symfony/string/Resources/bin: .placeholder

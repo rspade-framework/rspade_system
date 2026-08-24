@@ -9,7 +9,6 @@ namespace App\RSpade\Commands\Migrate;
 
 use App\Providers\AppServiceProvider;
 use App\RSpade\Core\Manifest\Manifest;
-use Doctrine\DBAL\Types\Type;
 use Exception;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;

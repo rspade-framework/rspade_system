@@ -20,13 +20,16 @@ use PhpCsFixer\FixerDefinition\FixerDefinition;
 use PhpCsFixer\FixerDefinition\FixerDefinitionInterface;
 use PhpCsFixer\Tokenizer\Tokens;
 
+/**
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
+ */
 final class DeclareParenthesesFixer extends AbstractFixer
 {
     public function getDefinition(): FixerDefinitionInterface
     {
         return new FixerDefinition(
             'There must not be spaces around `declare` statement parentheses.',
-            [new CodeSample("<?php declare ( strict_types=1 );\n")]
+            [new CodeSample("<?php declare ( strict_types=1 );\n")],
         );
     }
 
@@ -49,7 +52,7 @@ final class DeclareParenthesesFixer extends AbstractFixer
             $startParenthesisIndex = $tokens->getNextTokenOfKind($index, ['(']);
             $tokens->removeTrailingWhitespace($startParenthesisIndex);
 
-            $endParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $startParenthesisIndex);
+            $endParenthesisIndex = $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $startParenthesisIndex);
             $tokens->removeLeadingWhitespace($endParenthesisIndex);
         }
     }

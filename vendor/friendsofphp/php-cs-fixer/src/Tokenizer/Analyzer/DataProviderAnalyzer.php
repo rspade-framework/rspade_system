@@ -27,6 +27,8 @@ use PhpCsFixer\Tokenizer\Tokens;
  * @internal
  *
  * @phpstan-import-type _AttributeItem from \PhpCsFixer\Tokenizer\Analyzer\Analysis\AttributeAnalysis
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class DataProviderAnalyzer
 {
@@ -63,7 +65,7 @@ final class DataProviderAnalyzer
                     '/@dataProvider\h+(('.self::REGEX_CLASS.'::)?'.TypeExpression::REGEX_IDENTIFIER.')/',
                     $tokens[$docCommentIndex]->getContent(),
                     $matches,
-                    \PREG_OFFSET_CAPTURE
+                    \PREG_OFFSET_CAPTURE,
                 );
 
                 foreach ($matches[1] as $k => [$matchName]) {
@@ -146,6 +148,7 @@ final class DataProviderAnalyzer
             NamespaceUseAnalysis::TYPE_CLASS,
         );
 
+        // note: do not apply `DataProvider::class` here, as it would confuse `composer-dependency-analyser` to have PHPUnit as non-dev dependency
         if ('PHPUnit\Framework\Attributes\DataProvider' !== $fullyQualifiedName) {
             return null;
         }

@@ -23,6 +23,8 @@ use PhpCsFixer\Tokenizer\Tokens;
 
 /**
  * @internal
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 abstract class AbstractShortOperatorFixer extends AbstractFixer
 {
@@ -178,7 +180,7 @@ abstract class AbstractShortOperatorFixer extends AbstractFixer
             '$',
             ']',
             ')',
-            [CT::T_ARRAY_INDEX_CURLY_BRACE_CLOSE],
+            [CT::T_ARRAY_INDEX_BRACE_CLOSE],
             [CT::T_DYNAMIC_PROP_BRACE_CLOSE],
             [CT::T_DYNAMIC_VAR_BRACE_CLOSE],
             [\T_NS_SEPARATOR],

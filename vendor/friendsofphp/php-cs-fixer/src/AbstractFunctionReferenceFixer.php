@@ -21,6 +21,8 @@ use PhpCsFixer\Tokenizer\Tokens;
  * @internal
  *
  * @author Vladimir Reznichenko <kalessil@gmail.com>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 abstract class AbstractFunctionReferenceFixer extends AbstractFixer
 {
@@ -60,12 +62,13 @@ abstract class AbstractFunctionReferenceFixer extends AbstractFixer
         }
 
         // translate results for humans
+        \assert(isset(array_keys($matches)[1]));
         [$functionName, $openParenthesis] = array_keys($matches);
 
         if (!$this->functionsAnalyzer->isGlobalFunctionCall($tokens, $functionName)) {
             return $this->find($functionNameToSearch, $tokens, $openParenthesis, $end);
         }
 
-        return [$functionName, $openParenthesis, $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS_BRACE, $openParenthesis)];
+        return [$functionName, $openParenthesis, $tokens->findBlockEnd(Tokens::BLOCK_TYPE_PARENTHESIS, $openParenthesis)];
     }
 }

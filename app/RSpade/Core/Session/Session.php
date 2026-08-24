@@ -43,6 +43,48 @@ use App\RSpade\Core\Time\Rsx_Time;
  * A dedicated portal domain needs no machinery: per-origin cookie jars mean that
  * browser holds its own row on that origin, with the staff properties simply null.
  *
+ * ---------------------------------------------------------------------------
+ * WHO MINTS A ROW, AND WHO DELIBERATELY DOES NOT
+ * ---------------------------------------------------------------------------
+ *
+ * The class is LAZY BY DESIGN: a row is written only when something genuinely
+ * demands one. Read this before adding an init()/__activate() call anywhere -
+ * turning a reader into a writer is the easy mistake here, and it is invisible
+ * until a table fills with rows nobody asked for.
+ *
+ * __activate() is THE only creation path, in both modes. Its callers, and only
+ * these, can mint:
+ *
+ *   get_session_id()          "the id, making one if I have to" - the contract
+ *   get_session()             same, returning the model
+ *   set_login_user_id($id)    WEB only - signing in demands a session
+ *   begin/stop_impersonation  WEB only - both persist onto the live row
+ *   _portal_activate()        a portal login on a fresh browser
+ *   _set_portal_identity()    the moment a portal session becomes necessary
+ *
+ * Everything else creates NOTHING, on purpose:
+ *
+ *   has_session()             the question get_session_id() cannot answer
+ *   get_site_id/get_user_id/get_login_user_id/get_csrf_token/is_logged_in
+ *   is_impersonating() and the impersonator accessors
+ *   set_site_id()             stores a REQUEST-SCOPED override when there is no
+ *                             row (web), or a static (CLI). Declaring a tenant
+ *                             is not asking for a session.
+ *   set_temporary_site_id()   never, in any mode - see that method
+ *   __row_if_any()            the portal seams' non-creating read
+ *
+ * IN CLI THE WHOLE SHAPE IS TRANSIENT. init() has nothing to resume (no cookie),
+ * the identity setters write only to statics, and __cli_sync_session() pushes
+ * them onto a row ONLY IF one already exists. So a command that never calls
+ * get_session_id() touches the _sessions table zero times, however much identity
+ * it declares. When one IS demanded, __activate_cli() mints a real row stamped
+ * TYPE_CLI, and _cli_end_session() deletes it at process end.
+ *
+ * The tiers the getters consult, highest first: $_api_identity (headless Bearer,
+ * immutable, backed by no row), $_temporary_site_id (a declared tenant for this
+ * script), $_request_site_id_override (subdomain enforcement), the CLI statics,
+ * then the row itself.
+ *
  * The session represents a unique browser session with persistent authentication.
  * There is no "remember me" option: the cookie is always long-lived and the ROW is
  * what expires. Every session is stamped with a type_id at creation and is deleted
@@ -159,6 +201,12 @@ class Session extends Rsx_System_Model_Abstract
 
     // Request-scoped overrides
     private static $_request_site_id_override = null;
+
+    // DECLARED tenant for this script, set by set_temporary_site_id(). Outranks every
+    // other tier except an API identity, is never persisted, and creates nothing - see
+    // that method for why it is a separate property rather than a reuse of the
+    // request/CLI overrides above.
+    private static ?int $_temporary_site_id = null;
 
     // Headless API identity (cookie-less). When set: [login_user_id, site_id, user_id].
     // Consulted by the accessors ahead of every other tier; see _set_api_identity().
@@ -728,6 +776,13 @@ class Session extends Rsx_System_Model_Abstract
             return self::$_api_identity['site_id'];
         }
 
+        // A tenant DECLARED for this script outranks the stored session, both
+        // overrides below, and the CLI branch - the caller is asserting the context
+        // the rest of this execution runs in. See set_temporary_site_id().
+        if (self::$_temporary_site_id !== null) {
+            return self::$_temporary_site_id;
+        }
+
         // Request override takes precedence (subdomain enforcement)
         if (self::$_request_site_id_override !== null) {
             return self::$_request_site_id_override;
@@ -1201,6 +1256,77 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
+     * DECLARE the tenant for the rest of this script, writing nothing anywhere.
+     *
+     * set_site_id() is the wrong tool when there is no session and none should be
+     * created: in web mode, once a row exists it WRITES site_id to that row and, on
+     * the sign-in path, a row plus a Set-Cookie can come into being. This does
+     * neither, in either mode:
+     *
+     *   - it never creates a _sessions row and never emits a cookie;
+     *   - it never writes to an existing row - a browser mid-session keeps whatever
+     *     tenant it had, and gets it back the moment this is cleared;
+     *   - it works identically in CLI and web, because it is pure static state.
+     *
+     * From here until clear_temporary_site_id() or the end of the script:
+     * get_site_id() returns this value and has_session() answers true. The point of
+     * has_session() answering true is that site-scoped code guards on it before
+     * trusting get_site_id(), so a declared tenant that did not satisfy that guard
+     * would be a tenant half the framework refused to see.
+     *
+     * It OUTRANKS the stored session and both overrides - the caller is asserting
+     * the context this execution runs in, so a row that happens to say otherwise
+     * does not win. An API request is the one thing it will not override: that
+     * identity is immutable for the request, exactly as set_site_id() has it.
+     *
+     * The motivating case is creating the initial user, where site 1 must be the
+     * ambient tenant for the account write and for the user.initial.created
+     * handlers - in a first-run WEB request whose visitor has no session, and in a
+     * migrate/test CLI process, with the same one call. See Rsx_Initial_User.
+     *
+     * @param int $site_id
+     * @return void
+     */
+    public static function set_temporary_site_id(int $site_id): void
+    {
+        // API request identity is immutable - endpoints must not switch tenant
+        if (self::$_api_identity !== null) {
+            shouldnt_happen('Session::set_temporary_site_id() cannot mutate identity in an API request');
+        }
+
+        self::$_temporary_site_id = $site_id;
+
+        // Drop the resolved site so the next get_site() re-derives from the declaration
+        self::$_site = null;
+    }
+
+    /**
+     * Drop the declared tenant and return to normal resolution - the stored session,
+     * the request override, or the CLI static, whichever applied before.
+     *
+     * Nothing was written, so nothing has to be undone: this is a single assignment,
+     * and it is safe to call when no declaration is in force.
+     *
+     * @return void
+     */
+    public static function clear_temporary_site_id(): void
+    {
+        self::$_temporary_site_id = null;
+
+        self::$_site = null;
+    }
+
+    /**
+     * Whether a tenant has been DECLARED for this script by set_temporary_site_id().
+     *
+     * @return bool
+     */
+    public static function has_temporary_site_id(): bool
+    {
+        return self::$_temporary_site_id !== null;
+    }
+
+    /**
      * Check if a session exists - the question get_session_id() does NOT answer,
      * because asking it creates one. Creates nothing itself, in any mode.
      *
@@ -1215,6 +1341,13 @@ class Session extends Rsx_System_Model_Abstract
         // API request: identity is not backed by a session row
         if (self::$_api_identity !== null) {
             return false;
+        }
+
+        // A tenant DECLARED for this script IS a session context, in either mode -
+        // site-scoped code guards on has_session() before trusting get_site_id(),
+        // so answering false here would hide the tenant from half the framework.
+        if (self::$_temporary_site_id !== null) {
+            return true;
         }
 
         // CLI mode: a minted row, or a declared identity context
@@ -1409,6 +1542,10 @@ class Session extends Rsx_System_Model_Abstract
         self::$_cli_site_id = null;
         self::$_cli_login_user_id = null;
         self::$_cli_user_id = null;
+
+        // A declared tenant is script-scoped, and for a test the SCRIPT is the test:
+        // leaving it set would leak the declaration into every later test in the run.
+        self::$_temporary_site_id = null;
 
         self::$_site = null;
         self::$_user = null;

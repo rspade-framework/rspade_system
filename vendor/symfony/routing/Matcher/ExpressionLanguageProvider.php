@@ -22,11 +22,9 @@ use Symfony\Contracts\Service\ServiceProviderInterface;
  */
 class ExpressionLanguageProvider implements ExpressionFunctionProviderInterface
 {
-    private ServiceProviderInterface $functions;
-
-    public function __construct(ServiceProviderInterface $functions)
-    {
-        $this->functions = $functions;
+    public function __construct(
+        private ServiceProviderInterface $functions,
+    ) {
     }
 
     public function getFunctions(): array
@@ -37,7 +35,7 @@ class ExpressionLanguageProvider implements ExpressionFunctionProviderInterface
             $functions[] = new ExpressionFunction(
                 $function,
                 static fn (...$args) => \sprintf('($context->getParameter(\'_functions\')->get(%s)(%s))', var_export($function, true), implode(', ', $args)),
-                fn ($values, ...$args) => $values['context']->getParameter('_functions')->get($function)(...$args)
+                static fn ($values, ...$args) => $values['context']->getParameter('_functions')->get($function)(...$args)
             );
         }
 

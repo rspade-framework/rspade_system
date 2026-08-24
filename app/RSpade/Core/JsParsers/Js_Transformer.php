@@ -160,6 +160,12 @@ class Js_Transformer extends Rpc_Client_Abstract
      *   - the vendored decorator fork bundle (its content hash)
      *   - the @babel/core version string (from its package.json)
      *   - the transformer server script itself (its content hash)
+     *   - the one-shot transformer script (its content hash)
+     *
+     * BOTH transformer scripts are folded in, and they must stay that way: they
+     * carry the SAME babel options, so an edit to either changes what a transform
+     * produces. Hashing only one of them means editing the other silently serves
+     * every file from a cache built by the old options.
      *
      * Computed once per process (static cache). Files are small / read once, so this is
      * cheap. Missing pieces contribute a marker rather than throwing here -- the transform
@@ -175,10 +181,12 @@ class Js_Transformer extends Rpc_Client_Abstract
 
         $fork_bundle = base_path(self::DECORATOR_FORK_BUNDLE);
         $server_script = base_path(self::RPC_SERVER_SCRIPT);
+        $cli_script = base_path(self::TRANSFORMER_SCRIPT);
         $babel_core_pkg = base_path('node_modules/@babel/core/package.json');
 
         $fork_hash = is_file($fork_bundle) ? md5_file($fork_bundle) : 'no-fork';
         $server_hash = is_file($server_script) ? md5_file($server_script) : 'no-server';
+        $cli_hash = is_file($cli_script) ? md5_file($cli_script) : 'no-cli';
 
         $babel_core_version = 'no-babel-core';
         if (is_file($babel_core_pkg)) {
@@ -187,7 +195,7 @@ class Js_Transformer extends Rpc_Client_Abstract
         }
 
         static::$toolchain_fingerprint = substr(
-            md5($fork_hash . '.' . $babel_core_version . '.' . $server_hash),
+            md5($fork_hash . '.' . $babel_core_version . '.' . $server_hash . '.' . $cli_hash),
             0,
             12
         );

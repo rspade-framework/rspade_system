@@ -23,6 +23,8 @@ use PhpCsFixer\WhitespacesFixerConfig;
  * @author Greg Korba <greg@codito.dev>
  *
  * @readonly
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
 final class ImportProcessor
 {
@@ -35,14 +37,20 @@ final class ImportProcessor
 
     /**
      * @param array{
-     *     const?: array<int|string, class-string>,
-     *     class?: array<int|string, class-string>,
-     *     function?: array<int|string, class-string>
+     *     const?: array<int|string, non-empty-string>,
+     *     class?: array<int|string, non-empty-string>,
+     *     function?: array<int|string, non-empty-string>
      * } $imports
      */
     public function insertImports(Tokens $tokens, array $imports, int $atIndex): void
     {
         $lineEnding = $this->whitespacesConfig->getLineEnding();
+
+        $prevIndex = $tokens->getPrevMeaningfulToken($atIndex);
+        if (null !== $prevIndex && $tokens[$prevIndex]->isGivenKind(\T_OPEN_TAG_WITH_ECHO)) {
+            $tokens->insertAt($prevIndex, Tokens::fromCode("<?php\n?>"));
+            $atIndex = $prevIndex + 1;
+        }
 
         if (!$tokens[$atIndex]->isWhitespace() || !str_contains($tokens[$atIndex]->getContent(), "\n")) {
             $tokens->insertAt($atIndex, new Token([\T_WHITESPACE, $lineEnding]));
@@ -77,27 +85,27 @@ final class ImportProcessor
     }
 
     /**
-     * @param class-string $name
+     * @param non-empty-string $name
      *
      * @return list<Token>
      */
     public static function tokenizeName(string $name): array
     {
-        $parts = explode('\\', $name);
-        $newTokens = [];
+        $tokens = [];
 
-        if ('' === $parts[0]) {
-            $newTokens[] = new Token([\T_NS_SEPARATOR, '\\']);
-            array_shift($parts);
+        if ('\\' === $name[0]) {
+            $tokens[] = new Token([\T_NS_SEPARATOR, '\\']);
+            $name = substr($name, 1);
         }
 
-        foreach ($parts as $part) {
-            $newTokens[] = new Token([\T_STRING, $part]);
-            $newTokens[] = new Token([\T_NS_SEPARATOR, '\\']);
+        foreach (explode('\\', $name) as $i => $part) {
+            if ($i > 0) {
+                $tokens[] = new Token([\T_NS_SEPARATOR, '\\']);
+            }
+
+            $tokens[] = new Token([\T_STRING, $part]);
         }
 
-        array_pop($newTokens);
-
-        return $newTokens;
+        return $tokens;
     }
 }

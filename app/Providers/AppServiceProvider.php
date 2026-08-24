@@ -134,11 +134,15 @@ class AppServiceProvider extends ServiceProvider
             );
         }
 
-        // Configure MySQL connection to use custom grammar with millisecond precision
+        // Configure MySQL connection to use custom grammar with millisecond precision.
+        //
+        // Both grammars take the CONNECTION as a constructor argument: since Laravel 12
+        // Illuminate\Database\Grammar requires one, and the setConnection() method that
+        // used to supply it afterwards has been removed.
         $connection = DB::connection();
         if ($connection->getDriverName() === 'mysql') {
-            $connection->setQueryGrammar(new \App\RSpade\Core\Database\Query\Grammars\Query_MySqlGrammar());
-            $connection->setSchemaGrammar(new \App\RSpade\Core\Database\Schema\Grammars\Schema_MySqlGrammar());
+            $connection->setQueryGrammar(new \App\RSpade\Core\Database\Query\Grammars\Query_MySqlGrammar($connection));
+            $connection->setSchemaGrammar(new \App\RSpade\Core\Database\Schema\Grammars\Schema_MySqlGrammar($connection));
         }
 
         // Set up query listener for migration/normalize debugging

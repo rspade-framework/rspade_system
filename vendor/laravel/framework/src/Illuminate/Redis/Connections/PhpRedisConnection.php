@@ -4,8 +4,11 @@ namespace Illuminate\Redis\Connections;
 
 use Closure;
 use Illuminate\Contracts\Redis\Connection as ConnectionContract;
-use Redis;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
+use RedisClusterException;
 use RedisException;
+use Throwable;
 
 /**
  * @mixin \Redis
@@ -13,6 +16,70 @@ use RedisException;
 class PhpRedisConnection extends Connection implements ConnectionContract
 {
     use PacksPhpRedisValues;
+
+    /**
+     * The commands that may be safely retried after reconnecting.
+     *
+     * @var list<string>
+     */
+    protected const RETRYABLE_COMMANDS = [
+        'bitcount',
+        'bitpos',
+        'dbsize',
+        'dump',
+        'exists',
+        'geodist',
+        'geohash',
+        'geopos',
+        'geosearch',
+        'get',
+        'getbit',
+        'getrange',
+        'hexists',
+        'hget',
+        'hgetall',
+        'hkeys',
+        'hlen',
+        'hmget',
+        'hmset',
+        'hstrlen',
+        'hvals',
+        'keys',
+        'lindex',
+        'llen',
+        'lpos',
+        'lrange',
+        'mget',
+        'mset',
+        'ping',
+        'pttl',
+        'randomkey',
+        'scard',
+        'sdiff',
+        'sinter',
+        'sismember',
+        'smembers',
+        'smismember',
+        'srandmember',
+        'strlen',
+        'sunion',
+        'time',
+        'ttl',
+        'type',
+        'xinfo',
+        'xlen',
+        'xpending',
+        'xrange',
+        'xrevrange',
+        'zcard',
+        'zcount',
+        'zlexcount',
+        'zmscore',
+        'zrange',
+        'zrank',
+        'zrevrank',
+        'zscore',
+    ];
 
     /**
      * The connection creation callback.
@@ -34,7 +101,6 @@ class PhpRedisConnection extends Connection implements ConnectionContract
      * @param  \Redis  $client
      * @param  callable|null  $connector
      * @param  array  $config
-     * @return void
      */
     public function __construct($client, ?callable $connector = null, array $config = [])
     {
@@ -128,7 +194,7 @@ class PhpRedisConnection extends Connection implements ConnectionContract
         if (count($dictionary) === 1) {
             $dictionary = $dictionary[0];
         } else {
-            $input = collect($dictionary);
+            $input = new Collection($dictionary);
 
             $dictionary = $input->nth(2)->combine($input->nth(2, 1))->toArray();
         }
@@ -400,9 +466,17 @@ class PhpRedisConnection extends Connection implements ConnectionContract
     {
         $pipeline = $this->client()->pipeline();
 
-        return is_null($callback)
-            ? $pipeline
-            : tap($pipeline, $callback)->exec();
+        if (is_null($callback)) {
+            return $pipeline;
+        }
+
+        try {
+            return tap($pipeline, $callback)->exec();
+        } catch (Throwable $e) {
+            rescue(fn () => $this->client()->discard(), null, false);
+
+            throw $e;
+        }
     }
 
     /**
@@ -415,9 +489,17 @@ class PhpRedisConnection extends Connection implements ConnectionContract
     {
         $transaction = $this->client()->multi();
 
-        return is_null($callback)
-            ? $transaction
-            : tap($transaction, $callback)->exec();
+        if (is_null($callback)) {
+            return $transaction;
+        }
+
+        try {
+            return tap($transaction, $callback)->exec();
+        } catch (Throwable $e) {
+            rescue(fn () => $this->client()->discard(), null, false);
+
+            throw $e;
+        }
     }
 
     /**
@@ -523,23 +605,49 @@ class PhpRedisConnection extends Connection implements ConnectionContract
      * @param  array  $parameters
      * @return mixed
      *
+     * @throws \RedisClusterException
      * @throws \RedisException
      */
     public function command($method, array $parameters = [])
     {
-        try {
-            return parent::command($method, $parameters);
-        } catch (RedisException $e) {
-            foreach (['went away', 'socket', 'read error on connection', 'Connection lost'] as $errorMessage) {
-                if (str_contains($e->getMessage(), $errorMessage)) {
-                    $this->client = $this->connector ? call_user_func($this->connector) : $this->client;
+        $retries = max(
+            $this->isRetryable($method, $parameters) ? 1 : 0,
+            (int) ($this->config['command_retries'] ?? 0),
+        );
 
-                    break;
+        while (true) {
+            try {
+                return parent::command($method, $parameters);
+            } catch (RedisClusterException|RedisException $e) {
+                if (! Str::contains($e->getMessage(), ['went away', 'socket', 'Error while reading', 'read error on connection', 'READONLY', 'Connection lost', 'Error processing response from Redis node'])) {
+                    throw $e;
+                }
+
+                $this->client = $this->connector ? call_user_func($this->connector) : $this->client;
+
+                if ($retries-- === 0) {
+                    throw $e;
                 }
             }
-
-            throw $e;
         }
+    }
+
+    /**
+     * Determine whether the command may be safely retried.
+     *
+     * @param  string  $method
+     * @param  array  $parameters
+     * @return bool
+     */
+    protected function isRetryable($method, array $parameters)
+    {
+        $method = strtolower($method);
+
+        if ($method === 'set') {
+            return ! isset($parameters[2]);
+        }
+
+        return in_array($method, static::RETRYABLE_COMMANDS, true);
     }
 
     /**

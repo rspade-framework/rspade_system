@@ -17,11 +17,15 @@ class Pdf_Viewer extends Component {
      * ?v=build_key so a new deployment busts the long-cache; GlobalWorkerOptions.workerSrc points
      * at the worker route (same versioned url).
      *
-     * The dynamic import is routed through `new Function('u','return import(u)')` deliberately: the
-     * bundle is esbuild --format=iife, and a bare `import(url)` in that output is rewritten into a
-     * `require(...)`-based shim (require is undefined in the browser -> "require is not defined").
-     * Hiding the import() token inside a Function body keeps the bundler's hands off it so the
-     * browser performs a genuine native module import against the streaming route.
+     * The bare `import(url)` is deliberate and it is load-bearing that it stays bare. It used to
+     * be routed through `new Function('u','return import(u)')` to hide the token from the build,
+     * because the transform rewrote a plain import() into a `require(...)` shim and require is
+     * undefined in a browser. The transform now declares caller.supportsDynamicImport, so import()
+     * survives as native syntax and the workaround is gone - it was an eval-family construct, which
+     * the Content-Security-Policy blocks on every page that renders a PDF (JS-EVAL-01).
+     *
+     * Do not reintroduce a Function/eval wrapper here. If import() ever starts compiling to
+     * require() again, the fix is in the transform's caller declaration, not at this call site.
      */
     static _load_pdfjs() {
         if (Pdf_Viewer._pdfjs_promise) {
@@ -32,9 +36,7 @@ class Pdf_Viewer extends Component {
         const module_url = Rsx.Route('File_Preview_Controller::pdfjs') + '?v=' + urlencode(version);
         const worker_url = Rsx.Route('File_Preview_Controller::pdf_worker') + '?v=' + urlencode(version);
 
-        const dynamic_import = new Function('u', 'return import(u);');
-
-        Pdf_Viewer._pdfjs_promise = dynamic_import(module_url).then((pdfjs) => {
+        Pdf_Viewer._pdfjs_promise = import(module_url).then((pdfjs) => {
             pdfjs.GlobalWorkerOptions.workerSrc = worker_url;
             return pdfjs;
         });

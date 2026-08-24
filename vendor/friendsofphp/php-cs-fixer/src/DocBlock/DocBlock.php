@@ -24,8 +24,10 @@ use PhpCsFixer\Tokenizer\Analyzer\Analysis\NamespaceUseAnalysis;
  * It internally splits it up into "lines" that we can manipulate.
  *
  * @author Graham Campbell <hello@gjcampbell.co.uk>
+ *
+ * @no-named-arguments Parameter names are not covered by the backward compatibility promise.
  */
-final class DocBlock
+final class DocBlock implements \Stringable
 {
     /**
      * @var list<Line>
@@ -95,6 +97,7 @@ final class DocBlock
         $total = \count($this->lines);
 
         for ($index = 0; $index < $total; ++$index) {
+            \assert(isset($this->lines[$index]));
             if ($this->lines[$index]->containsATag()) {
                 // get all the lines that make up the annotation
                 $lines = \array_slice($this->lines, $index, $this->findAnnotationLength($index), true);
@@ -126,6 +129,7 @@ final class DocBlock
             return;
         }
 
+        \assert(isset($this->lines[0]));
         $lineContent = $this->getSingleLineDocBlockEntry($this->lines[0]);
 
         if ('' === $lineContent) {
@@ -153,7 +157,7 @@ final class DocBlock
 
         $usefulLines = array_filter(
             $this->lines,
-            static fn (Line $line): bool => $line->containsUsefulContent()
+            static fn (Line $line): bool => $line->containsUsefulContent(),
         );
 
         if (1 < \count($usefulLines)) {
