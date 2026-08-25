@@ -6,14 +6,18 @@
  * (bridge client, formatter, git status/diff) routes through here so there is
  * exactly ONE copy of this logic.
  *
- * SERVER URL: read APP_URL from the project-root .env. The literal sentinel
- * `APP_URL=https://$HOSTNAME` (unquoted, no braces) is expanded via os.hostname(),
- * matching the PHP side (gethostname()). APP_URL already carries the scheme.
+ * SERVER URL, in priority order: the `rspade.serverUrl` setting, then the app_url
+ * the SERVER wrote into the grant document, then APP_URL parsed out of the
+ * project-root .env. The grant outranks .env because APP_URL may hold the literal
+ * sentinel `APP_URL=https://$HOSTNAME`, which resolves to whichever machine expands
+ * it - the server's own name on the server, the workstation's name in an editor.
+ * Only the first of those is the address the application answers on. APP_URL already
+ * carries the scheme, so there is no protocol probing at any tier.
  *
  * AUTH: the framework (dev only) writes a mode-restricted ide-grant-<random>.token
- * file into storage/rsx-ide-bridge/ (outside the web docroot). The client
- * reads that file from local disk and presents its trimmed contents in the
- * X-Ide-Token request header. Possession of the file IS the grant.
+ * file into storage/rsx-ide-bridge/ (outside the web docroot). It is a JSON grant
+ * document, {"secret", "app_url"}; the client reads it from local disk and presents
+ * the SECRET in the X-Ide-Token request header. Possession of the file IS the grant.
  *
  * FAIL LOUD: every resolver throws a descriptive Error when it cannot resolve.
  * There are NO silent fallbacks.
@@ -54,12 +58,26 @@ export function find_rspade_root(): string | undefined {
  * Throws (fail loud) when .env is missing or APP_URL is undefined/empty.
  */
 export function resolveServerUrl(rspadeRoot: string): string {
-    // Optional explicit override for non-standard setups.
+    // 1. Optional explicit override for non-standard setups. Always wins.
     const configured = vscode.workspace.getConfiguration('rspade').get<string>('serverUrl');
     if (configured && configured.trim() !== '') {
         return configured.trim().replace(/\/+$/, '');
     }
 
+    // 2. The grant document's app_url. AUTHORITATIVE, and preferred over .env for one
+    //    reason: APP_URL may hold the literal `$HOSTNAME` token, and only the SERVER
+    //    can resolve that correctly. The framework substitutes its own gethostname()
+    //    before writing this value; an editor expanding the token locally would
+    //    substitute the WORKSTATION's name instead - harmless when the two are the same
+    //    machine, and completely wrong when the project is on a remote mount.
+    const from_grant = grantAppUrl(rspadeRoot);
+    if (from_grant) {
+        return from_grant;
+    }
+
+    // 3. .env, read directly. Reached when no grant is established yet (the site has
+    //    not been loaded in a browser). $HOSTNAME is expanded locally here, which is
+    //    correct only on a co-located setup - hence its place at the bottom.
     const env_file = path.join(rspadeRoot, '.env');
     if (!fs.existsSync(env_file)) {
         throw new Error(`RSpade IDE bridge: .env not found at ${env_file} - cannot resolve APP_URL.`);
@@ -98,16 +116,15 @@ export function resolveServerUrl(rspadeRoot: string): string {
 }
 
 /**
- * Read the local-file grant token. Globs
- * <rspadeRoot>/storage/rsx-ide-bridge/ide-grant-*.token, reads and trims the
- * content, and returns it. When multiple exist, the newest by mtime is used.
- * Throws (fail loud) when the directory or a token file is missing/empty.
+ * Locate the grant file: <rspadeRoot>/storage/rsx-ide-bridge/ide-grant-*.token.
+ * When several exist the newest by mtime wins, so the answer is deterministic.
+ * Throws (fail loud) when the directory or the file is missing.
  *
  * Volatile storage was relocated out of system/ to the project root; the historic
  * system/storage location is still probed as a fallback for an environment that
  * has not yet run the relocation.
  */
-export function readIdeToken(rspadeRoot: string): string {
+function find_grant_file(rspadeRoot: string): string {
     const relocated_dir = path.join(rspadeRoot, 'storage', 'rsx-ide-bridge');
     const legacy_dir = path.join(rspadeRoot, 'system', 'storage', 'rsx-ide-bridge');
     const bridge_dir = fs.existsSync(relocated_dir) ? relocated_dir : legacy_dir;
@@ -140,10 +157,58 @@ export function readIdeToken(rspadeRoot: string): string {
         }
     }
 
-    const token = fs.readFileSync(chosen, 'utf8').trim();
-    if (token === '') {
-        throw new Error(`RSpade IDE bridge: grant token file ${chosen} is empty.`);
+    return chosen;
+}
+
+/**
+ * The secret to present in the X-Ide-Token header.
+ * Throws (fail loud) when no grant is established.
+ */
+export function readIdeToken(rspadeRoot: string): string {
+    return read_grant_document(find_grant_file(rspadeRoot)).secret;
+}
+
+/**
+ * Parse a grant file into its secret and the server-resolved application URL.
+ *
+ * The file is a JSON document written by Ide_Bridge_Token: {"secret", "app_url"}.
+ * Throws (fail loud) when it is missing, unparseable, or carries no secret - an
+ * unreadable grant is never downgraded into a guess.
+ */
+function read_grant_document(grant_path: string): { secret: string; app_url: string | null } {
+    const raw = fs.readFileSync(grant_path, 'utf8').trim();
+    if (raw === '') {
+        throw new Error(`RSpade IDE bridge: grant token file ${grant_path} is empty.`);
     }
 
-    return token;
+    let parsed: any;
+    try {
+        parsed = JSON.parse(raw);
+    } catch (e) {
+        throw new Error(`RSpade IDE bridge: grant token file ${grant_path} is not a valid grant document (expected JSON).`);
+    }
+
+    const secret = typeof parsed?.secret === 'string' ? parsed.secret.trim() : '';
+    if (secret === '') {
+        throw new Error(`RSpade IDE bridge: grant token file ${grant_path} carries no secret.`);
+    }
+
+    const app_url = typeof parsed?.app_url === 'string' && parsed.app_url.trim() !== ''
+        ? parsed.app_url.trim().replace(/\/+$/, '')
+        : null;
+
+    return { secret, app_url };
+}
+
+/**
+ * The server URL the grant document reports, or null when no grant is established
+ * (or it predates the app_url field). Never throws - the caller decides what an
+ * absent answer means.
+ */
+function grantAppUrl(rspadeRoot: string): string | null {
+    try {
+        return read_grant_document(find_grant_file(rspadeRoot)).app_url;
+    } catch (e) {
+        return null;
+    }
 }

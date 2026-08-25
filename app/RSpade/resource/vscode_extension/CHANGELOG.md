@@ -6,6 +6,23 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.226] - 2026-08-25
+
+### Added
+- The extension tracks whether the RSpade server is reachable, and pauses only the
+  features that need it - formatting, go-to-definition, git decoration and
+  refactoring. Highlighting, completion, convention diagnostics and folder colours
+  continue to work while the server is down.
+- A status bar item appears when the bridge is unreachable, and reconnects on click.
+  The new **RSpade: Reconnect IDE Bridge** command does the same from the palette.
+- Authentication grants are refreshed every 15 minutes, in step with the server's
+  own rotation.
+
+### Changed
+- The server address is taken from the grant the server itself writes, so a project
+  edited over a remote mount reaches the right host. Previously it was derived
+  locally and could resolve to the workstation instead.
+
 ## [0.1.224] - 2026-08-20
 
 ### Added

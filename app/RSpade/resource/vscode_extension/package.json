@@ -18,7 +18,7 @@
         "blade",
         "formatter"
     ],
-    "version": "0.1.225",
+    "version": "0.1.226",
     "publisher": "rspade",
     "engines": {
         "vscode": "^1.74.0"
@@ -77,6 +77,10 @@
             {
                 "command": "rspade.sortClassMethods",
                 "title": "$(list-ordered) Rsx: Sort Class Methods"
+            },
+            {
+                "command": "rspade.reconnectBridge",
+                "title": "RSpade: Reconnect IDE Bridge"
             }
         ],
         "menus": {

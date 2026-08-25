@@ -17,6 +17,8 @@ import * as https from 'https';
 import * as http from 'http';
 import { promisify } from 'util';
 import { resolveServerUrl, readIdeToken, find_rspade_root } from './ide_bridge_config';
+import { bridge_is_online, bridge_token } from './bridge_connectivity';
+import { Bridge_Offline_Error } from './ide_bridge_client';
 
 const read_file = promisify(fs.readFile);
 const write_file = promisify(fs.writeFile);
@@ -76,6 +78,14 @@ export class RspadeFormattingProvider implements vscode.DocumentFormattingEditPr
             this.output_channel.appendLine('Result: SUCCESS - Content unchanged');
             return [];
         } catch (error: any) {
+            // Offline is not a formatting failure, and this runs on every save - a
+            // toast here would fire once per keystroke-to-disk for as long as the
+            // container is down. The status bar already says the bridge is offline.
+            if (error instanceof Bridge_Offline_Error) {
+                this.output_channel.appendLine('Result: SKIPPED - bridge offline');
+                return [];
+            }
+
             console.error('[RSpade Formatter] Format failed:', error.message);
             this.output_channel.appendLine(`Result: ERROR`);
             this.output_channel.appendLine(`Error message: ${error.message}`);
@@ -117,6 +127,12 @@ export class RspadeFormattingProvider implements vscode.DocumentFormattingEditPr
 
             this.output_channel.appendLine('Namespace update completed successfully');
         } catch (error: any) {
+            // Same reasoning as format(): a paused feature is not a failed one.
+            if (error instanceof Bridge_Offline_Error) {
+                this.output_channel.appendLine('Namespace update SKIPPED - bridge offline');
+                return;
+            }
+
             console.error('[RSpade Formatter] Namespace update failed:', error.message);
             this.output_channel.appendLine(`[ERROR] ${error.message}`);
             vscode.window.showErrorMessage(`RSpade namespace update failed: ${error.message || error}`);
@@ -192,11 +208,20 @@ export class RspadeFormattingProvider implements vscode.DocumentFormattingEditPr
         return new Promise((resolve, reject) => {
             this.output_channel.appendLine('\n--- HTTP REQUEST ---');
 
+            // THE GATE - the same one ide_bridge_client applies. This provider is the
+            // OTHER transport in the extension (formatting, and every refactor command
+            // routes through ide_service_request), so gating only the client would
+            // leave half the server-dependent surface hammering a dead server.
+            if (!bridge_is_online()) {
+                reject(new Bridge_Offline_Error());
+                return;
+            }
+
             let server_url: string;
             let token: string;
             try {
                 server_url = resolveServerUrl(rspade_root);
-                token = readIdeToken(rspade_root);
+                token = bridge_token() || readIdeToken(rspade_root);
             } catch (e: any) {
                 this.output_channel.appendLine(`[ERROR] ${e.message}`);
                 reject(e);

@@ -19,6 +19,7 @@ import { RspadeClassRefactorProvider } from './class_refactor_provider';
 import { RspadeClassRefactorCodeActionsProvider } from './class_refactor_code_actions';
 import { RspadeSortClassMethodsProvider } from './sort_class_methods_provider';
 import { SymlinkRedirectProvider } from './symlink_redirect_provider';
+import { init_bridge_connectivity } from './bridge_connectivity';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -94,6 +95,20 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     console.log(`[RSpade] Project root: ${rspade_root}`);
+
+    // CONNECTIVITY. Started before any provider is built, so the first request a
+    // provider makes already has an answer about whether the server is reachable.
+    //
+    // start() returns immediately and connects in the background: activation must not
+    // block on a container that may be stopped, and the local features below are
+    // useful whether or not it ever answers.
+    const bridge_output = vscode.window.createOutputChannel('RSpade IDE Bridge');
+    const bridge_connectivity = init_bridge_connectivity(bridge_output);
+    context.subscriptions.push(bridge_output, bridge_connectivity);
+    context.subscriptions.push(
+        vscode.commands.registerCommand('rspade.reconnectBridge', () => bridge_connectivity.reconnect_now())
+    );
+    bridge_connectivity.start();
 
     // Get JQHTML extension API for component navigation
     // Try both possible extension IDs

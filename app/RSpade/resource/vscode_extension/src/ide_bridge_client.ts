@@ -32,6 +32,19 @@ import * as vscode from 'vscode';
 import * as https from 'https';
 import * as http from 'http';
 import { resolveServerUrl, readIdeToken, find_rspade_root } from './ide_bridge_config';
+import { bridge_is_online, bridge_token, bridge_refresh_token } from './bridge_connectivity';
+
+/**
+ * Thrown when the bridge is known to be down. Distinct from a request that FAILED,
+ * because nothing was attempted: callers use it to degrade quietly rather than to
+ * report an error the developer can do nothing about.
+ */
+export class Bridge_Offline_Error extends Error {
+    constructor() {
+        super('RSpade IDE bridge is offline - server-dependent features are paused.');
+        this.name = 'Bridge_Offline_Error';
+    }
+}
 
 export class IdeBridgeClient {
     private output_channel: vscode.OutputChannel;
@@ -113,7 +126,26 @@ export class IdeBridgeClient {
                 return this.make_request_with_retry(endpoint, data, method, retry_count + 1);
             }
 
-            // 401 = grant token missing/invalid. Surface actionably; do NOT loop.
+            // Nothing was attempted - do not dress an offline bridge up as a failure.
+            if (error instanceof Bridge_Offline_Error) {
+                throw error;
+            }
+
+            // 401 = the grant was rejected. Re-read it ONCE and retry before giving up.
+            //
+            // The server rotates grants every 15 minutes and keeps the previous one
+            // valid, so the client's own refresh normally lands well inside the window.
+            // A machine that SLEPT through several rotations wakes outside it, holding
+            // a secret that has been retired; its next scheduled refresh may be minutes
+            // away. Re-reading here turns that into one retried request instead of an
+            // outage the developer has to wait out.
+            if (retry_count === 0 && error_msg.includes('HTTP 401')) {
+                this.output_channel.appendLine('[WARNING] Grant rejected (HTTP 401) - re-reading the newest grant and retrying once...');
+                if (bridge_refresh_token()) {
+                    return this.make_request_with_retry(endpoint, data, method, retry_count + 1);
+                }
+            }
+
             if (error_msg.includes('HTTP 401')) {
                 this.output_channel.appendLine('[ERROR] IDE bridge rejected the grant token (HTTP 401). The ide-grant-*.token is missing or invalid - reload the site in a browser (dev mode) to re-mint it.');
             }
@@ -130,7 +162,18 @@ export class IdeBridgeClient {
         method: string
     ): Promise<any> {
         return new Promise((resolve, reject) => {
-            // Resolve server URL and grant token fresh from local disk on every request.
+            // THE GATE. While the bridge is known to be down, a request is refused
+            // here instead of spending a connect timeout proving it again. The
+            // connectivity manager owns recovery; nothing else polls.
+            if (!bridge_is_online()) {
+                reject(new Bridge_Offline_Error());
+                return;
+            }
+
+            // Resolve server URL and grant token. The token comes from the
+            // connectivity manager (refreshed on its own 15-minute schedule, in step
+            // with the server's rotation); disk is the fallback for a request that
+            // somehow precedes the first refresh.
             let server_url: string;
             let token: string;
             try {
@@ -139,7 +182,7 @@ export class IdeBridgeClient {
                     throw new Error('RSpade project root not found (no workspace folder contains system/app/RSpade).');
                 }
                 server_url = resolveServerUrl(rspade_root);
-                token = readIdeToken(rspade_root);
+                token = bridge_token() || readIdeToken(rspade_root);
             } catch (e: any) {
                 this.output_channel.appendLine(`[ERROR] ${e.message}`);
                 reject(e);

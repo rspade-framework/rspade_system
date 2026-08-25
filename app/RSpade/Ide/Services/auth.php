@@ -183,9 +183,41 @@ if (!$is_localhost_bypass) {
         ide_auth_error_response('IDE bridge grant not established', 401);
     }
 
+    // ONLY THE TWO NEWEST GRANTS AUTHENTICATE (Ide_Bridge_Token::ACTIVE_GRANTS).
+    //
+    // Rotation retires everything older, so in a healthy tree this slice is the whole
+    // directory. It is applied here anyway because auth is where the consequence lands:
+    // if a rotation ever fails to delete - a permissions problem, a half-finished
+    // manual copy - retired secrets would otherwise keep opening the bridge for as long
+    // as the files sat there, which is exactly the property rotation exists to remove.
+    //
+    // Newest FIRST by the document's own issued_at (filemtime has one-second
+    // granularity and cannot separate two grants minted in the same second). The count
+    // is duplicated as a literal rather than read from Ide_Bridge_Token::ACTIVE_GRANTS
+    // because this file is included before the autoloader.
+    $issued_at = [];
+    foreach ($token_files as $token_file) {
+        $document = json_decode((string) file_get_contents($token_file), true);
+        $issued_at[$token_file] = is_array($document) && isset($document['issued_at']) && is_numeric($document['issued_at'])
+            ? (float) $document['issued_at']
+            : 0.0;
+    }
+    usort($token_files, static function ($a, $b) use ($issued_at) {
+        $order = $issued_at[$b] <=> $issued_at[$a];
+        return $order !== 0 ? $order : strcmp($b, $a);
+    });
+    $token_files = array_slice($token_files, 0, 2);
+
+    // The grant file is a JSON document {"secret": ..., "app_url": ...}; only the
+    // secret authenticates. A file that does not parse, or carries no secret, is not
+    // a grant - it is skipped, never treated as a match.
     $grant_ok = false;
     foreach ($token_files as $token_file) {
-        $secret = trim((string) file_get_contents($token_file));
+        $decoded = json_decode((string) file_get_contents($token_file), true);
+        if (!is_array($decoded) || !isset($decoded['secret']) || !is_string($decoded['secret'])) {
+            continue;
+        }
+        $secret = trim($decoded['secret']);
         if ($secret !== '' && hash_equals($secret, $presented)) {
             $grant_ok = true;
             break;
