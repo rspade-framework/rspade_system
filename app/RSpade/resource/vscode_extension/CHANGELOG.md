@@ -6,6 +6,16 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.227] - 2026-08-25
+
+### Added
+- The `use` statement block is collapsed when a PHP file is opened. RSpade resolves
+  classes by name through the manifest, so the import list is maintained for you and
+  carries nothing you act on. Expanding it keeps it expanded for as long as the file
+  is open. Disable with `rspade.foldUseStatements`.
+- The import block is now a foldable region at all - VS Code's PHP folding is
+  bracket-based and produced none for it.
+
 ## [0.1.226] - 2026-08-25
 
 ### Added

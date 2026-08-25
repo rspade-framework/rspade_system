@@ -18,7 +18,7 @@
         "blade",
         "formatter"
     ],
-    "version": "0.1.226",
+    "version": "0.1.227",
     "publisher": "rspade",
     "engines": {
         "vscode": "^1.74.0"
@@ -50,6 +50,11 @@
                     "type": "string",
                     "default": "",
                     "description": "Set to 'rspade' to enable RSpade framework features"
+                },
+                "rspade.foldUseStatements": {
+                    "type": "boolean",
+                    "default": true,
+                    "description": "Collapse the use statement block when a PHP file is opened. RSpade resolves classes by name through the manifest, so the import list is maintained for you and carries nothing you act on. Expanding it never re-folds while the file stays open."
                 }
             }
         },

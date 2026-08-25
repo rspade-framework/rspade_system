@@ -20,6 +20,7 @@ import { RspadeClassRefactorCodeActionsProvider } from './class_refactor_code_ac
 import { RspadeSortClassMethodsProvider } from './sort_class_methods_provider';
 import { SymlinkRedirectProvider } from './symlink_redirect_provider';
 import { init_bridge_connectivity } from './bridge_connectivity';
+import { activate_use_folding } from './use_folding_provider';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -179,6 +180,10 @@ export async function activate(context: vscode.ExtensionContext) {
     // Register git diff provider
     const git_diff_provider = new GitDiffProvider(rspade_root);
     git_diff_provider.activate(context);
+
+    // Collapse the `use` block in PHP files. Registered here - inside the branch that
+    // has already established an RSpade root - so it never touches an unrelated project.
+    activate_use_folding(context);
 
     // Register symlink redirect provider
     const symlink_redirect_provider = new SymlinkRedirectProvider();
