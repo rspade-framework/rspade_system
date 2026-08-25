@@ -1,0 +1,8 @@
+# Compiled TypeScript output.
+#
+# build.sh deletes and regenerates this directory (`rm -rf out/` then `tsc -p ./`),
+# and nothing in a checkout ever reads it: the extension is installed from the
+# packaged .vsix, which carries its own copy of the compiled JS. The .vsix files
+# themselves stay tracked - they ARE the distribution channel, and no downstream
+# box has a build step to produce them.
+out/

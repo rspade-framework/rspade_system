@@ -2,7 +2,23 @@
     "name": "rspade-framework",
     "displayName": "RSpade Framework Support",
     "description": "VS Code extension for RSpade framework with formatting and namespace management",
-    "version": "0.1.224",
+    "license": "MIT",
+    "homepage": "https://github.com/rspade-framework/",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/rspade-framework/rspade_vscode.git"
+    },
+    "bugs": {
+        "url": "https://github.com/rspade-framework/rspade_vscode/issues"
+    },
+    "keywords": [
+        "rspade",
+        "php",
+        "laravel",
+        "blade",
+        "formatter"
+    ],
+    "version": "0.1.225",
     "publisher": "rspade",
     "engines": {
         "vscode": "^1.74.0"
@@ -99,7 +115,9 @@
         "semanticTokenScopes": [
             {
                 "scopes": {
-                    "conventionMethod": ["entity.name.function.convention.rspade"]
+                    "conventionMethod": [
+                        "entity.name.function.convention.rspade"
+                    ]
                 }
             }
         ],

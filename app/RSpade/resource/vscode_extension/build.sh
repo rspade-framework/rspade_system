@@ -20,6 +20,35 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
+# Options
+#
+# --release omits sourcemaps. tsc emits a .js.map beside every .js because
+# tsconfig.json sets sourceMap:true, which is what you want while developing the
+# extension - a stack trace in the Extension Host points at the TypeScript line.
+# A published build has no use for them: .vscodeignore already keeps *.map out of
+# the .vsix, so in a release they are written and then discarded. --release stops
+# generating them at all, leaving out/ holding exactly what ships.
+RELEASE=0
+for arg in "$@"; do
+    case "$arg" in
+        --release)
+            RELEASE=1
+            ;;
+        -h|--help)
+            echo "Usage: ./build.sh [--release]"
+            echo ""
+            echo "  --release   Compile without sourcemaps (out/ then holds exactly"
+            echo "              what the .vsix ships). Default builds with sourcemaps."
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}✗ Unknown option: $arg${NC}" >&2
+            echo "Usage: ./build.sh [--release]" >&2
+            exit 1
+            ;;
+    esac
+done
+
 # Step 1: Check we're in Docker
 if [ ! -f /.dockerenv ]; then
     echo -e "${YELLOW}⚠ Not running in Docker container${NC}"
@@ -49,8 +78,13 @@ echo -e "${GREEN}✓ Dependencies installed${NC}"
 
 # Step 4: Compile TypeScript
 echo ""
-echo "🔨 Compiling TypeScript..."
-npx tsc -p ./
+if [ "$RELEASE" -eq 1 ]; then
+    echo "🔨 Compiling TypeScript (release - no sourcemaps)..."
+    npx tsc -p ./ --sourceMap false
+else
+    echo "🔨 Compiling TypeScript..."
+    npx tsc -p ./
+fi
 echo -e "${GREEN}✓ Compiled successfully${NC}"
 
 # Step 5: Run linter (optional, allow failures)
@@ -85,15 +119,25 @@ npx @vscode/vsce package --no-dependencies --allow-missing-repository
 # Find the generated .vsix file
 VSIX_FILE=$(ls -t *.vsix 2>/dev/null | head -n1)
 
-# Rename to standard filename
-if [ -n "$VSIX_FILE" ] && [ "$VSIX_FILE" != "rspade-framework.vsix" ]; then
-    mv "$VSIX_FILE" "rspade-framework.vsix"
-    VSIX_FILE="rspade-framework.vsix"
-fi
-
 if [ -z "$VSIX_FILE" ]; then
     echo -e "${RED}✗ Failed to create .vsix package${NC}"
     exit 1
+fi
+
+# Rename to the versioned filename.
+#
+# vsce names its output <name>-<version>.vsix, i.e. rspade-framework-N.vsix from
+# the package `name` field. We ship it as rspade-vscode-extension-N.vsix instead:
+# the version stays in the filename so a build is identifiable on sight, and the
+# stem matches the vendored jqhtml-vscode-extension-N.vsix beside it.
+#
+# Consumers glob rather than hardcode (check_setup.sh, check_setup.ps1,
+# install.sh), so the version moving does not strand them. Step 2 cleaned every
+# *.vsix before the build, so exactly one exists here now.
+TARGET_VSIX="rspade-vscode-extension-${NEW_VERSION}.vsix"
+if [ "$VSIX_FILE" != "$TARGET_VSIX" ]; then
+    mv "$VSIX_FILE" "$TARGET_VSIX"
+    VSIX_FILE="$TARGET_VSIX"
 fi
 
 # Step 8: Clean up build artifacts (keep .vsix)

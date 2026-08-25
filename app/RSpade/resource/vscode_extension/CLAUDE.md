@@ -51,22 +51,89 @@ The extension is built with TypeScript and follows VS Code extension best practi
 
    **Short Names:** If class is `Foo_Bar_Baz_Bom` in directory `./rsx/app/foo/bar/`, filename can be `baz_bom.php` instead of `foo_bar_baz_bom.php`
 
-## Development
+## Building
 
-### Setup
+**Always build with `./build.sh`. Never run `npm install`, `npm run compile` or
+`vsce package` by hand** - the script owns the whole sequence (clean, install,
+compile, lint, package, rename, clean up), and a hand-run step leaves the
+directory in a state the next build has to undo.
+
 ```bash
-npm install
-npm run compile
+cd system/app/RSpade/resource/vscode_extension
+bash build.sh --release   # what you ship
+bash build.sh             # development build, sourcemaps included
 ```
+
+`--release` compiles with `--sourceMap false`. `.vscodeignore` already keeps
+`*.map` out of the package either way, so in a release the maps would be written
+and then discarded; omitting them leaves `out/` holding exactly what ships.
+
+The script requires Docker (it checks for `/.dockerenv` and exits otherwise) and
+takes about 30 seconds.
+
+### What every build does to the tree
+
+Three side effects, all of them intentional and all of them worth knowing before
+you run it a few times in a row while editing:
+
+1. **The patch version is auto-incremented** in `package.json` (`0.1.224` ->
+   `0.1.225`). There is no way to build without bumping it. Four rebuilds while
+   tuning a setting means four versions burned.
+2. **The output is renamed to `rspade-vscode-extension-<version>.vsix`.** vsce
+   emits `rspade-framework-<version>.vsix` from the package `name`; the rename
+   gives it a stem matching the vendored `jqhtml-vscode-extension-<version>.vsix`
+   beside it. **Every build produces a NEW filename**, so the previous `.vsix`
+   must be removed from git - the build's own `rm -f *.vsix` clears the working
+   directory, but the old path is still tracked:
+
+   ```bash
+   git rm --cached <old>.vsix          # if the build already deleted it on disk
+   git add rspade-vscode-extension-<new version>.vsix
+   ```
+
+   Consumers glob rather than hardcode the name (`install.sh`,
+   `.vscode/ide_setup/check_setup.sh`, `check_setup.ps1`), so the moving version
+   does not strand them. **If you add a new consumer, glob it too.**
+3. **`out/` and `node_modules/` are deleted and rebuilt** from scratch. `out/` is
+   gitignored (the `.vsix` carries its own copy of the compiled JS), so this
+   produces no git noise.
+
+### Publishing
+
+`system/bin/publish` mirrors this directory to `rspade_vscode` on GitHub and
+commits **only when something changed**, with the message
+`RSpade VS Code extension v<version> - <date>` authored by the release bot. The
+version in that message is read from `package.json`, so a rebuild that only
+bumped the version still produces a commit. `out/` is excluded from the mirror.
+
+### Editing the manifest
+
+Marketplace-facing fields live in `package.json`: `displayName`, `description`,
+`keywords` (five max - they are the whole of the search discoverability),
+`categories`, `license`, `homepage`, `repository`, `bugs`, plus `contributes`
+(configuration, commands, menus, keybindings, languages, grammars, semantic
+tokens). `CHANGELOG.md` and `README.md` are rendered on the Marketplace listing;
+keep the changelog to features and behavior changes.
+
+`.vscodeignore` decides what users download. Internal documentation
+(`CLAUDE.md`, `SETUP.md`, `GOTO_DEFINITION.md`, `JQHTML_HIGHLIGHTING.md`) and the
+build/install scripts are excluded deliberately - **anything added to this
+directory ships unless it is listed there.**
 
 ### Testing
-Press F5 in VS Code to launch a development instance with the extension loaded.
 
-### Building
-```bash
-npm install -g vsce
-vsce package
-```
+Press F5 in VS Code to launch a development instance with the extension loaded.
+This uses `out/` directly, so run a non-`--release` build first if you want
+sourcemapped stack traces.
+
+### Known rough edges
+
+- The linter reports errors (currently 8, mostly `no-useless-escape`). `build.sh`
+  catches the failure and continues by design; they do not block packaging.
+- The final "To install on your host machine" block prints a path missing the
+  `system/` segment, and its escape codes are not interpreted (plain `echo`
+  instead of `echo -e`). Cosmetic; the build itself uses `SCRIPT_DIR` and is
+  correct.
 
 ## Configuration
 

@@ -1,12 +1,38 @@
+# What NOT to ship inside the .vsix.
+#
+# Everything here is downloaded by every user who installs the extension, so the
+# package holds the extension and the three files a marketplace listing is made of
+# (README.md, CHANGELOG.md, LICENSE) - nothing else.
+
+# Editor scaffolding
 .vscode/**
 .vscode-test/**
-src/**
 .gitignore
 .yarnrc
 vsc-extension-quickstart.md
+
+# Sources and build inputs. The compiled out/*.js is what runs; the TypeScript it
+# was built from, its config and its linter rules are of no use to an installed
+# copy. *.map is listed for the default (non---release) build, which emits them.
+src/**
 **/tsconfig.json
 **/.eslintrc.json
 **/*.map
 **/*.ts
 node_modules/**
 out/test/**
+
+# Build and install tooling. These operate ON this directory in a development
+# checkout; inside an installed extension they are dead weight that also invites
+# somebody to run them against the wrong tree.
+build.sh
+install.sh
+
+# Internal development documentation. Written for people working on the RSpade
+# framework, not for people using the extension - CLAUDE.md is agent instructions,
+# and the rest document internals and setup of the monorepo. The user-facing
+# documentation is README.md, which ships.
+CLAUDE.md
+SETUP.md
+GOTO_DEFINITION.md
+JQHTML_HIGHLIGHTING.md

@@ -38,20 +38,21 @@ The extension auto-installs when you open a terminal in VS Code if:
 ```bash
 # From the extension directory
 ./build.sh
-code --install-extension rspade-framework.vsix
+code --install-extension rspade-vscode-extension-*.vsix
 ```
 
 ## Building the Extension
 
 ```bash
-cd /app/RSpade/Extension
-./build.sh
+cd system/app/RSpade/resource/vscode_extension
+./build.sh            # development build (with sourcemaps)
+./build.sh --release  # release build (no sourcemaps)
 ```
 
 The build script:
-- Auto-increments version number
+- Auto-increments the patch version
 - Compiles TypeScript to JavaScript
-- Packages as `rspade-framework.vsix`
+- Packages as `rspade-vscode-extension-<version>.vsix`
 - Runs inside Docker for consistency
 
 ## Configuration
