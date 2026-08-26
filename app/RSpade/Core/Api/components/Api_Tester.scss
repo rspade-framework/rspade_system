@@ -88,6 +88,23 @@
             border-color: var(--api-accent);
             box-shadow: 0 0 0 3px var(--api-accent-soft);
         }
+
+        // int/float params render as type="number" (api_tester_input), whose spinners are
+        // noise here: these are API values typed or pasted, not quantities nudged up and
+        // down, and the buttons crowd an already-narrow monospace field. Two rules because
+        // the vendor spellings differ; the margin reset matters because WebKit keeps the
+        // buttons' gutter after hiding them, which would push the text off-centre against
+        // the text inputs beside it. Arrow keys and the scroll wheel still increment.
+        &[type='number'] {
+            appearance: textfield;
+            -moz-appearance: textfield;
+
+            &::-webkit-outer-spin-button,
+            &::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+        }
     }
 
     &__body {

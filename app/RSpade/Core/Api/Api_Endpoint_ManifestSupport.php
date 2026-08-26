@@ -461,7 +461,12 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
                 continue;
             }
 
-            if ($stripped === '*/' || str_starts_with($stripped, '@')) {
+            // The docblock terminator is tested on the RAW line: _strip_docblock_line()
+            // eats the leading '*' of '*/' and returns a bare '/', which never equalled
+            // the '*/' this once compared against - so the closing delimiter was captured
+            // as a line of the example and EVERY extracted example ended in a stray '/',
+            // making it malformed JSON for anything that tried to parse it.
+            if (trim($line) === '*/' || str_starts_with($stripped, '@')) {
                 break;
             }
 

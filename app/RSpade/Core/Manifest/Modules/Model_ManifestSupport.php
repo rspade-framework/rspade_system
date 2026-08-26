@@ -61,7 +61,7 @@ class Model_ManifestSupport extends ManifestSupport_Abstract
 
             // Check if table exists
             if (!Schema::hasTable($table_name)) {
-                // This is acceptable, maybe migrations didnt run or migrations are broken.  Just skip adding
+                // This is acceptable, maybe migrations didn't run or migrations are broken.  Just skip adding
                 // the database metadata to the manifest.
                 continue;
             }

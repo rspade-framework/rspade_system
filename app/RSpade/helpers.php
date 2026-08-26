@@ -1105,7 +1105,7 @@ function command_exists($command)
  *
  * The command string keeps full shell semantics (pipes, redirects, &&, cd) -
  * callers pass shell command lines and always have. The command is wrapped in a
- * subshell group exactly as before, so grouping behaviour is unchanged.
+ * subshell group exactly as before, so grouping behavior is unchanged.
  *
  * THE SHELL IS BASH, EXPLICITLY (project policy). proc_open() with a STRING would
  * run /bin/sh, which is dash on our platforms, and dash's POSIX-minimal parsing has

@@ -22,9 +22,12 @@ Session::get_login_user();        // Login_User_Model (cross-site identity) or n
 Session::get_login_user_id();
 Session::get_site();
 Session::get_site_id();           // 0 if not set
+Session::has_api_access();        // bool - may this identity use the external API?
 ```
 
 Two identity models, and the distinction matters: `Login_User_Model` is the person (one login, valid across sites); `User_Model` is their membership in the CURRENT site (role, per-site enablement). Roles and permissions hang off the membership.
+
+`has_api_access()` reads `users.is_api_access_enabled` and is the one predicate every API seam asks - `Api_Dispatcher` before it establishes a Bearer identity, the docs console before it renders, the key-management endpoints before they write. Its JS twin is `Permission.has_api_access()`. It answers for the headless Bearer identity too, which is backed by no session row at all.
 
 **None of the readers create a session.** `get_session()`, `get_session_id()`, `set_login_user_id()` and `set_site_id()` do. If you only want to know whether a session exists, `has_session()` is the answer - `get_session_id()` would have created one while you were asking, which is exactly what `SESSION-ID-01` makes a build-fatal.
 
@@ -189,6 +192,24 @@ if (window.rsxapp.impersonation) { /* render the "viewing as" banner + a Stop co
 ```
 
 ---
+
+## Session-scoped key/value storage
+
+For data that belongs to a **browser session** rather than to a user or a record — a wizard's half-finished input, a chosen filter, the API key the `/apidocs` tester is using.
+
+```php
+Session::put_value('apidocs.tester_key_id', $id);            // no expiry: lives as long as the session
+Session::put_value('draft', $data, Rsx_Time::add(Rsx_Time::now_iso(), 3600));
+Session::get_value('draft', $default_when_absent);
+Session::forget_value('draft');
+```
+
+- **Lifetime is intrinsic.** `_session_values` has an `ON DELETE CASCADE` to `_sessions`, so logout, admin termination and session GC reclaim the values with the session. A value cannot outlive its session.
+- **`put_value()` is a WRITER** and creates a session if there is not one. **`get_value()`/`forget_value()` are READERS** and never do — asking a question must not mint a session row for every anonymous visitor. No session -> `get_value()` returns the default.
+- **Expiry is optional with no default.** Pass one only when a value must die *sooner* than its session. An expired value reads as absent immediately (the query filters `expires_at`); `Session_Values_Cleanup_Service` only reclaims space, so a missed run is harmless.
+- Values are JSON-encoded, so `false` round-trips as `false` and is not confused with unset. `put()` is an upsert, not an append.
+- **One session serves staff AND portal**, so namespace your keys (`'apidocs.tester_key_id'`).
+- Not a cache (`RsxCache` is volatile), not configuration (`Rsx_Settings` is declared and site-scoped), and not for anything a user should still have on another device.
 
 ## Tenant context
 

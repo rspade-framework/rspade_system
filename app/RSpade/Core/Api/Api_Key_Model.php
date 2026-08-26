@@ -43,7 +43,7 @@ use App\RSpade\Core\Models\User_Model;
  * @property int $user_role_id
  * @property string $last_used_at
  * @property string $expires_at
- * @property bool $is_revoked
+ * @property int $is_revoked
  * @property string $created_at
  * @property string $updated_at
  * @property int $created_by_id
@@ -101,10 +101,13 @@ class Api_Key_Model extends Rsx_System_Model_Abstract
         ?int $user_role_id = null,
         ?\Carbon\Carbon $expires_at = null
     ): array {
-        // Generate random key: rsk_{env}_{32 random chars}
+        // {prefix}{env}_{32 random chars}, e.g. rsx_live_xxxxx. The leading token is
+        // config('rsx.api.key_prefix') so a product's keys read as its own; lookup is by
+        // hash of the whole key, so changing it never invalidates one already issued.
+        $key_prefix = (string) config('rsx.api.key_prefix', 'rsx_');
         $random = Str::random(32);
-        $plaintext_key = "rsk_{$environment}_{$random}";
-        $prefix = "rsk_{$environment}_" . substr($random, 0, 4) . '...';
+        $plaintext_key = "{$key_prefix}{$environment}_{$random}";
+        $prefix = "{$key_prefix}{$environment}_" . substr($random, 0, 4) . '...';
 
         $model = new self();
         $model->user_id = $user_id;

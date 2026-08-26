@@ -10,7 +10,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  *
  * @property int $id
  * @property int $session_id
- * @property bool $is_portal
+ * @property int $is_portal
  * @property int $type_id
  * @property string $message
  * @property string $created_at

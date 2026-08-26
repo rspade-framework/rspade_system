@@ -146,7 +146,19 @@ class Dispatcher
         if (AssetHandler::is_asset_request($url)) {
             console_debug('BENCHMARK', "Serving static asset: {$url}");
 
-            return AssetHandler::serve($url, $request);
+            // A real file wins. When there is no such file this returns null rather than
+            // throwing, and dispatch CONTINUES to the route table - so a #[Route] may serve
+            // a generated document at a natural filename (/apidocs/openapi.json) without the
+            // asset seam, which runs first and classifies on the extension alone, claiming
+            // it. Files still take precedence, so no asset that resolves today can be
+            // shadowed by a route pattern added tomorrow.
+            $asset_response = AssetHandler::try_serve($url, $request);
+
+            if ($asset_response !== null) {
+                return $asset_response;
+            }
+
+            console_debug('BENCHMARK', 'No such asset file; continuing route dispatch');
         }
         console_debug('BENCHMARK', 'Not a static asset, continuing route dispatch');
 

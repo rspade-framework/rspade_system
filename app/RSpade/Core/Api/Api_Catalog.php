@@ -110,57 +110,6 @@ class Api_Catalog
     }
 
     /**
-     * Machine-readable dump of the entire catalog for LLM consumption.
-     *
-     * Includes ALL non-hidden endpoints across every version, each annotated with a
-     * latest_in_version map (version => whether this endpoint is the resolved pick for
-     * that catalog version).
-     */
-    public static function get_llm_catalog(): array
-    {
-        $versions = static::get_versions();
-
-        // Precompute the resolved winner set (dedupe keys) for each catalog version.
-        $winners_by_version = [];
-        foreach ($versions as $v) {
-            $set = [];
-            foreach (static::resolve_for_version($v) as $group) {
-                foreach ($group['endpoints'] as $ep) {
-                    $set[static::_dedupe_key($ep)] = true;
-                }
-            }
-            $winners_by_version[$v] = $set;
-        }
-
-        $out_endpoints = [];
-        foreach (static::get_endpoint_list(false) as $ep) {
-            $key = static::_dedupe_key($ep);
-            $latest = [];
-            foreach ($versions as $v) {
-                $latest[$v] = isset($winners_by_version[$v][$key]);
-            }
-
-            $out_endpoints[] = [
-                'pattern' => $ep['pattern'],
-                'methods' => $ep['methods'],
-                'version' => $ep['version'],
-                'path_key' => $ep['path_key'],
-                'description' => $ep['description'],
-                'api_params' => $ep['api_params'],
-                'response_example' => $ep['response_example'],
-                'latest_in_version' => $latest,
-            ];
-        }
-
-        return [
-            'generated_for' => 'llm',
-            'version_resolution' => 'Endpoints are grouped by HTTP verb and path key (the pattern with its /api/vN prefix removed). When a catalog version is selected, each group displays only the single endpoint whose version is the newest at or below the selected version, presented at its real /api/vN path; older versions of the same verb+path are hidden from that view. This display rule affects documentation only. Runtime request routing is always an exact match on the full /api/vN pattern, so every listed version remains individually callable regardless of which catalog version is being viewed.',
-            'versions' => $versions,
-            'endpoints' => $out_endpoints,
-        ];
-    }
-
-    /**
      * Parse the integer version from an API pattern (e.g. '/api/v2/x' -> 2).
      *
      * Twin of the local regex in Api_Endpoint_ManifestSupport (which runs before this

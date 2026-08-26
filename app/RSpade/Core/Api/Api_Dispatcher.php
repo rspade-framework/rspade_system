@@ -48,6 +48,11 @@ class Api_Dispatcher
     private static bool $_is_api_dispatch = false;
 
     /**
+     * The key that authenticated this request; see current_key().
+     */
+    private static ?Api_Key_Model $_current_key = null;
+
+    /**
      * Does this URL address the external API namespace (/api/vN/...)?
      */
     public static function is_api_request(string $url): bool
@@ -63,6 +68,19 @@ class Api_Dispatcher
     /**
      * Is an API dispatch currently in flight? (Exception-handler gate.)
      */
+    /**
+     * The Api_Key_Model that authenticated THIS request, or null outside an API dispatch.
+     *
+     * Exposed because the identity Session carries is a user, not a key - two keys belonging
+     * to one user are indistinguishable through Session, and an endpoint that reports on the
+     * credential itself (its expiry, its name) needs the credential. Set once per dispatch,
+     * after authentication succeeds.
+     */
+    public static function current_key(): ?Api_Key_Model
+    {
+        return self::$_current_key;
+    }
+
     public static function is_api_dispatch(): bool
     {
         return self::$_is_api_dispatch;
@@ -106,6 +124,7 @@ class Api_Dispatcher
         }
         $api_key = $auth['key'];
         $user = $auth['user'];
+        self::$_current_key = $api_key;
         $api_key_id = (int) $api_key->id;
         $user_id = (int) $user->id;
         $site_id = (int) $user->site_id;
@@ -191,7 +210,12 @@ class Api_Dispatcher
     /**
      * Authenticate the Bearer key and establish the headless Session identity.
      *
-     * Resolves the key's user WITHOUT site scope (no site identity exists yet). On
+     * Resolves the key's user WITHOUT site scope (no site identity exists yet), and
+     * refuses unless that user is BOTH active and permitted to use the API
+     * (users.is_api_access_enabled - the same column Session::has_api_access() reads).
+     * The refusal happens BEFORE _set_api_identity(), so a refused user never gets an
+     * identity established, and it reuses the one uniform message every other key
+     * failure returns: a caller learns that the key does not work, never WHY. On
      * success, sets the API identity and throttles the last_used_at touch. Returns
      * ['error' => null, 'key' => ..., 'user' => ...] on success, or
      * ['error' => [$code, $message], ...] on failure (uniform 401).
@@ -217,7 +241,7 @@ class Api_Dispatcher
 
         // No site identity is established yet, so the site-scoped find must run unscoped.
         $user = User_Model::without_site_scope(fn () => User_Model::find((int) $key->user_id));
-        if (!$user || !$user->is_active()) {
+        if (!$user || !$user->is_active() || !$user->is_api_access_enabled) {
             return ['error' => ['unauthorized', 'Invalid or expired API key'], 'key' => null, 'user' => null];
         }
 

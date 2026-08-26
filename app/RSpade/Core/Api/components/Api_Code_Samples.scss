@@ -4,6 +4,36 @@
     overflow: hidden;
     background: var(--api-bg);
 
+    // Unfilled path placeholder inside a generated sample. Loud on purpose: the sample is
+    // otherwise syntactically fine and would run, against the wrong URL.
+    &__missing {
+        color: var(--api-danger);
+        font-weight: 700;
+        cursor: help;
+    }
+
+    // Right-aligned in the tab strip, so the tabs stay left and this reads as a mode switch
+    // for the panel rather than another tab.
+    &__fill {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12.5px;
+        color: var(--api-muted);
+        cursor: pointer;
+        padding-right: 4px;
+
+        input {
+            cursor: pointer;
+            margin: 0;
+        }
+
+        &:hover {
+            color: var(--api-text);
+        }
+    }
+
     &__tabs {
         display: flex;
         flex-wrap: wrap;

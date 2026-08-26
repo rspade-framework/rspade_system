@@ -20,6 +20,8 @@ The script itself (`system/bin/publish`, ~770 lines, heavily commented) is the a
 1. **`php artisan rsx:check`** must pass. A code-quality violation stops the publish.
 2. **The monorepo working directory must be CLEAN** (`git status --porcelain` empty). Everything ships from committed state, so the release commit and its changelog describe the source honestly.
 
+**Not enforced by the script, but belongs to a release:** the source spelling sweep - `docs.dev/audits/framework_internal_audit_checklist.md`, entry "Source spelling sweep (pre-release)". `/rsx/` ships as the reference app downstream reads as canonical, so a misspelled identifier in it gets copied into real applications. Run it before a release and after any epic that added vocabulary.
+
 ## Changelog and release subject
 
 The changelog is the monorepo `git log` since `.rspade_last_commit_for_publish` (written at the end of every successful publish), **capped at the more recent of that marker or 2 days back**, agent-attribution lines filtered out, and truncated at 50,000 characters. First publish falls back to the 2-day window.

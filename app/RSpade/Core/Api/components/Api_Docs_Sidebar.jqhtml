@@ -1,0 +1,47 @@
+<%--
+Api_Docs_Sidebar - endpoint filter + resource-grouped endpoint navigation.
+
+Lives in the LAYOUT, so it is built once per page load and survives navigation between
+endpoints. Only the active-link highlight changes, which the layout drives by setting
+$active and calling render() - not reload(), because there is nothing to re-fetch.
+
+Each link carries its own lowercased haystack in data-search, so filtering is a string
+compare against an attribute rather than a re-derivation of the catalog on every keystroke.
+
+$version - the selected catalog version (int)
+$active  - the _slug of the endpoint currently shown, or null on the landing page
+--%>
+<Define:Api_Docs_Sidebar tag="nav" class="Api_Docs_Page__sidebar">
+<% const version = this.args.version; %>
+<% const active = this.args.active || null; %>
+<% const filter = this.state.filter || ''; %>
+<% const clear_class = 'Api_Docs_Page__filter-clear' + (filter === '' ? ' Api_Docs_Page__filter-clear--hidden' : ''); %>
+
+<div class="Api_Docs_Page__filter">
+    <input type="text" $sid="filter_input" class="Api_Docs_Page__filter-input"
+           placeholder="Filter endpoints" spellcheck="false" autocomplete="off"
+           value="<%= filter %>">
+    <button type="button" $sid="filter_clear" class="<%= clear_class %>" title="Clear filter" aria-label="Clear filter">&times;</button>
+</div>
+
+<div $sid="filter_empty" class="Api_Docs_Page__filter-empty Api_Docs_Page__filter-empty--hidden">No endpoint matches that filter.</div>
+
+<% for (const [rk, group] of Object.entries(Api_Docs_Catalog.groups(version))) { %>
+    <div class="Api_Docs_Page__nav-group" $sid="nav_group">
+        <div class="Api_Docs_Page__nav-title"><%= group.name %></div>
+        <% for (const ep of group.endpoints) { %>
+            <% const nav_class = 'Api_Docs_Page__nav-link' + (active === ep._slug ? ' Api_Docs_Page__nav-link--active' : ''); %>
+            <% const haystack = (group.name + ' ' + ep.methods.join(' ') + ' ' + ep.path_key).toLowerCase(); %>
+            <a class="<%= nav_class %>" href="<%= Api_Docs_Catalog.endpoint_url(version, ep) %>" data-search="<%= haystack %>">
+                <span class="Api_Docs_Page__nav-verbs">
+                    <% for (const m of ep.methods) { %>
+                        <% const mc = 'Api_Docs_Page__pill--' + m.toLowerCase(); %>
+                        <span class="Api_Docs_Page__pill <%= mc %>"><%= m %></span>
+                    <% } %>
+                </span>
+                <span class="Api_Docs_Page__nav-path"><%= ep.path_key %></span>
+            </a>
+        <% } %>
+    </div>
+<% } %>
+</Define:Api_Docs_Sidebar>

@@ -13,7 +13,7 @@ use App\RSpade\Core\Realtime\Realtime;
  * @property int $id
  * @property int $user_id
  * @property int $permission_id
- * @property bool $is_grant
+ * @property int $is_grant
  * @property string $created_at
  * @property string $updated_at
  * @property int $created_by_id

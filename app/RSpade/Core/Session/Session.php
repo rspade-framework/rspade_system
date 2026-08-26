@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Core\Session;
 
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
@@ -66,6 +67,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  *
  *   has_session()             the question get_session_id() cannot answer
  *   get_site_id/get_user_id/get_login_user_id/get_csrf_token/is_logged_in
+ *   has_api_access()          a question about the identity, not a demand for one
  *   is_impersonating() and the impersonator accessors
  *   set_site_id()             stores a REQUEST-SCOPED override when there is no
  *                             row (web), or a static (CLI). Declaring a tenant
@@ -95,7 +97,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @FILE-SUBCLASS-01-EXCEPTION Class intentionally named Session instead of Session_Model
  * to maintain compatibility with static method calls like Session::init().  The developer will
  * almost never be interacting with a session orm record directly, so the term Session_Model
- * doesnt have much meaning.
+ * doesn't have much meaning.
  *
  * @property int $id
  * @property bool $active
@@ -117,7 +119,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * Table: _sessions
  *
  * @property int $id
- * @property bool $active
+ * @property int $active
  * @property int $site_id
  * @property int $type_id
  * @property int $login_user_id
@@ -941,6 +943,42 @@ class Session extends Rsx_System_Model_Abstract
         }
 
         return self::$_user;
+    }
+
+    /**
+     * Whether the current identity is permitted to use the external API.
+     *
+     * The one predicate every API seam asks: the Bearer dispatcher before it
+     * establishes an identity, the docs console before it renders, and the JS twin
+     * Permission.has_api_access() before it draws a link. Backed by the
+     * users.is_api_access_enabled column, which the user-management UI writes.
+     *
+     * CREATES NOTHING, EVER - this is a question, and asking a question must never
+     * mint a session row. The ordering below is what makes that true:
+     *
+     *   1. The headless Bearer tier is checked FIRST, because it is backed by no row
+     *      at all: has_session() answers false for it by contract, so an early-out on
+     *      has_session() would refuse every API request before its user was consulted.
+     *   2. Only then does the absence of a session end the question - a caller with no
+     *      session has no identity to have access, and get_user() must not be reached
+     *      through init() paths for a caller that plainly has nobody signed in.
+     *   3. Finally the site-scoped user is resolved; no user, no access.
+     *
+     * @return bool
+     */
+    public static function has_api_access(): bool
+    {
+        if (self::$_api_identity === null && !self::has_session()) {
+            return false;
+        }
+
+        $user = self::get_user();
+
+        if (!$user) {
+            return false;
+        }
+
+        return (bool) $user->is_api_access_enabled;
     }
 
     /**
@@ -2459,4 +2497,109 @@ class Session extends Rsx_System_Model_Abstract
                 'handoff_expires_at' => null,
             ]);
     }
+
+    // =========================================================================
+    // SESSION-SCOPED KEY/VALUE STORAGE (_session_values)
+    // =========================================================================
+
+    /**
+     * Store a value against THIS browser session.
+     *
+     * For data that belongs to a browser session rather than to a user or a record: a
+     * wizard's half-finished input, a chosen filter, the API key the /apidocs tester is
+     * using. Its lifetime IS the session's - the row is removed by an ON DELETE CASCADE
+     * when the session ends, so nothing outlives the session that owned it and no sweeper
+     * is involved in the common case.
+     *
+     * This is NOT a cache (RsxCache), NOT configuration (Rsx_Settings, which is declared
+     * and site-scoped), and NOT for anything a user should still have on another device.
+     *
+     * A WRITER: it establishes a session if there is not one yet, like every other Session
+     * writer. Values are JSON-encoded, so scalars and arrays round-trip unchanged.
+     *
+     * $expires_at is OPTIONAL and defaults to null, meaning "as long as the session lives".
+     * Pass one only when a value must die SOONER than the session does; the framework never
+     * invents an expiry for you.
+     *
+     * created_at/updated_at are maintained by the column defaults, so they are not written
+     * here - an ISO string with a 'Z' is not a MySQL datetime, and to_database() is only
+     * appropriate for the value we actually mean to control.
+     *
+     * @param string $key
+     * @param mixed $value
+     * @param string|null $expires_at ISO datetime, or null to live as long as the session
+     * @return void
+     */
+    public static function put_value(string $key, $value, ?string $expires_at = null): void
+    {
+        $session_id = self::get_session_id();
+
+        DB::table('_session_values')->updateOrInsert(
+            ['session_id' => $session_id, 'value_key' => $key],
+            [
+                'value' => json_encode($value),
+                'expires_at' => $expires_at === null ? null : Rsx_Time::to_database($expires_at),
+            ]
+        );
+    }
+
+    /**
+     * Read a value stored against this browser session.
+     *
+     * A READER: it never creates a session. With no session there is by definition no value,
+     * so the default is returned - asking a question must not have the side effect of
+     * minting a session row for every anonymous visitor.
+     *
+     * An EXPIRED value reads as absent immediately, because the query filters on expires_at
+     * rather than trusting the prune task to have run. Correctness comes from the read; the
+     * task only reclaims space.
+     *
+     * @param string $key
+     * @param mixed $default Returned when the key is unset, expired, or there is no session
+     * @return mixed
+     */
+    public static function get_value(string $key, $default = null)
+    {
+        if (!self::has_session()) {
+            return $default;
+        }
+
+        $row = DB::table('_session_values')
+            ->where('session_id', self::get_session_id())
+            ->where('value_key', $key)
+            ->where(function ($q) {
+                $q->whereNull('expires_at')->orWhere('expires_at', '>', Rsx_Time::to_database(Rsx_Time::now_iso()));
+            })
+            ->first();
+
+        if (!$row) {
+            return $default;
+        }
+
+        $decoded = json_decode($row->value, true);
+
+        return json_last_error() === JSON_ERROR_NONE ? $decoded : $default;
+    }
+
+    /**
+     * Remove a value stored against this browser session.
+     *
+     * A READER in the session sense - it never creates a session, because there is nothing
+     * to remove from one that does not exist. Removing an absent key is not an error.
+     *
+     * @param string $key
+     * @return void
+     */
+    public static function forget_value(string $key): void
+    {
+        if (!self::has_session()) {
+            return;
+        }
+
+        DB::table('_session_values')
+            ->where('session_id', self::get_session_id())
+            ->where('value_key', $key)
+            ->delete();
+    }
+
 }

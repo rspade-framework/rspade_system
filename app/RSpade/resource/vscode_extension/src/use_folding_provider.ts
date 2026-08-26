@@ -17,7 +17,7 @@
  *      range; there is no "return this folded" flag, so collapsing it is a command.
  *
  * The range is declared with FoldingRangeKind.Imports, so a developer who prefers the
- * platform's own `editor.foldingImportsByDefault` gets the right behaviour from it too.
+ * platform's own `editor.foldingImportsByDefault` gets the right behavior from it too.
  *
  * FOLDED ONCE PER OPEN, NEVER RE-FOLDED. Someone who expands the block is reading it,
  * and an editor that collapses it again while they look at it is broken. The document is
@@ -25,7 +25,7 @@
  *
  * GATED TO RSPADE PROJECTS. Registration happens inside activate(), which has already
  * established a project root, so this cannot reach a PHP file in an unrelated
- * repository. That is also why the behaviour is not contributed as a static
+ * repository. That is also why the behavior is not contributed as a static
  * configurationDefaults entry: the extension activates in every window, and a manifest
  * contribution would change PHP folding everywhere it is installed.
  */
@@ -97,7 +97,7 @@ export class Use_Folding_Provider implements vscode.FoldingRangeProvider {
 }
 
 /**
- * Register the provider and the fold-on-open behaviour.
+ * Register the provider and the fold-on-open behavior.
  */
 export function activate_use_folding(context: vscode.ExtensionContext): void {
     context.subscriptions.push(

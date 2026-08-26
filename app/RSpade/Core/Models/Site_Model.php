@@ -20,7 +20,7 @@ use App\RSpade\Core\Models\User_Model;
  * @property string $slug
  * @property string $name
  * @property string $timezone
- * @property bool $is_enabled
+ * @property int $is_enabled
  * @property string $deleted_at
  * @property string $created_at
  * @property string $updated_at

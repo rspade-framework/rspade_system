@@ -34,11 +34,11 @@ use App\RSpade\Core\Session\Session;
  * @property int $id
  * @property string $email
  * @property string $password
- * @property bool $is_activated
- * @property bool $is_verified
+ * @property int $is_activated
+ * @property int $is_verified
  * @property int $status_id
  * @property string $timezone
- * @property bool $timezone_auto
+ * @property int $timezone_auto
  * @property string $remember_token
  * @property string $last_login
  * @property string $created_at

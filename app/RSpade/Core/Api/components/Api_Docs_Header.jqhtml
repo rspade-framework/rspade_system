@@ -1,0 +1,28 @@
+<%--
+Api_Docs_Header - the docs tool's top bar: wordmark, version selector, openapi.json link.
+
+Lives in the LAYOUT, not the action, so it survives navigation between endpoints.
+
+$version - the selected catalog version (int)
+--%>
+<Define:Api_Docs_Header tag="header" class="Api_Docs_Page__header">
+<% const version = this.args.version; %>
+<a class="Api_Docs_Page__brand" href="<%= Api_Docs_Catalog.home_url(version) %>">
+    <span class="Api_Docs_Page__brand-mark">{&nbsp;}</span>
+    <span class="Api_Docs_Page__brand-text">REST API Reference</span>
+</a>
+<div class="Api_Docs_Page__header-controls">
+    <label class="Api_Docs_Page__version">
+        <span class="Api_Docs_Page__version-caption">Version</span>
+        <select $sid="version_select" class="Api_Docs_Page__version-select">
+            <% for (const v of Api_Docs_Catalog.versions()) { %>
+                <option value="<%= v %>" <% if (v === version) { %>selected<% } %>>v<%= v %></option>
+            <% } %>
+        </select>
+    </label>
+    <a class="Api_Docs_Page__catalog-link" href="<%= Api_Docs_Catalog.openapi_url() %>" target="_blank" rel="noopener">
+        <%!= api_icon('external') %>
+        <span>openapi.json</span>
+    </a>
+</div>
+</Define:Api_Docs_Header>

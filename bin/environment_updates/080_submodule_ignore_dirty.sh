@@ -15,7 +15,7 @@
 # 2. A repo-wide `[diff] ignoreSubmodules = all` in .git/config - the natural answer to
 #    that noise, and the reason this update exists. `all` suppresses submodule reporting
 #    ENTIRELY, the recorded pointer included, so a framework update lands leaving no
-#    trace in status, diff or the commit summary (field report, a downstream deployment 2026-08-22:
+#    trace in status, diff or the commit summary (field report, 2026-08-22:
 #    the bump had to be confirmed by hand with `git ls-tree`). It also applies silently
 #    to every OTHER gitlink the app keeps.
 #

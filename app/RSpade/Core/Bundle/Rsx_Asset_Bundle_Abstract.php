@@ -70,7 +70,7 @@ use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
  *   nothing is indistinguishable from a correct one right up until it serves a stale artifact.
  * - Bucket membership follows the DECLARING BUNDLE, never the watched path. A watch target of
  *   a vendor-bucket bundle invalidates the vendor output no matter where the file lives -
- *   which is what makes "compile a vendored source tree, parameterised by a first-party
+ *   which is what makes "compile a vendored source tree, parameterized by a first-party
  *   variables file" work. Registration is additive: one path may be a watch target of one
  *   bucket and an include of the other, and an edit invalidates both.
  *

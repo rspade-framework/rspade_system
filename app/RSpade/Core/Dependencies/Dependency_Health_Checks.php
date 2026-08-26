@@ -26,7 +26,7 @@ use App\RSpade\Core\Dependencies\Dependency_Manager;
  *
  * AND WHY THE FRAMEWORK UPDATE STAYS SILENT ABOUT IT. rsx:framework:post_update reports
  * on the UPDATE. Whether this app ought to have adopted an app dependency layer is not a
- * property of the update and must never colour its outcome - so the post-update
+ * property of the update and must never color its outcome - so the post-update
  * reconciler guards each half on its own file and says nothing when one is absent. This
  * check is where the question belongs, on a command the operator ran deliberately.
  */

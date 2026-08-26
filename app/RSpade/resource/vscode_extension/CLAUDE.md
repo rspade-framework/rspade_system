@@ -91,9 +91,8 @@ you run it a few times in a row while editing:
    git add rspade-vscode-extension-<new version>.vsix
    ```
 
-   Consumers glob rather than hardcode the name (`install.sh`,
-   `.vscode/ide_setup/check_setup.sh`, `check_setup.ps1`), so the moving version
-   does not strand them. **If you add a new consumer, glob it too.**
+   Consumers glob rather than hardcode the name (`install.sh`), so the moving
+   version does not strand them. **If you add a new consumer, glob it too.**
 3. **`out/` and `node_modules/` are deleted and rebuilt** from scratch. `out/` is
    gitignored (the `.vsix` carries its own copy of the compiled JS), so this
    produces no git noise.

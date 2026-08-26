@@ -1,7 +1,6 @@
 <Define:Api_Endpoint_Card tag="article">
 <% const ep = this.args.endpoint; %>
-<span class="Api_Endpoint_Card__anchor" id="<%= this.args.anchor %>"></span>
-
+<div class="Api_Endpoint_Card__col Api_Endpoint_Card__col--reference">
 <header class="Api_Endpoint_Card__head">
     <div class="Api_Endpoint_Card__verbs">
         <% for (const m of ep.methods) { %>
@@ -24,19 +23,27 @@
 <% } %>
 
 <% if (ep.response_example) { %>
-    <details class="Api_Endpoint_Card__example">
+    <%-- Open by default on a wide screen, where the two columns give it room and a collapsed
+         panel is just an extra click. Narrow, it stays shut so the page is scannable. --%>
+    <details class="Api_Endpoint_Card__example" <% if (this.args.example_open) { %>open<% } %>>
         <summary class="Api_Endpoint_Card__example-summary"><%!= api_icon('chevron') %><span>Example response</span></summary>
         <pre class="Api_Endpoint_Card__example-pre language-json" $sid="response_example"></pre>
     </details>
 <% } %>
-
-<div class="Api_Endpoint_Card__section">
-    <div class="Api_Endpoint_Card__section-title">Code samples</div>
-    <Api_Code_Samples $endpoint=ep />
 </div>
 
-<div class="Api_Endpoint_Card__section">
-    <div class="Api_Endpoint_Card__section-title">Try it</div>
-    <Api_Tester $endpoint=ep />
+<%-- The split. Above 1850px these two become the second column: reference material above and
+     to the left, the things you ACT on to the right, so a sample can be read while the tester
+     that produced it stays on screen. --%>
+<div class="Api_Endpoint_Card__col Api_Endpoint_Card__col--actions">
+    <div class="Api_Endpoint_Card__section">
+        <div class="Api_Endpoint_Card__section-title">Code samples</div>
+        <Api_Code_Samples $endpoint=ep />
+    </div>
+
+    <div class="Api_Endpoint_Card__section">
+        <div class="Api_Endpoint_Card__section-title">Try it</div>
+        <Api_Tester $endpoint=ep />
+    </div>
 </div>
 </Define:Api_Endpoint_Card>

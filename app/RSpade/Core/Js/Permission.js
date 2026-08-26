@@ -51,6 +51,20 @@ class Permission {
     }
 
     /**
+     * Whether the current user is permitted to use the external API
+     *
+     * The JS twin of PHP Session::has_api_access(), reading the same
+     * users.is_api_access_enabled column off window.rsxapp.user. MySQL ships the
+     * TINYINT as 0/1, so it is coerced rather than returned raw - callers get a real
+     * boolean, and a signed-out visitor gets false.
+     *
+     * @returns {boolean}
+     */
+    static has_api_access() {
+        return !!window.rsxapp?.user?.is_api_access_enabled;
+    }
+
+    /**
      * Check if current user has a specific permission
      *
      * @param {number} permission - Permission constant (e.g., User_Model.PERM_EDIT_DATA)

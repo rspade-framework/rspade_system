@@ -1,0 +1,96 @@
+<%--
+Api_Docs_Home - the landing pane of the API reference, shown when no endpoint is selected.
+
+Deliberately short. It answers the three things somebody arriving here does not know -
+how requests are authenticated, what to click, and where the machine-readable description
+is - and then gets out of the way. Endpoint detail belongs on the endpoint's own page.
+
+Carries the Api_Endpoint_Card class so the landing pane sits in the same panel as an
+endpoint page: one surface, one border, one padding, whatever the body is showing.
+
+$version - the selected catalog version (int), for the counts and the version caption
+--%>
+<Define:Api_Docs_Home tag="div" class="Api_Endpoint_Card">
+<% const version = this.args.version; %>
+<% let _resources = 0; let _endpoints = 0; %>
+<% for (const [rk, group] of Object.entries(Api_Docs_Catalog.groups(version))) { _resources++; _endpoints += group.endpoints.length; } %>
+
+<div class="Api_Docs_Home__hero">
+    <h1 class="Api_Docs_Home__title">REST API Reference</h1>
+    <p class="Api_Docs_Home__lede">
+        Browse every endpoint, read its parameters, copy a code sample in the language you
+        work in, and send a real request without leaving the page.
+    </p>
+    <div class="Api_Docs_Home__counts">
+        <span><strong><%= _endpoints %></strong> endpoint<% if (_endpoints !== 1) { %>s<% } %></span>
+        <span><strong><%= _resources %></strong> resource<% if (_resources !== 1) { %>s<% } %></span>
+        <span><strong>v<%= version %></strong> selected</span>
+    </div>
+</div>
+
+<% if (Api_Docs_Catalog.is_restricted()) { %>
+    <% const prefix = Api_Docs_Catalog.key_prefix(); %>
+    <div class="Api_Docs_Home__keygate">
+        <% if (prefix) { %>
+            <div class="Api_Docs_Home__keygate-title">
+                Listing the endpoints available to <code><%= prefix %></code>
+            </div>
+            <p class="Api_Docs_Home__keygate-body">
+                This installation lists only the endpoints the supplied API key is permitted
+                to call, so what you see in the sidebar is what this key can reach - not the
+                whole API.
+            </p>
+            <div class="Api_Docs_Home__keygate-row">
+                <button type="button" $sid="forget_key" class="Api_Docs_Home__keygate-btn">Use a different key</button>
+            </div>
+        <% } else { %>
+            <div class="Api_Docs_Home__keygate-title">An API key is required to list endpoints</div>
+            <p class="Api_Docs_Home__keygate-body">
+                This installation lists only the endpoints a given API key is permitted to
+                call, so there is nothing to show until you supply one. Create a key at
+                <strong>Settings &rsaquo; API Keys</strong>, then paste it here.
+            </p>
+            <div class="Api_Docs_Home__keygate-row">
+                <input type="text" $sid="key_input" class="Api_Docs_Home__keygate-input"
+                       placeholder="rsk_live_..." spellcheck="false" autocomplete="off">
+                <button type="button" $sid="adopt_key" class="Api_Docs_Home__keygate-btn Api_Docs_Home__keygate-btn--primary">Use key</button>
+            </div>
+            <div $sid="key_error" class="Api_Docs_Home__keygate-error Api_Docs_Home__keygate-error--hidden"></div>
+        <% } %>
+    </div>
+<% } %>
+
+<div class="Api_Docs_Home__steps">
+    <div class="Api_Docs_Home__step">
+        <div class="Api_Docs_Home__step-num">1</div>
+        <div class="Api_Docs_Home__step-body">
+            <div class="Api_Docs_Home__step-title">Pick an endpoint</div>
+            <p>Choose one from the sidebar. Each has its own page with parameters, an example
+            response, code samples and a live tester.</p>
+        </div>
+    </div>
+    <div class="Api_Docs_Home__step">
+        <div class="Api_Docs_Home__step-num">2</div>
+        <div class="Api_Docs_Home__step-body">
+            <div class="Api_Docs_Home__step-title">Paste an API key</div>
+            <p>Every request carries <code>Authorization: Bearer rsk_...</code> - there is no
+            cookie or session auth on this surface. Create a key in
+            <strong>Settings &rsaquo; API Keys</strong> and paste it into the bar above; it is
+            held for this browser tab only and never persisted.</p>
+        </div>
+    </div>
+    <div class="Api_Docs_Home__step">
+        <div class="Api_Docs_Home__step-num">3</div>
+        <div class="Api_Docs_Home__step-body">
+            <div class="Api_Docs_Home__step-title">Send a request</div>
+            <p>The tester fires a real call against this server as the key's user, scoped to
+            that user's site. A write endpoint writes.</p>
+        </div>
+    </div>
+</div>
+
+<div class="Api_Docs_Home__footnote">
+    Building a client? <a href="<%= Api_Docs_Catalog.openapi_url() %>" target="_blank" rel="noopener">openapi.json</a>
+    describes this API in OpenAPI 3.1 - feed it to a client generator, Postman, or an agent toolchain.
+</div>
+</Define:Api_Docs_Home>

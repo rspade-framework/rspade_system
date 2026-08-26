@@ -131,8 +131,8 @@ fi
 # the version stays in the filename so a build is identifiable on sight, and the
 # stem matches the vendored jqhtml-vscode-extension-N.vsix beside it.
 #
-# Consumers glob rather than hardcode (check_setup.sh, check_setup.ps1,
-# install.sh), so the version moving does not strand them. Step 2 cleaned every
+# Consumers glob rather than hardcode (install.sh), so the version moving does
+# not strand them. Step 2 cleaned every
 # *.vsix before the build, so exactly one exists here now.
 TARGET_VSIX="rspade-vscode-extension-${NEW_VERSION}.vsix"
 if [ "$VSIX_FILE" != "$TARGET_VSIX" ]; then

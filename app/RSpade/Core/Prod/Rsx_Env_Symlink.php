@@ -159,7 +159,7 @@ class Rsx_Env_Symlink
      * The DEVELOPER-BOOTSTRAP heal: get this environment's .env into a state the
      * application can boot from, and keep it in step with .env.dist.
      *
-     * This is the ONE implementation of .env recreation and key synchronisation.
+     * This is the ONE implementation of .env recreation and key synchronization.
      * It is what `rsx:env:heal` runs, what both entrypoints run pre-boot, and
      * what the container entrypoint invokes. heal() above remains the symlink
      * invariant on its own (step 3 here calls it).

@@ -165,7 +165,7 @@ Full contract: `php artisan rsx:man locks` (LOCK GROUPS) and the Rsx_Artisan cla
      * "Mention artisan" covers both spellings that occur in practice: the command as a
      * string literal (`passthru('php artisan rsx:clean')`) and the artisan path in a
      * variable (`exec_safe('php ' . escapeshellarg($artisan) . ' --version')`). Matching
-     * the arguments rather than the whole line is what keeps a neighbouring statement on
+     * the arguments rather than the whole line is what keeps a neighboring statement on
      * the same line from implicating an unrelated call.
      *
      * @return array<int, array{function: string, line: int}>

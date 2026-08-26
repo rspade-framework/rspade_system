@@ -44,7 +44,7 @@ use App\RSpade\Core\Session\Session;
  * @property string $last_name
  * @property string $phone
  * @property int $role_id
- * @property bool $is_enabled
+ * @property int $is_enabled
  * @property string $email
  * @property string $deleted_at
  * @property string $created_at
@@ -58,6 +58,7 @@ use App\RSpade\Core\Session\Session;
  * @property string $invite_code
  * @property string $invite_accepted_at
  * @property string $invite_expires_at
+ * @property int $is_api_access_enabled
  *
  * @property-read string $role_id__label
  * @property-read string $role_id__constant

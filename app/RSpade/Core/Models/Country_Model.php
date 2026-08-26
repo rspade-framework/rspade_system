@@ -22,7 +22,7 @@ use App\RSpade\Core\Models\Region_Model;
  * @property string $numeric
  * @property string $name
  * @property string $common_name
- * @property bool $enabled
+ * @property int $enabled
  * @property string $created_at
  * @property string $updated_at
  * @property int $created_by_id

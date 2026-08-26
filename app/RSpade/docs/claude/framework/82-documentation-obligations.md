@@ -3,11 +3,31 @@ monorepo. CANONICAL HOME of the documentation-authoring obligations. -->
 
 ## DOCUMENTATION OBLIGATIONS
 
-**Man pages are the CONTRACT tier** — the full treatment of a feature lives there, not in always-on knowledge. Framework man pages: `system/app/RSpade/man/*.txt`; project man pages: `rsx/resource/man/*.txt`. Terse, complete, expert-level. **Never update a man page autonomously.**
+**Man pages are the CONTRACT tier** — the full treatment of a feature lives there, not in always-on knowledge. Framework man pages: `system/app/RSpade/man/*.txt`; project man pages: `rsx/resource/man/*.txt`. Terse, complete, expert-level.
+
+### THE DOCUMENTATION IS PART OF THE CHANGE
+
+**The man pages describe what the framework ACTUALLY DOES.** Documentation that describes a previous version of the behavior is worse than no documentation, because it is trusted.
+
+**Documentation moves when the CONTRACT or OBSERVABLE BEHAVIOR moves — not when code moves.** A refactor, an internal implementation swap, or a bug fix that finally makes the code match what the page always said needs NO documentation edit: the documentation was already right. The test is *"did what a developer can observe, invoke or trip over change?"* — if no, you are done.
+
+**When it did move, update the affected tiers as part of the same work, WITHOUT ASKING** — the man page(s), the skill(s), and the always-on fragment when the trigger-moment test (`90-knowledge-routing.md`) puts it there. A change that leaves its documentation describing the old behavior is not finished, and removing a feature includes removing every passage that documents it.
+
+**The one thing that still comes to the owner: CHANGING a promise, as opposed to RECORDING one.** Writing down what the framework now does is yours to do. Rewriting what a man page COMMITS the framework to — narrowing a guarantee, inventing a contract nothing implements, ruling that a documented behavior was wrong — is a design decision wearing documentation clothing. Propose it; never land it.
+
+**WHO the tier serves decides what belongs in it.**
+- **Internal mechanics** — how the framework achieves something, where nothing surfaces at a developer-facing seam: a monorepo-scoped skill (`skills/framework/`), a publish-stripped man page, or a colocated `Core/*/CLAUDE.md`.
+- **Everything a developer can observe, invoke or trip over** — conventions, features, signatures, and framework behaviors as far as knowing them is necessary to be effective: a shipped man page plus `skills/shared/`.
+
+**A downstream developer treats the framework as a black box, and is entitled to.** Document internals for them ONLY where those internals leak into how they write code. Nothing earns a place in a tier by being interesting.
+
+**CLAUDE fragments stay expensive.** They load on EVERY task in EVERY session. A fragment earns its place by the trigger-moment test alone, never because a topic feels central — if a skill would fire at the right moment, it belongs in the skill. Terse, useful, discriminating.
 
 **The prelaunch checklist** (`rsx:man prelaunch_checklist`) is the designated home for launch-gating audits that are impractical to enforce with a lint rule. It is a **sanctioned enforcement channel**, and **the RSpade LLM may proactively suggest "add this to the prelaunch checklist"** to the owner.
 
 ### MANDATE: shipping a downstream-facing contract change
+
+The rule above governs EVERY change. This mandate is the heavier checklist that applies ADDITIONALLY when downstream code must now be written or invoked differently.
 
 **Any framework change that alters the CONTRACT or SYNTAX of how downstream code is written or invoked is not done until all of these are done** — not one of them, all that apply. A change that is only implemented is a change nobody downstream can use correctly.
 

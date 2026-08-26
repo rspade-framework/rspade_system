@@ -3,73 +3,113 @@
 namespace App\RSpade\Core\Api;
 
 use Illuminate\Http\Request;
-use App\RSpade\Core\Api\Api_Catalog;
+use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Api\Api_Key_Model;
+use App\RSpade\Core\Api\Api_Tester_Key;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Session\Session;
 
 /**
- * Api_Docs_Controller - login-gated backing endpoints for the API documentation SPA.
+ * Api_Docs_Controller - the Ajax endpoints the API reference console calls.
  *
- * This controller is NOT part of the external API surface (it is a normal staff-session
- * controller): get_catalog / mint_tester_key are internal #[Ajax_Endpoint]s consumed by the
- * Core/Api/components jqhtml docs UI, and llm_catalog is a plain #[Route] that serves the
- * machine-readable JSON catalog for LLMs / integration agents. All three require a logged-in
- * session (the class-level #[Auth] gate); none uses the Bearer-authenticated Api_Dispatcher
- * pipeline.
+ * The console PAGE is not here: the application declares its own route for it and calls
+ * Rsx_Api_Docs::page(). What remains are the two calls the console makes once it is on
+ * screen - adopting and dropping the API key whose permissions the listing is drawn for,
+ * and minting a short-lived one for a signed-in user who has not made a key yet.
+ *
+ * PUBLIC, because the console's gate is whatever the application put on ITS route and the
+ * framework cannot know what that is. Safe: adopting a key affects only the caller's own
+ * session and grants nothing. Possessing the key is the credential, the key is validated
+ * here before it is accepted, and Api_Dispatcher gates every request it is later used for.
  */
-#[Auth('is_logged_in')]
+#[Auth('public')]
 class Api_Docs_Controller extends Rsx_Controller_Abstract
 {
     /**
-     * Ajax: return the version list plus the resolved endpoint groups for one version.
+     * Ajax: adopt an API key for this browser session.
      *
-     * The version param (int) is validated against the catalog's version list; an unknown
-     * version is a 404. When absent, the newest version is selected.
+     * The plaintext never comes back from the database (only its SHA-256 is stored), so the
+     * BROWSER keeps it for the tester's Authorization header. What is stored here is the
+     * key's ID, in session-scoped storage, because the SERVER needs to know which key to
+     * answer "which endpoints may this caller use" when the page is next built.
      *
-     * @return array{versions: int[], resolved: array, selected_version: int}
+     * Callers reload after this returns: the endpoint list is baked into the page at render
+     * (Rsx_Api_Docs::rsxapp_data), so a key adopted afterwards changes nothing until
+     * the page is built again.
+     *
+     * A revoked, expired or unknown key is rejected here rather than stored and left to fail
+     * later at the first request.
      */
     #[Ajax_Endpoint]
-    public static function get_catalog(Request $request, array $params = [])
+    public static function adopt_tester_key(Request $request, array $params = [])
     {
-        $versions = Api_Catalog::get_versions();
-        if (empty($versions)) {
-            return ['versions' => [], 'resolved' => [], 'selected_version' => 0];
+        $key = trim((string) ($params['key'] ?? ''));
+
+        if ($key === '') {
+            Api_Tester_Key::forget();
+
+            return ['adopted' => false, 'prefix' => null];
         }
 
-        $requested = $params['version'] ?? null;
-        if ($requested === null || $requested === '') {
-            $selected = $versions[0]; // newest
-        } else {
-            $selected = (int) $requested;
-            if (!in_array($selected, $versions, true)) {
-                return response_not_found('Unknown API version');
-            }
+        $model = Api_Key_Model::find_by_key($key);
+
+        if (!$model) {
+            return response_error(Ajax::ERROR_VALIDATION, [
+                'key' => 'That API key is not valid, or it has been revoked or has expired.',
+            ]);
         }
 
-        return [
-            'versions' => $versions,
-            'resolved' => Api_Catalog::resolve_for_version($selected),
-            'selected_version' => $selected,
-        ];
+        Api_Tester_Key::adopt($model);
+
+        return ['adopted' => true, 'prefix' => $model->key_prefix];
     }
 
     /**
-     * Ajax: mint a short-lived (1 hour) live API key for the in-page request tester.
+     * Ajax: mint a one-hour API key for the caller's own user, for use in the tester.
      *
-     * The key is tied to the logged-in user and named "API Tester (temporary)" so it shows
-     * (and can be revoked) in Settings > API Keys like any other key. The plaintext value is
-     * returned here once and never recoverable afterward.
+     * THE PLAINTEXT EXISTS ONLY IN THIS RESPONSE. Api_Key_Model::generate() stores nothing
+     * but the SHA-256, so a key not kept by the browser here is gone - there is no second
+     * chance to read it, and no endpoint that could hand it back.
+     *
+     * The key is named "API Tester (temporary)" so it reads for what it is in
+     * Settings > API Keys, where it can be revoked before its hour is up.
+     *
+     * TWO REFUSALS, TWO DIFFERENT ERRORS, and the difference is deliberate:
+     *
+     *   - No signed-in user at all -> ERROR_AUTH_REQUIRED. The controller is #[Auth('public')]
+     *     because the application owns the console's gate, so a genuinely anonymous visitor
+     *     can reach this method. There is nobody to mint a key FOR, and the remedy is to sign
+     *     in - which is exactly what ERROR_AUTH_REQUIRED tells the client.
+     *
+     *   - Signed in, but the account has no API access -> ERROR_VALIDATION. This caller IS
+     *     authenticated; nothing about the session is missing or expired, and signing in
+     *     again changes nothing. The request is simply not a request this account may make,
+     *     so it is reported the way any other rejected input is - as a message beside the
+     *     control - rather than as an authentication failure that would send a signed-in
+     *     user back to a login screen they do not need.
      *
      * @return array{key: string, expires_at: string}
      */
     #[Ajax_Endpoint]
-    public static function mint_tester_key(Request $request, array $params = [])
+    public static function mint_temporary_key(Request $request, array $params = [])
     {
+        $user_id = Session::get_user_id();
+
+        if (!$user_id) {
+            return response_auth_required('Sign in to create a temporary API key.');
+        }
+
+        if (!Session::has_api_access()) {
+            return response_error(
+                Ajax::ERROR_VALIDATION,
+                'This account is not permitted to use the API.'
+            );
+        }
+
         $expires_at = now()->addHour();
 
         $result = Api_Key_Model::generate(
-            Session::get_user_id(),
+            $user_id,
             'API Tester (temporary)',
             'live',
             null,
@@ -83,17 +123,13 @@ class Api_Docs_Controller extends Rsx_Controller_Abstract
     }
 
     /**
-     * The machine-readable catalog for LLMs / integration agents (served application/json).
-     *
-     * Plain #[Route] (login-gated via pre_dispatch), NOT an external Api_Endpoint. The path is
-     * extensionless on purpose: AssetHandler::is_asset_request() intercepts ANY '.json' path
-     * as a static asset BEFORE route dispatch, so '/apidocs/catalog.json' could never reach a
-     * controller. The literal '/apidocs/catalog' also outranks the SPA's '/apidocs/:version'
-     * param route in RouteResolver priority, so both resolve correctly.
+     * Ajax: drop the adopted key. The caller reloads afterwards, for the same reason.
      */
-    #[Route('/apidocs/catalog', methods: ['GET'])]
-    public static function llm_catalog(Request $request, array $params = [])
+    #[Ajax_Endpoint]
+    public static function forget_tester_key(Request $request, array $params = [])
     {
-        return response()->json(Api_Catalog::get_llm_catalog());
+        Api_Tester_Key::forget();
+
+        return ['adopted' => false];
     }
 }

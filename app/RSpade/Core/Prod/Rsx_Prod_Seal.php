@@ -21,7 +21,7 @@ use App\RSpade\Core\Rsx;
  * every build artifact (manifest_data.php, build_key, and every file under
  * bundles/). It exists so the framework can:
  *
- *   - recognise that it is running a sealed build (is_sealed());
+ *   - recognize that it is running a sealed build (is_sealed());
  *   - refuse obviously-wrong mutations of the build assets from unauthorized
  *     contexts (assert_mutable() - a guardrail, NOT a security boundary);
  *   - verify on demand that the assets on disk still match what was sealed

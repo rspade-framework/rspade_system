@@ -35,9 +35,9 @@ use App\RSpade\Core\Models\Email_Queue_Model;
  * @property int $id
  * @property int $site_id
  * @property string $email
- * @property bool $is_blocked_notification
- * @property bool $is_blocked_marketing
- * @property bool $is_blocked_all
+ * @property int $is_blocked_notification
+ * @property int $is_blocked_marketing
+ * @property int $is_blocked_all
  * @property int $total_sent
  * @property int $total_failed
  * @property string $last_sent_at

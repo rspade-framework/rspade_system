@@ -807,7 +807,7 @@ class Manifest
             console_debug('MANIFEST', 'Manifest could not be loaded');
         }
 
-        console_debug('MANIFEST', 'Aquiring manifest build lock');
+        console_debug('MANIFEST', 'Acquiring manifest build lock');
 
         // Get a manifest build lock
         // SYSTEM lock: the manifest cache is an artifact on THIS box's local disk, so a
@@ -1329,7 +1329,7 @@ class Manifest
         console_debug('MANIFEST', 'Phase 5: Process Modules');
 
         // Build autoloader class map
-        // The major thing that happens here is this also scans app/RSpade for additional classes which arent on manifest,
+        // The major thing that happens here is this also scans app/RSpade for additional classes which aren't on manifest,
         // which is a somewhat expensive operation (50 ms).  This is acceptable for a incremental manifest rebuild
         static::$data['data']['autoloader_class_map'] = static::_build_autoloader_class_map();
 

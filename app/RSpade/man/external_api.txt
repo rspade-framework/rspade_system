@@ -24,8 +24,9 @@ SYNOPSIS
         return Rsx_Api::not_found('No such row'); // 404
         return Rsx_Api::validation_error(['email' => 'Invalid']); // 422
 
-    Docs / tester (login-gated, staff session):
-        /apidocs           /apidocs/v1        /apidocs/catalog   (LLM JSON)
+    Docs / tester - the APPLICATION routes to it and gates it:
+        Rsx_Api_Docs::page($request, My_Bundle::class[, $restrict_to_key])
+        Rsx_Api_Docs::openapi_document(): array   (the app builds the response)
 
     Config / keys / logs:
         config('rsx.api.log_retention_days')   Settings > API Keys   _api_request_log
@@ -259,6 +260,29 @@ AUTHENTICATION
     session id) are NOT usable from the API yet; a future attachment endpoint
     must revisit that seam.
 
+THE IDENTITY ENDPOINT - GET /api/v1/me
+    The one endpoint every RSpade API has, shipped by the framework rather than
+    written per app (Identity_Api_Controller). A client hits it FIRST and OFTEN:
+    to check a key at setup, to fail fast on a revoked one, to show "connected
+    as" in a UI.
+
+        curl https://host/api/v1/me -H "Authorization: Bearer rsx_live_..."
+
+        {"user_id":1,"email":"...","site_id":1,
+         "key":{"name":"...","prefix":"rsx_live_ab12...",
+                "expires_at":null,"last_used_at":"..."}}
+
+    IT REPORTS, IT DOES NOT AUTHORIZE. Reaching it at all IS the validation - an
+    absent, malformed, revoked or expired key is a 401 from Api_Dispatcher
+    before any of it runs, so a 200 means the key is good. The docs console's
+    "Use key" button checks a pasted key against exactly this.
+
+    It is a CONTRACT: path, verb and field names are stable across every install,
+    so a client can be written once. Deliberately thin - identity and the key's
+    own expiry, nothing else - because it is the endpoint an integration polls,
+    and anything expensive here is paid for on every heartbeat. expires_at null
+    means NO EXPIRY, not unknown.
+
 API KEYS
     Keys are Api_Key_Model rows on the framework-core _api_keys table. Format
     rsk_{environment}_{random}; only sha256(plaintext) is stored, so the full
@@ -273,17 +297,54 @@ API KEYS
                                                  // null if expired
         $key->revoke();  $key->is_valid();  $key->get_user();
 
-    Columns: user_id, name, key_hash, key_prefix (rsk_{env}_ + first chars, for
-    display), user_role_id (RESERVED - see below), scopes (RESERVED, TEXT NULL),
-    last_used_at, expires_at, is_revoked, timestamps.
+    Columns: user_id, name, key_hash, key_prefix ({prefix}{env}_ + first chars,
+    for display), user_role_id (RESERVED - see below), scopes (RESERVED, TEXT
+    NULL), last_used_at, expires_at, is_revoked, timestamps.
+
+    KEY PREFIX. config('rsx.api.key_prefix'), default 'rsx_', is the leading
+    token on newly minted keys: {prefix}{environment}_{random} -> rsx_live_xxx.
+    Rename it to your own product's short name. EXISTING KEYS ARE UNAFFECTED -
+    lookup is sha256 of the whole key, never the prefix - so changing it can
+    never invalidate a key already in service; only newly minted keys differ.
 
     MANAGEMENT UI. Settings > API Keys - staff create (name required; plaintext
     revealed once), view (name, prefix, created, last used), and revoke keys.
 
-    TESTER KEYS. The docs page can mint a throwaway key named
-    "API Tester (temporary)" that expires in 1 hour (Api_Docs_Controller::
-    mint_tester_key). It shows and revokes in the same Settings datagrid for
-    free - no separate management surface.
+    CLI. The same operations without a browser, for provisioning an integration
+    or auditing what exists:
+
+        php artisan rsx:api:key:create <user> [--name=] [--expires=]
+                                              [--environment=live|test]
+        php artisan rsx:api:key:list   <user> [--all]
+        php artisan rsx:api:key:delete <id>   [--purge] [--force]
+
+    <user> is a users.id or an email address, resolved WITHOUT the site scope: a
+    CLI process has no site context, and refusing to find a user for that reason
+    would be an accident of the environment rather than an answer.
+
+    --expires accepts an ISO datetime (2027-01-01) or a relative span ("30
+    days", "6 months"). There is NO default: a key with no expiry lives until it
+    is revoked, which is the right shape for a server-to-server integration.
+    An expiry in the past is refused rather than created dead.
+
+    create prints the plaintext ONCE. It is unrecoverable afterwards - only the
+    hash reaches the database.
+
+    list shows state, expiry, last used and created, ACTIVE ONLY by default;
+    --all includes revoked and expired keys, which is what "why did this stop
+    working" needs. Last-used is the field that answers "is this key still in
+    service".
+
+    delete REVOKES by default and keeps the row, because _api_request_log rows
+    reference api_key_id: destroying the key would leave every call it ever made
+    pointing at nothing, exactly when somebody is working out what it did.
+    --purge removes the row outright, for a key created in error. Both prompt
+    unless --force.
+
+    TESTER KEYS. There is no minting from the docs page: its tester takes a key
+    the developer PASTES, created in Settings > API Keys like any other. A page
+    that hands out live credentials on a button press is a worse default than
+    making key creation a deliberate act on the management screen.
 
     ROLE OVERRIDE - RESERVED, NOT ENFORCED. user_role_id is intended to let a
     key run at a REDUCED role. It is NOT honored in v1: a key always runs at the
@@ -308,19 +369,168 @@ VERSIONING
     Api_Catalog (pure functions over the manifest):
         get_versions()                 distinct versions, descending
         resolve_for_version($v)        the display-rule winners for version $v
-        get_llm_catalog()              every version + a version_resolution prose
-                                       field + per-endpoint latest_in_version map
         parse_version($pattern)        '/api/vN/...' -> N
         path_key($pattern)             the vN-stripped grouping key
 
 DOCS AND TESTER PAGE
-    /apidocs (and /apidocs/vN) is a login-gated SPA (any logged-in staff
-    session - it is NOT bearer-authenticated; it is a developer console). It is
-    a thin template-app module (rsx/app/apidocs/) mounting framework-core
-    components (Core/Api/components/):
+    A developer console - browse endpoints, read parameters, copy a code sample,
+    and send a real request. It is NOT bearer-authenticated: it is a page in your
+    application, and it is reached at whatever path your application routes to.
 
-        Api_Docs_Page      version dropdown -> navigates /apidocs/vN;
-                           resource-grouped sidebar; link to the LLM catalog
+    THE APPLICATION OWNS THE ROUTE AND THE GATE. The framework declares no
+    route for the console and has no visibility setting: it exists if and only
+    if an application routes to it, protected by whatever #[Auth] that route
+    carries. That reuses the permission vocabulary an app already has instead of
+    inventing a parallel one.
+
+        #[Auth('can_manage_integrations')]
+        class Developer_Tools_Controller extends Rsx_Controller_Abstract
+        {
+            #[Route('/dev/api-reference')]
+            public static function api_docs(Request $request, array $params = [])
+            {
+                return Rsx_Api_Docs::page($request, Developer_Tools_Bundle::class);
+            }
+
+            #[Route('/dev/api-reference/openapi.json')]
+            public static function api_openapi(Request $request, array $params = [])
+            {
+                return response()->json(Rsx_Api_Docs::openapi_document(), 200, [
+                    'Content-Type' => 'application/json; charset=utf-8',
+                    'Content-Disposition' => 'attachment; filename="openapi.json"',
+                ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+            }
+        }
+
+    Page and document are SEPARATE calls so they can be gated differently - a
+    public openapi.json beside a staff-only console is a normal arrangement.
+
+    They are also different KINDS of call. page() renders a RESPONSE;
+    openapi_document() returns an ARRAY, and the controller builds the response
+    around it. Status, content type and whether the browser renders the JSON
+    inline or downloads it are the route's business, not the generator's - the
+    reference app serves it as an attachment, because what a developer does with
+    the file is feed it to a client generator.
+
+    API ACCESS IS THE GATE THE CONSOLE USUALLY WANTS. A console listing an API
+    the viewer may not call is a lie, so the reference app gates both routes on
+    Session::has_api_access() (users.is_api_access_enabled) rather than on a
+    role - the same predicate Api_Dispatcher applies to a Bearer key, so the
+    console cannot drift from what the API will accept. A denial is rendered by
+    Error_Screens::unauthorized($request), which sends an unidentified caller to
+    the login route and shows an identified one a themed 403. See
+    reference_app/app/apidocs/apidocs_controller.php.
+
+    THE BUNDLE IS THE APPLICATION'S TOO, and must include its own directory plus
+    app/RSpade/Core/Api. A bundle has to cover the directory of the controller
+    that rendered it, so a framework bundle could never serve an app's route. It
+    forwards one hook:
+
+        public static function load_rsxapp_data(): array
+        {
+            return Rsx_Api_Docs::rsxapp_data();
+        }
+
+    Worked example, twelve lines including the docblock:
+    system/app/RSpade/resource/reference_app/app/apidocs/
+
+    RESTRICTED LISTING. page()'s third argument (default TRUE) lists only the
+    endpoints whose #[Auth] gates pass for the API key the viewer supplied,
+    scoped to the KEY'S user rather than the viewer's - the console is answering
+    "what can this integration do". With no key the sidebar lists NOTHING and
+    the landing card says why, because the key IS the question being asked.
+    Supplying one calls Api_Docs_Controller::adopt_tester_key and RELOADS: the
+    catalog is baked into the page at render, so a key adopted afterwards
+    changes nothing until the page is built again.
+
+    Pass false to list every published endpoint. Either way this is about not
+    ADVERTISING surfaces a caller cannot use; it is NOT access control, and
+    Api_Dispatcher gates every call regardless of what the page showed.
+
+    HOW THE FILTER KNOWS. Auth checks are parameterless and evaluate against the
+    current session, so the only way to ask "would this gate pass for the key's
+    user" is to become that user for the duration of the question.
+    Api_Tester_Key::accessible_targets() establishes the same headless identity
+    Api_Dispatcher uses (Session::_set_api_identity), evaluates
+    Auth_Gates::can_access per endpoint, and tears the identity down in a
+    finally. Auth_Gates memoizes per realm|check for the whole request, so the
+    memo is reset on the way IN and again on the way OUT - miss either and the
+    filter silently reflects the wrong user while still looking plausible.
+
+    The adopted key is remembered as an ID in session-scoped storage
+    (Session::put_value), which the browser never names and therefore cannot
+    forge. The PLAINTEXT stays in the browser for the tester's Authorization
+    header; it cannot come back from the database, which holds only the hash.
+
+    ONE COMPONENT, NOT AN SPA MODULE. Api_Docs_Console owns the whole page and
+    does its own history handling: a sidebar click pushes state and redraws only
+    the $redrawable body, and Back/Forward restores the previous endpoint. It is
+    mounted by an ordinary #[Route], so Spa's link interception does not apply
+    and the console's handler is unambiguous rather than competing with it.
+
+    That is not a workaround. An SPA split rebuilt the header, key bar and
+    sidebar on every click (Spa never reuses an action) and lost the class off
+    the content element (Spa._clear_container_attributes). Owning the page keeps
+    the sidebar's filter text, its scroll position, and the key bar's input.
+
+    COMPONENTS:
+
+        Api_Docs_Console   the page: chrome, navigation, and the body region
+        Api_Docs_Header    wordmark (links home), version selector, openapi link
+        Api_Docs_Sidebar   resource-grouped nav plus a filter box; filtering is
+                           DOM-level, not a re-render, so the focused input is
+                           never rebuilt mid-keystroke
+        Api_Docs_Home      the landing pane, and the key gate when restricted
+        Api_Docs_Catalog   synchronous reader over the baked catalog - there is
+                           no loading state anywhere in the UI because there is
+                           nothing to wait for
+        Api_Key_Bar        paste a key; VALIDATED against /api/v1/me before it is
+                           accepted, so a bad key fails here rather than later on
+                           some unrelated endpoint. Held in session storage, never
+                           persisted. With a key set the input is replaced by the
+                           masked key and a Clear button
+        Api_Code_Samples   curl / php / js / python / powershell, generated from
+                           the catalog. See FILL IN VALUES below
+        Api_Tester         the live tester. See WHAT THE TESTER VALIDATES below
+
+    WHAT THE TESTER VALIDATES: path parameters, and nothing else. A URL cannot be
+    built without them, so there would be no request to send and no server answer
+    to show. Everything else deliberately reaches the server unchecked - a
+    required field left blank comes back as the endpoint's own 422, which is the
+    thing a tester exists to show, and a second client-side rulebook would drift
+    from the real one. An unparseable JSON body is sent too: the dispatcher's 400
+    invalid_json is more useful than a message the page invented.
+
+    UNSET MEANS OMITTED. A blank query parameter is not sent as an empty string
+    and a blank body field is dropped from the JSON - sending "" would assert a
+    value the user never gave, which for an update is the difference between
+    "leave this alone" and "clear it".
+
+    FILL IN VALUES (a checkbox in the Code samples tab strip, off by default)
+    swaps the samples from documentation to the exact request the tester beside
+    them would send: the adopted key, the values typed, unset fields omitted,
+    path parameters merged in, updating live as the reader types. It reads
+    Api_Tester::current_values() - the same method the Send button uses - so a
+    sample can never describe a different request from the one that would be made.
+
+    Off, samples use each param's declared example and the literal {API_KEY}:
+    copyable code must not carry a real credential into a file or a chat window.
+
+    A path parameter left blank stays as {name}, marked red with a tooltip,
+    rather than being silently invented - a sample that looked runnable and was
+    not would be worse than one that says what is missing.
+
+    ESCAPING. Every value in a sample is escaped for the language it lands in
+    (api_docs_escaping.js: bash, php, python, powershell, js literals), and URL
+    values are escaped TWICE - percent-encoded for the URL, then quoted for the
+    language embedding it. Do only the first and a space breaks the command; do
+    only the second and the server receives something else. In a shell sample the
+    difference is not cosmetic: an unescaped value is a command.
+
+    LAYOUT. The card is two columns above 1850px - reference (verb, parameters,
+    example response) left, the things you act on (samples, tester) right - so a
+    sample stays readable beside the tester that shaped it. The example response
+    also starts expanded at that width, where a collapsed panel is just a click.
         Api_Endpoint_Card  one card per endpoint (description, params, example)
         Api_Params_Table   the #[Api_Param] specs rendered as a table
         Api_Code_Samples   curl / php / js / python / powershell, GENERATED
@@ -331,15 +541,47 @@ DOCS AND TESTER PAGE
                            fetch() with the Authorization header ($.ajax is
                            blocked framework-wide; fetch is not) and rendering
                            the status + highlighted JSON response
-        Api_Key_Bar        paste a key, or mint a 1-hour tester key; the key is
+        Api_Key_Bar        paste a key (the page never mints one); the key is
                            held in Rsx_Storage session scope (never persisted)
 
-    THE LLM CATALOG. /apidocs/catalog (login-gated) returns
-    Api_Catalog::get_llm_catalog() as JSON - a machine-readable dump of every
-    version with the resolution rule described in prose, for an LLM agent
-    generating a client. The path is deliberately EXTENSIONLESS: a /apidocs/
-    catalog.json would be intercepted by the asset handler (which claims *.json
-    paths) before reaching the controller.
+    THE OPENAPI DOCUMENT. /apidocs/openapi.json (login-gated) returns
+    Api_Openapi::document() - an OpenAPI 3.1 description of every published
+    endpoint across every version, served application/json with
+    Content-Disposition: inline so a browser renders it in its JSON viewer
+    rather than downloading it.
+
+    OpenAPI rather than a house format because everything that consumes an API
+    description already speaks it: client generators, Postman/Insomnia, mock
+    servers, contract testers, and the LLM/agent toolchains. A bespoke shape has
+    to be explained before it can be used.
+
+    Api_Openapi is a PURE PROJECTION of Api_Catalog::get_endpoint_list() and
+    invents no facts. Its translation decisions:
+
+        :token -> {token}   OpenAPI templates path params in braces.
+        path params         in:path, and required:true (OpenAPI mandates it).
+        GET other params    in:query.
+        POST other params   a requestBody object. The dispatcher also accepts
+                            them as query on POST, but the body is the
+                            documented shape and the one the tester sends.
+        superseded          deprecated:true when a HIGHER version exists for the
+                            same verb + path_key. Every version stays listed at
+                            its real path, because every version stays callable.
+        @api-hidden         omitted entirely.
+
+    Every version is listed; the catalog display rule above is a DOCS-PAGE
+    concern and has no equivalent here - paths are paths, and all of them work.
+
+    THE .json PATH. AssetHandler::is_asset_request() claims any *.json path
+    BEFORE route dispatch, so a generated document at a natural filename used to
+    be unreachable. It is reachable now because the asset seam FALLS THROUGH:
+    AssetHandler::try_serve() returns null when the public directories hold no
+    such file, and both dispatchers continue to the route table on null. A real
+    file still wins, so no asset that resolves today can be shadowed by a route
+    added tomorrow, and no route needs registering anywhere for this to work.
+
+    /_compiled/ and /_vendor/ deliberately do NOT fall through - a miss there is
+    a build problem, and a route scan would turn a loud failure into a 404.
 
 REQUEST LOGGING
     EVERY API request - success and every failure path - writes one
@@ -425,7 +667,7 @@ TESTING
         php artisan rsx:test --framework            # includes the api concern
         php artisan rsx:test --framework --filter=Api
 
-    Manual curl (over the APP_URL host or loopback; mint a key in Settings >
+    Manual curl (over the APP_URL host or loopback; create a key in Settings >
     API Keys first):
 
         # 200 - list
@@ -464,7 +706,7 @@ RSX VS LARAVEL
         RSX:     the model's redacting toArray() (neverExport + enum labels).
     Docs:
         Laravel: hand-write OpenAPI or bolt on a generator.
-        RSX:     /apidocs and /apidocs/catalog are generated from the manifest.
+        RSX:     /apidocs and /apidocs/openapi.json are generated from the manifest.
 
 TROUBLESHOOTING
     Manifest build fails after adding an endpoint
@@ -498,9 +740,10 @@ TROUBLESHOOTING
         redaction, not the endpoint.
 
     Docs page shows nothing / a key does not work in the tester
-        /apidocs needs a logged-in staff session (it is not bearer-auth). Use the
-        Api_Key_Bar to paste a key or mint a 1-hour tester key. The tester fires
-        a native fetch() - a blocked $.ajax error means something bypassed it.
+        /apidocs needs a logged-in staff session (it is not bearer-auth). Paste a
+        key into the Api_Key_Bar; create one first at Settings > API Keys. The
+        tester fires a native fetch() - a blocked $.ajax error means something
+        bypassed it.
 
 SEE ALSO
     rsx:man auth_gates       the mandatory #[Auth] gate on every endpoint

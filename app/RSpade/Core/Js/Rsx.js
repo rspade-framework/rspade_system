@@ -47,7 +47,7 @@
  * @global
  */
 class Rsx {
-    // Gets set to true to interupt startup sequence
+    // Gets set to true to interrupt startup sequence
     static __stopped = false;
 
     /**
@@ -785,7 +785,7 @@ class Rsx {
             // Ui refresh callbacks
             Rsx.trigger_refresh();
 
-            // TODO: Find a good wait to wait for all jqhtml components to load, then trigger on_ready and on('ready') emulating the top level last syntax that jqhtml components operateas, but as a standard js class (such as a page class).  The biggest question is, how do we efficiently choose only the top level jqhtml components.  do we only consider components cretaed directly on blade templates? that seams reasonable...
+            // TODO: Find a good way to wait for all jqhtml components to load, then trigger on_ready and on('ready') emulating the top level last syntax that jqhtml components operate as, but as a standard js class (such as a page class).  The biggest question is, how do we efficiently choose only the top level jqhtml components.  do we only consider components created directly on blade templates? that seems reasonable...
 
             // Trigger _debug_ready event - this is ONLY for tooling like rsx:debug
             // DO NOT use this in application code - use on_app_ready() phase instead

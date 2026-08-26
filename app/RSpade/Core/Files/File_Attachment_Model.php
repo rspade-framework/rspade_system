@@ -60,9 +60,9 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property int $width
  * @property int $height
  * @property int $duration
- * @property bool $is_animated
+ * @property int $is_animated
  * @property int $frame_count
- * @property bool $preview_unavailable
+ * @property int $preview_unavailable
  * @property int $fileable_type
  * @property int $fileable_id
  * @property string $fileable_category

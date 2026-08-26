@@ -1,34 +1,46 @@
+<%--
+Api_Key_Bar - the shared tester-key control.
+
+Two mutually exclusive states, never both: with no key it is an input, with one it is a
+status line. Showing an empty "paste a key" box beside an active key invites pasting over a
+working key by accident, and showing a masked key beside nothing is noise.
+
+The no-key state's ACTION BUTTON is likewise one or the other, never both. An empty box
+offers "Temporary Key" - the one useful thing to do with nothing typed - and the moment
+anything is typed it becomes "Use Key", which is the only useful thing to do with something
+typed. Api_Key_Bar._sync_action() does that swap on every keystroke; the classes below are
+only its starting position, computed for the empty box this renders with.
+
+The offer is made only to a signed-in account that HAS API access, because minting for any
+other caller is refused by Api_Docs_Controller::mint_temporary_key() - a button whose only
+possible outcome is an error is not an offer. Everyone else gets "Use Key" unconditionally:
+a key from elsewhere still works, whoever is holding it.
+--%>
 <Define:Api_Key_Bar tag="div">
 <% const key = this.state.key; %>
 <div class="Api_Key_Bar__row">
-    <div class="Api_Key_Bar__status">
-        <% if (key) { %>
+    <% if (key) { %>
+        <div class="Api_Key_Bar__status Api_Key_Bar__status--set">
             <span class="Api_Key_Bar__dot Api_Key_Bar__dot--on"></span>
             <span class="Api_Key_Bar__status-text">Key active</span>
             <code class="Api_Key_Bar__masked"><%= api_key_mask(key) %></code>
             <button type="button" $sid="clear" class="Api_Key_Bar__btn Api_Key_Bar__btn--ghost">Clear</button>
-        <% } else { %>
+        </div>
+    <% } else { %>
+        <div class="Api_Key_Bar__status">
             <span class="Api_Key_Bar__dot"></span>
             <span class="Api_Key_Bar__status-text Api_Key_Bar__status-text--muted">No API key set</span>
-        <% } %>
-    </div>
-    <div class="Api_Key_Bar__controls">
-        <input type="text" $sid="input" class="Api_Key_Bar__input" placeholder="Paste an API key (rsk_live_...)" spellcheck="false" autocomplete="off">
-        <button type="button" $sid="use" class="Api_Key_Bar__btn">Use key</button>
-        <button type="button" $sid="mint" class="Api_Key_Bar__btn Api_Key_Bar__btn--accent"><%!= api_icon('key') %><span>Mint temporary key (1h)</span></button>
-    </div>
+        </div>
+        <% const can_mint = Permission.is_logged_in() && Permission.has_api_access(); %>
+        <% const use_class = can_mint ? 'Api_Key_Bar__btn Api_Key_Bar__btn--hidden' : 'Api_Key_Bar__btn'; %>
+        <div class="Api_Key_Bar__controls">
+            <input type="text" $sid="input" class="Api_Key_Bar__input" placeholder="Paste an API key" spellcheck="false" autocomplete="off">
+            <button type="button" $sid="use" class="<%= use_class %>">Use Key</button>
+            <% if (can_mint) { %>
+                <button type="button" $sid="temporary" class="Api_Key_Bar__btn Api_Key_Bar__btn--warn">Temporary Key</button>
+            <% } %>
+        </div>
+    <% } %>
 </div>
-
-<% if (this.state.minted) { %>
-    <div class="Api_Key_Bar__reveal">
-        <div class="Api_Key_Bar__reveal-label">
-            <%!= api_icon('check') %>
-            <span>New key minted &mdash; copy it now (shown once)<% if (this.state.expires) { %>, expires <%= this.state.expires %><% } %></span>
-        </div>
-        <div class="Api_Key_Bar__reveal-row">
-            <code class="Api_Key_Bar__reveal-key" $sid="minted"><%= this.state.minted %></code>
-            <button type="button" $sid="copy_minted" class="Api_Key_Bar__btn Api_Key_Bar__btn--ghost"><%!= api_icon('copy') %><span>Copy</span></button>
-        </div>
-    </div>
-<% } %>
+<div $sid="error" class="Api_Key_Bar__error Api_Key_Bar__error--hidden"></div>
 </Define:Api_Key_Bar>

@@ -128,7 +128,7 @@ class Spa_Layout extends Component {
      * Override this in subclasses to react to action changes.
      *
      * on_action can / should be implemented as a async function. but nothing is waiting for it, this is
-     * just defined this way for convienence to make clear that async code can be used and is appropriate
+     * just defined this way for convenience to make clear that async code can be used and is appropriate
      * for on_action.
      *
      * If it is necessary to wait for the action itself to reach ready state, add:

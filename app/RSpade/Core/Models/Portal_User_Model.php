@@ -70,7 +70,7 @@ use App\RSpade\Core\Portal\Rsx_Portal;
  * @property int $contact_id
  * @property string $email
  * @property string $password
- * @property bool $is_verified
+ * @property int $is_verified
  * @property int $status_id
  * @property array $metadata
  * @property string $last_login

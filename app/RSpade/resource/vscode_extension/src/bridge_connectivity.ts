@@ -367,7 +367,7 @@ export function init_bridge_connectivity(output_channel: vscode.OutputChannel): 
 /**
  * Whether server-dependent work may proceed.
  *
- * Defaults to TRUE when no manager has been initialised. That is deliberate: the only
+ * Defaults to TRUE when no manager has been initialized. That is deliberate: the only
  * way to reach that state is a code path that runs before activate(), and refusing
  * there would disable the bridge for a reason that has nothing to do with the server.
  */

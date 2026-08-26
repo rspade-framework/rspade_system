@@ -1,0 +1,19 @@
+// Page-level reset for the API reference console.
+//
+// The console's bundle is deliberately hermetic - no Bootstrap, no application theme - so
+// nothing else zeroes the user agent's default 8px body margin, which shows as a gap around
+// the whole console.
+//
+// A bare element selector rather than a component-scoped block, because this is genuinely a
+// DOCUMENT concern: Api_Docs_Console is the only thing on the page (Api_Docs_App.blade.php
+// renders nothing else), so there is no other content for these rules to reach. Any future
+// rule here has to keep meeting that bar.
+//
+// The background is painted on the body as well as on .Api_Docs_Page because the body is
+// what shows in the overscroll gutter, which no component can reach. It is a literal rather
+// than var(--api-bg) because the palette is declared on .Api_Docs_Page, not :root - keep the
+// two in step.
+body {
+    margin: 0;
+    background: #0D1117;
+}

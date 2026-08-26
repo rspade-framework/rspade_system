@@ -24,7 +24,7 @@ use App\RSpade\Core\Search\Search_Index_Model;
  * @property int $id
  * @property string $hash
  * @property int $size
- * @property bool $is_indexed
+ * @property int $is_indexed
  * @property int $render_status_id
  * @property string $rendered_at
  * @property string $render_error

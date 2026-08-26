@@ -6,7 +6,7 @@
     --api-raised: #1C2333;
     --api-border: #2A3245;
     --api-text: #E6EDF3;
-    --api-muted: #8B98AD;
+    --api-muted: #DCE0E7;
     --api-accent: #58A6FF;
     --api-accent-hover: #79B8FF;
     --api-accent-soft: #13233A;
@@ -47,10 +47,17 @@
         border-bottom: 1px solid var(--api-border);
     }
 
+    // The wordmark is a link back to the docs home. It must not READ as a link - an
+    // accent-colored header title competes with the sidebar for "where do I click".
     &__brand {
         display: flex;
         align-items: center;
         gap: 10px;
+        text-decoration: none;
+
+        &:hover .Api_Docs_Page__brand-text {
+            color: var(--api-accent);
+        }
     }
 
     &__brand-mark {
@@ -68,6 +75,8 @@
         font-size: 16px;
         font-weight: 600;
         letter-spacing: 0.2px;
+        // Explicit: inside an <a> this would otherwise inherit the UA link color.
+        color: var(--api-text);
     }
 
     &__header-controls {
@@ -165,8 +174,81 @@
         overflow-y: auto;
     }
 
+    // -- Endpoint filter -------------------------------------------------
+    // An input group: the clear button sits inside the field's box rather than beside it,
+    // so the control reads as one thing and the field keeps the sidebar's full width.
+    &__filter {
+        position: relative;
+        margin-bottom: 18px;
+    }
+
+    &__filter-input {
+        width: 100%;
+        // This bundle is hermetic - no Bootstrap, no global reset - so nothing else sets
+        // border-box. Without it, width:100% plus the padding and border overflows the
+        // sidebar's content box.
+        box-sizing: border-box;
+        appearance: none;
+        background: var(--api-bg);
+        border: 1px solid var(--api-border);
+        border-radius: 6px;
+        color: var(--api-text);
+        font-family: inherit;
+        font-size: 13px;
+        padding: 7px 30px 7px 10px;
+
+        &::placeholder {
+            color: var(--api-muted);
+        }
+
+        &:focus {
+            outline: none;
+            border-color: var(--api-accent);
+            box-shadow: 0 0 0 3px var(--api-accent-soft);
+        }
+    }
+
+    &__filter-clear {
+        position: absolute;
+        top: 50%;
+        right: 6px;
+        transform: translateY(-50%);
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: var(--api-muted);
+        font-size: 18px;
+        line-height: 1;
+        padding: 0 4px;
+        cursor: pointer;
+
+        &:hover {
+            color: var(--api-text);
+        }
+
+        // Only offered when there is something to clear.
+        &--hidden {
+            display: none;
+        }
+    }
+
+    &__filter-empty {
+        font-size: 12.5px;
+        color: var(--api-muted);
+        padding: 4px 8px 12px;
+
+        &--hidden {
+            display: none;
+        }
+    }
+
     &__nav-group {
         margin-bottom: 22px;
+
+        // A group whose every link was filtered out takes its heading with it.
+        &--filtered {
+            display: none;
+        }
     }
 
     &__nav-title {
@@ -190,6 +272,22 @@
 
         &:hover {
             background: var(--api-raised);
+        }
+
+        &--filtered {
+            display: none;
+        }
+
+        // The selected endpoint. The sidebar is the only indication of where you are once
+        // the body shows one endpoint at a time, so this has to read at a glance.
+        &--active {
+            background: var(--api-accent-soft);
+            box-shadow: inset 2px 0 0 var(--api-accent);
+
+            .Api_Docs_Page__nav-path {
+                color: var(--api-text);
+                font-weight: 600;
+            }
         }
     }
 
@@ -233,9 +331,17 @@
     }
 
     // -- Main pane --------------------------------------------------------
+    // The body pane fills the space beside the sidebar, then caps itself and centres.
+    // Without the cap, a params table on a wide monitor stretches to unreadable line
+    // lengths; without the auto margins, capped content hugs the sidebar and leaves a
+    // lopsided gutter on the right. Auto margins on a flex item absorb the free space
+    // evenly, which is what centres it.
     &__main {
         flex: 1 1 auto;
         min-width: 0;
+        width: 100%;
+        max-width: 1500px;
+        margin: 0 auto;
         padding: 28px 32px 80px;
     }
 

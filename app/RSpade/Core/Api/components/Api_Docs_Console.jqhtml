@@ -1,0 +1,36 @@
+<%--
+Api_Docs_Console - the entire API reference: chrome, navigation and body, in ONE component.
+
+WHY ONE COMPONENT AND NOT AN SPA MODULE. The console is mounted by whatever route the
+APPLICATION declares for it (see Rsx_Api_Docs), so it cannot rely on the SPA router - and it
+turns out not to want to. Spa never reuses an action, so an SPA split rebuilt the header, key
+bar and sidebar on every endpoint click, and Spa._clear_container_attributes() strips the
+class off the element an action mounts into. Owning the whole page sidesteps both: only the
+$redrawable body is replaced on navigation, so the sidebar keeps its filter and its scroll
+position and the key bar keeps its input.
+
+Carries the Api_Docs_Page class so every frame rule in Api_Docs_Page.scss applies unchanged.
+--%>
+<Define:Api_Docs_Console tag="div" class="Api_Docs_Page">
+<% const version = this.state.version; %>
+<Api_Docs_Header $sid="header" $version=version />
+
+<div class="Api_Docs_Page__keybar-host">
+    <Api_Key_Bar />
+</div>
+
+<div class="Api_Docs_Page__body">
+    <Api_Docs_Sidebar $sid="sidebar" $version=version $active=this.state.slug />
+
+    <div class="Api_Docs_Page__main" $redrawable $sid="main">
+        <% const endpoint = Api_Docs_Catalog.find_endpoint(version, this.state.slug); %>
+        <% if (!Api_Docs_Catalog.exists()) { %>
+            <div class="Api_Docs_Page__notice">No external API endpoints are defined.</div>
+        <% } else if (endpoint) { %>
+            <Api_Endpoint_Card $endpoint=endpoint />
+        <% } else { %>
+            <Api_Docs_Home $version=version />
+        <% } %>
+    </div>
+</div>
+</Define:Api_Docs_Console>

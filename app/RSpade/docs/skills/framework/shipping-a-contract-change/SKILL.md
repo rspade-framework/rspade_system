@@ -31,7 +31,11 @@ Rules of thumb:
 
 ## 4. The man page(s)
 
-`system/app/RSpade/man/*.txt` - **the full treatment lives here**, not in always-on knowledge. Terse, complete, expert-level. Note the framework-developer-only pages are stripped at publish (`code_quality`, `manifest_api`, `manifest_build`, `ast_sourcecode_parsers`, `storage_directories`, `vs_code_extension`) - never point shipped knowledge at one.
+`system/app/RSpade/man/*.txt` - **the full treatment lives here**, not in always-on knowledge. Terse, complete, expert-level.
+
+**Update it as part of the change, without asking.** A man page describes what the framework ACTUALLY DOES, so a behavior that moved and left its page behind is an unfinished change - and a page describing the old behavior is worse than no page, because it is trusted. The one thing that still goes to the owner is CHANGING a promise rather than RECORDING one: narrowing a guarantee, inventing a contract nothing implements, or ruling that a documented behavior was wrong. See the always-on fragment `82-documentation-obligations.md`.
+
+Note the framework-developer-only pages are stripped at publish (`code_quality`, `manifest_api`, `manifest_build`, `ast_sourcecode_parsers`, `vs_code_extension`) - never point shipped knowledge at one.
 
 ## 5. `upstream_changes/*.txt`
 
@@ -93,7 +97,7 @@ Downstream consumption (what your document will be read through): `rsx:framework
 
 ## Authoring a prelaunch checklist entry
 
-`man/prelaunch_checklist.txt` is a **sanctioned enforcement channel**: when a lint rule is impractical, "add this to the prelaunch checklist" is a good answer - and the RSpade LLM may proactively suggest it to the owner. It is ADVISORY (nothing blocks a build) and man pages are never updated autonomously, so **propose the entry and get the owner's go-ahead**.
+`man/prelaunch_checklist.txt` is a **sanctioned enforcement channel**: when a lint rule is impractical, "add this to the prelaunch checklist" is a good answer - and the RSpade LLM may proactively suggest it to the owner. It is ADVISORY (nothing blocks a build), and an entry INVENTS an obligation rather than recording behavior that already shipped - which is the owner's call, not yours - so **propose the entry and get the owner's go-ahead**.
 
 An entry follows the house shape of the existing ones:
 

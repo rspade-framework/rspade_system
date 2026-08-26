@@ -145,7 +145,16 @@ class Portal_Dispatcher
         if (AssetHandler::is_asset_request($normalized_url)) {
             console_debug('PORTAL', "Serving static asset: {$normalized_url}");
 
-            return AssetHandler::serve($normalized_url, $request);
+            // A real file wins; a miss returns null and dispatch CONTINUES to the route
+            // table, so a portal #[Route] may serve a generated document at a natural
+            // filename. Twin of the staff seam in Dispatcher::dispatch().
+            $asset_response = AssetHandler::try_serve($normalized_url, $request);
+
+            if ($asset_response !== null) {
+                return $asset_response;
+            }
+
+            console_debug('PORTAL', 'No such asset file; continuing route dispatch');
         }
 
         // HEAD requests should be treated as GET

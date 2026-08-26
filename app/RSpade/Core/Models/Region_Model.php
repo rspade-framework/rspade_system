@@ -21,7 +21,7 @@ use App\RSpade\Core\Models\Country_Model;
  * @property string $country_alpha2
  * @property string $name
  * @property string $type
- * @property bool $enabled
+ * @property int $enabled
  * @property string $created_at
  * @property string $updated_at
  * @property int $created_by_id

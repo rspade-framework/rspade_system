@@ -5,6 +5,14 @@
         <% const active = (i === this.state.active) ? ' Api_Code_Samples__tab--active' : ''; %>
         <button type="button" class="Api_Code_Samples__tab<%= active %>" data-idx="<%= i %>"><%= samples[i].lang %></button>
     <% } %>
+
+    <%-- Off by default: the documentation sample is what most readers want, and it is the one
+         that is safe to copy anywhere. Switching it on turns the sample into the exact request
+         the tester below would send, real key included. --%>
+    <label class="Api_Code_Samples__fill">
+        <input type="checkbox" $sid="fill" <% if (this.state.fill) { %>checked<% } %>>
+        <span>Fill in values</span>
+    </label>
 </div>
 <div class="Api_Code_Samples__panes" $sid="panes">
     <% for (let i = 0; i < samples.length; i++) { %>

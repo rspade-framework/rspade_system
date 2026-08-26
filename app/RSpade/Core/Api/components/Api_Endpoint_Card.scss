@@ -1,19 +1,29 @@
 .Api_Endpoint_Card {
     position: relative;
     display: block;
+
+    // Two columns on a wide screen: reference (verb, params, example) on the left, the things
+    // you ACT on (samples, tester) on the right, so a sample stays readable beside the tester
+    // that shaped it. Below this the columns simply stack in source order, which is the
+    // reading order anyway - no reordering needed.
+    //
+    // A bare media query rather than an RSX breakpoint mixin: 1850 is a property of THIS
+    // card's content (a params table beside a code block), not of the app's device tiers, and
+    // this bundle deliberately loads none of the theme.
+    @media (min-width: 1850px) {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 0 26px;
+        align-items: start;
+    }
+
+    &__col {
+        min-width: 0;
+    }
     background: var(--api-surface);
     border: 1px solid var(--api-border);
     border-radius: 10px;
     padding: 20px 22px;
-    margin-bottom: 20px;
-
-    &__anchor {
-        position: absolute;
-        top: -90px;
-        left: 0;
-        width: 0;
-        height: 0;
-    }
 
     &__head {
         display: flex;

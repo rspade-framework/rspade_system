@@ -80,6 +80,9 @@ class AssetHandler
      * 
      * @var array
      */
+    /**
+     * @var array
+     */
     protected static $allowed_extensions = [
         'css', 'js', 'json', 'xml',
         'jpg', 'jpeg', 'png', 'gif', 'svg', 'webp', 'ico',
@@ -165,14 +168,23 @@ class AssetHandler
     }
     
     /**
-     * Serve an asset file
+     * Serve an asset file, or return NULL when the public directories hold no such file.
+     *
+     * A null return means "not a file" and nothing more - the caller decides what that
+     * means. Dispatcher and Portal_Dispatcher fall through to route dispatch on it, which
+     * is what lets a #[Route] serve a GENERATED document at a natural filename
+     * (/apidocs/openapi.json). Ordering is deliberate: a real file still wins, so no asset
+     * that resolves today can be shadowed by a route pattern added tomorrow.
+     *
+     * NOT null-returning for /_compiled/ and /_vendor/: those are framework-internal build
+     * artifacts, a miss is a build problem, and quietly falling through to a route scan
+     * would turn a loud, diagnosable failure into a generic 404.
      *
      * @param string $path The requested asset path
      * @param Request $request
-     * @return Response
-     * @throws NotFoundHttpException
+     * @return Response|null
      */
-    public static function serve($path, Request $request)
+    public static function try_serve($path, Request $request)
     {
         // Handle compiled bundle requests
         if (str_starts_with($path, '/_compiled/')) {
@@ -194,16 +206,18 @@ class AssetHandler
         $file_path = static::__find_asset_file($path);
 
         if (!$file_path) {
-            throw new NotFoundHttpException("Asset not found: {$path}");
+            return null;
         }
 
-        // Check if file is within allowed directories
+        // A traversal attempt is reported as "no such file" like any other miss - never as
+        // a distinct outcome, which would confirm to the prober that the path resolved.
         if (!static::__is_safe_path($file_path)) {
             Log::warning('Attempted directory traversal', [
                 'requested' => $path,
                 'resolved' => $file_path
             ]);
-            throw new NotFoundHttpException("Asset not found: {$path}");
+
+            return null;
         }
 
         // Create binary file response

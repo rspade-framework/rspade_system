@@ -25,6 +25,16 @@ Zero external users. No releases. We control 100% of the codebase. Breaking chan
 - Remove deprecated code before marking a feature complete
 - Never document "legacy", "compatibility", or how things "used to work"
 
+### CRITICAL DIRECTIVE: EVERYTHING YOU WRITE HERE BECOMES PUBLIC
+
+**This monorepo's commit messages and source comments end up in the open-source release.** Every commit here is replayed verbatim into the published release commit body (`bin/publish` assembles the changelog from `git log`), and `system/` + `rsx/` ship as public repositories. `docs/claude/framework/` ships too - it is not loaded downstream, but it IS readable on GitHub. Only `docs.dev/` is stripped.
+
+**NEVER name a client, employer, partner, or any external project** - not in a commit message, not in a code comment, not in a test docstring, not in a man page, not in a config default. Work done with them is confidential and is not ours to disclose. Attribute a field-sourced fix to **"a downstream field report"** or "a live deployment", never to whose deployment it was. The date and the symptom are the useful parts; the name is the part that cannot be taken back once pushed.
+
+**RSpade is presented as independently developed, because that is what the public record must show.** Never document the meta-story of a change: what other codebase an idea was studied in, what was ported from where, what was dropped into this tree to be read alongside, what is gitignored locally and why. A commit says what the framework now does - never what was consulted to get there. Local-only material belongs in `.git/info/exclude`, never in the tracked `.gitignore`, where the entry itself is the disclosure.
+
+**A leak is permanent.** A pushed commit message cannot be unpublished, so the check happens BEFORE the commit, every time.
+
 ### Safety checks here
 
 The safety-check override prohibition (shared conduct fragment) applies to this tree's own gates - `IS_FRAMEWORK_DEVELOPER=true` is the canonical example. Never modify it, never pass a flag around it: STOP, INFORM, ASK, WAIT.

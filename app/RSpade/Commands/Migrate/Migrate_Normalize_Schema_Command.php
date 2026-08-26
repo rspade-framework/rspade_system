@@ -537,7 +537,7 @@ class Migrate_Normalize_Schema_Command extends Command
         // two halves disagreed: on a table carrying BOTH the framework's own pre-pair `{base}` and an app
         // `{base}_user_id`, the rename manufactured the exact `{base}` + `{base}_id` pair the
         // next invocation refuses. The pass's own first action created the state its second
-        // action rejects (field report, 2026-08-10).
+        // action rejects (downstream field report, 2026-08-10).
         //
         // That is worse than a bad error because DDL AUTO-COMMITS in MySQL: a failed `migrate`
         // rolls back data but not the ALTER, so the table kept both columns permanently, and
@@ -548,7 +548,7 @@ class Migrate_Normalize_Schema_Command extends Command
         // `{base}` all-NULL is the common real case (a vestigial framework column that never
         // carried data). One COUNT proves it, and dropping it is lossless - so the situation
         // that used to dead-end a database now SELF-HEALS, including on a database already
-        // dead-ended by the old behaviour.
+        // dead-ended by the old behavior.
         if ($has_base && ($has_id || $has_legacy)) {
             $populated = (int) DB::table($tableName)->whereNotNull($base)->count();
 

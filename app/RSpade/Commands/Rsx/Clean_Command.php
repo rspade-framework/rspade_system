@@ -226,7 +226,7 @@ class Clean_Command extends Command
         // Not a submodule: the monorepo never reaches here (the caller gates on
         // is_framework_developer), so this is a project that has not been converted yet.
         // Nothing to reset in the submodule sense, and reaching into a tree whose shape
-        // we do not recognise is not an improvement.
+        // we do not recognize is not an improvement.
         if (!file_exists($system_dir . '/.git')) {
             return '[WARNING] system/ reset skipped (system/ is not a git submodule)';
         }

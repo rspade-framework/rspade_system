@@ -11,6 +11,14 @@
         display: flex;
         align-items: center;
         gap: 8px;
+
+        // With a key set the status IS the whole bar, so it takes the width and pushes its
+        // own contents to the trailing edge - the key and its Clear button read as one
+        // control there rather than floating mid-bar.
+        &--set {
+            flex: 1 1 auto;
+            justify-content: flex-end;
+        }
     }
 
     &__dot {
@@ -44,6 +52,23 @@
         padding: 2px 8px;
     }
 
+    // A rejected key. Cleared by any edit, so it describes what is typed NOW.
+    &__input--invalid {
+        border-color: var(--api-danger);
+        box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.18);
+    }
+
+    &__error {
+        margin-top: 8px;
+        font-size: 12.5px;
+        color: var(--api-danger);
+        text-align: right;
+
+        &--hidden {
+            display: none;
+        }
+    }
+
     &__controls {
         display: flex;
         align-items: center;
@@ -53,6 +78,7 @@
 
     &__input {
         width: 320px;
+        box-sizing: border-box;
         max-width: 100%;
         background: var(--api-raised);
         color: var(--api-text);
@@ -86,57 +112,31 @@
             border-color: var(--api-accent);
         }
 
-        &--accent {
-            background: var(--api-accent);
-            border-color: var(--api-accent);
+        // "Temporary Key" mints a real, live credential against the viewer's own account.
+        // Filled amber rather than the accent blue used for ordinary confirmations: it is
+        // the one control in this bar that CREATES something, and it should not read as the
+        // same weight as adopting a key that already exists.
+        &--warn {
+            background: var(--api-warn);
+            border-color: var(--api-warn);
             color: #0D1117;
             font-weight: 600;
 
             &:hover {
-                background: var(--api-accent-hover);
-                border-color: var(--api-accent-hover);
+                border-color: var(--api-warn);
+                filter: brightness(1.12);
             }
         }
 
         &--ghost {
             background: transparent;
         }
-    }
 
-    &__reveal {
-        margin-top: 12px;
-        padding: 12px 14px;
-        background: var(--api-accent-soft);
-        border: 1px solid var(--api-border);
-        border-radius: 8px;
-    }
-
-    &__reveal-label {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        font-size: 12.5px;
-        color: var(--api-accent-hover);
-        margin-bottom: 8px;
-    }
-
-    &__reveal-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        flex-wrap: wrap;
-    }
-
-    &__reveal-key {
-        flex: 1 1 auto;
-        min-width: 0;
-        font-family: var(--api-mono);
-        font-size: 13px;
-        color: var(--api-text);
-        background: var(--api-bg);
-        border: 1px solid var(--api-border);
-        border-radius: 6px;
-        padding: 8px 12px;
-        word-break: break-all;
+        // The action button that is not currently on offer. Both are rendered so the swap
+        // is a class change; re-rendering on every keystroke would destroy the input the
+        // user is typing into.
+        &--hidden {
+            display: none;
+        }
     }
 }

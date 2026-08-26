@@ -1,7 +1,7 @@
 /**
  * Flash_Alert - Temporary alert notification system with queue persistence
  *
- * Displays dismissable alert messages that auto-fade after a timeout.
+ * Displays dismissible alert messages that auto-fade after a timeout.
  * Messages are queued to prevent overwhelming the user with simultaneous alerts.
  * Queue state persists across page navigations using sessionStorage (per-tab).
  *

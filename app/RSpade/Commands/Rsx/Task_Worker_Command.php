@@ -263,7 +263,7 @@ class Task_Worker_Command extends Command
             // inherit it instead of contending for it.
             //
             // Loud on purpose: a task that ends still holding a lock is a defect in that
-            // task. This is a safety net, not a licence.
+            // task. This is a safety net, not a license.
             $leaked = RsxLocks::_release_since($lock_checkpoint);
             foreach ($leaked as $lock_name) {
                 $this->warn(

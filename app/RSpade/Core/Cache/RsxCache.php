@@ -106,7 +106,7 @@ class RsxCache
     }
 
     /**
-     * Check if we can skip reddis due to special circumstance
+     * Check if we can skip redis due to special circumstance
      */
     private static function _redis_bypass()
     {
@@ -165,7 +165,7 @@ class RsxCache
      *
      * The developer must call this function during manifest build phase, because
      * the build key to determine if the build has been updated is not available
-     * until the manifest resccan is complete.  Calling get() during manifest rescan
+     * until the manifest rescan is complete.  Calling get() during manifest rescan
      * will throw an exception.
      *
      * @param string $key Cache key

@@ -18,7 +18,7 @@ use App\RSpade\CodeQuality\Support\FileSanitizer;
  * The rule is a deliberately DUMB matcher. Nearly every real instance is one
  * thing - resolving a class from its name as a string - but the shapes that
  * reach it have nothing textually in common beyond the word `eval`, so trying to
- * recognise "is this a class lookup" produces a fragile matcher that misses the
+ * recognize "is this a class lookup" produces a fragile matcher that misses the
  * fourth shape somebody writes next month. Ban the construct (there is no
  * legitimate use in bundled code) and let the RESOLUTION TEXT carry the
  * class-resolution guidance to the authors who need it.

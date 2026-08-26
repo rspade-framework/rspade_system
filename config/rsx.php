@@ -113,8 +113,18 @@ return [
     */
 
     'api' => [
+        // Leading token on every newly minted API key, giving keys from this product a
+        // recognisable shape: {prefix}{environment}_{random} -> rsx_live_xxxxx.
+        //
+        // Rename it to your own product and new keys carry that instead. EXISTING KEYS ARE
+        // UNAFFECTED - lookup is by SHA-256 of the whole key, never by prefix, so changing
+        // this cannot invalidate a key already in service. Only key_prefix, the display
+        // fragment shown in the UI, records what a key was minted with.
+        'key_prefix' => 'rsx_',
+
         'log_retention_days' => 30,
     ],
+
 
     /*
     |--------------------------------------------------------------------------

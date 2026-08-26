@@ -633,7 +633,7 @@ class RsxLocks
      *
      * Releasing is unconditional but never silent - each leaked lock is returned so the
      * caller can say so. A task that ends still holding a lock is a defect in that task,
-     * and this is a safety net, not a licence.
+     * and this is a safety net, not a license.
      *
      * @param array<int, string> $checkpoint From _checkpoint()
      * @return array<int, string> Human-readable names of the locks that had to be released
@@ -1034,7 +1034,7 @@ class RsxLocks
      * Detection is evidence-based rather than bookkeeping: every descriptor this process has
      * open onto storage/flock/ IS one of our lock handles, whoever opened it. Linux-only by
      * construction (/proc/self/fd); an empty result elsewhere simply means no wrapping, which
-     * is the pre-existing behaviour.
+     * is the pre-existing behavior.
      *
      * @return int[] fd numbers, ascending
      */

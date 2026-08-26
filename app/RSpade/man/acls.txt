@@ -305,6 +305,21 @@ JAVASCRIPT PERMISSION CLASS
         Permission.get_user(): Object|null
             Get current user object from rsxapp.
 
+        Permission.has_api_access(): boolean
+            Whether the user may use the external API, read from
+            rsxapp.user.is_api_access_enabled. The JS twin of PHP
+            Session::has_api_access() - see rsx:man session. False when
+            nobody is signed in.
+
+            This is NOT a permission or a role: it is identity state on the
+            user record, and it is what the API dispatcher enforces against a
+            Bearer key. Gate an API-related link or panel on it rather than
+            on a permission, so the UI cannot offer what the API refuses.
+
+            <% if (Permission.has_api_access()) { %>
+                <a href="<%= Rsx.Route('Settings_Api_Keys_Action') %>">API Keys</a>
+            <% } %>
+
         Permission.has_permission(permission): boolean
             Check if user has specific permission.
 

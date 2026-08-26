@@ -87,6 +87,7 @@ LAZY INITIALIZATION
         - Session::get_site() - returns null if no session
         - Session::is_logged_in() - returns false if no session
         - Session::has_session() - returns false if no session
+        - Session::has_api_access() - returns false if no session
         - Session::init() - only loads existing session, never creates
 
     Example Flow:
@@ -280,6 +281,22 @@ API REFERENCE
         Session::get_user(): User_Model|null
             Returns User_Model for current user or null. Caches result.
             Does NOT create session.
+
+        Session::has_api_access(): bool
+            Whether the current identity may use the external API, read from
+            users.is_api_access_enabled. Does NOT create session - returns
+            false immediately when no session exists, so asking the question
+            never mints one.
+
+            The headless Bearer tier is consulted FIRST, ahead of that
+            early-out: an API identity is backed by no session row, so
+            has_session() is false for it by contract and an early-out would
+            refuse every API request. Api_Dispatcher applies this same
+            predicate before it establishes the identity, so a user whose
+            access is off gets the uniform "Invalid or expired API key" 401
+            from every key they hold.
+
+            JS twin: Permission.has_api_access() - see rsx:man acls.
 
         Session::set_login_user_id(int|null $login_user_id,
                                    bool $touch_last_login = true): void
@@ -977,6 +994,46 @@ TROUBLESHOOTING
         - Use has_session() to check without creating
         - Never "guard" with `if (get_session_id() === null)` - the guard is
           dead code AND it created the session (SESSION-ID-01)
+
+SESSION-SCOPED KEY/VALUE STORAGE
+    For data that belongs to a BROWSER SESSION rather than to a user or a
+    record: a wizard's half-finished input, a chosen filter, the API key the
+    /apidocs tester is using.
+
+        Session::put_value(string $key, $value, ?string $expires_at = null): void
+        Session::get_value(string $key, $default = null)
+        Session::forget_value(string $key): void
+
+    Stored in _session_values, one row per (session, key), with an ON DELETE
+    CASCADE to _sessions. The lifetime is INTRINSIC: logout, admin termination
+    and session garbage collection reclaim the values with the session, so a
+    value can never outlive the session that owned it and no sweeper is involved
+    in the common case.
+
+    put_value() is a WRITER and establishes a session if there is not one, like
+    every other Session writer. get_value() and forget_value() are READERS and
+    never create one - asking whether a value exists must not mint a session row
+    for every anonymous visitor. With no session, get_value() returns $default.
+
+    Values are JSON-encoded, so scalars and arrays round-trip by type: false
+    comes back as false and is not confused with unset.
+
+    put() is an UPSERT (UNIQUE on session_id + value_key), not an append.
+
+    EXPIRY IS OPTIONAL and defaults to null, meaning "as long as the session
+    lives". Pass one only when a value must die SOONER than its session; the
+    framework never invents an expiry. An expired value reads as ABSENT the
+    instant it expires, because get_value() filters on expires_at rather than
+    trusting a sweep to have run - Session_Values_Cleanup_Service (hourly) only
+    reclaims the space, so a missed run is harmless.
+
+    ONE SESSION SERVES BOTH EXPERIENCES. A browser has one session row shared by
+    the staff app and the portal, so namespace keys ('apidocs.tester_key_id')
+    rather than assuming an experience owns the key space.
+
+    WHAT IT IS NOT. Not a cache (RsxCache - volatile, not session-scoped), not
+    configuration (Rsx_Settings - declared and site-scoped), and not for
+    anything a user should still have on another device.
 
 SESSION TYPES
     Every session row carries a type_id, stamped by the writer at the moment the

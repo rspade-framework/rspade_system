@@ -1000,7 +1000,7 @@ class BundleCompiler
     * bundle are indistinguishable from the build output.
     *
     * Bucketing is by PROVENANCE, not by path. The watched file's own path says nothing about
-    * which output it feeds - the normal shape of "compile a vendor source tree parameterised by
+    * which output it feeds - the normal shape of "compile a vendor source tree parameterized by
     * first-party configuration" puts the knobs in application space on purpose - so the target
     * is registered under the bucket(s) the DECLARING bundle contributes to.
     *
