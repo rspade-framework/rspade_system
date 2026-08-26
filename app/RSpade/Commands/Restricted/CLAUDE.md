@@ -32,9 +32,12 @@ Each restricted command:
 ## Alternative Approaches
 
 Instead of using restricted commands:
-- Use `php artisan migrate` for forward migrations (auto-snapshot in development mode)
+- Use `php artisan migrate` for forward migrations (snapshot-protected only where the
+  snapshot is possible - development mode, in the dev container, against a local database;
+  `Maint_Migrate::snapshot_protection_available()`)
 - Create new migrations to fix issues rather than rolling back
-- In development mode, failed migrations automatically rollback to pre-migration state
+- Where protection IS engaged, a failed migration rolls back automatically; where it is not,
+  the run says so and there is no rollback
 - Maintain separate development databases for testing destructive operations
 
 ## Directive for AI Agents

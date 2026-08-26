@@ -1,6 +1,6 @@
 ---
 name: migrations
-description: RSX database migrations - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, automatic schema normalization and audit columns, and the development-mode database snapshot that auto-rolls-back a failed run. Use when creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, or wondering whether it is safe to run migrate.
+description: RSX database migrations - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, automatic schema normalization and audit columns, and the datadir snapshot that auto-rolls-back a failed run (and the three conditions that decide whether it is taken at all). Use when creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, or wondering whether it is safe to run migrate.
 ---
 
 # RSX Database Migrations
@@ -12,7 +12,7 @@ RSX enforces a forward-only migration strategy with raw SQL:
 1. **Forward-only** - No rollbacks, no `down()` methods
 2. **Raw SQL only** - Direct MySQL statements, no Schema builder
 3. **Fail loud** - Migrations must succeed or fail with clear errors
-4. **Snapshot safety** - Development requires database snapshots
+4. **Snapshot safety** - a snapshot is taken wherever one can be taken, and the run says out loud when one cannot
 
 ---
 
@@ -47,14 +47,40 @@ php artisan make:migration:safe create_products_table
 
 # 2. Write migration with raw SQL
 
-# 3. Run migrations (auto-snapshot in development)
+# 3. Run migrations (snapshot-protected where the snapshot is possible - see below)
 php artisan migrate
 ```
 
-In development mode, `migrate` automatically:
+Where snapshot protection is engaged (see below), `migrate` automatically:
 - Creates database snapshot before running
 - Commits on success (regenerates constants, recompiles bundles)
 - Auto-rollbacks on failure (database restored to pre-migration state)
+
+### When a snapshot is taken - all three required
+
+The mechanism is PHYSICAL: stop the local supervised mysqld, copy `/var/lib/mysql`,
+and on failure wipe that directory and copy the backup back. So it happens only when:
+
+1. **`RSX_MODE=development`**.
+2. **The RSpade DEVELOPMENT container** - `/.rspade_container_dev`, not merely
+   `/.rspade_container`. The PRODUCTION container carries the latter but ships
+   `mysql-client` ONLY: no mysqld to stop, no datadir to copy.
+3. **A LOCAL database host** - `localhost`, `127.0.0.1`, `::1`, or a configured unix
+   socket. Against an external database, `/var/lib/mysql` is not the database at all.
+
+`--framework-only` and the framework-internal `--_no-snapshot` suppress it for a run
+even where the mechanism is available.
+
+**Anywhere else the run proceeds bare and prints every reason protection is off** -
+there is no rollback of any kind. Development mode outside ANY RSpade container is
+refused outright (different rule: stopping somebody else's MySQL is not ours to do).
+
+**Why the production container no longer snapshots**: it never could - that image has
+no mysqld. The dangerous half was always the ROLLBACK, which would repopulate a datadir
+that is not the live database and report a successful rollback while the real database
+stayed broken. **A false rollback is worse than none**, so a rollback that cannot be
+performed is neither attempted nor advertised. `migrate:restore` applies the identical
+predicate and refuses, naming the condition, leaving the flag and snapshot untouched.
 
 **Run `migrate` with its FULL output** - never pipe it through `| tail`/`| head` or
 otherwise truncate: the snapshot/rollback narrative IS the diagnostic, and a truncated
@@ -203,7 +229,7 @@ php artisan migrate
 ```
 
 In debug/production mode:
-- No snapshot protection (source code is read-only)
+- No snapshot protection and no rollback
 - Schema normalization still runs
 - Constants and bundles NOT regenerated
 

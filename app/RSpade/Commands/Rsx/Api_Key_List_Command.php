@@ -25,26 +25,28 @@ use App\RSpade\Core\Time\Rsx_Time;
 class Api_Key_List_Command extends Command
 {
     protected $signature = 'rsx:api:key:list
-                            {user : User id, or email address}
-                            {--all : Include revoked and expired keys}';
+                            {--user= : User id or email address (required)}
+                            {--site= : Site id, to disambiguate an email held in more than one site}
+                            {--all : Include revoked and expired keys}
+                            {--json : Output as JSON}';
 
     protected $description = 'List a user\'s external API keys with expiry and last-used state';
 
     public function handle()
     {
-        $user = Api_Key_Cli_Support::resolve_user($this->argument('user'));
+        $as_json = (bool) $this->option('json');
 
-        if (!$user) {
-            $this->error("No user matches '{$this->argument('user')}' (try a users.id or an email address).");
-
-            return 1;
+        try {
+            $user = Api_Key_Cli_Support::resolve_user($this->option('user'), $this->option('site'));
+        } catch (Api_Cli_Error $e) {
+            return Api_Key_Cli_Support::report_error($this, $e, $as_json);
         }
 
         $show_all = (bool) $this->option('all');
 
         // get_for_user() returns an Rsx_Result_Set: every key, iterated a page at a time, so
         // a user with a long history is listed in full rather than truncated at some limit.
-        $rows = [];
+        $keys = [];
         $active = 0;
 
         foreach (Api_Key_Model::get_for_user((int) $user->id) as $key) {
@@ -58,27 +60,42 @@ class Api_Key_List_Command extends Command
                 continue;
             }
 
-            $rows[] = [
-                $key->id,
-                $key->name,
-                $key->key_prefix,
-                static::__state($key),
-                $key->expires_at ? Rsx_Time::format_datetime($key->expires_at) : 'never',
-                $key->last_used_at ? Rsx_Time::relative($key->last_used_at) : 'never used',
-                Rsx_Time::format_datetime($key->created_at),
-            ];
+            $keys[] = $key;
+        }
+
+        if ($as_json) {
+            return Api_Key_Cli_Support::json_ok($this, [
+                'user' => Api_Key_Cli_Support::user_data($user),
+                'api_access_enabled' => Api_Key_Cli_Support::api_access_enabled($user),
+                'includes_inactive' => $show_all,
+                'active_count' => $active,
+                'keys' => array_map(
+                    static fn (Api_Key_Model $key) => Api_Key_Cli_Support::key_data($key),
+                    $keys
+                ),
+            ]);
         }
 
         $this->newLine();
-        $this->line('API keys for user ' . $user->id . ' (' . $user->email . ')');
+        $this->line('API keys for user ' . $user->id . ' (' . $user->email . ')  site ' . $user->site_id);
 
-        if (empty($rows)) {
+        if (empty($keys)) {
             $this->newLine();
             $this->line($show_all ? '  No keys.' : '  No active keys. Re-run with --all to include revoked and expired ones.');
             $this->newLine();
 
             return 0;
         }
+
+        $rows = array_map(static fn (Api_Key_Model $key) => [
+            $key->id,
+            $key->name,
+            $key->key_prefix,
+            Api_Key_Cli_Support::key_state($key),
+            $key->expires_at ? Rsx_Time::format_datetime($key->expires_at) : 'never',
+            $key->last_used_at ? Rsx_Time::relative($key->last_used_at) : 'never used',
+            Rsx_Time::format_datetime($key->created_at),
+        ], $keys);
 
         $this->newLine();
         $this->table(
@@ -89,22 +106,5 @@ class Api_Key_List_Command extends Command
         $this->newLine();
 
         return 0;
-    }
-
-    /**
-     * Why a key is unusable, not merely that it is - revoked and expired call for different
-     * responses from whoever is reading.
-     */
-    private static function __state(Api_Key_Model $key): string
-    {
-        if ($key->is_revoked) {
-            return 'revoked';
-        }
-
-        if ($key->expires_at && Rsx_Time::is_past($key->expires_at)) {
-            return 'expired';
-        }
-
-        return 'active';
     }
 }

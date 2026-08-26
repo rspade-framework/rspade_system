@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Core\Api;
 
+use Illuminate\Http\UploadedFile;
 use App\RSpade\Core\Turnstile\Rsx_Turnstile;
 
 /**
@@ -15,7 +16,10 @@ use App\RSpade\Core\Turnstile\Rsx_Turnstile;
  * - reports each missing required param;
  * - applies declared defaults for absent optional params;
  * - coerces present values to the declared scalar type (string/int/float/bool), reporting
- *   a per-field error when a value cannot be coerced.
+ *   a per-field error when a value cannot be coerced;
+ * - validates a type:'file' param, which is NOT coerced: it must arrive as an UploadedFile
+ *   (a multipart part the dispatcher merged in) and that upload must have succeeded. The
+ *   UploadedFile instance is passed through to the endpoint untouched.
  *
  * A param spec is: ['name'=>string, 'type'=>string, 'required'=>bool, 'default'=>mixed,
  * 'description'=>?string, 'example'=>mixed] (as baked by Api_Endpoint_ManifestSupport).
@@ -75,7 +79,7 @@ class Api_Param_Validator
 
             $coerced = static::_coerce($spec['type'], $raw[$name]);
             if (!$coerced['ok']) {
-                $fields[$name] = 'Expected ' . $spec['type'];
+                $fields[$name] = $coerced['message'] ?? ('Expected ' . $spec['type']);
                 continue;
             }
 
@@ -90,14 +94,40 @@ class Api_Param_Validator
     }
 
     /**
-     * Coerce a single raw value to a declared scalar type.
+     * Coerce a single raw value to a declared type. Scalars are coerced; a file is validated
+     * and passed through. An optional 'message' overrides the caller's generic field error.
      *
-     * @return array{ok: bool, value: mixed}
+     * @return array{ok: bool, value: mixed, message?: string}
      */
     private static function _coerce(string $type, mixed $value): array
     {
-        // Compound values never satisfy a scalar param.
-        if (is_array($value)) {
+        // A file param is validated, never coerced: the UploadedFile reaches the endpoint as
+        // it arrived. Handled before the is_array() guard below so an array of files reports
+        // the file-specific message rather than the generic scalar one.
+        if ($type === 'file') {
+            if (!($value instanceof UploadedFile)) {
+                return [
+                    'ok' => false,
+                    'value' => null,
+                    'message' => 'Expected a single uploaded file part (multipart/form-data)',
+                ];
+            }
+
+            if (!$value->isValid()) {
+                return [
+                    'ok' => false,
+                    'value' => null,
+                    'message' => 'File upload failed: ' . $value->getErrorMessage(),
+                ];
+            }
+
+            return ['ok' => true, 'value' => $value];
+        }
+
+        // Compound values never satisfy a scalar param. An UploadedFile is named explicitly
+        // because SplFileInfo::__toString() would otherwise let a multipart file part coerce
+        // silently into a string param as its temp PATH.
+        if (is_array($value) || $value instanceof UploadedFile) {
             return ['ok' => false, 'value' => null];
         }
 

@@ -140,6 +140,32 @@ class Api_Docs_Catalog {
     }
 
     /**
+     * The multipart file part an endpoint declares, or null when it declares none.
+     *
+     * ONE PREDICATE, read from the catalog rather than repeated at each site. A `file` param
+     * is POST-only, can never be a :route token and can never carry a default (all three are
+     * manifest-scan failures), so its presence is the whole test for "this endpoint takes
+     * multipart/form-data" - and the PART NAME is read from here rather than assumed, because
+     * nothing in the contract fixes it to 'file'.
+     */
+    static file_param(ep) {
+        for (const p of (ep?.api_params || [])) {
+            if (p.type === 'file') {
+                return p;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * True when the endpoint's request body is multipart/form-data rather than JSON.
+     */
+    static is_file_endpoint(ep) {
+        return !!Api_Docs_Catalog.file_param(ep);
+    }
+
+    /**
      * Whether the page is listing only what the adopted key may call.
      */
     static is_restricted() {

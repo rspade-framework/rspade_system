@@ -30,6 +30,7 @@ runs it as root before the application serves traffic.
 |---|---|---|
 | MySQL server | in the container | **yours** — `mysql-client` only |
 | Migrations at start | automatic | **never** — run them deliberately |
+| `migrate` snapshot/rollback | yes, against a local DB | **no** — nothing to snapshot |
 | OPcache | revalidate every request | revalidate every 10s |
 | PHP-FPM | root, `ondemand` | `www-data`, `dynamic` |
 | Browser libraries | yes (`rsx:debug`) | no |
@@ -62,6 +63,16 @@ it, `Task::dispatch()` succeeds and nothing ever runs it — silently.
 `supervisorctl`, copying the data directory, and starting it again. That
 requires MySQL to be a supervised program in the same container as PHP. Split it
 out and migration rollback stops working.
+
+That is also exactly why **prod runs migrations bare**: this image ships
+`mysql-client` only, so there is no mysqld to stop and `/var/lib/mysql` is not
+the database. `migrate` there takes no snapshot and performs no rollback, and
+prints the reason before it starts. It decides by the dev marker
+`/.rspade_container_dev` plus a local database host — not by `/.rspade_container`,
+which both targets carry. A restore into a data directory that is not the live
+database would report a successful rollback while the real database stayed
+broken, so it is neither attempted nor advertised. `rsx:man migrations`,
+SNAPSHOT PROTECTION.
 
 **php-fpm runs as root in the dev target.** The application tree is a bind mount
 from a machine whose file ownership we cannot predict; running as `www-data`

@@ -14,14 +14,17 @@ DESCRIPTION
        statements. Laravel's Schema builder is prohibited to ensure clarity,
        auditability, and prevent hidden behaviors.
 
-       The migrate command automatically handles snapshot protection in development
-       mode - no manual steps required.
+       The migrate command automatically handles snapshot protection wherever that
+       protection can actually be performed - no manual steps required. See SNAPSHOT
+       PROTECTION for the three conditions, and for what happens where they do not
+       hold.
 
 PHILOSOPHY
        1. Forward-only migrations - No rollbacks, no down() methods
        2. Raw SQL only - Direct MySQL statements, no abstractions
        3. Fail loud - Migrations must succeed or fail with clear errors
-       4. Automatic safety - Development mode creates snapshots automatically
+       4. Automatic safety - a snapshot is taken wherever one can be taken, and the
+          run says out loud when one cannot
 
 MIGRATION RULES
 
@@ -182,7 +185,8 @@ MIGRATION WORKFLOW
 
            php artisan migrate
 
-       The command automatically:
+       In the RSpade DEVELOPMENT container, against a local database, the command
+       automatically:
        1. Creates a database snapshot before running migrations
        2. Runs all pending migrations with validation
        3. Runs schema quality checks
@@ -192,13 +196,17 @@ MIGRATION WORKFLOW
        Failed migrations restore the database to its pre-migration state. Fix your
        migration files and run "php artisan migrate" again.
 
+       Development mode OUTSIDE any RSpade container is REFUSED, with the container
+       invocation printed. Development mode inside a PRODUCTION-target container, or
+       pointed at an external database host, runs bare - see SNAPSHOT PROTECTION.
+
    Debug/Production Mode (RSX_MODE=debug or production)
        Run:
 
            php artisan migrate
 
        In these modes:
-       - No snapshot protection (source code is read-only)
+       - No snapshot protection and no automatic rollback
        - Migrations run directly against the database
        - Schema normalization still runs
        - Constants and bundles are NOT regenerated (already done in development)
@@ -212,6 +220,48 @@ MIGRATION WORKFLOW
            php artisan migrate --framework-only
 
        This skips snapshot protection regardless of mode.
+
+SNAPSHOT PROTECTION
+
+       Snapshot protection is PHYSICAL, not logical. It stops the local supervised
+       mysqld, copies /var/lib/mysql, and - when a migration fails - wipes that
+       directory and copies the snapshot back. It is performed ONLY where all three
+       of these hold:
+
+       1. RSX_MODE=development.
+       2. The RSpade DEVELOPMENT container - /.rspade_container_dev, not merely
+          /.rspade_container. The PRODUCTION container carries the latter but ships
+          mysql-client ONLY: there is no mysqld to stop and no data directory to
+          copy, and `supervisorctl status mysql` there answers "no such process".
+       3. A LOCAL database host - localhost, 127.0.0.1, ::1, or a configured unix
+          socket. Pointed at an external database, /var/lib/mysql is not the
+          database being migrated at all.
+
+       Two further things suppress the snapshot for a given RUN even where the
+       mechanism is available: --framework-only (a schema-only subset used by
+       tooling) and the framework-internal --_no-snapshot (a caller that already
+       holds a full dump, e.g. rsx:db:dump_cache).
+
+       ANYWHERE ELSE THE RUN PROCEEDS BARE, and prints every reason protection is
+       off, so an operator can tell WHICH condition disabled the undo:
+
+           [WARNING]  Running WITHOUT snapshot protection - a failed migration will
+           NOT be rolled back.
+              - this is a production-target RSpade container (/.rspade_container_dev
+                absent), which ships mysql-client only - there is no local mysqld to
+                stop and no datadir to copy
+
+       WHY THE PRODUCTION CONTAINER NO LONGER SNAPSHOTS. It never could: that image
+       has no mysqld. The dangerous half was never the snapshot but the ROLLBACK - a
+       restore into a /var/lib/mysql that is not the live database would report a
+       successful rollback while the real database stayed broken. A false rollback is
+       worse than no rollback, so a rollback that cannot be performed is neither
+       attempted nor advertised.
+
+       php artisan migrate:restore, which performs that same restore by hand after an
+       INTERRUPTED migrate, applies the identical predicate and refuses - naming the
+       condition, and leaving the migration flag and any snapshot untouched - wherever
+       protection is unavailable.
 
 THE SCHEMA CACHE
 
@@ -467,19 +517,28 @@ ERROR MESSAGES
        Migration files exist that weren't created via make:migration:safe.
        Recreate them using the proper command.
 
-   "Snapshot-based migrations require Docker environment"
-       You're in development mode but not running in Docker. Either:
-       - Run in Docker, or
-       - Set RSX_MODE=debug in .env to skip snapshot protection
+   "Development-mode migrations run inside the RSpade container."
+       You're in development mode but not in an RSpade container. The refusal prints
+       the exact docker compose invocation to use instead. A deployed application
+       migrates in place normally; this refusal is development mode only.
 
-AUTOMATIC ROLLBACK (Development Mode)
+   "Snapshot restore is not available here: <reason>"
+       migrate:restore found an interrupted migration but this environment cannot
+       perform the restore (see SNAPSHOT PROTECTION). The migration flag and the
+       snapshot are left exactly as they are.
 
-   In development mode, if a migration fails:
+AUTOMATIC ROLLBACK
+
+   Where snapshot protection is engaged (see SNAPSHOT PROTECTION), if a migration
+   fails:
    1. The error is displayed
    2. Database is automatically restored to pre-migration state
    3. You can fix the migration and run "php artisan migrate" again
 
    This happens automatically - no manual intervention required.
+
+   Where protection is NOT engaged, there is no rollback of any kind, and the run
+   says so before it starts.
 
 SECURITY CONSIDERATIONS
 

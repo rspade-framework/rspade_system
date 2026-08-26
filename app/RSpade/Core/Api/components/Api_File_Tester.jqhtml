@@ -1,0 +1,61 @@
+<Define:Api_File_Tester tag="div">
+<% const ep = this.args.endpoint; %>
+<% const params = ep.api_params || []; %>
+<% const file_param = Api_Docs_Catalog.file_param(ep); %>
+<% const path_params = params.filter(p => ep.pattern.indexOf(':' + p.name) !== -1); %>
+<% const field_params = params.filter(p => ep.pattern.indexOf(':' + p.name) === -1 && p.type !== 'file'); %>
+<% const size_label = Ajax.max_file_size_human(); %>
+
+<div class="Api_File_Tester__request" $sid="form">
+    <div class="Api_File_Tester__reqline">
+        <span class="Api_File_Tester__verb">POST</span>
+        <code class="Api_File_Tester__pattern"><%= ep.pattern %></code>
+        <span class="Api_File_Tester__encoding">multipart/form-data</span>
+    </div>
+
+    <% if (path_params.length) { %>
+        <div class="Api_File_Tester__group">
+            <div class="Api_File_Tester__group-title">Path parameters</div>
+            <% for (const p of path_params) { %>
+                <div class="Api_File_Tester__field">
+                    <label class="Api_File_Tester__label"><%= p.name %><span class="Api_File_Tester__req-mark">*</span></label>
+                    <%!= api_tester_input(p, 'Api_File_Tester') %>
+                </div>
+            <% } %>
+        </div>
+    <% } %>
+
+    <div class="Api_File_Tester__group">
+        <div class="Api_File_Tester__group-title">File part</div>
+        <div class="Api_File_Tester__field">
+            <label class="Api_File_Tester__label"><%= file_param.name %><span class="Api_File_Tester__req-mark">*</span></label>
+            <input type="file" $sid="file" class="Api_File_Tester__file" data-param="<%= file_param.name %>">
+        </div>
+        <%-- The ceiling is read from the framework, never written into this label: a typed
+             number here would be wrong the day the limit moves and nothing would break to
+             say so. "Unlimited" is what an uncapped install reads back. --%>
+        <div class="Api_File_Tester__hint">Maximum upload size: <%= size_label %></div>
+    </div>
+
+    <% if (field_params.length) { %>
+        <div class="Api_File_Tester__group">
+            <div class="Api_File_Tester__group-title">Form fields</div>
+            <% for (const p of field_params) { %>
+                <div class="Api_File_Tester__field">
+                    <label class="Api_File_Tester__label"><%= p.name %><% if (p.required) { %><span class="Api_File_Tester__req-mark">*</span><% } %></label>
+                    <%!= api_tester_input(p, 'Api_File_Tester') %>
+                </div>
+            <% } %>
+        </div>
+    <% } %>
+
+    <div class="Api_File_Tester__actions">
+        <button type="button" $sid="send" class="Api_File_Tester__send"><%!= api_icon('play') %><span>Send request</span></button>
+        <span $sid="key_hint" class="Api_File_Tester__key-hint"></span>
+    </div>
+</div>
+
+<div $sid="response" class="Api_File_Tester__response">
+    <div class="Api_File_Tester__response-empty">Choose a file and send the request to see the response.</div>
+</div>
+</Define:Api_File_Tester>

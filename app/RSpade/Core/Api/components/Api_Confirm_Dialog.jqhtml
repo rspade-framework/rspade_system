@@ -1,0 +1,23 @@
+<%--
+Api_Confirm_Dialog - the console's own yes/no dialog.
+
+FRAMEWORK-OWNED ON PURPOSE. The console runs inside an application's page, but it may not
+borrow that application's dialog system: an app is free to restyle Modal, replace it, or not
+ship one at all, and a framework feature that reached for it would break on exactly the
+install that customised the most. So the console asks its own question, in its own markup,
+painted from its own --api-* custom properties.
+
+It is a CONFIRM and nothing else - two buttons, one boolean. It is not a modal system, and it
+must not grow into one; a second kind of question belongs to whichever feature needs it.
+--%>
+<Define:Api_Confirm_Dialog tag="div">
+<div $sid="backdrop" class="Api_Confirm_Dialog__backdrop"></div>
+<div $sid="panel" class="Api_Confirm_Dialog__panel" role="alertdialog" aria-modal="true" aria-label="<%= this.args.title %>">
+    <div class="Api_Confirm_Dialog__title"><%= this.args.title %></div>
+    <div class="Api_Confirm_Dialog__body"><%= this.args.body %></div>
+    <div class="Api_Confirm_Dialog__actions">
+        <button type="button" $sid="cancel" class="Api_Confirm_Dialog__btn"><%= this.args.cancel_label %></button>
+        <button type="button" $sid="confirm" class="Api_Confirm_Dialog__btn Api_Confirm_Dialog__btn--confirm"><%= this.args.confirm_label %></button>
+    </div>
+</div>
+</Define:Api_Confirm_Dialog>

@@ -98,16 +98,20 @@ class Api_Key_Bar extends Component {
      * they can reach. A button that does that on a single click, next to a text box, is one
      * mis-click from a key nobody meant to create.
      *
+     * ASKED WITH THE CONSOLE'S OWN DIALOG, never the application's Modal: this is framework
+     * code running inside somebody else's page, and an app's dialog system is not the
+     * framework's to depend on. See Api_Confirm_Dialog.
+     *
      * The minted key is stored down the SAME path a pasted one takes, so 'apidocs:key_changed'
      * broadcasts and every Api_Tester on the page picks it up with no special case.
      */
     async _mint() {
-        const confirmed = await Modal.confirm(
-            'Create a temporary API key?',
-            'This creates a real API key on your own user account, valid for one hour. It is held in this browser tab only, and you can revoke it sooner from Settings > API Keys.',
-            'Create Key',
-            'Cancel'
-        );
+        const confirmed = await Api_Confirm_Dialog.ask({
+            title: 'Create a temporary API key?',
+            body: 'This creates a real API key on your own user account, valid for one hour. It is held in this browser tab only, and you can revoke it sooner from Settings > API Keys.',
+            confirm_label: 'Create Key',
+            cancel_label: 'Cancel',
+        });
 
         if (!confirmed) {
             return;

@@ -38,18 +38,24 @@
 
 ```bash
 php artisan make:migration:safe     # Create whitelisted migration
-php artisan migrate                 # Run migrations (auto-snapshot in dev mode)
+php artisan migrate                 # Run migrations (snapshot-protected in the dev container,
+                                    #   against a local database - see man migrations)
 php artisan migrate:status          # View pending migrations
 ```
 
 ## Mode-Aware Behavior
 
-**Development mode** (`RSX_MODE=development`):
+**Development mode** (`RSX_MODE=development`), in the RSpade DEV container, against a
+LOCAL database host - all three required (`Maint_Migrate::snapshot_protection_available()`):
 - Automatically creates database snapshot before migrations
 - On success: commits changes, regenerates constants, recompiles bundles
 - On failure: automatically rolls back to snapshot
 
+Anywhere else - the PRODUCTION container included, since it ships `mysql-client` only -
+the run proceeds bare and prints every reason protection is off. See
+`rsx:man migrations`, SNAPSHOT PROTECTION.
+
 **Debug/Production mode** (`RSX_MODE=debug` or `production`):
-- No snapshot protection (source code is read-only)
+- No snapshot protection and no rollback
 - Schema normalization still runs
 - Constants and bundles NOT regenerated

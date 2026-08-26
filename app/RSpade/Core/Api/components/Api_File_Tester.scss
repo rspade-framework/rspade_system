@@ -1,0 +1,279 @@
+// Api_File_Tester - the multipart "Try it" panel.
+//
+// Deliberately the same shell as Api_Tester (same border, same --api-* palette, same status
+// badges), under this component's own BEM prefix. A component owns its whole look here, and
+// the console loads no theme and no framework of any kind - the only shared vocabulary is the
+// --api-* custom properties in Api_Docs_Page.scss.
+.Api_File_Tester {
+    border: 1px solid var(--api-border);
+    border-radius: 8px;
+    overflow: hidden;
+
+    &__request {
+        padding: 16px;
+        background: var(--api-bg);
+    }
+
+    &__reqline {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+    }
+
+    &__verb {
+        font-family: var(--api-mono);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        padding: 3px 8px;
+        border-radius: 5px;
+        color: #0D1117;
+        background: var(--api-post);
+    }
+
+    &__pattern {
+        font-family: var(--api-mono);
+        font-size: 13px;
+        color: var(--api-text);
+    }
+
+    // The transport, stated on the request line. It is the whole reason this panel exists
+    // rather than the JSON one, and a reader comparing it to the samples should not have to
+    // infer it from the presence of a file picker.
+    &__encoding {
+        font-family: var(--api-mono);
+        font-size: 11px;
+        color: var(--api-muted);
+        border: 1px solid var(--api-border);
+        border-radius: 5px;
+        padding: 2px 7px;
+    }
+
+    &__group {
+        margin-bottom: 14px;
+    }
+
+    &__group-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: var(--api-muted);
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+
+    &__field {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 8px;
+    }
+
+    &__label {
+        flex: 0 0 160px;
+        font-family: var(--api-mono);
+        font-size: 12.5px;
+        color: var(--api-text);
+        text-align: right;
+    }
+
+    &__req-mark {
+        color: var(--api-danger);
+        margin-left: 2px;
+    }
+
+    &__hint {
+        margin-left: 172px;
+        font-size: 12px;
+        color: var(--api-muted);
+    }
+
+    &__input {
+        flex: 1 1 auto;
+        min-width: 0;
+        background: var(--api-surface);
+        color: var(--api-text);
+        border: 1px solid var(--api-border);
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-family: var(--api-mono);
+        font-size: 13px;
+
+        &:focus {
+            outline: none;
+            border-color: var(--api-accent);
+            box-shadow: 0 0 0 3px var(--api-accent-soft);
+        }
+
+        // Spinners on an int/float param are noise: these are API values typed or pasted,
+        // not quantities nudged. Two rules because the vendor spellings differ; the margin
+        // reset stops WebKit keeping the buttons' gutter after hiding them.
+        &[type='number'] {
+            appearance: textfield;
+            -moz-appearance: textfield;
+
+            &::-webkit-outer-spin-button,
+            &::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+        }
+    }
+
+    // The file picker. The browser owns the button inside it, so only the box around it and
+    // the button's own colours are set here - enough to stop a bright native control from
+    // being the loudest thing on a dark page.
+    &__file {
+        flex: 1 1 auto;
+        min-width: 0;
+        background: var(--api-surface);
+        color: var(--api-text);
+        border: 1px solid var(--api-border);
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-family: var(--api-mono);
+        font-size: 13px;
+
+        &:focus {
+            outline: none;
+            border-color: var(--api-accent);
+            box-shadow: 0 0 0 3px var(--api-accent-soft);
+        }
+
+        &::file-selector-button {
+            appearance: none;
+            border: 1px solid var(--api-border);
+            border-radius: 5px;
+            background: var(--api-bg);
+            color: var(--api-text);
+            font-family: inherit;
+            font-size: 12px;
+            padding: 5px 12px;
+            margin-right: 12px;
+            cursor: pointer;
+        }
+
+        &::file-selector-button:hover {
+            border-color: var(--api-accent);
+        }
+    }
+
+    &__actions {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-top: 4px;
+    }
+
+    &__send {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        appearance: none;
+        border: none;
+        background: var(--api-accent);
+        color: #0D1117;
+        font-weight: 600;
+        font-size: 13px;
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+
+        &:hover {
+            background: var(--api-accent-hover);
+        }
+    }
+
+    &__key-hint {
+        font-size: 12px;
+        color: var(--api-muted);
+
+        &--warn {
+            color: var(--api-warn);
+        }
+    }
+
+    // -- Response ---------------------------------------------------------
+    // Markup from api_docs_response.js, which parameterises the BEM prefix - these rules
+    // match the generic tester's on purpose: one look for "here is what the server said".
+    &__response {
+        border-top: 1px solid var(--api-border);
+        background: var(--api-surface);
+    }
+
+    &__response-empty {
+        padding: 16px;
+        color: var(--api-muted);
+        font-size: 13px;
+    }
+
+    &__response-note {
+        padding: 14px 16px;
+        font-size: 13px;
+
+        &--warn {
+            color: var(--api-warn);
+        }
+
+        &--error {
+            color: var(--api-danger);
+        }
+    }
+
+    &__response-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--api-border);
+    }
+
+    &__status {
+        font-family: var(--api-mono);
+        font-size: 12px;
+        font-weight: 700;
+        padding: 3px 10px;
+        border-radius: 5px;
+        color: #0D1117;
+
+        &--2xx {
+            background: var(--api-get);
+        }
+
+        &--3xx {
+            background: var(--api-accent);
+        }
+
+        &--4xx {
+            background: var(--api-warn);
+        }
+
+        &--5xx {
+            background: var(--api-danger);
+        }
+    }
+
+    &__timing {
+        font-family: var(--api-mono);
+        font-size: 12px;
+        color: var(--api-muted);
+    }
+
+    &__response-pre {
+        margin: 0;
+        padding: 16px;
+        overflow-x: auto;
+        max-height: 420px;
+
+        code {
+            font-family: var(--api-mono);
+            font-size: 12.5px;
+            line-height: 1.6;
+            background: transparent;
+            padding: 0;
+            white-space: pre;
+        }
+    }
+}

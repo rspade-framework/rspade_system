@@ -66,17 +66,50 @@ Error shape is always `{"error":{"code","message","fields"?}}`.
 
 Keys are minted and revoked at **Settings > API Keys** (the plaintext key is shown once). Missing header -> 401, bad key -> 401, **both before route match** - so a bad key cannot be used to probe which paths exist.
 
-From the CLI, for provisioning or auditing without a browser:
+`_api_keys.user_role_id` + `scopes` are RESERVED, NOT enforced. Do not build authorization on them; use `#[Auth]` and record-level checks like everywhere else.
+
+## The `rsx:api:*` CLI
+
+**The namespace exists so a SCRIPT can grant itself access to this API and then use it** — an importer or an exporter mints a key, calls `/api/vN` with `Authorization: Bearer <key>` like any other client, and exits. There is no privileged CLI channel into the API: the CLI mints a credential, and the script speaks the same HTTP the outside world speaks.
 
 ```bash
-php artisan rsx:api:key:create <user> [--name=] [--expires="30 days"] [--environment=live|test]
-php artisan rsx:api:key:list   <user> [--all]      # active only unless --all
-php artisan rsx:api:key:delete <id>   [--purge] [--force]
+php artisan rsx:api:key:create --user=<id|email> [--site=] [--name=] [--expires=] [--environment=live|test] [--json]
+php artisan rsx:api:key:temp   --user=<id|email> [--site=] [--expires="1 hour"] [--json]
+php artisan rsx:api:key:list   --user=<id|email> [--site=] [--all] [--json]
+php artisan rsx:api:key:delete <id> [--purge] [--force] [--json]
+php artisan rsx:api:openapi    [--user=<id|email>] [--site=] [--compact]
 ```
 
-`<user>` is a users.id or an email. `--expires` takes an ISO datetime or a relative span and has **no default** - no expiry means "until revoked". `delete` **revokes** and keeps the row (request-log rows reference `api_key_id`); `--purge` removes it outright.
+- **`--user` is required and has NO default** — it is an option because every framework command spells it that way (`rsx:debug`, `rsx:ajax`), and the requirement is enforced in the command, naming the flag. A users.id or an email.
+- **`--site` disambiguates, it does not select.** `users.id` is a global PK, so a numeric `--user` needs no site (a mismatched `--site` is refused). `users.email` is not unique across sites, so an email matching in two sites is **refused with the candidates listed** rather than a tenant being guessed.
+- **`--expires`** takes an ISO datetime or a relative span. On `create` there is **no default** — no expiry means "until revoked". `temp` defaults to `1 hour` and names every key it mints **`Temporary (CLI)`**, so `list` and Settings > API Keys both say what it is.
+- **`delete` revokes** and keeps the row (request-log rows reference `api_key_id`); `--purge` removes it outright. Under `--json` it **requires `--force`** — a prompt would write into the stream the script is parsing and then block forever.
+- **Minting is NOT gated on `users.is_api_access_enabled`** (shell access outranks any in-app permission, and a provisioning script must be able to mint for a user it is about to enable) — but `create`/`temp` **warn**, and report `api_access_enabled: false`.
 
-`_api_keys.user_role_id` + `scopes` are RESERVED, NOT enforced. Do not build authorization on them; use `#[Auth]` and record-level checks like everywhere else.
+**The `--json` envelope**, one shape for every `key:*` command, stdout carrying JSON and nothing else:
+
+```json
+{"ok": true,  "command": "rsx:api:key:create", "data": {"key": "rsx_live_...", "api_key": {...}, "user": {...}}}
+{"ok": false, "command": "rsx:api:key:create", "error": {"code": "user_not_found", "message": "..."}}
+```
+
+A failure is **still JSON and still exits non-zero**. `error.code` is machine-stable: `user_required`, `user_not_found`, `user_ambiguous`, `user_site_mismatch`, `site_invalid`, `site_without_user`, `expires_invalid`, `expires_in_past`, `environment_invalid`, `key_not_found`, `confirmation_required`.
+
+**`rsx:api:openapi` has no `--json`** — it has only a machine form, so a flag that can only ever be passed is noise. A successful run emits the bare document (generators read that shape; wrapping it would mean every consumer unwrapping it); errors use the envelope above. Pretty-printed unless `--compact`. `--user` narrows it to what that identity's `#[Auth]` gates admit, via `Api_Tester_Key::accessible_targets_for_user()`.
+
+**End to end** — an importer that grants itself access, uses it, and lets the credential expire:
+
+```bash
+KEY=$(php artisan rsx:api:key:temp --user=importer@example.com --expires="2 hours" --json | jq -r .data.key)
+
+curl -s -H "Authorization: Bearer $KEY" https://app.example.com/api/v1/clients | jq .
+
+# Nothing to clean up: the key stops working in two hours.
+# To end it sooner: php artisan rsx:api:key:delete <id> --force
+```
+
+Full flag reference, exit codes and the error-code roster: `rsx:man external_api`, under API KEYS.
+
 
 ## Param validation
 
@@ -95,7 +128,7 @@ The docs GROUP by (verb, path with the `vN` stripped) and show the newest versio
 
 ## Docs and tester
 
-- `/apidocs` (+ `/apidocs/vN`): per-endpoint cards, generated curl/php/js/python/powershell samples, a sidebar filter, and a live tester (paste a key created in Settings > API Keys; the page never mints one).
+- `/apidocs` (+ `/apidocs/vN`): per-endpoint cards, generated curl/php/js/python/powershell samples, a sidebar filter, and a live tester (paste a key created in Settings > API Keys, or let the page mint itself a one-hour `API Tester (temporary)` key).
 - **The application owns the route and the gate.** The framework declares no route and has no visibility setting — the console exists only if you route to it, protected by whatever `#[Auth]` that route carries:
 
 ```php

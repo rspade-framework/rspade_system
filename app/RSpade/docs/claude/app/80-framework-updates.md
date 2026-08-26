@@ -15,7 +15,7 @@ The pull then **commits the new submodule pointer** in your repo — one commit 
 
 **Cloning your app needs the submodule**: `git clone --recurse-submodules`, or `git submodule update --init --recursive` after the fact. A checkout with an empty `system/` is a missing submodule, not a broken framework.
 
-**Run `php artisan migrate` AFTER every completed pull.** A pull can bring migrations from other environments; until `migrate` runs, the code and the schema disagree. The full user-requested pull sequence is: `php artisan rsx:git pull` -> `php artisan migrate` (safe when nothing is pending — it simply reports nothing to migrate; in development the automatic snapshot protects the database). **Do this whenever the user asks for a pull, without being asked separately.**
+**Run `php artisan migrate` AFTER every completed pull.** A pull can bring migrations from other environments; until `migrate` runs, the code and the schema disagree. The full user-requested pull sequence is: `php artisan rsx:git pull` -> `php artisan migrate` (safe when nothing is pending — it simply reports nothing to migrate; in the dev container, against a local database, the automatic snapshot protects it). **Do this whenever the user asks for a pull, without being asked separately.**
 
 **Set a LONG command timeout (10 minutes / 600000ms) when running `rsx:framework:pull`** — it fetches the distribution and runs the whole rebuild chain, and killing it mid-run leaves a partial update. This is a TOOL-CALL budget, not a timeout in code; the no-timeout mandate is unaffected.
 

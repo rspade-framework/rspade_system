@@ -1,13 +1,17 @@
 // Page-level reset for the API reference console.
 //
-// The console's bundle is deliberately hermetic - no Bootstrap, no application theme - so
-// nothing else zeroes the user agent's default 8px body margin, which shows as a gap around
-// the whole console.
+// The console's bundle is deliberately hermetic - it depends only on framework files, and no
+// Bootstrap or application theme reaches it - so the handful of normalisations every CSS
+// framework performs have to be performed HERE or not at all. Each one below was measured as
+// a real regression when the app's Bootstrap build was removed from the bundle's includes,
+// not added speculatively.
 //
-// A bare element selector rather than a component-scoped block, because this is genuinely a
-// DOCUMENT concern: Api_Docs_Console is the only thing on the page (Api_Docs_App.blade.php
+// A bare element selector rather than a component-scoped block, because these are genuinely
+// DOCUMENT concerns: Api_Docs_Console is the only thing on the page (Api_Docs_App.blade.php
 // renders nothing else), so there is no other content for these rules to reach. Any future
 // rule here has to keep meeting that bar.
+
+// The user agent's default 8px body margin shows as a gap around the whole console.
 //
 // The background is painted on the body as well as on .Api_Docs_Page because the body is
 // what shows in the overscroll gutter, which no component can reach. It is a literal rather
@@ -16,4 +20,46 @@
 body {
     margin: 0;
     background: #0D1117;
+
+    // Typography is restated here as well as on .Api_Docs_Page so nothing on this page can
+    // ever inherit the user agent's Times New Roman at its default line-height - a stray text
+    // node, a detached element mounted from JS, or anything that renders outside the console
+    // root. Literals for the same reason the background is one: the palette is declared on
+    // .Api_Docs_Page, not :root.
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #E6EDF3;
+}
+
+// A link says what colour it is or takes the colour of its surroundings. The user agent's own
+// #0000EE is unreadable on this page's near-black, so an anchor whose component forgot to
+// declare a colour must not be handed it.
+a {
+    color: inherit;
+}
+
+// Border-box everywhere. Every width in this console's SCSS is written as the size the box
+// should OCCUPY - a 320px key input, a 100%-wide tester field inside a padded card - which is
+// only true under border-box. Under the user agent's content-box those same declarations add
+// their padding and border on top and the field overflows its container.
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+// Form controls do not inherit type from their surroundings in any browser: left alone, a
+// button renders in the UA's own font at the UA's own line-height, so the console's buttons
+// and inputs come out in Arial, shorter than the components' padding was drawn for, next to
+// text in the page's own stack.
+button,
+input,
+optgroup,
+select,
+textarea {
+    font-family: inherit;
+    font-size: inherit;
+    line-height: inherit;
+    margin: 0;
 }

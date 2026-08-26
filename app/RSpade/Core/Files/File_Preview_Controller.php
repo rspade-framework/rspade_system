@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Files;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Response;
+use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
@@ -97,6 +98,14 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     #[Route('/_preview/pdf/:key', methods: ['GET'])]
     public static function pdf_rendition(Request $request, array $params = [])
     {
+        // An API client may present its key here instead of a cookie session; this is a no-op
+        // for a browser request, and a bad key denies rather than degrading to anonymous.
+        // See Rsx_Api_Bearer::authenticate_web_request().
+        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
+        if ($bearer_denied !== null) {
+            return $bearer_denied;
+        }
+
         $key = $params['key'] ?? null;
         if (!$key) {
             abort(404, 'File not found');

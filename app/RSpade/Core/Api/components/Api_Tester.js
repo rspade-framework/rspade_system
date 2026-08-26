@@ -210,39 +210,10 @@ class Api_Tester extends Component {
         }
         const ms = Math.round(performance.now() - started);
 
-        let pretty = text;
-        try {
-            pretty = JSON.stringify(JSON.parse(text), null, 2);
-        } catch (e) {
-            // Non-JSON body: show as-is.
-        }
-
-        this._render_response(res.status, res.statusText, ms, pretty);
+        api_render_response(this.$sid('response'), 'Api_Tester', res.status, res.statusText, ms, api_pretty_body(text));
     }
 
     _render_message(message, level) {
-        const cls = 'Api_Tester__response-note Api_Tester__response-note--' + (level || 'warn');
-        this.$sid('response').html('<div class="' + cls + '">' + html(message) + '</div>');
-    }
-
-    _render_response(status, status_text, ms, pretty) {
-        const bucket = Math.floor(status / 100);
-        const badge_cls = 'Api_Tester__status--' + bucket + 'xx';
-
-        const parts = [];
-        parts.push('<div class="Api_Tester__response-head">');
-        parts.push('<span class="Api_Tester__status ' + badge_cls + '">' + status + ' ' + html(status_text || '') + '</span>');
-        parts.push('<span class="Api_Tester__timing">' + ms + ' ms</span>');
-        parts.push('</div>');
-        parts.push('<pre class="Api_Tester__response-pre"><code class="language-json"></code></pre>');
-
-        const $resp = this.$sid('response');
-        $resp.html(parts.join(''));
-
-        const code_el = $resp.find('code')[0];
-        code_el.textContent = pretty;
-        if (typeof hljs !== 'undefined') {
-            hljs.highlightElement(code_el);
-        }
+        api_render_response_note(this.$sid('response'), 'Api_Tester', message, level);
     }
 }

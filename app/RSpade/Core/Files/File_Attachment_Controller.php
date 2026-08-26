@@ -6,17 +6,16 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Response;
 use Symfony\Component\HttpFoundation\StreamedResponse;
+use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
-use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
-use App\RSpade\Core\Files\Unparseable_Upload_Exception;
+use App\RSpade\Core\Files\Rsx_File_Upload;
 use App\RSpade\Core\Files\Zip_Download_Request_Model;
 use App\RSpade\Core\Files\Zip_Stream;
-use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
@@ -226,20 +225,10 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Portal_Route('/_upload', methods: ['POST'])]
     public static function upload(Request $request, array $params = [])
     {
-        // MANDATORY GATE. trigger_gate() defaults OPEN when nothing is listening - correct for
-        // an optional gate, catastrophic for this one (an app that never wrote a handler would
-        // be running an anonymous upload endpoint). Who may upload is an APPLICATION decision
-        // the framework cannot guess, so an unregistered gate is a MISCONFIGURED APPLICATION,
-        // not a bad request: fail loud (5xx), before the request is examined at all.
-        if (!Event_Registry::has_handlers('file.upload.authorize')) {
-            throw new \RuntimeException(
-                'File uploads are disabled: no file.upload.authorize gate handler is registered. '
-                . 'Uploading is an application authorization decision the framework will not make '
-                . 'for you (at minimum, require a logged-in user), so /_upload refuses to accept a '
-                . 'file until the application registers a #[OnEvent(\'file.upload.authorize\')] '
-                . 'handler in /rsx/handlers/. See: php artisan rsx:man file_upload'
-            );
-        }
+        // The mandatory authorize-gate precondition and the whole ingest sequence below live in
+        // Rsx_File_Upload, shared verbatim with POST /api/v1/files. Only the transport checks
+        // and the response vocabulary are this endpoint's own.
+        Rsx_File_Upload::require_authorize_gate();
 
         // Validate the file BEFORE the gate: the gate payload carries the uploaded file itself
         // (and its temp path), so a handler can inspect the real bytes and reject on content.
@@ -280,113 +269,33 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             ], 400);
         }
 
-        // Size ceiling. Checked BEFORE the authorize gate: the gate is application code that
-        // may read the real bytes, and there is no reason to run it over a file we have
-        // already decided to refuse. 0 or null disables the framework ceiling entirely, which
-        // leaves only PHP's ini limits.
-        $max_file_size = (int) config('rsx.files.max_file_size', 0);
-        if ($max_file_size > 0 && $file->getSize() > $max_file_size) {
-            return response()->json([
-                'success' => false,
-                'error' => 'File is too large: ' . bytes_to_human((int) $file->getSize())
-                    . ' exceeds the ' . bytes_to_human($max_file_size) . ' limit.',
-            ], 413);
-        }
-
-        // Event: file.upload.authorize (gate) - First non-true response halts.
-        // 'user' is realm-honest: /_upload serves BOTH universes, so a portal request reports
-        // the portal user, never a staff facade read that would be null for a logged-in
-        // portal uploader.
-        //
-        // The fork is on the REALM OF THE REQUEST, not on who is signed in. "A portal user
-        // is logged in" is an identity test and gets BOTH directions wrong: an anonymous
-        // portal upload would be handed the staff user, and a staff upload from a browser
-        // that also holds a portal cookie would be authorized as the PORTAL user. See
+        // The realm fork. /_upload serves BOTH universes, so the gate user and the site both
+        // follow the REALM OF THE REQUEST, never "who is logged in": "a portal user is logged
+        // in" is an identity test and gets both directions wrong (an anonymous portal upload
+        // would be handed the staff user, and a staff upload from a browser that also holds a
+        // portal cookie would be authorized as the PORTAL user). See
         // docs.dev/audits/portal_realm_session_audit_2026_08_09.md.
-        $is_portal = Rsx_Portal::is_portal_request();
+        $outcome = Rsx_File_Upload::accept(
+            $request,
+            $file,
+            Rsx_Portal::is_portal_request(),
+            $request->input('filename_override'),
+            $params
+        );
 
-        $auth_result = Rsx::trigger_gate('file.upload.authorize', [
-            'request' => $request,
-            'user' => $is_portal
-                ? Portal_Session::get_portal_user()
-                : Session::get_user(),
-            'params' => $params,
-            'file' => $file,
-            'filename' => $file->getClientOriginalName(),
-            'size' => (int) $file->getSize(),
-            'mime_type' => $file->getMimeType(),
-            'extension' => strtolower($file->getClientOriginalExtension()),
-            'tmp_path' => $file->getRealPath(),
-        ]);
+        if (!$outcome['ok']) {
+            // A gate handler's refusal (error JSON, redirect, etc) is returned verbatim.
+            if ($outcome['gate_denied']) {
+                return $outcome['gate_response'];
+            }
 
-        if ($auth_result !== true) {
-            // Handler returned a response (error JSON, redirect, etc)
-            return $auth_result;
-        }
-
-        // site_id is derived ENTIRELY server-side — client input is never consulted.
-        // Trusting a posted site_id was a cross-tenant write primitive (a logged-in
-        // caller could stamp an attachment into another tenant), and it forced app JS
-        // to care about tenancy. /_upload serves BOTH universes, so: portal REQUEST ->
-        // Portal_Session's site (declared by the app in Portal_Main::init(), and it
-        // throws rather than guess), otherwise the staff Session's site — the same
-        // realm fork as the gate payload above, and for the same reason.
-        $site_id = $is_portal
-            ? Portal_Session::get_site_id()
-            : Session::get_site_id();
-
-        if (!$site_id) {
             return response()->json([
                 'success' => false,
-                'error' => 'Unable to resolve a site for this upload',
-            ], 400);
+                'error' => $outcome['error'],
+            ], $outcome['status']);
         }
 
-        $upload_params = [
-            'site_id' => $site_id,
-            'filename_override' => $request->input('filename_override'),
-        ];
-
-        // Remove null values
-        $upload_params = array_filter($upload_params, fn($v) => $v !== null);
-
-        // Event: file.upload.params (filter) - Allow handlers to modify params
-        // Note: Handlers can still add fileable_* params if needed for programmatic uploads
-        $upload_params = Rsx::trigger_filter('file.upload.params', $upload_params);
-
-        // Security: Files uploaded via web endpoint should NOT be pre-assigned to records
-        // User-provided fileable_* params are ignored. Use attach_to()/add_to() after upload.
-        // This prevents users from attaching files to records they don't own.
-        unset($upload_params['fileable_type']);
-        unset($upload_params['fileable_id']);
-        unset($upload_params['fileable_category']);
-        unset($upload_params['fileable_type_meta']);
-        unset($upload_params['fileable_order']);
-
-        // Create file attachment
-        try {
-            $attachment = File_Attachment_Model::create_from_upload($file, $upload_params);
-        } catch (Unparseable_Upload_Exception $e) {
-            // Strict reject-mode (config rsx.attachments.reject_unparseable_images): the image bytes
-            // could not be parsed. create_from_upload() already cleaned up the orphan row + blob, so
-            // just surface a 4xx validation error to the client.
-            return response()->json([
-                'success' => false,
-                'error' => 'This image could not be processed and was not accepted.',
-            ], 422);
-        } catch (\Exception $e) {
-            return response()->json([
-                'success' => false,
-                'error' => 'File upload failed: ' . $e->getMessage(),
-            ], 500);
-        }
-
-        // Event: file.upload.complete (action) - Logging, notifications, etc
-        Rsx::trigger_action('file.upload.complete', [
-            'attachment' => $attachment,
-            'request' => $request,
-            'params' => $params,
-        ]);
+        $attachment = $outcome['attachment'];
 
         // Build response data
         $response_data = [
@@ -435,6 +344,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_download/:key', methods: ['GET'])]
     public static function download_file(Request $request, array $params = [])
     {
+        // An API client may present its key here instead of a cookie session; this is a no-op
+        // for a browser request, and a bad key denies rather than degrading to anonymous.
+        // See Rsx_Api_Bearer::authenticate_web_request().
+        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
+        if ($bearer_denied !== null) {
+            return $bearer_denied;
+        }
+
         $key = $params['key'] ?? null;
         if (!$key) {
             abort(404, 'File not found');
@@ -510,6 +427,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_inline/:key', methods: ['GET'])]
     public static function inline(Request $request, array $params = [])
     {
+        // An API client may present its key here instead of a cookie session; this is a no-op
+        // for a browser request, and a bad key denies rather than degrading to anonymous.
+        // See Rsx_Api_Bearer::authenticate_web_request().
+        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
+        if ($bearer_denied !== null) {
+            return $bearer_denied;
+        }
+
         $key = $params['key'] ?? null;
         if (!$key) {
             abort(404, 'File not found');
@@ -620,6 +545,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_download_zip/:key', methods: ['GET'])]
     public static function download_multiple_zip(Request $request, array $params = [])
     {
+        // An API client may present its key here instead of a cookie session; this is a no-op
+        // for a browser request, and a bad key denies rather than degrading to anonymous.
+        // See Rsx_Api_Bearer::authenticate_web_request().
+        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
+        if ($bearer_denied !== null) {
+            return $bearer_denied;
+        }
+
         // -----------------------------------------------------------------------------
         // PHASE 1 - resolve the request, then validate and authorize everything up front
         // (no bytes streamed yet).
@@ -1145,6 +1078,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_thumbnail/preset/:key/:preset_name', methods: ['GET'])]
     public static function thumbnail_preset(Request $request, array $params = [])
     {
+        // An API client may present its key here instead of a cookie session; this is a no-op
+        // for a browser request, and a bad key denies rather than degrading to anonymous.
+        // See Rsx_Api_Bearer::authenticate_web_request().
+        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
+        if ($bearer_denied !== null) {
+            return $bearer_denied;
+        }
+
         $key = $params['key'] ?? null;
         $preset_name = $params['preset_name'] ?? null;
 
@@ -1214,6 +1155,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     #[Route('/_thumbnail/dynamic/:key/:type/:width/:height?', methods: ['GET'])]
     public static function thumbnail(Request $request, array $params = [])
     {
+        // An API client may present its key here instead of a cookie session; this is a no-op
+        // for a browser request, and a bad key denies rather than degrading to anonymous.
+        // See Rsx_Api_Bearer::authenticate_web_request().
+        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
+        if ($bearer_denied !== null) {
+            return $bearer_denied;
+        }
+
         $key = $params['key'] ?? null;
         $type = $params['type'] ?? 'fit';
         $width = (int)($params['width'] ?? 0);

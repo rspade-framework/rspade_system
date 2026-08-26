@@ -10,12 +10,12 @@ use Throwable;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Param_Validator;
 use App\RSpade\Core\Api\Api_Request_Log_Model;
+use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Session\Session;
 
 /**
  * Api_Dispatcher - request pipeline for external REST API endpoints (/api/vN/...).
@@ -208,67 +208,17 @@ class Api_Dispatcher
     }
 
     /**
-     * Authenticate the Bearer key and establish the headless Session identity.
+     * Authenticate the Bearer key for this dispatch.
      *
-     * Resolves the key's user WITHOUT site scope (no site identity exists yet), and
-     * refuses unless that user is BOTH active and permitted to use the API
-     * (users.is_api_access_enabled - the same column Session::has_api_access() reads).
-     * The refusal happens BEFORE _set_api_identity(), so a refused user never gets an
-     * identity established, and it reuses the one uniform message every other key
-     * failure returns: a caller learns that the key does not work, never WHY. On
-     * success, sets the API identity and throttles the last_used_at touch. Returns
-     * ['error' => null, 'key' => ..., 'user' => ...] on success, or
-     * ['error' => [$code, $message], ...] on failure (uniform 401).
+     * The bearer rules themselves live in Rsx_Api_Bearer, which the file-serving web routes
+     * share - there is exactly one implementation of what a key must satisfy. This wrapper
+     * exists so the dispatch pipeline above reads in one vocabulary.
      *
      * @return array{error: ?array, key: ?Api_Key_Model, user: ?User_Model}
      */
     private static function _authenticate(Request $request): array
     {
-        $auth_header = $request->header('Authorization');
-        if (!$auth_header || !str_starts_with($auth_header, 'Bearer ')) {
-            return [
-                'error' => ['auth_required', 'API key is required. Provide via Authorization: Bearer <key> header.'],
-                'key' => null,
-                'user' => null,
-            ];
-        }
-
-        $token = substr($auth_header, 7);
-        $key = Api_Key_Model::find_by_key($token);
-        if (!$key) {
-            return ['error' => ['unauthorized', 'Invalid or expired API key'], 'key' => null, 'user' => null];
-        }
-
-        // No site identity is established yet, so the site-scoped find must run unscoped.
-        $user = User_Model::without_site_scope(fn () => User_Model::find((int) $key->user_id));
-        if (!$user || !$user->is_active() || !$user->is_api_access_enabled) {
-            return ['error' => ['unauthorized', 'Invalid or expired API key'], 'key' => null, 'user' => null];
-        }
-
-        Session::_set_api_identity((int) $user->login_user_id, (int) $user->site_id, (int) $user->id);
-        self::_touch_last_used($key);
-
-        return ['error' => null, 'key' => $key, 'user' => $user];
-    }
-
-    /**
-     * Bump last_used_at, but only when it is null or older than 60 seconds. Keeps a
-     * high-frequency key from writing the row on every single request.
-     */
-    private static function _touch_last_used(Api_Key_Model $key): void
-    {
-        $last = $key->last_used_at;
-
-        if ($last === null) {
-            $key->touch_last_used();
-
-            return;
-        }
-
-        // last_used_at carries the model's datetime cast (Carbon) - touch only when stale.
-        if ($last->lt(now()->subSeconds(60))) {
-            $key->touch_last_used();
-        }
+        return Rsx_Api_Bearer::authenticate($request);
     }
 
     /**
@@ -318,9 +268,15 @@ class Api_Dispatcher
     }
 
     /**
-     * Assemble the raw input map with precedence route params > GET query > request body.
-     * The body is a JSON object when Content-Type is application/json (an unparseable body
-     * sets $json_invalid), otherwise the posted form fields.
+     * Assemble the raw input map with precedence route params > GET query > uploaded files >
+     * request body. The body is a JSON object when Content-Type is application/json (an
+     * unparseable body sets $json_invalid), otherwise the posted form fields.
+     *
+     * A multipart/form-data body lands in the else branch: its TEXT parts arrive through
+     * $request->post() like any form post, and its FILE parts are merged in from
+     * $request->allFiles() so a declared type:'file' param resolves to the UploadedFile.
+     * Files sit above the body and below the query deliberately - a file part and a text
+     * part of the same name is a client bug, and the file is the one the declaration meant.
      */
     private static function _collect_raw_input(Request $request, array $route_params, bool &$json_invalid): array
     {
@@ -345,8 +301,9 @@ class Api_Dispatcher
         }
 
         $get = $request->query->all();
+        $files = $request->allFiles();
 
-        return array_merge($body, $get, $route_params);
+        return array_merge($body, $files, $get, $route_params);
     }
 
     /**

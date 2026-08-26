@@ -1,0 +1,92 @@
+// Api_Confirm_Dialog - painted from the console's own --api-* custom properties (declared on
+// .Api_Docs_Page) and nothing else. No theme variable, no Bootstrap class, no application
+// SCSS: the console must look like itself on every install, including one whose theme is
+// nothing like this.
+.Api_Confirm_Dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+
+    &__backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(1, 4, 9, 0.72);
+    }
+
+    &__panel {
+        position: relative;
+        width: 480px;
+        max-width: 100%;
+        background: var(--api-surface);
+        border: 1px solid var(--api-border);
+        border-radius: 10px;
+        box-shadow: 0 18px 48px rgba(1, 4, 9, 0.6);
+        padding: 22px 24px;
+    }
+
+    &__title {
+        font-size: 16px;
+        font-weight: 600;
+        color: var(--api-text);
+        margin-bottom: 10px;
+    }
+
+    &__body {
+        font-size: 13.5px;
+        line-height: 1.55;
+        color: var(--api-muted);
+    }
+
+    &__actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        margin-top: 20px;
+    }
+
+    &__btn {
+        appearance: none;
+        border: 1px solid var(--api-border);
+        background: var(--api-raised);
+        color: var(--api-text);
+        font-size: 13px;
+        padding: 7px 14px;
+        border-radius: 6px;
+        cursor: pointer;
+
+        &:hover {
+            border-color: var(--api-accent);
+        }
+
+        &:focus-visible {
+            outline: none;
+            border-color: var(--api-accent);
+            box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.28);
+        }
+
+        // The affirmative answer carries the same amber as the control that opened it, so the
+        // button that CREATES a credential reads the same weight in both places.
+        &--confirm {
+            background: var(--api-warn);
+            border-color: var(--api-warn);
+            color: #0D1117;
+            font-weight: 600;
+
+            &:hover {
+                border-color: var(--api-warn);
+                filter: brightness(1.12);
+            }
+
+            &:focus-visible {
+                border-color: var(--api-warn);
+                box-shadow: 0 0 0 3px rgba(210, 153, 34, 0.35);
+            }
+        }
+    }
+}

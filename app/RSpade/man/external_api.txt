@@ -28,6 +28,11 @@ SYNOPSIS
         Rsx_Api_Docs::page($request, My_Bundle::class[, $restrict_to_key])
         Rsx_Api_Docs::openapi_document(): array   (the app builds the response)
 
+    Provisioning a key from a script (see COMMAND LINE, under API KEYS):
+        KEY=$(php artisan rsx:api:key:temp --user=1 --expires="2 hours" \
+              --json | jq -r .data.key)
+        php artisan rsx:api:openapi --user=1 > openapi.json
+
     Config / keys / logs:
         config('rsx.api.log_retention_days')   Settings > API Keys   _api_request_log
 
@@ -310,25 +315,57 @@ API KEYS
     MANAGEMENT UI. Settings > API Keys - staff create (name required; plaintext
     revealed once), view (name, prefix, created, last used), and revoke keys.
 
-    CLI. The same operations without a browser, for provisioning an integration
-    or auditing what exists:
+    COMMAND LINE. The rsx:api:* namespace exists so a SCRIPT can grant itself
+    access to this API and then use it: an importer or an exporter mints a key,
+    calls /api/vN with Authorization: Bearer <key> like any other client, and
+    exits. There is no privileged CLI channel into the API - the CLI mints a
+    credential, and the script then speaks the same HTTP the outside world
+    speaks, so it is gated on exactly the surface it will run against.
 
-        php artisan rsx:api:key:create <user> [--name=] [--expires=]
-                                              [--environment=live|test]
-        php artisan rsx:api:key:list   <user> [--all]
-        php artisan rsx:api:key:delete <id>   [--purge] [--force]
+        php artisan rsx:api:key:create --user=<id|email> [--site=] [--name=]
+                                       [--expires=] [--environment=live|test]
+                                       [--json]
+        php artisan rsx:api:key:temp   --user=<id|email> [--site=]
+                                       [--expires="1 hour"]
+                                       [--environment=live|test] [--json]
+        php artisan rsx:api:key:list   --user=<id|email> [--site=] [--all]
+                                       [--json]
+        php artisan rsx:api:key:delete <id> [--purge] [--force] [--json]
+        php artisan rsx:api:openapi    [--user=<id|email>] [--site=]
+                                       [--compact]
 
-    <user> is a users.id or an email address, resolved WITHOUT the site scope: a
+    --user IS REQUIRED wherever it appears without brackets, and is spelled as
+    an OPTION because that is how every other framework command spells it
+    (rsx:debug, rsx:ajax, rsx:file:list). The requirement is enforced in the
+    command, loudly, naming the flag - there is NO default user, because
+    defaulting would mint a real key against an identity nobody named.
+
+    It takes a users.id or an email address, resolved WITHOUT the site scope: a
     CLI process has no site context, and refusing to find a user for that reason
     would be an accident of the environment rather than an answer.
 
+    --site DISAMBIGUATES, it does not select. users.id is a global primary key,
+    so a numeric --user is already unambiguous and --site is only cross-checked
+    against the row it found (a mismatch is refused). users.email is NOT unique
+    - one person may hold a users row in several sites - so an email matching in
+    more than one site is REFUSED with the candidates listed rather than a
+    tenant being guessed. Omitting --site therefore means "infer it from the
+    user", and the one case that cannot be inferred fails loud.
+
     --expires accepts an ISO datetime (2027-01-01) or a relative span ("30
-    days", "6 months"). There is NO default: a key with no expiry lives until it
-    is revoked, which is the right shape for a server-to-server integration.
-    An expiry in the past is refused rather than created dead.
+    days", "6 months"). On create there is NO default: a key with no expiry
+    lives until it is revoked, which is the right shape for a server-to-server
+    integration. An expiry in the past is refused rather than created dead.
 
     create prints the plaintext ONCE. It is unrecoverable afterwards - only the
     hash reaches the database.
+
+    temp is the same mint with a lifetime that defaults to one hour, matching
+    what the docs tester issues. It is the shape a batch job wants: nothing has
+    to remember to revoke it, and a job that dies half way leaves a credential
+    that stops working by itself. Every key it mints is named "Temporary (CLI)"
+    verbatim, in rsx:api:key:list and in Settings > API Keys, so what it is and
+    whether it can go are answerable without reading the expiry column.
 
     list shows state, expiry, last used and created, ACTIVE ONLY by default;
     --all includes revoked and expired keys, which is what "why did this stop
@@ -339,12 +376,84 @@ API KEYS
     reference api_key_id: destroying the key would leave every call it ever made
     pointing at nothing, exactly when somebody is working out what it did.
     --purge removes the row outright, for a key created in error. Both prompt
-    unless --force.
+    unless --force. It names the key by ID and not by --user: an id already
+    identifies exactly one key across every user and site.
 
-    TESTER KEYS. There is no minting from the docs page: its tester takes a key
-    the developer PASTES, created in Settings > API Keys like any other. A page
-    that hands out live credentials on a button press is a worse default than
-    making key creation a deliberate act on the management screen.
+    MINTING IS NOT GATED ON users.is_api_access_enabled. This command runs as
+    whoever holds shell access, a strictly higher privilege than any in-app
+    permission, and a provisioning script that could not mint for a user it is
+    about to enable would be useless. But a key minted for a disabled user is
+    rejected at Api_Dispatcher on first use, which reads as "the key is broken",
+    so create and temp both WARN and name the column - in the human output and
+    as api_access_enabled:false in the JSON.
+
+    THE --json ENVELOPE. Every rsx:api:key:* command takes --json, and under it
+    STDOUT carries the JSON document and nothing else - no banner, no table, no
+    trailing count - so it pipes straight into jq. One shape, every command:
+
+        {"ok": true,  "command": "rsx:api:key:create", "data": { ... }}
+        {"ok": false, "command": "rsx:api:key:create",
+         "error": {"code": "user_not_found", "message": "..."}}
+
+    A FAILURE IS STILL JSON, and still exits non-zero. Both halves are required:
+    a script cannot parse an English error line, and a script that gets valid
+    JSON back with a zero exit code carries on as though nothing happened.
+
+    error.code is machine-stable and never reworded: user_required,
+    user_not_found, user_ambiguous, user_site_mismatch, site_invalid,
+    site_without_user, expires_invalid, expires_in_past, environment_invalid,
+    key_not_found, confirmation_required.
+
+    EXIT CODES are 0 on success and 1 on any handled failure, in both output
+    forms. An unhandled fault still bubbles with its stack trace intact.
+
+    delete under --json REQUIRES --force. A confirmation prompt would write a
+    question onto the stream the script is parsing and then block forever
+    waiting for an answer nobody is there to give, so it refuses with
+    confirmation_required instead.
+
+    rsx:api:openapi writes the OpenAPI 3.1 document to stdout, for feeding a
+    client generator, a diff against last release's copy, or jq. It is the same
+    document /apidocs/openapi.json serves, without a browser or an HTTP round
+    trip.
+
+    It has NO --json flag: every other command has a human form and a machine
+    form and --json selects between them, while this one has only the machine
+    form, and a flag that can only ever be passed is noise. Nor is the envelope
+    applied to a successful run - the document IS the payload and has a shape
+    generators already read, so wrapping it would mean every consumer unwrapping
+    it. ERRORS do use the envelope, and are never mistaken for a document
+    because a document has no "ok" key.
+
+    Pretty-printed by default (the common use is reading it or committing it,
+    where a one-line file makes every future diff unreadable); --compact for
+    piping into something that does not care.
+
+    --user scopes the document to the endpoints that user's #[Auth] gates
+    actually admit, via Api_Tester_Key::accessible_targets_for_user() - the same
+    fenced identity swap /apidocs uses for an adopted key. Without --user the
+    document describes the whole published surface, which is what a public
+    openapi.json is. --site on its own is refused: it disambiguates --user and
+    scopes nothing by itself.
+
+    END TO END. A key that grants itself access, uses it, and expires:
+
+        KEY=$(php artisan rsx:api:key:temp --user=importer@example.com \
+              --expires="2 hours" --json | jq -r .data.key)
+
+        curl -s -H "Authorization: Bearer $KEY" \
+             https://app.example.com/api/v1/clients | jq .
+
+        # nothing to clean up: the key stops working in two hours.
+        # to end it sooner, revoke by id:
+        # php artisan rsx:api:key:delete <id> --force
+
+    TESTER KEYS. The docs page's tester normally takes a key the developer
+    PASTES, created in Settings > API Keys like any other. It can also mint a
+    throwaway for itself (Api_Docs_Controller::mint_temporary_key): a live key
+    for the signed-in user, named 'API Tester (temporary)', expiring in one
+    hour. It is gated on the same Session::has_api_access() the page is, and it
+    is the browser twin of rsx:api:key:temp.
 
     ROLE OVERRIDE - RESERVED, NOT ENFORCED. user_role_id is intended to let a
     key run at a REDUCED role. It is NOT honored in v1: a key always runs at the

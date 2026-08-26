@@ -14,9 +14,13 @@
         border-bottom: 1px solid var(--api-border);
     }
 
+    // The one heading element in the console. Every property it needs is declared here,
+    // line-height included: a display-sized heading left on the page's 1.5 body leading sits
+    // in far too much space, and there is no CSS framework underneath to tighten it.
     &__title {
         margin: 0 0 10px;
         font-size: 26px;
+        line-height: 1.2;
         font-weight: 600;
         color: var(--api-text);
     }

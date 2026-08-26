@@ -7,8 +7,6 @@
 
 namespace App\RSpade\Commands\Migrate;
 
-use App\RSpade\Core\Rsx;
-
 /**
  * Restore the database to the pre-migration snapshot after an INTERRUPTED migrate.
  *
@@ -19,7 +17,10 @@ use App\RSpade\Core\Rsx;
  * failure (same rollback_snapshot machinery, inherited - not a second implementation).
  *
  * Contract:
- * - Migration flag present  -> restore the snapshot, then clear flag + backup.
+ * - Migration flag present, snapshot protection available here -> restore the snapshot,
+ *   then clear flag + backup.
+ * - Snapshot protection NOT available (see Maint_Migrate::snapshot_protection_available())
+ *   -> refuse, naming the condition, and leave the flag and backup untouched.
  * - No migration flag       -> state that no migration is in progress; nothing to do.
  * - A FAILED restore keeps the flag AND the backup: the snapshot is the only copy of
  *   the pre-migration data, so nothing may delete it until a restore has succeeded.
@@ -40,14 +41,21 @@ class Migrate_Restore_Command extends Maint_Migrate
             return 0;
         }
 
-        // Same gate as migrate: the snapshot it restores was taken by, and can only
-        // be put back by, the RSpade container's supervisor and data-directory
-        // layout.
-        if (!Rsx::is_rspade_container()) {
-            $this->error('[ERROR] Snapshot restore requires the RSpade container.');
+        // THE SAME PREDICATE migrate uses to decide whether it may snapshot at all.
+        // The restore is the dangerous half: it wipes /var/lib/mysql and repopulates it
+        // from the backup. Where that directory is not the live database - a
+        // production-target container with no mysqld, an external database host - the
+        // restore would report a successful rollback while the real database stayed
+        // broken. A false rollback is worse than no rollback, so this refuses, naming the
+        // condition.
+        $unavailable = $this->snapshot_protection_unavailable_reason();
+        if ($unavailable !== null) {
+            $this->error('[ERROR] Snapshot restore is not available here: ' . $unavailable . '.');
             $this->info('  The snapshot is restored by stopping the supervised MySQL service and');
-            $this->info('  replacing its data directory; this environment is not that container');
-            $this->info('  (/.rspade_container absent).');
+            $this->info('  replacing its data directory, so it is performed only where that data');
+            $this->info('  directory IS the database being restored.');
+            $this->info('');
+            $this->info('  The migration flag and any snapshot are left exactly as they are.');
             return 1;
         }
 

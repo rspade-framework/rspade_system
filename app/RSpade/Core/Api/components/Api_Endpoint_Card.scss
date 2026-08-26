@@ -120,19 +120,18 @@
         display: none;
     }
 
+    // highlight.js is run against the <pre> ITSELF - there is no <code> child - so the code
+    // type is declared here. Left off, the element falls back to the user agent's monospace
+    // default, which is a different face at a different size from every other code run on the
+    // page.
     &__example-pre {
         margin: 0;
         padding: 16px;
         border-top: 1px solid var(--api-border);
         overflow-x: auto;
-
-        code {
-            font-family: var(--api-mono);
-            font-size: 12.5px;
-            line-height: 1.6;
-            background: transparent;
-            padding: 0;
-            white-space: pre;
-        }
+        font-family: var(--api-mono);
+        font-size: 12.5px;
+        line-height: 1.6;
+        white-space: pre;
     }
 }

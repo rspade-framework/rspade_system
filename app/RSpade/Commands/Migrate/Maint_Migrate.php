@@ -24,18 +24,25 @@ use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Commands\Database\Db_Dump_Cache_Command;
 
 /**
- * Unified migration command with mode-aware behavior
+ * Unified migration command.
  *
- * In DEVELOPMENT mode:
- * - Automatically creates database snapshot before migrations
+ * SNAPSHOT-PROTECTED run - development mode, inside the RSpade DEVELOPMENT container,
+ * against a LOCAL database host (snapshot_protection_available(); all three required):
+ * - Stops the supervised mysqld and copies /var/lib/mysql before migrating
  * - Runs migrations with validation and normalization
- * - On success: commits changes, removes snapshot, regenerates constants/bundles
- * - On failure: automatically rolls back to snapshot and exits migration mode
+ * - On success: commits changes, removes the snapshot, regenerates constants/bundles
+ * - On failure: restores the datadir from the snapshot and exits migration mode
  *
- * In DEBUG/PRODUCTION mode:
- * - Runs migrations without snapshot protection
- * - Runs schema normalization
- * - Does NOT update source code (constants, bundles) - source is read-only
+ * BARE run - anything else, INCLUDING a production-target container and a development
+ * run pointed at an external database:
+ * - Runs migrations and schema normalization with NO snapshot and NO rollback
+ * - Prints every reason protection is off (run_without_snapshot)
+ * - Does NOT update source code (constants, bundles)
+ *
+ * The mechanism is physical - stop a local mysqld, copy and replace its data directory -
+ * so it is performed only where all three of those things are true. A rollback that would
+ * wipe and repopulate a /var/lib/mysql which is not the live database would report success
+ * while the real database stayed broken; a false rollback is worse than no rollback.
  *
  * This command is automatically used when running 'php artisan migrate' due to
  * a modification in the artisan script.
@@ -75,51 +82,218 @@ class Maint_Migrate extends Command
             config(['rsx.files.storage_root' => $storage_root]);
         }
 
-        // WHERE this is running decides how it runs - the CONTAINER, not RSX_MODE.
+        // SNAPSHOT PROTECTION IS TAKEN ONLY WHERE IT CAN ACTUALLY BE PERFORMED.
         //
-        //   dev container   snapshot, migrate, then discard the snapshot. A
-        //                   developer breaks schemas all day and wants the undo,
-        //                   not a growing pile of copies.
+        // The mechanism is physical: stop the LOCAL, SUPERVISED mysqld, copy
+        // /var/lib/mysql, and - on failure - wipe that directory and copy the
+        // snapshot back. Every one of those three verbs is an assumption about the
+        // machine, and the whole thing is only correct where all of them hold:
         //
-        //   prod container  snapshot, migrate, and KEEP it. Same protection, but
-        //                   the copy is left behind: on a production box that is
-        //                   the last image of the database before the change, and
-        //                   throwing it away the moment migrations pass is exactly
-        //                   the wrong instinct.
+        //   1. DEVELOPMENT mode. The undo exists for a developer breaking schemas
+        //      all day against a database that is theirs to break.
+        //   2. An RSpade DEVELOPMENT container. The marker /.rspade_container_dev is
+        //      exactly this distinction, and it matters: the PRODUCTION container
+        //      carries /.rspade_container too, but ships mysql-client ONLY. There is
+        //      no mysqld to stop and no datadir to copy there - `supervisorctl status
+        //      mysql` answers "no such process".
+        //   3. A LOCAL database host. Pointed at an external DB, /var/lib/mysql is
+        //      not the database at all.
         //
-        //   no container    migrate only. Stopping services and copying a data
-        //                   directory are things this framework's container does;
-        //                   somewhere else, they are things this framework has no
-        //                   business doing to somebody's machine.
+        // Anything else runs BARE, exactly as production does, and says which
+        // condition disabled protection (run_without_snapshot).
         //
-        // The one refusal: DEVELOPMENT mode outside the container. Development
-        // means the source tree is being edited and regenerated, and a migration
-        // there is expected to be undoable. Silently dropping that protection
-        // because of where the command was typed is not a trade to make on
-        // somebody's behalf.
-        $is_framework_only = $this->option('framework-only');
-        $in_container = Rsx::is_rspade_container();
-
-        if (Rsx::is_development() && !$in_container) {
+        // THE RETIRED PROMISE: this used to snapshot in the production container too
+        // and KEEP the copy, on the theory that it was the last image of the database
+        // before the change. That promise was never deliverable - the production
+        // container has no mysqld - and a promise of protection that cannot be kept is
+        // worse than none. The dangerous half was never the snapshot but the ROLLBACK:
+        // restoring a /var/lib/mysql that is not the live database would report a
+        // successful rollback while the real database stayed broken. A rollback we
+        // cannot perform must not be attempted or advertised.
+        //
+        // The one refusal below is a DIFFERENT question and stays: DEVELOPMENT mode
+        // outside the container is somebody's own machine, and stopping their MySQL is
+        // not ours to do.
+        if (Rsx::is_development() && !$this->probe_is_rspade_container()) {
             return $this->refuse_development_outside_container();
         }
 
-        // Framework-only runs never snapshot: they are a schema-only subset used
-        // by tooling, and the snapshot exists to protect a developer's data.
-        //
-        // --_no-snapshot is the same statement made by a caller that has ALREADY taken a
-        // better backup and knows this database is empty: rsx:db:dump_cache holds a full
-        // gzipped dump of the live database on disk and has just dropped and recreated the
-        // database this run migrates. Stopping MySQL to copy an empty datadir would
-        // protect nothing and cost the whole stop/copy/start. Framework-internal (the `--_`
-        // convention): no InputOption, stripped from argv pre-boot, invisible to help.
-        $no_snapshot = Rsx_Internal_Flags::has(self::NO_SNAPSHOT_FLAG);
-
-        if ($in_container && !$is_framework_only && !$no_snapshot) {
+        if ($this->snapshot_protection_engaged()) {
             return $this->run_with_snapshot();
         }
 
         return $this->run_without_snapshot();
+    }
+
+    /**
+     * Whether the stop-MySQL / snapshot / restore-on-failure machinery can ACTUALLY be
+     * performed on this machine, against this database.
+     *
+     * Three conditions, all required - see the block in handle() for why each one is
+     * load-bearing. This answers only "is the mechanism available here"; it says nothing
+     * about whether a particular RUN wants it (--framework-only, --_no-snapshot), which is
+     * snapshot_protection_engaged()'s question.
+     */
+    protected function snapshot_protection_available(): bool
+    {
+        return $this->snapshot_protection_unavailable_reason() === null;
+    }
+
+    /**
+     * Why snapshot protection is unavailable here, in one operator-readable clause - or
+     * null when it IS available.
+     *
+     * The reason is not decoration. Somebody who believes they are protected and is not
+     * is the exact failure this predicate exists to prevent, so every path that proceeds
+     * unprotected prints which condition disabled it.
+     */
+    protected function snapshot_protection_unavailable_reason(): ?string
+    {
+        if (!$this->probe_is_development()) {
+            return 'the application is in ' . Rsx::get_mode_label() . ' mode, not development';
+        }
+
+        if (!$this->probe_is_rspade_container()) {
+            return 'this is not an RSpade container (/.rspade_container absent), so there is no'
+                . ' supervised MySQL service to stop';
+        }
+
+        if (!$this->probe_is_rspade_dev_container()) {
+            return 'this is a production-target RSpade container (/.rspade_container_dev absent),'
+                . ' which ships mysql-client only - there is no local mysqld to stop and no datadir to copy';
+        }
+
+        if (!$this->is_local_database()) {
+            return 'the configured database host (' . $this->configured_database_host_label() . ') is not'
+                . ' local, so /var/lib/mysql is not this database';
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether THIS RUN takes a snapshot: the mechanism is available AND nothing about the
+     * invocation suppresses it.
+     */
+    protected function snapshot_protection_engaged(): bool
+    {
+        return count($this->snapshot_skipped_reasons()) === 0;
+    }
+
+    /**
+     * Every reason this run proceeds without snapshot protection, most specific first.
+     * Empty means the run IS protected.
+     *
+     * @return string[]
+     */
+    protected function snapshot_skipped_reasons(): array
+    {
+        $reasons = [];
+
+        // Framework-only runs never snapshot: they are a schema-only subset used by
+        // tooling, and the snapshot exists to protect a developer's data.
+        if ($this->is_framework_only_run()) {
+            $reasons[] = 'this is a --framework-only run (a schema-only subset used by tooling)';
+        }
+
+        // --_no-snapshot is the statement made by a caller that has ALREADY taken a better
+        // backup and knows this database is empty: rsx:db:dump_cache holds a full gzipped
+        // dump of the live database on disk and has just dropped and recreated the database
+        // this run migrates. Stopping MySQL to copy an empty datadir would protect nothing
+        // and cost the whole stop/copy/start. Framework-internal (the `--_` convention): no
+        // InputOption, stripped from argv pre-boot, invisible to help.
+        if ($this->is_snapshot_suppressed_by_flag()) {
+            $reasons[] = 'the caller passed ' . self::NO_SNAPSHOT_FLAG
+                . ' (it holds its own backup of this database)';
+        }
+
+        $unavailable = $this->snapshot_protection_unavailable_reason();
+        if ($unavailable !== null) {
+            $reasons[] = $unavailable;
+        }
+
+        return $reasons;
+    }
+
+    /**
+     * Whether the configured database lives on THIS machine, so that /var/lib/mysql is in
+     * fact the database being migrated.
+     *
+     * A configured unix socket is local by construction - a socket connection cannot reach
+     * another host - and is checked first because a socket connection ignores the host
+     * value entirely. Otherwise only the three exact loopback spellings count; matching is
+     * exact so that a hostname merely BEGINNING with a loopback literal
+     * ("127.0.0.1.attacker.example", "localhost.example.com") is correctly remote.
+     *
+     * Read from config, never by parsing .env - the connection RSpade actually opens is the
+     * one config describes.
+     */
+    protected function is_local_database(): bool
+    {
+        $db = $this->configured_database_connection();
+
+        $socket = trim((string) ($db['unix_socket'] ?? ''));
+        if ($socket !== '') {
+            return true;
+        }
+
+        $host = strtolower(trim((string) ($db['host'] ?? '')));
+
+        // An IPv6 literal is conventionally written bracketed in a host field.
+        if (strlen($host) > 1 && $host[0] === '[' && substr($host, -1) === ']') {
+            $host = substr($host, 1, -1);
+        }
+
+        return in_array($host, ['localhost', '127.0.0.1', '::1'], true);
+    }
+
+    /**
+     * The configured host, for the operator-facing reason string.
+     */
+    protected function configured_database_host_label(): string
+    {
+        $db = $this->configured_database_connection();
+        $host = trim((string) ($db['host'] ?? ''));
+
+        return $host !== '' ? $host : '(no host configured)';
+    }
+
+    /**
+     * The default connection's config array. A seam so the predicate is testable without a
+     * database or a configured environment.
+     */
+    protected function configured_database_connection(): array
+    {
+        return (array) config('database.connections.' . config('database.default'));
+    }
+
+    /**
+     * Environment probes, each its own overridable seam so snapshot_protection_available()
+     * is testable without a container, a database or a process.
+     */
+    protected function probe_is_development(): bool
+    {
+        return Rsx::is_development();
+    }
+
+    protected function probe_is_rspade_container(): bool
+    {
+        return Rsx::is_rspade_container();
+    }
+
+    protected function probe_is_rspade_dev_container(): bool
+    {
+        return Rsx::is_rspade_dev_container();
+    }
+
+    protected function is_framework_only_run(): bool
+    {
+        return (bool) $this->option('framework-only');
+    }
+
+    protected function is_snapshot_suppressed_by_flag(): bool
+    {
+        return Rsx_Internal_Flags::has(self::NO_SNAPSHOT_FLAG);
     }
 
     /**
@@ -153,15 +327,15 @@ class Maint_Migrate extends Command
     }
 
     /**
-     * Run migrations with automatic snapshot protection (development mode)
+     * Run migrations with automatic snapshot protection.
+     *
+     * Reached only when snapshot_protection_engaged() is true, which is to say: development
+     * mode, in the RSpade DEVELOPMENT container, against a local database. The snapshot is
+     * discarded on success - a developer wants the undo, not a growing pile of copies.
      */
     protected function run_with_snapshot(): int
     {
-        $keep_snapshot = !Rsx::is_rspade_dev_container();
-
-        $this->info($keep_snapshot
-            ? ' Production container: snapshot protection (the snapshot is KEPT)'
-            : ' Development container: automatic snapshot protection');
+        $this->info(' Development container: automatic snapshot protection');
         $this->info('');
 
         // Step 1: Create snapshot
@@ -232,18 +406,7 @@ class Maint_Migrate extends Command
         $this->info('');
         $this->info('[4/4] Committing changes...');
 
-        if ($keep_snapshot) {
-            // Leave the copy where it is. The migration succeeded, so nothing here
-            // needs undoing - but on a production box this is the database as it
-            // was immediately before the change, and that is worth more than the
-            // disk it occupies. Removing it is a deliberate act.
-            $this->release_migration_flag();
-            $this->info('[OK] Snapshot RETAINED at ' . $this->backup_dir . '.');
-            $this->info('     Remove it when you are satisfied with the migration:');
-            $this->info('         rm -rf ' . $this->backup_dir);
-        } else {
-            $this->commit_snapshot();
-        }
+        $this->commit_snapshot();
 
         // Post-migration source regeneration, which only makes sense where the
         // source tree is writable and gets edited.
@@ -267,19 +430,23 @@ class Maint_Migrate extends Command
     }
 
     /**
-     * Run migrations without snapshot protection (debug/production mode)
+     * Run migrations WITHOUT snapshot protection, naming every reason protection is off.
+     *
+     * The reasons are printed rather than summarised because "development mode" is no
+     * longer a synonym for "protected": a development run in a production-target container,
+     * or against an external database host, lands here too. An operator who cannot tell
+     * WHICH condition disabled the undo is the operator who finds out by needing it.
      */
     protected function run_without_snapshot(): int
     {
-        $mode_label = Rsx::get_mode_label();
-        $is_framework_only = $this->option('framework-only');
+        $is_framework_only = $this->is_framework_only_run();
+        $reasons = $this->snapshot_skipped_reasons();
 
-        if ($is_framework_only) {
-            $this->info(" Framework-only migrations (no snapshot protection)");
-        } else {
-            $this->info(" {$mode_label} mode: Running without snapshot protection");
+        $this->warn('[WARNING]  Running WITHOUT snapshot protection - a failed migration will NOT be rolled back.');
+        foreach ($reasons as $reason) {
+            $this->line('   - ' . $reason);
         }
-        $this->info(' Source code is read-only - constants/bundles will not be regenerated.');
+        $this->info(' Constants and bundles will not be regenerated by this run.');
         $this->info('');
 
         // Run migrations
@@ -377,16 +544,11 @@ class Maint_Migrate extends Command
             return 1;
         }
 
-        // Run normalize_schema BEFORE migrations to fix existing tables
-        // Use --production flag if not using snapshots (framework-only, non-development
-        // mode, or --_no-snapshot). normalize_schema without --production REQUIRES the
-        // .migrating flag the snapshot path writes, so this must track the same condition
-        // handle() used to choose the path - otherwise a --_no-snapshot run fails on a
-        // snapshot it was told not to take.
-        $use_snapshot = $is_development
-            && !$is_framework_only
-            && !Rsx_Internal_Flags::has(self::NO_SNAPSHOT_FLAG);
-        $requiredColumnsArgs = $use_snapshot ? [] : ['--production' => true];
+        // Run normalize_schema BEFORE migrations to fix existing tables.
+        // normalize_schema without --production REQUIRES the .migrating flag the snapshot
+        // path writes, so this must ask the SAME question handle() asked when it chose the
+        // path - otherwise an unprotected run fails on a snapshot it was never going to take.
+        $requiredColumnsArgs = $this->snapshot_protection_engaged() ? [] : ['--production' => true];
 
         $this->info("\n Pre-migration normalization (fixing existing tables)...\n");
         // normalize_schema fails loud (throws) rather than performing a logical
@@ -704,21 +866,6 @@ class Maint_Migrate extends Command
         }
 
         $this->info('[OK] Snapshot committed - backup removed.');
-    }
-
-    /**
-     * Clear the migration flag WITHOUT touching the snapshot.
-     *
-     * commit_snapshot() removes both; this removes only the flag, for the
-     * production-container path where the copy is deliberately kept. Leaving the
-     * flag behind would make every later run believe a migration was still in
-     * progress - and the application answers 503 while it is.
-     */
-    protected function release_migration_flag(): void
-    {
-        if (file_exists($this->flag_file)) {
-            unlink($this->flag_file);
-        }
     }
 
     /**

@@ -15,7 +15,7 @@
     <tbody>
         <% for (const p of params) { %>
             <% const in_path = pattern.indexOf(':' + p.name) !== -1; %>
-            <% const loc = in_path ? 'path' : 'query / body'; %>
+            <% const loc = in_path ? 'path' : (p.type === 'file' ? 'multipart' : 'query / body'); %>
             <tr>
                 <td class="Api_Params_Table__name">
                     <code><%= p.name %></code>

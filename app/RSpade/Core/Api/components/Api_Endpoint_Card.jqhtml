@@ -36,14 +36,23 @@
      to the left, the things you ACT on to the right, so a sample can be read while the tester
      that produced it stays on screen. --%>
 <div class="Api_Endpoint_Card__col Api_Endpoint_Card__col--actions">
+    <%-- THE TWO SWAPPABLE PIECES. Everything above this line is the same for every endpoint;
+         the samples and the tester are the parts a different KIND of endpoint replaces, so
+         they are named slots with the generic components as the defaults. A card whose
+         template is slots-only inherits this whole structure and overrides only what it must
+         - see Api_File_Endpoint_Card, which swaps in a multipart tester and leaves the rest
+         of the card, comments and all, in exactly one place. --%>
+    <% const _code_samples = content('code_samples'); %>
+    <% const _tester = content('tester'); %>
+
     <div class="Api_Endpoint_Card__section">
         <div class="Api_Endpoint_Card__section-title">Code samples</div>
-        <Api_Code_Samples $endpoint=ep />
+        <% if (_code_samples) { %><%= _code_samples %><% } else { %><Api_Code_Samples $endpoint=ep /><% } %>
     </div>
 
     <div class="Api_Endpoint_Card__section">
         <div class="Api_Endpoint_Card__section-title">Try it</div>
-        <Api_Tester $endpoint=ep />
+        <% if (_tester) { %><%= _tester %><% } else { %><Api_Tester $endpoint=ep /><% } %>
     </div>
 </div>
 </Define:Api_Endpoint_Card>

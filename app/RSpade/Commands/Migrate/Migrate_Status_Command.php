@@ -29,7 +29,9 @@ class Migrate_Status_Command extends Command
             $this->line('   php artisan migrate');
             if ($environment !== 'production') {
                 $this->line('');
-                $this->line('In development mode, snapshots are created automatically.');
+                $this->line('Snapshots are created automatically in the RSpade development');
+                $this->line('container against a local database; `migrate` prints the reason');
+                $this->line('when it runs without that protection.');
             }
             
             return 0;

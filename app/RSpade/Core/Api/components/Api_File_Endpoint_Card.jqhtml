@@ -1,0 +1,16 @@
+<%--
+Api_File_Endpoint_Card - the endpoint card for a multipart/form-data endpoint.
+
+SLOTS ONLY, so the whole card - verb pills, description, parameters, example response, the
+two-column split - is inherited from Api_Endpoint_Card and exists in exactly one file. The
+one thing a file endpoint genuinely needs differently is the tester: a JSON textarea cannot
+carry a binary part, and posting a filename as text would only ever earn a 422.
+
+The code samples need NO override: api_code_samples() reads the endpoint spec and dispatches
+to the multipart generator on its own, so the samples cannot disagree with the transport.
+--%>
+<Define:Api_File_Endpoint_Card extends="Api_Endpoint_Card" tag="article">
+    <Slot:tester>
+        <Api_File_Tester $endpoint=this.args.endpoint />
+    </Slot:tester>
+</Define:Api_File_Endpoint_Card>

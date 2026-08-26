@@ -27,7 +27,13 @@ Carries the Api_Docs_Page class so every frame rule in Api_Docs_Page.scss applie
         <% if (!Api_Docs_Catalog.exists()) { %>
             <div class="Api_Docs_Page__notice">No external API endpoints are defined.</div>
         <% } else if (endpoint) { %>
-            <Api_Endpoint_Card $endpoint=endpoint />
+            <%-- A multipart endpoint gets the card whose tester can actually send one. The
+                 catalog answers which it is, from the endpoint's own declared params. --%>
+            <% if (Api_Docs_Catalog.is_file_endpoint(endpoint)) { %>
+                <Api_File_Endpoint_Card $endpoint=endpoint />
+            <% } else { %>
+                <Api_Endpoint_Card $endpoint=endpoint />
+            <% } %>
         <% } else { %>
             <Api_Docs_Home $version=version />
         <% } %>

@@ -2,7 +2,7 @@
 
 ## SCHEMA, AUDIT AUTHORSHIP & POLYMORPHIC REFERENCES
 
-**Migrations are forward-only, with no rollbacks: deterministic transformations against known state.** Raw SQL through `DB::statement()`; the Schema builder is prohibited. Create one with `php artisan make:migration:safe <name>`, apply with `php artisan migrate` (which snapshots the database first in development and auto-rolls-back the run on failure).
+**Migrations are forward-only, with no rollbacks: deterministic transformations against known state.** Raw SQL through `DB::statement()`; the Schema builder is prohibited. Create one with `php artisan make:migration:safe <name>`, apply with `php artisan migrate` (which snapshots the database first and auto-rolls-back the run on failure — but ONLY in the RSpade DEV container against a LOCAL database host; anywhere else, the prod container included, it runs bare and prints every reason protection is off).
 
 **`migrate` is fine to run whenever schema work needs it** — expected and encouraged after creating or changing a migration; treat it as one command (press the button), not "heavy machinery." **Always run `migrate` with its FULL output — never pipe it through `| tail`/`| head`, grep it, or truncate it in any way**: the snapshot/rollback narrative IS the diagnostic, and a truncated run hides which step failed. A migrate CANCELLED mid-run leaves its snapshot behind — `php artisan migrate:restore` performs the same restore a failed run performs automatically (and says so when no migration is in progress).
 

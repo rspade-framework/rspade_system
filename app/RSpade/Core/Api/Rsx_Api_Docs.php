@@ -170,11 +170,15 @@ class Rsx_Api_Docs
      * to the route, not to the generator. The class docblock above shows the shape of a
      * caller; reference_app/app/apidocs/apidocs_controller.php is the worked one.
      *
+     * $accessible_targets narrows the document to one identity's reachable endpoints - pass
+     * Api_Tester_Key::accessible_targets_for_user($user). Omit it for the full surface, which
+     * is what a public openapi.json wants.
+     *
      * @return array The OpenAPI 3.1 document
      */
-    public static function openapi_document(): array
+    public static function openapi_document(?array $accessible_targets = null): array
     {
-        return Api_Openapi::document();
+        return Api_Openapi::document($accessible_targets);
     }
 
     /**

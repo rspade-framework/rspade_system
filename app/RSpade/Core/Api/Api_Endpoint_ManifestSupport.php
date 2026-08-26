@@ -30,7 +30,10 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * - Declaring class MUST extend Rsx_Api_Controller_Abstract.
  * - Every :param token in the pattern MUST have a matching #[Api_Param].
  * - #[Api_Param] names are unique per method; required:true with a default is a contradiction.
- * - #[Api_Param] type is one of {string, int, float, bool} (default 'string').
+ * - #[Api_Param] type is one of {string, int, float, bool, file} (default 'string').
+ * - type 'file' is POST-only, may never be a :route token, and may never carry a default -
+ *   there is no multipart body on a GET, a URL segment is not a file, and there is no such
+ *   thing as a default upload.
  * - The method MUST NOT also carry #[FPC], #[Route], #[SPA], or #[Ajax_Endpoint].
  *
  * Docblock parsing:
@@ -45,7 +48,7 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
 
     // Allowed HTTP verbs and #[Api_Param] types for v1.
     private const ALLOWED_METHODS = ['GET', 'POST'];
-    private const ALLOWED_PARAM_TYPES = ['string', 'int', 'float', 'bool'];
+    private const ALLOWED_PARAM_TYPES = ['string', 'int', 'float', 'bool', 'file'];
 
     // Attributes forbidden on the same method as #[Api_Endpoint].
     private const CONFLICTING_ATTRIBUTES = ['FPC', 'Route', 'SPA', 'Ajax_Endpoint'];
@@ -150,7 +153,7 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
                         }
 
                         // Normalize and validate #[Api_Param] declarations for this method.
-                        $api_params = static::_parse_api_params($method_data, $pattern, $location);
+                        $api_params = static::_parse_api_params($method_data, $pattern, $location, $methods);
 
                         // Duplicate route detection (pattern must be unique across all route types).
                         if (isset($manifest_data['data']['routes'][$pattern])) {
@@ -300,7 +303,7 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
      *
      * @return array List of [name, type, required, default, description, example].
      */
-    private static function _parse_api_params(array $method_data, string $pattern, string $location): array
+    private static function _parse_api_params(array $method_data, string $pattern, string $location, array $methods): array
     {
         $raw_instances = [];
         foreach (($method_data['attributes'] ?? []) as $attr_name => $instances) {
@@ -370,6 +373,32 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
 
             $required = (bool) ($args['required'] ?? false);
             $has_default = array_key_exists('default', $args);
+
+            // A file param is a multipart part, not a value: it cannot ride a GET, cannot be a
+            // URL segment, and cannot have a default. Each of these is rejected at scan time
+            // rather than producing an endpoint that is undocumentable and uncallable.
+            if ($type === 'file') {
+                if (in_array('GET', $methods, true)) {
+                    throw new \RuntimeException(
+                        "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
+                        "  type 'file' is POST-only; this endpoint declares GET."
+                    );
+                }
+
+                if (preg_match('/(^|\/):' . preg_quote($name, '/') . '(\/|$|\?)/', $pattern)) {
+                    throw new \RuntimeException(
+                        "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
+                        "  type 'file' cannot be a :route token."
+                    );
+                }
+
+                if ($has_default) {
+                    throw new \RuntimeException(
+                        "Invalid #[Api_Param] '{$name}' for '{$pattern}': {$location}\n" .
+                        "  type 'file' cannot carry a default."
+                    );
+                }
+            }
 
             if ($required && $has_default) {
                 throw new \RuntimeException(

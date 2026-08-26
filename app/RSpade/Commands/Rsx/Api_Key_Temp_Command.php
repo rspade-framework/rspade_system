@@ -12,34 +12,36 @@ use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
- * rsx:api:key:create - mint an external API key for a user.
+ * rsx:api:key:temp - a key that expires on its own, for the duration of one script run.
  *
- * This is how a script grants ITSELF access to the application API: an importer or an
- * exporter mints a key here, then calls /api/vN with Authorization: Bearer <key> like any
- * other client. There is no second, privileged CLI channel into the API - the CLI mints a
- * credential and then speaks the same HTTP the outside world speaks, so a script exercises
- * exactly the surface it will be gated on.
+ * The shape a batch job wants: an importer mints a key, calls /api/vN with it for as long as
+ * the import takes, and exits. Nothing has to remember to revoke it, because the expiry is
+ * what revokes it - and a job that dies half way leaves a credential that stops working by
+ * itself rather than one that lives until somebody notices.
  *
- * The plaintext is printed ONCE and is unrecoverable afterwards: only its SHA-256 reaches
- * the database. That is the whole reason this command prints so loudly - a key scrolled past
- * in a terminal is a key that has to be revoked and reissued.
+ * It is the same mint /apidocs performs for its live tester (Api_Docs_Controller::mint_temporary_key),
+ * with the lifetime moved to the command line. The DEFAULT is one hour, matching that page.
  *
- * --expires is OPTIONAL and there is NO default. A key with no expiry lives until it is
- * revoked, which is the right shape for a server-to-server integration; inventing a lifetime
- * for one would silently break an integration at a time nobody chose. A script that wants a
- * key for the duration of one run wants rsx:api:key:temp instead.
+ * The name is deliberate and unmissable - it appears verbatim in rsx:api:key:list and in
+ * Settings > API Keys, where the question being asked is always "what is this and can it go".
+ * "Temporary (CLI)" answers both without anyone having to check the expiry column.
  */
-class Api_Key_Command extends Command
+class Api_Key_Temp_Command extends Command
 {
-    protected $signature = 'rsx:api:key:create
+    /**
+     * The name every key minted here carries. A constant so the string in the docs, the
+     * string in the UI and the string in the code cannot drift apart.
+     */
+    public const KEY_NAME = 'Temporary (CLI)';
+
+    protected $signature = 'rsx:api:key:temp
                             {--user= : User id or email address (required)}
                             {--site= : Site id, to disambiguate an email held in more than one site}
-                            {--name= : Human-readable key name (default: "CLI key")}
-                            {--expires= : Expiry as an ISO datetime or a relative span like "30 days". Omit for no expiry}
+                            {--expires=1 hour : Lifetime as a relative span ("30 minutes", "24 hours") or an ISO datetime}
                             {--environment=live : Key environment: live or test}
                             {--json : Output as JSON}';
 
-    protected $description = 'Create an external API key for a user (the plaintext is shown once)';
+    protected $description = 'Mint a short-lived external API key that expires on its own';
 
     public function handle()
     {
@@ -48,20 +50,12 @@ class Api_Key_Command extends Command
         try {
             $user = Api_Key_Cli_Support::resolve_user($this->option('user'), $this->option('site'));
             $environment = Api_Key_Cli_Support::parse_environment($this->option('environment'));
-
-            $expires_at = null;
-            $expires_option = $this->option('expires');
-
-            if ($expires_option !== null && trim((string) $expires_option) !== '') {
-                $expires_at = Api_Key_Cli_Support::parse_expiry((string) $expires_option);
-            }
+            $expires_at = Api_Key_Cli_Support::parse_expiry((string) $this->option('expires'));
         } catch (Api_Cli_Error $e) {
             return Api_Key_Cli_Support::report_error($this, $e, $as_json);
         }
 
-        $name = (string) ($this->option('name') ?: 'CLI key');
-
-        $result = Api_Key_Model::generate($user->id, $name, $environment, null, $expires_at);
+        $result = Api_Key_Model::generate($user->id, static::KEY_NAME, $environment, null, $expires_at);
         $api_access = Api_Key_Cli_Support::api_access_enabled($user);
 
         if ($as_json) {
@@ -74,11 +68,11 @@ class Api_Key_Command extends Command
         }
 
         $this->newLine();
-        $this->info('[OK] API key created');
+        $this->info('[OK] Temporary API key created');
         $this->line('  User:    ' . $user->id . ' (' . $user->email . ')  site ' . $user->site_id);
         $this->line('  Name:    ' . $result['model']->name);
         $this->line('  Id:      ' . $result['model']->id);
-        $this->line('  Expires: ' . ($expires_at ? Rsx_Time::format_datetime($expires_at->toIso8601String()) : 'never'));
+        $this->line('  Expires: ' . Rsx_Time::format_datetime($expires_at->toIso8601String()));
         $this->newLine();
         $this->line('  KEY (shown once, store it now):');
         $this->line('  ' . $result['key']);

@@ -48,7 +48,11 @@ class Api_Code_Samples extends Component {
 
         this.$.closest('.Api_Endpoint_Card')
             .off('input.acs change.acs')
-            .on('input.acs change.acs', '.Api_Tester__input, .Api_Tester__body', this._values_handler);
+            .on(
+                'input.acs change.acs',
+                '.Api_Tester__input, .Api_Tester__body, .Api_File_Tester__input, .Api_File_Tester__file',
+                this._values_handler
+            );
 
         // The key lives outside the card entirely.
         document.addEventListener('apidocs:key_changed', this._values_handler);
@@ -88,7 +92,9 @@ class Api_Code_Samples extends Component {
      * implementation of "what would we send".
      */
     _filled_values() {
-        const tester = this.$.closest('.Api_Endpoint_Card').find('.Api_Tester').component();
+        // EITHER tester answers this: both implement current_values(), which is the whole
+        // contract, and the card decides which one is mounted (see Api_File_Endpoint_Card).
+        const tester = this.$.closest('.Api_Endpoint_Card').find('.Api_Tester, .Api_File_Tester').component();
 
         const values = tester ? tester.current_values() : {
             path: this.args.endpoint.pattern,

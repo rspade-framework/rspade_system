@@ -455,12 +455,12 @@ class Rsx
     /**
      * Whether this is the RSpade DEVELOPMENT container specifically.
      *
-     * Distinct from is_rspade_container(), and the distinction decides what
-     * happens to a migration snapshot: both targets take one, but only the
-     * development container discards it once the migration succeeds. On a
-     * production container that snapshot is the last copy of the database as it
-     * was a minute ago, which is precisely the thing an operator would want to
-     * still have.
+     * Distinct from is_rspade_container(), and the distinction decides whether a
+     * migration may snapshot at all. The PRODUCTION container carries
+     * /.rspade_container too but ships mysql-client ONLY - there is no local
+     * mysqld to stop and no data directory to copy - so `migrate` there runs bare
+     * rather than pretending to a rollback it could not perform. Only the
+     * development container satisfies this.
      */
     public static function is_rspade_dev_container(): bool
     {

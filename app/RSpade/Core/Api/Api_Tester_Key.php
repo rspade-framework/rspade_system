@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Api;
 use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Auth\Auth_Gates;
+use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -122,6 +123,23 @@ class Api_Tester_Key
             return null;
         }
 
+        return self::accessible_targets_for_user($user);
+    }
+
+    /**
+     * The same question asked about a user directly, with no adopted key and no browser
+     * session involved: which 'Class::method' targets would this user's #[Auth] gates admit.
+     *
+     * Split out because the CLI asks it too - rsx:api:openapi scopes its document to a user
+     * named by --user, and there is no session there to adopt a key into. The fencing
+     * described above is the whole reason this is ONE implementation rather than two: the
+     * identity swap, and both memo resets around it, are easy to get subtly wrong and the
+     * wrong answer still looks plausible.
+     *
+     * @return array<string, bool>
+     */
+    public static function accessible_targets_for_user(User_Model $user): array
+    {
         $targets = [];
 
         Session::_set_api_identity((int) $user->login_user_id, (int) $user->site_id, (int) $user->id);

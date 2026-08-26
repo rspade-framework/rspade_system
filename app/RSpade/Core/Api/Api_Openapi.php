@@ -33,8 +33,10 @@ use App\RSpade\Core\Api\Api_Catalog;
  *   @api-hidden            omitted entirely - there is nothing to say about an endpoint the
  *                          catalog does not publish.
  *
- * Param types are scalar-only (string/int/float/bool), which is a strict subset of JSON
- * Schema, so every type maps exactly. Responses carry the documented example; there is no
+ * Param types are scalar (string/int/float/bool), which is a strict subset of JSON Schema, so
+ * every type maps exactly - plus 'file', which is a multipart part rather than a value: an
+ * operation declaring one emits a multipart/form-data requestBody with that property typed
+ * string/format:binary, instead of the application/json object body every other POST gets. Responses carry the documented example; there is no
  * response SCHEMA because the framework never had one to project - an example alone is
  * valid OpenAPI and degrades honestly.
  */
@@ -48,6 +50,9 @@ class Api_Openapi
         'int' => 'integer',
         'float' => 'number',
         'bool' => 'boolean',
+        // A multipart file part. OpenAPI spells binary content as a string with format
+        // 'binary'; the requestBody media type is what actually makes it an upload.
+        'file' => 'string',
     ];
 
     /**
@@ -56,10 +61,23 @@ class Api_Openapi
      * Versions are NOT filtered: /api/v1/x and /api/v2/x are two paths, individually
      * callable, and listing both is what makes the document true. The older one carries
      * deprecated:true.
+     *
+     * $accessible_targets, when supplied, is the map Api_Tester_Key::accessible_targets_for_user()
+     * returns: 'Class::method' => bool. Only the endpoints it admits reach the document, so
+     * the caller gets a description of what one identity may actually call rather than of the
+     * whole surface. It is a VISIBILITY filter and nothing more - Api_Dispatcher gates every
+     * real call regardless of which document a client was generated from.
      */
-    public static function document(): array
+    public static function document(?array $accessible_targets = null): array
     {
         $endpoints = Api_Catalog::get_endpoint_list(false);
+
+        if ($accessible_targets !== null) {
+            $endpoints = array_values(array_filter(
+                $endpoints,
+                static fn ($ep) => !empty($accessible_targets[$ep['class'] . '::' . $ep['method']])
+            ));
+        }
 
         return [
             'openapi' => '3.1.0',
@@ -208,6 +226,7 @@ class Api_Openapi
         $parameters = [];
         $body_props = [];
         $body_required = [];
+        $body_has_file = false;
 
         foreach ($ep['api_params'] as $param) {
             $in_path = in_array($param['name'], $path_names, true);
@@ -218,6 +237,9 @@ class Api_Openapi
             }
 
             $body_props[$param['name']] = static::__schema($param);
+            if (($param['type'] ?? null) === 'file') {
+                $body_has_file = true;
+            }
             if (!empty($param['required'])) {
                 $body_required[] = $param['name'];
             }
@@ -233,9 +255,14 @@ class Api_Openapi
                 $schema['required'] = $body_required;
             }
 
+            // One media type, never two: a body carrying a file part IS multipart, and its
+            // sibling text params ride the same multipart body. Documenting a JSON
+            // alternative would describe a request the dispatcher cannot receive a file from.
+            $media_type = $body_has_file ? 'multipart/form-data' : 'application/json';
+
             $operation['requestBody'] = [
                 'required' => !empty($body_required),
-                'content' => ['application/json' => ['schema' => $schema]],
+                'content' => [$media_type => ['schema' => $schema]],
             ];
         }
 
@@ -273,6 +300,10 @@ class Api_Openapi
     private static function __schema(array $param): array
     {
         $schema = ['type' => static::TYPE_MAP[$param['type']] ?? 'string'];
+
+        if (($param['type'] ?? null) === 'file') {
+            $schema['format'] = 'binary';
+        }
 
         if (array_key_exists('default', $param) && $param['default'] !== null) {
             $schema['default'] = $param['default'];
