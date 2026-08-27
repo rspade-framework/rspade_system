@@ -1,0 +1,221 @@
+DARK_MODE(7)                RSpade Framework Manual                DARK_MODE(7)
+
+NAME
+       dark_mode - the per-identity theme preference, resolved server-side and
+       painted before the page loads
+
+SYNOPSIS
+       PHP:
+           use App\RSpade\Core\Theme\Rsx_Dark_Mode;
+
+           Rsx_Dark_Mode::get_mode();          // int - the stored preference
+           Rsx_Dark_Mode::is_dark();           // true | false | null (auto)
+           Rsx_Dark_Mode::set_mode($mode);     // bool - did the answer move
+           Rsx_Dark_Mode::body_classes();      // string[] for <body>
+           Rsx_Dark_Mode::body_attributes();   // the app's own vocabulary
+
+       JavaScript:
+           Rsx_Dark_Mode.mode();               // 0 light | 1 dark | 2 auto
+           Rsx_Dark_Mode.is_dark();            // always a real answer
+           Rsx_Dark_Mode.apply(is_dark);       // put a theme on <body>
+
+       Endpoints (framework-owned, staff realm):
+           Rsx_Dark_Mode_Controller.get_settings()
+           Rsx_Dark_Mode_Controller.set_dark_mode({dark_mode: 1})
+
+       Constants (Login_User_Model, mirrored on the JS class):
+           DARK_MODE_LIGHT = 0    DARK_MODE_DARK = 1    DARK_MODE_AUTO = 2
+
+DESCRIPTION
+       RSpade owns the theme PREFERENCE and how it reaches the page. It owns no
+       colours, no stylesheet and no opinion about a UI toolkit - an app supplies
+       those, and says how a theme is spelled in its own markup.
+
+       THE PREFERENCE IS RESOLVED ON THE SERVER AND RENDERED INTO <body>. That is
+       the whole design. A theme applied by JavaScript after load means the page
+       paints in the wrong colour first and is corrected a frame later, which is
+       the white flash every dark-mode user knows. Rendering it in the first bytes
+       of HTML means the page is never the wrong colour.
+
+       THREE MODES, AND THE THIRD IS NOT AN ABSENCE:
+
+           light (0)   an explicit choice; resolvable server-side
+           dark  (1)   an explicit choice; resolvable server-side
+           auto  (2)   follow the operating system - a real stored preference
+                       whose ANSWER only the browser knows
+
+       That asymmetry is the one thing to understand. An explicit mode is decided
+       in PHP and painted in the HTML. Auto cannot be: prefers-color-scheme exists
+       only in the browser, so the server emits the MODE and no theme, and
+       Rsx_Dark_Mode.js resolves it at boot and keeps following the OS for the
+       life of the page. An auto user can therefore see one frame of the default
+       theme; an explicit user never does.
+
+STORAGE
+       login_users.dark_mode - a BIGINT enum column, default 2 (auto).
+
+       It lives on login_users, beside timezone, because it describes the PERSON
+       rather than their membership of a site: the same human signed in to three
+       sites wants one answer, and a per-site column would give them three that
+       silently disagree.
+
+       STAFF ONLY. portal_users has no equivalent column, exactly as it has no
+       timezone, so a portal request resolves to the configured default and never
+       to a person's choice. If portal accounts ever gain a theme preference,
+       Rsx_Dark_Mode is the one place that changes.
+
+WHAT REACHES THE PAGE
+       CLASSES on <body>, always:
+
+           rsx-theme-light | rsx-theme-dark | rsx-theme-auto
+               The MODE that was chosen. Present on every page. Note that
+               rsx-theme-auto says nothing about which theme is showing.
+
+           rsx-dark
+               Dark is ACTIVE right now. Present only when dark is actually in
+               effect - server-rendered for an explicit dark preference, added by
+               Rsx_Dark_Mode.js under auto when the OS asks for it.
+
+       Style against rsx-dark. It is the only class that answers "is this page
+       dark", and it is correct under all three modes.
+
+       ATTRIBUTES on <body>, app-declared:
+
+           config('rsx.theme.dark_mode.attributes') is a map keyed 'dark' and
+           'light', rendered onto <body> verbatim. RSpade ships nothing here by
+           design - it does not know whether an app is built on a CSS framework
+           with a theme attribute, on custom properties, or on plain CSS.
+
+           An app whose CSS keys off an attribute declares it:
+
+               'theme' => [
+                   'dark_mode' => [
+                       'attributes' => [
+                           'dark'  => ['data-theme' => 'dark'],
+                           'light' => ['data-theme' => 'light'],
+                       ],
+                   ],
+               ],
+
+           An app that themes purely off rsx-dark declares nothing.
+
+       window.rsxapp.theme, always present:
+
+           mode              the stored preference (0|1|2)
+           is_dark           the resolved answer, or null under auto
+           dark_class        the class name, so client code never hardcodes it
+           dark_attributes   the app's declared sets, so the client applies
+           light_attributes  exactly what the server would have
+
+CHANGING THE PREFERENCE
+       Post to the framework controller; do not write the column directly and do
+       not wrap it in an app endpoint (that would be a second way to do one
+       thing). The app owns the settings SCREEN, not the preference.
+
+           const result = await Rsx_Dark_Mode_Controller.set_dark_mode({
+               dark_mode: Rsx_Dark_Mode.MODE_DARK,
+           });
+
+       set_dark_mode returns 'changed', which says the RESOLVED theme moved.
+
+       THE PAGE ON SCREEN CANNOT BE RE-THEMED. The theme was rendered into <body>
+       by the server, so only a real request can paint the new one. On a change,
+       call Spa.disable(): the SPA keeps working, but the next navigation - a link
+       click or a programmatic redirect alike - becomes a full page load that
+       re-renders <body> correctly.
+
+           if (result.changed) {
+               Spa.disable();
+               Flash_Alert.success('Theme saved. The app will switch over when you navigate away.');
+           }
+
+       Prefer that to reloading immediately: the user may still be editing other
+       settings on the page, and yanking it out from under them to recolour it is
+       worse than the brief mismatch. Reload outright only if the screen has
+       nothing else on it.
+
+STYLING
+       The framework guarantees the class is on <body> at the right time. What
+       "dark" LOOKS like is entirely the app's, and there are two workable shapes:
+
+       TOKEN-FIRST (recommended). Define the palette as CSS custom properties and
+       redefine them under the dark class. Every surface that reads a token flips
+       at once, and component CSS needs no dark rules at all:
+
+           :root { --surface: #fff; --text: #111; }
+           body.rsx-dark { --surface: #10151b; --text: #e6e9ee; }
+
+       PER-COMPONENT OVERRIDES for whatever cannot be a token. Values baked at
+       compile time - SCSS variables, hardcoded hex - cannot be re-pointed by a
+       runtime class, so each needs a rule:
+
+           .My_Widget {
+               background: $white;
+
+               body.rsx-dark & { background: #10151b; }
+           }
+
+       Nest it inside the component's own top-level selector (`body.rsx-dark &`)
+       rather than opening a second top-level block, so the file keeps one root
+       selector and stays SCSS-SCOPE-01 clean.
+
+       TWO THINGS THAT ARE NOT CSS. Native controls - checkboxes, scrollbars, date
+       pickers - are painted by the browser, not by a stylesheet, and stay light
+       until told otherwise:
+
+           body.rsx-dark { color-scheme: dark; }
+
+       And a custom property inherits DOWNWARD only, so redefining a token on
+       <body> does not reach a rule that resolved it on <html>.
+
+CONFIGURATION
+       config('rsx.theme.dark_mode'):
+
+           default             mode for an identity that expressed no preference,
+                               and for every portal request. Default 2 (auto).
+           dark_class          class meaning "dark is active". Default rsx-dark.
+           mode_class_prefix   prefix for the mode class. Default rsx-theme-.
+           attributes          the app's own vocabulary, keyed dark/light. Empty
+                               in the framework; declared by the app.
+
+GOTCHAS
+       AUTO IS NOT RESOLVABLE SERVER-SIDE, and no amount of framework code changes
+       that. If a one-frame flash for auto users is unacceptable, the app's own
+       CSS can cover it with a prefers-color-scheme media query scoped to
+       rsx-theme-auto - the framework will not do it for you, because the correct
+       rule depends on the app's palette.
+
+       rsx-theme-auto DOES NOT MEAN DARK. Style against rsx-dark; a rule written
+       against the mode class will be wrong for half of that mode's users.
+
+       A THEME CHANGE DOES NOT REPAINT THE CURRENT PAGE. See CHANGING THE
+       PREFERENCE - Spa.disable() is the mechanism, and forgetting it leaves the
+       user looking at the old theme with no indication anything happened.
+
+       THE PREFERENCE IS NOT A SESSION VALUE. It is a column, so it follows the
+       person to every browser they sign in from, which is what users expect of a
+       theme and is worth knowing before caching it anywhere.
+
+FILES
+       system/app/RSpade/Core/Theme/Rsx_Dark_Mode.php
+       system/app/RSpade/Core/Theme/Rsx_Dark_Mode_Controller.php
+       system/app/RSpade/Core/Js/Rsx_Dark_Mode.js
+       system/app/RSpade/Core/SPA/Spa_App.blade.php     (renders the body tag)
+       system/app/RSpade/helpers.php                    (rsx_body_class,
+                                                         rsx_body_attributes)
+
+       Worked example, both halves:
+       system/app/RSpade/resource/reference_app/resource/config/rsx.php
+       system/app/RSpade/resource/reference_app/app/frontend/settings/user_settings/
+
+SEE ALSO
+       rsx:man spa               Spa.disable() and the navigation model
+       rsx:man time              the other per-identity preference
+       rsx:man config_rsx        the framework/app config merge
+       rsx:man scss              component styling and SCSS-SCOPE-01
+
+VERSION
+       RSpade Framework 1.0
+       Last updated 2026-08-27
+
+DARK_MODE(7)                RSpade Framework Manual                DARK_MODE(7)

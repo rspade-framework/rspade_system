@@ -777,6 +777,30 @@ SPA EVENTS
             }
         }
 
+DISABLING SPA NAVIGATION
+    Spa.disable() turns every subsequent navigation into a full page load. The
+    SPA stays mounted and the current page keeps working; what changes is that
+    the next link click or Spa.dispatch() hands off to the browser instead of
+    swapping the action client-side.
+
+        Spa.disable();   // next navigation is a real request
+        Spa.enable();    // back to client-side dispatch
+
+    WHY IT EXISTS: some state is decided by the SERVER at page render and cannot
+    be re-decided without a new request. The theme is the worked example - it is
+    rendered onto <body> before the shell loads (rsx:man dark_mode), so a saved
+    theme change cannot be applied to the page already on screen. Disabling
+    navigation means the user's next move repaints the app correctly, with no
+    reload forced on them mid-task.
+
+    Back/Forward is exempt: popstate dispatches with force:true, so history
+    navigation stays client-side even while disabled.
+
+    The framework also disables the SPA on an unhandled JavaScript exception, so
+    a broken page can still be navigated away from. Nothing re-enables it
+    automatically - a page that disables the SPA for a recoverable reason should
+    call Spa.enable() itself once the reason is gone.
+
 SESSION VALIDATION
     After each SPA navigation (except initial load and back/forward), the client
     validates its state against the server by calling Rsx.validate_session().
@@ -791,8 +815,9 @@ SESSION VALIDATION
     fresh state, or is redirected to login if session was invalidated.
 
     Validation is fire-and-forget (non-blocking) and fails silently on network
-    errors to avoid disrupting navigation. Stale state will be detected on
-    subsequent navigations or when the 30-minute SPA timeout triggers.
+    errors to avoid disrupting navigation. Stale state is detected on subsequent
+    navigations. There is no time-based expiry - the SPA runs until something
+    disables it or the page is left.
 
     Manual validation:
         // Returns true if valid, false if refresh triggered

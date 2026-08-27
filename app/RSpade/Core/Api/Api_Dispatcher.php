@@ -42,6 +42,29 @@ use App\RSpade\Core\Models\User_Model;
 class Api_Dispatcher
 {
     /**
+     * Whole-payload ceiling for the stored request body. The log is an activity record,
+     * not a copy of the traffic: a body larger than this is truncated with a marker.
+     */
+    private const LOG_BODY_MAX_BYTES = 25000;
+
+    /**
+     * Per-value ceiling inside that payload, so one enormous field cannot consume the
+     * whole budget and push every other field out of the record.
+     */
+    private const LOG_VALUE_MAX_BYTES = 4000;
+
+    /**
+     * Appended wherever a cap bit, so a truncated value is never mistaken for the value.
+     */
+    private const LOG_TRUNCATION_MARKER = '...[truncated]';
+
+    /**
+     * Keys whose VALUE is replaced with [redacted] before the body is stored. Credentials
+     * only - see _redact() for why a bare 'key' is deliberately absent.
+     */
+    private const LOG_REDACT_KEYS = '/pass(word|wd)?|secret|token|authorization|api[_-]?key|credential|private[_-]?key/i';
+
+    /**
      * True for the duration of an API dispatch. Api_Exception_Handler gates on this so
      * an uncaught endpoint error renders as JSON rather than an HTML error page.
      */
@@ -110,17 +133,19 @@ class Api_Dispatcher
 
         // --- Verb gate (HEAD deliberately included -> 405) ---
         if ($method !== 'GET' && $method !== 'POST') {
-            self::_log($request, $start, $method, $path, null, 405, $api_key_id, $user_id, $site_id);
+            $response = self::_error('method_not_allowed', 'Only GET and POST are supported', 405);
+            self::_log($request, $start, $method, $path, null, 405, $api_key_id, $user_id, $site_id, $response);
 
-            return self::_error('method_not_allowed', 'Only GET and POST are supported', 405);
+            return $response;
         }
 
         // --- Auth FIRST (uniform 401 across the whole namespace) ---
         $auth = self::_authenticate($request);
         if ($auth['error'] !== null) {
-            self::_log($request, $start, $method, $path, null, 401, $api_key_id, $user_id, $site_id);
+            $response = self::_error($auth['error'][0], $auth['error'][1], 401);
+            self::_log($request, $start, $method, $path, null, 401, $api_key_id, $user_id, $site_id, $response);
 
-            return self::_error($auth['error'][0], $auth['error'][1], 401);
+            return $response;
         }
         $api_key = $auth['key'];
         $user = $auth['user'];
@@ -132,9 +157,10 @@ class Api_Dispatcher
         // --- Route match (exact, api routes only) ---
         $route = self::_match_route($path, $method);
         if ($route === null) {
-            self::_log($request, $start, $method, $path, null, 404, $api_key_id, $user_id, $site_id);
+            $response = self::_error('not_found', 'Unknown API endpoint', 404);
+            self::_log($request, $start, $method, $path, null, 404, $api_key_id, $user_id, $site_id, $response);
 
-            return self::_error('not_found', 'Unknown API endpoint', 404);
+            return $response;
         }
         $handler = $route['class'] . '::' . $route['method'];
 
@@ -142,17 +168,19 @@ class Api_Dispatcher
         $json_invalid = false;
         $raw = self::_collect_raw_input($request, $route['params'], $json_invalid);
         if ($json_invalid) {
-            self::_log($request, $start, $method, $path, $handler, 400, $api_key_id, $user_id, $site_id);
+            $response = self::_error('invalid_json', 'Request body is not valid JSON', 400);
+            self::_log($request, $start, $method, $path, $handler, 400, $api_key_id, $user_id, $site_id, $response);
 
-            return self::_error('invalid_json', 'Request body is not valid JSON', 400);
+            return $response;
         }
 
         // --- Param validation ---
         $validation = Api_Param_Validator::validate($route['api_params'], $raw);
         if (!$validation['valid']) {
-            self::_log($request, $start, $method, $path, $handler, 422, $api_key_id, $user_id, $site_id);
+            $response = self::_error('validation', 'Validation failed', 422, $validation['fields']);
+            self::_log($request, $start, $method, $path, $handler, 422, $api_key_id, $user_id, $site_id, $response);
 
-            return self::_error('validation', 'Validation failed', 422, $validation['fields']);
+            return $response;
         }
         $params = $validation['params'];
 
@@ -165,9 +193,10 @@ class Api_Dispatcher
         $gates = $route['auth'] ?? [];
         if (!empty($gates)
             && !Auth_Gates::gates_pass_at_seam($gates, Auth_Gates::REALM_STAFF, $handler)) {
-            self::_log($request, $start, $method, $path, $handler, 403, $api_key_id, $user_id, $site_id);
+            $response = self::_error('forbidden', 'Insufficient permissions', 403);
+            self::_log($request, $start, $method, $path, $handler, 403, $api_key_id, $user_id, $site_id, $response);
 
-            return self::_error('forbidden', 'Insufficient permissions', 403);
+            return $response;
         }
 
         // --- Invoke (controller pre_dispatch + action) + build response ---
@@ -196,13 +225,13 @@ class Api_Dispatcher
 
             $response = self::build_response($result);
         } catch (Throwable $e) {
-            self::_log($request, $start, $method, $path, $handler, 500, $api_key_id, $user_id, $site_id);
+            self::_log($request, $start, $method, $path, $handler, 500, $api_key_id, $user_id, $site_id, null);
 
             throw $e;
         }
 
         $status = $response->getStatusCode();
-        self::_log($request, $start, $method, $path, $handler, $status, $api_key_id, $user_id, $site_id);
+        self::_log($request, $start, $method, $path, $handler, $status, $api_key_id, $user_id, $site_id, $response);
 
         return $response;
     }
@@ -377,6 +406,11 @@ class Api_Dispatcher
     /**
      * Write one _api_request_log row. Deliberately try/catch-free: a write failure here
      * indicates schema drift and must fail loud, not be swallowed.
+     *
+     * $response is the response this request is ABOUT to be answered with - every call
+     * site builds it first and hands it in, so the error code, error message and byte
+     * size are all read from the ONE thing that actually goes over the wire rather than
+     * being restated per call site.
      */
     private static function _log(
         Request $request,
@@ -387,7 +421,8 @@ class Api_Dispatcher
         int $status,
         ?int $api_key_id,
         ?int $user_id,
-        ?int $site_id
+        ?int $site_id,
+        ?Response $response = null
     ): void {
         $duration_ms = (int) round((hrtime(true) - $start_ns) / 1_000_000);
 
@@ -401,6 +436,158 @@ class Api_Dispatcher
         $log->status = $status;
         $log->duration_ms = $duration_ms;
         $log->ip = $request->ip();
+        $log->request_body = self::_capture_request_body($request);
+
+        $facts = self::_response_facts($response);
+        $log->response_error_code = $facts['error_code'];
+        $log->response_error_message = $facts['error_message'];
+        $log->response_bytes = $facts['bytes'];
+
         $log->save();
+    }
+
+    /**
+     * The request body as it will be stored: redacted, per-value capped, whole-payload
+     * capped - or NULL when there is nothing to store or it must not be stored.
+     *
+     * NEVER FOR AN UPLOAD. A multipart request carries file bytes, and the log is not a
+     * copy of the blob store: the test is the REQUEST (files present, or a multipart
+     * content type), not the endpoint name, so it holds for POST /api/v1/files and for
+     * any future upload endpoint without either knowing about the other.
+     */
+    private static function _capture_request_body(Request $request): ?string
+    {
+        if (!empty($request->allFiles())) {
+            return null;
+        }
+
+        $content_type = (string) $request->header('Content-Type', '');
+        if (stripos($content_type, 'multipart/form-data') !== false) {
+            return null;
+        }
+
+        if (stripos($content_type, 'application/json') !== false) {
+            $raw = (string) $request->getContent();
+            $decoded = $raw === '' ? null : json_decode($raw, true);
+
+            // An unparseable body is still evidence - that request 400s, and the log is
+            // where you look to find out why - so it is stored as the text it was.
+            if (!is_array($decoded)) {
+                return $raw === '' ? null : self::_cap(self::_redact_value($raw), self::LOG_BODY_MAX_BYTES);
+            }
+
+            $body = $decoded;
+        } else {
+            $body = $request->post();
+        }
+
+        if (empty($body)) {
+            return null;
+        }
+
+        $encoded = json_encode(self::_redact($body), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        if ($encoded === false) {
+            return null;
+        }
+
+        return self::_cap($encoded, self::LOG_BODY_MAX_BYTES);
+    }
+
+    /**
+     * Redact secret-looking keys and cap every scalar, at any depth.
+     *
+     * WHAT IS NOT REDACTED MATTERS AS MUCH AS WHAT IS: a bare 'key' is left alone,
+     * because in this API that is the attachment key an upload hands back - the thing you
+     * most need to see when tracing an attach - and it is single-use, tenant-scoped and
+     * already spent by the time anyone reads the log. The list names credentials.
+     */
+    private static function _redact(array $body): array
+    {
+        $out = [];
+
+        foreach ($body as $key => $value) {
+            if (is_string($key) && preg_match(self::LOG_REDACT_KEYS, $key)) {
+                $out[$key] = '[redacted]';
+                continue;
+            }
+
+            if (is_array($value)) {
+                $out[$key] = self::_redact($value);
+                continue;
+            }
+
+            $out[$key] = is_string($value) ? self::_redact_value($value) : $value;
+        }
+
+        return $out;
+    }
+
+    /**
+     * Cap one scalar. A value over the per-value ceiling is truncated with a marker, so a
+     * reader can tell a truncated value from one that was genuinely that long.
+     */
+    private static function _redact_value(string $value): string
+    {
+        return self::_cap($value, self::LOG_VALUE_MAX_BYTES);
+    }
+
+    /**
+     * Truncate to $max, marking it when truncation happened.
+     */
+    private static function _cap(string $value, int $max): string
+    {
+        if (strlen($value) <= $max) {
+            return $value;
+        }
+
+        return substr($value, 0, $max) . self::LOG_TRUNCATION_MARKER;
+    }
+
+    /**
+     * Pull the loggable facts out of the response actually being sent.
+     *
+     * The error code and message come from this API's error envelope
+     * ({"error":{"code","message"}}); a success carries neither, which is what makes
+     * "response_error_code IS NULL" the success predicate.
+     */
+    private static function _response_facts(?Response $response): array
+    {
+        $facts = ['error_code' => null, 'error_message' => null, 'bytes' => 0];
+
+        if ($response === null) {
+            return $facts;
+        }
+
+        // A streamed or file response has no in-memory content; its declared length is
+        // the only honest answer, and 0 when it declares none.
+        $content = null;
+        if (!($response instanceof \Symfony\Component\HttpFoundation\StreamedResponse)
+            && !($response instanceof \Symfony\Component\HttpFoundation\BinaryFileResponse)) {
+            $raw = $response->getContent();
+            $content = is_string($raw) ? $raw : null;
+        }
+
+        if ($content !== null) {
+            $facts['bytes'] = strlen($content);
+        } else {
+            $facts['bytes'] = (int) $response->headers->get('Content-Length', 0);
+        }
+
+        if ($response->getStatusCode() < 400 || $content === null || $content === '') {
+            return $facts;
+        }
+
+        $decoded = json_decode($content, true);
+        if (!is_array($decoded) || !isset($decoded['error']) || !is_array($decoded['error'])) {
+            return $facts;
+        }
+
+        $error = $decoded['error'];
+        $facts['error_code'] = isset($error['code']) ? substr((string) $error['code'], 0, 64) : null;
+        $facts['error_message'] = isset($error['message'])
+            ? self::_cap((string) $error['message'], self::LOG_VALUE_MAX_BYTES)
+            : null;
+
+        return $facts;
     }
 }

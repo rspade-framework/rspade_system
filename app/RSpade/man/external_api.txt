@@ -790,8 +790,41 @@ REQUEST LOGGING
         status, duration_ms, ip, and nullable api_key_id / user_id / site_id
         (null where unknown, e.g. a 401 before the key resolved).
 
-    Request and response BODIES are deliberately NOT logged (size + PII); a
-    config knob to opt into body capture is backlogged.
+    WHAT WAS EXCHANGED is recorded alongside what was called:
+
+        request_body            The payload as sent - REDACTED and CAPPED.
+        response_error_code     The error envelope's code, NULL on a success.
+        response_error_message  The envelope's message.
+        response_bytes          Size of the body actually sent.
+
+    "response_error_code IS NULL" is the success predicate; status carries the
+    HTTP code for finer filtering.
+
+    THE BODY IS NEVER STORED FOR AN UPLOAD. The test is the REQUEST - files
+    present, or a multipart/form-data content type - not the endpoint name, so it
+    holds for POST /api/v1/files and for any upload endpoint written later
+    without either knowing about the other. It is also null when there was no
+    body, which is every GET.
+
+    REDACTION AND CAPS. Values under credential-shaped keys (password, secret,
+    token, authorization, api_key, credential, private_key) are replaced with
+    [redacted] at any depth. A bare 'key' is deliberately NOT on that list: in
+    this API it is the single-use, tenant-scoped attachment key an upload hands
+    back, and it is the thing you most need when tracing an attach. Each value is
+    capped at 4000 bytes and the whole payload at 25000, both marked
+    '...[truncated]' so a truncated value never reads as the value. An
+    unparseable JSON body is stored as the text it was - that request 400s, and
+    this is where you look to find out why.
+
+    A streamed or file response reports its declared Content-Length as
+    response_bytes (0 when it declares none) - the log never buffers a download
+    just to measure it.
+
+    PURGING A KEY DESTROYS ITS HISTORY. api_key_id is a foreign key with
+    ON DELETE CASCADE, so `rsx:api:key:delete <id> --purge` takes that key's rows
+    with it. Revoking does NOT - it sets _api_keys.is_revoked and keeps the row,
+    which is the difference between the two operations. Indexes cover the three
+    ways the table is read: by key, by ip, and by created_at (date range).
 
     RETENTION. config('rsx.api.log_retention_days') (default 30) is consumed by
     Api_Cleanup_Service::cleanup_request_log - a #[Task] #[Exclusive]

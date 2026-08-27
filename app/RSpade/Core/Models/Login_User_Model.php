@@ -39,6 +39,7 @@ use App\RSpade\Core\Session\Session;
  * @property int $status_id
  * @property string $timezone
  * @property int $timezone_auto
+ * @property int $dark_mode
  * @property string $remember_token
  * @property string $last_login
  * @property string $created_at
@@ -55,6 +56,8 @@ use App\RSpade\Core\Session\Session;
  * @property-read string $status_id__constant
  * @property-read string $is_verified__label
  * @property-read string $is_verified__constant
+ * @property-read string $dark_mode__label
+ * @property-read string $dark_mode__constant
  *
  * @method static array status_id__enum() Get all enum definitions with full metadata
  * @method static array status_id__enum_select() Get [{value, label}] array for dropdowns
@@ -64,6 +67,10 @@ use App\RSpade\Core\Session\Session;
  * @method static array is_verified__enum_select() Get [{value, label}] array for dropdowns
  * @method static array is_verified__enum_labels() Get simple id => label map
  * @method static array is_verified__enum_ids() Get array of all valid enum IDs
+ * @method static array dark_mode__enum() Get all enum definitions with full metadata
+ * @method static array dark_mode__enum_select() Get [{value, label}] array for dropdowns
+ * @method static array dark_mode__enum_labels() Get simple id => label map
+ * @method static array dark_mode__enum_ids() Get array of all valid enum IDs
  *
  * @mixin \Eloquent
  */
@@ -78,6 +85,9 @@ class Login_User_Model extends Rsx_Actor_Model_Abstract implements
     const STATUS_ACTIVE = 1;
     const STATUS_INACTIVE = 2;
     const STATUS_SUSPENDED = 3;
+    const DARK_MODE_LIGHT = 0;
+    const DARK_MODE_DARK = 1;
+    const DARK_MODE_AUTO = 2;
 
 
     use Authenticatable;
@@ -121,6 +131,26 @@ class Login_User_Model extends Rsx_Actor_Model_Abstract implements
             ],
             1 => [
                 'label' => 'Verified',
+            ],
+        ],
+        // The per-identity theme preference. AUTO is the default and means "follow the
+        // operating system" - it is a real stored choice, not the absence of one, which
+        // is why it is an enum value rather than a null.
+        'dark_mode' => [
+            0 => [
+                'constant' => 'DARK_MODE_LIGHT',
+                'label' => 'Light',
+                'order' => 1,
+            ],
+            1 => [
+                'constant' => 'DARK_MODE_DARK',
+                'label' => 'Dark',
+                'order' => 2,
+            ],
+            2 => [
+                'constant' => 'DARK_MODE_AUTO',
+                'label' => 'Auto (match system)',
+                'order' => 3,
             ],
         ],
     ];

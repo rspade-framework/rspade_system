@@ -84,7 +84,7 @@ php artisan rsx:api:openapi    [--user=<id|email>] [--site=] [--compact]
 - **`--user` is required and has NO default** — it is an option because every framework command spells it that way (`rsx:debug`, `rsx:ajax`), and the requirement is enforced in the command, naming the flag. A users.id or an email.
 - **`--site` disambiguates, it does not select.** `users.id` is a global PK, so a numeric `--user` needs no site (a mismatched `--site` is refused). `users.email` is not unique across sites, so an email matching in two sites is **refused with the candidates listed** rather than a tenant being guessed.
 - **`--expires`** takes an ISO datetime or a relative span. On `create` there is **no default** — no expiry means "until revoked". `temp` defaults to `1 hour` and names every key it mints **`Temporary (CLI)`**, so `list` and Settings > API Keys both say what it is.
-- **`delete` revokes** and keeps the row (request-log rows reference `api_key_id`); `--purge` removes it outright. Under `--json` it **requires `--force`** — a prompt would write into the stream the script is parsing and then block forever.
+- **`delete` revokes** and keeps the row, and its request-log history with it; **`--purge` removes the key outright and CASCADE-deletes that history** (`_api_request_log.api_key_id` is a real FK). That difference is the reason to prefer revoke. Under `--json` it **requires `--force`** — a prompt would write into the stream the script is parsing and then block forever.
 - **Minting is NOT gated on `users.is_api_access_enabled`** (shell access outranks any in-app permission, and a provisioning script must be able to mint for a user it is about to enable) — but `create`/`temp` **warn**, and report `api_access_enabled: false`.
 
 **The `--json` envelope**, one shape for every `key:*` command, stdout carrying JSON and nothing else:
@@ -157,6 +157,20 @@ Worked example: `system/app/RSpade/resource/reference_app/app/api/v1/clients_api
 **Downloads need no API endpoint.** `/_download`, `/_inline`, `/_thumbnail/*`, `/_download_zip` and `/_preview/pdf` all accept `Authorization: Bearer`, so an integration fetches bytes with no cookie. A bad Bearer is a 401 there — it never degrades to anonymous.
 
 **Status vocabulary** (`pending` / `available` / `error` / `unsupported`): rendering and extraction are async, so a just-uploaded document reads `pending`. Poll; never assume. `error` is terminal and never auto-retried.
+
+## Request logging
+
+Every request — success and every failure path — writes one `_api_request_log` row: `verb`, `path`, `handler`, `status`, `duration_ms`, `ip`, nullable identity columns, plus **what was exchanged**:
+
+| Column | Notes |
+|---|---|
+| `request_body` | redacted + capped; **NULL for any upload** |
+| `response_error_code` / `response_error_message` | from the error envelope; NULL on success |
+| `response_bytes` | body size actually sent |
+
+`response_error_code IS NULL` is the success predicate. **The body is never stored for an upload** — the test is the request (files present, or a multipart content type), not the endpoint name, so it covers future upload endpoints automatically. Credential-shaped keys (`password`, `secret`, `token`, `authorization`, `api_key`, `credential`, `private_key`) are `[redacted]` at any depth; a bare **`key` is deliberately not redacted** because in this API that is the attachment key you need when tracing an attach. Values cap at 4000 bytes, the whole payload at 25000, both marked `...[truncated]`.
+
+Indexed by key, by `ip`, and by `created_at`. Retention is `config('rsx.api.log_retention_days')` (default 30), pruned by a daily `#[Task]`.
 
 ## Versioning
 

@@ -485,6 +485,19 @@ abstract class Rsx_Bundle_Abstract
         $login_user = $is_portal ? null : Session::get_login_user();
         $rsxapp_data['user_timezone_auto'] = $login_user ? (bool) $login_user->timezone_auto : null;
 
+        // Theme, ALWAYS present so client code can read it as a constant. 'mode' is the
+        // preference (light/dark/auto); 'is_dark' is the RESOLVED answer, or null under
+        // auto - where only the browser knows and Rsx_Dark_Mode.js decides at boot. The
+        // class names and the app's own attribute vocabulary ride along so the client
+        // applies exactly what the server would have, rather than a second guess at it.
+        $rsxapp_data['theme'] = [
+            'mode' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::get_mode(),
+            'is_dark' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::is_dark(),
+            'dark_class' => \App\RSpade\Core\Theme\Rsx_Dark_Mode::dark_class(),
+            'dark_attributes' => (object) \App\RSpade\Core\Theme\Rsx_Dark_Mode::attributes_for(true),
+            'light_attributes' => (object) \App\RSpade\Core\Theme\Rsx_Dark_Mode::attributes_for(false),
+        ];
+
         // Add console_debug config in development AND debug modes (strict production
         // omits it; call sites are stripped from the bundle there). Policy helper.
         if (Manifest::_should_include_debug_info()) {

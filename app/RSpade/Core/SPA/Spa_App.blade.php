@@ -11,7 +11,7 @@
     {!! $bundle::render() !!}
 </head>
 
-<body class="{{ rsx_body_class() }}">
+<body class="{{ rsx_body_class() }}"{!! rsx_body_attributes() !!}>
     <div id="spa-root"></div>
 </body>
 

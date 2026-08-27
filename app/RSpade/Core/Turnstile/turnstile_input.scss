@@ -14,10 +14,10 @@
         min-height: 65px;
         max-width: 300px;
         padding: 0 16px;
-        border: 1px solid #dee2e6;
+        border: 1px solid var(--bs-border-color);
         border-radius: 6px;
-        background-color: #f8f9fa;
-        color: #6c757d;
+        background-color: var(--bs-tertiary-bg);
+        color: var(--bs-secondary-color);
         font-size: 13px;
         user-select: none;
     }

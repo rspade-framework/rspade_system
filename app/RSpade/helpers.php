@@ -1208,16 +1208,48 @@ function rsx_dump_die(...$values)
 }
 
 /**
- * Get the RSX ID of the current view for use as a body class
+ * Get the classes for the current view's body tag.
  *
- * This is used in layout files to add the view's RSX ID as a CSS class
- * to the body tag, enabling view-specific styling.
+ * The view's RSX ID (enabling view-specific styling), plus the framework's theme
+ * classes - the mode that was chosen, and the dark class when dark is actually active.
  *
- * @return string The RSX ID or empty string if not set
+ * THE THEME IS RENDERED HERE, IN THE FIRST BYTES OF HTML, precisely so a dark-mode user
+ * never sees a white page while the SPA shell boots. Applying it from JavaScript would
+ * mean painting light first and correcting it, which is the flash this avoids.
+ *
+ * @return string The body class attribute value
  */
 function rsx_body_class()
 {
-    return \Illuminate\Support\Facades\View::shared('rsx_view_id', '');
+    $classes = [\Illuminate\Support\Facades\View::shared('rsx_view_id', '')];
+
+    foreach (\App\RSpade\Core\Theme\Rsx_Dark_Mode::body_classes() as $theme_class) {
+        $classes[] = $theme_class;
+    }
+
+    return trim(implode(' ', array_filter($classes)));
+}
+
+/**
+ * Get the APP-DECLARED theme attributes for the current view's body tag, ready to print.
+ *
+ * RSpade ships no UI toolkit, so it has no opinion about how a theme is expressed in
+ * markup: an app names its own vocabulary in config('rsx.theme.dark_mode.attributes')
+ * (a Bootstrap app, data-bs-theme) and this renders it verbatim. Empty when the app
+ * declared nothing, and empty under AUTO - where the answer is not knowable server-side
+ * and Rsx_Dark_Mode.js applies it at boot instead.
+ *
+ * @return string A pre-escaped attribute string, with a leading space, or ''
+ */
+function rsx_body_attributes()
+{
+    $parts = [];
+
+    foreach (\App\RSpade\Core\Theme\Rsx_Dark_Mode::body_attributes() as $name => $value) {
+        $parts[] = htmlspecialchars((string) $name, ENT_QUOTES) . '="' . htmlspecialchars((string) $value, ENT_QUOTES) . '"';
+    }
+
+    return empty($parts) ? '' : ' ' . implode(' ', $parts);
 }
 
 /**

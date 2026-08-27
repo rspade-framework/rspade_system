@@ -19,13 +19,13 @@
         font-size: 13px;
         font-weight: 600;
         letter-spacing: 0.05em;
-        color: #6c757d;
+        color: var(--bs-secondary-color);
     }
 
     &__name {
         margin-top: 4px;
         font-size: 14px;
-        color: #212529;
+        color: var(--bs-body-color);
         word-break: break-word;
     }
 }
