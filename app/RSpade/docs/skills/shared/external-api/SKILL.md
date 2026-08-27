@@ -1,6 +1,6 @@
 ---
 name: external-api
-description: Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version, minting API keys, or diagnosing a 401 before route match, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument.
+description: Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version, uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, or diagnosing a 401 before route match, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument.
 ---
 
 # External API
@@ -32,6 +32,7 @@ class Contacts_Api_Controller extends Rsx_Api_Controller_Abstract {
 
 - Path MUST start `/api/vN/` (N = digits).
 - **GET/POST only.**
+- A `file` param is POST-only, never a `:token`, and never defaulted (see Files).
 - Every `:token` in the path needs a matching `#[Api_Param]`.
 - No `#[Route]`/`#[SPA]`/`#[Ajax_Endpoint]`/`#[FPC]` on the same method.
 - `/api/vN` is reserved against `#[Route]`/SPA - a normal route may not claim it.
@@ -113,12 +114,49 @@ Full flag reference, exit codes and the error-code roster: `rsx:man external_api
 
 ## Param validation
 
-Input precedence: **route params > GET query > JSON/form body.**
+Input precedence: **route params > GET query > JSON/form/multipart body.**
 
 - 422 per-field on a missing required param, a bad type, or **any undeclared param**.
 - 400 on an unparseable JSON body.
 
 The undeclared-param rejection is deliberate: a client sending `?limt=50` gets told, instead of silently receiving unfiltered data.
+
+Every param is validated AND coerced, except `file` — that one is validated only and reaches the endpoint as the raw `UploadedFile`. An `UploadedFile` offered for a scalar param is refused, so a temp path can never be smuggled into a string.
+
+## Files
+
+**The framework moves the bytes; your app owns "attach".** Three shipped endpoints:
+
+| Endpoint | Returns |
+|---|---|
+| `POST /api/v1/files` | 201 + the file payload, including an unclaimed `key` |
+| `GET /api/v1/files/:key` | metadata, URLs, `preview_status`, `text_status` |
+| `GET /api/v1/files/:key/text` | `{key, text, text_status}`, or 409 while pending |
+
+Upload is `multipart/form-data`, declared with the **`file` param type**:
+
+```php
+#[Api_Endpoint('/api/v1/files', methods: ['POST'])]
+#[Api_Param('file', type: 'file', required: true, description: '...')]
+```
+
+A `file` param is **POST-only, never a `:token`, never defaulted** — all three are manifest-scan failures. It is **validated but never coerced**: the endpoint receives the `UploadedFile` as it arrived. It also fixes the part name (read it from the catalog rather than assuming `'file'`), and drives the OpenAPI projection to `multipart/form-data` with a binary part.
+
+**Attaching is the app's endpoint, deliberately.** Which record, which category and who may do it are policy the framework cannot answer:
+
+```php
+$attachment = File_Attachment_Model::find_by_key($params['key']);
+if (!$attachment || !$attachment->can_user_assign_this_file()) { /* refuse */ }
+$attachment->add_to($record, 'documents');   // add_to = many; attach_to = replace
+```
+
+`can_user_assign_this_file()` is **structural** — unclaimed, and in this tenant. It is not a per-user check, and it **works fine under a Bearer identity** (a key is a staff session with a real `site_id`). Removing needs `$record->find_attachment($id_or_key, $category)`, which returns null unless the attachment belongs to that record in that category — resolving with a bare `find()` would let any attachment id in the site be deleted through any record's URL.
+
+Worked example: `system/app/RSpade/resource/reference_app/app/api/v1/clients_api_controller.php` (and `tasks_api_controller.php`).
+
+**Downloads need no API endpoint.** `/_download`, `/_inline`, `/_thumbnail/*`, `/_download_zip` and `/_preview/pdf` all accept `Authorization: Bearer`, so an integration fetches bytes with no cookie. A bad Bearer is a 401 there — it never degrades to anonymous.
+
+**Status vocabulary** (`pending` / `available` / `error` / `unsupported`): rendering and extraction are async, so a just-uploaded document reads `pending`. Poll; never assume. `error` is terminal and never auto-retried.
 
 ## Versioning
 
@@ -184,4 +222,4 @@ Dev calls must use the `APP_URL` host or loopback; CSRF N/A (no cookie session);
 
 ## Full reference
 
-`php artisan rsx:man external_api`.
+`php artisan rsx:man external_api`. Related: `rspade:file-attachments` (the attachment model, the upload gate, the retention window).

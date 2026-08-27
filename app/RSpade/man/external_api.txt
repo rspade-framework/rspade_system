@@ -119,8 +119,11 @@ DECLARING ENDPOINTS
     #[Api_Param(name, type, required, default, description, example)]  (repeatable)
         name         The parameter name; matches a :token or a query/body key.
                      Names must be unique within an endpoint.
-        type         'string' | 'int' | 'float' | 'bool'. Scalar-only in v1
-                     (array/json is backlogged - see BACKLOG below).
+        type         'string' | 'int' | 'float' | 'bool' | 'file'.
+                     Scalars, plus 'file' for a multipart upload part
+                     (array/json remains backlogged). A 'file' param is
+                     POST-only, can never be a :token, and can never carry a
+                     default. See FILE ENDPOINTS.
         required     bool. A required param with no value -> 422.
         default      Value applied when an OPTIONAL param is absent. Declaring
                      BOTH required:true AND a default is a contradiction and
@@ -142,7 +145,10 @@ DECLARING ENDPOINTS
         - a :token with no matching #[Api_Param]
         - duplicate #[Api_Param] names
         - required:true combined with a default
-        - a type outside {string, int, float, bool}
+        - a type outside {string, int, float, bool, file}
+        - type 'file' on an endpoint that declares GET
+        - type 'file' on a :route token
+        - type 'file' carrying a default
         - #[FPC], #[Route], #[SPA], or #[Ajax_Endpoint] on the same method
         - a duplicate route pattern
       The converse guard lives in Route_ManifestSupport: a NON-API #[Route] (or
@@ -179,12 +185,18 @@ PARAMETERS AND VALIDATION
         string passthrough
 
     INPUT PRECEDENCE (highest wins): route params > GET query > body.
-    The body is parsed as JSON when Content-Type is application/json, otherwise
-    read as form POST. An application/json body that does not parse ->
+    The body is parsed as JSON when Content-Type is application/json,
+    multipart/form-data when the request carries an upload, otherwise read as
+    form POST. An application/json body that does not parse ->
     400 {"error": {"code": "invalid_json", ...}} (this is distinct from a 422).
 
     The controller receives $params containing ONLY the validated, coerced,
-    declared parameters - nothing else reaches it.
+    declared parameters - nothing else reaches it. The one param that is
+    VALIDATED BUT NEVER COERCED is 'file': it arrives as the
+    Illuminate\Http\UploadedFile exactly as it was received. A non-file value
+    for a 'file' param -> 422 "Expected a single uploaded file part
+    (multipart/form-data)"; an UploadedFile offered for a SCALAR param is
+    likewise refused, so a temp path can never be smuggled into a string.
 
 RESPONSE CONTRACT
     The endpoint's return value becomes the HTTP response:
@@ -260,14 +272,17 @@ AUTHENTICATION
     re-set. No API response ever carries Set-Cookie. Calling _set_api_identity()
     twice in one request is a bug and throws.
 
-    Because get_session_id() is 0, session-validated flows (notably the
-    File_Attachment unattached-upload -> assign handshake, which keys on the
-    session id) are NOT usable from the API yet; a future attachment endpoint
-    must revisit that seam.
+    get_session_id() being 0 does NOT disable the file-attachment flow. The
+    unattached-upload -> claim handshake never keyed on the session id:
+    can_user_assign_this_file() asks exactly two questions - is this attachment
+    still unclaimed, and is its site_id the current request's site. A bearer
+    identity has a real site_id, so the claim succeeds. See FILE ENDPOINTS below
+    and rsx:man file_upload.
 
 THE IDENTITY ENDPOINT - GET /api/v1/me
-    The one endpoint every RSpade API has, shipped by the framework rather than
-    written per app (Identity_Api_Controller). A client hits it FIRST and OFTEN:
+    One of the four endpoints every RSpade API has, shipped by the framework
+    rather than written per app (Identity_Api_Controller; the other three are
+    the file endpoints below). A client hits it FIRST and OFTEN:
     to check a key at setup, to fail fast on a revoked one, to show "connected
     as" in a UI.
 
@@ -287,6 +302,77 @@ THE IDENTITY ENDPOINT - GET /api/v1/me
     own expiry, nothing else - because it is the endpoint an integration polls,
     and anything expensive here is paid for on every heartbeat. expires_at null
     means NO EXPIRY, not unknown.
+
+FILE ENDPOINTS
+    The framework ships THREE file endpoints. They move bytes and report on
+    them; they deliberately do NOT attach a file to a record.
+
+        POST /api/v1/files              upload; returns 201 + the attachment key
+        GET  /api/v1/files/:key         metadata, URLs, preview/text status
+        GET  /api/v1/files/:key/text    extracted text
+
+    UPLOAD is multipart/form-data with a part named by the endpoint's 'file'
+    param:
+
+        curl -X POST https://host/api/v1/files \
+             -H "Authorization: Bearer rsx_live_..." \
+             -F "file=@contract.pdf"
+
+    Optional filename_override stores the file under a different name. The
+    response is the file payload: key, id, file_name, file_extension, mime_type,
+    file_type, size, width/height, is_animated, duration, has_thumbnail,
+    preview_unavailable, and absolute urls{download,inline,thumbnail,preview}.
+
+    The upload gate applies here exactly as it does to POST /_upload: an app with
+    no file.upload.authorize handler gets a loud 5xx, not an open endpoint, and a
+    handler's refusal is returned verbatim. The size ceiling is checked BEFORE
+    the gate (413 file_too_large). site_id is derived server-side; an API key is
+    a STAFF credential, so the realm is never the portal.
+
+    THE FILE ARRIVES UNATTACHED, AND THAT IS THE DESIGN. The framework does not
+    own "attach this file to that record" - which record, which category and who
+    may do it are application policy. The app writes that endpoint itself using
+    the returned key:
+
+        $attachment = File_Attachment_Model::find_by_key($params['key']);
+        if (!$attachment || !$attachment->can_user_assign_this_file()) { ... }
+        $attachment->add_to($record, 'documents');      // add_to = many files
+                                                        // attach_to = replace
+
+    can_user_assign_this_file() is STRUCTURAL - unclaimed, and in this tenant. It
+    is not a per-user check and never was; authorizing the claim is the app
+    endpoint's job. Removing one needs the ownership re-verification
+    $record->find_attachment($id_or_key, $category), which returns null unless
+    the attachment belongs to THAT record in THAT category.
+
+    Worked example, both halves, in the reference app:
+        system/app/RSpade/resource/reference_app/app/api/v1/clients_api_controller.php
+        system/app/RSpade/resource/reference_app/app/api/v1/tasks_api_controller.php
+
+    STATUS VOCABULARY. GET /api/v1/files/:key adds preview_status and
+    text_status, each one of:
+
+        pending      not converted / not extracted YET - poll
+        available    ready
+        error        terminal failure; never auto-retried
+        unsupported  nothing to convert, or no extractor for this type
+
+    Rendering and extraction are ASYNC, so a document uploaded a second ago is
+    normally 'pending'. GET /api/v1/files/:key/text returns 409 with code
+    text_pending / text_error / text_unsupported when the text is not available,
+    and {key, text, text_status} when it is.
+
+    BYTES ARE FETCHED FROM THE ORDINARY FILE ROUTES, WITH THE SAME KEY. These
+    accept Authorization: Bearer in addition to a browser session, so an
+    integration needs no cookie:
+
+        /_download/:key          /_inline/:key
+        /_thumbnail/preset/...   /_thumbnail/dynamic/...
+        /_download_zip/:key      /_preview/pdf/:key
+
+    A bad Bearer on one of these is a 401 - it never degrades to anonymous.
+    Read authorization runs the file.thumbnail.authorize and (for bytes)
+    file.download.authorize gates; a denial and a missing file are both 404.
 
 API KEYS
     Keys are Api_Key_Model rows on the framework-core _api_keys table. Format
@@ -673,6 +759,10 @@ DOCS AND TESTER PAGE
         POST other params   a requestBody object. The dispatcher also accepts
                             them as query on POST, but the body is the
                             documented shape and the one the tester sends.
+        a 'file' param      the requestBody becomes multipart/form-data and the
+                            part is type:string, format:binary. One 'file' param
+                            is what makes an endpoint multipart; the PART NAME is
+                            the param's own name, never assumed to be 'file'.
         superseded          deprecated:true when a HIGHER version exists for the
                             same verb + path_key. Every version stays listed at
                             its real path, because every version stays callable.
@@ -746,8 +836,8 @@ ENVIRONMENT INTERACTIONS AND CAVEATS
     gates by the time it runs.
 
 TEMPLATE ENDPOINTS
-    The starter template ships two reference API controllers (rsx/app/api/v1/),
-    five endpoints each, as the working pattern to copy:
+    The starter template ships three reference API controllers
+    (rsx/app/api/v1/) as the working pattern to copy:
 
         GET  /api/v1/contacts            list (page, per_page, search) -> {items, meta}
         GET  /api/v1/contacts/:id        one record (or 404)
@@ -755,6 +845,18 @@ TEMPLATE ENDPOINTS
         POST /api/v1/contacts/:id/update present-only update -> 200
         POST /api/v1/contacts/:id/delete soft delete -> 204
         ... and the same five for /api/v1/clients
+
+    Plus the app-owned half of the file story - the three-endpoint attachment
+    shape, implemented identically on two record types:
+
+        GET  /api/v1/clients/:id/attachments                     list
+        POST /api/v1/clients/:id/attachments/attach              claim a key
+        POST /api/v1/clients/:id/attachments/:attachment_id/delete
+        ... and the same three for /api/v1/tasks (which also has list + one)
+
+    Clients attach into the SAME category the staff Documents tab reads, so a
+    file uploaded over the API shows up in the UI; removing one revokes its
+    portal shares before soft-deleting. See FILE ENDPOINTS.
 
     Notes worth copying: the mutation URLs use explicit action segments
     (/create, /:id/update, /:id/delete) - fitting the GET/POST-only philosophy,
@@ -766,9 +868,10 @@ TEMPLATE ENDPOINTS
 
 TESTING
     Framework tests live in the 'api' concern (system/app/RSpade/tests/api/):
-    nine PHP classes (scan enforcement, the validator matrix, catalog
+    ten PHP classes (scan enforcement, the validator matrix, catalog
     resolution, key model, request log, cleanup, serialization, response
-    helpers, and the headless-session identity accessors) plus one live-server
+    helpers, the OpenAPI projection, and the headless-session identity
+    accessors) plus one live-server
     shell script (http/api_auth_and_dispatch.sh) asserting the 401/200/405/404/
     422/400 shapes, that NO response carries Set-Cookie, that a cookie+bearer
     request uses the bearer identity, and that log rows are written. Run:
@@ -855,6 +958,7 @@ TROUBLESHOOTING
         bypassed it.
 
 SEE ALSO
+    rsx:man file_upload - attachments, the upload gate, the claim window
     rsx:man auth_gates       the mandatory #[Auth] gate on every endpoint
     rsx:man session          headless identity, impersonation, Session accessors
     rsx:man acls             Permission:: checks, role_id, the reserved override

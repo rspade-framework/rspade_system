@@ -425,6 +425,40 @@ abstract class Rsx_Site_Model_Abstract extends Rsx_Model_Abstract
     }
 
     /**
+     * Pin every attachment reader on a site-scoped record to THIS SESSION'S TENANT.
+     *
+     * One override tightens all of them at once - get_attachment(), get_attachments(),
+     * get_all_attachments(), get_deleted_attachments() and find_attachment() all narrow the
+     * seam this overrides.
+     *
+     * WHY IT IS NEEDED, given File_Attachment_Model is itself site-scoped. Its global scope
+     * is governed by $apply_site_scope, which is declared ONCE on this class and never
+     * redeclared - so it is a single flag shared by EVERY site-scoped model. Inside any
+     * without_site_scope() callback the flag is off for all of them at once, and a bare
+     * $record->get_attachments('documents') would then return that category across EVERY
+     * tenant. Naming site_id here keeps the answer tenant-correct no matter what the ambient
+     * scope is doing, which is the property a caller of these helpers is entitled to assume.
+     *
+     * Deliberately NOT a way to reach another tenant's files: code that genuinely means to
+     * sweep attachments across sites (the render, extraction and MIME-repair services)
+     * queries File_Attachment_Model directly and does not come through here.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder|null $query
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    protected function __attachment_query($query = null)
+    {
+        $query = parent::__attachment_query($query);
+
+        // Qualify the column: the global scope does the same, and an unqualified site_id
+        // would be ambiguous the moment a caller joins another site-scoped table.
+        return $query->where(
+            $query->getModel()->getTable() . '.site_id',
+            static::get_current_site_id()
+        );
+    }
+
+    /**
      * Scope a query to a specific site
      *
      * @param Builder $query

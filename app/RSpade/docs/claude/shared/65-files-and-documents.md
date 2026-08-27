@@ -2,9 +2,9 @@
 
 ## FILE ATTACHMENTS
 
-Two models, one dedup boundary: `File_Storage_Model` = the physical content-addressed blob, `File_Attachment_Model` = the logical upload with its metadata and owner. Identical bytes are stored — and text-extracted, and rendered, and previewed — exactly once. The flow is always upload-unattached -> validate -> claim onto a record (`find_by_key()` + `can_user_assign_this_file()` + `attach_to()`/`add_to()`); the client transport is `Ajax.upload(form_data)`.
+Two models, one dedup boundary: `File_Storage_Model` = the physical content-addressed blob, `File_Attachment_Model` = the logical upload with its metadata and owner. Identical bytes are stored — and text-extracted, and rendered, and previewed — exactly once. The flow is always upload-unattached -> validate -> claim onto a record (`find_by_key()` + `can_user_assign_this_file()` + `attach_to()`/`add_to()`); the **browser** transport is `Ajax.upload(form_data)`, and an external integration's is `POST /api/v1/files` (Bearer key) — both run one implementation, so the gate, the ceiling and the server-derived `site_id` are identical. `can_user_assign_this_file()` is STRUCTURAL (unclaimed + this tenant), never a per-user check, so the claim works under an API identity too; **acting on an attachment the CALLER named needs `$record->find_attachment($id_or_key, $category)`**, which returns null unless it belongs to that record.
 
-**The upload gate is MANDATORY.** `POST /_upload` THROWS when no `file.upload.authorize` handler is registered — an unhandled gate would be an anonymous upload endpoint. Every app ships one handler in `/rsx/handlers/` (minimum: require login).
+**The upload gate is MANDATORY.** Both upload transports THROW when no `file.upload.authorize` handler is registered — an unhandled gate would be an anonymous upload endpoint. Every app ships one handler in `/rsx/handlers/` (minimum: require login).
 
 **Never hardcode the size ceiling in a label** — "Max size 25MB" is wrong the day the limit changes and nothing breaks to tell you. One number both languages read (`config('rsx.files.max_file_size')` / `window.rsxapp.files.max_file_size`), rendered by `Ajax::max_file_size_human()` / `Ajax.max_file_size_human()`. **`0` means no framework ceiling — read it as UNLIMITED, never as "reject everything".**
 

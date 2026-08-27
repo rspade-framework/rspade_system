@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: Uploading files in RSX and attaching them to records - the mandatory file.upload.authorize gate, Ajax.upload(form_data) as the one client transport, the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, showing a thumbnail or avatar, showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks.
+description: Uploading files in RSX and attaching them to records - the mandatory file.upload.authorize gate, Ajax.upload(form_data) as the browser transport (POST /api/v1/files for an external integration), the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, attaching a file uploaded through the external API, showing a thumbnail or avatar, showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks.
 ---
 
 # File attachments
@@ -24,11 +24,13 @@ Identical bytes are stored once and shared by every attachment pointing at them.
 
 Nothing about step 1 authorizes step 3, and nothing about step 3 is done for you.
 
+**An integration walks the same three steps over the external API** — `POST /api/v1/files` with a Bearer key instead of step 1, then its own `#[Api_Endpoint]` instead of step 3. Both transports run one implementation (`Rsx_File_Upload::accept()`), so the gate, the ceiling and the server-derived `site_id` are identical. See `rspade:external-api`.
+
 ---
 
 ## 1. Uploading (client)
 
-**`Ajax.upload(form_data)` is THE client upload API.** There is no `<File_Upload>` component.
+**`Ajax.upload(form_data)` is THE client upload API** — in the browser. (An external integration uses `POST /api/v1/files` instead; this section is about page code.) There is no `<File_Upload>` component.
 
 ```javascript
 async _upload(file) {
@@ -40,7 +42,7 @@ async _upload(file) {
 }
 ```
 
-**Never `fetch('/_upload')` by hand.** `Ajax.upload()` owns two things a hand-rolled call gets wrong: it rebases the path through `Rsx_Portal.internal_url()` so a portal page's upload dispatches as a genuine portal request, and it sends the CSRF token (multipart cannot go through jQuery, so the token has to be attached explicitly). A raw fetch hardcodes the staff channel and sends no token.
+**Never `fetch('/_upload')` by hand from page code.** `Ajax.upload()` owns two things a hand-rolled call gets wrong: it rebases the path through `Rsx_Portal.internal_url()` so a portal page's upload dispatches as a genuine portal request, and it sends the CSRF token (multipart cannot go through jQuery, so the token has to be attached explicitly). A raw fetch hardcodes the staff channel and sends no token.
 
 **Never post a `site_id`.** It is derived server-side from the request's realm; client input is ignored. Same for `fileable_*` — the endpoint strips them, because letting an uploader name the owning record would let them attach files to records they do not own.
 
@@ -113,6 +115,8 @@ public static function save_document(Request $request, array $params = [])
 
 WHO may upload and WHO may claim are the application's decisions: the gate above, plus the `#[Auth]` and record-level checks in your own endpoint.
 
+Because the test is structural, **the claim flow works unchanged under a Bearer API identity** — a key is a staff session with a real `site_id`. An `#[Api_Endpoint]` claims a key from `POST /api/v1/files` exactly as the `#[Ajax_Endpoint]` above claims one from `/_upload`.
+
 **`attach_to()` vs `add_to()`** — both throw if the attachment is not claimable:
 
 ```php
@@ -127,9 +131,20 @@ $attachment->detach();                            // clears the owner, keeps the
 $photo = $user->get_attachment('profile_photo');          // ?File_Attachment_Model
 foreach ($project->get_attachments('documents') as $doc)  // Rsx_Result_Set - every row, paged
     echo $doc->file_name;
+foreach ($project->get_all_attachments() as $file)        // EVERY category, no limiter
+    echo $file->fileable_category;
 ```
 
-`get_attachments()` returns a result set, not an array, because one record's attachment count has no ceiling.
+`get_attachments()` returns a result set, not an array, because one record's attachment count has no ceiling. `get_all_attachments()` is the category-less form — what a delete cascade, an export or an audit needs, none of which can enumerate categories up front.
+
+**Acting on an attachment the CALLER named needs `find_attachment()`:**
+
+```php
+$doc = $project->find_attachment($params['attachment_id'], 'documents');   // null unless it is THIS project's
+if (!$doc) { return response_not_found('Not found'); }
+```
+
+`File_Attachment_Model::find()` and `find_by_key()` are tenant-scoped and nothing more — within one site they will hand back an attachment hanging off a *different* record, so removing/renaming/sharing by a caller-supplied id without this is a real hole. A miss and a mismatch are the same null. On a site-scoped record every reader here is additionally pinned to the current session's site, so they stay correct even inside `without_site_scope()`.
 
 ---
 
@@ -338,6 +353,8 @@ Do not compare `created_by` to a user id — authorship is a polymorphic PAIR an
 
 `POST /_upload` · `GET /_download/:key` · `GET /_inline/:key` · `GET /_download_zip/:key` · `GET /_thumbnail/preset/:key/:preset` · `GET /_thumbnail/dynamic/:key/:type/:width/:height?` · `GET /_icon_by_extension/:extension` · `GET /_preview/pdf/:key`
 
+All of those except `/_icon_by_extension` also accept `Authorization: Bearer rsk_...`, so an integration reaches bytes with no browser session (a bad Bearer is a 401 — it never degrades to anonymous). The external API adds `POST /api/v1/files` · `GET /api/v1/files/:key` · `GET /api/v1/files/:key/text`.
+
 ---
 
 ## Troubleshooting
@@ -349,4 +366,4 @@ Do not compare `created_by` to a user id — authorship is a polymorphic PAIR an
 - **The size label disagrees with enforcement** — a hardcoded number. Use `max_file_size_human()`.
 - **A deleted file is still on disk** — correct: it is in the retention window. Only `File_Disposal_Service` (or `force_destroy()`) releases blobs.
 
-Details: `php artisan rsx:man file_upload` · `file_disposal` · `thumbnails` · `droppable`. Related: `rspade:document-preview`, `rspade:event-hooks`, `rspade:auth-gates`.
+Details: `php artisan rsx:man file_upload` · `file_disposal` · `thumbnails` · `droppable`. Related: `rspade:document-preview`, `rspade:event-hooks`, `rspade:auth-gates`, `rspade:external-api` (uploading and attaching over the REST API).

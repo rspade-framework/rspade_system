@@ -276,12 +276,42 @@ THE CLAIM WINDOW
         get_attachment(string $category): ?File_Attachment_Model
             The single attachment in a category (single-slot fields).
 
-        get_attachments(string $category): Collection
-            All attachments in a category (multi-file fields).
+        get_attachments(string $category): Rsx_Result_Set
+            Every attachment in a category (multi-file fields).
 
-    These two are the recommended read path. (There is no has_attachment(),
+        get_all_attachments(): Rsx_Result_Set
+            Every attachment on this record, across ALL categories, with no
+            limiter of any kind. The shape a delete cascade, an export or an
+            audit needs - none of which can enumerate the categories up front,
+            because a category is an arbitrary app-chosen string and nothing
+            indexes the set in use. Read $attachment->fileable_category to group.
+
+        get_deleted_attachments(string $category): Rsx_Result_Set
+            The retention-window set for a category (see DELETING).
+
+        find_attachment($id_or_key, string $category): ?File_Attachment_Model
+            THE OWNERSHIP RE-VERIFICATION. One attachment, by numeric id or by
+            key, returning null unless it belongs to THIS record in THIS
+            category. Any endpoint that acts on an attachment the CALLER named -
+            remove it, rename it, share it - must resolve it this way.
+            File_Attachment_Model::find()/find_by_key() are tenant-scoped and
+            nothing more: within one site they will happily hand back an
+            attachment hanging off a different record. A miss and a mismatch are
+            the same null, so a caller cannot probe for ids that exist.
+            Live records only; recovery flows walk get_deleted_attachments().
+
+    These are the recommended read path. (There is no has_attachment(),
     count_attachments(), or is_attached() helper - use get_attachment()/
     get_attachments() and check the result.)
+
+    THEY RETURN Rsx_Result_Set, NOT A COLLECTION: foreach it or count() it,
+    there is no ->map(). One record's attachment count has no ceiling, so the
+    set is walked a page at a time - bounded memory, never a bounded answer.
+
+    On a SITE-SCOPED record all five are additionally pinned to the current
+    session's site, so they stay tenant-correct even inside a
+    without_site_scope() callback (which suspends the ordinary global scope for
+    every site model at once).
 
     Complete round trip:
 
@@ -572,12 +602,35 @@ HTTP ENDPOINTS
         GET  /_thumbnail/preset/:key/:preset_name            Preset thumbnail
         GET  /_icon_by_extension/:extension                  File-type icon
 
+    EVERY ONE OF THESE EXCEPT /_icon_by_extension ALSO ACCEPTS AN API KEY.
+    Authorization: Bearer rsk_... authenticates the request exactly as a session
+    cookie would, so an integration reaches bytes with no browser (/_preview/pdf,
+    in File_Preview_Controller, likewise). A bad Bearer is a 401 - it never
+    degrades to anonymous; no Bearer at all is still anonymous as before.
+
+    And the external REST API adds three of its own (Files_Api_Controller):
+
+        POST /api/v1/files              Upload -> 201 + the attachment key
+        GET  /api/v1/files/:key         Metadata, URLs, preview/text status
+        GET  /api/v1/files/:key/text    Extracted text (409 while pending)
+
+    Those three cover getting bytes IN and reporting on them. Attaching a file to
+    a RECORD is deliberately not among them - see THE CLAIM WINDOW and
+    rsx:man external_api.
+
 UPLOAD ENDPOINT
 
     POST /_upload
 
     Uploads a file UNATTACHED with automatic dedup and metadata extraction.
     Claim it afterward via attach_to()/add_to(), inside the claim window.
+
+    TWO TRANSPORTS, ONE IMPLEMENTATION. This endpoint (browser, via
+    Ajax.upload()) and POST /api/v1/files (integrations, via a Bearer key) both
+    run Rsx_File_Upload::accept(), so the size ceiling, the mandatory gate, the
+    server-derived site_id and the fileable_* strip below are identical on both.
+    Everything in this section is true of the API endpoint too, with one
+    addition: an API key is a STAFF credential, so its realm is never the portal.
 
     Request parameters:
         file               (required) The uploaded file
@@ -1152,6 +1205,13 @@ DOCUMENT TEXT EXTRACTION AND PREVIEW
             $file->get_extracted_text();     // ?string (null = pending)
             $file->get_extraction_status();  // ?int STATUS_* (null = pending)
 
+        Over the external API the same two products are reported as a FOUR-VALUE
+        vocabulary - pending / available / error / unsupported - by
+        GET /api/v1/files/:key (preview_status, text_status), with the text
+        itself at GET /api/v1/files/:key/text (409 + text_pending/text_error/
+        text_unsupported while it is not available). Both are ASYNC, so a
+        document uploaded a second ago reads 'pending'; poll, never assume.
+
     Preview
         <Document_Preview $attachment_id=this.args.id /> resolves a viewer
         server-side (PDF / image / icon). An Office document is served from the
@@ -1380,9 +1440,10 @@ SEE ALSO
     rsx:man polymorphic        Integer type-ref columns (fileable_type)
     rsx:man locks              Cluster/system locks and counting semaphores
     rsx:man model              Model system, enums, fetch()
+    rsx:man external_api       /api/v1/files, Bearer access to the byte routes
 
 VERSION
     RSpade Framework 1.0
-    Last updated 2026-08-22
+    Last updated 2026-08-27
 
 FILE_UPLOAD(1)                   RSpade Manual                   FILE_UPLOAD(1)

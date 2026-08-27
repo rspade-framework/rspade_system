@@ -742,6 +742,7 @@ FUTURE ENHANCEMENTS
     See FUTURE POSSIBILITIES above for the rest of what one component makes reachable.
 
 SEE ALSO
+    rsx:man external_api         Bearer access to the thumbnail routes from an integration
     rsx:man documents            Operating the render pipeline (status/failed/rerender)
     rsx:man document_search      Text extraction, Document_Preview, the same worker
     rsx:man libreoffice          The soffice invocation and its one sanctioned timeout

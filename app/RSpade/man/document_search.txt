@@ -238,6 +238,13 @@ SEARCH API
                 ->orderByDesc('created_at')
                 ->get();
 
+    Extracted text is also reachable EXTERNALLY, per file, at
+    GET /api/v1/files/:key/text (Bearer key; 409 while extraction is pending, and
+    a text_status of pending/available/error/unsupported on
+    GET /api/v1/files/:key). There is no external SEARCH endpoint - search_text()
+    is site-unscoped by construction and the scoping is the app's to compose, so
+    exposing it is an application decision. See rsx:man external_api.
+
         Dedup note: one matching blob may back several attachments, so the builder can
         yield multiple rows per blob - exactly what a staff-wide Files index wants.
 
@@ -324,6 +331,8 @@ SERVER SURFACES
         The PDF that pdf.js loads. DUAL authorization gate cascade - a rendition
         exposes the full document, so BOTH file.thumbnail.authorize AND
         file.download.authorize must return true (identical to inline()/download).
+        Authenticates an Authorization: Bearer API key as well as a session
+        cookie, so an integration can fetch a rendition without a browser.
         After auth, the document.preview_rendition chain may override. Framework
         default: SERVE-ONLY, never convert. A PDF blob is served as-is. A convertible
         Office mime (config('rsx.preview.convertible')) is served from

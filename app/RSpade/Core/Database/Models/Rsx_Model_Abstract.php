@@ -2295,6 +2295,33 @@ EXAMPLE;
     }
 
     /**
+     * THE SEAM every attachment reader on this record is built from: a query already
+     * constrained to "attachments belonging to THIS record".
+     *
+     * It exists so the ownership constraint is written ONCE. Every public reader below
+     * (get_attachment, get_attachments, get_all_attachments, get_deleted_attachments,
+     * find_attachment) narrows this query rather than re-deriving fileable_type/fileable_id
+     * for itself - and so that a subclass can tighten ALL of them at once by overriding this
+     * one method. Rsx_Site_Model_Abstract does exactly that, pinning the tenant.
+     *
+     * An override MUST chain to parent::__attachment_query() - deliberately NOT #[Replaceable],
+     * because the parent call is what applies the ownership constraint. An override that
+     * skipped it would silently return attachments belonging to other records, so
+     * PHP-PARENT-CHAIN-01 enforcing the chain here is the point rather than a formality.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder|null $query Base query (defaults to live rows)
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    protected function __attachment_query($query = null)
+    {
+        $query = $query ?? \App\RSpade\Core\Files\File_Attachment_Model::query();
+
+        // Use simple class name (type_ref system stores simple names, not FQCNs)
+        return $query->where('fileable_type', class_basename($this))
+            ->where('fileable_id', $this->id);
+    }
+
+    /**
      * Get a single attachment for this model by category
      *
      * Returns the first attachment with the specified category.
@@ -2305,11 +2332,51 @@ EXAMPLE;
      */
     public function get_attachment(string $category)
     {
-        // Use simple class name (type_ref system stores simple names, not FQCNs)
-        return \App\RSpade\Core\Files\File_Attachment_Model::where('fileable_type', class_basename($this))
-            ->where('fileable_id', $this->id)
+        return $this->__attachment_query()
             ->where('fileable_category', $category)
             ->first();
+    }
+
+    /**
+     * Find ONE attachment that belongs to THIS record, in THIS category, by id or key.
+     *
+     * THE OWNERSHIP RE-VERIFICATION STEP. An endpoint that acts on an attachment named by
+     * the caller - remove it, rename it, share it - has been handed an id it must not
+     * trust. File_Attachment_Model::find() and find_by_key() are tenant-scoped and nothing
+     * more: within one site they will happily return an attachment hanging off a DIFFERENT
+     * record, or off the same record under a different category. Resolving through the
+     * OWNING RECORD is what closes that, and it is why this lives on the model rather than
+     * being re-derived per endpoint.
+     *
+     * All three must hold or the answer is null: the attachment is fileable to this class,
+     * to this id, under this category. A miss and a mismatch are the SAME null - the caller
+     * reports "not found" either way and never confirms that someone else's id exists.
+     *
+     * Live records only. A soft-deleted attachment is not found here; recovery flows walk
+     * get_deleted_attachments() instead.
+     *
+     * @param int|string $id_or_key Numeric attachment id, or the 64-hex attachment key
+     * @param string $category Category identifier (e.g., 'documents')
+     * @return \App\RSpade\Core\Files\File_Attachment_Model|null
+     */
+    public function find_attachment($id_or_key, string $category)
+    {
+        $query = $this->__attachment_query()->where('fileable_category', $category);
+
+        // A key is 64 hex characters; an id is an integer. Test for the key FIRST, because
+        // a key drawn entirely from the digits 0-9 is numeric and an id is never 64 digits
+        // long - checking is_numeric() first would misread that key as an id.
+        $id_or_key = (string) $id_or_key;
+
+        if (strlen($id_or_key) === 64 && ctype_xdigit($id_or_key)) {
+            return $query->where('key', $id_or_key)->first();
+        }
+
+        if (!is_numeric($id_or_key)) {
+            return null;
+        }
+
+        return $query->where('id', (int) $id_or_key)->first();
     }
 
     /**
@@ -2324,11 +2391,33 @@ EXAMPLE;
      */
     public function get_attachments(string $category)
     {
-        // Use simple class name (type_ref system stores simple names, not FQCNs)
-        return \App\RSpade\Core\Files\File_Attachment_Model::where('fileable_type', class_basename($this))
-            ->where('fileable_id', $this->id)
+        return $this->__attachment_query()
             ->where('fileable_category', $category)
             ->result_set();
+    }
+
+    /**
+     * Get EVERY live attachment on this record, across ALL categories.
+     *
+     * The category-less reader. get_attachments() answers "the documents on this client";
+     * this answers "everything hanging off this client" - the shape a delete cascade, an
+     * export, an audit or a "does this record carry any files at all" check needs, none of
+     * which can enumerate the categories in advance (a category is an arbitrary app-chosen
+     * string, and nothing indexes the set in use).
+     *
+     * NO LIMITER OF ANY KIND. Every category, every attachment, however many there are: the
+     * set comes back as an Rsx_Result_Set, which an ordinary foreach walks to the end one
+     * keyset page at a time. A record's attachment count has no ceiling - a bulk import can
+     * hang thousands off a single row - so this is bounded memory, never a bounded ANSWER.
+     *
+     * Read the category off each row ($attachment->fileable_category) when you need to
+     * group them.
+     *
+     * @return \App\RSpade\Core\Database\Rsx_Result_Set
+     */
+    public function get_all_attachments()
+    {
+        return $this->__attachment_query()->result_set();
     }
 
     /**
@@ -2347,11 +2436,9 @@ EXAMPLE;
         // NOTE the orderByDesc is dropped by iteration: Rsx_Result_Set walks by primary
         // key. Recovery lists are small enough to sort in the view, and the whole-set
         // guarantee matters more here than arrival order.
-        return \App\RSpade\Core\Files\File_Attachment_Model::withTrashed()
+        return $this->__attachment_query(\App\RSpade\Core\Files\File_Attachment_Model::withTrashed())
             ->whereNotNull('deleted_at')
             ->whereNull('destroyed_at')
-            ->where('fileable_type', class_basename($this))
-            ->where('fileable_id', $this->id)
             ->where('fileable_category', $category)
             ->result_set();
     }
