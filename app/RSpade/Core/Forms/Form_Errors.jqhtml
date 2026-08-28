@@ -1,0 +1,23 @@
+<%--
+Form_Errors
+
+The one place a form's failure feedback renders: the always-visible top alert on a
+failed submit, and non-validation errors. Place it WHERE THE LAYOUT WANTS IT - inside
+the first section, above a two-column grid, under a heading - and the renderer targets
+it; the form's structural containers then give it their own spacing, which is the whole
+reason placement belongs to the form author and not to the engine.
+
+Every <Rsx_Form> contains exactly one. A form without one throws the moment failure
+feedback is needed - the engine never invents a position for the alert, because an
+engine-chosen position sits outside every section's spacing and the layout has no say.
+
+    <Rsx_Form $controller="..." $method="...">
+        <div class="view-section">
+            <Form_Errors />
+            <Form_Field $label="Title" $required=true>
+                <Text_Input $name="title" $max_length=255 />
+            </Form_Field>
+        </div>
+    </Rsx_Form>
+--%>
+<Define:Form_Errors tag="div" class="Rsx_Form__error"></Define:Form_Errors>

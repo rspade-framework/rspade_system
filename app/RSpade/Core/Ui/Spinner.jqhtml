@@ -1,0 +1,23 @@
+<%--
+Spinner
+
+The template-side entry point to the application's spinner: place <Spinner /> and the
+REGISTERED spinner component (Rsx.get_default_spinner()) renders inside it. From JS the
+equivalent is $(element).component(Rsx.get_default_spinner()) on any host element.
+
+THE HOST OWNS THE BOX, and it is a CENTERING STAGE - not a scale target. This wrapper
+defaults to 60x60 via .Spinner in Spinner.scss, overridden by ordinary CSS wherever a
+context wants another size (the form loading overlay hosts one at 150px); the
+REGISTERED component decides whether it fills that box or draws at a fixed size
+centered inside it. There are no size arguments anywhere.
+
+Applications register their spinner once at init:
+
+    class App_Spinner extends Component {
+        static on_app_ready() { Rsx.set_default_spinner('App_Spinner'); }
+        ...
+    }
+--%>
+<Define:Spinner tag="div">
+    <div class="Spinner__target" $sid="target"></div>
+</Define:Spinner>

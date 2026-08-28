@@ -13,6 +13,21 @@ Plus **`on_stop()`** - teardown when the component is destroyed (sync).
 
 **Double-render**: if `on_load()` modifies `this.data`, the component renders twice (defaults -> populated). `on_ready()` fires once, after the final render.
 
+**The full sequence, spelled out** (owner-stated, 2026-08-27): `on_create` (no DOM,
+sync) -> render + `on_render` (sync — with no loaded data, or with cached data on a
+cache hit) -> `on_load` (async, runs to completion) -> if the loaded data differs from
+what rendered, render + `on_render` again (sync) -> wait for every child component to
+reach its own ready state -> `on_ready`.
+
+**`on_ready` means FULLY LOADED AND READY — a loading indicator there is a
+contradiction in terms.** By the time it fires, `on_load()` has completed and every
+child is ready; anything that must exist *while* loading (an overlay, a spinner, a
+disabled state) is wired in `on_render()` — driven by STATE, because renders rebuild
+the DOM and an imperatively-drawn indicator silently dies on the post-load re-render.
+The shape: a flag set in `on_create()`/cleared when data lands, and `on_render()`
+draws or removes the indicator to match. (`Rsx_Form.set_loading()` /
+`_sync_loading_overlay()` is the reference implementation.)
+
 ## on_render - the full contract
 
 Fires after render, BEFORE children are ready (top-down, sync). **May fire more than once**: a cached-stub render, the post-`on_load()` re-render, and every `render()`/`redraw()`/`reload()`.
@@ -37,8 +52,38 @@ Runs on the real component, not the detached proxy. `this.data` is frozen (read-
 
 ## The state triad
 
+**`on_load()` runs on a DETACHED PROXY and may only touch `this.args` and `this.data`**
+- calling any method or reaching the DOM from it throws
+(`[JQHTML] Cannot access ... during on_load()`). Imperative post-load work belongs in
+`on_loaded()` (the real component) or `on_ready()`; render-coupled work belongs in
+`on_render()` driven by state.
+
 **`this.args`** - component arguments (read-only in `on_load()`, modifiable everywhere else)
-**`this.data`** - Ajax-loaded data (writable ONLY in `on_create()` and `on_load()`)
+**`this.data`** - the MAYBE-CACHED result of `on_load()` (writable ONLY in `on_create()`
+and `on_load()`; frozen everywhere else - the framework THROWS on any other write)
+**`this.state`** - developer-owned scratch, initialized `{}`; no framework semantics,
+no caching, writable anywhere EXCEPT inside `on_load()` (the detached proxy reaches
+only `args` and `data`)
+
+**What `this.data` actually IS - and when NOT to use it.** `this.data` is not "the
+component's data"; it is specifically the cached-able output of the load cycle. On a
+repeat invocation of the same component the framework may serve a CACHED copy of it
+and render before `on_load()` revalidates - that is the feature. Two consequences:
+
+1. Anything you put in `this.data` may come back STALE on a later visit, describing
+   the previous life of the component. A flag like `record_loading: false` cached
+   from a finished visit LIES during the next visit's in-flight revalidation.
+2. Anything that is not genuinely a load result - form seed values, in-progress
+   selections, UI mode flags - does not belong there. Use `this.state`: it is born
+   fresh per instance, carries no caching semantics, and the framework never touches
+   it. (Form seeds in particular: `<Rsx_Form $data=this.state.form_data>` - a form
+   silently re-seeded from a cache is exactly the bug class the form contract exists
+   to prevent.)
+
+Decision rule: **"did `on_load()` fetch this, and is a stale cached copy acceptable
+until revalidation?" -> `this.data`. Everything else -> `this.state` (cross-render)
+or a plain instance property (per-instance, e.g. a settled/loading flag that must
+never be cached).**
 **`this.state`** - arbitrary component state, no framework meaning (modifiable anytime)
 
 **Quick guide:**

@@ -67,6 +67,36 @@ function extractSourceMap(content, filename) {
 }
 
 /**
+ * Assert that a sourcemap does not describe more generated lines than the file has.
+ *
+ * A map whose mappings run past the end of the code is not a cosmetic defect: Mozilla's
+ * SourceNode.fromStringWithSourceMap walks the mappings and materializes every generated
+ * line it is told about, so each phantom line becomes a bare `undefined` identifier in the
+ * concatenated bundle - top-level JS that throws the moment the bundle executes, taking the
+ * whole bundle with it. Fail here, where the offending file is still named.
+ */
+function assert_sourcemap_line_count(map, content, filename) {
+    const segments = map.mappings.split(';');
+
+    let mapped_lines = 0;
+    for (let i = 0; i < segments.length; i++) {
+        if (segments[i] !== '') {
+            mapped_lines = i + 1;
+        }
+    }
+
+    const content_lines = content.split('\n').length;
+
+    if (mapped_lines > content_lines) {
+        throw new Error(
+            `Malformed sourcemap in ${filename}: the map describes ${mapped_lines} generated lines ` +
+            `but the file has only ${content_lines}. Concatenating it would emit ${mapped_lines - content_lines} ` +
+            `bare "undefined" identifiers into the bundle.`
+        );
+    }
+}
+
+/**
  * Main concatenation logic using Mozilla source-map library
  */
 async function concatenateFiles() {
@@ -112,6 +142,10 @@ async function concatenateFiles() {
 
         // Extract sourcemap if present
         const { content: cleanContent, map } = extractSourceMap(content, relativePath);
+
+        if (map) {
+            assert_sourcemap_line_count(map, cleanContent + '\n', relativePath);
+        }
 
         // Store source content for embedding in sourcemap
         sourceContents[relativePath] = cleanContent;

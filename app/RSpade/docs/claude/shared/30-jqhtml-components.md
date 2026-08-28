@@ -2,6 +2,12 @@
 
 ## JQHTML COMPONENTS
 
+**Comments in `.jqhtml` are ALWAYS `<%-- --%>`** — never `<!-- -->` (still parsed for
+jqhtml constructs, JS inside executes, and it ships to the DOM) and never bare `//` in
+markup. Full syntax table and the empty-body pitfall: the `rspade:jqhtml` skill's
+`reference/template-syntax.md`.
+
+
 RSX's component system. A component is up to three co-located files sharing one name: `Foo.jqhtml` (markup), optional `Foo.js` (class holding lifecycle hooks/logic/state), `Foo.scss` (its complete look). No registration — the manifest discovers them. Invoked from a template as `<Foo $arg=value>content</Foo>`, or from JS as `$(sel).component('Foo', {arg: v})`.
 
 **`<Define>` IS the element**, not a wrapper: `<Define:My_Button tag="button" class="btn">`. Interpolation `<%= safe %>` / `<%!= html %>` / `<% js %>`; `<%= content() %>` renders caller content; `@click=this.handler` binds child elements.

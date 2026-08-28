@@ -78,6 +78,8 @@ this.$sid('result_container').component('My_Component', {
 
 **Class preservation**: only PascalCase component names (capital first letter, no `__`) are replaced. Utility classes (`text-muted`), BEM child classes (`Parent__child`) and all attributes are preserved - so the container keeps its layout classes across repeated calls. A `class="..."` set at invocation is additive too: it unions onto the root's existing classes, never replaces them.
 
+**A name with no definition still mounts.** `$(el).component('Not_Yet_Written')` behaves exactly like the undefined tag in a template: a div carrying the component name as a class that nests its contents. Nothing throws and nothing is deferred, so JS-side composition can be scaffolded out of names before a single one exists, the same as a template can.
+
 **Detached creation skips the first render.** A component created before it is in the DOM (`$('<div>').component(...)` then appended) paints once, after `on_load()` finishes - so a loading state never appears. Pass `_force_initial_render: true` if it must.
 
 **The `val()` hook**: a component that defines `val(value)` (getter with no args, setter with one) is auto-wired into jQuery's `.val()` on its root element, so `$(sel).val()` delegates to the component. This is what makes `Form_Input_Abstract`-style components behave like native inputs.

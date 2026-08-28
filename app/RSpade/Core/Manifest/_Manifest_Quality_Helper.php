@@ -302,6 +302,12 @@ class _Manifest_Quality_Helper
         // ==================================================================================
         // STEP 3: Check for duplicates and create overrides
         // ==================================================================================
+        // A build that has already poisoned its own manifest (manifest_is_bad) has declared
+        // its index untrustworthy, and archiving is the one thing in this pass that cannot
+        // be taken back on the next build. So it does not run: duplicates are still reported,
+        // nothing is renamed, and the rebuild that follows the poisoning decides.
+        $index_is_trustworthy = !Manifest::$_manifest_is_bad;
+
         foreach ($classes_by_extension as $extension => $base_class_files) {
             foreach ($base_class_files as $class_name => $files) {
                 if (count($files) > 1) {
@@ -312,6 +318,49 @@ class _Manifest_Quality_Helper
                     // Valid override: exactly one file in rsx/, rest in app/RSpade/
                     if (count($rsx_files) === 1 && count($framework_files) >= 1) {
                         $rsx_file = array_values($rsx_files)[0];
+
+                        // ==========================================================================
+                        // RE-VERIFY THE TWIN AGAINST DISK BEFORE ARCHIVING ANYTHING
+                        // ==========================================================================
+                        // Archiving is destructive and irreversible within a build: the framework
+                        // file is renamed away and the class stops existing. The only justification
+                        // for it is that an rsx/ file is standing in for that class RIGHT NOW - so
+                        // that claim is checked against the filesystem, never taken from the index.
+                        //
+                        // A field report on 2026-08-25 is why: a scan rule failed on a brand-new
+                        // framework class while the index still carried just-deleted rsx/ copies of
+                        // the same class names, the failure poisoned the manifest, and the next
+                        // build ran this pass against that file list and archived the new framework
+                        // files as twins of app classes that no longer existed. They vanished with
+                        // no error naming them.
+                        //
+                        // A stale entry is dropped and the build restarts, so the next pass sees a
+                        // file list that matches the disk.
+                        // ==========================================================================
+                        if (!$index_is_trustworthy) {
+                            error_log(
+                                '[Manifest] Class override pass: NOT archiving a framework twin of '
+                                . $class_name . ' - this build already marked its manifest bad, so '
+                                . 'its file list is not evidence of anything. The rebuild decides.'
+                            );
+
+                            continue;
+                        }
+
+                        if (!file_exists(base_path($rsx_file))) {
+                            error_log(
+                                '[Manifest] Class override pass: ignoring stale index entry for '
+                                . $class_name . ' - ' . $rsx_file . ' is in the file list but not on '
+                                . 'disk. No framework file was archived; dropping the entry and '
+                                . 'restarting the build.'
+                            );
+
+                            unset(Manifest::$data['data']['files'][$rsx_file]);
+                            Manifest::$_needs_manifest_restart = true;
+
+                            continue;
+                        }
+
                         $rsx_metadata = Manifest::$data['data']['files'][$rsx_file] ?? [];
                         $rsx_extends = $rsx_metadata['extends'] ?? null;
 
@@ -345,13 +394,24 @@ class _Manifest_Quality_Helper
                             if (file_exists($full_framework_path) && !file_exists($upstream_path)) {
                                 // Normal case: rename to .upstream
                                 rename($full_framework_path, $upstream_path);
-                                console_debug('MANIFEST', "Class override: {$class_name} - moved {$framework_file} to .upstream");
+
+                                // Loud, not debug-channel: a class leaving the build must always
+                                // be attributable to the override that took it out.
+                                error_log(
+                                    '[Manifest] Class override: ' . $class_name . ' - archived '
+                                    . $framework_file . ' to ' . $framework_file . '.upstream, '
+                                    . 'overridden by ' . $rsx_file
+                                );
                                 $did_change = true;
                             } elseif (file_exists($full_framework_path) && file_exists($upstream_path)) {
                                 // Self-healing: both .php and .php.upstream exist (e.g., after framework update)
                                 // Remove the .php file since .upstream is the correct archived version
                                 unlink($full_framework_path);
-                                console_debug('MANIFEST', "Class override: {$class_name} - removed duplicate {$framework_file} (upstream already exists)");
+                                error_log(
+                                    '[Manifest] Class override: ' . $class_name . ' - removed duplicate '
+                                    . $framework_file . ' (its .upstream archive already exists), '
+                                    . 'overridden by ' . $rsx_file
+                                );
                                 $did_change = true;
                             }
 

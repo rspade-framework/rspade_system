@@ -146,29 +146,30 @@ const user = await User_Controller.get_user(123);
 
 ## Form Error Handling
 
-### With Rsx_Form (Recommended)
+### With Rsx_Form (there is nothing to write)
+
+The endpoint is named on the `<Rsx_Form>` tag and `submit()` runs the one
+pipeline, so a failed submit renders itself and resolves `false`:
 
 ```javascript
 const result = await Modal.form({
     title: 'Add User',
-    component: 'User_Form',
-    on_submit: async (form) => {
-        try {
-            const result = await Controller.save(form.vals());
-            return result; // Success - close modal
-        } catch (error) {
-            await form.render_error(error);
-            return false; // Keep modal open
-        }
-    }
+    component: 'Add_User_Modal_Form',
 });
+
+if (result) { /* saved */ }
 ```
 
-`form.render_error()` handles all error types:
-- **validation**: Shows inline field errors + alert for unmatched errors
-- **fatal/network/auth**: Shows error in form's error container
+`form.render_error(error)` is what it uses internally, and a host that caught an
+error itself (an edit modal whose record fetch rejected) may call it directly:
+- **validation**: inline field errors, plus the top alert, which ALWAYS renders
+- **fatal/network/auth**: a single alert in the form's `<Form_Errors />`
 
-### With Form_Utils (Non-Rsx_Form)
+**Never `try/catch` a submit to "handle" a validation error** - swallowing it
+before the renderer sees it is how a failed save comes to look successful. Full
+contract: skill `rspade:forms`, `rsx:man form_conventions`.
+
+### With Form_Utils (bare-markup pages, e.g. login)
 
 ```javascript
 try {

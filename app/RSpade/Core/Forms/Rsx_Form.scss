@@ -1,0 +1,25 @@
+/* Structural rules the form CONTRACT owns: the loading overlay geometry. Visual
+   voice (spacing, buttons, palette) stays with the app.
+
+   --rsx-form-veil is the ONE colour this file reads, and the app owns it: core has no
+   palette and cannot know whether the surface behind the overlay is light or dark. The
+   fallback is a light-surface veil, so a form works before an app declares anything. */
+.Rsx_Form {
+    position: relative;
+
+    .Rsx_Form__loading {
+        position: absolute;
+        inset: 0;
+        z-index: 10;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--rsx-form-veil, rgba(255, 255, 255, 0.65));
+        cursor: progress;
+    }
+
+    .Rsx_Form__loading-spinner {
+        width: 150px;
+        height: 150px;
+    }
+}

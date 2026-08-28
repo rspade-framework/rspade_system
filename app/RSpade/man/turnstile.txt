@@ -169,7 +169,7 @@ THE WIDGET
     field, and RSpade owns it.
 
     AUTO-RESET ON A FAILED SUBMIT. The component subscribes to the
-    surrounding Rsx_Form's 'error' event and resets the widget when it
+    surrounding Rsx_Form's 'submit_error' event and resets the widget when it
     fires. This is mandatory, not a nicety: tokens are SINGLE-USE and
     validate() runs BEFORE any field validation, so EVERY failed submit has
     already spent the token - including one that failed on an unrelated
@@ -178,12 +178,13 @@ THE WIDGET
     a component registering after an error already fired replays it once and
     resets a freshly-minted widget. Harmless - it simply re-solves.)
 
-    NOT A Form_Input_Abstract. Form_Input_Abstract and Rsx_Form are
-    APP-owned (rsx/theme/components/), and a framework-core component may
-    not depend on application classes. The hidden-input trick above replaces
-    the inheritance. Practical consequence: it is not a form field in the
-    Rsx_Form sense - it takes no $name, produces no field error, and must
-    not be nested inside another input component.
+    NOT A Form_Input_Abstract. Turnstile is not a value the user enters and
+    the server may reject per-field: it is a fixed, always-submitted proof
+    that the endpoint validates FIRST, before any field. The hidden-input
+    trick above is what carries it on both transports, and it deliberately
+    replaces the inheritance. Practical consequence: it is not a form field
+    in the Rsx_Form sense - it takes no $name, produces no field error, and
+    must not be nested inside a <Form_Field> or another input component.
 
 THE VALIDATOR
 
@@ -376,7 +377,7 @@ COMMON PITFALLS
     Reusing a token
         Tokens are single-use and the server validates BEFORE field
         validation, so every rejected submit has spent one. Inside an
-        Rsx_Form the widget resets itself on the form's 'error' event. If
+        Rsx_Form the widget resets itself on the form's 'submit_error' event. If
         you submit some other way, you own the reset.
 
     Expecting a config flip to reach an open page

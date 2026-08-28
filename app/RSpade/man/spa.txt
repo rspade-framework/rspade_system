@@ -1075,18 +1075,15 @@ COMMON PATTERNS
         Spa.action().reload();
 
     Form Submission with Redirect:
-        async on_submit() {
-            const data = this.vals();
-            const result = await Controller.save(data);
-
-            if (result.errors) {
-                Form_Utils.apply_form_errors(this.$, result.errors);
-                return;
-            }
-
-            // Flash alert set server-side, redirect to view
-            Spa.dispatch(result.redirect);
-        }
+        // The action declares the endpoint on the form and submits nothing
+        // itself. A ['redirect' => ...] in the endpoint's success payload
+        // navigates; validation failures render in place. See
+        // form_conventions(3).
+        <Rsx_Form $controller="My_Controller" $method="save" $data=this.data.form_data>
+            <Form_Errors />
+            ...
+            <button type="submit" class="btn btn-primary">Save</button>
+        </Rsx_Form>
 
     Multiple Layouts:
         // Different layouts for different areas

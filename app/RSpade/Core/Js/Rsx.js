@@ -47,6 +47,39 @@
  * @global
  */
 class Rsx {
+    /**
+     * The application's spinner component name. Framework default; applications
+     * override at init with their own (see set_default_spinner). Private - read it
+     * through get_default_spinner().
+     */
+    static _default_spinner = 'Rsx_Default_Spinner';
+
+    /**
+     * Register the application's spinner component. Call once at application init
+     * (a static on_app_ready() is the natural home). The component must GROW TO FILL
+     * its container - hosts own the box, the spinner owns only the animation.
+     *
+     * @param {string} component_name
+     */
+    static set_default_spinner(component_name) {
+        Rsx._default_spinner = component_name;
+    }
+
+    /**
+     * The registered spinner component name. Whenever a spinner is required, turn a
+     * host element into one with:
+     *
+     *     $(element).component(Rsx.get_default_spinner());
+     *
+     * or place <Spinner /> in a template. The HOST controls the size (the spinner
+     * fills it); never size the spinner itself.
+     *
+     * @returns {string}
+     */
+    static get_default_spinner() {
+        return Rsx._default_spinner;
+    }
+
     // Gets set to true to interrupt startup sequence
     static __stopped = false;
 

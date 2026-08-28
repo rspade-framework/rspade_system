@@ -1,110 +1,175 @@
 FORM_INPUT(3)                  RSX Framework Manual                  FORM_INPUT(3)
 
 NAME
-    form_input - Form input component contract and implementation
+    form_input - The Form_Input_Abstract contract: one named value, buffered,
+    announced
 
 SYNOPSIS
-    // Creating a custom input component (template method pattern)
     class My_Custom_Input extends Form_Input_Abstract {
-        _get_value() {
-            return this.$sid('input').val();
-        }
+        _get_value()      { return this.$sid('input').val(); }
+        _set_value(value) { this.$sid('input').val(value ?? ''); }
 
-        _set_value(value) {
-            this.$sid('input').val(value || '');
-        }
-
-        on_ready() {
+        on_render() {
             this._mark_ready();
 
             const that = this;
-            this.$sid('input').on('input', function() {
-                const value = that.val();
-                that.trigger('input', value);
-                that.trigger('val', value);
+            this.$sid('input').on('input', function () {
+                that._notify_input(that._get_value());
             });
         }
     }
 
 DESCRIPTION
-    Form input components are the building blocks of RSX forms. They provide
-    a consistent interface for getting and setting values, handling user
-    interaction, and integrating with the form system.
+    An input is a component that owns ONE named value. Form_Input_Abstract
+    (framework core, Core/Forms/Form_Input_Abstract.js) owns the whole value
+    contract - buffering, the val() getter/setter, events, the data-name
+    attribute - so a concrete input only describes how its value maps to its DOM.
 
-    The base class (Form_Input_Abstract) implements a template method pattern
-    that handles all common logic:
-    - Pre-initialization value buffering
-    - val() getter/setter implementation
-    - Automatic trigger('val') on value changes
-    - Applying buffered values when ready
+    An application never carries a copy of the base class; it reaches every
+    bundle through Core_Bundle.
 
-    Concrete input classes only need to implement:
-    - _get_value() - How to read the current value
-    - _set_value(value) - How to write a value
-    - on_ready() - Call _mark_ready() and setup event handlers
+    Unlike an ordinary jqhtml component:
+        - an input has NO on_load(), so this.data is always {}
+        - its template renders EMPTY - no value attribute, ever; the form writes
+          the value through val() after render
+        - .Form_Input_Abstract is stamped automatically; never add a marker class
 
-    Key difference from Laravel:
-    - Laravel: Form inputs are standard HTML elements, values read via request
-    - RSX: Form inputs are components with rich behavior and event system
+    Where the value goes once it exists is form_conventions(3).
 
-    Unlike regular JQHTML components:
-    - Input components have NO on_load() method
-    - Input components do not use this.data (it's always empty)
-    - Values are managed via the base class val() method
-    - Templates render EMPTY elements (no value attributes)
+THE FOUR MEMBERS
 
-TEMPLATE METHOD PATTERN
+    _get_value()          REQUIRED - read the current value from the DOM/library
+    _set_value(value)     REQUIRED - write a value to the DOM/library
+    _mark_ready()         call at the earliest moment a _set_value() would stick
+    _notify_input(value)  call when the USER changed the value through the UI
 
-    The base class handles the complex logic, concrete classes provide simple
-    hooks for getting and setting values.
+    _validate(value)      OPTIONAL and almost never used - see THE _validate()
+                          EXCEPTION
 
-    Base Class Provides:
-        on_create()         Initializes _pending_value and _is_ready
-        val()               Full getter/setter with buffering and events
-        _mark_ready()       Apply buffered value, mark component ready
-        _transform_value()  Default pass-through (override if needed)
+    NEVER OVERRIDE val(). It is where buffering and events live; different
+    read/write behaviour is expressed through _get_value()/_set_value(). An
+    unimplemented pair throws by name:
 
-    Concrete Class Implements:
-        _get_value()        Return current DOM/component value (REQUIRED)
-        _set_value(value)   Set DOM/component value (REQUIRED)
-        _transform_value()  Transform buffered value for getter (OPTIONAL)
-        on_ready()          Call _mark_ready(), setup events (REQUIRED)
+        My_Custom_Input must implement _get_value()
+        My_Custom_Input must implement _set_value()
 
-    Benefits:
-        - Cannot forget trigger('val') - base class handles it
-        - Cannot forget buffering - base class handles it
-        - Reduced boilerplate: ~10 lines instead of ~40
-        - Consistent behavior across all inputs
+    A concrete class that overrides on_create() MUST call super.on_create() -
+    that is where buffering state is initialized and data-name is stamped.
 
-MINIMAL IMPLEMENTATION
+BUFFERING: SETTABLE BEFORE READY, ALWAYS
 
-    class My_Input extends Form_Input_Abstract {
-        _get_value() {
-            return this.$sid('input').val();
-        }
+    val(v) may be called at ANY point in the component's life - before an option
+    list has been fetched, before the underlying library has instantiated, before
+    the DOM exists. The value is buffered and applied at _mark_ready().
 
-        _set_value(value) {
-            this.$sid('input').val(value || '');
-        }
+    THE CONTRACT IS TIMING INDIFFERENCE. val(value) produces identical results
+    whether called before initialization, after it, or at any point between. If a
+    caller needs await component.ready() or a timing trick to make val() work,
+    THE COMPONENT IS BROKEN - and so is a _set_value() whose behaviour depends on
+    initialization state.
 
+    The pending slot is tracked with a BOOLEAN flag, so null, 0, false and '' all
+    buffer faithfully. null is a legitimate value (most nullable columns), never
+    a sentinel; do not reintroduce a null test as "no value".
+
+    While a value is pending, val() as a GETTER returns it - so a form serialized
+    before every input finished initializing still reports what was set.
+
+LIFECYCLE: EDITABLE AS SOON AS POSSIBLE
+
+    Initialize in on_render() whenever the input's DOM is self-contained; the
+    input becomes editable as early as possible. Use on_ready() only when
+    initialization genuinely depends on child components or an async library.
+
+    Call _mark_ready() at the earliest moment a programmatic _set_value() would
+    stick:
+
+        plain text input        on_render()
+        TomSelect-backed input  after the library instantiates
+        server-fed select       after the options arrive
+        Quill editor            inside the library's ready callback
+
+    class Wysiwyg_Input extends Form_Input_Abstract {
         on_ready() {
-            this._mark_ready();
-
             const that = this;
-            this.$sid('input').on('input', function() {
-                const value = that.val();
-                that.trigger('input', value);
-                that.trigger('val', value);
+            quill_ready(function () {
+                that._initialize_quill();
+                that._mark_ready();          // AFTER the library is usable
             });
         }
     }
 
-    That's it. No on_create(), no val() method, no buffering logic.
+    Renders REBUILD the DOM. An input that draws its own rows in JavaScript
+    therefore draws them from STATE in on_render(), and every user edit writes
+    back to that state - anything drawn once imperatively vanishes on the next
+    render. Worked example:
+    system/app/RSpade/resource/reference_app/theme/components/inputs/tag_list/
+    tag_list_input.js
 
-VALUE TRANSFORMATION
+EVENTS
 
-    Some inputs need to transform the buffered value when returning it.
-    Override _transform_value() for this:
+    'input'   the USER changed the value through the UI
+    'val'     the value changed, by any path (user or programmatic val(v))
+
+    'input' is fired ONLY through _notify_input(value), which fires 'input' then
+    'val', in that order. Hand-triggering the pair is a defect: the ordering and
+    the pairing belong to the base class, and a call site that fires only one of
+    them silently breaks every listener expecting the other.
+
+    _mark_ready() applying a buffered value fires 'val' - the value did change.
+    With nothing buffered it fires NOTHING: readiness is not a value change, and
+    listeners wired to "on change" must not fire on load.
+
+    Because jqhtml replays an already-fired event to a late .on(), a 'val'
+    listener registered after the fact fires immediately with the current value
+    and then on every subsequent change:
+
+        this.sid('country').on('input', (c, v) => this.reload_states(v));  // user only
+        this.sid('amount').on('val',  (c, v) => this.update_total(v));     // all changes
+
+    From a form, reach one input with form.input(name) rather than a selector.
+
+NAMING
+
+    $name is required on every input that participates in a form. The base class
+    stamps it as data-name on the component root; that attribute is how Rsx_Form
+    discovers inputs and how the error renderer targets them. data-name is a LIVE
+    CONTRACT ATTRIBUTE, not a debug attribute - never hand-write it, never strip
+    it.
+
+    $name goes on the INPUT, never on Form_Field. A Form_Field reads its child's
+    data-name for accessibility wiring and shouldnt_happen()s without one:
+
+        Form_Field_Abstract child input has no data-name attribute.
+
+THE _validate() EXCEPTION
+
+    Validation lives on the server, once. A client check that duplicates a server
+    rule MASKS the absence of the server rule: blank never reaches the endpoint,
+    the missing server validator is never exercised, and the gap surfaces only
+    when an API caller or a script hits the endpoint directly - silently, in
+    production. Full reasoning: form_conventions(3).
+
+    _validate(value) returns null (valid) or a user-facing message string, and
+    exists SOLELY for a constraint whose invalid state cannot even be EXPRESSED
+    to the server: a pick-at-most-two multiselect where a third selection is
+    unrepresentable in the payload, a structured value that cannot serialize when
+    malformed. Its message renders through the same pipeline as a server error,
+    so there is no second styling path.
+
+    NEVER for required, format, length or range. And even where it is legitimate,
+    prefer interaction design: the best pick-at-most-two multiselect simply
+    refuses the third click and needs no message at all. Almost every input keeps
+    the inherited no-op forever.
+
+VALUE COERCION
+
+    An input must accept both string and numeric values: a select whose option
+    values are "3", "5", "9" must work with val(3) and val('3') alike.
+
+        selects / discrete values   convert to string before comparing
+        text inputs                 jQuery's .val() handles it
+        checkboxes                  accept 1, '1' and true as checked
 
     class Checkbox_Input extends Form_Input_Abstract {
         on_create() {
@@ -112,249 +177,133 @@ VALUE TRANSFORMATION
             this.checked_value = this.args.checked_value || '1';
             this.unchecked_value = this.args.unchecked_value || '0';
         }
-
         _get_value() {
             return this.$sid('input').prop('checked')
-                ? this.checked_value
-                : this.unchecked_value;
+                ? this.checked_value : this.unchecked_value;
         }
-
         _set_value(value) {
-            const should_check = (value === this.checked_value ||
-                                  value === '1' || value === 1 || value === true);
-            this.$sid('input').prop('checked', should_check);
-        }
-
-        _transform_value(value) {
-            const should_check = (value === this.checked_value ||
-                                  value === '1' || value === 1 || value === true);
-            return should_check ? this.checked_value : this.unchecked_value;
-        }
-
-        on_ready() {
-            this._mark_ready();
-            // setup change handler...
+            this.$sid('input').prop('checked',
+                value === this.checked_value || value === '1' || value === 1 || value === true);
         }
     }
 
-ASYNC INITIALIZATION
-
-    Some components initialize asynchronously (e.g., waiting for external
-    libraries). Call _mark_ready() when actually ready, not at the start
-    of on_ready().
-
-    class Wysiwyg_Input extends Form_Input_Abstract {
-        _get_value() {
-            if (!this.quill) return '';
-            return safe_html(this.quill.root.innerHTML);
-        }
-
-        _set_value(value) {
-            if (value) {
-                this.quill.root.innerHTML = value;
-            }
-        }
-
-        _transform_value(value) {
-            return safe_html(value);
-        }
-
-        on_ready() {
-            const that = this;
-            quill_ready(function() {
-                that._initialize_quill();
-                that._mark_ready();  // Called AFTER quill is ready
-            });
-        }
-    }
-
-EVENT SYSTEM
-
-    Two events serve different purposes:
-
-    'input' Event:
-        Fires only on user interaction. Use for dependent fields, live search,
-        or any logic that should respond to user changes but not programmatic
-        population.
-
-        this.sid('country').on('input', (component, value) => {
-            this.reload_states(value);
-        });
-
-    'val' Event:
-        Fires on ALL value changes. Because jqhtml triggers already-fired
-        events when .on() is registered late, this provides immediate callback
-        with the current value plus all future changes.
-
-        this.sid('amount').on('val', (component, value) => {
-            // Fires immediately with current value
-            // Then fires on every subsequent change
-            this.update_total(value);
-        });
-
-    Event Triggering:
-        - Base class val() setter automatically triggers 'val'
-        - Concrete classes trigger BOTH 'input' and 'val' on user interaction
-        - Never trigger 'input' from the val() setter
-
-PRE-INITIALIZATION
-
-    Why Required:
-        Forms call vals() during on_ready() to populate all inputs with data.
-        Child input components may still be loading (e.g., Select_Input
-        fetching options via Ajax). The base class buffers the value and
-        applies it when _mark_ready() is called.
-
-    Example Scenario:
-        1. Form on_ready() calls this.vals(data)
-        2. Select_Input is still loading options from server
-        3. Form sets val('123') on the Select_Input
-        4. Base class buffers '123' in _pending_value
-        5. Select_Input on_ready() calls _mark_ready()
-        6. Base class applies buffered '123' via _set_value()
-
-    The base class handles all this automatically. Concrete classes just
-    need to implement _get_value() and _set_value().
-
-BUILT-IN INPUTS
-
-    Text_Input
-        Text, email, url, tel, number, textarea inputs.
-        REQUIRES $max_length argument for character limits.
-
-        <Text_Input $name="email" $max_length=User_Model.field_length('email') />
-        <Text_Input $name="notes" $type="textarea" $max_length=-1 $rows="5" />
-
-        $max_length values:
-        - Positive number: Sets HTML maxlength attribute
-        - -1: Unlimited (no maxlength applied)
-        - Undefined: Console error with guidance
-
-        Use Model.field_length('column') for database-driven limits.
-        Subclasses (Phone_Text_Input, Currency_Input) are exempt.
-
-    Select_Input
-        Dropdown with static options.
-        <Select_Input $options="<%= JSON.stringify(options) %>" />
-
-    Select_Ajax_Input
-        Dropdown that loads options via Ajax.
-        $data is an endpoint URL returning an array of options.
-        <Select_Ajax_Input $data="/path/to/options" />
-
-    Checkbox_Input
-        Boolean checkbox input.
-        <Checkbox_Input $label="I agree to terms" />
-
-    Checkbox_Multiselect
-        Multiple checkbox selection as array value.
-
-    Wysiwyg_Input
-        Rich text editor (Quill-based).
-
-EXTENDING OTHER INPUTS
-
-    When extending another input (e.g., Select_Ajax_Input extends Select_Input),
-    call super methods appropriately:
+EXTENDING ANOTHER INPUT
 
     class Select_Ajax_Input extends Select_Input {
         async on_load() {
             this.data.select_values = await Controller.get_options();
         }
-
         on_ready() {
-            // Parent sets up TomSelect and calls _mark_ready()
-            super.on_ready();
+            super.on_ready();   // parent instantiates TomSelect and _mark_ready()s
         }
-
-        // _get_value() and _set_value() inherited from Select_Input
+        // _get_value() / _set_value() inherited
     }
 
-CREATING CUSTOM INPUTS
+    Overriding a parent's _set_value() to add behaviour calls super._set_value();
+    it never becomes a val() override.
 
-    1. Create JavaScript class extending Form_Input_Abstract
-    2. Create jqhtml template (NO class="Widget" needed)
-    3. Implement _get_value() and _set_value()
-    4. Implement on_ready() calling _mark_ready() and setting up events
+BUILT-IN INPUTS
 
-    Template Example:
+    The inputs themselves are APPLICATION components (the template ships a full
+    set under theme/components/inputs/); only the base class is framework core.
+
+    Text_Input
+        text, email, url, tel, number, date, textarea.
+        $max_length is REQUIRED - a positive number sets the HTML maxlength, -1
+        means unlimited, and omitting it is a console error.
+
+            <Text_Input $name="email" $max_length=User_Model.field_length('email') />
+            <Text_Input $name="notes" $type="textarea" $rows=5 $max_length=-1 />
+
+        field_length('column') is generated from the database schema and returns
+        null for a non-varchar column. Subclasses (Phone_Text_Input,
+        Currency_Input) are exempt from the requirement - they have intrinsic
+        limits.
+
+    Select_Input                  dropdown with a static options array (TomSelect)
+    Select_With_Description_Input dropdown with a description line per option
+    Select_Ajax_Input             dropdown whose options load from a controller
+    Select_Country_Input          country picker
+    Select_State_Input            state picker
+    Checkbox_Input                single checkbox, configurable checked value
+    Checkbox_Multiselect_Input    checkbox group whose value is an array
+    Hidden_Input                  hidden value, no Form_Field wrapper
+    Tag_List_Input                a list of short strings as one array value
+    Pin_Input                     fixed-length code entry
+    Profile_Photo_Input           photo upload and crop
+    Repeater_Simple_Input         repeating simple values
+    Wysiwyg_Input                 rich text (Quill), async initialization
+
+    $disabled=true renders the control disabled but the input STILL SERIALIZES -
+    useful for a value the user may not change but the endpoint still receives.
+
+CREATING A CUSTOM INPUT
+
+    1. A jqhtml template rendering EMPTY elements, no class="Widget".
+    2. A class extending Form_Input_Abstract.
+    3. _get_value() and _set_value().
+    4. _mark_ready() at the earliest writable moment.
+    5. User interaction wired to _notify_input(value).
+
         <Define:My_Custom_Input>
-            <div class="my-input-wrapper">
-                <input type="text" $sid="input" class="form-control" />
-            </div>
+            <input type="text" $sid="input" class="form-control" />
         </Define:My_Custom_Input>
 
-    JavaScript Example:
-        class My_Custom_Input extends Form_Input_Abstract {
-            _get_value() {
-                return this.$sid('input').val();
-            }
-
-            _set_value(value) {
-                this.$sid('input').val(value || '');
-            }
-
-            on_ready() {
-                this._mark_ready();
-
-                const that = this;
-                this.$sid('input').on('input', function() {
-                    const val = that.val();
-                    that.trigger('input', val);
-                    that.trigger('val', val);
-                });
-            }
-        }
+    A value in the template - value="<%= this.data.value %>" - is wrong twice
+    over: inputs have no this.data, and the form is what supplies values.
 
 COMMON MISTAKES
 
-    Implementing val():
-        Don't override val(). Implement _get_value() and _set_value() instead.
-        The base class handles all the buffering and event logic.
+    Overriding val()
+        Implement _get_value()/_set_value(). The base class owns buffering and
+        events.
 
-    Forgetting _mark_ready():
-        Must call in on_ready() to apply buffered values and mark ready.
+    Forgetting _mark_ready()
+        A buffered value is never applied, and the field silently stays empty.
 
-    Calling _mark_ready() too early:
-        For async initialization, wait until actually ready before calling.
+    Calling _mark_ready() too early
+        For async initialization, wait until the library or option list is
+        actually usable.
 
-    Using this.data:
-        Input components have no on_load(), so this.data is always {}.
-        Never use this.data.value or similar patterns.
+    Hand-triggering 'input' + 'val'
+        Call _notify_input(value).
 
-    Adding class="Widget":
-        No longer required. The .Form_Input_Abstract class is automatic.
+    Overriding on_create() without super.on_create()
+        Buffering state and data-name never initialize.
 
-    Not triggering both events:
-        User interaction must trigger both 'input' and 'val'.
+    Using this.data
+        Inputs have no on_load(); this.data is always {}.
 
-    Setting value in template:
-        Templates must render empty. Forms populate via val().
+    Writing a required/format/length check
+        That rule is the server's. See THE _validate() EXCEPTION.
+
+    Treating null as "no value"
+        The buffer tracks presence with a boolean; val(null) buffers and applies
+        null.
 
 TROUBLESHOOTING
 
-    Value Not Appearing:
-        - Check _set_value() actually sets DOM element
-        - Verify _mark_ready() is called in on_ready()
-        - Confirm template has $sid="input" or equivalent
+    Value not appearing
+        _mark_ready() missing or called before the input can accept a write;
+        _set_value() not actually touching the DOM; $sid mismatch.
 
-    Events Not Firing:
-        - Verify on_ready() sets up DOM event listeners
-        - Confirm both 'input' and 'val' triggered on user interaction
-        - Base class handles trigger('val') in setter automatically
+    Value lost on re-render
+        The input draws from a handle instead of from state - redraw in
+        on_render().
 
-    Form Not Finding Input:
-        - Input must extend Form_Input_Abstract
-        - Check for typos in class name
-        - Verify component is inside Rsx_Form
+    Form does not see the input
+        No $name (so no data-name), or the input does not extend
+        Form_Input_Abstract, or it sits inside a composite input (serialization
+        is shallow, and that is correct - the composite owns it).
 
-    Pre-Init Values Lost:
-        - Verify _mark_ready() is called in on_ready()
-        - For async init, call _mark_ready() after initialization completes
-        - Check _get_value() returns correct value
+    A listener fires on page load
+        It is on 'val', which is every change including the seed. Use 'input' for
+        user-only reactions.
 
 SEE ALSO
-    jqhtml(3) - Component lifecycle and templates
-    form_conventions(3) - Form patterns and data flow
-    spa(3) - SPA action forms
-    rsx/theme/components/inputs/CLAUDE.md - Implementation details
+    form_conventions(3) - the form contract this input plugs into
+    jqhtml(3) - component lifecycle and templates
+    modals(3) - dialogs that host a form
+    system/app/RSpade/resource/reference_app/theme/components/inputs/CLAUDE.md
+
+RSX Framework                     August 2026                   FORM_INPUT(3)

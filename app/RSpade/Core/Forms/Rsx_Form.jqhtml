@@ -1,0 +1,33 @@
+<%--
+Rsx_Form
+
+The form component - value state, dirty tracking, client validation, submission and
+error rendering, in one pipeline. See Rsx_Form.js for the contract summary.
+
+The template is deliberately minimal and framework-owned. Failure feedback renders in
+the <Form_Errors /> the form's content places wherever its LAYOUT wants it (inside a
+section, above a grid) - see Form_Errors.jqhtml. Layout, labels and styling belong to
+the content the application composes inside (Form_Field, the form grid, .form-actions).
+
+  $controller  (required) - controller class name; with $method, names the ONE endpoint
+  $method      (required) - Ajax endpoint method on that controller
+  $data        (optional) - seed values for an edit form; omit for a pristine create form
+
+  <Rsx_Form $controller="Frontend_Tasks_Controller" $method="save" $data=this.data.form_data>
+      <Form_Field $label="Title" $required=true>
+          <Text_Input $name="title" />
+      </Form_Field>
+      <div class="form-actions">
+          <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+  </Rsx_Form>
+--%>
+<Define:Rsx_Form tag="form">
+
+    <div $sid="form_content">
+
+        <%= content() %>
+
+    </div>
+
+</Define:Rsx_Form>

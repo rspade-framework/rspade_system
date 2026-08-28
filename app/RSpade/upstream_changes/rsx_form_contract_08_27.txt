@@ -1,0 +1,531 @@
+RSX_FORM CONTRACT - ONE FORM ENGINE IN FRAMEWORK CORE
+Date: 2026-08-27
+
+SUMMARY
+    The form engine is now framework core and has ONE contract. Rsx_Form,
+    Form_Input_Abstract and Form_Errors live in system/app/RSpade/Core/Forms/
+    and reach every bundle through Core_Bundle; the spinner registry
+    (Rsx.set_default_spinner / get_default_spinner, <Spinner />,
+    Rsx_Default_Spinner) lives in Core/Ui/.
+
+    This affects EVERY app that has forms. Your app almost certainly carries its
+    own copy of the old engine, its own Modal.form() with an on_submit callback,
+    inputs that override val(), and endpoints that validate with the wrong
+    response helper. None of that is compatible with the core engine, and most
+    of it fails LOUDLY on the first submit - but two items in ACTION REQUIRED
+    fail SILENTLY and must be audited by hand.
+
+    Full contract: php artisan rsx:man form_conventions
+                   php artisan rsx:man form_input
+                   php artisan rsx:man modals
+
+THE CHANGE
+    Three words, used exactly:
+
+        Form    Rsx_Form - value state, dirty tracking, submission, error
+                rendering. ONE pipeline.
+        Field   Form_Field (yours) - label, required asterisk, help text.
+                Purely presentational; validates nothing.
+        Input   a Form_Input_Abstract subclass - ONE named value.
+
+    The properties that matter:
+
+    1.  $controller + $method on the <Rsx_Form> tag is the ONLY place an
+        endpoint is named. Modals do not repeat it, buttons do not repeat it,
+        JavaScript does not repeat it.
+
+    2.  form.submit() is the only submission path. It resolves with the server
+        result, or false on ANY failure.
+
+    3.  VALIDATION LIVES ON THE SERVER, ONCE. No client-side required / format /
+        length / range checks anywhere. A client check that duplicates a server
+        rule MASKS the absence of the server rule: blank never reaches the
+        endpoint, the missing validator is never exercised, and the gap surfaces
+        only when an API caller or a script hits the endpoint directly. The one
+        exception is an input's _validate(), for a constraint that cannot even be
+        EXPRESSED to the server.
+
+    4.  BLANK IS A VALUE; ABSENT MEANS UNTOUCHED. Every input serializes on every
+        submit, so a blank field arrives as ''. An absent key means "leave it
+        alone"; a present-but-blank value must validate. "Keep the old value when
+        blank" is forbidden server-side.
+
+    5.  <Form_Errors /> is author-placed and MANDATORY. A form without one throws.
+
+    6.  An input implements _get_value()/_set_value(), never val(); announces
+        user edits with _notify_input(value), never a hand-triggered event pair.
+
+    7.  Modal.form() is chrome: {title, component, component_args, submit_label,
+        cancel_label, max_width, closable, before_submit, on_success}. There is
+        no on_submit. The hosted component usually needs no JS class at all.
+
+    8.  The loading overlay is STATE on the form (set_loading / populate), and
+        clearing it is explicit. Dirty values survive re-renders and are parked
+        across SPA re-creation.
+
+ACTION REQUIRED
+
+    Work these in order. Items 1-3 are structural; items 8 and 9 are the SILENT
+    ones - nothing breaks to tell you they were missed.
+
+    ------------------------------------------------------------------------
+    1. DELETE your copies of the engine
+    ------------------------------------------------------------------------
+
+        grep -rl "class Rsx_Form\|class Form_Input_Abstract" rsx/
+        find rsx/ -name 'rsx_form.js' -o -name 'rsx_form.jqhtml' \
+             -o -name 'form_input_abstract.js' -o -name 'form_errors.jqhtml'
+
+    Delete every hit. Their names now collide with framework core, and yours is
+    the one that must go. Your inputs already say `extends Form_Input_Abstract`
+    and resolve to the core base class with no import changes - classes are found
+    by NAME, not path.
+
+    If your app forked the engine for the portal as well (a Portal_Form, a
+    portal_input_abstract.js), delete those too: one engine serves both
+    experiences.
+
+    Keep your Form_Field, your concrete inputs and your SCSS - those are yours.
+    Form_Field must not require a form: a bare Field outside a submission context
+    is legitimate, and a closest('.Rsx_Form') requirement in
+    form_field_abstract.js now breaks it. Delete that requirement, the
+    `this.form` handle it fed, and any get_error()/has_error() branch - a Field
+    renders no error markup, because the form's one renderer pins messages under
+    the fields it targets.
+
+    ------------------------------------------------------------------------
+    2. Every <Rsx_Form> gets $controller, $method and a <Form_Errors />
+    ------------------------------------------------------------------------
+
+        grep -rn "<Rsx_Form" rsx/ | grep -v '\$controller'
+        grep -rlL "Form_Errors" $(grep -rl "<Rsx_Form" rsx/)
+
+    BEFORE
+
+        <Rsx_Form $data=this.data.form_data>
+            <div $sid="error_container"></div>
+            <Form_Field $label="Title" $required=true>
+                <Text_Input $name="title" $max_length=255 />
+            </Form_Field>
+        </Rsx_Form>
+
+    AFTER
+
+        <Rsx_Form $controller="Frontend_Tasks_Controller" $method="save"
+                  $data=this.data.form_data>
+
+            <Form_Errors />
+
+            <Form_Field $label="Title" $required=true>
+                <Text_Input $name="title" $max_length=255 />
+            </Form_Field>
+
+            <button type="submit" class="btn btn-primary">Save</button>
+        </Rsx_Form>
+
+    <Form_Errors /> goes where YOUR LAYOUT wants the failure feedback - inside
+    the first section, above a two-column grid, under a heading - so the form's
+    own containers give the alert their spacing. Any $sid="error_container" div
+    is dead; delete it.
+
+    A form missing either argument throws on submit:
+        "Rsx_Form: $controller and $method are required on the <Rsx_Form> tag"
+    A form with no <Form_Errors /> throws when feedback is needed:
+        "Rsx_Form: no <Form_Errors /> in this form."
+
+    Worked example (a page form, complete):
+        system/app/RSpade/resource/reference_app/app/frontend/tasks/edit/
+            Tasks_Edit_Action.jqhtml
+            Tasks_Edit_Action.js
+
+    ------------------------------------------------------------------------
+    3. form.on('success') -> form.on('submitted')
+    ------------------------------------------------------------------------
+
+        grep -rn "\.on('success'\|\.on(\"success\"" rsx/
+
+    The success event is 'submitted', and its payload is exactly what the
+    endpoint returned. The failure event is 'submit_error'. A per-field user edit
+    is 'input' (name, value).
+
+        form.on('submitted', (form, result) => grid.reload());
+
+    ------------------------------------------------------------------------
+    4. Modal.form({on_submit}) -> the new options
+    ------------------------------------------------------------------------
+
+        grep -rn "on_submit" rsx/
+
+    There is no on_submit. The dialog drives the hosted form's submit().
+
+    BEFORE
+
+        const result = await Modal.form({
+            title: 'Add User',
+            component: 'Add_User_Form',
+            on_submit: async (form) => {
+                try {
+                    return await Users_Controller.add_user(form.vals());
+                } catch (error) {
+                    await form.render_error(error);
+                    return false;
+                }
+            },
+        });
+
+    AFTER
+
+        const result = await Modal.form({
+            title: 'Add User',
+            component: 'Add_User_Modal_Form',   // its template holds the <Rsx_Form>
+        });
+
+    The endpoint moves ONTO the form's tag. The wrapper class that existed only
+    to delegate vals() and render_error() is DELETED - the body component
+    usually needs no JS class at all:
+
+        system/app/RSpade/resource/reference_app/app/frontend/settings/api_keys/
+            add_api_key_modal_form.jqhtml     (template only, no JS class)
+
+    Where you genuinely need to adjust the payload or run a side effect, the
+    replacements are before_submit(vals, form) and on_success(result, form).
+    before_submit returning FALSE aborts silently - that is the seam for an "are
+    you sure?" the user declined; throwing a {field: message} object from it
+    renders as validation.
+
+    EDIT MODALS no longer fetch before opening. The dialog opens immediately and
+    the body component loads its own record behind the form's loading overlay:
+
+        class Edit_User_Modal_Form extends Component {
+            on_create() {
+                this._record = Users_Controller.get_user_for_edit({
+                    user_id: int(this.args.user_id),
+                });
+            }
+            on_render() {
+                if (!this._record_settled) this._get_form()?.set_loading(true);
+            }
+            on_ready() {
+                if (this._populate_started) return;
+                this._populate_started = true;
+                this._populate();
+            }
+            async _populate() {
+                const form = this._get_form();
+                try { await form.populate(this._record); }
+                catch (e) { this._record_settled = true; await form.render_error(e); return; }
+                this._record_settled = true;
+            }
+            _get_form() {
+                const $form = this.$.find('.Rsx_Form').first();
+                return $form.exists() ? $form.component() : null;
+            }
+        }
+
+    The settled flag is an INSTANCE property, never this.data - this.data is the
+    maybe-cached result of on_load(), and a cached "already settled" lies on the
+    next open while the real fetch is in flight.
+
+        system/app/RSpade/resource/reference_app/app/frontend/settings/
+            group_management/edit_group/edit_group_modal_form.js
+
+    Modal.apply_errors() and Modal.reopen_with_errors() are gone - they were a
+    second error path into a modal body. Delete every call.
+
+    ------------------------------------------------------------------------
+    5. A dialog with no endpoint is Modal.show({buttons}), not Modal.form()
+    ------------------------------------------------------------------------
+
+    If the dialog collects a choice and the CALLER acts on it - a picker, a
+    selection table, a wizard step that persists nothing - there is no form and
+    no endpoint for a form to name. Modal.form() on such a body now raises:
+
+        Modal.form({component: 'X'}) found no <Rsx_Form> inside that component.
+        A dialog with no form belongs on Modal.show({buttons}).
+
+    Give the body a NAMED ACCESSOR (get_selection()), not a vals():
+
+        const picked = await Modal.show({
+            title: 'Choose contacts',
+            body: $body,
+            buttons: [
+                {label: 'Cancel', value: false, class: 'btn-secondary'},
+                {
+                    label: 'Continue', class: 'btn-primary', default: true,
+                    callback: () => {
+                        const selection = body.get_selection();
+                        if (!selection.length) {
+                            body.show_empty_selection_note();
+                            return false;   // ONLY a literal false keeps it open
+                        }
+                        return selection;
+                    },
+                },
+            ],
+            on_show: () => {
+                body = $body.component('Contact_Picker_Body', {contacts}).component();
+            },
+        });
+
+    WHILE YOU ARE IN THERE, audit for this bug:
+
+        grep -rn "return null;.*keep\|keep the modal open" rsx/
+
+    RETURN null CLOSES THE DIALOG. Only a literal false holds it open. A callback
+    returning null "to keep the modal open" has been silently closing the dialog
+    and discarding whatever the user entered.
+
+    ------------------------------------------------------------------------
+    6. Inputs: val() overrides -> _get_value()/_set_value()
+    ------------------------------------------------------------------------
+
+        grep -rn "    val(" rsx/theme/components/inputs/ rsx/app/
+
+    BEFORE
+
+        class My_Input extends Form_Input_Abstract {
+            val(value) {
+                if (value !== undefined) { this.$sid('input').val(value); return; }
+                return this.$sid('input').val();
+            }
+        }
+
+    AFTER
+
+        class My_Input extends Form_Input_Abstract {
+            _get_value()      { return this.$sid('input').val(); }
+            _set_value(value) { this.$sid('input').val(value ?? ''); }
+        }
+
+    An input that overrode val() to add behaviour on top of a parent's now
+    overrides _set_value() and calls super._set_value(value).
+
+    An unconverted input throws by name on first use:
+        "My_Input must implement _get_value()"
+
+    _transform_value() is gone. A getter that needs to normalize does it in
+    _get_value(); the pending buffer no longer needs a transform hook, because it
+    tracks presence with a boolean and returns exactly what was set.
+
+    A class overriding on_create() MUST call super.on_create() - that is where
+    buffering state initializes and data-name is stamped.
+
+    ------------------------------------------------------------------------
+    7. Hand-triggered 'input' + 'val' pairs -> _notify_input()
+    ------------------------------------------------------------------------
+
+        grep -rn "trigger('input'" rsx/
+
+    BEFORE
+
+        const value = that.val();
+        that.trigger('input', value);
+        that.trigger('val', value);
+
+    AFTER
+
+        that._notify_input(that._get_value());
+
+    The ordering and the pairing belong to the base class. A call site that fires
+    only one of them silently breaks every listener expecting the other.
+
+    Also check any input whose contract told a child to trigger 'change' - no
+    Form_Input_Abstract fires 'change'. Listen for 'input' (user edits) or 'val'
+    (all changes).
+
+    ------------------------------------------------------------------------
+    8. SILENT: delete client-side validation, and add the server rule it hid
+    ------------------------------------------------------------------------
+
+        grep -rn "is required\|required'" rsx/app rsx/theme --include=*.js
+
+    Every client-side required / format / length / range check is deleted. That
+    is the easy half. THE HARD HALF IS WHY THIS ITEM EXISTS:
+
+        A client check that duplicated a server rule MASKED THE ABSENCE OF THE
+        SERVER RULE.
+
+    For each check you delete, open the endpoint it was standing in front of and
+    confirm the rule actually exists there. Where it does not, ADD IT. Nothing
+    will fail to tell you it is missing - the field simply becomes silently
+    saveable as blank, or as garbage, by your own UI and by every API caller.
+
+    The same audit runs from the other direction, and is the more complete one:
+
+        grep -rn '\$required=true' rsx/
+
+    $required on Form_Field is now PRESENTATION - the asterisk telling the user a
+    SERVER rule exists. It enforces nothing. Every asterisk must have a server
+    rule behind it.
+
+    ------------------------------------------------------------------------
+    9. SILENT: endpoints - response_form_error(), and blank means blank
+    ------------------------------------------------------------------------
+
+        grep -rn "ERROR_VALIDATION" rsx/
+
+    BEFORE
+
+        return response_error(Ajax::ERROR_VALIDATION, 'Title is required');
+
+    AFTER
+
+        return response_form_error('Please correct the errors below.', [
+            'title' => 'Title is required',
+        ]);
+
+    response_error()'s second argument is METADATA, not a message: that spelling
+    renders an EMPTY alert. response_form_error($message, $fields) pins each
+    message under the input its key names and raises the summary at the top.
+    Unmatched keys are legitimate and render in the top alert.
+
+    Then, the silent one:
+
+        grep -rn "if (!empty(\$params\[\|if (isset(\$params\[" rsx/
+
+    Look for "keep the old value when blank" logic:
+
+        // FORBIDDEN - a failed clear looks like a success
+        if (!empty($params['description'])) {
+            $record->description = $params['description'];
+        }
+
+        // CORRECT - an ABSENT key means untouched; a BLANK value is a value
+        if (array_key_exists('description', $params)) {
+            $record->description = $params['description'];
+        }
+
+    The form serializes EVERY input on every submit, so a blank field arrives as
+    ''. Blank is something the user DID. A required field rejects it identically
+    on create and on edit; an optional field SAVES it. The old spelling means the
+    user emptied a field, pressed save, and was silently ignored.
+
+    ------------------------------------------------------------------------
+    10. Loading placeholders -> the overlay
+    ------------------------------------------------------------------------
+
+        grep -rn "Loading_Spinner" rsx/app | grep -i "edit\|form"
+
+    An edit page that rendered a spinner INSTEAD of the form now renders the real
+    form unconditionally and overlays it:
+
+    BEFORE
+
+        <% if (this.data.loading) { %>
+            <Loading_Spinner />
+        <% } else { %>
+            <Rsx_Form ...> ... </Rsx_Form>
+        <% } %>
+
+    AFTER (template renders the form unconditionally; the action arms the overlay)
+
+        on_create() { this._record_settled = false; }   // INSTANCE property
+
+        on_render() {
+            // Renders REBUILD the DOM, so re-arm every render.
+            this._set_form_loading(this.data.is_edit && !this._record_settled);
+        }
+
+        on_ready() {
+            if (!this.data.is_edit) return;
+            this._record_settled = true;
+            this.$.find('.Rsx_Form').first().component().vals(this.data.form_data);
+            this._set_form_loading(false);
+        }
+
+        _set_form_loading(loading) {
+            const $form = this.$.find('.Rsx_Form').first();
+            if ($form.exists()) $form.component().set_loading(loading);
+        }
+
+    A LOAD FAILURE branch is different and stays - an error page is not a
+    placeholder, because there is no form to wait for.
+
+    Clearing the overlay is ALWAYS explicit. In a modal, form.populate(promise)
+    does it in a finally and cannot leak.
+
+    ------------------------------------------------------------------------
+    11. Register your spinner, and declare the veil token
+    ------------------------------------------------------------------------
+
+    The loading overlay hosts the REGISTERED spinner. Register yours once, at
+    app init:
+
+        class App_Spinner extends Component {
+            static on_app_ready() { Rsx.set_default_spinner('App_Spinner'); }
+
+            // The host owns the box and the box is a CENTERING STAGE, not a
+            // scale target - decide here whether you fill it or draw centered.
+        }
+
+    Until you do, the framework's Rsx_Default_Spinner is used, which is correct
+    but generic. There are no size arguments anywhere: <Spinner /> defaults to
+    60x60, the form overlay hosts one at 150px, and ordinary CSS sets any other
+    context. Never hand-roll spinner markup.
+
+    Core/Forms/Rsx_Form.scss reads ONE colour, --rsx-form-veil, and YOU own it -
+    core has no palette and cannot know whether the surface behind the overlay is
+    light or dark. Declare it in your theme, for both themes:
+
+        :root {
+            --rsx-form-veil: rgba(255, 255, 255, 0.65);
+        }
+
+        body.rsx-dark {
+            --rsx-form-veil: rgba(16, 21, 27, 0.7);
+        }
+
+    Without the dark declaration, a dark page's form flashes white while loading.
+    It is a VEIL, not a curtain: the translucency is what tells the user the form
+    underneath is real and coming.
+
+VERIFICATION
+
+    1.  No engine copies remain:
+
+            find rsx/ -name 'rsx_form.js' -o -name 'form_input_abstract.js' \
+                 -o -name 'form_errors.jqhtml'          # expect no output
+
+    2.  Every form declares its endpoint and its error container:
+
+            grep -c "<Rsx_Form" -r rsx/ | ...            # count your forms
+            grep -rn "<Rsx_Form" rsx/ | grep -vc '\$controller'   # expect 0
+            grep -rL "Form_Errors" $(grep -rl "<Rsx_Form" rsx/)   # expect no files
+
+        Then cross-check each $controller/$method pair against the PHP it names:
+        every one must resolve to an #[Ajax_Endpoint] method that exists.
+
+    3.  Nothing references the old API:
+
+            grep -rn "on_submit\|apply_errors\|reopen_with_errors\|_transform_value\|error_container" rsx/
+            grep -rn "\.on('success'" rsx/
+            # all expect no output
+
+    4.  No input overrides val(), and no site hand-triggers the event pair:
+
+            grep -rn "^\s*val(" rsx/theme rsx/app
+            grep -rn "trigger('input'" rsx/
+            # both expect no output
+
+    5.  Every endpoint a form submits to answers response_form_error():
+
+            grep -rn "ERROR_VALIDATION" rsx/          # expect no output
+
+    6.  EXERCISE EACH FORM, in this order, and watch the console:
+
+            a. Open an ADD form, submit it EMPTY. Expect the server's message
+               under each field AND the top alert. If a field saves blank that
+               should not, the server rule is missing (ACTION REQUIRED item 8).
+            b. Open an EDIT form. Expect the loading overlay over the real form,
+               then the values, then no overlay.
+            c. On an EDIT form, CLEAR an optional field and save. Re-open it.
+               The field must still be empty. If the old value came back, the
+               endpoint still has "keep the old value when blank" (item 9).
+            d. On an EDIT form, type in a field, then let a realtime or
+               revalidation re-render land. Your keystrokes must survive.
+            e. Cancel a modal. Expect false, and no console error.
+
+    7.  Dark theme: open an edit form on a dark page and confirm the loading veil
+        is dark, not white.
+
+    8.  php artisan rsx:check

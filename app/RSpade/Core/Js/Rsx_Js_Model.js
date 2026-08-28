@@ -494,13 +494,26 @@ class Rsx_Js_Model {
     }
 
     /**
-     * Convert model instance to JSON string
+     * JSON.stringify() serialization hook
      *
-     * @returns {string} JSON representation
+     * This is the JS language protocol method: JSON.stringify() calls toJSON() on any
+     * value that defines it and serializes the RETURNED VALUE. It therefore returns the
+     * plain object to be serialized, NOT a JSON string - returning a string here would
+     * make stringify() encode that string as a string, so a model would round-trip into
+     * its own JSON TEXT instead of an object.
+     *
+     * Why it matters beyond tidiness: jqhtml's load coordinator shares one on_load result
+     * across every component invoked with the same (component, args) pair, and hands it to
+     * the followers as JSON.parse(JSON.stringify(leader_data)). With a string-returning
+     * toJSON() the leader keeps the live instance while every follower receives the model's
+     * own JSON TEXT - so record.field reads undefined on the repeats and works on the first
+     * one, the "the first identical component on a page works, the copies break" shape.
+     *
+     * @returns {Object} Plain object representation to serialize
      */
     toJSON() {
         const that = this;
-        return JSON.stringify(that.toObject());
+        return that.toObject();
     }
 
     /**

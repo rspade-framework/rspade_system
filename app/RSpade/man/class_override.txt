@@ -41,6 +41,46 @@ During manifest build, when duplicate class names are detected:
 
 The .upstream file preserves the original for reference and framework updates.
 
+## WHAT THE BUILD PRINTS WHEN IT ARCHIVES
+
+Archiving un-registers a class, so the build never does it silently. Every
+rename prints one line naming the file that left the build and the rsx/ file
+that displaced it:
+
+    [Manifest] Class override: User_Model - archived
+    app/RSpade/Core/Models/User_Model.php to
+    app/RSpade/Core/Models/User_Model.php.upstream, overridden by
+    rsx/models/user_model.php
+
+A class can therefore never disappear without a line naming it. If a framework
+class stops existing and no such line was printed, an override did not do it.
+
+## WHEN THE BUILD REFUSES TO ARCHIVE
+
+The decision to archive comes from the manifest's file list, and a file list can
+be out of date. Two conditions make the build decline and say so instead:
+
+    The rsx/ twin is not on disk. The index names an override that has since
+    been deleted. The stale entry is dropped, the build restarts, and nothing
+    is renamed:
+
+        [Manifest] Class override pass: ignoring stale index entry for
+        User_Model - rsx/models/user_model.php is in the file list but not on
+        disk. No framework file was archived; dropping the entry and restarting
+        the build.
+
+    The build already marked its own manifest bad. A build that has hit a
+    manifest-fatal has declared its index untrustworthy, and archiving is the
+    one act in this pass it could not take back. Duplicates are still reported;
+    nothing is renamed, and the rebuild that follows decides:
+
+        [Manifest] Class override pass: NOT archiving a framework twin of
+        User_Model - this build already marked its manifest bad, so its file
+        list is not evidence of anything. The rebuild decides.
+
+Both lines are informational. An override that is genuinely present is archived
+on the next build, with the ordinary notice above.
+
 ## COMMON OVERRIDE TARGETS
 
 These framework classes are commonly overridden to add application-specific
@@ -246,9 +286,20 @@ the .upstream file or extend from a different base class.
 
 ### Framework file not renamed
 
-Run a clean manifest build:
+Read the build output first - if it printed either of the refusal lines under
+WHEN THE BUILD REFUSES TO ARCHIVE, it is telling you why. A stale-entry line
+means the rsx/ file it names is not where the index thinks it is; a bad-manifest
+line means an earlier failure in the same build has to be fixed first.
+
+Otherwise, run a clean manifest build:
 
     php artisan rsx:manifest:build --clean
+
+### A framework class disappeared and nothing explains it
+
+It was not this system. Every archive prints a line naming both files; search
+the build output for "Class override:". An absent notice means the file left
+some other way.
 
 ## SEE ALSO
 

@@ -245,26 +245,26 @@ CLIENT-SIDE IMPLEMENTATION
 
     Rsx_Form Error Handling
     -----------------------
-    Rsx_Form components have built-in error handling:
+    A form renders its own failures - there is nothing to write and nothing to
+    catch. The endpoint is named on the <Rsx_Form> tag, form.submit() runs the
+    one pipeline, and a failed submit resolves false with the messages already
+    on screen:
 
     const result = await Modal.form({
         title: 'Add User',
-        component: 'Add_User_Form',
-        on_submit: async (form) => {
-            try {
-                const values = form.vals();
-                const result = await Controller.add_user(values);
-                return result; // Success - close modal
-            } catch (error) {
-                await form.render_error(error);
-                return false; // Keep modal open
-            }
-        }
+        component: 'Add_User_Modal_Form',
     });
 
-    Rsx_Form.render_error() handles all error types:
-    - validation: Shows inline field errors + unmatched errors alert
-    - fatal/network/auth: Shows error in form's error container
+    if (result) { /* saved */ }
+
+    Rsx_Form.render_error() is what it uses, and a host that caught an error
+    itself (an edit modal whose record fetch rejected) may call it directly:
+    - validation: inline field errors, plus the top alert, which ALWAYS renders
+    - fatal/network/auth: a single alert in the form's <Form_Errors />
+
+    NEVER try/catch a submit to "handle" a validation error - swallowing it
+    before the renderer sees it is how a failed save comes to look successful.
+    See form_conventions(3).
 
     Form_Utils Error Display
     ------------------------

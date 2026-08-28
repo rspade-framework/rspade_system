@@ -205,6 +205,7 @@ class Contacts_Edit_Action extends Spa_Action {
         this.data.form_data = { name: '', email: '' };
         this.data.is_edit = !!this.args.id;
         this.data.error = null;
+        this._record_settled = false;      // INSTANCE property - this.data is cached
     }
 
     async on_load() {
@@ -221,14 +222,32 @@ class Contacts_Edit_Action extends Spa_Action {
             this.data.error = e;
         }
     }
+
+    // An EDIT FORM does not use the three-state pattern: the real form renders
+    // unconditionally and wears the form's own loading overlay until the record
+    // lands. Renders rebuild the DOM, so the overlay is re-armed every render.
+    on_render() {
+        this._set_form_loading(this.data.is_edit && !this._record_settled);
+    }
+
+    on_ready() {
+        if (!this.data.is_edit || this.data.error) return;
+        this._record_settled = true;
+        this.$.find('.Rsx_Form').first().component().vals(this.data.form_data);
+        this._set_form_loading(false);
+    }
+
+    _set_form_loading(loading) {
+        const $form = this.$.find('.Rsx_Form').first();
+        if ($form.exists()) $form.component().set_loading(loading);
+    }
 }
 ```
 
 ```jqhtml
 <Define:Contacts_Edit_Action tag="div">
-    <% if (this.data.is_edit && !this.data.form_data.id && !this.data.error) { %>
-        <Loading_Spinner />
-    <% } else if (this.data.error) { %>
+    <% if (this.data.error) { %>
+        <%-- A LOAD FAILURE is a page, not a placeholder - there is no form to wait for. --%>
         <Universal_Error_Page_Component $error="<%= this.data.error %>" />
     <% } else { %>
         <h1><%= this.data.is_edit ? 'Edit Contact' : 'Add Contact' %></h1>
@@ -237,8 +256,10 @@ class Contacts_Edit_Action extends Spa_Action {
                   $data="<%= JSON.stringify(this.data.form_data) %>">
             <Hidden_Input $name="id" />
 
+            <Form_Errors />
+
             <Form_Field $label="Name" $required=true>
-                <Text_Input $name="name" />
+                <Text_Input $name="name" $max_length=Contact_Model.field_length('name') />
             </Form_Field>
 
             <Form_Field $label="Email">
@@ -284,7 +305,7 @@ A denial and a missing row return the same generic "not found" (anti-enumeration
 2. **Single action handles add/edit** - Dual `@route` decorators
 3. **Models implement `fetch()`** - With `#[Ajax_Endpoint_Model_Fetch]`
 4. **DataGrids extend `DataGrid_Abstract`** - Query + columns + sorting
-5. **Three-state pattern** - Loading -> Error -> Content. Skip it for DataGrid pages, static pages and redirect-only actions.
+5. **Three-state pattern** - Loading -> Error -> Content, for VIEW pages. An EDIT FORM instead renders the real form and overlays it (`set_loading()`), keeping only the error branch. Skip the pattern entirely for DataGrid pages, static pages and redirect-only actions.
 6. **form_data must be serializable** - Plain objects, not models
 7. **Every surface is gated** - `#[Auth]` on every controller endpoint and model `fetch()`, `@auth` on every `@route` action. Closed by default; the manifest build fails without them, and `pre_dispatch()` never authorizes.
 

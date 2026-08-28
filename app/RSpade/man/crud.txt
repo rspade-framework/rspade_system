@@ -101,13 +101,14 @@ FEATURE CONTROLLER
             #[Auth('can_manage_clients')]
             public static function save(Request $request, array $params = [])
             {
-                // Validation
+                // Validation - the ONLY place it lives. A blank field arrives
+                // as '', so validate presence with a trim, never with empty().
                 $errors = [];
-                if (empty($params['name'])) {
+                if (trim($params['name'] ?? '') === '') {
                     $errors['name'] = 'Name is required';
                 }
-                if (!empty($errors)) {
-                    return response_error(Ajax::ERROR_VALIDATION, $errors);
+                if ($errors) {
+                    return response_form_error('Please correct the errors below.', $errors);
                 }
 
                 // Create or update
@@ -156,7 +157,7 @@ FEATURE CONTROLLER
                     return response_error(Ajax::ERROR_NOT_FOUND, 'Client not found');
                 }
                 if (!$record->trashed()) {
-                    return response_error(Ajax::ERROR_VALIDATION, ['message' => 'Not deleted']);
+                    return response_error(Ajax::ERROR_GENERIC, 'Client is not deleted');
                 }
                 $record->restore();
                 return ['message' => 'Restored successfully'];
@@ -164,21 +165,29 @@ FEATURE CONTROLLER
         }
 
     Validation Pattern
-        Return field-level errors that Rsx_Form can display:
+        Return field-level errors through response_form_error():
 
             $errors = [];
-            if (empty($params['name'])) {
+            if (trim($params['name'] ?? '') === '') {
                 $errors['name'] = 'Name is required';
             }
-            if (!empty($params['email']) && !filter_var($params['email'], FILTER_VALIDATE_EMAIL)) {
+            if ($params['email'] !== '' && !filter_var($params['email'], FILTER_VALIDATE_EMAIL)) {
                 $errors['email'] = 'Invalid email address';
             }
-            if (!empty($errors)) {
-                return response_error(Ajax::ERROR_VALIDATION, $errors);
+            if ($errors) {
+                return response_form_error('Please correct the errors below.', $errors);
             }
 
-        The errors array keys must match form field names. Rsx_Form
-        automatically displays these errors next to the corresponding fields.
+        The keys must match the inputs' $name values; an unmatched key renders
+        in the top alert instead, which is legitimate. The first argument is
+        the SUMMARY MESSAGE - response_error(Ajax::ERROR_VALIDATION, 'a string')
+        passes a message where metadata belongs and renders an empty alert.
+
+        BLANK IS A VALUE; ABSENT MEANS UNTOUCHED. Every input serializes on
+        every submit, so a blank field arrives as ''. A required field rejects
+        it identically on create and on edit; an optional field SAVES it.
+        "Keep the old value when blank" is forbidden - it makes a failed clear
+        look like a success. See form_conventions(3).
 
 LIST PAGE (INDEX)
 
@@ -328,7 +337,25 @@ VIEW PAGE (DETAIL)
                     } catch (e) {
                         this.data.error_data = e;
                     }
-                    this.data.loading = false;
+                }
+
+                // An edit FORM does not use the three-state pattern. The real
+                // form renders unconditionally and wears the form's own loading
+                // overlay; renders rebuild the DOM, so it is re-armed here.
+                on_render() {
+                    this._set_form_loading(this.data.is_edit && !this._record_settled);
+                }
+
+                on_ready() {
+                    if (!this.data.is_edit || this.data.error_data) return;
+                    this._record_settled = true;
+                    this.$.find('.Rsx_Form').first().component().vals(this.data.form_data);
+                    this._set_form_loading(false);
+                }
+
+                _set_form_loading(loading) {
+                    const $form = this.$.find('.Rsx_Form').first();
+                    if ($form.exists()) $form.component().set_loading(loading);
                 }
             }
 
@@ -414,7 +441,11 @@ EDIT PAGE (ADD/EDIT COMBINED)
                     };
 
                     this.data.error_data = null;
-                    this.data.loading = this.data.is_edit;  // Only load in edit mode
+
+                    // INSTANCE property, never this.data: this.data is the
+                    // maybe-cached result of on_load(), and a cached "already
+                    // settled" lies on a revisit while the fetch is in flight.
+                    this._record_settled = false;
                 }
 
                 async on_load() {
@@ -436,16 +467,35 @@ EDIT PAGE (ADD/EDIT COMBINED)
                     } catch (e) {
                         this.data.error_data = e;
                     }
-                    this.data.loading = false;
+                }
+
+                // An edit FORM does not use the three-state pattern. The real
+                // form renders unconditionally and wears the form's own loading
+                // overlay; renders rebuild the DOM, so it is re-armed here.
+                on_render() {
+                    this._set_form_loading(this.data.is_edit && !this._record_settled);
+                }
+
+                on_ready() {
+                    if (!this.data.is_edit || this.data.error_data) return;
+                    this._record_settled = true;
+                    this.$.find('.Rsx_Form').first().component().vals(this.data.form_data);
+                    this._set_form_loading(false);
+                }
+
+                _set_form_loading(loading) {
+                    const $form = this.$.find('.Rsx_Form').first();
+                    if ($form.exists()) $form.component().set_loading(loading);
                 }
             }
 
     Template (edit/{Feature}_Edit_Action.jqhtml)
             <Define:Clients_Edit_Action>
                 <Page>
-                    <% if (this.data.loading) { %>
-                        <Loading_Spinner $message="Loading..." />
-                    <% } else if (this.data.error_data) { %>
+                    <%-- A LOAD FAILURE is a page, not a placeholder: there is no
+                         form to wait for. There is no loading branch - the form
+                         renders and the overlay covers it. --%>
+                    <% if (this.data.error_data) { %>
                         <Universal_Error_Page_Component ... />
                     <% } else { %>
                         <Page_Header>
@@ -461,8 +511,11 @@ EDIT PAGE (ADD/EDIT COMBINED)
                                 <Hidden_Input $name="id" />
                             <% } %>
 
+                            <Form_Errors />
+
                             <Form_Field $label="Name" $required=true>
-                                <Text_Input $name="name" />
+                                <Text_Input $name="name"
+                                    $max_length=Client_Model.field_length('name') />
                             </Form_Field>
 
                             <Form_Field $label="Status">
@@ -477,12 +530,19 @@ EDIT PAGE (ADD/EDIT COMBINED)
 
 RSX_FORM
 
-    The Rsx_Form component provides Ajax form submission with automatic
-    error handling. Required attributes:
+    Rsx_Form is framework core and owns the ONE submission pipeline. Full
+    contract: form_conventions(3). The CRUD-relevant surface:
 
-        $data       - JSON string of initial form values
-        $controller - Controller class name
-        $method     - Ajax endpoint method name
+        $controller - controller class name          (REQUIRED)
+        $method     - Ajax endpoint method name      (REQUIRED)
+        $data       - initial form values; omit for an add form
+
+    $controller + $method is the only place the endpoint is named, and
+    form.submit() - reached by a type="submit" button inside the form - is
+    the only submission path.
+
+    Every form places exactly one <Form_Errors /> where the layout wants its
+    failure feedback. A form without one throws.
 
     Form Fields
         <Form_Field $label="Label" $required=true>
@@ -502,16 +562,21 @@ RSX_FORM
             <% } %>
 
     Available Input Components
-        - Text_Input ($type: text, email, url, password, number, textarea)
+        - Text_Input ($type: text, email, url, number, textarea) - $max_length
+          is REQUIRED
         - Select_Input ($options: array or object)
         - Checkbox_Input ($label: checkbox text)
         - Phone_Text_Input (formatted phone input)
         - Select_Country_Input, Select_State_Input
-        - File_Input (for uploads)
+
+        Full roster and the authoring contract: form_input(3).
 
     Validation Display
-        When the server returns response_error(Ajax::ERROR_VALIDATION, $errors),
-        Rsx_Form automatically displays errors next to matching fields.
+        The server answers response_form_error($message, $errors). Each key
+        is pinned under the input its name matches; the top alert always
+        renders. Validation lives on the SERVER, once - write no client-side
+        required or format check, and remember that a blank field arrives as
+        '' and must be validated or saved, never silently ignored.
 
     Success Handling
         When the server returns a redirect URL, Rsx_Form navigates there:

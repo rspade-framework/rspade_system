@@ -51,7 +51,9 @@ class Form_Utils {
      * @param {string|Object|Array} errors - Error messages to display
      * @returns {Promise} Promise that resolves when all animations complete
      */
-    static apply_form_errors(parent_selector, errors) {
+    static apply_form_errors(parent_selector, errors, options = {}) {
+        // The one deliberate console surface in the form stack: a failed submit is an
+        // error, and rsx:debug reads it.
         console.error(errors);
 
         const $parent = $(parent_selector);
@@ -82,11 +84,12 @@ class Form_Utils {
                 const unmatched_deduplicated = Form_Utils._deduplicate_errors(result.unmatched);
                 const unmatched_count = Object.keys(unmatched_deduplicated).length;
 
-                // Show summary alert if there are any field errors (matched or unmatched)
+                // The top alert ALWAYS renders on a failed submit — a failure is never
+                // silent at the top of the form, even when every error matched inline.
                 if (matched_count > 0 || unmatched_count > 0) {
-                    // Build summary message
-                    let summary_msg = '';
-                    if (matched_count > 0) {
+                    // The server's summary (_message) wins; otherwise the generic line.
+                    let summary_msg = options.message || '';
+                    if (!summary_msg && matched_count > 0) {
                         summary_msg = matched_count === 1
                             ? 'Please correct the error highlighted below.'
                             : 'Please correct the errors highlighted below.';
@@ -106,22 +109,7 @@ class Form_Utils {
 
             // Resolve the promise once all animations are complete
             Promise.all(animations).then(() => {
-                // Scroll to error container if it exists
-                const component = $parent.component();
-                const $error_container = component ? component.$sid('error_container') : $();
-                if ($error_container.length > 0) {
-                    const container_top = $error_container.offset().top;
-
-                    // Calculate fixed header offset
-                    const fixed_header_height = Form_Utils._get_fixed_header_height();
-
-                    // Scroll to position error container 20px below any fixed headers
-                    const target_scroll = container_top - fixed_header_height - 20;
-                    $('html, body').animate({
-                        scrollTop: target_scroll
-                    }, 500);
-                }
-
+                Form_Utils.scroll_to_errors($parent);
                 resolve();
             });
         });
@@ -314,23 +302,32 @@ class Form_Utils {
 
         for (const field_name in field_errors) {
             const error_message = field_errors[field_name];
-            const $input = $parent.find(`[name="${field_name}"]`);
+
+            // Native inputs match by [name=]; component inputs (Form_Input_Abstract)
+            // by the data-name their base class stamps. One renderer, both worlds.
+            let $input = $parent.find(`[name="${field_name}"]`);
+            if (!$input.length) {
+                $input = $parent.find(`[data-name="${field_name}"]`);
+            }
 
             if (!$input.length) {
                 unmatched[field_name] = error_message;
                 continue;
             }
 
-            const $error = $('<div class="invalid-feedback"></div>').html(error_message);
-            const $target = $input.closest('.form-group, .form-check, .input-group');
+            const $error = $('<div class="invalid-feedback d-block"></div>').html(error_message);
 
-            if (!$target.length) {
-                unmatched[field_name] = error_message;
-                continue;
-            }
+            // The message lands inside the field container when there is one; a bare
+            // input (no Form_Field wrapper — the contract allows label-less layouts)
+            // gets it directly after the input itself.
+            const $group = $input.closest('.form-group, .form-check, .input-group');
 
             $input.addClass('is-invalid');
-            $error.appendTo($target);
+            if ($group.length) {
+                $error.appendTo($group);
+            } else {
+                $error.insertAfter($input);
+            }
             animations.push($error.hide().fadeIn(300).promise());
         }
 
@@ -347,8 +344,9 @@ class Form_Utils {
      */
     static _apply_combined_error($parent, summary_msg, unmatched_errors) {
         const animations = [];
-        const component = $parent.component();
-        const $error_container = component ? component.$sid('error_container') : $();
+        // Alerts land in the form's <Form_Errors /> when one exists (component forms);
+        // a bare-markup page (login) has neither and gets the alert prepended to itself.
+        const $error_container = $parent.find('.Form_Errors').first();
         const $target = $error_container.length > 0 ? $error_container : $parent;
 
         // Create alert with summary message and bulleted list of unmatched errors
@@ -389,8 +387,9 @@ class Form_Utils {
         const animations = [];
 
         // Look for a specific error container div (e.g., in Rsx_Form component)
-        const component = $parent.component();
-        const $error_container = component ? component.$sid('error_container') : $();
+        // Alerts land in the form's <Form_Errors /> when one exists (component forms);
+        // a bare-markup page (login) has neither and gets the alert prepended to itself.
+        const $error_container = $parent.find('.Form_Errors').first();
         const $target = $error_container.length > 0 ? $error_container : $parent;
 
         if (typeof messages === 'string') {
@@ -427,6 +426,67 @@ class Form_Utils {
         }
 
         return animations;
+    }
+
+    /**
+     * Bring a failed submit's feedback into view: the top alert when the form's error
+     * container rendered one, otherwise the first inline field error. Scrolls the
+     * NEAREST SCROLLABLE ANCESTOR (an SPA layout scrolls a content pane, a bare page
+     * scrolls the document), header-aware so the target lands below sticky headers.
+     * No scroll happens when the target is already comfortably visible.
+     *
+     * @param {jQuery} $parent - The form (or container) whose errors were rendered
+     */
+    static scroll_to_errors($parent) {
+        const $container = $parent.find('.Form_Errors').first();
+
+        let $target = ($container.length ? $container : $parent).find('.alert-danger').first();
+        if (!$target.length) {
+            const $feedback = $parent.find('.invalid-feedback').first();
+            if (!$feedback.length) {
+                return;
+            }
+            const $group = $feedback.closest('.form-group, .form-check, .input-group');
+            $target = $group.length ? $group : $feedback;
+        }
+
+        const header_offset = Form_Utils._get_fixed_header_height();
+        const rect = $target[0].getBoundingClientRect();
+
+        // Already comfortably visible: 40px clearance below the headers, bottom on screen.
+        if (rect.top > header_offset + 40 && rect.bottom < window.innerHeight - 20) {
+            return;
+        }
+
+        const scroller = Form_Utils._find_scroller($target[0]);
+        if (scroller === null) {
+            // Document scrolling
+            const doc_target = window.scrollY + rect.top - header_offset - 40;
+            $('html, body').animate({ scrollTop: Math.max(0, doc_target) }, 300);
+            return;
+        }
+
+        const $scroller = $(scroller);
+        const scroller_rect = scroller.getBoundingClientRect();
+        const target_scroll = $scroller.scrollTop() + (rect.top - scroller_rect.top) - header_offset - 40;
+        $scroller.animate({ scrollTop: Math.max(0, target_scroll) }, 300);
+    }
+
+    /**
+     * The nearest ancestor that actually scrolls, or null for document scrolling.
+     * @private
+     */
+    static _find_scroller(el) {
+        let node = el.parentElement;
+        while (node && node !== document.body) {
+            const style = window.getComputedStyle(node);
+            const overflow_y = style.overflowY;
+            if ((overflow_y === 'auto' || overflow_y === 'scroll') && node.scrollHeight > node.clientHeight) {
+                return node;
+            }
+            node = node.parentElement;
+        }
+        return null;
     }
 
     /**

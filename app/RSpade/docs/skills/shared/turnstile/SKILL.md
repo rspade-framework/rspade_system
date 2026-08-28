@@ -47,7 +47,7 @@ Framework-core, globally available - nothing to import. Args: `$theme` (auto|lig
 
 **The fixed field.** The component renders a REAL `<input type="hidden" name="__turnstile">`. That one detail is what lets a single core component work on both transports: `Rsx_Form.vals()` sweeps hidden inputs and a native `<form>` POST serializes them. **The name is a contract shared with `Rsx_Turnstile::FIELD`** (as is the `'inactive'` sentinel) and must never be renamed on one side only. Cloudflare is told `response-field: false`, so its own hidden input is never injected - there is exactly one field and RSpade owns it.
 
-**It is NOT a `Form_Input_Abstract`**: `Form_Input_Abstract` and `Rsx_Form` are app-owned, and a framework-core component may not depend on application classes. Practical consequence - it takes no `$name`, produces no field error, and **must never be nested inside a `<Form_Field>` or another input component.**
+**It is NOT a `Form_Input_Abstract`**: Turnstile is not a value the user enters and the server may reject per-field - it is a fixed, always-submitted proof the endpoint validates FIRST, before any field, and the hidden-input trick above deliberately replaces the inheritance. Practical consequence - it takes no `$name`, produces no field error, and **must never be nested inside a `<Form_Field>` or another input component.**
 
 **Auto-reset on a failed submit** is mandatory machinery, not a nicety: tokens are SINGLE-USE and `validate()` runs BEFORE any field validation, so **every** failed submit has already spent the token - including one that failed on an unrelated field. Inside an `<Rsx_Form>` the component subscribes to the form's `error` event and resets itself. **If you submit some other way, you own the reset.**
 

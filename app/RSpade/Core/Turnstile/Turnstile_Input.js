@@ -72,7 +72,7 @@ class Turnstile_Input extends Component {
             const form = this.closest('.Rsx_Form');
             if (form) {
                 this._form_bound = true;
-                form.on('error', function () {
+                form.on('submit_error', function () {
                     that._reset();
                 });
             }

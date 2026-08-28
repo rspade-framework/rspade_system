@@ -80,6 +80,15 @@ class Php_Fixer
     private const MIN_FRAMEWORK_CLASSES_FOR_DELETION = 100;
 
     /**
+     * Memoized answer for guard 2, one decision per process.
+     *
+     * A class PROPERTY rather than a method static so it can be cleared: a function static
+     * survives for the life of the process, which meant a manifest rebuild earlier in the
+     * same process silently decided the answer for every later caller - including tests.
+     */
+    private static ?bool $__class_index_healthy = null;
+
+    /**
      * Fix a PHP file by applying automatic improvements
      *
      * Called during Manifest Phase 2 (Parse Metadata) before token parsing extracts metadata.
@@ -662,10 +671,8 @@ class Php_Fixer
      */
     private static function __class_index_is_healthy(array &$step_2_manifest_data): bool
     {
-        static $healthy = null;
-
-        if ($healthy !== null) {
-            return $healthy;
+        if (self::$__class_index_healthy !== null) {
+            return self::$__class_index_healthy;
         }
 
         $framework_classes = 0;
@@ -674,14 +681,14 @@ class Php_Fixer
                 $framework_classes++;
 
                 if ($framework_classes >= self::MIN_FRAMEWORK_CLASSES_FOR_DELETION) {
-                    $healthy = true;
+                    self::$__class_index_healthy = true;
 
-                    return $healthy;
+                    return true;
                 }
             }
         }
 
-        $healthy = false;
+        self::$__class_index_healthy = false;
 
         // Loud, once. A silent guard would hide the poisoned build that tripped it.
         error_log(
@@ -691,7 +698,7 @@ class Php_Fixer
             . 'strip load-bearing imports (backlog B-68). Rewrites and additions still ran.'
         );
 
-        return $healthy;
+        return false;
     }
 
     /**
@@ -755,7 +762,31 @@ class Php_Fixer
         return false;
     }
 
+    /**
+     * GUARD 3 (the register-phase half, field-reported 2026-08-25).
+     *
+     * A class that loads BEFORE Rsx_Framework_Provider::boot() calls Autoloader::register()
+     * is resolved by composer alone, and composer resolves FQCNs only. Strip an import from
+     * one of those files and its `extends` resolves into its own namespace, where nothing
+     * exists - so artisan and every HTTP request die at boot, with no autoloader available
+     * to rescue them and no build able to run and undo the edit. Membership in that set is
+     * derived from disk by Pre_Autoload_Reachability; see its docblock for the derivation.
+     *
+     * One-directional like guard 2: DELETIONS are suppressed, rewrites and additions still
+     * run, because those rest on positive evidence that a class is where the fixer says.
+     */
     private static function __should_remove_use_statement(string $use_fqcn, string $file_path, array &$step_2_manifest_data): bool|string
+    {
+        $action = self::__decide_use_statement_action($use_fqcn, $file_path, $step_2_manifest_data);
+
+        if ($action === true && Pre_Autoload_Reachability::contains_file($file_path)) {
+            return false;
+        }
+
+        return $action;
+    }
+
+    private static function __decide_use_statement_action(string $use_fqcn, string $file_path, array &$step_2_manifest_data): bool|string
     {
         // Get excluded directories from config
         $excluded_dirs = config('rsx.manifest.excluded_dirs', ['vendor', 'node_modules', 'storage', '.git', 'public', 'resource', 'archived']);

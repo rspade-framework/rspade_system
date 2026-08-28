@@ -1,0 +1,11 @@
+/* The host's default box. Override with ordinary CSS where a context wants another
+   size - the spinner inside always fills whatever this is. */
+.Spinner {
+    width: 60px;
+    height: 60px;
+
+    .Spinner__target {
+        width: 100%;
+        height: 100%;
+    }
+}

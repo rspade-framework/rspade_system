@@ -1,0 +1,13 @@
+<%--
+Rsx_Default_Spinner
+
+The framework's stock spinner: a plain spinning circle. This one fills the box its host
+gives it, centered, and draws in currentColor so it reads on any surface - the host owns
+the box, the spinner owns what it does with it (see Spinner.jqhtml). Applications
+replace it by registering their own
+component with Rsx.set_default_spinner() at init; this one exists so a fresh RSpade app
+has a working spinner before it has designed one.
+--%>
+<Define:Rsx_Default_Spinner tag="div">
+    <div class="Rsx_Default_Spinner__circle"></div>
+</Define:Rsx_Default_Spinner>

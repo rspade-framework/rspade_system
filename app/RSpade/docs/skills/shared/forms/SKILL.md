@@ -1,315 +1,268 @@
 ---
 name: forms
-description: Building RSX forms with Rsx_Form, Form_Field, input components, data binding, validation, and the vals() pattern. Use when creating forms, handling form submissions, implementing form validation, working with Form_Field or Form_Input components, or implementing polymorphic form fields.
+description: Building RSX forms on the Rsx_Form contract - the $controller/$method declaration, form.submit(), server-only validation, the mandatory <Form_Errors />, the loading overlay and populate(), dirty protection, and the page and modal patterns. Use when creating or converting a form, wiring an endpoint to a form, writing the save() endpoint's validation, deciding where a form's loading state lives, or hitting "no <Form_Errors /> in this form", "$controller and $method are required on the <Rsx_Form> tag", or a form whose values arrive blank.
 ---
 
-# RSX Form Components
+# Building an RSX form
 
-## Core Form Structure
+`Rsx_Form` is the ONE form engine, and it lives in framework core (`Core/Forms/`).
+An application never carries a copy of `Rsx_Form`, `Form_Input_Abstract` or
+`Form_Errors` — they reach every bundle automatically.
 
-Forms use `<Rsx_Form>` with automatic data binding. **`$data` present = edit form; `$data` absent = add form.**
+Three words, used exactly:
 
-**Always open an existing form as a reference before writing a new one.** Form behavior here is abstract: binding, population and error placement are automatic rather than spelled out in the markup the way plain HTML spells them out. Reading a comparable form in the codebase and copying its patterns is faster and more reliable than reasoning the wiring out from first principles.
+| Word | What it is |
+|---|---|
+| **Form** | `Rsx_Form` — value state, dirty tracking, submission, error rendering |
+| **Field** | `Form_Field` (app-owned) — label, required asterisk, help text. Purely presentational |
+| **Input** | a `Form_Input_Abstract` subclass — ONE named value. Skill `rspade:form-input` |
 
-**Edit form** (values bind from `$data` by matching `$name`):
+**Always open an existing form before writing a new one.** Binding, population and
+error placement are automatic rather than spelled out in markup, so copying a
+comparable form beats reasoning the wiring out. The current worked example is
+`system/app/RSpade/resource/reference_app/app/frontend/tasks/edit/Tasks_Edit_Action.{js,jqhtml}`.
+
+## The declaration
 
 ```jqhtml
-<Rsx_Form $data="<%= JSON.stringify(this.data.form_data) %>"
-          $controller="My_Controller" $method="save">
-  <Hidden_Input $name="id" />
-  <Form_Field $label="Email" $required=true>
-    <Text_Input $name="email" $type="email" $max_length=My_Model.field_length('email') />
-  </Form_Field>
-  <Form_Field $label="Notes">
-    <Text_Input $name="notes" $type="textarea" $max_length=-1 $rows="3" />
-  </Form_Field>
+<Rsx_Form $controller="Frontend_Tasks_Controller" $method="save" $data=this.data.form_data>
+
+    <% if (this.data.is_edit) { %>
+        <Hidden_Input $name="id" />
+    <% } %>
+
+    <Section $title="Task Information">
+        <Form_Errors />
+
+        <Form_Field $label="Title" $required=true>
+            <Text_Input $name="title" $max_length=Task_Model.field_length('title') />
+        </Form_Field>
+
+        <Form_Field $label="Description">
+            <Text_Input $name="description" $type="textarea" $rows=4 $max_length=-1 />
+        </Form_Field>
+    </Section>
+
+    <button type="submit" class="btn btn-primary">Save Task</button>
 </Rsx_Form>
 ```
 
-**Add form** (no `$data` - fields start empty):
+- **`$controller` + `$method` is the ONLY place the endpoint is named.** Modals do not
+  repeat it, buttons do not repeat it, JS does not repeat it. Missing either throws
+  *"$controller and $method are required on the `<Rsx_Form>` tag"*.
+- **`$data` present = edit form, absent = create form.** It is a plain serializable
+  object — never a model instance. Values bind by matching each input's `$name`.
+- **`$name` goes on the INPUT, never on `Form_Field`, and you NEVER set `$value`.**
+- **Exactly one `<Form_Errors />`, placed where the LAYOUT wants the feedback** — inside
+  the first section, above a grid, under a heading — so the form's own containers give
+  the alert their spacing. A form without one throws *"no `<Form_Errors />` in this
+  form"* at the moment feedback is needed.
+- A `type="submit"` button inside the form is auto-wired to `submit()`.
 
-```jqhtml
-<Rsx_Form $controller="My_Controller" $method="add">
-  <Form_Field $label="Name" $required=true>
-    <Text_Input $name="name" $max_length=My_Model.field_length('name') $placeholder="Enter name" />
-  </Form_Field>
-</Rsx_Form>
-```
+## Submission
 
-**Two binding rules:** `$name` goes on the INPUT component, never on `Form_Field`; and **NEVER** set `$value` on an input - the form sets it from `$data`.
+`form.submit()` is the only submission path. It resolves with the server result, or
+`false` on **any** failure — client `_validate()`, server validation, transport, or a
+`before_submit` abort. On failure the form stays put with the user's values intact and
+the messages rendered.
 
-## Field Components
-
-| Component | Purpose |
-|-----------|---------|
-| `Form_Field` | Standard formatted field with label, errors, help text |
-| `Hidden_Input` | Single-tag hidden input (no `Form_Field` wrapper) |
-| `Form_Field_Abstract` | Base class for custom formatting (advanced) |
-
-## Input Components
-
-Live components under `rsx/theme/components/inputs/`:
-
-| Component | Usage |
-|-----------|-------|
-| `Text_Input` | text, email, url, tel, number, date, textarea |
-| `Select_Input` | Dropdown (TomSelect) with options array |
-| `Select_With_Description_Input` | Dropdown with a description line per option |
-| `Select_Ajax_Input` | Dropdown whose options load from a controller |
-| `Select_Country_Input` / `Select_State_Input` | Country / state pickers |
-| `Select_User_Role_Input` | Role picker (app-level) |
-| `Checkbox_Input` | Single checkbox |
-| `Checkbox_Multiselect_Input` | Checkbox group returning an array |
-| `Hidden_Input` | Hidden value |
-| `Profile_Photo_Input` | Photo upload/crop |
-| `Repeater_Simple_Input` | Repeating simple values |
-| `Wysiwyg_Input` | Rich text editor (Quill) |
-
-### Text_Input Attributes
-
-`$max_length` is **REQUIRED**: `Model.field_length('column')` for database-driven limits, a numeric value for custom limits, or `-1` for unlimited.
-
-```jqhtml
-<Text_Input $name="email" $type="email" $placeholder="user@example.com" $max_length=User_Model.field_length('email') />
-<Text_Input $name="notes" $type="textarea" $rows="5" $max_length=-1 />
-<Text_Input $name="qty" $type="number" $min="0" $max="100" $max_length=10 />
-<Text_Input $name="handle" $prefix="@" $placeholder="username" $max_length=User_Model.field_length('handle') />
-```
-
-### Select_Input Formats
-
-```jqhtml
-<%-- Simple array --%>
-<Select_Input $options="<%= JSON.stringify(['Option 1', 'Option 2']) %>" />
-
-<%-- Value/label objects --%>
-<Select_Input $options="<%= JSON.stringify([
-    {value: 'opt1', label: 'Option 1'},
-    {value: 'opt2', label: 'Option 2'}
-]) %>" />
-
-<%-- From model enum --%>
-<Select_Input $options="<%= JSON.stringify(Project_Model.status_id__enum_select()) %>" />
-```
-
----
-
-## Disabled Fields
-
-Use `$disabled=true` on input components. Unlike standard HTML, disabled fields still return values via `vals()` (useful for read-only data that should be submitted).
-
-```jqhtml
-<Text_Input $type="email" $disabled=true />
-<Select_Input $options="..." $disabled=true />
-```
-
----
-
-## Multi-Column Layouts
-
-Use Bootstrap grid for multi-column field layouts:
-
-```jqhtml
-<div class="row">
-    <div class="col-md-6">
-        <Form_Field $label="First Name">
-            <Text_Input $name="first_name" />
-        </Form_Field>
-    </div>
-    <div class="col-md-6">
-        <Form_Field $label="Last Name">
-            <Text_Input $name="last_name" />
-        </Form_Field>
-    </div>
-</div>
-```
-
----
-
-## The vals() Dual-Mode Pattern
-
-Form components implement `vals()` for get/set:
+Events: `'submitted'` (result), `'submit_error'` (error), `'input'` (name, value).
 
 ```javascript
-class My_Form extends Component {
-    vals(values) {
-        if (values) {
-            // Setter - populate form
-            this.$sid('name').val(values.name || '');
-            return null;
-        } else {
-            // Getter - extract values
-            return {name: this.$sid('name').val()};
-        }
-    }
-}
+form.on('submitted', (form, result) => grid.reload());
 ```
 
----
+Reaching one input: `form.input('due_date').on('val', cb)` — never a raw selector.
+`form.vals()` serializes, `form.vals(object)` applies (skipping dirty names).
 
-## Form Validation
+## Validation lives on the server, once
 
-Apply server-side validation errors:
+**Write no client-side required / format / length / range check. Anywhere.**
 
-```javascript
-const response = await Controller.save(form.vals());
-if (response.errors) {
-    Form_Utils.apply_form_errors(form.$, response.errors);
-}
-```
+A client check that duplicates a server rule **masks the absence of the server rule**:
+blank never reaches the endpoint, the missing validator is never exercised, every manual
+test looks green, and the gap surfaces only when an API caller or a script hits the
+endpoint directly — silently, in production. One rule, one home; and the round trip is
+fast enough that rendering the server's message IS the responsive UX.
 
-Errors match by `name` attribute on form fields. The endpoint side is `response_form_error('Validation failed', ['title' => 'Required'])` - the message becomes the form-level error and each key lands inline on the input with that `$name`. `Rsx_Form` displays them itself; `Form_Utils.apply_form_errors()` is for when you handle the response manually. Full contract: skill `rspade:ajax-error-handling`.
+`$required` on `Form_Field` is an **asterisk announcing a server rule**. It enforces
+nothing. When you write `$required=true`, go write the server rule — nothing will tell
+you it is missing.
 
----
+The one exception is an input's `_validate()`: an architectural constraint whose invalid
+state cannot be expressed to the server at all. Skill `rspade:form-input`.
 
-## Action/Controller Pattern
+## The endpoint
 
-Forms follow load/save mirroring traditional Laravel:
-
-**Action (loads data):**
-```javascript
-on_create() {
-    this.data.form_data = { title: '', status_id: Model.STATUS_ACTIVE };
-    this.data.is_edit = !!this.args.id;
-}
-async on_load() {
-    if (!this.data.is_edit) return;
-    const record = await My_Model.fetch(this.args.id);
-    this.data.form_data = { id: record.id, title: record.title };
-}
-```
-
-**Controller (saves data):**
 ```php
 #[Ajax_Endpoint]
-#[Auth('can_manage_projects')]   // #[Auth] is MANDATORY on every endpoint (manifest build fails without it)
-public static function save(Request $request, array $params = []) {
-    if (empty($params['title'])) {
-        return response_form_error('Validation failed', ['title' => 'Required']);
+#[Auth('can_manage_tasks')]          // #[Auth] is MANDATORY - the build fails without it
+public static function save(Request $request, array $params = [])
+{
+    $errors = [];
+
+    if (trim($params['title'] ?? '') === '') {
+        $errors['title'] = 'Title is required';
     }
-    $record = $params['id'] ? My_Model::find($params['id']) : new My_Model();
-    $record->title = $params['title'];
-    $record->save();
-    return ['redirect' => Rsx::Route('View_Action', $record->id)];
+
+    if ($errors) {
+        return response_form_error('Please correct the errors below.', $errors);
+    }
+
+    $task = !empty($params['id']) ? Task_Model::find($params['id']) : new Task_Model();
+    $task->title = $params['title'];
+    $task->save();
+
+    Flash_Alert::success('Saved');
+    return ['redirect' => Rsx::Route('Tasks_View_Action', $task->id)];
 }
 ```
 
-**Key principles:**
-- `form_data` must be serializable (plain objects, no models)
-- Keep load/save in same controller for field alignment
-- `on_load()` loads data, `on_ready()` is UI-only
+**Blank is a value; absent means untouched.** Every input serializes on every submit, so
+a blank field arrives as `''` — something the user *did*, never an omission.
 
----
+- **absent key** → leave it alone (partial update; the external API legitimately omits).
+- **present but blank** → must validate. A required field rejects it identically on
+  create and edit; an optional field **saves** it.
+- **"keep the old value when blank" is forbidden** — it makes a failed clear look like a
+  success.
 
-## Repeater Fields
+`response_form_error($message, $fields)`: first argument is the summary, second is the
+field map. `response_error(Ajax::ERROR_VALIDATION, 'a string')` is the wrong shape — that
+argument is metadata, so the alert renders empty. Unmatched keys are legitimate and
+render in the top alert, which **always** renders on a failed submit.
 
-For arrays of values (relationships, multiple items):
+## The page pattern (SPA add/edit)
 
-**Simple repeaters (array of IDs):**
+The action loads in `on_load()`, so the form is never blank on a first visit — but a
+**cached revisit** re-renders instantly while revalidation is in flight, and that is what
+the overlay is for.
+
 ```javascript
-// form_data
-this.data.form_data = {
-    client_ids: [1, 5, 12],
-};
+on_create() {
+    this.data.is_edit = !!this.args.id;
+    this.data.form_data = { title: '', status: Task_Model.STATUS_PENDING };
+    this._record_settled = false;          // INSTANCE property, never this.data
+}
 
-// Controller receives
-$params['client_ids']  // [1, 5, 12]
+async on_load() {
+    if (!this.data.is_edit) return;
+    const task = await Task_Model.fetch(this.args.id);
+    this.data.form_data = { id: task.id, title: task.title || '' };
+}
 
-// Sync
-$project->clients()->sync($params['client_ids'] ?? []);
-```
+on_render() {
+    // Renders REBUILD the DOM, so the overlay is re-armed every render.
+    this._set_form_loading(this.data.is_edit && !this._record_settled);
+}
 
-**Complex repeaters (array of objects):**
-```javascript
-// form_data
-this.data.form_data = {
-    team_members: [
-        {user_id: 1, role_id: 2},
-        {user_id: 5, role_id: 1},
-    ],
-};
-
-// Controller receives
-$params['team_members']  // [{user_id: 1, role_id: 2}, ...]
-
-// Sync with pivot data
-$project->team()->detach();
-foreach ($params['team_members'] ?? [] as $member) {
-    $project->team()->attach($member['user_id'], [
-        'role_id' => $member['role_id'],
-    ]);
+on_ready() {
+    if (!this.data.is_edit) return;
+    this._record_settled = true;
+    this.$.find('.Rsx_Form').first().component().vals(this.data.form_data);
+    this._set_form_loading(false);
 }
 ```
 
----
+`_record_settled` is an instance property **deliberately not `this.data`**: `this.data`
+is the maybe-cached result of `on_load()`, and a cached "already settled" lies on the
+next visit while the real fetch is in flight.
 
-## Test Data (Debug Mode)
+**The template renders the REAL form unconditionally.** A `Loading_Spinner` placeholder
+branch in place of the form is the anti-pattern this replaces — the overlay is what the
+user waits behind, with the form's structure underneath. A **load failure** is different:
+an error-page branch is correct, because there is no form to wait for.
 
-Widgets can implement `seed()` for debug mode test data. Rsx_Form displays "Fill Test Data" button when `window.rsxapp.debug` is true.
+## The modal pattern
 
-```jqhtml
-<Text_Input $seeder="company_name" />
-<Text_Input $seeder="email" />
-<Text_Input $seeder="phone" />
+A modal is chrome around a form; `Modal.form()` drives the hosted form's `submit()`. In
+the common case the body component **needs no JS class at all**. An edit modal's body IS
+the loader and needs three hooks (`on_create` starts the fetch, `on_render` arms the
+overlay, a guarded `on_ready` calls `form.populate(promise)`). Skill `rspade:modals`;
+worked example
+`system/app/RSpade/resource/reference_app/app/frontend/settings/group_management/edit_group/edit_group_modal_form.js`.
+
+## Loading
+
+The overlay is **state**, not a DOM operation — `set_loading()` flips it and
+`on_render()` re-syncs, because renders rebuild the DOM.
+
+`form.populate(data_or_promise)` is the procedure: overlay on → await → `vals()` →
+overlay off in a `finally`, so it cannot leak on success or rejection.
+
+**Clearing is always explicit**, owned by whoever set it. `on_ready()` is the wrong hook
+by definition (ready means loaded), and an auto-clear on data-set misfires on partial
+`vals()` writes during load. A forgotten clear is a permanently overlaid form — loud, and
+fixed in minutes; a wrong auto-clear is a briefly-blank *editable* form, the silent kind
+of bug this contract exists to kill.
+
+**While loading, `submit()` refuses.** Blank is a value, so a submit racing the fetch
+would validly clear every field the data had not reached.
+
+The veil colour is the app's: core reads `--rsx-form-veil` and falls back to a light
+veil, so a dark theme that does not declare it flashes white.
+
+```scss
+:root         { --rsx-form-veil: rgba(255, 255, 255, 0.65); }
+body.rsx-dark { --rsx-form-veil: rgba(16, 21, 27, 0.7); }
 ```
 
----
+The overlay hosts the **registered spinner** — `Rsx.set_default_spinner('App_Spinner')`
+once at app init, `<Spinner />` or `$(el).component(Rsx.get_default_spinner())` anywhere
+else. The host owns the box and the box is a centering stage; there are no size
+arguments, and spinner markup is never hand-rolled.
 
-## Creating Custom Input Components
+## Dirty protection
 
-Extend `Form_Input_Abstract`:
+**Data fills fields the user has not touched; the user's keystrokes always win.**
 
-```javascript
-class My_Custom_Input extends Form_Input_Abstract {
-    on_create() {
-        // NO on_load() - never use this.data
-    }
+Every user `'input'` marks that name dirty, and applying data (`$data`, `vals(object)`)
+skips dirty names. Across component **re-creation** — an SPA action re-rendering on fresh
+data — dirty values are parked on the live SPA action under a key frozen at `on_create()`
+(`controller|method|record-id`) and re-applied to the successor, still beating `$data`.
+Parking is silent, cleared on a successful submit, and dies with the action on
+navigation.
 
-    on_ready() {
-        // Render elements EMPTY - form calls val(value) to populate AFTER render
-    }
+To overwrite a field the user has touched, address the input: `form.input(name).val(v)`.
 
-    // Required: get/set value
-    val(value) {
-        if (value !== undefined) {
-            // Set value
-            this.$sid('input').val(value);
-        } else {
-            // Get value
-            return this.$sid('input').val();
-        }
-    }
-}
-```
+## Layout and repeaters
 
-Reference implementations: `Select_Input`, `Text_Input`, `Checkbox_Input`. Full authoring contract: skill `rspade:form-input`.
+Multi-column layouts use the grid around `Form_Field`s. A repeater is one input holding
+an array (`client_ids: [1, 5, 12]`, or `team_members: [{user_id, role_id}]`); the
+endpoint syncs it. Serialization is **shallow**, so inputs a composite input renders
+inside itself belong to that composite, not to the form.
 
-Reference form (a real, working edit form): `/rsx/app/frontend/settings/user_management/edit_user/`.
+`$disabled=true` renders the control disabled but the input **still serializes**.
 
----
-
-## Polymorphic Form Fields
-
-For fields that can reference multiple model types:
+## Polymorphic fields
 
 ```php
-use App\RSpade\Core\Polymorphic_Field_Helper;
-
 $eventable = Polymorphic_Field_Helper::parse($params['eventable'], [
     Contact_Model::class,
     Project_Model::class,
 ]);
-
 if ($error = $eventable->validate('Please select an entity')) {
     $errors['eventable'] = $error;
 }
-
 $model->eventable_type = $eventable->model;
-$model->eventable_id = $eventable->id;
+$model->eventable_id   = $eventable->id;
 ```
 
-Client submits: `{"model":"Contact_Model","id":123}`. Always use `Model::class` for the whitelist.
+The client submits `{"model":"Contact_Model","id":123}`. Always whitelist with
+`Model::class`.
 
-## More Information
+## Common mistakes
 
-Details: `php artisan rsx:man form_conventions`, `php artisan rsx:man form_input`, `php artisan rsx:man datetime_inputs`
+| Mistake | Fix |
+|---|---|
+| Naming the endpoint anywhere but the tag | One pipeline: `form.submit()` |
+| A client-side required check | Delete it; add the server rule the asterisk promised |
+| `response_error(ERROR_VALIDATION, 'msg')` | `response_form_error($message, $fields)` |
+| "Keep the old value when blank" in `save()` | Validate it or save it |
+| A loading placeholder instead of the form | Overlay the real form |
+| A model instance in `form_data` | Extract a plain object |
+| `$name` on `Form_Field` | It belongs on the input |
+| Storing the settled flag in `this.data` | Instance property |
+
+Details: `php artisan rsx:man form_conventions`, `rsx:man form_input`, `rsx:man modals`,
+`rsx:man datetime_inputs`.

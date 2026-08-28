@@ -26,7 +26,7 @@ The component's own class name is always stamped on the root - which is what mak
 | `<% javascript %>` | A JavaScript block - no output |
 | `<%-- comment --%>` | A jqhtml comment, removed at compile |
 
-**Use `<%-- --%>` for comments, not `<!-- -->`.** An HTML comment is still parsed for jqhtml constructs, so JS inside it still executes (`JQHTML-COMMENT-01`). Inside a `<% %>` block, a line-leading `//` is stripped as an ordinary JS comment.
+**Use `<%-- --%>` for comments, ALWAYS — never `<!-- -->`.** An HTML comment is still parsed for jqhtml constructs, so JS inside it still executes (`JQHTML-COMMENT-01`), and it ships to the DOM. Inside a `<% %>` block, a line-leading `//` is stripped as an ordinary JS comment.
 
 ## Child content and slots
 
