@@ -567,6 +567,13 @@ class Database_BundleIntegration extends BundleIntegration_Abstract
         // Generate field_length() method for varchar max lengths
         $varchar_lengths = [];
         foreach ($columns as $col_name => $col_data) {
+            // A single leading underscore marks a SYSTEM column. toArray() strips those
+            // from every payload, so the client never holds one and can never need its
+            // length; publishing it would only advertise a column that is not there.
+            if (str_starts_with($col_name, '_') && !str_starts_with($col_name, '__')) {
+                continue;
+            }
+
             if (isset($col_data['max_length']) && $col_data['max_length'] !== null) {
                 $varchar_lengths[$col_name] = $col_data['max_length'];
             }

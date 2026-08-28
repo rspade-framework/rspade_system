@@ -83,6 +83,10 @@ class Dispatcher
 
         console_debug('BENCHMARK', "Dispatch started for: {$method} {$url}");
 
+        // One request is one unit of work for revision history: every revisioned write from
+        // here on is filed under one _transactions row, minted lazily on the first of them.
+        \App\RSpade\Core\Revisions\Revision::_reset_request_state('web', $method . ' ' . $url);
+
         // Initialize manifest (handles all loading/rebuilding logic)
         console_debug('BENCHMARK', 'Initializing manifest');
         Manifest::init();

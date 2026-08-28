@@ -19,7 +19,9 @@ use App\RSpade\Core\Rsx;
 use App\RSpade\SchemaQuality\SchemaQualityChecker;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
+use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Env\Rsx_Initial_User;
+use App\RSpade\Core\Revisions\Revision_Dictionary;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Commands\Database\Db_Dump_Cache_Command;
 
@@ -423,6 +425,11 @@ class Maint_Migrate extends Command
             Rsx_Artisan::passthru('rsx:bundle:compile');
         }
 
+        // The build-scoped cache describes a schema that has just changed underneath it.
+        // Nothing here knows which entries are now wrong, so all of them go.
+        RsxCache::clear();
+        $this->info('[OK] Cache cleared');
+
         $this->info('');
         $this->info('[OK] Migration completed successfully!');
 
@@ -469,6 +476,10 @@ class Maint_Migrate extends Command
                 $this->warn('Source code may be out of sync with database schema.');
             }
         }
+
+        // See the note on the snapshot path: the schema moved, so the cache goes.
+        RsxCache::clear();
+        $this->info('[OK] Cache cleared');
 
         $this->info('');
         $this->info('[OK] Migration completed!');
@@ -670,7 +681,48 @@ class Maint_Migrate extends Command
             return 1;
         }
 
+        // THE REVISION DICTIONARY - here for the same reason the initial user is here,
+        // and skipped for the same reason too. It is DERIVED from the finished schema
+        // (every column name in information_schema) and from the manifest's models
+        // (every enum label), so it is only correct once the final normalize pass has
+        // run. A framework-only run migrates a schema-only subset with none of the
+        // application's tables in it, and a dictionary built from that would be a
+        // permanently-recorded description of half a database.
+        if (!$this->option('framework-only') && !$this->build_revision_dictionary_if_stale()) {
+            return 1;
+        }
+
         return $exitCode;
+    }
+
+    /**
+     * Build a new revision-history compression dictionary when the current one is
+     * missing or past config('rsx.revisions.dictionary_max_age_days').
+     *
+     * Silent when there is nothing to do, which is every run inside the cadence; one
+     * line when a dictionary is built. Dictionary rows are append-only and every stored
+     * revision names the one it was written against, so building a new one never
+     * invalidates an old revision.
+     *
+     * @return bool false when the build failed (the caller turns that into a rollback)
+     */
+    protected function build_revision_dictionary_if_stale(): bool
+    {
+        try {
+            $id = Revision_Dictionary::regenerate_if_stale();
+        } catch (\Throwable $e) {
+            $this->error('');
+            $this->error('Building the revision dictionary failed: ' . $e->getMessage());
+
+            return false;
+        }
+
+        if ($id !== null) {
+            $token_count = (int) DB::table('_revision_dictionaries')->where('id', $id)->value('token_count');
+            $this->info('[OK] Revision dictionary ' . $id . ' built (' . $token_count . ' tokens)');
+        }
+
+        return true;
     }
 
     /**

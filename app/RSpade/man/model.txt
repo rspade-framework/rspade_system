@@ -508,9 +508,22 @@ Columns:
 - Use BIGINT for all integers, TINYINT(1) for booleans only
 - All text columns use UTF-8 (utf8mb4_unicode_ci collation)
 
-TODO
+REVISION HISTORY
 
-- Revision tracking: Auto-increment revision column via database trigger on update
+Opt a model into per-write revision recording:
+
+    public static $revisions = true;                      // record every save()/delete()
+    protected static $revision_exclude = ['view_count'];  // columns not worth recording
+
+Instance methods this adds:
+- revisions() - every revision recorded for THIS record, newest first
+  (Rsx_Result_Set). #[Replaceable] - a model whose `revisions` name means
+  something else replaces it outright.
+- revisions_including_children() - the same, plus every record declaring this
+  one as its #[Revision_Parent], resolved by one indexed query on the root pair.
+
+updated_at, the updated_by pair and every `_`-prefixed system column are
+excluded automatically. Full treatment: rsx:man revisions.
 
 SEE ALSO
 
@@ -518,4 +531,5 @@ php artisan rsx:man model_fetch - Ajax ORM fetch system
 php artisan rsx:man model_normalization - Database normalization process
 php artisan rsx:man enums - Complete enum system documentation
 php artisan rsx:man migrations - Migration system and safety
+php artisan rsx:man revisions - Per-model revision history
 php artisan rsx:man prelaunch_checklist - the unbounded-query audit (ENTRY 4)

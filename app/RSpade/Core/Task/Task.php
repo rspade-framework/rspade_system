@@ -110,6 +110,10 @@ class Task
         // Mark as started
         $task_instance->mark_started();
 
+        // One task is one unit of work for revision history - the in-process twin of the
+        // reset Task_Worker_Command performs per task.
+        \App\RSpade\Core\Revisions\Revision::_reset_request_state('task', $service_class . '::' . $rsx_task);
+
         try {
             // Call pre_task() if exists
             if (method_exists($service_class, 'pre_task')) {

@@ -323,6 +323,12 @@ class Ignition
 
     public static function viewPath(string $viewName): string
     {
+        // Check for custom view in resources/views/vendor/ignition/ first
+        $customPath = base_path("resources/views/vendor/ignition/{$viewName}.php");
+        if (file_exists($customPath)) {
+            return $customPath;
+        }
+
         return __DIR__ . "/../resources/views/{$viewName}.php";
     }
 

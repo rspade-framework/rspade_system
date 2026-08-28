@@ -34,6 +34,10 @@ A framework dependency is INTERNAL by default: downstream `rsx:composer require 
         'ezyang/htmlpurifier',
         'sokil/php-isocodes',
         'nikic/php-parser',
+        'phpoffice/phpspreadsheet',
+        'league/csv',
+        'brick/money',
+        'endroid/qr-code',
     ],
     'exposed_npm' => [
         'dompurify',
@@ -90,4 +94,6 @@ It is **machine-generated and never hand-edited**, and it is regenerated for the
 
 ---
 
-Details: `php artisan rsx:man dependencies`, `rsx:man npm`, `rsx:man upstream_changes`. Authoring charter: `system/app/RSpade/upstream_changes/CLAUDE.md`.
+The exposed lists, plus the declared PHP extensions, ARE the RSpade standard library - `rsx:man standard_library` is its roster and its "reach for X when" guidance. **A new exposure is not finished until that page names it**; the page is what makes the promise legible to a downstream developer.
+
+Details: `php artisan rsx:man dependencies`, `rsx:man npm`, `rsx:man upstream_changes`, `rsx:man standard_library`. Authoring charter: `system/app/RSpade/upstream_changes/CLAUDE.md`.

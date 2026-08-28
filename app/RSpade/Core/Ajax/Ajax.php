@@ -249,6 +249,13 @@ class Ajax
         static::$_in_internal_call = true;
         \App\RSpade\Core\Turnstile\Rsx_Turnstile::_reset_request_state();
 
+        // Same reasoning for revision history: each batched or nested call is its own unit
+        // of work and gets its own _transactions row, so a batch cannot file four unrelated
+        // endpoints' writes under one action. The calling scope's transaction is handed back
+        // afterwards, exactly as its Turnstile latch is.
+        $previous_revision_state = \App\RSpade\Core\Revisions\Revision::_snapshot_request_state();
+        \App\RSpade\Core\Revisions\Revision::_reset_request_state('ajax', $rsx_controller . '::' . $rsx_action);
+
         try {
             // Call pre_dispatch if it exists
             $response = null;
@@ -275,6 +282,7 @@ class Ajax
         } finally {
             static::$_in_internal_call = $previous_internal_call;
             \App\RSpade\Core\Turnstile\Rsx_Turnstile::_set_request_checked($previous_turnstile_checked);
+            \App\RSpade\Core\Revisions\Revision::_restore_request_state($previous_revision_state);
         }
 
         // Handle special response types
@@ -459,6 +467,10 @@ class Ajax
         if (!$has_ajax_endpoint) {
             throw new Exception("Method {$action_name} in {$controller_class} must have Ajax_Endpoint annotation");
         }
+
+        // Revision history files this call's writes under the endpoint, not under the
+        // transport URL the dispatcher saw: the unit of work is Controller::action.
+        \App\RSpade\Core\Revisions\Revision::_reset_request_state('ajax', $controller_name . '::' . $action_name);
 
         // --- Declarative #[Auth] gates ---
         // The framework authorization seam for #[Ajax_Endpoint]: after CSRF (enforced

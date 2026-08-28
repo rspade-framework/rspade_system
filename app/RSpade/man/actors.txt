@@ -210,9 +210,8 @@ Client side, the framework component:
     <Record_Author $author=this.data.record.get_created_by_author />
 
 It renders the name, hyperlinked when url is non-null and plain text when it is null.
-Content between the tags is the placeholder for a null author (default "Unknown"):
-
-    <Record_Author $author=x>System</Record_Author>
+A null author renders nothing - the component takes no content and has no placeholder;
+the sentence around it decides how to read the gap.
 
 Worked example - the template app's client view page:
 

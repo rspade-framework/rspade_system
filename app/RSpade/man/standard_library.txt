@@ -1,0 +1,250 @@
+NAME
+    standard_library - the toolkit every RSpade install is guaranteed to have
+
+SYNOPSIS
+    php artisan rsx:man standard_library
+    php artisan rsx:health                 # reports the extension tiers
+    php artisan rsx:composer provides      # what the framework already supplies
+
+DESCRIPTION
+    RSpade ships a STANDARD LIBRARY: a set of PHP extensions and composer packages
+    that are present on every install, that the framework commits to keeping
+    present, and that application code may therefore reach for without asking
+    whether the box has them.
+
+    The point is not that these are good libraries. The point is that they are
+    ALWAYS THERE. A toolkit that is available only on the boxes that happen to
+    have the package is not a toolkit - it is a coin flip that pays off in
+    development and fails in production. So an app writing a phone-number check,
+    a spreadsheet export or a money calculation writes it once, against the
+    library named here, and stops shopping.
+
+    This is the same reasoning as the rest of the framework: one way to do a
+    thing. Two apps in the same codebase parsing phone numbers two different ways
+    is the outcome this page exists to prevent.
+
+    Unlike a stock Laravel project, where every dependency is the application's
+    own decision and its own composer.json line, an RSpade app inherits the
+    framework's installed set. Nothing below is installed by the app, appears in
+    the app's composer.json, or has to be required before use.
+
+    THE DECLARATION OF RECORD IS CODE, NOT THIS PAGE. The extension list lives in
+    App\RSpade\Core\Health\Rsx_Php_Requirements (REQUIRED_EXTENSIONS and
+    REQUIRED_CLI_EXTENSIONS); the package list lives in config('rsx.dependencies')
+    under exposed_composer. This page explains what to reach for and when. If the
+    two ever disagree, the code is right and this page is a bug.
+
+PHP EXTENSIONS
+    Declared in Rsx_Php_Requirements::REQUIRED_EXTENSIONS and enforced on every
+    web request and every artisan invocation: a box missing one THROWS at boot
+    naming it, rather than failing later inside whatever feature touched it
+    first. There is no degraded second code path for any of them.
+
+    Reach for:
+
+        imagick     Image manipulation - resize, crop, convert, thumbnail. The
+                    framework's own attachment icons and thumbnails use it.
+        gd          The other image library. Present because PhpSpreadsheet and
+                    the QR-code writer render through it.
+        gmp         Arbitrary-precision integers. Big counters, hash arithmetic,
+                    anything where a 64-bit int is not enough.
+        zip         Reading and writing .zip archives - and the format xlsx and
+                    every other Office document actually is.
+        zlib        deflate/gzip streams. ZIP downloads stream through it.
+        zstd        Zstandard compression - a better ratio and far faster than
+                    deflate on payloads above a few KB.
+        redis       The cache, the lock daemon and the realtime relay all speak
+                    it. An app reaching Redis directly uses this, never a
+                    userland client.
+        pdo_mysql   The database. Every query, framework and app alike.
+        ldap        Directory authentication - binding against Active Directory
+                    or OpenLDAP for single sign-on.
+        imap        Reading a mailbox over IMAP/POP3 - ticket ingestion, reply
+                    parsing, anything that treats an inbox as an inbound queue.
+        sodium      Modern cryptography: authenticated encryption, signing,
+                    password hashing, secure random. Reach for this and not for
+                    a hand-rolled openssl call.
+        intl        Locale-aware formatting and collation: NumberFormatter,
+                    IntlDateFormatter, Collator, Normalizer. Reach for it when
+                    output must follow a locale rather than a hardcoded format.
+        bcmath      Arbitrary-precision DECIMAL strings. Money is brick/money
+                    (below), which does not need it; reach for bcmath for
+                    non-money exact decimals - rates, measurements, statistics.
+        soap        SOAP clients and servers for the integrations that still
+                    speak it - payroll, logistics, government gateways.
+
+    Also declared, and required for the framework to function at all: ctype,
+    curl, dom, fileinfo, filter, hash, iconv, json, libxml, mbstring, openssl,
+    pcre, pdo, phar, posix, session, simplexml, tokenizer, xml, xmlreader,
+    xmlwriter. An app uses them freely; they are listed here for completeness
+    rather than as things to go looking for.
+
+    THE CLI TIER
+        Rsx_Php_Requirements::REQUIRED_CLI_EXTENSIONS is enforced only when
+        PHP_SAPI is 'cli':
+
+            pcntl   Signal handling and process control. Debian/sury compile it
+                    into php-cli and deliberately NOT into php-fpm, because
+                    forking inside an fpm worker duplicates the pool's sockets
+                    and database connections. So CLI code may assume it; web code
+                    may not, and must never call it.
+
+    NOT DECLARED, DO NOT ASSUME
+        exif, calendar, mysqli and sockets are present on a typical box and on
+        this framework's own container image, but nothing in the framework or the
+        template application calls them, so none of them is declared, enforced or
+        promised. Code depending on one of them works until it meets a box that
+        lacks it; an app that needs one declares its own ext- requirement in the
+        application layer (rsx:man dependencies).
+
+COMPOSER PACKAGES
+    Listed in config('rsx.dependencies.exposed_composer') and installed in
+    system/vendor. `use` them directly - there is nothing to require.
+
+        giggsey/libphonenumber-for-php
+            Phone numbers: parse, validate, and format to E.164 or to a region's
+            national style. Reach for it whenever a phone number is stored,
+            compared or displayed - a regex over digits is wrong in every country
+            including this one.
+
+            Worked example, including the isPossibleNumber-not-isValidNumber
+            choice and E.164 as the storage format:
+            system/app/RSpade/resource/reference_app/app/frontend/contacts/contacts_controller.php
+            (_normalize_phone) and .../reference_app/lib/formatters.php
+            (Formatters::phone).
+
+            The JS side of the same metadata is google-libphonenumber, exposed on
+            exposed_npm.
+
+        ezyang/htmlpurifier
+            Sanitising HTML that came from a user or a third party. Reach for it
+            before rendering rich text you did not generate. The framework's own
+            safe_html() path uses it - see rsx:man safe_html.
+
+        brick/money
+            Money arithmetic. Reach for it the moment an amount is added,
+            multiplied, split, converted or rounded: a Money carries its currency
+            and an exact decimal, so a total cannot silently drift, two
+            currencies cannot be added, and the rounding mode is something you
+            state rather than something the CPU picks.
+
+            NEVER do money arithmetic in a float. 0.1 + 0.2 is not 0.3 in any
+            language that has doubles, and the error compounds across a line-item
+            loop until an invoice is off by a cent that nobody can find.
+
+                use Brick\Money\Money;
+                use Brick\Math\RoundingMode;
+
+                $line  = Money::of('19.99', 'USD')->multipliedBy(3);
+                $total = $line->plus(Money::of('4.95', 'USD'));
+                $each  = $total->dividedBy(7, RoundingMode::HalfUp);
+
+                echo $total->getAmount();      // exact decimal, never a float
+                echo $total->formatTo('en_US'); // "$64.92"
+
+            brick/math comes with it and is the exact-decimal type underneath
+            (BigDecimal, BigInteger, BigRational). It is not separately exposed;
+            reach for it through brick/money.
+
+            Worked example:
+            system/app/RSpade/resource/reference_app/lib/formatters.php
+            (Formatters::currency).
+
+        phpoffice/phpspreadsheet
+            Reading and writing real spreadsheets - xlsx, xls, ods, and CSV when
+            it must go through the same code path. Reach for it for an export
+            whose recipient opens it in Excel: unlike CSV, the workbook carries
+            types, so a phone number stays text and a date stays a date instead
+            of being re-guessed by the reader's locale.
+
+            Worked example, including handing a binary file back through the Ajax
+            envelope:
+            system/app/RSpade/resource/reference_app/app/frontend/clients/clients_controller.php
+            (export_xlsx) and .../clients/list/clients_datagrid.js.
+
+        league/csv
+            CSV as a first-class format: streaming reads of files too large to
+            hold, headers, escaping, encoding conversion. Reach for it when CSV is
+            INPUT, or when an export is large enough to stream.
+
+            For a small export the framework already has the answer -
+            DataGrid_Abstract::build_csv($headers, $rows) returns an RFC4180
+            string (rsx:man crud). Use league/csv when that shape does not fit.
+
+        endroid/qr-code
+            QR codes as PNG or SVG. Reach for it for two-factor enrolment,
+            check-in codes, a printable link on a document, a device-pairing
+            handoff.
+
+        laravel/framework, guzzlehttp/guzzle, sokil/php-isocodes,
+        nikic/php-parser
+            Also exposed. Guzzle is the outbound HTTP client (never file_get_contents
+            on a URL); php-isocodes carries country, subdivision and currency data;
+            php-parser is the PHP AST library the framework's own refactoring
+            commands are built on.
+
+    Everything else in system/vendor is an INTERNAL framework dependency. It is
+    installed, and it works if you call it, but it is not part of this promise
+    and may be removed or major-bumped without a migration document. Check with
+    `php artisan rsx:composer provides` before depending on one, or ask for it to
+    be exposed.
+
+THE TWO RULES THAT MAKE THIS A LIBRARY
+    Exposure is a standing commitment
+        A package on this list is expected to remain available indefinitely at a
+        compatible major version. That is what makes it safe to build on, and it
+        is why the list is short and grows slowly.
+
+    Version pins are the framework's, not the app's
+        The framework pins every version in system/composer.lock and ships
+        system/vendor already installed. An app never requires, upgrades or pins
+        one of these itself - `rsx:composer require` on an exposed package RECORDS
+        it as provided-by-framework rather than installing a second copy, and the
+        generated "replace" block in the app's root composer.json keeps composer's
+        solver aware of the framework's pins. See rsx:man dependencies.
+
+        If a package on this list is ever retired or moved across a major version
+        boundary, it ships with an upstream_changes document naming the remedy -
+        never silently. See rsx:man upstream_changes.
+
+RSX VS LARAVEL
+    Laravel: every dependency is the application's own composer.json line. There
+    is no layer above the app, so nothing is guaranteed and nothing is shared -
+    two Laravel apps in one shop solve the same problem with two different
+    packages.
+
+    RSpade: the framework layer supplies a curated set already installed, and
+    names it. The app's composer.json holds only what is genuinely the app's own.
+    An app that needs something outside this list still adds it with
+    `php artisan rsx:composer require` - the standard library is a floor, not a
+    ceiling.
+
+TROUBLESHOOTING
+    "Required PHP extension is not loaded: <name>"
+        The boot check. The box is missing a declared extension; the message
+        names the apt package. Inside the RSpade container it means the image
+        needs regenerating - the extension is added to
+        system/app/RSpade/resource/docker/Dockerfile and the image rebuilt.
+        `php artisan rsx:health` prints the full report; both it and `rsx:heal`
+        run with the check unenforced so they can diagnose the problem rather
+        than inherit it.
+
+    "<package> is an internal framework dependency, not part of the supported
+    surface"
+        `rsx:composer require` refusing a package that is installed but NOT on
+        the exposed list. Either use a package that is exposed, install your own
+        copy under a different name, or ask for the exposure.
+
+    Class not found on a package that is definitely in system/vendor
+        The framework autoloader covers system/vendor - if a class inside it is
+        missing, the package is not installed in THIS install (the framework was
+        pulled at an older version). `php artisan rsx:composer provides` lists
+        what the framework actually supplies here.
+
+SEE ALSO
+    dependencies         The two dependency layers, rsx:composer / rsx:npm
+    health               rsx:health, and the extension tiers it reports
+    upstream_changes     How a change to an exposed package reaches an app
+    safe_html            The framework's own HTML sanitising path
+    npm                  JavaScript packages and Asset Bundles
+    crud                 DataGrid_Abstract::build_csv and the export pattern

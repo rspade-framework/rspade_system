@@ -104,6 +104,11 @@ class Api_Dispatcher
         return self::$_current_key;
     }
 
+    /**
+     * The id of the last _api_request_log row this process wrote. See last_request_log_id().
+     */
+    private static ?int $_last_request_log_id = null;
+
     public static function is_api_dispatch(): bool
     {
         return self::$_is_api_dispatch;
@@ -117,6 +122,11 @@ class Api_Dispatcher
         self::$_is_api_dispatch = true;
         $start = hrtime(true);
         $request = $request ?? request();
+
+        // One API request is one unit of work for revision history. The _api_request_log row
+        // does not exist yet (it is written after the endpoint answers), so its id is
+        // back-filled onto the transaction by _log().
+        \App\RSpade\Core\Revisions\Revision::_reset_request_state('api', $method . ' ' . $url);
 
         Manifest::init();
 
@@ -444,6 +454,24 @@ class Api_Dispatcher
         $log->response_bytes = $facts['bytes'];
 
         $log->save();
+
+        self::$_last_request_log_id = (int) $log->id;
+
+        // A revision transaction minted during this request can now name the log row that
+        // recorded it - the API's answer to "which call did this".
+        \App\RSpade\Core\Revisions\Revision::_set_api_request_log_id((int) $log->id);
+    }
+
+    /**
+     * The _api_request_log row id this process last wrote, or null before the first one.
+     *
+     * Exposed because the log row is written AFTER the endpoint has run: anything that
+     * wants to reference the call it belongs to (revision transactions do) can only learn
+     * the id from here.
+     */
+    public static function last_request_log_id(): ?int
+    {
+        return self::$_last_request_log_id;
     }
 
     /**

@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Health;
 
 use Symfony\Component\Process\Process;
+use App\RSpade\Core\Health\Rsx_Php_Requirements;
 use App\RSpade\Core\Prod\Rsx_Env_Symlink;
 use App\RSpade\Core\Rsx;
 
@@ -23,11 +24,12 @@ use App\RSpade\Core\Rsx;
  */
 class Environment_Health_Checks
 {
-    /** PHP extensions the framework needs to boot every feature. */
-    private const REQUIRED_EXTENSIONS = ['zip', 'gd', 'imagick', 'redis', 'pdo_mysql'];
-
-    /** Minimum supported PHP version. */
-    private const MIN_PHP_VERSION = '8.4';
+    /*
+     * The required-extension list and the minimum PHP version are NOT declared here.
+     * They live in Rsx_Php_Requirements, which the boot check reads too - one list,
+     * two consumers, so the guard and the diagnostic can never disagree about what
+     * this framework needs.
+     */
 
     /**
      * PHP version + required extensions.
@@ -40,27 +42,20 @@ class Environment_Health_Checks
         $rows = [];
 
         // PHP version.
-        if (version_compare(PHP_VERSION, self::MIN_PHP_VERSION, '>=')) {
+        if (version_compare(PHP_VERSION, Rsx_Php_Requirements::MIN_PHP_VERSION, '>=')) {
             $rows[] = ['label' => 'PHP Version', 'status' => 'OK', 'detail' => 'PHP ' . PHP_VERSION];
         } else {
             $rows[] = [
                 'label' => 'PHP Version',
                 'status' => 'FAIL',
-                'detail' => 'PHP ' . PHP_VERSION . ' is below the required ' . self::MIN_PHP_VERSION,
-                'remediation' => 'upgrade PHP to ' . self::MIN_PHP_VERSION . ' or newer',
+                'detail' => 'PHP ' . PHP_VERSION . ' is below the required ' . Rsx_Php_Requirements::MIN_PHP_VERSION,
+                'remediation' => 'upgrade PHP to ' . Rsx_Php_Requirements::MIN_PHP_VERSION . ' or newer',
             ];
         }
 
         // Required extensions: a summary OK for those present, a FAIL row per missing one.
-        $present = [];
-        $missing = [];
-        foreach (self::REQUIRED_EXTENSIONS as $ext) {
-            if (extension_loaded($ext)) {
-                $present[] = $ext;
-            } else {
-                $missing[] = $ext;
-            }
-        }
+        $missing = Rsx_Php_Requirements::missing_extensions();
+        $present = array_values(array_diff(Rsx_Php_Requirements::REQUIRED_EXTENSIONS, $missing));
 
         if (!empty($present)) {
             $rows[] = [
@@ -75,7 +70,31 @@ class Environment_Health_Checks
                 'label' => 'PHP Extension: ' . $ext,
                 'status' => 'FAIL',
                 'detail' => "required extension '{$ext}' is not loaded",
-                'remediation' => "install/enable the php-{$ext} extension",
+                'remediation' => Rsx_Php_Requirements::remediation_for($ext),
+            ];
+        }
+
+        // The CLI tier, reported separately because it is a promise about a different
+        // SAPI: pcntl is compiled into php-cli and NOT into php-fpm, so a box can be
+        // correct for the web tier and wrong for the CLI tier. rsx:health always runs
+        // under the CLI SAPI, so what it sees here IS what a command would get.
+        $cli_missing = Rsx_Php_Requirements::missing_cli_extensions();
+        $cli_present = array_values(array_diff(Rsx_Php_Requirements::REQUIRED_CLI_EXTENSIONS, $cli_missing));
+
+        if (!empty($cli_present)) {
+            $rows[] = [
+                'label' => 'PHP CLI Extensions',
+                'status' => 'OK',
+                'detail' => 'loaded: ' . implode(', ', $cli_present),
+            ];
+        }
+
+        foreach ($cli_missing as $ext) {
+            $rows[] = [
+                'label' => 'PHP CLI Extension: ' . $ext,
+                'status' => 'FAIL',
+                'detail' => "required CLI extension '{$ext}' is not loaded",
+                'remediation' => Rsx_Php_Requirements::remediation_for($ext),
             ];
         }
 

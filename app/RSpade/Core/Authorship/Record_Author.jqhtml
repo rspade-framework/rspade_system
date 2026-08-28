@@ -11,8 +11,9 @@ Args:
       Rsx_Model_Abstract::get_created_by_author() / get_updated_by_author():
       {name: string, url: string|null}, or null for an unattributed record.
 
-Content (optional) - what to render when $author is null. Defaults to "Unknown".
-      Use it when the page knows something better: <Record_Author $author=x>System</Record_Author>.
+A null $author renders NOTHING. There is no placeholder and no content slot: an
+unattributed record has nothing truthful to say, and the surrounding sentence decides
+how to read the gap.
 
 WHY THE DATA COMES IN AS AN ARG. The name and the URL are BOTH server-side answers: the
 name may belong to a soft-deleted actor, and the URL is resolved through the destination's
@@ -32,17 +33,10 @@ deleted authorship decorates it itself.
 See: php artisan rsx:man actors
 --%>
 <Define:Record_Author tag="span">
-    <%
-        const _author = this.args.author || null;
-        const _placeholder = (content() || '').trim();
-    %>
+    <% const _author = this.args.author || null; %>
     <% if (_author && _author.url) { %>
         <a class="Record_Author__link" href="<%= _author.url %>"><%= _author.name %></a>
     <% } else if (_author) { %>
         <span class="Record_Author__name"><%= _author.name %></span>
-    <% } else if (_placeholder !== '') { %>
-        <span class="Record_Author__unattributed"><%!= _placeholder %></span>
-    <% } else { %>
-        <span class="Record_Author__unattributed">Unknown</span>
     <% } %>
 </Define:Record_Author>

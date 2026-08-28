@@ -390,6 +390,19 @@ THE SCHEMA CACHE
        AI AGENTS: do not run rsx:db:dump_cache, and do not propose it as a step. See
        app/RSpade/Commands/CLAUDE.md.
 
+POST-MIGRATE STEPS
+
+       After the final normalize pass, migrate builds a new revision-history
+       compression dictionary when the current one is missing or older than
+       config('rsx.revisions.dictionary_max_age_days') - silent inside that cadence,
+       one [OK] Revision dictionary N built (T tokens) line when it builds - because
+       the dictionary is derived from the finished schema's column names and the
+       models' enum labels and is only correct once the schema is at its tip.
+
+       Every successful run, snapshot-protected or bare, ends by clearing the
+       build-scoped cache (and so does php artisan migrate:restore, whose restore
+       leaves the cache describing a schema that no longer exists).
+
 MIGRATION EXAMPLES
 
    Creating a Table (Simple Version - Recommended)

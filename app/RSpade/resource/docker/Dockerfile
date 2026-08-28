@@ -83,6 +83,19 @@ RUN apt-get update && apt-get install -y \
 # sury publishes no such package - every release from 5.6 to 8.4 has one, 8.5 does
 # not. Listing it fails the whole apt-get and breaks the build. It is present:
 # `php -m` reports Zend OPcache without it.
+# The extension list below is the COUNTERPART of
+# App\RSpade\Core\Health\Rsx_Php_Requirements::REQUIRED_EXTENSIONS, which every
+# request and every artisan run enforces at boot. Adding an extension there means
+# adding its package here (and vice versa is how an image grows dead weight).
+#
+# TWO DECLARED EXTENSIONS HAVE NO LINE HERE, ON PURPOSE:
+#   sodium - compiled into sury's PHP binary; no php${PHP_VERSION}-sodium package
+#            exists, so naming one fails the whole apt-get exactly like -opcache above.
+#   pcntl  - shipped inside php${PHP_VERSION}-cli and deliberately absent from php-fpm
+#            (forking an fpm worker corrupts the pool's sockets and DB connections).
+#            It is the CLI tier, REQUIRED_CLI_EXTENSIONS, enforced only under PHP_SAPI
+#            'cli'.
+# `rsx:man health` -> PHP EXTENSION CONTRACT.
 COPY php/ondrej-php.sources /etc/apt/sources.list.d/ondrej-php.sources
 RUN apt-get update && apt-get install -y \
         php${PHP_VERSION} \
@@ -100,7 +113,10 @@ RUN apt-get update && apt-get install -y \
         php${PHP_VERSION}-zip \
         php${PHP_VERSION}-bcmath \
         php${PHP_VERSION}-gmp \
+        php${PHP_VERSION}-imap \
+        php${PHP_VERSION}-ldap \
         php${PHP_VERSION}-soap \
+        php${PHP_VERSION}-zstd \
     && update-alternatives --set php /usr/bin/php${PHP_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 

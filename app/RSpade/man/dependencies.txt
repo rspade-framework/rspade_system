@@ -219,6 +219,10 @@ FRAMEWORK-PROVIDED PACKAGES
     framework formally EXPOSES them: you may depend on them, and the wrapper
     records that dependency instead of installing a duplicate.
 
+    Together with the declared PHP extensions, the exposed packages ARE the RSpade
+    standard library - what each one is for, and when to reach for it, is
+    `rsx:man standard_library`. This page is the mechanism; that page is the menu.
+
     The exposed lists live in config/rsx.php under the `dependencies` key:
 
         'dependencies' => [
@@ -229,6 +233,10 @@ FRAMEWORK-PROVIDED PACKAGES
                 'ezyang/htmlpurifier',
                 'sokil/php-isocodes',
                 'nikic/php-parser',
+                'phpoffice/phpspreadsheet',
+                'league/csv',
+                'brick/money',
+                'endroid/qr-code',
             ],
             'exposed_npm' => [
                 'dompurify',
@@ -389,6 +397,7 @@ TROUBLESHOOTING
         version.
 
 SEE ALSO
+    standard_library - the guaranteed toolkit: extensions and exposed packages
     npm              - including npm packages in RSX bundles (Asset Bundle 'npm')
     bundle_api       - Module and Asset Bundle system
     upstream_changes - reviewing framework-driven mandatory changes (Category 2)

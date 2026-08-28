@@ -1,0 +1,541 @@
+    revisions - per-model revision history: what changed, in which action, by whom
+
+SYNOPSIS
+    // PHP: opt a model in. That is the whole wiring.
+    class Client_Model extends Rsx_Site_Model_Abstract {
+        public static $revisions = true;
+
+        // Columns that move without the user having changed anything.
+        protected static $revision_exclude = ['last_seen_at', 'open_task_count'];
+    }
+
+    // PHP: file a child's revisions under its parent's history.
+    class Contact_Model extends Rsx_Site_Model_Abstract {
+        public static $revisions = true;
+
+        #[Relationship]
+        #[Revision_Parent]
+        public function client() { return $this->belongsTo(Client_Model::class); }
+    }
+
+    // PHP: read a record's history.
+    foreach ($client->revisions() as $revision) {
+        $revision->operation_id__label;   // Created / Updated / Deleted / Restored
+        $revision->diff();                // ['name' => ['Acme', 'Acme Ltd'], ...]
+        $revision->transaction->actor;    // who did it
+    }
+
+    // PHP: everything that happened to this client, its contacts included.
+    $client->revisions_including_children();
+
+    // PHP: the transactions that touched one record, newest first.
+    Revision::transactions_for($client);
+
+    // PHP: label this unit of work, and suppress recording for a backfill.
+    Revision::describe('Imported 40 contacts from CSV');
+    Revision::without(function () { $counter->recompute(); });
+
+    // PHP: the id an activity row stores so it can answer "what did that change".
+    $activity->transaction_id = Revision::transaction_id();
+
+DESCRIPTION
+    Revision history records every write to an opted-in model as a document of
+    the shape
+
+        {"field": [before, after], ...}
+
+    and files it under ONE transaction per unit of work. It answers two
+    questions an application otherwise cannot: "what did this record's fields
+    used to be", and "what else changed in the same action".
+
+    Nothing is recorded until a model asks. $revisions is deliberately shaped
+    like $realtime - one static on the model, and no other part of the
+    application has to know. Off costs one static read on the write path.
+
+    THE TRANSACTION IS THE POINT. A revision on its own says "this field
+    changed". The question an activity screen actually asks is "what did that
+    one action change" - a client save that also wrote three contact rows is
+    ONE thing the user did. The `_transactions` row is what says so, and it
+    carries the facts that belong to the action rather than to any one record:
+    who, from where, over which endpoint, from which IP, and for an API call
+    which _api_request_log row.
+
+    It is NOT a database transaction. Revisions are written on the SAME
+    connection as the record write they describe, immediately - never through
+    DB::afterCommit(). A real database transaction that rolls back therefore
+    discards its revisions along with the writes they describe, which is
+    exactly right.
+
+    RSX VS LARAVEL: Laravel has no revision system; the ecosystem answer is a
+    package that hangs observers off model events and writes a row per model.
+    RSpade records at the framework's own single-write seam (so a bulk update
+    routed through save() records per record for free), groups by unit of work
+    rather than by model, and stores the document compressed against a
+    schema-derived dictionary. There is no service provider, no trait, and no
+    registration - the manifest and the model's own static are the wiring.
+
+OPTING IN
+
+    public static $revisions = true;
+
+    Set on any model extending Rsx_Model_Abstract. From that point every
+    committed save() and delete() through the model layer records.
+
+    protected static $revision_exclude = ['col', ...];
+
+    Columns this model never records, on top of the automatic exclusions. The
+    list is for columns that CHANGE without the user having changed anything -
+    denormalized counters, last-seen timestamps, cached aggregates. Recording
+    them turns a history into noise, and a diff of what the user changed is the
+    whole product.
+
+    $revision_exclude is NOT a security control. An excluded column is still
+    stored in the record. To keep a value out of the database, do not put it
+    there.
+
+    #[Revision_Parent]
+
+    A bare marker on a child model's belongsTo method. A revision recorded on
+    that child is filed under the PARENT's root pair, so asking the client for
+    its history returns the writes that landed on its contacts too. The
+    attribute takes no arguments: the foreign key and the parent class are
+    resolved once per process by reflecting the annotated relationship.
+
+    ONE parent, not a cascade. A revision has exactly one root, so the first
+    declared #[Revision_Parent] with a non-null foreign key wins and the root
+    is not resolved transitively up a chain. That is a storage decision: a
+    transitive root would have to be recomputed for every existing revision the
+    day a middle link moved.
+
+    REVISION-01 is a manifest-build FATAL that validates the declaration:
+
+      1. The declaring model must itself declare $revisions = true. Without it
+         nothing on this model is recorded, so the attribute is inert.
+      2. The annotated method must return a belongsTo. Only a belongsTo names
+         exactly one parent row.
+      3. The parent must declare $revisions = true too. Filing a child's
+         revisions under a record whose own writes are not recorded produces a
+         half-history: the contacts show up, the client's own edits never do.
+
+    Every one of those failure modes is SILENT at runtime - a history screen
+    quietly missing rows, months later, with nothing to trace it back to -
+    which is why the rule is fatal rather than advisory. Suppress a genuine
+    exception with @REVISION-01-EXCEPTION on the method or in the file.
+
+AUTOMATIC EXCLUSIONS
+
+    Excluded from every diff, on every model, always:
+
+      updated_at, updated_by_id, updated_by_type
+          They change on every single write. Recording them would put two
+          entries nobody reads in front of the one that matters.
+
+      every `_`-prefixed system column
+          Framework bookkeeping, not data anybody changed. See SYSTEM COLUMNS.
+
+    created_at and the created_by pair are NOT excluded. They appear exactly
+    once, on the create, where they are the record's provenance.
+
+WHAT EACH OPERATION RECORDS
+
+    Created   Every non-null column as [null, value]. A created record's
+              history must be readable on its own, without inferring the
+              starting state from the schema.
+    Updated   Only the columns that actually changed. An update that changed
+              nothing records nothing, and an update whose every changed column
+              was excluded records nothing either.
+    Deleted   An EMPTY document, soft delete and hard delete alike. A delete
+              does not change fields, it removes the record; what its values
+              were is already in the revisions that put them there.
+    Restored  A soft-deleted record coming back: an update whose deleted_at
+              went to null, recorded as its own operation so a history can name
+              it. The diff carries the deleted_at / deleted_by columns.
+
+    Both halves of a pair are the FULL stored value, never a delta. Answering
+    "what changed" must not require replaying every earlier revision.
+
+THE TABLES
+
+    _transactions
+        One row per unit of work that produced at least one revision, minted
+        LAZILY on the first revisioned write - a request that changed nothing
+        leaves nothing behind.
+
+        site_id             the tenant, adopted from the first revision when
+                            the unit had none of its own (a portal write)
+        actor_type/actor_id the polymorphic actor pair, resolved by the same
+                            stamp matrix the audit columns use
+        source_id           web / ajax / api / task / cli / test
+        endpoint            what the unit was serving
+        ip                  the caller's IP, null off a real request
+        api_request_log_id  the _api_request_log row, when the source is api
+        revision_count      how many revisions the action produced
+        description         whatever Revision::describe() was given
+
+    _revisions
+        One row per recorded write. FK transaction_id ON DELETE CASCADE.
+
+        record_type/record_id  WHICH ROW changed
+        root_type/root_id      WHICH ENTITY the change belongs to - equal to
+                               the record pair for a top-level model, the
+                               parent's pair under #[Revision_Parent]. Storing
+                               it at write time is what makes "everything that
+                               happened to this client" one indexed query
+                               instead of a union over every child table.
+        operation_id           create / update / delete / undelete
+        sequence               1-based position within the transaction, so one
+                               action's writes replay in the order they happened
+        changes                the compressed document (see STORAGE FORMAT)
+
+    _revision_dictionaries
+        The compression dictionaries. Append-only; see THE DICTIONARY.
+
+    Both pairs are ordinary type-ref pairs (BIGINT columns holding a type-ref
+    id, read and written as a class basename) - see rsx:man polymorphic.
+
+STORAGE FORMAT
+
+    `changes` is a compressed blob. Every payload is SELF-DESCRIBING: two
+    leading bytes say how the rest was produced, so a row written years ago
+    decodes without consulting anything but its own prefix.
+
+        byte 0   the codec:  0 raw
+                             1 deflate
+                             2 deflate + dictionary
+                             3 zstd
+                             4 zstd + dictionary
+        byte 1   the _revision_dictionaries.id it was compressed against, or 0
+                 for none. One byte - which is why a dictionary id may never
+                 exceed 255.
+
+    The codec is chosen BY SIZE, from measurements on real documents:
+
+        < 1 KB     deflate only. At 138 bytes - the common case, a one-field
+                   edit - deflate with the dictionary produces 45 bytes where
+                   zstd with the same dictionary produces 60. Deflate's window
+                   is seeded directly with the dictionary and it has almost no
+                   frame overhead; at this size the frame IS the payload.
+        1 - 3 KB   compress with BOTH and keep the smaller. Neither wins across
+                   the sample, and compressing twice on a few-KB input costs
+                   tens of microseconds.
+        > 3 KB     zstd. At 35 KB zstd produces 884 bytes where deflate level 6
+                   produces 1177: once there is enough input for a real entropy
+                   stage, zstd wins outright.
+
+    Write-path levels are deflate 6 and zstd 3, and they are settled. zstd
+    level 19 measured 10.8 ms per document against 0.02-0.2 ms for level 3, for
+    a few percent of size; a revision is written inside the user's request, and
+    10 ms per record write is not a trade this subsystem may make.
+
+    RAW IS AN ESCAPE, NOT A MODE. If no codec makes the document smaller it is
+    stored verbatim. Storing a "compressed" form larger than its input is the
+    one outcome a compressor must never commit to disk.
+
+    Deflate is used wherever zstd or a dictionary is absent.
+
+    An unknown codec byte or a dictionary id with no row behind it THROWS on
+    read. A revision that cannot be decoded is a fact about the data, and
+    saying so is the only correct answer - there is nothing to degrade to.
+
+THE DICTIONARY
+
+    A revision document is a few hundred bytes of JSON whose bytes are almost
+    entirely PREDICTABLE FROM THE SCHEMA: the punctuation of a JSON object, the
+    column names of this database, the labels of this application's enums. A
+    general-purpose compressor cannot exploit that, having never seen any of it
+    before the 138-byte input arrived. A dictionary hands it the vocabulary up
+    front, and the measured effect is 138 bytes going to 45 instead of 94.
+
+    The dictionary is DERIVED, never authored: it is built from JSON structural
+    tokens, every column name in information_schema, and every $enums label in
+    the manifest - so it is automatically correct for whatever application this
+    framework is running. Tokens are ordered coldest first, hottest LAST,
+    because zlib prices a match by its distance and the dictionary is loaded
+    nearest-last.
+
+    A REBUILD NEVER INVALIDATES ANYTHING. Every stored payload names the
+    dictionary it was written against, so old revisions keep decoding against
+    the old row forever. That is also why a dictionary row is never updated or
+    deleted: the table is append-only, and the newest row is simply the one new
+    writes use.
+
+    `migrate` maintains it. After the final normalize pass, the post-migrate
+    step builds a new dictionary when the current one is missing or older than
+    config('rsx.revisions.dictionary_max_age_days') - silent inside that
+    cadence, one [OK] line when it builds. A schema that has gained tables has
+    gained vocabulary.
+
+    Ids are capped at 255 by the one-byte prefix field; minting past it is
+    refused rather than writing revisions that cannot be read back. At a 30-day
+    cadence that ceiling is roughly twenty years.
+
+THE UNIT OF WORK
+
+    The transaction facade's state is per-process, and it is RESET at every
+    unit boundary. A web request is one process and one unit, so the two
+    coincide; a task worker, a test runner and an Ajax batch are one process
+    running MANY units, and without a reset every write they made for the rest
+    of their lifetime would be filed under the first unit's transaction.
+
+        Reset point                         source    endpoint
+        ---------------------------------   -------   ---------------------------
+        Dispatcher::dispatch()              web       'GET /clients'
+        Api_Dispatcher::dispatch()          api       'POST /api/v1/clients'
+        Ajax::internal() / an Ajax call     ajax      'Clients_Controller::save'
+        Task_Worker_Command, Task::internal task      'Service::method'
+        Rsx_Test_Abstract                   test      'Test_Class::test_method'
+
+    So a PLAIN AJAX CALL is source `ajax` with endpoint `Controller::action` -
+    the unit of work is the endpoint, not the transport URL the dispatcher saw.
+    A BATCH of Ajax calls is ONE TRANSACTION PER CALL, not one for the batch:
+    each call snapshots the facade, resets it, runs, and restores the calling
+    scope's state afterwards. A TASK WORKER processing many tasks starts a
+    fresh transaction per task. An API request records `api_request_log_id`
+    back onto its transaction after the log row is written.
+
+    A write that happens before any reset point runs - boot code, a one-off
+    artisan command calling straight into a model - is recorded under a DERIVED
+    source: `cli` in a CLI process, `web` otherwise. Both are true statements
+    about where the write came from, which is all the column claims.
+
+API REFERENCE
+
+  The facade - App\RSpade\Core\Revisions\Revision
+
+    transaction_id(): int
+        The transaction every revision recorded right now belongs to, MINTING
+        the row on first call. THIS IS A WRITER. Call it from the recording
+        path, or from an application activity row that wants to point at the
+        action (see ACTIVITY TEXT below). Anything that merely wants to LOOK at
+        the current transaction calls current_transaction().
+
+    current_transaction(): ?Transaction_Model
+        The current transaction row, or null when this unit has recorded
+        nothing. A reader: it never mints.
+
+    current_revisions(): Revision_Model[]
+        The revisions recorded under the current transaction so far, in order.
+
+    describe(string $description): void
+        Attach a human description to this unit of work ("Imported 40 contacts
+        from CSV"). Works before OR after the first revision. Purely
+        descriptive - nothing keys on it.
+
+    without(callable $callable): mixed
+        Run the callable with recording SUPPRESSED, and return what it returns.
+        For a write that is not a user action and would only be noise: a data
+        migration, a backfill, a recomputed counter. Suppression is restored in
+        a finally, so a throw cannot leave it off.
+
+    for_transaction(int $transaction_id): Rsx_Result_Set
+        Every revision recorded under one transaction, oldest first.
+
+    transactions_for(Rsx_Model_Abstract $record): Rsx_Result_Set
+        Every transaction that touched one record, newest first. Matches the
+        record pair OR the root pair, so it answers for both directions of
+        #[Revision_Parent].
+
+  On the model - Rsx_Model_Abstract
+
+    revisions(): Rsx_Result_Set
+        Every revision recorded for THIS record, newest first. #[Replaceable]:
+        a model whose `revisions` name means something else of its own replaces
+        it outright (Transaction_Model does, with the FK relation to the
+        revisions it groups).
+
+    revisions_including_children(): Rsx_Result_Set
+        Every revision recorded for this record AND for every record that
+        declares it as its #[Revision_Parent], newest first. ONE indexed query
+        on the root pair.
+
+  On a revision - Revision_Model
+
+    diff(): array
+        The decoded document, ['field' => [before, after], ...]. The only
+        reader of `changes`, which is $neverExport and never leaves the server
+        raw. Throws when the payload names a codec or dictionary this build
+        cannot honour.
+
+    transaction, record, root
+        Relations. $revision->transaction->actor is who did it;
+        $revision->record is the row that changed (null once hard-deleted).
+
+    operation_id__label / operation_id__constant, and the OPERATION_* constants.
+
+  On a transaction - Transaction_Model
+
+    revisions()     the revisions it groups, in sequence order
+    actor           the User_Model / Portal_User_Model / Login_User_Model, or null
+    source_id__label, and the SOURCE_* constants
+
+BULK WRITES
+
+    Model::where(...)->update() / ->delete() on a model that records revisions
+    loads the rows and runs each through its own save()/delete(), so ONE
+    REVISION IS RECORDED PER RECORD. ->raw_bulk() records NOTHING;
+    DB::table() and raw SQL bypass the model layer entirely and record nothing
+    either.
+
+    That is the same rule realtime follows, and for the same reason: only the
+    per-record path can produce a per-record diff.
+
+    THERE IS NO MANUAL RECORDING CALL. Realtime has $record->realtime_emit()
+    for a write that bypassed the model layer; revisions have no equivalent,
+    deliberately. A revision is a before/after pair, and a write the model
+    layer never saw has no before the framework can vouch for. A write that
+    must be recorded goes through save().
+
+SYSTEM COLUMNS
+
+    A single leading underscore on a COLUMN marks it a framework SYSTEM column,
+    the same way it marks a system table. Such a column is:
+
+      - stripped from every payload by Rsx_Model_Abstract::toArray(), so the
+        client never holds one;
+      - skipped by the generated JS model stub's field_length() map, because
+        the client can never need the length of a column it never receives;
+      - excluded from every revision diff, because it is bookkeeping rather
+        than data anybody changed.
+
+    DOUBLE underscore is untouched: __MODEL and __details are framework keys
+    toArray() adds, and they are the payload's contract with the JS ORM.
+
+RETENTION
+
+    config('rsx.revisions.retention_days') - default 0, meaning KEEP FOREVER,
+    and the cleanup task then does nothing at all. A history is the kind of
+    data whose value shows up years later, so the framework does not decide to
+    throw any of it away; an operator who wants a window sets one.
+
+    Revision_Cleanup_Service::cleanup_revisions is #[Task] #[Exclusive]
+    #[Schedule('daily at 3am')]. It deletes only _transactions rows past the
+    window, in chunks; _revisions goes with them by FK cascade, so there is one
+    statement, no orphans, and no second sweep that could be interrupted
+    between the two halves.
+
+    config('rsx.revisions.dictionary_max_age_days') - default 30. See THE
+    DICTIONARY.
+
+WHAT THIS FEATURE DELIBERATELY DOES NOT DO
+
+  No restore-this-revision.
+
+    There is no "revert to this version" call, and adding one is not a small
+    feature that was left out.
+
+    A revision records WHAT THE USER CHANGED, not what the record WAS. A delete
+    stores an empty document; an update stores only the columns that moved;
+    excluded columns are not stored at all. Reconstructing a record's full
+    state at an instant would mean replaying every revision from the create
+    forward, and the result would still be missing every excluded column.
+
+    Restoring is also not a data problem. Putting a row back the way it was
+    crosses foreign keys that may no longer resolve, soft-deleted rows that may
+    have been reclaimed, child records that were created after the revision,
+    and uniqueness constraints that another row now satisfies. Which of those
+    to honour and which to refuse is an APPLICATION decision, and an
+    application that needs it writes it against its own rules with the history
+    as evidence.
+
+  No automatic activity text.
+
+    The framework never writes "User X updated Client Y". It records fields,
+    actors and endpoints; it does not write sentences.
+
+    A sentence is the application's vocabulary. "Updated" is wrong when the
+    change was an approval, a status is not a field the user thinks of as a
+    field, and the same three column writes are one story in one screen and a
+    different story in another. A framework that guessed would be wrong often
+    and inconsistently, and there would be no way to correct it.
+
+    So the app records its own activity row, and stores
+    Revision::transaction_id() on it:
+
+        $activity = new Activity_Model();
+        $activity->text = 'Approved the proposal';
+        $activity->transaction_id = Revision::transaction_id();
+        $activity->save();
+
+    The activity row says what happened in the application's words; the
+    transaction says exactly which field writes that sentence covered, and
+    Revision::for_transaction($activity->transaction_id) walks them.
+
+EXAMPLES
+
+    Recording an import under one description:
+
+        Revision::describe('Nightly contact import');
+
+        foreach ($rows as $row) {
+            $contact = new Contact_Model();
+            $contact->client_id = $client->id;
+            $contact->email = $row['email'];
+            $contact->save();
+        }
+
+        // ONE transaction, N revisions, revision_count = N.
+
+    Suppressing a recomputation that is not a user action:
+
+        Revision::without(function () use ($client) {
+            $client->open_task_count = $client->tasks()->count();
+            $client->save();
+        });
+
+    Rendering a history screen:
+
+        foreach ($client->revisions_including_children() as $revision) {
+            $transaction = $revision->transaction;
+
+            echo $transaction->actor?->get_printed_name();
+            echo $transaction->source_id__label;
+            echo $transaction->endpoint;
+            echo $revision->operation_id__label;
+
+            foreach ($revision->diff() as $field => [$before, $after]) {
+                echo "{$field}: {$before} -> {$after}";
+            }
+        }
+
+    The template application's worked example is the Revision_History
+    component and its endpoint:
+
+        system/app/RSpade/resource/reference_app/theme/components/view/revision_history/
+        system/app/RSpade/resource/reference_app/app/frontend/revisions/frontend_revisions_controller.php
+
+TROUBLESHOOTING
+
+    Nothing is being recorded
+        The model does not declare $revisions = true, or the write went through
+        ->raw_bulk(), DB::table() or raw SQL, or it ran inside
+        Revision::without().
+
+    A field never appears in a diff
+        It is in $revision_exclude, it is an automatic exclusion (updated_at,
+        the updated_by pair, a `_`-prefixed column), or the write did not
+        actually change it - an update records only what moved.
+
+    A child's writes do not show on the parent's history
+        The child has no #[Revision_Parent], or the foreign key was null at
+        write time (the root pair is written at write time and is never
+        recomputed).
+
+    REVISION-01 fails the manifest build
+        The message names which of the three checks failed. It is fatal because
+        every failure mode it catches is silent at runtime.
+
+    "unknown codec byte N" / "unknown dictionary id N" on read
+        The row was written by a build that knows a format this one does not,
+        or its _revision_dictionaries row is gone. Dictionary rows are
+        append-only and must never be deleted.
+
+    Revisions vanished after a rollback
+        Correct. They are written on the same connection as the writes they
+        describe, so a database transaction that rolls back takes them along.
+
+SEE ALSO
+    php artisan rsx:man model
+    php artisan rsx:man realtime
+    php artisan rsx:man migrations
+    php artisan rsx:man database_schema_architecture
+    php artisan rsx:man tasks

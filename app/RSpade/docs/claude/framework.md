@@ -43,6 +43,7 @@ in this monorepo). Populated during Phase 2 of the knowledge restructure
 @framework/10-ide-tooling.md
 @framework/11-framework-testing.md
 @framework/21-migration-classification.md
+@framework/22-system-columns.md
 @framework/70-monorepo-environment.md
 @framework/80-distribution-and-publishing.md
 @framework/81-git-and-conflicts.md

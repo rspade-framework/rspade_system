@@ -232,6 +232,11 @@ class Task_Worker_Command extends Command
         // checkpoint and is left alone.
         $lock_checkpoint = RsxLocks::_checkpoint();
 
+        // One task is one unit of work for revision history. A worker is a LONG-LIVED
+        // process running unrelated tasks back to back; without this, every revision the
+        // worker ever recorded would be filed under the first task's transaction.
+        \App\RSpade\Core\Revisions\Revision::_reset_request_state('task', $task_row->class . '::' . $task_row->method);
+
         try {
             $class = $task_row->class;
             $method = $task_row->method;

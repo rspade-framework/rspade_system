@@ -481,6 +481,11 @@
             "created_at": "2026-08-27T10:56:09+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_dark_mode_to_login_users_table"
+        },
+        "2026_08_28_122844_create_revisions_tables.php": {
+            "created_at": "2026-08-28T12:28:44+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe create_revisions_tables"
         }
     }
 }

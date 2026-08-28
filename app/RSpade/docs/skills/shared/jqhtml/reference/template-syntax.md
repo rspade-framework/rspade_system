@@ -41,6 +41,8 @@ The component's own class name is always stamped on the root - which is what mak
 
 `content()` renders whatever the caller placed between the opening and closing tags - the default, unnamed slot. **A wrapper component that forgets `content()` silently discards its caller's content.**
 
+**`content()` returns an array, not text.** When the caller supplied content it returns the pair `[instructions, context]` - the caller's markup as compiled output instructions - and the template spreads that into its own output when you write `<%= content() %>` (the only sanctioned way to EMIT it). When the caller supplied nothing it returns `''`. So the value may be assigned to a `const`, emitted later, and tested for presence (`if (_footer_actions)`) to decide whether a wrapper should draw at all - `DataGrid_Abstract` does exactly that for its optional `footer_actions` slot. What it never is, is a string carrying content: `.trim()`, `=== ''` on the populated case, concatenation or your own escaping all operate on an array and throw at render. A component that needs a caller-supplied VALUE takes an argument (`$label`); caller MARKUP is `content()`.
+
 Named slots are a separate channel for components with more than one content region:
 
 ```jqhtml

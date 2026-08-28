@@ -162,6 +162,35 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Revision History
+    |--------------------------------------------------------------------------
+    |
+    | Settings for the revision-history subsystem (models declaring
+    | public static $revisions = true).
+    |
+    | - retention_days: how many days of _transactions rows to keep. Consumed by
+    |   Revision_Cleanup_Service::cleanup_revisions (daily 3am, #[Exclusive]); the
+    |   _revisions FK cascades, so pruning a transaction prunes its revisions.
+    |   0 means KEEP FOREVER - the cleanup task does nothing at all.
+    |
+    | - dictionary_max_age_days: how old the current compression dictionary may get
+    |   before the post-migrate step in Maint_Migrate builds a new one. The dictionary
+    |   is derived from the live schema's column names and the models' enum labels, so
+    |   it drifts as the schema does; rebuilding on a cadence keeps new revisions
+    |   compressing well without ever invalidating old ones (every stored payload names
+    |   the dictionary it was written with, in its prefix byte).
+    |
+    */
+
+    'revisions' => [
+        'retention_days' => 0,
+
+        'dictionary_max_age_days' => 30,
+    ],
+
+
+    /*
+    |--------------------------------------------------------------------------
     | Manifest Modules
     |--------------------------------------------------------------------------
     |
@@ -719,7 +748,7 @@ return [
     'exception_handlers' => [
         \App\RSpade\Core\Exceptions\Cli_Exception_Handler::class,              // Priority 10
         \App\RSpade\Core\Exceptions\Ajax_Exception_Handler::class,             // Priority 20
-        \App\RSpade\Core\Api\Api_Exception_Handler::class,                     // Priority 25
+        \App\RSpade\Core\Exceptions\Api_Exception_Handler::class,        // Priority 25
         \App\RSpade\Core\Debug\Playwright_Exception_Handler::class,            // Priority 30
         \App\RSpade\Core\Providers\Rsx_Dispatch_Bootstrapper_Handler::class,   // Priority 1000
         \App\RSpade\Core\Exceptions\Web_Exception_Handler::class,              // Priority 1100
@@ -1697,6 +1726,10 @@ return [
             'ezyang/htmlpurifier',
             'sokil/php-isocodes',
             'nikic/php-parser',
+            'phpoffice/phpspreadsheet',
+            'league/csv',
+            'brick/money',
+            'endroid/qr-code',
         ],
         'exposed_npm' => [
             'dompurify',

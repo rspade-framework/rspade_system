@@ -209,6 +209,16 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
      `@ABSTRACT-ATTR-01-EXCEPTION`
    - Severity: Critical
 
+9. **RevisionParent_CodeQualityRule** (REVISION-01)
+   - A `#[Revision_Parent]` must be coherent: the declaring model must itself declare
+     `public static $revisions = true`, the annotated method must return a `belongsTo` (a
+     revision has exactly one root), and the parent it names must record revisions too
+   - Every failure mode is silent at runtime - the root pair is simply written wrong, and the
+     only symptom is a history screen quietly missing rows, months later
+   - Cross-file, AST-based (nikic/php-parser); runs at manifest-time; deliberately silent on a
+     `belongsTo` whose target cannot be resolved statically; honors `@REVISION-01-EXCEPTION`
+   - Severity: Critical
+
 ## Configuration
 
 ### Config File (`config/rsx.php`)
@@ -623,6 +633,8 @@ The heaviest of these deserves its own note:
 - **PHP-PARENT-CHAIN-01** (ParentCallChain_CodeQualityRule): Default parent-call chaining. A method override MUST call `parent::<same-method>()` unless the nearest manifest-visible ancestor that declares the method is abstract or marked `#[Replaceable]`. Covers static + instance methods including `__construct` and magic methods. Vendor parents are excluded (the manifest never scans `vendor/`, so overriding a vendor method is not flagged). Cross-file rule (`is_incremental() = false`); AST-based detection (nikic/php-parser), never regex, so a comment/string mention of `parent::method()` cannot spoof it.
 
 - **POLY-01** (MorphStringPattern_CodeQualityRule): a polymorphic relation whose `*_type` discriminator is not declared as a type ref. RSpade stores the discriminator as a BIGINT type-ref id; with the declaration in place, STOCK Eloquent morph relations work over it unchanged (`Type_Ref_Registry::register_morph_map()` registers each integer id as a morph-map alias next to the class name). Without it you get Laravel's VARCHAR class-name morph, which half-works - it reads plausibly and silently matches nothing the moment anything else in the framework treats the column as a type ref, which is why it is fatal rather than advisory. Cross-file (`is_incremental() = false`), AST-based, and deliberately silent on any call whose owning model cannot be resolved statically. Migrations are NOT covered (the manifest does not scan them, and column definitions live inside raw SQL strings), so a VARCHAR `*_type` column is caught at the model that relates over it. Full contract: `rsx:man polymorphic`.
+
+- **REVISION-01** (RevisionParent_CodeQualityRule): an incoherent `#[Revision_Parent]`. The attribute says "a revision on this child belongs to that parent's history", and the root pair it produces is written into every `_revisions` row AT WRITE TIME - so an incoherent declaration is never an error, it is a history that is quietly missing rows long after the change that caused it. Three checks: the child must declare `$revisions = true` (otherwise the attribute is inert and its author believes something that is not happening), the method must return a `belongsTo` (only a belongsTo names exactly one parent row, and a revision has exactly one root), and the parent must declare `$revisions = true` too (otherwise the child's writes are filed under a record whose own writes are never recorded - a half history). Cross-file (`is_incremental() = false`), AST-based, and deliberately silent on a target it cannot resolve statically. Full contract: `rsx:man revisions`.
 
 - **SESSION-ID-01** (SessionIdNullCheck_CodeQualityRule): a null-ish/zero-ish TEST on a `Session::get_session_id()` / `Portal_Session::get_session_id()` result. Both calls CREATE a session and are declared `: int`, so the test is unreachable AND the session it was meant to prevent has already been created — a defect that is completely invisible at runtime, which is why it is fatal at build time rather than advisory. Per-file (`is_incremental() = true`), AST-based (nikic/php-parser), with a single-assignment variable-dataflow model deliberately kept conservative. The two Session facade files and `/CodeQuality/` meta-code are excluded; the rule honors `@SESSION-ID-01-EXCEPTION` itself (file-level or on/above the line), since the manifest-time driver does not apply the checker's generic exception handling.
 

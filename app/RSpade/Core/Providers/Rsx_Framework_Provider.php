@@ -34,7 +34,8 @@ use App\RSpade\Core\Manifest\Manifest;
  * EXECUTION ORDER:
  * 1. Rsx_Preboot_Service::init() (debug/cache setup - runs first in AppServiceProvider::register())
  * 2. Rsx_Framework_Provider::register() (this class - registers services)
- * 3. Rsx_Framework_Provider::boot() (this class - core framework initialization)
+ * 3. Rsx_Framework_Provider::boot() (this class - required-PHP-extension check, then
+ *    core framework initialization)
  *
  * WHAT IT DOES:
  * 1. register() method (line ~51):
@@ -182,6 +183,19 @@ class Rsx_Framework_Provider extends ServiceProvider
      */
     public function boot()
     {
+        // Fail loud when the PHP runtime this framework was written against is not the
+        // one underneath it. ONE list, in Rsx_Php_Requirements, shared with the
+        // rsx:health "PHP" row; extension_loaded() over it costs microseconds and buys
+        // an invariant every line below may assume. rsx:health and rsx:heal are exempt
+        // (they are how a missing extension gets diagnosed); nothing else is.
+        //
+        // Here rather than in Rsx_Preboot_Service::init() for the same reason the
+        // APP_URL check below sits here: this runs after HandleExceptions has
+        // bootstrapped AND after the RSX autoloader is available, so the throw renders
+        // as an error page. Raised from AppServiceProvider::register() it produced a
+        // blank fatal - the configured exception handler could not be resolved yet.
+        \App\RSpade\Core\Health\Rsx_Php_Requirements::enforce();
+
         // Fail loud on an APP_URL whose scheme this mode does not accept (https always;
         // http in development only), or a missing one. Deferred to here from the
         // afterLoadingEnvironment substitution phase so the error is readable: this

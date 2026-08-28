@@ -659,16 +659,13 @@ class Db_Dump_Cache_Command extends Command
      *
      * NOT a timeout and not a deadline - it is the operator's own Ctrl-C arriving as
      * something this command can act on instead of a hard kill mid-restore.
+     *
+     * pcntl is unconditional here: it is declared in
+     * Rsx_Php_Requirements::REQUIRED_CLI_EXTENSIONS and the boot check enforces that
+     * tier under the CLI SAPI, so a PHP without it never reaches this command.
      */
     protected function __install_signal_handlers(): void
     {
-        if (!function_exists('pcntl_async_signals')) {
-            $this->warn('[WARNING] pcntl is not available: Ctrl-C will not run the recovery path.');
-            $this->warn('          The backups are still deleted last, so a re-run recovers.');
-
-            return;
-        }
-
         pcntl_async_signals(true);
 
         $handler = static function (int $signal): void {

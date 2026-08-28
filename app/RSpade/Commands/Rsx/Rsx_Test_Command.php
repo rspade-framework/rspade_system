@@ -280,6 +280,10 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             $this->newLine();
         }
 
+        // The run is over: drop what it cached under the test suffix so the next run
+        // starts from the database, not from a previous run's answers.
+        \App\RSpade\Core\Cache\RsxCache::clear();
+
         // Summary
         $this->info('Test Summary');
         $this->info('============');
@@ -446,6 +450,13 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         config(['database.default' => 'test']);
         DB::purge('test');
         DB::setDefaultConnection('test');
+
+        // The cache and every database-derived process static were filled from the
+        // development connection during boot. A cached answer is cheap to lose and
+        // expensive to trust across a connection swap, so both are dropped here and the
+        // run rebuilds them from the test database on first use.
+        \App\RSpade\Core\Cache\RsxCache::clear();
+        \App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry::_reset_cached_state();
 
         $this->newLine();
 

@@ -12,6 +12,7 @@ use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
 use App\RSpade\Core\Realtime\Realtime_Touch_Registry;
+use App\RSpade\Core\Revisions\Revision_Parent_Registry;
 
 /**
  * Custom Eloquent query builder that prevents eager loading and unsafe operations
@@ -886,9 +887,11 @@ class RestrictedEloquentBuilder extends Builder
     /**
      * Whether this builder's model has a side-effect surface that per-record processing must
      * fire: a realtime surface ($realtime, a #[Realtime_Touch] relationship, or an overridden
-     * realtime_touch()) OR a lifecycle surface (an overridden after_create/update/delete hook).
-     * A model with neither takes the raw single-statement fast path (today's behavior, no
-     * regression).
+     * realtime_touch()), a lifecycle surface (an overridden after_create/update/delete hook),
+     * or revision recording ($revisions - a bulk update records one revision per affected
+     * record, and only the per-record path can produce a per-record diff).
+     * A model with none of them takes the raw single-statement fast path (today's behavior,
+     * no regression).
      */
     protected function _has_side_effect_surface(): bool
     {
@@ -900,7 +903,8 @@ class RestrictedEloquentBuilder extends Builder
         $fqcn = get_class($model);
 
         return Realtime_Touch_Registry::has_realtime_surface($fqcn)
-            || Model_Lifecycle_Registry::has_lifecycle_surface($fqcn);
+            || Model_Lifecycle_Registry::has_lifecycle_surface($fqcn)
+            || Revision_Parent_Registry::records_revisions($fqcn);
     }
 
     /**

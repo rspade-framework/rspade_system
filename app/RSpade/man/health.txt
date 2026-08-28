@@ -114,8 +114,8 @@ FRAMEWORK INVENTORY
         Lock Server              rsx-lockd listening (INFO under maintenance)
         MySQL Connectivity       database reachable
         Node.js                  node binary present (relay, tooling)
-        PHP                      version + required extensions (zip, gd, imagick,
-                                 redis, pdo_mysql)
+        PHP                      version + every required extension (see PHP
+                                 EXTENSION CONTRACT below)
         Pending Migrations       schema up to date
         Playwright / Chromium    Playwright package + browser installed (rsx:debug)
         Realtime Relay           WebSocket relay reachable when enabled
@@ -128,6 +128,92 @@ FRAMEWORK INVENTORY
         poppler-utils (pdftotext) PDF text-extraction binary present
 
     An app's own #[Health_Check] methods appear in the same table, ordered by label.
+
+PHP EXTENSION CONTRACT
+    ONE DECLARATION. App\RSpade\Core\Health\Rsx_Php_Requirements holds
+    REQUIRED_EXTENSIONS, REQUIRED_CLI_EXTENSIONS and MIN_PHP_VERSION, and nothing
+    else declares any of them. Two consumers read it:
+
+        Environment_Health_Checks::php_environment()   the DIAGNOSTIC - one OK
+            summary row per tier ("PHP Extensions", "PHP CLI Extensions") listing
+            what is loaded, plus one FAIL row per missing extension carrying its
+            own remediation.
+
+        Rsx_Php_Requirements::enforce()                the GUARD - the first
+            statement of Rsx_Framework_Provider::boot(). Runs on EVERY web request
+            and EVERY artisan invocation.
+
+    TWO TIERS.
+
+        REQUIRED_EXTENSIONS      the RUNTIME tier - every SAPI, always.
+        REQUIRED_CLI_EXTENSIONS  the CLI tier - enforced only when PHP_SAPI is
+                                 'cli'. Today: pcntl.
+
+    enforce() reads PHP_SAPI and delegates to enforce_for_sapi(); extensions_for_sapi()
+    is the composition, and both take the SAPI as a parameter so a caller can ask
+    what the check would do elsewhere without pretending to be there.
+
+    WHY pcntl IS CLI-ONLY. Debian/sury compile it into php-cli and not into
+    php-fpm, because pcntl_fork() in an fpm worker duplicates the pool's sockets
+    and database connections and corrupts them. That is correct packaging, not an
+    omission to work around - so a flat single list would have to either refuse
+    every web request or leave the CLI code that uses pcntl unguaranteed. The tier
+    split refuses neither. Db_Dump_Cache_Command's SIGINT/SIGTERM handlers
+    therefore call pcntl_async_signals() unconditionally: the boot check has
+    already guaranteed it by the time any command runs.
+
+    THE BOOT CHECK. extension_loaded() over the list; microseconds. On any missing
+    extension it THROWS, naming every missing one. There is no degraded mode: the
+    framework has no fallback path for a missing extension anywhere (no
+    GD-instead-of-Imagick, no file-cache-instead-of-Redis), so an environment
+    missing one is misconfigured and says so at the entrypoint rather than three
+    layers into whichever feature touches it first.
+
+    Placement is deliberate and was measured: Rsx_Framework_Provider::boot() is the
+    earliest point shared by the web entrypoint and artisan at which a throw renders
+    READABLY, and it precedes every framework subsystem (manifest, autoloader, Main
+    init), so nothing gets a chance to fail in its own idiom first. Raised any
+    earlier - from Rsx_Preboot_Service::init() / AppServiceProvider::register() - the
+    web response is a blank fatal instead of an error page. It sits beside the
+    deferred APP_URL scheme enforcement, which is here for the same reason (see
+    bootstrap/app.php).
+
+    THE EXEMPTION. rsx:health and rsx:heal - and nothing else - run with the check
+    stood down. They are how a missing extension is diagnosed and repaired, and a
+    guard standing between the operator and the lever that fixes the thing it is
+    complaining about is a deadlock, not a guard. The exemption is CLI-only and
+    reads argv[1], the same shape system/artisan's pre-boot maintenance
+    interception uses. A web request is never exempt.
+
+    REMEDIATION, TWO BRANCHES. When /.rspade_container is present (the marker the
+    framework's own Dockerfile writes) the remediation says the RSpade development
+    container image may need to be REGENERATED to install the additional
+    dependency, and names both the versioned apt package (php<major>.<minor>-<ext>)
+    and system/app/RSpade/resource/docker/Dockerfile. Outside the container it is
+    the ordinary "install/enable the php-<ext> extension". The boot throw carries
+    the same two branches.
+
+    ADDING AN EXTENSION is a promise about every environment this framework runs
+    in. It ships with the apt package added to that Dockerfile and a note here.
+    The framework image installs php-zstd as of 2026-08-28: zstd is declared ahead
+    of its first call site because the revision-history feature is built on it, so
+    a box without it fails at boot rather than at the first revision write.
+
+    TWO DECLARED EXTENSIONS HAVE NO DOCKERFILE LINE, and must never be given one:
+    sodium is compiled into sury's PHP binary and publishes no package (naming one
+    fails the image build the same way php-opcache does), and pcntl arrives inside
+    php<version>-cli.
+
+    ldap, imap and sodium are declared as the RSpade STANDARD LIBRARY rather than
+    from a framework call site - a downstream app is told it may reach for
+    directory authentication, mailbox reading and libsodium without first asking
+    what the box has. See `rsx:man standard_library`.
+
+    WHAT IS NOT DECLARED. An extension is declared because framework code calls
+    it or because it is part of the standard library promised to applications
+    (intl, bcmath, soap are the latter). exif, calendar, mysqli and sockets are
+    installed by the image but promised by nothing, so they are absent from the
+    list on purpose.
 
 WEB EXPOSURE CHECK
     Security_Health_Checks::web_exposure() actively PROVES that sensitive files

@@ -46,13 +46,11 @@ $record->get_deleted_by_author();   // same (soft-deleting tables only)
 $data['get_created_by_author'] = $client->get_created_by_author();
 ```
 
-Client side, the framework component renders it - hyperlinked when `url` is non-null, plain text when it is null. Content between the tags is the null-author placeholder (default "Unknown"):
+Client side, the framework component renders it - hyperlinked when `url` is non-null, plain text when it is null, and **nothing at all for a null author** (it takes no content and has no placeholder):
 
 ```jqhtml
 <span>Created <%= Rsx_Time.format_date(_client.created_at) %>
       by <Record_Author $author=_client.get_created_by_author /></span>
-
-<Record_Author $author=_row.get_created_by_author>System</Record_Author>
 ```
 
 **Why it is explicit and not automatic.** Resolving an author costs a query and discloses a name, so it is asked for rather than riding along on every `toArray()`. And there is deliberately **no "who wrote record X" endpoint** - that would be a new identity-lookup surface over arbitrary records, gated by nothing the record's own `fetch()` already decided.

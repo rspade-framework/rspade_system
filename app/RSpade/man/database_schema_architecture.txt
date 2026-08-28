@@ -32,6 +32,33 @@ RSpade uses table name prefixes to distinguish between different layers of the s
    - MUST use ORM models (DB::table() prohibited)
    - Not shipped with framework (starter template only)
 
+COLUMN NAMING CONVENTION (the same prefix, one level down)
+----------------------------------------------------------
+A single leading underscore on a COLUMN means what it means on a table: this is
+framework SYSTEM state, not application data.
+
+  _columnname
+    - Owned by a framework subsystem, on a table the application otherwise owns
+    - Stripped from every payload by Rsx_Model_Abstract::toArray(), so the
+      client never receives it
+    - Skipped in the generated JS model stub's field_length() map (the client
+      cannot hold the column, so it can never need its length)
+    - Excluded from every revision diff (rsx:man revisions)
+
+  __columnname
+    NOT a system column. Double underscore is the framework KEY prefix that
+    toArray() itself adds - __MODEL, __details - and is the payload's contract
+    with the JavaScript ORM. Nothing strips it.
+
+  columnname
+    Ordinary application/core data. Reaches the browser, appears in diffs.
+
+Consequence for both directions: when a framework feature needs per-record
+state on an application table it names the column `_foo` and needs no
+exclusion list, no config and no cooperation from the app; and an
+application-facing column must NEVER be given a leading underscore, because it
+will silently never reach the browser.
+
 DATABASE ACCESS RULES
 ----------------------
 The underscore prefix has enforcement implications:

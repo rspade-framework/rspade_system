@@ -17,6 +17,9 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Realtime\Realtime_Emissions;
 use App\RSpade\Core\Realtime\Realtime_Touch_Registry;
+use App\RSpade\Core\Revisions\Revision;
+use App\RSpade\Core\Revisions\Revision_Model;
+use App\RSpade\Core\Revisions\Revision_Parent_Registry;
 
 /**
  * Abstract base model for all RSpade models
@@ -95,6 +98,33 @@ abstract class Rsx_Model_Abstract extends Model
      * @var bool
      */
     public static $realtime_silent = false;
+
+    /**
+     * Revision-history opt-in. When true, every committed save()/delete() through the model
+     * layer records a `{field: [before, after]}` document on the `_revisions` table, grouped
+     * under the current Revision transaction. Off by default, and off costs one static read.
+     *
+     * Deliberately shaped exactly like $realtime: a model declares what it wants recorded,
+     * and nothing else in the application has to know.
+     *
+     * @var bool
+     */
+    public static $revisions = false;
+
+    /**
+     * Columns this model never records a revision for, on top of the automatic exclusions
+     * (every `_`-prefixed system column, updated_at, and the updated_by pair).
+     *
+     * The list is for columns that CHANGE without the user having changed anything -
+     * denormalized counters, last-seen timestamps, cached aggregates. Recording them turns
+     * a history into noise, and a diff of "what the user changed" is the whole product.
+     *
+     * NOT a security control: a column excluded here is still stored in the record. To keep
+     * a value out of the database, do not put it there.
+     *
+     * @var array<int, string>
+     */
+    protected static $revision_exclude = [];
 
     /**
      * Enum definitions for this model
@@ -344,6 +374,18 @@ abstract class Rsx_Model_Abstract extends Model
         // Remove fields that should never be exported to JavaScript
         if (property_exists($this, 'neverExport') && is_array($this->neverExport)) {
             foreach ($this->neverExport as $field) {
+                unset($array[$field]);
+            }
+        }
+
+        // A single leading underscore marks a SYSTEM column: framework bookkeeping the
+        // client has no business seeing and no way to interpret. Stripping it here is what
+        // makes the prefix a convention a model can rely on rather than a naming habit.
+        //
+        // DOUBLE underscore is untouched - `__MODEL` and `__details` are framework keys this
+        // very method adds, and they are the payload's contract with the JS ORM.
+        foreach (array_keys($array) as $field) {
+            if (is_string($field) && str_starts_with($field, '_') && !str_starts_with($field, '__')) {
                 unset($array[$field]);
             }
         }
@@ -1207,6 +1249,12 @@ EXAMPLE;
         // Stamp authorship BEFORE the write so the columns ride the same INSERT/UPDATE.
         $this->__apply_audit_stamp($was_existing);
 
+        // Snapshot the BEFORE values while they still exist. parent::save() ends with
+        // syncOriginal(), so once the write returns the "original" IS the new row and the
+        // before half of every pair is gone. Null when this model records no revisions,
+        // which is one static read on the hot path.
+        $revision_original = $this->_revision_original_snapshot();
+
         // Guard the DB write: any RestrictedEloquentBuilder::update() reached from inside
         // parent::save() (Eloquent's performUpdate) is THIS record's own single-row write and
         // must run raw — never re-enter the user-bulk fetch-then-iterate path (that would
@@ -1219,7 +1267,7 @@ EXAMPLE;
         }
 
         if ($result) {
-            $this->_dispatch_write_effects_on_save($was_existing);
+            $this->_dispatch_write_effects_on_save($was_existing, $revision_original);
         }
 
         return $result;
@@ -1616,6 +1664,54 @@ EXAMPLE;
     }
 
     /**
+     * Resolve the actor for something that is NOT a record: a unit of work, a log line - a
+     * revision transaction. Returns ['type' => simple class name, 'id' => int] or null when
+     * nobody identifiable is acting.
+     *
+     * Same matrix as __resolve_audit_actor(), minus the one question that needs a record:
+     * "do the sites match". A transaction is not a row in a tenant's table, so there is no
+     * site to compare against - the staff branch therefore names User_Model whenever the
+     * session has a site-scoped user and Login_User_Model otherwise, which is exactly what
+     * the record version does once the record's site is out of the picture.
+     *
+     * Public because it is the seam Revision::transaction_id() resolves its actor through;
+     * the record version stays private, because a caller holding a record must use the
+     * matrix that considers it.
+     *
+     * @return array{type: string, id: int}|null
+     */
+    public static function _resolve_context_actor(): ?array
+    {
+        if (\App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()) {
+            if (!\App\RSpade\Core\Portal\Portal_Session::is_logged_in()) {
+                return null;
+            }
+
+            $portal_user_id = \App\RSpade\Core\Portal\Portal_Session::get_portal_user_id();
+
+            if (empty($portal_user_id)) {
+                return null;
+            }
+
+            return ['type' => self::AUDIT_ACTOR_MODELS['portal'], 'id' => (int) $portal_user_id];
+        }
+
+        $login_user_id = \App\RSpade\Core\Session\Session::get_login_user_id();
+
+        if (empty($login_user_id)) {
+            return null;
+        }
+
+        $user_id = \App\RSpade\Core\Session\Session::get_user_id();
+
+        if (!empty($user_id)) {
+            return ['type' => self::AUDIT_ACTOR_MODELS['staff_site'], 'id' => (int) $user_id];
+        }
+
+        return ['type' => self::AUDIT_ACTOR_MODELS['cross_site'], 'id' => (int) $login_user_id];
+    }
+
+    /**
      * Whether this record belongs to the actor's site, which is what selects the site-scoped
      * actor model over the cross-site one.
      *
@@ -1846,8 +1942,11 @@ EXAMPLE;
      * the app after_create/after_update hooks. Both are individually gated and no-op for a
      * model that opts into neither.
      */
-    private function _dispatch_write_effects_on_save(bool $was_existing): void
+    private function _dispatch_write_effects_on_save(bool $was_existing, ?array $revision_original = null): void
     {
+        // Revision first: it describes THIS write, and an after_* hook that writes another
+        // revisioned model must land after it in the transaction's sequence.
+        $this->_record_revision_on_save($was_existing, $revision_original);
         $this->_realtime_emit_on_write();
         $this->_lifecycle_dispatch_on_save($was_existing);
     }
@@ -1858,8 +1957,251 @@ EXAMPLE;
      */
     private function _dispatch_write_effects_on_delete(): void
     {
+        $this->_record_revision_on_delete();
         $this->_realtime_emit_on_write();
         $this->_lifecycle_dispatch_on_delete();
+    }
+
+    // =========================================================================
+    // REVISION HISTORY
+    // =========================================================================
+
+    /**
+     * Every revision recorded for THIS record, newest first.
+     *
+     * Marked #[Replaceable]: a model whose `revisions` name means something else of its own
+     * replaces it outright (Transaction_Model does exactly that, with the FK relation to the
+     * revisions it groups). No return type is declared for the same reason - an overriding
+     * relation method returns a relation object, and a declared return type here would make
+     * that override a fatal signature clash.
+     *
+     * @return \App\RSpade\Core\Database\Rsx_Result_Set
+     */
+    #[Replaceable]
+    public function revisions()
+    {
+        return Revision_Model::where('record_type', class_basename(static::class))
+            ->where('record_id', (int) $this->getKey())
+            ->orderBy('id', 'desc')
+            ->result_set();
+    }
+
+    /**
+     * Every revision recorded for this record AND for every record that declares it as its
+     * #[Revision_Parent], newest first.
+     *
+     * This is what a history screen wants: "everything that happened to this client",
+     * including the writes that landed on its contacts. It is ONE indexed query on the root
+     * pair rather than a union over every child table, which is the entire reason the root
+     * pair is stored at write time instead of being resolved at read time.
+     *
+     * @return \App\RSpade\Core\Database\Rsx_Result_Set
+     */
+    #[Replaceable]
+    public function revisions_including_children()
+    {
+        return Revision_Model::where('root_type', class_basename(static::class))
+            ->where('root_id', (int) $this->getKey())
+            ->orderBy('id', 'desc')
+            ->result_set();
+    }
+
+    /**
+     * The raw attribute values as they stood BEFORE this write, or null when this model
+     * records nothing (the fast path: one static read and a suppression check).
+     *
+     * @return array<string, mixed>|null
+     */
+    private function _revision_original_snapshot(): ?array
+    {
+        if (!static::$revisions || Revision::is_suppressed()) {
+            return null;
+        }
+
+        return $this->getRawOriginal();
+    }
+
+    /**
+     * Record the revision for a committed save().
+     *
+     * CREATE records every non-null column as [null, value] - a created record's history
+     * must be readable on its own, without inferring the starting state from the schema.
+     * UPDATE records only the columns that actually changed; an update that changed nothing
+     * wrote nothing and records nothing. A restore is an UPDATE whose deleted_at went back
+     * to null, and is recorded as its own operation so a history can name it.
+     *
+     * @param array<string, mixed>|null $original The pre-write raw attributes, or null when
+     *                                            recording was off before the write.
+     */
+    private function _record_revision_on_save(bool $was_existing, ?array $original): void
+    {
+        if ($original === null || Revision::is_suppressed()) {
+            return;
+        }
+
+        $excluded = $this->_revision_excluded_columns();
+
+        if (!$was_existing) {
+            $diff = [];
+
+            foreach ($this->getAttributes() as $column => $value) {
+                if ($value === null || isset($excluded[$column]) || $this->_is_system_column($column)) {
+                    continue;
+                }
+
+                $diff[$column] = [null, $this->_revision_value($value)];
+            }
+
+            Revision::_record($this, Revision_Model::OPERATION_CREATE, $diff, $this->_revision_root());
+
+            return;
+        }
+
+        $changes = $this->getChanges();
+
+        if (empty($changes)) {
+            return;
+        }
+
+        $diff = [];
+
+        foreach ($changes as $column => $value) {
+            if (isset($excluded[$column]) || $this->_is_system_column($column)) {
+                continue;
+            }
+
+            $diff[$column] = [
+                $this->_revision_value($original[$column] ?? null),
+                $this->_revision_value($value),
+            ];
+        }
+
+        // Everything that changed was excluded - the record moved, but nothing a history
+        // would show did.
+        if (empty($diff)) {
+            return;
+        }
+
+        $operation = $this->_revision_is_undelete($original, $changes)
+            ? Revision_Model::OPERATION_UNDELETE
+            : Revision_Model::OPERATION_UPDATE;
+
+        Revision::_record($this, $operation, $diff, $this->_revision_root());
+    }
+
+    /**
+     * Record the revision for a committed delete(), soft or hard.
+     *
+     * The document is EMPTY, deliberately. A delete does not change fields, it removes the
+     * record; what its values were is already in the revisions that put them there. (This is
+     * also why there is no restore-this-revision feature: the history says what the user
+     * changed, not what the record was at each instant.)
+     */
+    private function _record_revision_on_delete(): void
+    {
+        if (!static::$revisions || Revision::is_suppressed()) {
+            return;
+        }
+
+        Revision::_record($this, Revision_Model::OPERATION_DELETE, [], $this->_revision_root());
+    }
+
+    /**
+     * The root pair a revision on this record is filed under: the #[Revision_Parent]
+     * target's pair when one is declared and set, otherwise this record's own.
+     *
+     * @return array{type: string, id: int}
+     */
+    private function _revision_root(): array
+    {
+        foreach (Revision_Parent_Registry::parent_metadata(static::class) as $entry) {
+            $foreign_key = $this->getAttribute($entry['fk_column']);
+
+            if ($foreign_key === null) {
+                continue;
+            }
+
+            return ['type' => $entry['parent_class'], 'id' => (int) $foreign_key];
+        }
+
+        return ['type' => class_basename(static::class), 'id' => (int) $this->getKey()];
+    }
+
+    /**
+     * The columns this model never records, as a lookup.
+     *
+     * updated_at and the updated_by pair are excluded ALWAYS: they change on every single
+     * write, so recording them would put two entries nobody reads in front of the one that
+     * matters. created_at and the created_by pair are NOT excluded - they appear exactly
+     * once, on the create, where they are the record's provenance.
+     *
+     * @return array<string, bool>
+     */
+    private function _revision_excluded_columns(): array
+    {
+        $excluded = [
+            'updated_at' => true,
+            'updated_by_id' => true,
+            'updated_by_type' => true,
+        ];
+
+        foreach (static::$revision_exclude as $column) {
+            $excluded[$column] = true;
+        }
+
+        return $excluded;
+    }
+
+    /**
+     * Whether a column is a framework SYSTEM column - a single leading underscore. Excluded
+     * from every diff for the same reason toArray() strips it: it is bookkeeping, not data
+     * anybody changed.
+     */
+    private function _is_system_column(string $column): bool
+    {
+        return str_starts_with($column, '_');
+    }
+
+    /**
+     * Whether an update restored a soft-deleted record: deleted_at moved, and it moved to
+     * null.
+     *
+     * @param array<string, mixed> $original
+     * @param array<string, mixed> $changes
+     */
+    private function _revision_is_undelete(array $original, array $changes): bool
+    {
+        if (!method_exists($this, 'getDeletedAtColumn')) {
+            return false;
+        }
+
+        $column = $this->getDeletedAtColumn();
+
+        if (!array_key_exists($column, $changes)) {
+            return false;
+        }
+
+        return $changes[$column] === null && ($original[$column] ?? null) !== null;
+    }
+
+    /**
+     * One stored value, reduced to something JSON can carry.
+     *
+     * Raw attributes are already the values that went to the database - scalars and strings
+     * - so this is a floor, not a conversion: anything else (an Expression, a value object a
+     * custom cast produced) is encoded rather than allowed to make the whole document
+     * unserializable.
+     *
+     * @param mixed $value
+     * @return mixed
+     */
+    private function _revision_value($value)
+    {
+        if ($value === null || is_scalar($value)) {
+            return $value;
+        }
+
+        return json_encode($value);
     }
 
     /**

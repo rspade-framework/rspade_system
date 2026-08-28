@@ -172,6 +172,11 @@ abstract class Rsx_Test_Abstract
             if (strpos($method->getName(), 'test_') === 0) {
                 static::$current_test = $method->getName();
 
+                // One test is one unit of work for revision history. The runner is a single
+                // process for the whole suite, so without this every revision any test
+                // recorded would be filed under the first one's transaction.
+                \App\RSpade\Core\Revisions\Revision::_reset_request_state('test', static::class . '::' . $method->getName());
+
                 $use_transaction = static::$use_database_transactions;
 
                 if ($use_transaction) {
@@ -229,6 +234,10 @@ abstract class Rsx_Test_Abstract
                     // Clear the Turnstile per-request validation latch so a controller
                     // call in one test cannot satisfy the completeness guard for the next.
                     Rsx_Turnstile::_reset_request_state();
+
+                    // Clear every revision static, suppression included: a test that threw
+                    // inside Revision::without() must not leave recording off for the next.
+                    \App\RSpade\Core\Revisions\Revision::_testing_reset();
                 }
             }
         }
