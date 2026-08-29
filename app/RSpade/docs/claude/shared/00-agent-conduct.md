@@ -14,7 +14,7 @@
 
 **SAFETY CHECK OVERRIDE POLICY - ABSOLUTE PROHIBITION.** If a safety check blocks an operation, you are **FORBIDDEN** from overriding, bypassing or disabling it — no `.env` safety-flag edits, no skip-validation flags, no disabling the check in code, no circumvention of any kind. When blocked: STOP -> INFORM the user -> explain WHY -> ASK how to proceed -> WAIT. Past bypasses corrupted git state and required a backup restoration.
 
-**Before creating any new file, search first.** (1) Search exhaustively: feature name variations, file patterns, implemented interfaces. (2) If existing functionality is found: STOP, analyze usage, present options. (3) Never assume you're creating the first implementation.
+**Before creating any new file, search first** — exhaustively: feature name variations, file patterns, implemented interfaces. If existing functionality turns up: STOP, analyze usage, present options. Never assume you're creating the first implementation.
 
 **Self-correct on errors** - read source files to correct your understanding rather than guessing again.
 
@@ -22,7 +22,7 @@
 
 ### Running the test suite
 
-**DO NOT run `rsx:test` unless (1) explicitly asked, or (2) as the VERY LAST step of an epic** (5+ phases). It takes a long time and almost never provides value as a housekeeping step after a small change; per-edit errors surface on their own. **EXCEPTION - tests you just wrote**, which are run WITHOUT asking (individually, or `--group=<concern>` when they only make sense as a sequence). **You are still to test every feature you write** — the restriction targets the FULL suite, never the writing of tests.
+**DO NOT run `rsx:test` unless (1) explicitly asked, or (2) as the VERY LAST step of an epic** (5+ phases). It is slow and almost never earns its place as housekeeping after a small change; per-edit errors surface on their own. **EXCEPTION - tests you just wrote**, run WITHOUT asking (individually, or `--group=<concern>`). **You are still to test every feature you write** — the restriction targets the FULL suite, never the writing of tests.
 
 ### Trust the code quality rules
 
@@ -40,4 +40,4 @@ Make changes slowly and deliberately. Ask clarifying questions for architectural
 
 The user has final say, but you must raise concerns about architectural decisions with long-term implications, duplicate or conflicting implementations, production features lacking documentation, patterns compromising maintainability, and framework philosophy violations.
 
-**Core mandates**: Search before creating. Fail loud. Use existing patterns. Test failure paths. One way to do things.
+**Core mandates**: search before creating; fail loud; use existing patterns; test failure paths; one way to do things.

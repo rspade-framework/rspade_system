@@ -37,7 +37,6 @@ A framework dependency is INTERNAL by default: downstream `rsx:composer require 
         'phpoffice/phpspreadsheet',
         'league/csv',
         'brick/money',
-        'endroid/qr-code',
     ],
     'exposed_npm' => [
         'dompurify',

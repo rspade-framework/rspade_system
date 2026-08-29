@@ -47,7 +47,7 @@ use App\RSpade\Core\Rsx;
  * follows is the reason the packagers took the decision for us. So pcntl is genuinely
  * unavailable to the web tier on a CORRECTLY built image, and a single flat list would
  * have to choose between refusing every web request and letting the CLI commands that
- * do use it (Db_Dump_Cache_Command's SIGINT/SIGTERM handlers) go unguaranteed. The tier
+ * do use it (Db_Rebuild_Provision_Cache_Snapshot_Command's SIGINT/SIGTERM handlers) go unguaranteed. The tier
  * split refuses neither: the web tier promises what the web tier can deliver, the CLI
  * tier promises what CLI code may assume, and both are declared here.
  *
@@ -146,7 +146,7 @@ class Rsx_Php_Requirements
      * corrupts them. That is not a packaging accident to work around - it is the right
      * decision, and it makes pcntl a CLI fact rather than a runtime fact.
      *
-     * Declaring it here is what lets CLI code stop asking. Db_Dump_Cache_Command
+     * Declaring it here is what lets CLI code stop asking. Db_Rebuild_Provision_Cache_Snapshot_Command
      * installs SIGINT/SIGTERM handlers so an operator's Ctrl-C during a restore runs the
      * recovery path instead of leaving a half-restored datadir; it used to check
      * function_exists('pcntl_async_signals') and warn that recovery was unavailable.

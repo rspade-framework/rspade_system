@@ -248,6 +248,12 @@ Violations show clear error messages with remediation advice.
 
 ---
 
+## The Fresh-Database Schema Cache
+
+**A database with NO TABLES AT ALL restores a shipped snapshot before it migrates.** When `rsx/resource/db/schema_cache.sql.gz` exists, `migrate` streams it in (plus `uploads_cache.tar.gz` into the blob store) and then **continues with the ordinary run**. It is a PRE-MIGRATE step, never a replacement: migrations newer than the cache apply on top exactly as they always would.
+
+**A stale cache is therefore never a bug**, and it is never yours to refresh on your own initiative. `php artisan rsx:db:dump_cache` rebuilds it, and doing so **takes the app down, wipes and restores the developer's own database and blob store, and rewrites roughly half a megabyte of committed binary**. It is a development-only command that runs every few months, when the operator asks for it by name.
+
 ## Troubleshooting
 
 | Error | Solution |

@@ -106,7 +106,7 @@ the command string, where `ps` shows them to every user on the box.
 
 ## THE MIGRATION SCHEMA CACHE IS NEVER REGENERATED ON DEMAND
 
-`php artisan rsx:db:dump_cache` rebuilds `rsx/resource/db/schema_cache.sql.gz` and
+`php artisan rsx:db:rebuild_provision_cache_snapshot` rebuilds `rsx/resource/db/schema_cache.sql.gz` and
 `uploads_cache.tar.gz` - the artifacts a fresh install restores instead of replaying every
 migration (`rsx:man migrations`, THE SCHEMA CACHE).
 

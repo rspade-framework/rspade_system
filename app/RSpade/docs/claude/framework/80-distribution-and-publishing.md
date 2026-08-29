@@ -4,7 +4,7 @@ downstream operator contract lives in the app framework-updates fragment. -->
 
 ## DISTRIBUTION & PUBLISHING
 
-**`bin/publish` packages for production — NOT for testing.** It publishes the `system/` tree to `rspade_system` (one commit = one release) and wires it into `rspade_project` as a git SUBMODULE. **Byte fidelity is a release requirement** — the shipped `.gitattributes` sets `* -text`, so a downstream checkout materializes exactly the bytes the monorepo committed; if git normalized line endings, every CRLF-bearing vendored file (node_modules ships them) would read as modified on every pull, churn that is not a change.
+**`bin/publish` packages for production — NOT for testing.** It publishes the `system/` tree to `rspade_system` (one commit = one release) and wires it into `rspade_project` as a git SUBMODULE. **Byte fidelity is a release requirement**: the shipped `.gitattributes` sets `* -text`, so a downstream checkout materializes exactly the bytes the monorepo committed.
 
 **We AUTHOR the consumer.** Downstream, `system/` is a git submodule moved only by `rsx:framework:pull` — every rule that tree obeys is a rule written here.
 
@@ -16,6 +16,6 @@ downstream operator contract lives in the app framework-updates fragment. -->
 
 **The pull commits the submodule pointer BEFORE the rebuild**, so a rebuild that fails costs only the build — fix what it reports and rebuild, never re-pull. **Framework-developer trees never run any of this** — here `system/` is authored source, not a checkout.
 
-**The starter app's own CLAUDE.md is `rsx/resource/CLAUDE.dist.md`** — publish renames it to `rsx/resource/CLAUDE.md`, symlinks the project-root `CLAUDE.md` to it and prepends the `@../../system/app/RSpade/docs/claude/app.md` import; it is NOT loaded in this monorepo. It is a TEMPLATE EXAMPLE of how an end developer uses their own local CLAUDE.md, not an index of the application, so **edits to it are minimal**: it may record how a change to the shipped template application works, but the template app is kept deliberately simple and obvious in function precisely so that specific usage documentation is unnecessary — its behavior is inferred from RSpade conventions and from the comments in the template code itself. **`rsx/resource/skills/` ships too** (reference app and starter alike), so a skill seeded there reaches every install.
+**The starter app's own CLAUDE.md is `rsx/resource/CLAUDE.dist.md`** — publish renames it, symlinks the project-root `CLAUDE.md` to it and prepends the `@../../system/app/RSpade/docs/claude/app.md` import; it is NOT loaded in this monorepo. It is a TEMPLATE EXAMPLE of how an end developer uses their own local CLAUDE.md, not an index of the application, so **edits to it are minimal**: the template app is kept deliberately simple precisely so that specific usage documentation is unnecessary — its behavior is inferred from RSpade conventions and from the comments in the template code itself. **`rsx/resource/skills/` ships too**, so a skill seeded there reaches every install.
 
 Skill `rspade:publishing-a-release` (pre-flight gates, changelog assembly, the three repositories, strip/transform rules, failure triage). Details: `rsx:man rsx_upstream`, `rsx:man framework_pull_mechanics`.

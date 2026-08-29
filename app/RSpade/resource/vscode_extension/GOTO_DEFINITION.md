@@ -71,6 +71,22 @@ public static function define(): array
 }
 ```
 
+## The extension builds no file index
+
+Resolution is always a question put to the IDE bridge, which answers from the
+RSpade manifest (`storage/rsx-build/manifest_data.php`). The extension never walks
+the tree to build an index of its own, so what it can resolve is exactly what the
+manifest holds. The manifest skips every directory named `resource/`, which means
+a vendored copy of the reference app under
+`system/app/RSpade/resource/reference_app/` is never a definition target - `F12`
+lands on the real class, not on the vendored copy of it.
+
+The few places that do enumerate workspace files (the `**/*.php` file watcher, the
+one `findFiles` lookup for `Rsx.js`) pass no exclude argument, so VS Code applies
+the workspace's own `files.exclude` / `files.watcherExclude` settings. Excluding a
+directory in `.vscode/settings.json` is therefore enough to keep the extension out
+of it; there is no second list to maintain.
+
 ## Configuration
 
 The base URL for the IDE helper can be configured in VS Code settings:

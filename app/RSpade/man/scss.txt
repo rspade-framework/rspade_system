@@ -175,6 +175,87 @@ SCOPING RULES
         and can be organized as needed (e.g., global utilities, variables
         in rsx/theme/).
 
+COLOURS - RUNTIME TOKENS, NOT SCSS VARIABLES
+
+    Every colour is a Bootstrap runtime custom property. An SCSS variable
+    is resolved by the compiler and baked into the stylesheet once, so it
+    cannot follow a theme that is chosen at request time - a component
+    styled with $text-color or $background-light stays light-mode-coloured
+    on a dark page, and nothing reports it. The custom properties are
+    redefined for dark by Bootstrap itself, so a rule that reads one is
+    correct in both themes with no dark-mode rule of its own.
+
+    SCSS VARIABLES REMAIN CORRECT FOR EVERYTHING THAT IS NOT A COLOUR -
+    spacing, border radius, typography, z-index and transitions do not
+    change with the theme, and rsx/theme/variables.scss stays the source
+    for those.
+
+    THE TOKENS
+
+        --bs-body-bg              page and card surface - the base surface
+        --bs-tertiary-bg          subtle raised/striped surface (the token
+                                  that replaces a literal #f8f9fa)
+        --bs-secondary-bg         a step stronger again (replaces #e9ecef);
+                                  disabled fields, selected rows
+        --bs-border-color         every border, divider and rule
+        --bs-body-color           primary ink
+        --bs-secondary-color      muted ink - captions, hints, placeholders
+        --bs-emphasis-color       strongest ink - headings, active values
+
+        --bs-border-color-translucent is the border for a surface whose own
+        colour must show through (overlays, nested cards).
+
+        A TINTED BRAND COLOUR uses the -rgb channel form rather than an
+        SCSS rgba(), which would bake the same problem back in:
+
+            background: rgba(var(--bs-primary-rgb), 0.1);
+
+        Every Bootstrap theme colour publishes one: --bs-primary-rgb,
+        --bs-success-rgb, --bs-warning-rgb, --bs-danger-rgb, --bs-info-rgb.
+
+    BEFORE AND AFTER
+
+        // WRONG - baked at build time; wrong on a dark page, silently
+        .Invoice_Header {
+            background: $white;
+            color: $text-color;
+            border-bottom: 1px solid $border-color;
+            padding: $spacing-md;
+
+            .meta { color: $text-muted; }
+        }
+
+        // RIGHT - the colours follow the theme; the spacing does not need to
+        .Invoice_Header {
+            background: var(--bs-body-bg);
+            color: var(--bs-body-color);
+            border-bottom: 1px solid var(--bs-border-color);
+            padding: $spacing-md;
+
+            .meta { color: var(--bs-secondary-color); }
+        }
+
+    TWO EXCEPTIONS, BOTH DELIBERATE
+
+    A SURFACE THAT IS DARK ON PURPOSE IN BOTH THEMES - a dark sidebar, a
+    code block, a marketing panel - is a fixed colour, because it is not
+    following the theme by design. Say so in a comment, so the next reader
+    does not "fix" it:
+
+        // Deliberate: the sidebar is dark in both themes; not a token.
+        background: #1f2933;
+
+    CONTRAST INK ON A BRAND-COLOURED BUTTON OR BADGE IS color: #fff, not a
+    token. The surface under it is the brand colour in both themes, so the
+    text must stay white in both; --bs-body-color would flip to a light ink
+    on a light background and become unreadable.
+
+    A widget whose own stylesheet hardcodes colours and offers no custom
+    properties has to be re-pointed rule by rule. The worked example is
+    system/app/RSpade/resource/reference_app/theme/components/inputs/select/select_input.scss,
+    which maps a prebuilt third-party stylesheet onto these same tokens so
+    one set of rules serves both themes.
+
 SCSS VARIABLES
 
     SCSS variable declarations ($var: value;) are allowed OUTSIDE the
@@ -471,5 +552,7 @@ SEE ALSO
     spa - SPA routing and actions
     jqhtml - Component template system
     responsive - semantic breakpoint mixins and column classes
+    dark_mode - the theme preference, how it reaches <body>, and what the
+                runtime tokens are flipping between
     coding_standards - General naming conventions
     code_quality - Code quality rule system

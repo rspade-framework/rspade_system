@@ -9,10 +9,12 @@ SYNOPSIS
     php artisan rsx:maintenance:disable [--no-services] [--force]
 
 DESCRIPTION
-    Maintenance mode is ONE flag file with two ways in: the operator commands above, and
-    rsx:framework:pull, which raises the same window around the destructive part of an update
-    with the reason "framework update in progress". Same mechanism, same script, different
-    reason - there is no second maintenance system to learn.
+    Maintenance mode is ONE flag file with several ways in: the operator commands above, and
+    the framework commands that raise the same window around their own destructive stretch -
+    rsx:framework:pull (reason "framework update in progress"), rsx:db:rebuild_provision_cache_snapshot (reason
+    "schema cache build") and rsx:database_and_storage_reset (reason "data reset"). Each of
+    those raises the window on entry and lowers it on every exit path. Same mechanism, same
+    script, different reason - there is no second maintenance system to learn.
 
         storage/rsx-framework/.maintenance.mode.framework.update
 
@@ -94,7 +96,7 @@ WHY THE RPC DAEMONS ARE A SPECIAL CASE
     whose provenance no longer matches (rsx:man storage_directories).
 
 THE SCHEMA-CACHE GUARD ON DISABLE
-    Disable refuses while a live backup from `php artisan rsx:db:dump_cache` is still on
+    Disable refuses while a live backup from `php artisan rsx:db:rebuild_provision_cache_snapshot` is still on
     disk. That command backs the live database and blob store up, wipes both, builds the
     shipped schema cache from zero, and restores them - and BETWEEN those two points the
     database this application serves is cache-build scratch and the blob store is empty.
@@ -116,7 +118,7 @@ THE SCHEMA-CACHE GUARD ON DISABLE
     BEFORE it lowers the window, so the refusal condition is already false by the time
     disable runs. There is deliberately no override token: what the guard catches is the
     INTERRUPTED build - a Ctrl-C, or a recovery that could not finish. Re-running
-    rsx:db:dump_cache completes the restore from exactly those backups (it refuses to
+    rsx:db:rebuild_provision_cache_snapshot completes the restore from exactly those backups (it refuses to
     overwrite them). --force is the deliberate operator override, as it is for the
     conflict guard. Full treatment in rsx:man migrations, THE SCHEMA CACHE.
 

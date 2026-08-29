@@ -392,7 +392,7 @@ NAMING CONVENTIONS
 FRAMEWORK EVENT CATALOG
 
     The framework fires these events automatically. This is the COMPLETE catalog
-    (15 events across six families). Each entry lists: the event kind
+    (16 events across seven families). Each entry lists: the event kind
     (gate/filter/action/resolve), where it fires, its exact payload keys, the
     return contract (for gate/filter/resolve; actions ignore returns), and what
     to use it for.
@@ -517,6 +517,35 @@ FRAMEWORK EVENT CATALOG
                     (render the generic extension icon)
             Use for: producing custom thumbnail rasters for a mime the renderer
                      registry does not cover.
+
+    Migrate Events (action)
+
+        migrate.normalize_schema.complete (action)
+            Fired from: Maint_Migrate::execute_migrations(), after the POST-migration
+                        migrate:normalize_schema pass has succeeded and query logging
+                        has been switched off, and BEFORE the initial user and the
+                        revision dictionary. Both run paths reach it - the
+                        snapshot-protected one and the bare one - and both reach it
+                        BEFORE commit_snapshot(), so where a snapshot was taken it
+                        still covers whatever a handler does.
+            Data: [] - no payload. A handler that wants to know something about the
+                  schema reads it from the database, which is the whole point of the
+                  position: every migration has run and the framework's own
+                  normalization is finished, so the schema is at its final tip.
+            Return: ignored (it is an action).
+            Use for: an application's own "columns every table must have" pass -
+                     provenance columns, tenancy columns, an app-wide index -
+                     computed over information_schema instead of maintained as a
+                     hand-written per-table migration list, which stops being
+                     complete the moment somebody adds a table.
+            Handlers run INLINE in the migrate process and nothing catches them: a
+            throw propagates, which on the snapshot-protected path rolls the entire
+            migration back exactly as a normalization failure does. Handlers MUST be
+            idempotent - the event fires on every migrate, including runs with no
+            pending migrations. When at least one handler is registered, migrate
+            prints one line naming the count; with none it says nothing.
+            Write the event name as a LITERAL in #[OnEvent] - never a class constant.
+            See: php artisan rsx:man migrations (POST-NORMALIZATION APP STEPS)
 
     Initial User Events (action)
 

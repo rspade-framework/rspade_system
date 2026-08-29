@@ -12,7 +12,13 @@ export class RspadeFileWatcher {
     private disposables: vscode.Disposable[] = [];
     
     activate(context: vscode.ExtensionContext) {
-        // Watch for file rename/move events
+        // Watch for file rename/move events.
+        //
+        // A relative glob (a bare string, as opposed to a RelativePattern) is resolved
+        // against the workspace folders, and VS Code applies the `files.watcherExclude`
+        // setting to those watchers - so this never walks a directory the workspace has
+        // told the file watcher to ignore. Nothing to pass here: the extension keeps no
+        // index of its own and inherits the workspace's exclusions by construction.
         const watcher = vscode.workspace.createFileSystemWatcher('**/*.php');
         
         // Track file renames

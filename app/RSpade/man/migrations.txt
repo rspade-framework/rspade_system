@@ -7,7 +7,8 @@ SYNOPSIS
        php artisan make:migration:safe <name>
        php artisan migrate
        php artisan migrate:status
-       php artisan rsx:db:dump_cache
+       php artisan rsx:db:rebuild_provision_cache_snapshot
+       php artisan rsx:database_and_storage_reset --yes [--force] [--no-migrate]
 
 DESCRIPTION
        The RSX framework enforces a forward-only migration strategy using raw SQL
@@ -117,6 +118,111 @@ AUTOMATIC NORMALIZATION
        optimization and standardization. The only time you need to be explicit about
        types is when creating foreign key columns that must match their referenced
        column exactly.
+
+   POST-NORMALIZATION APP STEPS
+       normalize_schema runs TWICE in a migrate - once after each individual
+       migration, and once at the end over the whole schema. The app hook hangs off
+       the SECOND one, the POST-migration pass: when that pass succeeds, migrate
+       fires the action event
+
+           migrate.normalize_schema.complete
+
+       with no payload, from Maint_Migrate::execute_migrations(), before the initial
+       user and before the revision dictionary. The schema is therefore at its final
+       framework-normalized tip, and the run is still inside the migration window -
+       where a snapshot was taken, it still covers whatever a handler does, so a
+       handler that throws rolls the whole migration back.
+
+       An application uses it for its own "columns every table of mine must have"
+       pass, computed instead of listed. A hand-maintained per-table migration list
+       stops being complete the moment somebody adds a table, and nothing reports it.
+
+       Example - stamping import provenance on every application table, so an
+       importer has an idempotency key and every imported row records where it came
+       from:
+
+           namespace Rsx\Handlers;
+
+           use Illuminate\Support\Facades\DB;
+
+           class Schema_Normalize_Handlers
+           {
+               #[OnEvent('migrate.normalize_schema.complete')]
+               public static function ensure_import_columns(): void
+               {
+                   $database = DB::connection()->getDatabaseName();
+
+                   $tables = DB::select(
+                       "SELECT table_name AS name
+                          FROM information_schema.tables
+                         WHERE table_schema = ? AND table_type = 'BASE TABLE'",
+                       [$database]
+                   );
+
+                   foreach ($tables as $table) {
+                       $name = $table->name;
+
+                       // A leading underscore marks a SYSTEM table - framework
+                       // property, never an application's to alter. The same
+                       // convention governs columns: a _-prefixed COLUMN is a system
+                       // column. See rsx:man database_schema_architecture.
+                       if (str_starts_with($name, '_')) {
+                           continue;
+                       }
+
+                       $existing = DB::select(
+                           "SELECT column_name AS name
+                              FROM information_schema.columns
+                             WHERE table_schema = ? AND table_name = ?
+                               AND column_name IN ('ext_src', 'ext_ref')",
+                           [$database, $name]
+                       );
+                       $have = array_column($existing, 'name');
+
+                       $clauses = [];
+                       if (!in_array('ext_src', $have, true)) {
+                           $clauses[] = "ADD COLUMN ext_src VARCHAR(64) NULL";
+                       }
+                       if (!in_array('ext_ref', $have, true)) {
+                           $clauses[] = "ADD COLUMN ext_ref VARCHAR(64) NULL";
+                       }
+                       if (!$clauses) {
+                           continue;
+                       }
+
+                       // The index rides along with the columns, in the same ALTER,
+                       // so it exists exactly when they do.
+                       $clauses[] = "ADD INDEX idx_ext_ref (ext_ref, ext_src)";
+
+                       DB::statement("ALTER TABLE `{$name}` " . implode(', ', $clauses));
+                   }
+               }
+           }
+
+       The example is illustrative. The hook enforces nothing about column names or
+       shapes - the columns above are unprefixed because they are the APPLICATION's
+       columns, and an application names its own.
+
+       Rules for a handler on this event:
+
+       - IDEMPOTENT BY CONSTRUCTION. It runs on every migrate, including a run with
+         nothing to migrate. Read what is already there (information_schema, raw SQL)
+         and emit only the difference; never assume a previous run's state.
+       - ONE ALTER TABLE per table. Collect every clause for a table and issue them
+         together - a table rebuild is expensive and there is no reason to pay for it
+         more than once per table per run.
+       - NEVER touch a table whose name begins with an underscore. That prefix marks
+         framework-owned system tables, and the same convention makes a _-prefixed
+         COLUMN a system column (rsx:man database_schema_architecture).
+       - LET IT THROW. Nothing catches the handler; on the snapshot-protected path a
+         throw rolls the migration back, which is the correct outcome for a schema
+         step that could not be completed.
+       - Handlers run INLINE in the migrate process. Long work makes every migrate
+         long; that is the handler's own cost to own.
+
+       When at least one handler is registered, migrate prints one line naming the
+       count. With none, it says nothing. The full event entry, with the position
+       contract, is rsx:man event_hooks (FRAMEWORK EVENT CATALOG, Migrate Events).
 
 VALIDATION SYSTEM
 
@@ -240,7 +346,7 @@ SNAPSHOT PROTECTION
        Two further things suppress the snapshot for a given RUN even where the
        mechanism is available: --framework-only (a schema-only subset used by
        tooling) and the framework-internal --_no-snapshot (a caller that already
-       holds a full dump, e.g. rsx:db:dump_cache).
+       holds a full dump, e.g. rsx:db:rebuild_provision_cache_snapshot).
 
        ANYWHERE ELSE THE RUN PROCEEDS BARE, and prints every reason protection is
        off, so an operator can tell WHICH condition disabled the undo:
@@ -286,7 +392,7 @@ THE SCHEMA CACHE
        resource/ is manifest-invisible and SHIPS with the application, so the cache
        travels with the code whose migrations produced it.
 
-   Building it - php artisan rsx:db:dump_cache
+   Building it - php artisan rsx:db:rebuild_provision_cache_snapshot
 
        DEVELOPMENT MODE ONLY. It refuses in debug and production: a sealed build's
        source tree is immutable and its services are serving traffic, and neither
@@ -339,7 +445,7 @@ THE SCHEMA CACHE
        dump, clears the build store, moves the backup back, and only then deletes
        the dump. If recovery itself fails it leaves the backups in place, names
        them, keeps the maintenance window UP, and tells you that re-running
-       rsx:db:dump_cache completes the restore from exactly those backups.
+       rsx:db:rebuild_provision_cache_snapshot completes the restore from exactly those backups.
 
        MAINTENANCE MODE STAYS DOWN WHILE A BACKUP EXISTS. php artisan
        rsx:maintenance:disable REFUSES while storage/rsx-tmp/db_cache/live_db.sql.gz
@@ -387,21 +493,129 @@ THE SCHEMA CACHE
        megabyte of committed binary, so casual regeneration churns history for no
        benefit.
 
-       AI AGENTS: do not run rsx:db:dump_cache, and do not propose it as a step. See
+       AI AGENTS: do not run rsx:db:rebuild_provision_cache_snapshot, and do not propose it as a step. See
        app/RSpade/Commands/CLAUDE.md.
+
+RESETTING THE DATA
+
+       php artisan rsx:database_and_storage_reset --yes [--force] [--no-migrate]
+
+       Returns the application to the FRESH-INSTALL STATE: every table in the
+       application database dropped, every file under the three configured storage
+       roots deleted, then migrate. It exists for iterating on a bulk import, where
+       the same import is run, inspected, corrected and re-run until it is right and
+       every cycle needs a zero state to run against.
+
+       NOT rsx:clean, which resets the system/ tree. This resets the DATA. The names
+       are deliberately dissimilar so an operator reaching for one cannot land on the
+       other.
+
+   The two-flag gate
+
+       --yes            required always. Without it the command prints the whole
+                        consequence in plain language, exits 1, and destroys nothing.
+       --force          required ADDITIONALLY when the box is running a sealed
+                        production build - the same escape hatch, in the same shape,
+                        as the guard on rsx:clean.
+       --no-migrate     leave the schema dropped instead of re-migrating, for an
+                        operator who intends to restore a dump.
+
+       Nothing makes the command inaccessible: a command an operator cannot run is a
+       command they work around. What stands between them and the wipe is that the
+       refusal makes them READ WHAT THEY ARE AGREEING TO first. It names every table,
+       every business record and every user account and login; the actual uploaded
+       bytes under each root; that there is no undo from inside the application; and
+       the flag spelled exactly as it must be typed. The refusal goes to stderr and
+       exits 1.
+
+   What it touches, and what it does not
+
+       Dropped:   every table in the application database - not truncated, DROPPED,
+                  so the re-migrate rebuilds the schema rather than leaving it at
+                  whatever shape the last run produced.
+       Emptied:   the three roots Rsx_File_Paths resolves - the content-addressed blob
+                  store (storage/uploads), the thumbnail cache and the rendition
+                  cache. The DIRECTORIES and their permissions survive; the contents
+                  do not.
+       Untouched: everything else. Never storage/logs, never the framework's own
+                  storage, never system/, never .env.
+
+   Where it lands
+
+       A database with NO TABLES AT ALL is exactly the state that makes migrate take
+       the fresh-install path (see THE SCHEMA CACHE): it restores the shipped cache
+       and then applies whatever migrations are newer. So the landing point is the
+       fresh-install state, not "empty" - and user 1 arrives the way it always does,
+       from RSPADE_DEFAULT_* or the first-run screen.
+
+       The child migrate is spawned with the internal no-snapshot flag: the reset owns
+       the snapshot, and a second one would copy a datadir already copied and delete
+       the copy the reset is still relying on.
+
+   The snapshot protects the OPERATION, not your data
+
+       Where the datadir snapshot can be taken at all (SNAPSHOT PROTECTION - the same
+       three conditions, the same predicate), the reset takes it before the drop. A
+       failed wipe or a failed migrate rolls the DATABASE back and the command exits
+       1, exactly as migrate does; an interrupt (SIGINT/SIGTERM) takes the same path.
+       Where it cannot be taken, the run says so and names every reason.
+
+       IT IS NOT AN UNDO. A SUCCESSFUL reset commits - which is to say deletes - the
+       snapshot, and the deleted FILES were never in it: there is no filesystem
+       snapshot, so a file this command removes is gone at the moment it is removed,
+       failure or success. After a successful reset the only route back is a database
+       backup and a copy of the file store that you took BEFORE running it.
+
+   The run
+
+       The command raises the REAL maintenance window for its duration (reason: data
+       reset) and lowers it on every exit path, so web traffic gets a 503 and
+       automated task runners are refused while the database underneath them is being
+       replaced. It refuses to be invoked through $this->call() from another command,
+       for the same reason rsx:clean does: it drops the database the calling process
+       is connected to.
+
+       It ends with the blast radius in one line, because a destructive command owes
+       the operator a record of what it destroyed:
+
+           [OK] Dropped 62 tables, removed 1743 files (4.21 GB freed); migrated to
+                the fresh-install state.
 
 POST-MIGRATE STEPS
 
-       After the final normalize pass, migrate builds a new revision-history
-       compression dictionary when the current one is missing or older than
-       config('rsx.revisions.dictionary_max_age_days') - silent inside that cadence,
-       one [OK] Revision dictionary N built (T tokens) line when it builds - because
-       the dictionary is derived from the finished schema's column names and the
-       models' enum labels and is only correct once the schema is at its tip.
+       Once the migrations themselves have run, migrate performs these steps IN THIS
+       ORDER. All of them run on both paths - snapshot-protected and bare - and all
+       of them run before the snapshot is committed, so a failure in any of them
+       rolls the run back where a snapshot was taken.
 
-       Every successful run, snapshot-protected or bare, ends by clearing the
-       build-scoped cache (and so does php artisan migrate:restore, whose restore
-       leaves the cache describing a schema that no longer exists).
+       1. THE POST-MIGRATION NORMALIZE PASS - migrate:normalize_schema over the whole
+          schema, adding the framework's required columns and indexes to tables the
+          run just created. A failure here is a migration failure.
+
+       2. migrate.normalize_schema.complete - the action event an application hooks
+          for its own schema steps, fired with no payload. See POST-NORMALIZATION APP
+          STEPS above and rsx:man event_hooks. One line when handlers exist, silence
+          otherwise.
+
+       3. THE INITIAL USER - create_initial_user_if_needed() creates the application's
+          first account from RSPADE_DEFAULT_* when the database has none, firing
+          user.initial.created (source post_migrate). Deliberately NOT a migration: it
+          runs model and application handler code, which only works against the
+          current schema, so it belongs at the tip rather than at a fixed point in
+          history. See rsx:man initial_user.
+
+       4. THE REVISION DICTIONARY - a new revision-history compression dictionary when
+          the current one is missing or older than
+          config('rsx.revisions.dictionary_max_age_days') - silent inside that
+          cadence, one [OK] Revision dictionary N built (T tokens) line when it builds
+          - because the dictionary is derived from the finished schema's column names
+          and the models' enum labels and is only correct once the schema is at its
+          tip. Skipped on a --framework-only run, which migrates a schema-only subset
+          with none of the application's tables in it.
+
+       5. THE CACHE CLEAR - every successful run, snapshot-protected or bare, ends by
+          clearing the build-scoped cache (and so does php artisan migrate:restore,
+          whose restore leaves the cache describing a schema that no longer exists).
 
 MIGRATION EXAMPLES
 
@@ -589,7 +803,8 @@ DEBUGGING
        - "Duplicate column" - Check if column already exists before adding
 
 SEE ALSO
-       rsx:man maintenance_mode - The window rsx:db:dump_cache raises, and the
+       rsx:man maintenance_mode - The window rsx:db:rebuild_provision_cache_snapshot and
+                                  rsx:database_and_storage_reset raise, and the
                                   disable refusal that protects an interrupted build
        rsx:man artisan_commands - How framework commands are registered, intercepted
                                   and stubbed, and why that directory is not linted

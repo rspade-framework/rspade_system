@@ -59,9 +59,9 @@ The safety-check override prohibition (shared conduct fragment) applies to this 
 
 - **Realtime is ENABLED in this dev env**: the relay runs under supervisor (`[program:realtime]`) and nginx proxies `/ws`. The template app ships **no `#[Emitter]` consumer** (verified 2026-08-17) - emitters are exercised only by framework tests.
 - **Monorepo cron line carries the path**: `* * * * * cd /var/www/html && php artisan rsx:task:process` (the shipped/downstream form is pathless).
-- **Backlog pointers**: **B-85** (a task should DECLARE whether it wants the site lock at all) and **B-87** (automatic per-tenant write locks on `save()` are DISABLED since 2026-08-11 - re-enable decision pending; the `Rsx_Artisan` mandate stands regardless).
+- **Backlog pointers**: **B-85** (a task should DECLARE whether it wants the site lock) and **B-87** (automatic per-tenant write locks on `save()` DISABLED since 2026-08-11, re-enable pending; the `Rsx_Artisan` mandate stands regardless).
 - A framework test whose SUBJECT is the artisan entrypoint keeps its raw spawn under a rationale'd `@ARTISAN-SPAWN-01-EXCEPTION`.
-- Colocated deep docs: `Core/Task/CLAUDE.md`, `Core/Realtime/CLAUDE.md`, `Commands/CLAUDE.md` (why `rsx:check` deliberately refuses that directory, pre-boot interception and its stubs, and the standing rule that the migration schema cache is regenerated ONLY on explicit operator request - `rsx:man artisan_commands`).
+- Colocated deep docs: `Core/Task/CLAUDE.md`, `Core/Realtime/CLAUDE.md`, `Commands/CLAUDE.md` (why `rsx:check` refuses that directory, pre-boot interception and its stubs - `rsx:man artisan_commands`).
 
 ### Documentation obligations
 

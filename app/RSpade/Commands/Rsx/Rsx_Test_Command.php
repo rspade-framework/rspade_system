@@ -7,7 +7,7 @@
 
 namespace App\RSpade\Commands\Rsx;
 
-use App\RSpade\Commands\Database\Db_Dump_Cache_Command;
+use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
 use App\Console\Commands\FrameworkDeveloperCommand;
 use App\RSpade\Core\Database\MigrationPaths;
 use App\RSpade\Core\Manifest\Manifest;
@@ -755,7 +755,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * restores rsx/resource/db/schema_cache.sql.gz before migrating - deliberately, so
      * the suite exercises what a real install does. That makes the cache an INPUT to the
      * provisioned schema, and an input that is not in this hash is a stale dump waiting
-     * to happen: rebuilding the cache with rsx:db:dump_cache would otherwise leave the
+     * to happen: rebuilding the cache with rsx:db:rebuild_provision_cache_snapshot would otherwise leave the
      * previous dump matching. Absent (no cache shipped) hashes as the literal 'none'.
      *
      * @return string
@@ -788,10 +788,10 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      */
     protected function schema_cache_fingerprint(): string
     {
-        $cache_dir = rsx_project_file_path(Db_Dump_Cache_Command::CACHE_DIR_RELATIVE);
+        $cache_dir = rsx_project_file_path(Db_Rebuild_Provision_Cache_Snapshot_Command::CACHE_DIR_RELATIVE);
 
         $parts = [];
-        foreach ([Db_Dump_Cache_Command::SCHEMA_CACHE_FILE, Db_Dump_Cache_Command::UPLOADS_CACHE_FILE] as $file) {
+        foreach ([Db_Rebuild_Provision_Cache_Snapshot_Command::SCHEMA_CACHE_FILE, Db_Rebuild_Provision_Cache_Snapshot_Command::UPLOADS_CACHE_FILE] as $file) {
             $path = $cache_dir . '/' . $file;
             if (is_file($path)) {
                 $parts[] = $file . ':' . md5_file($path);

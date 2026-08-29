@@ -59,9 +59,11 @@ Resolution is ordered per context — inside a `.jqhtml` file a bare class name
 tries components first, then JavaScript, then PHP, because that is the order the
 framework itself would resolve it in.
 
-**`system/rsx/` redirects to `rsx/`.** That path is a symlink the framework needs;
-opening a file through it silently sends you to the real one, so you never edit
-a copy that looks right and saves to the wrong place.
+**A file opened through a symlink redirects to its real path.** `system/rsx/` is
+a symlink to `rsx/` that the framework needs; opening a file through it silently
+sends you to the real one, so you never edit a copy that looks right and saves to
+the wrong place. Any symlink inside the workspace behaves the same way - the
+redirect is resolved with the real path on disk, not from a list of known names.
 
 ---
 

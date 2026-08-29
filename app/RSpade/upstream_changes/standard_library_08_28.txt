@@ -48,7 +48,6 @@ THE CHANGE
             phpoffice/phpspreadsheet   Real spreadsheets (xlsx/xls/ods)
             league/csv                 Streaming CSV read/write
             brick/money                Money arithmetic (with brick/math)
-            endroid/qr-code            QR codes as PNG or SVG
 
         Joining the four already exposed and unchanged:
         giggsey/libphonenumber-for-php, ezyang/htmlpurifier, sokil/php-isocodes,

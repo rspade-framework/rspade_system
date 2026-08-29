@@ -1729,7 +1729,6 @@ return [
             'phpoffice/phpspreadsheet',
             'league/csv',
             'brick/money',
-            'endroid/qr-code',
         ],
         'exposed_npm' => [
             'dompurify',

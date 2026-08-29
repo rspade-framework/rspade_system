@@ -10,10 +10,10 @@ namespace App\RSpade\Commands\Database;
 use App\RSpade\Commands\Migrate\Maint_Migrate;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
+use App\RSpade\Core\Database\Rsx_Data_Wipe;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Rsx;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 /**
  * BUILD THE SHIPPED SCHEMA CACHE.
@@ -60,9 +60,9 @@ use Illuminate\Support\Facades\DB;
  * with the code whose migrations produced it. The restore side lives in
  * Maint_Migrate::maybe_restore_schema_cache().
  */
-class Db_Dump_Cache_Command extends Command
+class Db_Rebuild_Provision_Cache_Snapshot_Command extends Command
 {
-    protected $signature = 'rsx:db:dump_cache';
+    protected $signature = 'rsx:db:rebuild_provision_cache_snapshot';
 
     protected $description = 'Rebuild the shipped schema cache (rsx/resource/db/schema_cache.sql.gz + uploads_cache.tar.gz) that a fresh install restores instead of replaying every migration. Backs the live database and blob store up, builds the cache from zero, and restores them.';
 
@@ -145,7 +145,7 @@ class Db_Dump_Cache_Command extends Command
         // decide to do. Development is where migrations are authored, and it is the only
         // place a cache built from them means anything.
         if (!Rsx::is_development()) {
-            $this->error('[ERROR] rsx:db:dump_cache runs in DEVELOPMENT mode only (this box is ' . Rsx::get_mode_label() . ').');
+            $this->error('[ERROR] rsx:db:rebuild_provision_cache_snapshot runs in DEVELOPMENT mode only (this box is ' . Rsx::get_mode_label() . ').');
             $this->info('');
             $this->info('  Building the cache DROPS AND RECREATES this database and empties the blob');
             $this->info('  store, restoring both afterwards. A sealed debug/production build serves');
@@ -153,7 +153,7 @@ class Db_Dump_Cache_Command extends Command
             $this->info('  rsx/resource/db artifacts belong there.');
             $this->info('');
             $this->info('  Build the cache in development and ship it with the code:');
-            $this->info('      php artisan rsx:db:dump_cache');
+            $this->info('      php artisan rsx:db:rebuild_provision_cache_snapshot');
 
             return 1;
         }
@@ -275,7 +275,7 @@ class Db_Dump_Cache_Command extends Command
         if (!$decision[self::DECISION_TAKE_DUMP]) {
             $this->live_dump_ok = true;
         } else {
-            $this->__dump_database($this->__database_name(), $partial);
+            $this->__dump_database(Rsx_Data_Wipe::database_name(), $partial);
             if (!rename($partial, $this->live_dump_path)) {
                 throw new \RuntimeException('Could not finalize the live dump: ' . $partial . ' -> ' . $this->live_dump_path);
             }
@@ -342,7 +342,7 @@ class Db_Dump_Cache_Command extends Command
     {
         $this->info('[3/7] Resetting the database...');
 
-        $this->__recreate_database();
+        Rsx_Data_Wipe::recreate_database();
         $this->db_is_build_state = true;
     }
 
@@ -408,14 +408,14 @@ class Db_Dump_Cache_Command extends Command
 
         // Same .partial-then-rename discipline as the live dump: a crash mid-write must
         // never leave a truncated cache that a fresh install would restore.
-        $this->__dump_database($this->__database_name(), $schema_target . '.partial');
+        $this->__dump_database(Rsx_Data_Wipe::database_name(), $schema_target . '.partial');
         if (!rename($schema_target . '.partial', $schema_target)) {
             throw new \RuntimeException('Could not finalize the schema cache: ' . $schema_target);
         }
 
         // -C <root> . : relative paths inside the archive, so extraction lands in ANY blob
         // root (the test-isolated one included).
-        $this->__stream(
+        Rsx_Data_Wipe::stream(
             'tar -czf ' . escapeshellarg($uploads_target . '.partial')
             . ' -C ' . escapeshellarg($this->blob_root) . ' .',
             [],
@@ -433,7 +433,7 @@ class Db_Dump_Cache_Command extends Command
     {
         $this->info('[6/7] Clearing the cache-build database and blob store...');
 
-        $this->__recreate_database();
+        Rsx_Data_Wipe::recreate_database();
         $this->__clear_build_blob_store();
     }
 
@@ -515,7 +515,7 @@ class Db_Dump_Cache_Command extends Command
             }
             $this->error('');
             $this->error('  Re-running the command completes the restore from exactly these backups:');
-            $this->error('      php artisan rsx:db:dump_cache');
+            $this->error('      php artisan rsx:db:rebuild_provision_cache_snapshot');
             $this->error('');
             $this->error('  Maintenance mode is left UP on purpose, and rsx:maintenance:disable refuses');
             $this->error('  to lower it while those backups exist.');
@@ -595,12 +595,12 @@ class Db_Dump_Cache_Command extends Command
         foreach ($plan as $action) {
             switch ($action) {
                 case self::ACTION_RECREATE_DATABASE:
-                    $this->__recreate_database();
+                    Rsx_Data_Wipe::recreate_database();
                     $this->db_is_build_state = false;
                     break;
 
                 case self::ACTION_RESTORE_DATABASE:
-                    $this->__restore_database_from_dump($this->__database_name(), $this->live_dump_path);
+                    $this->__restore_database_from_dump(Rsx_Data_Wipe::database_name(), $this->live_dump_path);
                     break;
 
                 case self::ACTION_CLEAR_BUILD_BLOB_STORE:
@@ -676,43 +676,6 @@ class Db_Dump_Cache_Command extends Command
         pcntl_signal(SIGTERM, $handler);
     }
 
-    /** The database the DEFAULT connection points at - never a literal. */
-    protected function __database_name(): string
-    {
-        return (string) config('database.connections.' . config('database.default') . '.database');
-    }
-
-    /** The default connection's config array. */
-    protected function __connection(): array
-    {
-        return config('database.connections.' . config('database.default'));
-    }
-
-    /**
-     * The credential channel: the password rides in the child's ENVIRONMENT, never on the
-     * command line, where `ps` shows it to every user on the box. Same contract as
-     * Rsx_Test_Command's dump/restore and Maint_Migrate::wait_for_mysql_ready().
-     *
-     * @return array<string, string>
-     */
-    protected function __mysql_env(): array
-    {
-        $conn = $this->__connection();
-        $password = (string) $conn['password'];
-
-        return $password === '' ? [] : ['MYSQL_PWD' => $password];
-    }
-
-    /** The shared `-h -P -u` prefix for the mysql/mysqldump client. */
-    protected function __client_flags(): string
-    {
-        $conn = $this->__connection();
-
-        return '-h' . escapeshellarg((string) $conn['host'])
-            . ' -P' . escapeshellarg((string) $conn['port'])
-            . ' -u' . escapeshellarg((string) $conn['username']);
-    }
-
     /**
      * Dump $database to $gz_target, gzipped, with the same options the test harness uses.
      *
@@ -723,13 +686,13 @@ class Db_Dump_Cache_Command extends Command
      */
     protected function __dump_database(string $database, string $gz_target): void
     {
-        $pipeline = 'set -o pipefail; mysqldump ' . $this->__client_flags()
+        $pipeline = 'set -o pipefail; mysqldump ' . Rsx_Data_Wipe::client_flags()
             . ' --no-tablespaces --single-transaction --quick --lock-tables=false '
             . escapeshellarg($database)
             . self::mysqlpv_pipe_segment()
             . ' | gzip > ' . escapeshellarg($gz_target);
 
-        $this->__stream($pipeline, $this->__mysql_env(), 'dumping ' . $database);
+        Rsx_Data_Wipe::stream($pipeline, Rsx_Data_Wipe::mysql_env(), 'dumping ' . $database);
 
         if (!is_file($gz_target) || filesize($gz_target) === 0) {
             throw new \RuntimeException('The dump of ' . $database . ' produced no output: ' . $gz_target);
@@ -742,9 +705,9 @@ class Db_Dump_Cache_Command extends Command
         $pipeline = 'set -o pipefail; cat ' . escapeshellarg($gz_source)
             . ' | gunzip'
             . self::mysqlpv_pipe_segment()
-            . ' | mysql ' . $this->__client_flags() . ' ' . escapeshellarg($database);
+            . ' | mysql ' . Rsx_Data_Wipe::client_flags() . ' ' . escapeshellarg($database);
 
-        $this->__stream($pipeline, $this->__mysql_env(), 'restoring ' . $database);
+        Rsx_Data_Wipe::stream($pipeline, Rsx_Data_Wipe::mysql_env(), 'restoring ' . $database);
     }
 
     /**
@@ -776,46 +739,16 @@ class Db_Dump_Cache_Command extends Command
     }
 
     /**
-     * DROP + CREATE the database through the mysql CLI rather than the framework's own
-     * connection: dropping the database a live PDO handle is bound to leaves that handle
-     * pointing at nothing. The purge afterwards makes the next framework query reconnect.
-     */
-    protected function __recreate_database(): void
-    {
-        $database = $this->__database_name();
-
-        $sql = 'DROP DATABASE IF EXISTS `' . $database . '`;'
-            . ' CREATE DATABASE `' . $database . '` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;';
-
-        $command = 'mysql ' . $this->__client_flags() . ' -e ' . escapeshellarg($sql) . ' 2>&1';
-
-        $output = [];
-        $exit_code = 0;
-        \exec_safe($command, $output, $exit_code, $this->__mysql_env());
-
-        if ($exit_code !== 0) {
-            throw new \RuntimeException('Could not recreate the database ' . $database . ': ' . implode("\n", $output));
-        }
-
-        DB::purge(config('database.default'));
-    }
-
-    /**
      * Empty the blob store directory, leaving the directory itself in place.
      *
      * Content-addressed blobs, so there is nothing here to preserve selectively: whatever
      * is in the store at this point was written by the cache build, and the live bytes
-     * are safe in <blob_root>_tmp.
+     * are safe in <blob_root>_tmp. The counts Rsx_Data_Wipe returns are the reset
+     * command's business, not this one's - here the store is build residue.
      */
     protected function __clear_build_blob_store(): void
     {
-        if (is_dir($this->blob_root)) {
-            rmdir_recursive($this->blob_root, false);
-
-            return;
-        }
-
-        ensure_directory($this->blob_root);
+        Rsx_Data_Wipe::clear_directory_contents($this->blob_root);
     }
 
     /**
@@ -927,7 +860,7 @@ replaying every migration ever written.
 
 ## Who writes them
 
-`php artisan rsx:db:dump_cache`, in development mode only. It backs the live database
+`php artisan rsx:db:rebuild_provision_cache_snapshot`, in development mode only. It backs the live database
 and blob store up, wipes both, migrates from zero, records the result here, and then
 restores the live data.
 

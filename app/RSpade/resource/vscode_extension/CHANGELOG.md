@@ -6,6 +6,23 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.231] - 2026-08-29
+
+### Changed
+- File enumeration honours `search.exclude` as well as `files.exclude` (`workspace_exclude_glob()`): what the workspace hides from search is not enumerated, including the vendored reference app.
+
+## [0.1.230] - 2026-08-29
+
+### Changed
+- A file opened through any symlink inside the workspace now redirects to its real
+  path, resolved from the filesystem instead of from a hardcoded `system/rsx/`
+  pattern. A vendored reference app that is a symlink to the real source is covered
+  by the same rule.
+- The workspace lookup for `Rsx.js` no longer passes its own exclude pattern, which
+  had been replacing the workspace's `files.exclude` setting rather than adding to
+  it. Directories excluded in workspace settings are now honoured everywhere the
+  extension enumerates files.
+
 ## [0.1.227] - 2026-08-25
 
 ### Added

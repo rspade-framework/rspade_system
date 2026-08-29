@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { workspace_exclude_glob } from './config';
 
 /**
  * Convention methods that are called automatically by the RSX framework
@@ -231,8 +232,15 @@ export class ConventionMethodDefinitionProvider implements vscode.DefinitionProv
             return undefined;
         }
 
-        // Find Rsx.js in the workspace
-        const files = await vscode.workspace.findFiles('**/Rsx.js', '**/node_modules/**');
+        // Find Rsx.js in the workspace.
+        //
+        // The exclude glob is the workspace's own `files.exclude` + `search.exclude`,
+        // merged (see workspace_exclude_glob). Per the VS Code API doc, an explicit
+        // glob REPLACES `files.exclude` and `undefined` applies `files.exclude` only -
+        // neither honours `search.exclude`, so a tree the workspace hides from search
+        // (the vendored reference app, for one) would still be enumerated here. What
+        // is not searchable is not enumerable.
+        const files = await vscode.workspace.findFiles('**/Rsx.js', workspace_exclude_glob());
         if (files.length === 0) {
             return undefined;
         }

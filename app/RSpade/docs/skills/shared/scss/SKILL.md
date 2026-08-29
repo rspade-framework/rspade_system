@@ -77,9 +77,39 @@ Child classes use exact PascalCase component name as prefix:
 
 ---
 
-## Variables
+## Colours Are Runtime Tokens
 
-Define in `rsx/theme/variables.scss`. **Check this file before writing new SCSS.**
+**Never write a colour as an SCSS variable or a hex literal.** SCSS resolves at compile time, so a baked colour cannot follow a theme chosen at request time - it is simply wrong on a dark page, and nothing reports it. Bootstrap's custom properties are redefined for dark, so one rule serves both themes:
+
+| Token | Role |
+|---|---|
+| `--bs-body-bg` | page / card surface |
+| `--bs-tertiary-bg` | subtle raised surface (replaces `#f8f9fa`) |
+| `--bs-secondary-bg` | stronger again (replaces `#e9ecef`) - disabled fields, selected rows |
+| `--bs-border-color` | borders, dividers, rules |
+| `--bs-body-color` | primary ink |
+| `--bs-secondary-color` | muted ink - captions, hints, placeholders |
+| `--bs-emphasis-color` | strongest ink - headings, active values |
+
+`--bs-border-color-translucent` for a border that must let its surface show through. A tinted brand colour uses the channel form - `rgba(var(--bs-primary-rgb), 0.1)` - never an SCSS `rgba($primary-color, ...)`.
+
+```scss
+// WRONG - baked at build time
+.Invoice_Header { background: $white; color: $text-color; border-bottom: 1px solid $border-color; }
+
+// RIGHT
+.Invoice_Header { background: var(--bs-body-bg); color: var(--bs-body-color); border-bottom: 1px solid var(--bs-border-color); }
+```
+
+Two exceptions: a surface that is dark **on purpose** in both themes (sidebar, code block) is a fixed colour with a comment saying so; contrast ink on a brand-coloured button or badge is `color: #fff`, because the surface under it does not flip.
+
+Full treatment, including the third-party-widget case: `php artisan rsx:man scss` (COLOURS section) and `php artisan rsx:man dark_mode`.
+
+---
+
+## Variables (Everything That Is Not A Colour)
+
+Define in `rsx/theme/variables.scss` - spacing, radius, typography, z-index, transitions, none of which are theme-dependent. **Check this file before writing new SCSS.**
 
 In bundles, variables.scss must be included before directory includes:
 
@@ -111,8 +141,8 @@ Files with only `$var: value;` declarations (no selectors) are valid without wra
 
 ```scss
 // _variables.scss
-$primary-color: #0d6efd;
-$border-radius: 0.375rem;
+$sidebar-width: 215px;
+$border-radius: 6px;
 ```
 
 ---

@@ -321,7 +321,7 @@ do_enable() {
 # -----------------------------------------------------------------------------
 # Schema-cache guard - refuse to bring services back up while a live backup exists.
 #
-# `php artisan rsx:db:dump_cache` backs the live database and blob store up, wipes
+# `php artisan rsx:db:rebuild_provision_cache_snapshot` backs the live database and blob store up, wipes
 # both, builds the shipped schema cache from zero, and restores them. Between those
 # two points the DATABASE THIS APPLICATION SERVES IS NOT THE DEVELOPER'S DATABASE -
 # it is a scratch copy - and the blob store is empty. Starting php-fpm over that
@@ -331,7 +331,7 @@ do_enable() {
 # The command's own step 7 deletes the backups BEFORE it lowers the window, so this
 # refusal is already false by the time it runs; there is no override token, and none
 # is needed. What the guard catches is the INTERRUPTED build: an operator who Ctrl-C'd
-# it, or a recovery that could not finish. Re-running rsx:db:dump_cache completes the
+# it, or a recovery that could not finish. Re-running rsx:db:rebuild_provision_cache_snapshot completes the
 # restore from exactly these backups (it refuses to overwrite them).
 #
 # The blob root is not derivable pre-boot, so the command writes it into the marker
@@ -391,7 +391,7 @@ do_disable() {
         say "  While those exist, this database and blob store hold cache-build scratch data,"
         say "  not your own. Complete the build - it refuses to overwrite the backups and"
         say "  restores your live data from them:"
-        say "    php artisan rsx:db:dump_cache"
+        say "    php artisan rsx:db:rebuild_provision_cache_snapshot"
         say ""
         say "  Bringing services up now would serve an application that has lost its data,"
         say "  which is why this is refused. Override deliberately:"

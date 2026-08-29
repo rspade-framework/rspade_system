@@ -16,6 +16,7 @@ use App\Providers\AppServiceProvider;
 use App\RSpade\Core\Database\MigrationValidator;
 use App\RSpade\Core\Database\SqlQueryTransformer;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\SchemaQuality\SchemaQualityChecker;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
@@ -23,7 +24,7 @@ use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Env\Rsx_Initial_User;
 use App\RSpade\Core\Revisions\Revision_Dictionary;
 use App\RSpade\Core\Files\Rsx_File_Paths;
-use App\RSpade\Commands\Database\Db_Dump_Cache_Command;
+use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
 
 /**
  * Unified migration command.
@@ -59,7 +60,7 @@ class Maint_Migrate extends Command
 
     /**
      * Framework-internal: skip the datadir snapshot (see handle()). Passed by
-     * rsx:db:dump_cache, which holds a full dump of the live database and is migrating a
+     * rsx:db:rebuild_provision_cache_snapshot, which holds a full dump of the live database and is migrating a
      * database it just created empty.
      */
     public const NO_SNAPSHOT_FLAG = '--_no-snapshot';
@@ -199,7 +200,7 @@ class Maint_Migrate extends Command
         }
 
         // --_no-snapshot is the statement made by a caller that has ALREADY taken a better
-        // backup and knows this database is empty: rsx:db:dump_cache holds a full gzipped
+        // backup and knows this database is empty: rsx:db:rebuild_provision_cache_snapshot holds a full gzipped
         // dump of the live database on disk and has just dropped and recreated the database
         // this run migrates. Stopping MySQL to copy an empty datadir would protect nothing
         // and cost the whole stop/copy/start. Framework-internal (the `--_` convention): no
@@ -288,6 +289,12 @@ class Maint_Migrate extends Command
         return Rsx::is_rspade_dev_container();
     }
 
+    /**
+     * Replaceable: a subclass with no --framework-only option of its own
+     * (Database_And_Storage_Reset_Command) answers this without consulting argv - calling
+     * parent:: there would ask Symfony for an option this command never declared.
+     */
+    #[Replaceable]
     protected function is_framework_only_run(): bool
     {
         return (bool) $this->option('framework-only');
@@ -665,6 +672,28 @@ class Maint_Migrate extends Command
         // Disable query logging
         AppServiceProvider::disable_query_echo();
         SqlQueryTransformer::disable();
+
+        // THE POST-NORMALIZATION HOOK - the one seam an application has for "columns every
+        // table of mine must have". Its position is the contract, and every clause of it
+        // matters:
+        //
+        // - The schema is at the framework-normalized tip: every migration has run and the
+        //   POST-migration normalize pass has finished, so a handler sees the final set of
+        //   tables and the framework's own columns already in place.
+        // - It fires BEFORE the initial user and BEFORE the revision dictionary, so a
+        //   handler's columns exist before any row is written and before the dictionary is
+        //   derived from information_schema.
+        // - It is INSIDE the snapshot window (both paths reach it before commit_snapshot()),
+        //   so a throwing handler rolls the whole run back exactly as a normalization
+        //   failure does. That is why nothing here catches: an exception must propagate.
+        //
+        // Handlers run INLINE, in this process. An action event, no payload, no return.
+        Rsx::trigger_action('migrate.normalize_schema.complete', []);
+
+        if (Event_Registry::has_handlers('migrate.normalize_schema.complete')) {
+            $handler_count = count(Event_Registry::get_handlers('migrate.normalize_schema.complete'));
+            $this->info('[OK] migrate.normalize_schema.complete fired (' . $handler_count . ($handler_count === 1 ? ' handler)' : ' handlers)'));
+        }
 
         // THE INITIAL USER - after the FINAL normalize pass, so the schema is at the tip
         // by construction. This is deliberately NOT a migration: it runs model code and,
@@ -1374,7 +1403,7 @@ class Maint_Migrate extends Command
      * THE INITIAL PROVISION: restore the shipped schema cache into an EMPTY database.
      *
      * A fresh install replays every migration ever written to arrive at a schema that is
-     * already known. rsx:db:dump_cache records that known end state - a gzipped mysqldump
+     * already known. rsx:db:rebuild_provision_cache_snapshot records that known end state - a gzipped mysqldump
      * plus an archive of whatever blobs the data-seed migrations wrote - into
      * rsx/resource/db/, which ships with the application. This restores it, and the normal
      * migration run then continues on top: migrations NEWER than the cache apply, both
@@ -1409,15 +1438,15 @@ class Maint_Migrate extends Command
             return;
         }
 
-        // --_cache-dir is the same test seam rsx:db:dump_cache honours, so a test can
+        // --_cache-dir is the same test seam rsx:db:rebuild_provision_cache_snapshot honours, so a test can
         // produce a cache into a sandbox and prove this restores it - without ever writing
         // into the shipped rsx/resource/db.
-        $cache_dir_override = Rsx_Internal_Flags::get(Db_Dump_Cache_Command::CACHE_DIR_FLAG);
+        $cache_dir_override = Rsx_Internal_Flags::get(Db_Rebuild_Provision_Cache_Snapshot_Command::CACHE_DIR_FLAG);
         $cache_dir = !empty($cache_dir_override)
             ? rtrim($cache_dir_override, '/')
-            : rsx_project_file_path(Db_Dump_Cache_Command::CACHE_DIR_RELATIVE);
+            : rsx_project_file_path(Db_Rebuild_Provision_Cache_Snapshot_Command::CACHE_DIR_RELATIVE);
 
-        $schema_cache = $cache_dir . '/' . Db_Dump_Cache_Command::SCHEMA_CACHE_FILE;
+        $schema_cache = $cache_dir . '/' . Db_Rebuild_Provision_Cache_Snapshot_Command::SCHEMA_CACHE_FILE;
 
         if (!is_file($schema_cache)) {
             return;
@@ -1440,7 +1469,7 @@ class Maint_Migrate extends Command
         $this->stream_shell_pipeline(
             'set -o pipefail; cat ' . escapeshellarg($schema_cache)
             . ' | gunzip'
-            . Db_Dump_Cache_Command::mysqlpv_pipe_segment()
+            . Db_Rebuild_Provision_Cache_Snapshot_Command::mysqlpv_pipe_segment()
             . ' | mysql ' . $client_flags . ' ' . escapeshellarg((string) $db['database']),
             (string) $db['password'],
             'restoring the cached schema'
@@ -1450,7 +1479,7 @@ class Maint_Migrate extends Command
         // the restore; make the next query reconnect.
         DB::purge($connection);
 
-        $uploads_cache = $cache_dir . '/' . Db_Dump_Cache_Command::UPLOADS_CACHE_FILE;
+        $uploads_cache = $cache_dir . '/' . Db_Rebuild_Provision_Cache_Snapshot_Command::UPLOADS_CACHE_FILE;
 
         if (is_file($uploads_cache)) {
             // Rsx_File_Paths is the ONE resolver for the blob store, so this honours the

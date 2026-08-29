@@ -158,7 +158,7 @@ PHP EXTENSION CONTRACT
     and database connections and corrupts them. That is correct packaging, not an
     omission to work around - so a flat single list would have to either refuse
     every web request or leave the CLI code that uses pcntl unguaranteed. The tier
-    split refuses neither. Db_Dump_Cache_Command's SIGINT/SIGTERM handlers
+    split refuses neither. Db_Rebuild_Provision_Cache_Snapshot_Command's SIGINT/SIGTERM handlers
     therefore call pcntl_async_signals() unconditionally: the boot check has
     already guaranteed it by the time any command runs.
 

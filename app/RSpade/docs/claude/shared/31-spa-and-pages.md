@@ -13,7 +13,7 @@ Client-side routing for authenticated areas: **ONE PHP bootstrap controller per 
 class Contacts_Index_Action extends Spa_Action { async on_load() { ... } }
 ```
 
-**A fixed title is `@title` and nothing else** — `page_title()` returns it, and the layout paints it synchronously at dispatch. **Override `page_title()` only for a data-dependent title, and start the override with `await this.await_loaded()`** before reading `this.data` (it is called before the load finishes); an override means the class's `@title`, if any, is route metadata and is never painted.
+**A fixed title is `@title` and nothing else** — `page_title()` returns it, painted synchronously at dispatch. **Override `page_title()` only for a data-dependent title, and start the override with `await this.await_loaded()`** before reading `this.data` (it is called before the load finishes); an override means the class's `@title`, if any, is never painted.
 
 A **layout** extends `Spa_Layout` and its template MUST contain a `$sid="content"` element — that is where actions render, and it persists across navigation. **Navigation**: `Spa.dispatch('/path')` pushes history; **`Spa.redirect('/path')` REPLACES it and is the one for a programmatic redirect in `on_load()`**. Route and query params both land in `this.args`. **Link interception is automatic** — only known SPA routes are intercepted, so no attribute is needed to bypass it; do not invent a `data-no-spa`.
 
@@ -23,6 +23,6 @@ A **layout** extends `Spa_Layout` and its template MUST contain a `$sid="content
 
 **All URLs are generated with `Rsx::Route()` / `Rsx.Route()` — hardcoded URLs are forbidden** and `rsx:check` flags them: `Rsx::Route('Frontend_Controller::view', $id)`, with extra array keys becoming a query string.
 
-**Modules and bundles**: scaffold with `rsx:app:module:create` / `:module:feature:create` (SPA by default; `--blade` scaffolds the server-rendered ladder for public/SEO pages) / `:submodule:create` / `rsx:app:component:create`. **One bundle per module**, compiled JIT on web request — never a manual build step.
+**Modules and bundles**: scaffold with `rsx:app:module:create` / `:module:feature:create` (SPA by default, `--blade` for the server-rendered ladder) / `:submodule:create` / `rsx:app:component:create`. **One bundle per module**, compiled JIT on web request — never a manual build step.
 
 Skills: `rspade:spa`, `rspade:crud-patterns`, `rspade:blade-views`, `rspade:bundles`. Details: `rsx:man spa`, `rsx:man crud`, `rsx:man routing`.

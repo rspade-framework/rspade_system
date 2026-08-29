@@ -44,8 +44,8 @@ PHP EXTENSIONS
 
         imagick     Image manipulation - resize, crop, convert, thumbnail. The
                     framework's own attachment icons and thumbnails use it.
-        gd          The other image library. Present because PhpSpreadsheet and
-                    the QR-code writer render through it.
+        gd          The other image library. Present because PhpSpreadsheet
+                    renders through it.
         gmp         Arbitrary-precision integers. Big counters, hash arithmetic,
                     anything where a 64-bit int is not enough.
         zip         Reading and writing .zip archives - and the format xlsx and
@@ -163,18 +163,14 @@ COMPOSER PACKAGES
             (export_xlsx) and .../clients/list/clients_datagrid.js.
 
         league/csv
-            CSV as a first-class format: streaming reads of files too large to
-            hold, headers, escaping, encoding conversion. Reach for it when CSV is
-            INPUT, or when an export is large enough to stream.
+            CSV as a first-class format, in BOTH directions: streaming reads of
+            files too large to hold, headers, escaping, encoding conversion, and
+            Writer for output. It is the framework's CSV library and the only one
+            - never hand-roll a CSV field, in either direction.
 
-            For a small export the framework already has the answer -
-            DataGrid_Abstract::build_csv($headers, $rows) returns an RFC4180
-            string (rsx:man crud). Use league/csv when that shape does not fit.
-
-        endroid/qr-code
-            QR codes as PNG or SVG. Reach for it for two-factor enrolment,
-            check-in codes, a printable link on a document, a device-pairing
-            handoff.
+            A grid export already has the shape: DataGrid_Abstract::build_csv(
+            $headers, $rows) returns an RFC4180 string, written through
+            League\Csv\Writer. Full treatment: rsx:man csv_exports.
 
         laravel/framework, guzzlehttp/guzzle, sokil/php-isocodes,
         nikic/php-parser
@@ -248,3 +244,4 @@ SEE ALSO
     safe_html            The framework's own HTML sanitising path
     npm                  JavaScript packages and Asset Bundles
     crud                 DataGrid_Abstract::build_csv and the export pattern
+    csv_exports          league/csv in both directions, and the template's export

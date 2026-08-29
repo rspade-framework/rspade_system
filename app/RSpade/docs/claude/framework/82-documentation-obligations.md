@@ -33,12 +33,12 @@ The rule above governs EVERY change. This mandate is the heavier checklist that 
 
 1. **This monorepo's always-on knowledge** (`docs/claude/framework/`, or `docs/claude/shared/` when true in both environments) — how to USE the feature. **Terse.**
 2. **The shared fragment(s)** — **write it ONCE**; the downstream view assembles the same file.
-3. **The reference app (`/rsx/`)** — make it demonstrate the new way. **This item ships.** `bin/publish` vendors `/rsx/` into every release at `system/app/RSpade/resource/reference_app/`, where a downstream developer reads it as pristine, release-current ground truth — so a feature the reference app does not demonstrate is not merely an untidy template, it is a silent lie in a file that looks canonical. Never mark a contract change done with this item outstanding.
+3. **The reference app (`/rsx/`)** — make it demonstrate the new way. **This item ships**: `bin/publish` vendors `/rsx/` into every release at `system/app/RSpade/resource/reference_app/`, where a downstream developer reads it as pristine, release-current ground truth. A feature the reference app does not demonstrate is a silent lie in a file that looks canonical. Never mark a contract change done with this item outstanding.
 4. **The relevant man page(s)** — the full treatment.
 5. **`upstream_changes/*.txt`** — the migration: how to find and convert EXISTING downstream code.
 6. **`man/prelaunch_checklist.txt`** — ONLY when the change does not self-correct through a thrown exception or failed build (a silent behavior change), and so needs a human eye.
 
-**Cite the reference app by path.** `system/app/RSpade/resource/reference_app/...` resolves in BOTH environments — here it is a symlink to `/rsx/`, downstream it is real files — so a man page, skill or `upstream_changes` document may point at a concrete file and be correct everywhere. Use it: RSpade's wiring is implicit, and a worked example settles what prose cannot. It is especially the fix for a Category 1 `upstream_changes` document — show the essential code inline as the charter demands, AND name the full converted file in the reference app.
+**Cite the reference app by path.** `system/app/RSpade/resource/reference_app/...` resolves in BOTH environments (here a symlink to `/rsx/`, downstream real files), so a man page, skill or `upstream_changes` document may point at a concrete file and be correct everywhere. RSpade's wiring is implicit, and a worked example settles what prose cannot.
 
 **Keep the audiences separate.** Always-on knowledge describes how to write code with the feature TODAY — audit sweeps, "find your existing call sites" and conversion steps belong in `upstream_changes/`; recurring pre-launch verification belongs in the prelaunch checklist. Mixing migration prose into always-on knowledge bloats what every reader loads on every task.
 
@@ -46,7 +46,7 @@ The rule above governs EVERY change. This mandate is the heavier checklist that 
 
 ### External requests
 
-`docs.dev/external_requests/` holds pre-authorized requests from external environments that Brian controls. **MANDATE**: the directory is tracked by a self-maintained `INDEX.md` — one row per request (filename, disposition, the commit that fulfilled it, an absolute-date timestamp), updated whenever status changes. **A FULLY-processed request (`IMPLEMENTED`/`FOLDED`/`SUPERSEDED`/`DECLINED`) is ALSO MOVED into `archive/`** (its INDEX row then carries the `archive/` path); a file still at the top level is OPEN.
+`docs.dev/external_requests/` holds pre-authorized requests from external environments that Brian controls. **MANDATE**: the directory is tracked by a self-maintained `INDEX.md`, one row per request, updated whenever status changes, and **a FULLY-processed request is ALSO MOVED into `archive/`** — so a file still at the top level is OPEN. Row shape and dispositions: skill `rspade:shipping-a-contract-change`.
 
 **Hierarchy**: development (`docs.dev/`) -> always-on knowledge (`docs/claude/{shared,framework,app}/`) + contract tier (`man/*.txt`, `Core/*/CLAUDE.md`) -> upstream changes. **Editing always-on knowledge**: *"Say only what needs to be said, but say all of it."*
 

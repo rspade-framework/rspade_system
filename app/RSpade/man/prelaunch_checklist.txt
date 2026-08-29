@@ -724,7 +724,7 @@ ENTRY 7: DATETIME DISPLAY AND DATETIME-vs-DATE COLUMNS (timezone correctness)
            looking at pages. Walk each one by hand:
 
                grep -rnE '(_at|_date)\b' rsx/emails/
-               grep -rniE 'fputcsv|->download\(|Response::file|pdf' rsx/ \
+               grep -rniE 'build_csv|Csv.Writer|->download\(|Response::file|pdf' rsx/ \
                  --include='*.php'
 
            An emailed or exported datetime has no browser to fall back on: it MUST
@@ -846,6 +846,84 @@ ENTRY 7: DATETIME DISPLAY AND DATETIME-vs-DATE COLUMNS (timezone correctness)
         MODEL-FETCH-DATE-01  server-side twin - no pre-formatting in fetch()
 
 
+--------------------------------------------------------------------------------
+
+ENTRY 8: $required ASTERISKS WITH NO SERVER RULE (form validation completeness)
+
+    What to audit
+        Whether every $required=true on a <Form_Field> has a real validation rule
+        behind it, in the endpoint the enclosing <Rsx_Form>'s $controller and
+        $method name.
+
+        FIRST: read `php artisan rsx:man form_conventions` IN FULL. That man page
+        is the single source of truth for how a form declares its endpoint, why
+        validation is server-only, and what a rejection looks like coming back
+        (response_form_error keyed by field). This audit does NOT restate those
+        patterns - it directs you to them and requires you to verify each form
+        against them.
+
+        THEN enumerate EVERY form in the application - staff AND portal. This
+        audit is form-enumeration driven: grep for <Rsx_Form across rsx/, list
+        every one, open the endpoint each names, and check each $required field in
+        that form individually.
+
+    Why it matters
+        $required is PRESENTATION. It draws an asterisk beside the label and
+        nothing else - it does not block submission, and there is deliberately no
+        client-side check to add, because validation lives on the server exactly
+        once. A client check would be a second implementation of the same rule,
+        and its real damage is that it MASKS a missing server rule: the form
+        appears to enforce the field, so nobody notices the endpoint does not.
+
+        An asterisk with no rule behind it is silent in every way that matters.
+        Nothing throws. The field is visibly marked. Manual testing passes,
+        because a human fills the field in. The gap surfaces later, when a script,
+        an import, or an external API client posts the same endpoint with the
+        field blank and the record is written with an empty value that the rest of
+        the application assumed could never exist.
+
+    Guidelines
+        1. Enumerate the forms: grep for `<Rsx_Form` across rsx/, staff and portal
+           alike. Every match is one audit item.
+        2. For each form, read its $controller and $method and open that endpoint.
+        3. For each $required field in the form, confirm the endpoint has a
+           presence check for it, and that the check is written against BLANK, not
+           merely against ABSENCE - a submitted-but-empty text input arrives as
+           the empty string, not as a missing key.
+        4. Confirm the rule is IDENTICAL on create and on edit. A field required
+           when a record is added is required when it is changed; a save path that
+           validates on one and not the other is the same hole with a narrower
+           entrance.
+        5. Confirm the rejection is response_form_error keyed by the input's
+           $name, so the message lands on the field rather than at the top of the
+           form.
+        6. Sweep the other direction too: a field the endpoint requires but whose
+           <Form_Field> carries no $required is a UI defect. The user is given no
+           warning and discovers the requirement by having their submission
+           rejected.
+
+    Dos and don'ts
+        DO test for blank:
+             if (trim($params['title'] ?? '') === '') { ... }
+        DON'T add a client-side required check to "help" - validation lives on the
+             server once, and the client copy hides the case where the server copy
+             is missing.
+        DON'T write `if (!empty($params['title'])) { $record->title = ...; }` as a
+             stand-in for a required rule. That is not validation; it is "keep the
+             old value when the field is blank", it silently accepts the blank
+             submission, and on a create it leaves the column at its default.
+        DON'T reject with response_error(Ajax::ERROR_VALIDATION, 'message'). That
+             is a form-level error with no field to attach to; the user is told
+             something is wrong and not which box.
+        DO check the portal's forms with the same rigour as the staff app's. A
+             portal endpoint is reachable by an external user, which is the
+             population least likely to fill a form in the way you expected.
+
+    Related
+        php artisan rsx:man form_conventions
+        php artisan rsx:man external_api    (the other caller that sends blanks)
+
+
 SEE ALSO
     php artisan rsx:man login_redirect
     php artisan rsx:man session
@@ -858,3 +936,4 @@ SEE ALSO
     php artisan rsx:man csp
     php artisan rsx:man external_resources
     php artisan rsx:man time
+    php artisan rsx:man form_conventions

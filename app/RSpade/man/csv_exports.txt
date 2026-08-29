@@ -1,0 +1,102 @@
+NAME
+    csv_exports - CSV in RSpade: league/csv is the library, in both directions
+
+SYNOPSIS
+    php artisan rsx:man csv_exports
+    php artisan rsx:man standard_library   # the wider guaranteed toolkit
+
+DESCRIPTION
+    league/csv is the framework's CSV library. It is installed in system/vendor,
+    it is on the exposed list in config('rsx.dependencies.exposed_composer'), and
+    it is the ONE way an RSpade application reads or writes CSV.
+
+    THE ONE-WAY RULE: never hand-roll CSV again. Not an implode(','), not a
+    str_getcsv() loop, not "this export has no commas in it so a join is fine".
+    Escaping is where a hand-rolled CSV is wrong - a value carrying a comma, a
+    quote, a newline or a leading = is the row that corrupts somebody's
+    spreadsheet, and it is never the row the developer tested with. league/csv
+    already knows the rules, on both sides, so writing a second implementation
+    only creates a place for them to disagree.
+
+    Both directions matter, and they are the reason it is one library rather than
+    two:
+
+    WRITING
+        League\Csv\Writer over a stream. insertOne() writes a row, insertAll()
+        writes many, toString() returns the whole document. Writer owns quoting,
+        doubled quotes, embedded newlines and the delimiter.
+
+    READING
+        League\Csv\Reader, and reading is STREAMING. Reader::from($path) plus
+        getRecords() yields one row at a time, so an import of a file bigger than
+        memory is an ordinary foreach - the file is NEVER loaded whole. That is
+        the property that makes an import safe to point at a customer's export,
+        whatever size it turns out to be.
+
+    Use php://temp for a document being built in memory: it keeps a small
+    document in RAM and spills a large one to disk by itself, so the size of a
+    user's selection never decides how much memory the request needs.
+
+THE TEMPLATE'S EXPORT
+    The reference application implements the grid export in two files, and a new
+    export is written by copying them:
+
+    system/app/RSpade/resource/reference_app/theme/components/datagrid/datagrid_abstract.php
+        DataGrid_Abstract::build_csv($headers, $rows) - a header row plus data
+        rows to one RFC4180 string, through League\Csv\Writer over php://temp.
+        Every grid's export endpoint calls this; none of them formats a CSV field
+        itself.
+
+    system/app/RSpade/resource/reference_app/app/frontend/clients/clients_controller.php
+        Frontend_Clients_Controller::export_csv - the endpoint. It resolves the
+        grid selection (apply_selection), walks the WHOLE of it one keyset page at
+        a time (iterate_selection - no LIMIT, no truncation), builds each row, and
+        hands the columns to build_csv().
+
+    An Ajax response can never BE a download: every Ajax response is HTTP 200 JSON
+    in the standard envelope. So the endpoint returns
+
+        ['csv' => <string>, 'filename' => <string>, 'count' => <int>]
+
+    and the browser turns it into a file. The client seam is
+    trigger_file_download(content, filename[, mime_type]) in
+    system/app/RSpade/resource/reference_app/lib/file_download.js, called from
+    Clients_DataGrid.export_selection(). An export does NOT clear the grid
+    selection - it reads, it does not consume.
+
+THE EXCEL SIBLING
+    Same selection, same columns, different container:
+    Frontend_Clients_Controller::export_xlsx builds a workbook with
+    phpoffice/phpspreadsheet and returns
+
+        ['xlsx_base64' => <string>, 'filename' => <string>, 'count' => <int>]
+
+    base64 because JSON carries no bytes; the client rebuilds them with
+    base64_to_bytes() and passes the xlsx MIME type to trigger_file_download().
+
+    WHICH ONE TO OFFER. CSV is text a spreadsheet guesses at - a phone number
+    becomes a number, a date becomes whatever the recipient's locale decides
+    "3/4/25" meant. xlsx carries the types. Offer CSV when the destination is
+    another program, xlsx when the destination is a person. The template offers
+    both from the same footer menu.
+
+THE GATE
+    An export endpoint is gated like every other dispatchable surface, and the
+    template's gate is
+
+        #[Auth('can_export_data')]
+        #[Ajax_Endpoint]
+
+    Exporting is a bulk read of everything a grid can see, which is not the same
+    permission as being allowed to look at one record - hence a check of its own
+    rather than reusing the page's.
+
+    The menu item that triggers it mirrors the same check in the template
+    (Permission.has_permission(...)), so the UI never offers an action the server
+    will refuse. The gate is the server's; the mirror is only politeness.
+
+SEE ALSO
+    standard_library     The guaranteed toolkit, league/csv included
+    crud                 DataGrid_Abstract and the grid export pattern
+    auth_gates           #[Auth] and writing an #[Auth_Check]
+    dependencies         The exposed package list and what exposure promises

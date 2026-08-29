@@ -51,6 +51,33 @@ The extension is built with TypeScript and follows VS Code extension best practi
 
    **Short Names:** If class is `Foo_Bar_Baz_Bom` in directory `./rsx/app/foo/bar/`, filename can be `baz_bom.php` instead of `foo_bar_baz_bom.php`
 
+## The extension keeps no file index
+
+Everything the extension resolves - classes, views, components, bundles, routes -
+is answered by the IDE bridge (`/_ide/service/resolve_class`), which reads
+`storage/rsx-build/manifest_data.php`. **There is no extension-side index**, so
+nothing here has its own idea of what is in the tree. One consequence worth
+knowing: the manifest never scans a directory named `resource/`
+(`manifest.excluded_dirs` in `system/config/rsx.php`), so the reference app
+vendored into a release at `system/app/RSpade/resource/reference_app/` is never a
+definition target - go-to-definition lands on the real class every time.
+
+**Anything that does enumerate workspace files honours the workspace's own
+excludes.** `convention_method_provider.ts` passes `undefined` as `findFiles`'s
+exclude argument (an explicit glob REPLACES `files.exclude` instead of adding to
+it), and `file_watcher.ts` uses a workspace-relative watcher glob, to which VS
+Code applies `files.watcherExclude`. Excluding a directory in
+`.vscode/settings.json` is the whole of the configuration; **never introduce a
+second exclusion list inside the extension.** `fs.existsSync` / `fs.statSync` on
+a single already-known path is not enumeration and needs no such handling.
+
+`symlink_redirect_provider.ts` resolves `fs.realpathSync` rather than matching
+known symlink names, so a file opened through ANY in-workspace symlink redirects
+to its real path. `system/rsx/` is the worked example; in this monorepo
+`system/app/RSpade/resource/reference_app/` is a second symlink to `rsx/` and is
+covered by the same rule with no special case. Downstream that directory is real
+files, so realpath equals the opened path and the provider does nothing.
+
 ## Building
 
 **Always build with `./build.sh`. Never run `npm install`, `npm run compile` or
