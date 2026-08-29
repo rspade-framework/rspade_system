@@ -18,7 +18,9 @@
 
 ### `$sid` is TEMPLATE-ONLY
 
-`$sid`/`$id` are assigned **only in `.jqhtml` files** (they compile to scoped `id=""` values) and are **never settable from JS**.
+`$sid` is assigned **only in `.jqhtml` files** (it compiles to a scoped `id=""` value) and is **never settable from JS**.
+
+`$id` is NOT a synonym for it. `$id` was the original spelling, renamed to `$sid`, and it now carries no special meaning at all: `$id="x"` is an ordinary component argument exactly like `$foo="x"`, so it produces no scoped id and `this.$sid('x')` will never find it. An un-migrated template fails silently.
 
 **Tagging imperative DOM with `data-id` via `.attr()` plus `[data-id=]` selectors is WRONG.** `data-*` belongs to the args machinery, and the jquery layer THROWS on the setter form. To address DOM you created imperatively, keep **in-memory element references** (a `Map` from key to element) or use CSS classes.
 
@@ -59,7 +61,7 @@ A subscription that means "the USER changed this" rides **`input`**, never **`va
 
 Custom component methods always get unique names. **Never shadow the `Jqhtml_Component` surface:**
 
-`reload` · `refresh` · `render` · `redraw` · `stop` · `ready` · `rendered` · `gate_load` · `subscribe` · `sid` · `$sid` · `closest` · `find` · `instantiator` · `on` · `once` · `trigger` · plus every lifecycle hook (`on_create`, `on_render`, `on_load`, `on_loaded`, `on_ready`, `on_stop`).
+`reload` · `refresh` · `render` · `redraw` · `stop` · `ready` · `rendered` · `gate_load` · `sid` · `$sid` · `closest` · `find` · `instantiator` · `on` · `once` · `trigger` · `invalidate` · plus every lifecycle hook (`on_create`, `on_render`, `on_load`, `on_loaded`, `on_ready`, `on_stop`). Also reserved, but RSpade's rather than jqhtml's: `subscribe`, patched onto `Component.prototype` at boot by `Rsx_Realtime` (which also wraps `on_stop` to release subscriptions).
 
 Overriding one of these is a deliberate OOP override for unusual edge cases only, never a naming convenience. **`render()` is the exception with no exceptions** - never override or shadow it, instance or static (`JQHTML-RENDER-01`/`JQHTML-IMPL-01` reject it). The full list is in `php artisan rsx:man jqhtml` (RESERVED NAMES).
 

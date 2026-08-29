@@ -2095,15 +2095,20 @@ RESERVED NAMES (METHODS AND EVENTS)
     class and event bus the framework uses. Two reserved namespaces exist;
     colliding with either silently replaces or shadows framework behavior.
 
-    Reserved METHOD names (the Jqhtml_Component surface):
+    Reserved METHOD names (the Jqhtml_Component surface, plus what RSpade
+    adds to it):
         Lifecycle hooks:
             on_create, on_render, on_load, on_loaded, on_ready, on_stop,
             on_viewport_resize
         Lifecycle methods:
             reload, refresh, render, redraw, stop, ready, rendered,
-            gate_load, subscribe
+            gate_load
         Access / traversal / events:
             sid, $sid, closest, find, instantiator, on, once, trigger
+        Added by RSpade (not part of jqhtml itself):
+            subscribe - patched onto Component.prototype at boot by
+            Rsx_Realtime (see rsx:man realtime); on_stop is wrapped by the
+            same patch to release subscriptions
         Properties:
             $, data, args, state, _cid (and every _-prefixed internal)
 

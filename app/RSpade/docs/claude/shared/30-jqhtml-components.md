@@ -18,7 +18,7 @@ RSX's component system. A component is up to three co-located files sharing one 
 
 **Access**: `this.$` (element), `this.$sid('x')` (child element tagged `$sid=` in the template — template-only, never set from JS), `this.sid('x')` (child component instance), `$(sel).component()`. Events: `this.trigger(name, data)` / `child.on(name, cb)`.
 
-**Re-render**: `reload()` re-runs `on_create()` -> `on_load()` -> render (use when `this.args` changed); `render()`/`redraw()` re-executes the template only; `stop()` destroys. Ajax belongs in `on_load()` — never refetch from a handler.
+**Re-render**: `reload()` restores `this.data` to its `on_create()` snapshot then re-runs `on_load()` -> render (`on_create()` is NOT called again; use when `this.args` changed); `render()`/`redraw()` re-executes the template only; `stop()` destroys. Ajax belongs in `on_load()` — never refetch from a handler.
 
 **Compose pages from named components** — an Action template reads as component invocations, not `<div class>` soup; each component owns its whole look in its own SCSS.
 

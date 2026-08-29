@@ -208,8 +208,18 @@ The skill's `on_render` cache-stub warnings presuppose this model:
 
 - Components with the same name and the same args loading at the same time share **one** `on_load()`
   call. Automatic, always on. Fewer network requests than component instances is expected.
-- The invocation key is built from **primitive args only**. An object, array or function arg makes
-  the key null, which silently disables BOTH deduplication and caching (see SKILL.md pitfall 21).
+- **Caching and deduplication key differently, and this is deliberate.** CACHING keys plain data by
+  CONTENT (jqhtml >= 2.3.54): null, booleans, numbers, strings, Dates, arrays and plain objects, in
+  any nesting, so `$filters={status:'open'}` rebuilt on every render still hits the same entry. It
+  DECLINES - never silently degrades - on a function, a class instance, a DOM/jQuery object, a
+  circular structure, or anything over 500 bytes, marking the element
+  `data-nocache="<arg>:<reason>"`. A key that dropped a callback would let two different arg sets
+  share an entry and serve the wrong content, which is worse than not caching.
+- DEDUPLICATION is stricter and does NOT use content keys: it needs primitive args, or a
+  `_jqhtml_cache_id` property on the object. A deduplicated follower skips `on_load()` entirely with
+  no revalidation, so a wrong key there is permanently wrong data - redundant requests are the
+  cheaper failure. This is why a non-primitive arg still opts out of shared loads (SKILL.md
+  pitfall 21) even though it now caches.
 - `cache_id()` can be overridden to control the persisted cache key. It does **not** affect
   deduplication, which always keys off raw `this.args`.
 

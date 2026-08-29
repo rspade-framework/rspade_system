@@ -70,7 +70,7 @@ Displayed content belongs in `content()`/slots, never in an attribute - see `ref
 | Form | Meaning |
 |---|---|
 | `$quoted="string"` | String literal arg |
-| `$unquoted=expression` | JavaScript expression arg - **no spaces allowed** (`$alert=(_x>0)`, not `$alert=(_x > 0)`) |
+| `$unquoted=expression` | JavaScript expression arg - ends at the first space unless bracketed. `$alert=_x > 0` fails; `$alert=(_x>0)` and `$alert=(_x > 0)` both work |
 | `$sid="name"` | Scoped element id, addressable as `this.$sid('name')` |
 | `attr="<%= expr %>"` | An ordinary HTML attribute with interpolation |
 | `$prop=value` ON `<Define>` | A DEFAULT for `this.args.prop`; the caller's `$prop=` at the invocation wins |
@@ -82,6 +82,7 @@ Displayed content belongs in `content()`/slots, never in an attribute - see `ref
 - **`$prefix` means component arg, NOT HTML attribute.** `<My_Component $data-id=123 />` creates `this.args['data-id']` - it does not put a `data-id` attribute on the DOM node.
 - **Conditional attributes use if-statements, not ternaries**: `<% if (cond) { %>checked<% } %>`.
 - **Unquoted `$` expressions are synchronous.** The generated render function is not async - no `await`. Precompute in a `<% %>` block.
+- **An unquoted `$` expression ends at the first space unless it is bracketed.** Wrap anything containing spaces in parentheses, or precompute it.
 - **`class` and `style` MERGE; everything else overrides.** Define + invocation classes union (no dupes); `style` merges per CSS property with the invocation winning conflicts. Plain attributes and `$` args are replaced outright by the invocation.
 - **Void HTML elements auto-close** (`<input>`, `<img>`, `<br>`, `<hr>`); components never do - always `<Card />` or `<Card>...</Card>`.
 
@@ -93,10 +94,12 @@ Logic toggles a **whole attribute**, and the `<% %>` block sits **between** attr
 <input <% if (this.args.required) { %>required="required"<% } %> />
 ```
 
-**GOTCHA 1 - never put `<% %>` inside a quoted attribute value.**
+**GOTCHA 1 - never put `<% %>` inside a quoted attribute value.** This is a COMPILE
+ERROR, not a silent corruption: `<% %> code blocks are not allowed inside attribute
+values`. (It corrupted the value silently before jqhtml 2.3.42.)
 
 ```jqhtml
-<!-- [NO] renders the template text literally and silently corrupts the class -->
+<!-- [NO] compile error -->
 <div class="base<% if (x) { %> extra<% } %>">
 
 <!-- [OK] compute the value, then interpolate the whole thing -->
@@ -106,14 +109,30 @@ Logic toggles a **whole attribute**, and the `<% %>` block sits **between** attr
 
 A value that *starts* with `<%=` is fine (`class="<%= cls %>"`); a `<%` appearing mid-string inside the quotes is not.
 
-**GOTCHA 2 - raw-text elements.** `<%= %>` does NOT interpolate inside `<textarea>`, and nested content inside `<pre>` throws at compile. Render both empty in the markup and set their content from JS:
+**GOTCHA 2 - raw-content elements.** `<pre>` and `<textarea>` hold a single block of
+content rather than a normal child list. As of jqhtml 2.3.59 both interpolate normally:
 
 ```jqhtml
-<textarea $sid="notes"></textarea>
+<textarea><%= this.data.notes %></textarea>
+<pre><code class="language-<%= lang %>"><%= this.data.src %></code></pre>
 ```
-```javascript
-on_render() { this.$sid('notes').val(this.data.notes || ''); }
+
+`<pre>` is lexed as a raw-text element, so nested markup is preserved and its interior
+whitespace survives byte for byte - `<pre><code>` is the standard code-block idiom and
+compiles. `<textarea>` takes text only: a nested element inside one is a compile error,
+matching its HTML content model.
+
+What neither accepts is a `<% %>` code block. Their content is one flat string with
+nowhere for statements to write output, so build the value first and interpolate it:
+
+```jqhtml
+<% const body = cond ? a : b; %>
+<textarea><%= body %></textarea>
 ```
+
+(Before 2.3.59 an expression in either position silently rendered the literal text
+`undefined`, and the workaround was to render them empty and populate from JS in
+`on_render()`. That workaround is no longer needed.)
 
 ## Inline logic and handlers
 
