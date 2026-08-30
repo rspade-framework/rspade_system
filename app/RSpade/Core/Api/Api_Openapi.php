@@ -104,7 +104,7 @@ class Api_Openapi
             'title' => config('app.name', 'RSpade') . ' API',
             'version' => 'v' . ($versions[0] ?? 1),
             'description' => 'External REST API. Every request carries an API key as '
-                . 'Authorization: Bearer rsk_... - there is no cookie or session auth on this '
+                . 'Authorization: Bearer rsx_... - there is no cookie or session auth on this '
                 . 'surface. Keys are created in Settings > API Keys. A key resolves to a staff '
                 . 'user and that user\'s site, and every endpoint is scoped to that site '
                 . 'automatically.',
@@ -122,7 +122,7 @@ class Api_Openapi
                     'type' => 'http',
                     'scheme' => 'bearer',
                     'description' => 'An API key from Settings > API Keys, sent as '
-                        . 'Authorization: Bearer rsk_live_...',
+                        . 'Authorization: Bearer rsx_live_...',
                 ],
             ],
             'schemas' => [

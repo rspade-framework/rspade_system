@@ -150,12 +150,16 @@ AUTHENTICATION
         attempt() itself and pruned on rsx.sessions.login_history_retention_days.
         FAILURES are NOT database rows: record_failure() increments a per-email
         and a per-IP counter that expire on
-        rsx.sessions.login_failure_window_minutes and logs one warning line, so
+        rsx.sessions.login_throttle.window_minutes and logs one warning line, so
         an anonymous caller cannot grow a table by failing to log in. The
         consequence to plan around: get_failed_attempts_count*() answers are
         BOUNDED BY THAT WINDOW - a 30-day failed-attempt stat is not answerable.
-        Throttling built on the counters fails OPEN. Full treatment (including
-        the 2FA and custom-status recipes): rsx:man session, LOGIN HISTORY.
+        Those counts are a STATISTIC; ENFORCEMENT is Login_Throttle's, per client
+        IP, and it is on by default: attempt() refuses a locked-out address
+        before the lookup by throwing Auth_Throttled_Exception ("You're doing
+        that too fast"), so a login function CATCHES it and renders the message.
+        Full treatment (including the 2FA, portal and custom-status recipes):
+        rsx:man session, LOGIN HISTORY + LOGIN THROTTLE.
 
     Account state (status_id / is_activated / is_verified):
         APPLICATION vocabulary, enforced by the application - attempt() checks a

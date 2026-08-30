@@ -1441,18 +1441,49 @@ return [
         // evicted - a harness run must not sign a developer out of their browser.
         'max_web_sessions_per_user' => 25,
 
-        // Window over which failed login attempts are counted, in minutes.
-        // Login_History::record_failure() writes no database row: it increments a
-        // per-email and a per-IP counter in Redis carrying this value as their TTL
-        // (owner-approved 2026-08-12 CR design), and the counts read back by
-        // get_failed_attempts_count*() are bounded by it. The window is FIXED, not
-        // sliding - it runs from the first failure, then the counter disappears.
+        // Brute-force throttle on the authentication surface, enforced by the
+        // framework (Login_Throttle, called first by RsxAuth::attempt()).
         //
-        // Application behavior, not a deployment fact, so it lives here rather than
-        // in .env. Under maintenance mode Redis is stopped, the increments drop and
-        // the counts read 0: throttling built on them fails OPEN, deliberately - a
-        // cache outage must never lock users out.
-        'login_failure_window_minutes' => 15,
+        // WHAT IS COUNTED: FAILURES, not requests. A request that authenticates
+        // costs nothing, so a normal user never approaches the budget however
+        // often they sign in; only wrong answers accumulate.
+        //
+        // KEYED PER CLIENT IP (Session::get_client_ip(), the one place the proxy
+        // header chain is interpreted). Per-IP rather than per-email because the
+        // attacker chooses the email - spraying one password across a thousand
+        // addresses would never trip a per-email budget. A request with no client
+        // IP at all (CLI, tasks) is never throttled: there is no remote party to
+        // throttle, and a command is not an attack surface.
+        //
+        // The counter's window is FIXED, not sliding - it runs from the first
+        // failure, then the counter disappears and the next failure opens a new
+        // one. A sliding window would let a slow attacker hold a counter alive
+        // forever. The same window bounds the per-email and per-IP counts
+        // Login_History::get_failed_attempts_count*() read back.
+        //
+        // ON BY DEFAULT: an unthrottled login endpoint is an unlimited password
+        // and second-factor guessing oracle, so the secure posture is the one you
+        // get without doing anything. 'enabled' => false turns the whole feature
+        // off (nothing is counted and nothing is enforced) for an environment that
+        // throttles at the edge instead.
+        //
+        // Under maintenance mode Redis is stopped, the increments drop and the
+        // counts read 0: the throttle is inert while the web tier is answering
+        // 503 anyway. Any OTHER cache failure is loud - the login fails rather
+        // than proceeding unthrottled.
+        'login_throttle' => [
+            // Master switch for counting and enforcement.
+            'enabled' => true,
+
+            // Failures from one IP inside the window that trigger the lockout.
+            'attempts' => 10,
+
+            // How long the failure counter lives, in minutes.
+            'window_minutes' => 15,
+
+            // How long the IP is refused after the budget is spent, in minutes.
+            'lockout_minutes' => 15,
+        ],
 
         // Days a `_login_history` row (successes only) is kept before the hourly
         // Session_Cleanup_Service prunes it. Default: 1 year. Set to 0 or null to

@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Auth;
 
 use Illuminate\Support\Facades\Hash;
+use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Session;
@@ -59,15 +60,32 @@ class RsxAuth
      * The pre-check neither records nor stamps, so a recorded SUCCESS always means FULL
      * authentication and last_login is stamped only when the user is actually all the way in.
      *
+     * THROTTLED BEFORE ANYTHING ELSE. The first statement is
+     * Login_Throttle::require_not_throttled(), which THROWS Auth_Throttled_Exception when the
+     * client IP has spent its failure budget (rsx.sessions.login_throttle). It runs before the
+     * lookup so a locked-out address cannot even probe which addresses exist, and it throws
+     * rather than returning false because "we did not check" is not the same answer as "those
+     * credentials are wrong" - a false there would report an invalid password to a user whose
+     * password may be perfectly correct.
+     *
+     * The exception is part of this method's contract: a login function CATCHES it and renders
+     * $e->getMessage() as its error. It is not caught here, and $record = false does not
+     * suppress it - the opt-out is about the audit trail, not about the attack surface.
+     *
      * See rsx:man session.
      *
      * @param array $credentials Requires 'email' and 'password'
      * @param bool $record Whether to record the outcome to Login_History (default true)
      * @param bool $touch_last_login Whether a successful login bumps last_login (default true)
      * @return bool
+     * @throws Auth_Throttled_Exception when this client IP is locked out
      */
     public static function attempt(array $credentials, bool $record = true, bool $touch_last_login = true)
     {
+        // Before the lookup, before the classification, before anything a caller could learn
+        // something from.
+        Login_Throttle::require_not_throttled();
+
         $email = $credentials['email'] ?? null;
         $password = $credentials['password'] ?? null;
 

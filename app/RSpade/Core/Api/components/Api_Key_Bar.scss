@@ -52,6 +52,25 @@
         padding: 2px 8px;
     }
 
+    // How the adopted key is scoped. Muted by default: 'unrestricted' is the ordinary
+    // case and should not shout. 'scoped' is the one that explains a short listing or an
+    // insufficient_scope refusal, so it takes the accent.
+    &__scope {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--api-muted);
+        border: 1px solid var(--api-border);
+        border-radius: 4px;
+        padding: 2px 7px;
+
+        &--scoped {
+            color: var(--api-accent);
+            border-color: var(--api-accent);
+            background: var(--api-accent-soft);
+        }
+    }
+
     // A rejected key. Cleared by any edit, so it describes what is typed NOW.
     &__input--invalid {
         border-color: var(--api-danger);

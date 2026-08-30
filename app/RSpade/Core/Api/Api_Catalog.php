@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Core\Api;
 
+use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Manifest\Manifest;
 
 /**
@@ -107,6 +108,67 @@ class Api_Catalog
         ksort($grouped);
 
         return $grouped;
+    }
+
+    /**
+     * The same resolved catalogue, narrowed to what one scope rule set actually reaches.
+     *
+     * PURE, and deliberately so: it takes the scopes TEXT rather than a key, touches no
+     * session and asks no gate, so the same function answers "what would this rule set
+     * reach" for a key that exists and for one an operator is still typing. That is what a
+     * live effective-access preview needs - there is no key to look up yet.
+     *
+     * SCOPES NARROW PER VERB, NOT PER ENDPOINT. A rule set may grant GET and withhold POST
+     * on one pattern, so each endpoint's `methods` list is narrowed to the verbs the rules
+     * admit and the endpoint drops out only when none survive; a resource left with no
+     * endpoints drops out with it. The returned structure is otherwise byte-identical to
+     * resolve_for_version()'s, so anything that renders one renders the other.
+     *
+     * IT IS NOT AN AUTHORITY CHECK. Scopes subtract from the holder's permissions and never
+     * add to them, so this answers "which of these endpoints do the rules allow", never
+     * "which may the user call" - Api_Tester_Key::accessible_targets_for_key() is the one
+     * that intersects the two, and Api_Dispatcher gates every real call regardless.
+     *
+     * @param int $version The catalogue version, as resolve_for_version() means it.
+     * @param string|null $scopes Rule text; null/blank is unrestricted and narrows nothing.
+     *
+     * @throws \InvalidArgumentException on a malformed rule (see Api_Scopes::parse()).
+     */
+    public static function resolve_for_scopes(int $version, ?string $scopes, bool $include_hidden = false): array
+    {
+        $groups = static::resolve_for_version($version, $include_hidden);
+
+        if (Api_Scopes::is_unrestricted($scopes)) {
+            return $groups;
+        }
+
+        $out = [];
+
+        foreach ($groups as $resource => $group) {
+            $endpoints = [];
+
+            foreach ($group['endpoints'] as $endpoint) {
+                $granted = Api_Scopes::targets_matching($scopes, [$endpoint]);
+
+                if (empty($granted)) {
+                    continue;
+                }
+
+                $endpoint['methods'] = array_values(array_map(
+                    static fn (array $target) => $target['method'],
+                    $granted
+                ));
+
+                $endpoints[] = $endpoint;
+            }
+
+            if (!empty($endpoints)) {
+                $group['endpoints'] = $endpoints;
+                $out[$resource] = $group;
+            }
+        }
+
+        return $out;
     }
 
     /**

@@ -47,11 +47,26 @@ function api_render_response($target, prefix, status, status_text, ms, pretty) {
     parts.push('<span class="' + prefix + '__status ' + badge_cls + '">' + status + ' ' + html(status_text || '') + '</span>');
     parts.push('<span class="' + prefix + '__timing">' + ms + ' ms</span>');
     parts.push('</div>');
+    // An insufficient_scope refusal is the one error whose REMEDY is not in the message.
+    // The body says the key is not scoped for this endpoint; the 'required' field says which
+    // rule would have to exist, verbatim in the rule language - so it is lifted out of the
+    // JSON rather than left for the reader to find in it.
+    const required = api_scope_required(pretty);
+
+    if (required !== null) {
+        parts.push('<div class="' + prefix + '__response-note ' + prefix + '__response-note--error">'
+            + 'This API key is not scoped for this endpoint. Requires: <code>' + html(required) + '</code>'
+            + '</div>');
+    }
+
     parts.push('<pre class="' + prefix + '__response-pre"><code class="language-json"></code></pre>');
 
     $target.html(parts.join(''));
 
-    const code_el = $target.find('code')[0];
+    // Addressed through the response block, not as "the first code element": the scope note
+    // above may carry a <code> of its own, and a bare find('code') would write the body into
+    // it and leave the response empty.
+    const code_el = $target.find('.' + prefix + '__response-pre code')[0];
     code_el.textContent = pretty;
 
     if (typeof hljs !== 'undefined') {
@@ -70,4 +85,28 @@ function api_pretty_body(text) {
     } catch (e) {
         return text;
     }
+}
+
+/**
+ * The `required` target of an insufficient_scope refusal, or null for any other body.
+ *
+ * Reads the already-pretty-printed text rather than taking a parsed object, because that is
+ * what the renderer holds and a body that did not parse as JSON cannot be this error anyway.
+ */
+function api_scope_required(pretty) {
+    let body;
+
+    try {
+        body = JSON.parse(pretty);
+    } catch (e) {
+        return null;
+    }
+
+    if (body?.error?.code !== 'insufficient_scope') {
+        return null;
+    }
+
+    const required = str(body.error.required || '').trim();
+
+    return required === '' ? null : required;
 }

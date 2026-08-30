@@ -25,6 +25,11 @@ use App\RSpade\Core\Time\Rsx_Time;
  * The name is deliberate and unmissable - it appears verbatim in rsx:api:key:list and in
  * Settings > API Keys, where the question being asked is always "what is this and can it go".
  * "Temporary (CLI)" answers both without anyone having to check the expiry column.
+ *
+ * --scope is accepted here for the same reason it exists on key:create, and matters MORE: a
+ * job that needs to read one resource can mint a key that can only read that resource, so a
+ * credential leaked out of a log for its remaining fifty minutes leaks that much authority
+ * and no more.
  */
 class Api_Key_Temp_Command extends Command
 {
@@ -39,6 +44,7 @@ class Api_Key_Temp_Command extends Command
                             {--site= : Site id, to disambiguate an email held in more than one site}
                             {--expires=1 hour : Lifetime as a relative span ("30 minutes", "24 hours") or an ISO datetime}
                             {--environment=live : Key environment: live or test}
+                            {--scope=* : Scope rule ("Grant GET /api/v1/contacts/**"), repeatable. Omit for an unrestricted key}
                             {--json : Output as JSON}';
 
     protected $description = 'Mint a short-lived external API key that expires on its own';
@@ -51,11 +57,12 @@ class Api_Key_Temp_Command extends Command
             $user = Api_Key_Cli_Support::resolve_user($this->option('user'), $this->option('site'));
             $environment = Api_Key_Cli_Support::parse_environment($this->option('environment'));
             $expires_at = Api_Key_Cli_Support::parse_expiry((string) $this->option('expires'));
+            $scopes = Api_Key_Cli_Support::parse_scopes($this->option('scope'));
         } catch (Api_Cli_Error $e) {
             return Api_Key_Cli_Support::report_error($this, $e, $as_json);
         }
 
-        $result = Api_Key_Model::generate($user->id, static::KEY_NAME, $environment, null, $expires_at);
+        $result = Api_Key_Model::generate($user->id, static::KEY_NAME, $environment, null, $expires_at, $scopes);
         $api_access = Api_Key_Cli_Support::api_access_enabled($user);
 
         if ($as_json) {
@@ -73,6 +80,12 @@ class Api_Key_Temp_Command extends Command
         $this->line('  Name:    ' . $result['model']->name);
         $this->line('  Id:      ' . $result['model']->id);
         $this->line('  Expires: ' . Rsx_Time::format_datetime($expires_at->toIso8601String()));
+        $this->line('  Scope:   ' . Api_Key_Cli_Support::key_scope_summary($result['model']));
+
+        foreach (preg_split('/\n/', (string) $result['model']->scopes, -1, PREG_SPLIT_NO_EMPTY) as $rule) {
+            $this->line('           ' . $rule);
+        }
+
         $this->newLine();
         $this->line('  KEY (shown once, store it now):');
         $this->line('  ' . $result['key']);

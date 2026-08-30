@@ -10,6 +10,7 @@ use Throwable;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Param_Validator;
 use App\RSpade\Core\Api\Api_Request_Log_Model;
+use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
@@ -28,9 +29,13 @@ use App\RSpade\Core\Models\User_Model;
  *   2. Bearer authentication FIRST (uniform 401 across the namespace, no route probing) -
  *      establishes a headless, cookie-less Session identity via Session::_set_api_identity();
  *   3. exact-match route resolution over the 'api' routes (unknown -> 404);
- *   4. declarative param validation against baked #[Api_Param] specs (422 per field);
- *   5. controller invocation (no auth of its own - the controller trusts this dispatcher);
- *   6. bare-JSON response building (models serialize via toArray(); null -> 204).
+ *   4. the KEY's scope rules (Api_Scopes) - a scoped key that does not reach this endpoint
+ *      is refused with insufficient_scope 403 BEFORE its params are read, so it learns
+ *      nothing about an endpoint it may not call;
+ *   5. declarative param validation against baked #[Api_Param] specs (422 per field);
+ *   6. declarative #[Auth] gates (403 forbidden);
+ *   7. controller invocation (no auth of its own - the controller trusts this dispatcher);
+ *   8. bare-JSON response building (models serialize via toArray(); null -> 204).
  *
  * EVERY request is recorded in _api_request_log (success and every failure path). An
  * uncaught Throwable from the endpoint is logged as a 500 row then rethrown to
@@ -174,6 +179,25 @@ class Api_Dispatcher
         }
         $handler = $route['class'] . '::' . $route['method'];
 
+        // --- Key scope check ---
+        // Runs before ANY input is read, and before the gates. A scope denial is a KEY
+        // problem ("mint a wider key"); the gate denial below is a PERMISSION problem
+        // ("ask your administrator"), and an integrator cannot act on the two the same
+        // way. Scopes only ever subtract from the user's live permissions - the gates
+        // still run for a key that clears its scope.
+        if (!Api_Scopes::decide($api_key->scopes, $method, $path)) {
+            $response = self::_error(
+                'insufficient_scope',
+                'This API key is not scoped for this endpoint',
+                403,
+                null,
+                ['required' => $method . ' ' . $path]
+            );
+            self::_log($request, $start, $method, $path, $handler, 403, $api_key_id, $user_id, $site_id, $response);
+
+            return $response;
+        }
+
         // --- Assemble raw input (route > GET > body); reject unparseable JSON ---
         $json_invalid = false;
         $raw = self::_collect_raw_input($request, $route['params'], $json_invalid);
@@ -196,7 +220,9 @@ class Api_Dispatcher
 
         // --- Declarative #[Auth] gates ---
         // Runs after bearer identity established the headless session and before the
-        // controller. Names resolve in the STAFF realm: an API key belongs to a staff
+        // controller. This answers "may this USER do this at all" - distinct from the
+        // scope check above, which answered "may this KEY reach this endpoint". Names
+        // resolve in the STAFF realm: an API key belongs to a staff
         // user, so the bearer session IS a staff identity (#[Api_Endpoint] surfaces are
         // indexed staff for the same reason). An endpoint declaring no gates is
         // untouched; closed-by-default is a manifest-build rule, not a runtime one.
@@ -402,12 +428,23 @@ class Api_Dispatcher
 
     /**
      * Build a {"error":{"code","message","fields"?}} JSON response with the given status.
+     *
+     * $extra merges additional keys INTO the error object - insufficient_scope carries
+     * "required": "POST /api/v1/x", the exact target the caller would need a rule for.
      */
-    private static function _error(string $code, string $message, int $status, ?array $fields = null): JsonResponse
-    {
+    private static function _error(
+        string $code,
+        string $message,
+        int $status,
+        ?array $fields = null,
+        array $extra = []
+    ): JsonResponse {
         $error = ['code' => $code, 'message' => $message];
         if ($fields !== null) {
             $error['fields'] = $fields;
+        }
+        foreach ($extra as $key => $value) {
+            $error[$key] = $value;
         }
 
         return response()->json(['error' => $error], $status);

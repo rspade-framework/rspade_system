@@ -21,6 +21,10 @@ use App\RSpade\Core\Time\Rsx_Time;
  *
  * Active keys only by default. --all includes revoked and expired ones, because "why did this
  * stop working" is a question that needs the dead keys visible.
+ *
+ * SCOPE is a column here for the same reason: "why did this key get a 403 from an endpoint
+ * its user can reach" is answered by the difference between 'unrestricted' and '3 rules',
+ * and nothing else in the listing would say it. The rules themselves are in --json.
  */
 class Api_Key_List_Command extends Command
 {
@@ -92,6 +96,7 @@ class Api_Key_List_Command extends Command
             $key->name,
             $key->key_prefix,
             Api_Key_Cli_Support::key_state($key),
+            Api_Key_Cli_Support::key_scope_summary($key),
             $key->expires_at ? Rsx_Time::format_datetime($key->expires_at) : 'never',
             $key->last_used_at ? Rsx_Time::relative($key->last_used_at) : 'never used',
             Rsx_Time::format_datetime($key->created_at),
@@ -99,7 +104,7 @@ class Api_Key_List_Command extends Command
 
         $this->newLine();
         $this->table(
-            ['Id', 'Name', 'Prefix', 'State', 'Expires', 'Last used', 'Created'],
+            ['Id', 'Name', 'Prefix', 'State', 'Scope', 'Expires', 'Last used', 'Created'],
             $rows
         );
         $this->line('  ' . $active . ' active');

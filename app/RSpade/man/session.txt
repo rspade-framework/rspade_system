@@ -1391,7 +1391,7 @@ LOGIN HISTORY
         record_failure() writes NO database row. It increments two counters - one
         keyed by email (hashed and normalized, so casing or stray whitespace
         cannot open a fresh window), one by client IP - both expiring on
-        rsx.sessions.login_failure_window_minutes (default 15), and it emits ONE
+        rsx.sessions.login_throttle.window_minutes (default 15), and it emits ONE
         Log::warning('Login failure', [...]) carrying email, IP, status and
         reason. That log line is the forensic record; the counters exist only to
         answer "how many failures in the window".
@@ -1417,14 +1417,10 @@ LOGIN HISTORY
         the counter disappears and the next failure opens a new one. A sliding
         window would let a slow attacker hold a counter alive forever.
 
-        THROTTLING FAILS OPEN. Under maintenance mode Redis is stopped, the
-        increments drop and the counts read 0. A cache outage must never lock
-        users out. Enforcement (threshold, lockout vs delay, per-email vs per-IP)
-        is the app's policy; the framework only keeps the counters:
-
-            if (Login_History::get_failed_attempts_count($email) >= 5) {
-                return response_error(Ajax::ERROR_GENERIC, 'Too many failed attempts');
-            }
+        THESE COUNTS ARE A STATISTIC, NOT THE ENFORCEMENT. Brute-force
+        enforcement is the framework's own, in Login_Throttle (next section),
+        which keeps its own per-IP counter. Nothing enforces the per-email count;
+        read it, display it, alert on it - do not build a second throttle on it.
 
     STATUS CONSTANTS:
         Login_History::STATUS_SUCCESS          - produced by attempt()
@@ -1491,6 +1487,139 @@ LOGIN HISTORY
         and returns before the stamp, whatever $touch_last_login says. So a
         command, task or test that "logs in" leaves last_login alone, and the flag
         can only be observed over HTTP.
+
+LOGIN THROTTLE (BRUTE FORCE)
+    The authentication surface is rate-limited by the framework, not by each app.
+    An unthrottled login endpoint is an unlimited password (and second-factor)
+    guessing oracle, so the protection is ON by default and an app inherits it
+    without writing anything.
+
+    THE CONTRACT:
+        App\RSpade\Core\Auth\Login_Throttle
+
+        require_not_throttled(?string $ip = null): void
+            Throws Auth_Throttled_Exception when this client IP is locked out.
+            RsxAuth::attempt() calls it as its FIRST statement, before the
+            lookup - a locked-out address cannot even probe which addresses
+            exist. Call it yourself only on a login path that does not go
+            through attempt().
+
+        record_failure(?string $ip = null): void
+            Counts one failure against the IP and locks the address out when the
+            budget is spent. Login_History::record_failure() calls it, so every
+            recorded failure feeds the throttle - password misses, unknown
+            addresses, and the outcomes an APP records itself (a bad second
+            factor, a disabled account). Call it directly only where you do not
+            record through Login_History.
+
+        retry_after_seconds(?string $ip = null): int
+            Seconds left on the lockout; 0 when the address is free. For a
+            Retry-After header or an operator log line.
+
+        reset(?string $ip = null): void
+            Clears the counter and the lockout - a test, or an operator
+            releasing a customer.
+
+        $ip defaults to Session::get_client_ip() - the one place the proxy header
+        chain is interpreted.
+
+    WHAT IS COUNTED - FAILURES, NOT REQUESTS, PER IP:
+        A request that authenticates costs nothing, so a real user signing in
+        fifty times a day never approaches the budget; only wrong answers
+        accumulate. The key is the CLIENT IP and not the email because the
+        attacker chooses the email: spraying one password across a thousand
+        addresses would never trip a per-email budget, while the address it is
+        sprayed FROM is the one thing the attacker must keep using.
+
+        The counter window is FIXED, not sliding - it runs from the first failure,
+        then the counter disappears and the next failure opens a new one.
+
+    A CALLER WITH NO CLIENT IP IS NEVER THROTTLED:
+        Session::get_client_ip() answers null outside a request - CLI, tasks,
+        programmatic work - and there is no remote party to throttle there. A
+        command that authenticates a thousand fixtures is not an attack, and
+        throttling it would collapse every such process onto one shared bucket.
+        The web request is the surface being defended, and it always has an
+        address.
+
+    CONFIGURATION - rsx.sessions.login_throttle:
+        enabled          true   count and enforce at all
+        attempts         10     failures from one IP inside the window
+        window_minutes   15     how long the failure counter lives
+        lockout_minutes  15     how long the address is refused afterwards
+
+        window_minutes is ALSO the window bounding Login_History's per-email and
+        per-IP counts (there is one window, not two). A non-positive value in any
+        of the three numbers is a broken deployment and fails loud.
+
+        'enabled' => false turns the whole feature off for a deployment that
+        throttles at the edge instead. There is no per-endpoint switch.
+
+    THE MESSAGE AND THE THROW:
+        Auth_Throttled_Exception carries exactly "You're doing that too fast" and
+        a retry_after_seconds property. It THROWS rather than returning false
+        because "we did not check" is not the same answer as "those credentials
+        are wrong" - a false there would report an invalid password to a user
+        whose password may be perfectly correct. The message says nothing about
+        which accounts exist, how many attempts remain, or when to try again;
+        retry_after_seconds is for YOUR logs and headers, not for the attacker.
+
+    APP RECIPE - A LOGIN FUNCTION:
+        Catch it around the attempt and render the message as the form error
+        (the template app's rsx/app/login/login_controller.php does exactly this;
+        an Ajax login answers response_form_error($e->getMessage())):
+
+            try {
+                $authenticated = RsxAuth::attempt($credentials);
+            } catch (Auth_Throttled_Exception $e) {
+                $error = $e->getMessage();
+            }
+
+    APP RECIPE - A SECOND FACTOR:
+        A 6-digit code is a million guesses inside a 30-second window, so the
+        challenge step needs the same protection the password step gets. Refuse
+        first, and let the recorded failure do the counting:
+
+            Login_Throttle::require_not_throttled();     // may throw - catch it
+
+            if (!Totp_Service::verify($login_user, $code)) {
+                Login_History::record_failure($email, Login_History::STATUS_FAILED_2FA,
+                                              null, $login_user->id);
+                return response_form_error('That code is not valid');
+            }
+
+        record_failure() there already feeds the throttle; do NOT also call
+        Login_Throttle::record_failure() or the failure counts twice.
+
+    APP RECIPE - A LOGIN PATH THAT VERIFIES ITS OWN PASSWORD:
+        A flow that does not go through RsxAuth::attempt() and does not record to
+        Login_History does BOTH halves itself. The framework's own portal login
+        (rsx/portal/auth/Portal_Login_Controller.php) is the worked example:
+
+            try {
+                Login_Throttle::require_not_throttled();
+            } catch (Auth_Throttled_Exception $e) {
+                return $this_form_with_error($e->getMessage());
+            }
+
+            if (!$portal_user || !$portal_user->check_password($password)) {
+                Login_Throttle::record_failure();
+                $error = 'Invalid email or password. Please try again.';
+            }
+
+    FAIL CLOSED, WITH ONE TOLERATED DEGRADATION:
+        Nothing in Login_Throttle catches a cache error: a redis failure
+        propagates and the login fails LOUD rather than proceeding unthrottled.
+        The single exception is MAINTENANCE MODE, where redis is deliberately
+        stopped and RsxCache answers 0/false without touching it - the throttle is
+        then inert, which costs nothing because the web tier is answering 503 to
+        every request anyway.
+
+    STORAGE:
+        Two redis keys per address, both in the persistent RsxCache namespace:
+        a failure counter carrying the window as its TTL, and a lockout marker
+        holding the instant the lockout expires. Both disappear on their own; the
+        THROTTLE never writes a database row.
 
 USER AGENT PARSING
     The User_Agent class parses user agent strings into human-readable

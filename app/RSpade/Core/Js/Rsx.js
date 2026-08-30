@@ -1307,10 +1307,14 @@ class Rsx {
             }
 
             if (needs_refresh) {
-                // Use location.replace() to refresh without adding history entry
-                // This ensures back/forward navigation isn't polluted by the refresh
+                // location.reload() is deliberate. location.replace(location.href) looks
+                // equivalent but is NOT when the URL carries a #hash: replacing a URL with
+                // itself is a fragment navigation, which the browser performs WITHOUT
+                // fetching the document - so on any hashed URL (a tab, a DataGrid page)
+                // the refresh silently never happened and the page ran on with stale
+                // rsxapp state. reload() always refetches, and adds no history entry.
                 console.warn('[Rsx] Session validation failed (' + refresh_reason + '), refreshing page');
-                window.location.replace(window.location.href);
+                window.location.reload();
                 return false;
             }
 

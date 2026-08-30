@@ -351,8 +351,9 @@ is STOPPED, and RsxCache degrades instead of failing:
 
 - Reads (get, get_persistent, exists) return the default / false. Silently: a miss is a
   normal cache outcome and logging every one would drown the log.
-- Writes (set, set_persistent, delete, increment, decrement, clear) are DROPPED and leave
-  ONE warning line in the Laravel log per process ("maintenance mode: redis write skipped").
+- Writes (set, set_persistent, delete, delete_persistent, increment, decrement, clear) are
+  DROPPED and leave ONE warning line in the Laravel log per process ("maintenance mode:
+  redis write skipped").
   Nothing already in the cache is mutated by the window.
 
 This is mandatory, not a nicety: the manifest auto-rebuild and the polymorphic type-ref

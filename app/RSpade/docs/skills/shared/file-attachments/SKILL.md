@@ -353,7 +353,7 @@ Do not compare `created_by` to a user id — authorship is a polymorphic PAIR an
 
 `POST /_upload` · `GET /_download/:key` · `GET /_inline/:key` · `GET /_download_zip/:key` · `GET /_thumbnail/preset/:key/:preset` · `GET /_thumbnail/dynamic/:key/:type/:width/:height?` · `GET /_icon_by_extension/:extension` · `GET /_preview/pdf/:key`
 
-All of those except `/_icon_by_extension` also accept `Authorization: Bearer rsk_...`, so an integration reaches bytes with no browser session (a bad Bearer is a 401 — it never degrades to anonymous). The external API adds `POST /api/v1/files` · `GET /api/v1/files/:key` · `GET /api/v1/files/:key/text`.
+All of those except `/_icon_by_extension` also accept `Authorization: Bearer rsx_...`, so an integration reaches bytes with no browser session (a bad Bearer is a 401 — it never degrades to anonymous). The external API adds `POST /api/v1/files` · `GET /api/v1/files/:key` · `GET /api/v1/files/:key/text`.
 
 ---
 

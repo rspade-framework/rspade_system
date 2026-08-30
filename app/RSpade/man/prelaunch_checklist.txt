@@ -924,6 +924,80 @@ ENTRY 8: $required ASTERISKS WITH NO SERVER RULE (form validation completeness)
         php artisan rsx:man external_api    (the other caller that sends blanks)
 
 
+--------------------------------------------------------------------------------
+
+ENTRY 9: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and the
+         client IP your proxy actually presents)
+
+    What to audit
+        Two things, both silent when wrong.
+
+        FIRST, every path in the application that checks a credential. Enumerate
+        them: grep for RsxAuth::attempt, check_password, Hash::check and password_verify
+        across rsx/, staff and portal alike, and add every second-factor, backup-code,
+        invitation-code and password-reset-token verification you find. For each one,
+        confirm it is covered - either it goes through RsxAuth::attempt() (which
+        refuses a locked-out address before the lookup), or it calls
+        Login_Throttle::require_not_throttled() itself before the check and feeds a
+        failure afterwards (Login_Throttle::record_failure(), or a
+        Login_History::record_failure() which already does).
+
+        SECOND, what Session::get_client_ip() answers on the DEPLOYED host. It reads
+        X-Forwarded-For, then X-Real-IP, then REMOTE_ADDR. Load one page and look at
+        the address the framework recorded (a `_sessions` row's ip_address, or a
+        deliberate failed login and its "Login failure" log line).
+
+    Why it matters
+        The throttle is keyed on the client IP, so a deployment where every request
+        presents the SAME address has one shared bucket: ten failures from anywhere
+        lock out every user in the world. That is the failure mode to find before
+        launch, not after. It happens whenever a reverse proxy, load balancer or CDN
+        terminates the connection and the app sees only the proxy's address - and it
+        is invisible in development, where every request comes from a different place
+        already.
+
+        The mirror image is just as quiet: a credential path that neither goes
+        through attempt() nor calls the throttle itself is an unlimited guessing
+        oracle sitting beside a protected one. A 6-digit second factor is a million
+        guesses inside a 30-second window; an attacker who has the password only
+        needs the unthrottled door.
+
+    Guidelines
+        1. Enumerate the credential paths as above. One audit item each.
+        2. For a path that does NOT use RsxAuth::attempt(), verify the ORDER:
+           require_not_throttled() runs BEFORE any lookup, comparison or account-state
+           check, so a locked-out address learns nothing at all.
+        3. Verify the failure is counted exactly ONCE. Login_History::record_failure()
+           already feeds the throttle; pairing it with Login_Throttle::record_failure()
+           on the same event counts twice and halves your configured budget.
+        4. Verify the refusal is rendered as a message, not as an error page:
+           Auth_Throttled_Exception is THROWN, and an uncaught throw on an anonymous
+           login form is a 500 for a user who merely typed a password wrong ten times.
+        5. Confirm the address the framework sees is the real client's, and that your
+           proxy sets X-Forwarded-For (or X-Real-IP). If it does not, the throttle is
+           either global or useless.
+        6. Review rsx.sessions.login_throttle against how your users actually behave.
+           The defaults (10 failures / 15 minutes / 15 minute lockout) suit a normal
+           business application; a kiosk or a shared-NAT population may need a larger
+           budget, and lowering 'enabled' to false is only correct when something in
+           FRONT of the app is doing the same job.
+
+    Dos and don'ts
+        DO route a new login flow through RsxAuth::attempt() when you can - coverage
+             is then automatic and cannot drift.
+        DON'T report a throttled attempt as "invalid email or password". It is not a
+             wrong password, and the user whose password is correct will keep retrying.
+        DON'T build a second throttle on Login_History::get_failed_attempts_count*().
+             Those counts are a statistic; the enforcement is Login_Throttle's, and a
+             second one only guarantees two different answers.
+        DON'T trust a manual test from your own desk to prove the IP wiring. One
+             browser cannot tell a per-IP bucket from a global one.
+
+    Related
+        php artisan rsx:man session      (LOGIN THROTTLE)
+        php artisan rsx:man auth
+
+
 SEE ALSO
     php artisan rsx:man login_redirect
     php artisan rsx:man session

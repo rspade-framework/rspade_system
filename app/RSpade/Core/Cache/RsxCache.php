@@ -315,6 +315,34 @@ class RsxCache
     }
 
     /**
+     * Delete a key from the PERSISTENT namespace
+     *
+     * The counterpart of get_persistent()/set_persistent()/increment_with_ttl(): delete() looks
+     * under the build-prefixed key and can never find one of those, so a persistent key needs
+     * its own delete. Used to clear a windowed counter or marker before its TTL runs out - a
+     * test cleaning up after itself, an operator releasing a throttled address.
+     *
+     * @param string $key Cache key (persistent namespace)
+     * @return bool True when a key was removed
+     */
+    public static function delete_persistent(string $key): bool
+    {
+        self::_init();
+
+        if (self::_redis_bypass()) {
+            return false;
+        }
+
+        if (self::_maintenance_bypass()) {
+            self::_note_maintenance_write_skipped();
+
+            return false;
+        }
+
+        return self::$_redis->del(self::_make_key_persistent($key)) > 0;
+    }
+
+    /**
      * Check if a key exists in cache
      *
      * @param string $key Cache key

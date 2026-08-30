@@ -1,6 +1,6 @@
 ---
 name: external-api
-description: Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version, uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, or diagnosing a 401 before route match, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument.
+description: Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, key scopes (Grant|Deny METHOD path rules in _api_keys.scopes), file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version, uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, narrowing a key with scope rules or scope presets (config('rsx.api.scope_presets')), or diagnosing a 401 before route match, a 403 insufficient_scope, an API-GET-PURE-01 manifest-build failure, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument.
 ---
 
 # External API
@@ -63,19 +63,19 @@ Error shape is always `{"error":{"code","message","fields"?}}`.
 
 ## Authentication
 
-`Authorization: Bearer rsk_...` ONLY -> a cookie-less headless `Session` identity (`Session::is_logged_in()`/`get_user()`/`get_user_id()`/`get_site_id()` all work; NO cookie, NO `_sessions` row, NO Set-Cookie; `get_session_id()==0`). Site scope applies automatically — **never hand-write `where('site_id')`**.
+`Authorization: Bearer rsx_...` ONLY -> a cookie-less headless `Session` identity (`Session::is_logged_in()`/`get_user()`/`get_user_id()`/`get_site_id()` all work; NO cookie, NO `_sessions` row, NO Set-Cookie; `get_session_id()==0`). Site scope applies automatically — **never hand-write `where('site_id')`**.
 
 Keys are minted and revoked at **Settings > API Keys** (the plaintext key is shown once). Missing header -> 401, bad key -> 401, **both before route match** - so a bad key cannot be used to probe which paths exist.
 
-`_api_keys.user_role_id` + `scopes` are RESERVED, NOT enforced. Do not build authorization on them; use `#[Auth]` and record-level checks like everywhere else.
+`_api_keys.scopes` narrows ONE key below its holder — see **Key scopes** below. `_api_keys.user_role_id` stays RESERVED and NOT enforced; do not restrict a key with it.
 
 ## The `rsx:api:*` CLI
 
 **The namespace exists so a SCRIPT can grant itself access to this API and then use it** — an importer or an exporter mints a key, calls `/api/vN` with `Authorization: Bearer <key>` like any other client, and exits. There is no privileged CLI channel into the API: the CLI mints a credential, and the script speaks the same HTTP the outside world speaks.
 
 ```bash
-php artisan rsx:api:key:create --user=<id|email> [--site=] [--name=] [--expires=] [--environment=live|test] [--json]
-php artisan rsx:api:key:temp   --user=<id|email> [--site=] [--expires="1 hour"] [--json]
+php artisan rsx:api:key:create --user=<id|email> [--site=] [--name=] [--expires=] [--environment=live|test] [--scope=<rule>]... [--json]
+php artisan rsx:api:key:temp   --user=<id|email> [--site=] [--expires="1 hour"] [--scope=<rule>]... [--json]
 php artisan rsx:api:key:list   --user=<id|email> [--site=] [--all] [--json]
 php artisan rsx:api:key:delete <id> [--purge] [--force] [--json]
 php artisan rsx:api:openapi    [--user=<id|email>] [--site=] [--compact]
@@ -228,7 +228,38 @@ Reaching it **is** the validation: a bad, revoked or expired key is a 401 from t
 
 ## Interactions
 
-Dev calls must use the `APP_URL` host or loopback; CSRF N/A (no cookie session); FPC never applies; `Main_Abstract::pre_dispatch` is skipped for API (Portal precedent). `_api_keys.user_role_id` + `scopes` are RESERVED, NOT enforced.
+Dev calls must use the `APP_URL` host or loopback; CSRF N/A (no cookie session); FPC never applies; `Main_Abstract::pre_dispatch` is skipped for API (Portal precedent). `_api_keys.user_role_id` is RESERVED, NOT enforced (`scopes` IS — see above).
+
+## Key scopes
+
+A key otherwise carries its holder's **entire** authority. `_api_keys.scopes` narrows one key; `Api_Scopes` (static, pure) is the whole meaning.
+
+```
+Grant GET  /api/v1/billing/*
+Grant POST /api/v1/billing/*
+Deny  POST /api/v1/invoices/*/void
+```
+
+- Keyword `Grant`/`Deny`, method `GET`/`POST`, pattern matched against the **full path with `/api/vN/` retained**. `*` = exactly one segment; `**` = zero or more, **last segment only**; a wildcard is a whole segment (`foo*` is refused). Blank lines and `#` comments ignored. A malformed line **throws naming the line**, at save — never at first request.
+- **NULL/blank = unrestricted.** Any rule flips the key to **deny-by-default**, so a preset never writes a blanket Deny.
+- **Specificity decides, not order** (more literals, then fewer wildcards; a **Deny wins any tie**). That is what makes combining two rule sets set union — order-independent, so a mint UI has no ordering to get wrong.
+- **Scopes subtract only**: `effective = the user's LIVE permissions ∩ the rules`. Evaluated per request, never frozen at mint. A rule can never grant what the user lacks.
+- Dispatcher order: verb gate → bearer auth → route match → **SCOPE** → param validation → `#[Auth]` gates → controller.
+
+**Two different 403s.** `insufficient_scope` (`{"error":{"code","message","required":"POST /api/v1/x"}}`) means *mint a wider key*; `forbidden` from the gates means *ask your administrator for the permission*. Both are logged in `_api_request_log`. The file-serving web routes (`/_file/`, `/_thumbnail/`, …) clamp a scoped key against the synthetic target `GET /api/v1/files/**` and answer the same 403.
+
+**`API-GET-PURE-01`** — a GET-only handler's body may not contain `->save(` `->delete(` `->update(` `::create(` `->raw_bulk(` `DB::statement|insert|update|delete(` `Task::dispatch(`; it is a **manifest-build failure**, because "read-only" is only expressible as a GET grant. Escape: `@API-GET-PURE-01-EXCEPTION <rationale>` in the method docblock — **the rationale is required**, a bare tag still fails. Only the handler's own body is scanned; a private helper it calls is not followed.
+
+**Presets are APP data.** The framework never names a scope. `config('rsx.api.scope_presets')` (`[['name','description','rules'], …]`) is read by the app's key UI and by nothing in core — mirroring how `Auth_Gates` never names a permission.
+
+```php
+Api_Key_Model::generate($user_id, $name, 'live', null, null, $scopes);
+$key->is_unrestricted();  $key->get_scope_rules();  $key->set_scopes($text);
+Api_Scopes::decide($scopes, 'GET', '/api/v1/contacts');   // the dispatcher's question
+Api_Catalog::resolve_for_scopes(1, $scopes);              // pure: takes TEXT, not a key
+```
+
+**Keys are immutable after mint** — no edit endpoint anywhere; revoke and re-mint. `GET /api/v1/me` reports `key.scopes`; `rsx:api:key:list` shows a rule count (full text under `--json`); `rsx:api:openapi --key=<id>` narrows the document to gates ∩ that key's rules.
 
 ## Config
 

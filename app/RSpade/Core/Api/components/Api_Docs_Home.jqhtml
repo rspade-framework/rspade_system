@@ -52,7 +52,7 @@ $version - the selected catalog version (int), for the counts and the version ca
             </p>
             <div class="Api_Docs_Home__keygate-row">
                 <input type="text" $sid="key_input" class="Api_Docs_Home__keygate-input"
-                       placeholder="rsk_live_..." spellcheck="false" autocomplete="off">
+                       placeholder="rsx_live_..." spellcheck="false" autocomplete="off">
                 <button type="button" $sid="adopt_key" class="Api_Docs_Home__keygate-btn Api_Docs_Home__keygate-btn--primary">Use key</button>
             </div>
             <div $sid="key_error" class="Api_Docs_Home__keygate-error Api_Docs_Home__keygate-error--hidden"></div>
@@ -73,7 +73,7 @@ $version - the selected catalog version (int), for the counts and the version ca
         <div class="Api_Docs_Home__step-num">2</div>
         <div class="Api_Docs_Home__step-body">
             <div class="Api_Docs_Home__step-title">Paste an API key</div>
-            <p>Every request carries <code>Authorization: Bearer rsk_...</code> - there is no
+            <p>Every request carries <code>Authorization: Bearer rsx_...</code> - there is no
             cookie or session auth on this surface. Create a key in
             <strong>Settings &rsaquo; API Keys</strong> and paste it into the bar above; it is
             held for this browser tab only and never persisted.</p>

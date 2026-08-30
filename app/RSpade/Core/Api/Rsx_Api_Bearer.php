@@ -5,12 +5,13 @@ namespace App\RSpade\Core\Api;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 use App\RSpade\Core\Api\Api_Key_Model;
+use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Api\Rsx_Api;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
 
 /**
- * Rsx_Api_Bearer - the ONE implementation of "turn an Authorization: Bearer rsk_... header into
+ * Rsx_Api_Bearer - the ONE implementation of "turn an Authorization: Bearer rsx_... header into
  * a headless Session identity".
  *
  * Two callers, one implementation:
@@ -30,6 +31,12 @@ use App\RSpade\Core\Session\Session;
  */
 class Rsx_Api_Bearer
 {
+    /**
+     * The representative path the file-serving web routes are scope-checked against - one
+     * concrete member of the /api/v1/files/** subtree. See authenticate_web_request().
+     */
+    private const FILES_SUBTREE_PROBE = '/api/v1/files/anything';
+
     /**
      * The raw key from an Authorization: Bearer header, or null when there is no such header.
      */
@@ -102,6 +109,19 @@ class Rsx_Api_Bearer
      *     A bad key DENIES; it never degrades into an anonymous request, because a caller who
      *     presented a credential is entitled to be told it was refused rather than silently
      *     handed whatever an anonymous visitor may see.
+     *
+     * A SCOPED key is clamped here too, and it must be: these routes serve the very bytes
+     * GET /api/v1/files/{key} describes, on a URL that carries no /api/vN/ path for a rule to
+     * match. Without this check a key scoped away from files would be refused by the API and
+     * then handed the same file on /_download - the scope would be advisory. So a scoped key
+     * is evaluated against the synthetic target GET /api/v1/files/{key}: the question asked is
+     * "does any grant reach the files subtree", and the representative single-segment path
+     * below is how decide() is asked it. A key with no such grant gets the same
+     * insufficient_scope 403 the dispatcher returns.
+     *
+     * The 403 body names no 'required' target, unlike the dispatcher's: the synthetic path is
+     * not an endpoint the caller could ever call, and printing it would advertise a URL that
+     * does not exist.
      */
     public static function authenticate_web_request(Request $request): ?Response
     {
@@ -116,6 +136,14 @@ class Rsx_Api_Bearer
         $auth = static::authenticate($request);
         if ($auth['error'] !== null) {
             return Rsx_Api::error($auth['error'][0], $auth['error'][1], 401);
+        }
+
+        if (!Api_Scopes::decide($auth['key']->scopes, 'GET', self::FILES_SUBTREE_PROBE)) {
+            return Rsx_Api::error(
+                'insufficient_scope',
+                'This API key is not scoped for this endpoint',
+                403
+            );
         }
 
         return null;

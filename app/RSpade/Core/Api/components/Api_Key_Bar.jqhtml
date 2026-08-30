@@ -1,6 +1,11 @@
 <%--
 Api_Key_Bar - the shared tester-key control.
 
+With a key adopted it also carries a SCOPE BADGE - 'scoped' or 'unrestricted' - read from
+the server's view of the adopted key. A listing drawn for a scoped key describes what that
+credential reaches, which is a narrower claim than what its owner reaches, and a reader
+comparing two consoles has no other way to tell which they are looking at.
+
 Two mutually exclusive states, never both: with no key it is an input, with one it is a
 status line. Showing an empty "paste a key" box beside an active key invites pasting over a
 working key by accident, and showing a masked key beside nothing is noise.
@@ -24,6 +29,15 @@ a key from elsewhere still works, whoever is holding it.
             <span class="Api_Key_Bar__dot Api_Key_Bar__dot--on"></span>
             <span class="Api_Key_Bar__status-text">Key active</span>
             <code class="Api_Key_Bar__masked"><%= api_key_mask(key) %></code>
+            <%-- The SERVER's view of the adopted key, not the browser's: the console asked
+                 it which endpoints this credential reaches, and this says on what basis. It
+                 is absent when no key is adopted server-side, because then there is nothing
+                 to describe. --%>
+            <% const scoped = Api_Docs_Catalog.key_scoped(); %>
+            <% if (scoped !== null) { %>
+                <span class="Api_Key_Bar__scope <%= scoped ? 'Api_Key_Bar__scope--scoped' : '' %>"
+                      title="<%= scoped ? 'This key carries scope rules that narrow it below its owner\'s authority.' : 'This key carries its owner\'s full authority.' %>"><%= scoped ? 'scoped' : 'unrestricted' %></span>
+            <% } %>
             <button type="button" $sid="clear" class="Api_Key_Bar__btn Api_Key_Bar__btn--ghost">Clear</button>
         </div>
     <% } else { %>

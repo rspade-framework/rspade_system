@@ -8,6 +8,8 @@
 
 **A guarded termination REFUSAL THROWS `AjaxUnauthorizedException`; ABSENCE returns false/0** — never conflate them (that conflation hid a broken admin-terminate button for months). **Never implement "Remember Me"** — the cookie is long-lived and the ROW expires on its own schedule.
 
+**Brute-force throttling is the framework's and is ON by default**: `Login_Throttle` counts FAILURES per client IP (`rsx.sessions.login_throttle`), `RsxAuth::attempt()` refuses a locked-out address as its FIRST statement by THROWING `Auth_Throttled_Exception` ("You're doing that too fast"), and `Login_History::record_failure()` feeds it — so a login function CATCHES that exception and renders its message, never reporting it as a wrong password, and a path that verifies its own password calls `require_not_throttled()` + `record_failure()` itself. A caller with no client IP (CLI, tasks) is never throttled.
+
 **`RsxAuth::attempt()` records the login outcome itself** — never call `Login_History::record_success()` beside it, or you record twice. Account state (`status_id`/`is_activated`/`is_verified`) is **APPLICATION vocabulary**: `attempt()` checks a live identity plus the password and nothing else, so enforce your statuses in your own login function and in `Main::pre_dispatch()` (`init()` is bootstrap and cannot eject anybody).
 
 **CSRF is framework-handled** on every internal transport (Ajax, uploads, `@csrf`), portal included — never hand-roll one. **Never hand-roll `?redirect=` handling** either: `Login_Redirect` (`capture()`/`params()`/`hidden_input()`/`consume()`, PHP and an identical JS mirror) is the ONE redirect sanitizer, staff/portal aware, degrading silently on hostile input.

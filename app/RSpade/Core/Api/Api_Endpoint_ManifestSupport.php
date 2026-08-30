@@ -35,6 +35,11 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  *   there is no multipart body on a GET, a URL segment is not a file, and there is no such
  *   thing as a default upload.
  * - The method MUST NOT also carry #[FPC], #[Route], #[SPA], or #[Ajax_Endpoint].
+ * - API-GET-PURE-01: a GET-only handler's body MUST NOT contain a write call
+ *   (->save( / ->delete( / ->update( / ::create( / ->raw_bulk( / DB::statement|insert|
+ *   update|delete( / Task::dispatch(). 'Grant GET /api/v1/**' is the only way to express
+ *   "read-only", and it is trustworthy only while GET cannot mutate. Escape hatch:
+ *   '@API-GET-PURE-01-EXCEPTION <rationale>' in the method docblock, rationale required.
  *
  * Docblock parsing:
  * - description: the first PARAGRAPH (consecutive non-tag lines).
@@ -52,6 +57,28 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
 
     // Attributes forbidden on the same method as #[Api_Endpoint].
     private const CONFLICTING_ATTRIBUTES = ['FPC', 'Route', 'SPA', 'Ajax_Endpoint'];
+
+    /**
+     * API-GET-PURE-01: call shapes that write, searched for in a GET-only handler's body
+     * with every comment, string literal and space already removed. Deliberately a small
+     * literal list rather than a general effect analysis - it catches the realistic cases,
+     * names exactly what it found, and has an explicit escape for the rest.
+     */
+    private const GET_MUTATION_TOKENS = [
+        '->save(',
+        '->delete(',
+        '->update(',
+        '::create(',
+        '->raw_bulk(',
+        'DB::statement(',
+        'DB::insert(',
+        'DB::update(',
+        'DB::delete(',
+        'Task::dispatch(',
+    ];
+
+    // The docblock tag that waives API-GET-PURE-01 for one handler.
+    private const GET_PURE_EXCEPTION_TAG = '@API-GET-PURE-01-EXCEPTION';
 
     public static function get_name(): string
     {
@@ -155,6 +182,14 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
                         // Normalize and validate #[Api_Param] declarations for this method.
                         $api_params = static::_parse_api_params($method_data, $pattern, $location, $methods);
 
+                        // Read the docblock directly from source (the manifest does not store docblocks).
+                        $docblock = static::_read_method_docblock(base_path($file), $method_name);
+
+                        // API-GET-PURE-01 - a GET endpoint may not mutate.
+                        if ($methods === ['GET']) {
+                            static::_assert_get_handler_is_pure(base_path($file), $method_name, $docblock, $location);
+                        }
+
                         // Duplicate route detection (pattern must be unique across all route types).
                         if (isset($manifest_data['data']['routes'][$pattern])) {
                             $existing = $manifest_data['data']['routes'][$pattern];
@@ -165,8 +200,6 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
                             );
                         }
 
-                        // Read the docblock directly from source (the manifest does not store docblocks).
-                        $docblock = static::_read_method_docblock(base_path($file), $method_name);
                         $description = static::_parse_description($docblock);
                         $is_hidden = str_contains($docblock, '@api-hidden');
                         $response_example = static::_parse_response_example($docblock);
@@ -526,6 +559,174 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
         }
 
         return rtrim($line);
+    }
+
+    /**
+     * API-GET-PURE-01 - refuse a GET-only handler that writes.
+     *
+     * "Read-only" is expressible in the scope language only as a GET grant, so the whole
+     * value of `Grant GET /api/v1/**` rests on GET being side-effect free. That guarantee has
+     * to exist BEFORE keys depend on it: retrofitting it later means auditing every GET
+     * handler by hand and hoping.
+     *
+     * The body is read from source and tokenized, so comments and string literals cannot
+     * trigger the rule and spacing cannot evade it ("$m -> save ()" is caught). Only the
+     * handler's OWN body is inspected - a private helper it calls is not followed, which is
+     * the honest limit of a literal-token rule and the reason the escape hatch exists.
+     *
+     * The escape is '@API-GET-PURE-01-EXCEPTION <rationale>' in the method docblock. The
+     * rationale is REQUIRED: a bare tag records that somebody wanted the rule off, which is
+     * not the same as somebody having a reason.
+     */
+    private static function _assert_get_handler_is_pure(string $file_path, string $method_name, string $docblock, string $location): void
+    {
+        $exception_rationale = static::_parse_get_pure_exception($docblock);
+
+        if ($exception_rationale === '') {
+            throw new \RuntimeException(
+                "Invalid #[Api_Endpoint] GET handler: {$location}\n" .
+                "  API-GET-PURE-01: " . self::GET_PURE_EXCEPTION_TAG . " requires a rationale.\n" .
+                "  Write the reason the write is legitimate on the same line as the tag."
+            );
+        }
+
+        if ($exception_rationale !== null) {
+            return;
+        }
+
+        $body = static::_read_method_body($file_path, $method_name);
+        if ($body === '') {
+            return;
+        }
+
+        foreach (self::GET_MUTATION_TOKENS as $token) {
+            if (!str_contains($body, $token)) {
+                continue;
+            }
+
+            throw new \RuntimeException(
+                "Invalid #[Api_Endpoint] GET handler: {$location}\n" .
+                "  API-GET-PURE-01: a GET endpoint must be side-effect free, and this one " .
+                "calls '{$token}'.\n" .
+                "  Move the write to a POST endpoint, or - if the write is legitimate " .
+                "bookkeeping - declare\n" .
+                "  '" . self::GET_PURE_EXCEPTION_TAG . " <rationale>' in the method docblock."
+            );
+        }
+    }
+
+    /**
+     * The rationale from an @API-GET-PURE-01-EXCEPTION docblock tag.
+     *
+     * Returns null when the tag is absent, '' when it is present with nothing after it, and
+     * the rationale text otherwise. The three answers are distinct because a bare tag must
+     * fail rather than waive.
+     */
+    private static function _parse_get_pure_exception(string $docblock): ?string
+    {
+        foreach (explode("\n", $docblock) as $line) {
+            $stripped = static::_strip_docblock_line($line);
+
+            if (!str_starts_with($stripped, self::GET_PURE_EXCEPTION_TAG)) {
+                continue;
+            }
+
+            return trim(substr($stripped, strlen(self::GET_PURE_EXCEPTION_TAG)));
+        }
+
+        return null;
+    }
+
+    /**
+     * The body of one method as compacted code text: comments dropped, every string literal
+     * replaced with a placeholder, and all whitespace removed - so a literal search for
+     * '->save(' cannot be fooled by formatting, and cannot fire on prose or on data.
+     *
+     * Returns '' when the file or the method cannot be read (a synthetic manifest entry
+     * pointing at no file, exactly as the docblock reader behaves).
+     */
+    private static function _read_method_body(string $file_path, string $method_name): string
+    {
+        if (!file_exists($file_path)) {
+            return '';
+        }
+
+        $tokens = @token_get_all(file_get_contents($file_path));
+        if (!is_array($tokens)) {
+            return '';
+        }
+
+        $count = count($tokens);
+
+        // Locate "function <method_name>".
+        $start = null;
+        for ($i = 0; $i < $count; $i++) {
+            if (!is_array($tokens[$i]) || $tokens[$i][0] !== T_FUNCTION) {
+                continue;
+            }
+
+            for ($j = $i + 1; $j < $count; $j++) {
+                $token = $tokens[$j];
+                if (is_array($token) && ($token[0] === T_WHITESPACE || $token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT)) {
+                    continue;
+                }
+                if (is_array($token) && $token[0] === T_STRING && $token[1] === $method_name) {
+                    $start = $j;
+                }
+                break;
+            }
+
+            if ($start !== null) {
+                break;
+            }
+        }
+
+        if ($start === null) {
+            return '';
+        }
+
+        // Walk to the body's opening brace, then brace-match to its close. An abstract or
+        // interface declaration ends at ';' and has no body.
+        $depth = 0;
+        $body = '';
+        for ($i = $start; $i < $count; $i++) {
+            $token = $tokens[$i];
+            $text = is_array($token) ? $token[1] : $token;
+
+            if ($depth === 0) {
+                if ($text === ';') {
+                    return '';
+                }
+                if ($text === '{') {
+                    $depth = 1;
+                }
+                continue;
+            }
+
+            if ($text === '{') {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+                if ($depth === 0) {
+                    break;
+                }
+            }
+
+            if (is_array($token)) {
+                if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                    continue;
+                }
+                if ($token[0] === T_CONSTANT_ENCAPSED_STRING || $token[0] === T_ENCAPSED_AND_WHITESPACE
+                    || $token[0] === T_INLINE_HTML) {
+                    $body .= "'_'";
+                    continue;
+                }
+            }
+
+            $body .= $text;
+        }
+
+        return preg_replace('/\s+/', '', $body);
     }
 
     /**

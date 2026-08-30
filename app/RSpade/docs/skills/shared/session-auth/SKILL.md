@@ -82,9 +82,27 @@ Login_History::get_failed_attempts_count($email);     // within the failure wind
 Login_History::get_failed_attempts_count_by_ip($ip);  // same
 ```
 
-Successes are `_login_history` rows, pruned on `rsx.sessions.login_history_retention_days` (default 365). **Failures are ephemeral - no row at all**: a per-email and a per-IP counter expiring on `rsx.sessions.login_failure_window_minutes` (default 15), plus one `Log::warning` line. `/login` is anonymous-reachable, and a persisted failure row was an unauthenticated INSERT anyone on the internet could drive.
+Successes are `_login_history` rows, pruned on `rsx.sessions.login_history_retention_days` (default 365). **Failures are ephemeral - no row at all**: a per-email and a per-IP counter expiring on `rsx.sessions.login_throttle.window_minutes` (default 15), plus one `Log::warning` line. `/login` is anonymous-reachable, and a persisted failure row was an unauthenticated INSERT anyone on the internet could drive.
 
-Consequences you must design around: **a 30-day failed-attempt count is not answerable** - shrink such a stat to the window, or state the window in the label. And **throttling built on these counters fails OPEN** (a stopped cache must never lock users out); the enforcement policy is yours to write.
+Consequences you must design around: **a 30-day failed-attempt count is not answerable** - shrink such a stat to the window, or state the window in the label. And these counts are a **statistic, not the enforcement** - never build a second throttle on them (below).
+
+### Brute-force throttling is the framework's, and it is already on
+
+`Login_Throttle` counts FAILURES per CLIENT IP and locks the address out; `RsxAuth::attempt()` calls `require_not_throttled()` as its **first statement**, before the lookup, and `Login_History::record_failure()` feeds it - so every failure you record (a bad second factor, a disabled account) counts, and an app writes nothing to inherit the protection.
+
+```php
+try {
+    $authenticated = RsxAuth::attempt($credentials);
+} catch (Auth_Throttled_Exception $e) {
+    $error = $e->getMessage();     // "You're doing that too fast" - render it as the form error
+}
+```
+
+**It THROWS rather than returning false**, because "we did not check" is not "those credentials are wrong" - a false would report an invalid password to a user whose password may be correct. `$e->retry_after_seconds` is for your logs and headers; the message deliberately tells the caller nothing else.
+
+A login path that verifies its own password and does not record to `Login_History` does both halves itself - `Login_Throttle::require_not_throttled()` before the check, `Login_Throttle::record_failure()` on the miss (the template's portal login is the worked example). **Never pair `record_failure()` with a `Login_History::record_failure()` on the same event** - that counts twice.
+
+Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (10), `window_minutes` (15), `lockout_minutes` (15). **A caller with no client IP is never throttled** - CLI, tasks and tests have no remote party to throttle. **Fail closed**: a cache error propagates and the login fails loud; only maintenance mode (redis deliberately stopped) leaves the throttle inert.
 
 ### Account state is APPLICATION vocabulary
 
@@ -232,7 +250,9 @@ Session::set_site_id((int) $params['site_id']);
 - **`SESSION-ID-01` build failure.** A null-ish or zero-ish test on `get_session_id()`. Delete the test - it is dead code (the method is `: int`, never null) and it already created the session it was guarding against. Using the value in arithmetic, a query or a comparison is never flagged.
 - **An admin "sign out" button that always reports success but changes nothing.** The classic refusal-vs-absence conflation: the call was throwing `AjaxUnauthorizedException` (or returning false for a genuinely absent row) and the endpoint treated both as "done". Let the throw propagate; treat false as "nothing matched".
 - **A user is still signed in after being disabled.** `attempt()` only guards the sign-in. Enforce account state in `Main::pre_dispatch()` too, and terminate their sessions when you disable them.
-- **Failed-attempt count reads zero for a user you know just failed.** The window (`login_failure_window_minutes`, default 15) elapsed, or the cache was restarted. Both are expected - the counters are ephemeral and throttling on them fails open.
+- **Failed-attempt count reads zero for a user you know just failed.** The window (`login_throttle.window_minutes`, default 15) elapsed, or the cache was restarted. Both are expected - the counters are ephemeral, and they are a statistic rather than the enforcement.
+- **A login form reports "invalid email or password" for a correct password.** The attempt was throttled and the `Auth_Throttled_Exception` was swallowed into the same branch as a credential miss. Catch it separately and show `$e->getMessage()`.
+- **A test or command "cannot log in any more".** It cannot be the throttle: CLI has no client IP and is never throttled. Clear a real lockout with `Login_Throttle::reset($ip)`.
 - **A test signs in but `last_login` moves.** Pass `$touch_last_login = false` (or `record: false` on `attempt()`) for harness logins.
 
 ---

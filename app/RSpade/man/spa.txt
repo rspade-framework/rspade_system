@@ -810,9 +810,12 @@ SESSION VALIDATION
         2. User changes - account details modified (name, role, permissions)
         3. Session changes - logged out, ACLs updated, session invalidated
 
-    On mismatch, triggers location.replace() for a transparent page refresh
-    that doesn't pollute browser history. The user sees the page reload with
-    fresh state, or is redirected to login if session was invalidated.
+    On mismatch, triggers location.reload() - a transparent page refresh that
+    adds no history entry. The user sees the page reload with fresh state, or
+    is redirected to login if the session was invalidated. It is reload(), not
+    location.replace(location.href): on a URL carrying a #hash (a tab, a
+    DataGrid page) the latter is a fragment navigation, no document is
+    fetched, and the refresh silently never happens.
 
     Validation is fire-and-forget (non-blocking) and fails silently on network
     errors to avoid disrupting navigation. Stale state is detected on subsequent

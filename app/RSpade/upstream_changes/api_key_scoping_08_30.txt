@@ -1,0 +1,550 @@
+API KEY SCOPING - SCOPE MANAGEMENT UI, AND THE GET-PURITY RULE
+Date: 2026-08-30
+
+SUMMARY
+    An API key used to carry its holder's ENTIRE authority: an integration that
+    only needed to read contacts could, with the same credential, delete every
+    client its owner could delete. _api_keys.scopes is now enforced - a key may
+    be narrowed to a rule set, and every existing key (scopes NULL) is
+    unaffected.
+
+    TWO THINGS REACH YOU HERE.
+
+    1. The template app's Settings > API Keys module grew a whole scope
+       management UI - a mint modal with presets, a custom-rule box and a live
+       effective-access preview, a Scope column on the grid, and a read-only
+       view of an existing key's rules. Your /rsx/ is your own fork, so none of
+       it arrives on its own. Copy it if you want it. (Section: CHANGES
+       REQUIRED.)
+
+    2. API-GET-PURE-01, a new manifest-scan rule, ships in /system/ and applies
+       to YOUR API controllers immediately. A GET #[Api_Endpoint] whose body
+       writes now FAILS THE MANIFEST BUILD. (Section: ACTION REQUIRED.)
+
+    Nothing else changes. A key with no rules behaves exactly as it did, and
+    Api_Key_Model::generate() gained an optional trailing $scopes argument, so
+    every existing call site is unaffected.
+
+    Full contract: php artisan rsx:man external_api (section KEY SCOPES).
+
+AFFECTED FILES
+    /rsx/resource/config/rsx.php
+    /rsx/app/frontend/settings/api_keys/settings_api_keys_controller.php
+    /rsx/app/frontend/settings/api_keys/api_keys_datagrid.php
+    /rsx/app/frontend/settings/api_keys/api_keys_datagrid.jqhtml
+    /rsx/app/frontend/settings/api_keys/api_keys_datagrid.js
+    /rsx/app/frontend/settings/api_keys/add_api_key_modal.js
+    /rsx/app/frontend/settings/api_keys/add_api_key_modal_form.jqhtml
+    /rsx/app/frontend/settings/api_keys/api_key_created_modal_body.jqhtml
+    /rsx/theme/components/inputs/select/select_with_description_input.jqhtml
+
+    NEW files (copy verbatim - see COPY THESE FILES):
+    /rsx/app/frontend/settings/api_keys/add_api_key_modal_form.js
+    /rsx/app/frontend/settings/api_keys/add_api_key_modal_form.scss
+    /rsx/app/frontend/settings/api_keys/api_scope_preview.jqhtml|.js|.scss
+    /rsx/app/frontend/settings/api_keys/api_scope_presets_input.jqhtml|.js|.scss
+    /rsx/app/frontend/settings/api_keys/api_key_scopes_modal_body.jqhtml|.js|.scss
+    /rsx/app/frontend/settings/api_keys/api_key_created_modal_body.scss
+
+COPY THESE FILES
+    The release vendors the reference app, so the new components are already on
+    your disk after the pull. Copy them across verbatim:
+
+        cp system/app/RSpade/resource/reference_app/app/frontend/settings/api_keys/api_scope_preview.* \
+           system/app/RSpade/resource/reference_app/app/frontend/settings/api_keys/api_scope_presets_input.* \
+           system/app/RSpade/resource/reference_app/app/frontend/settings/api_keys/api_key_scopes_modal_body.* \
+           system/app/RSpade/resource/reference_app/app/frontend/settings/api_keys/add_api_key_modal_form.* \
+           system/app/RSpade/resource/reference_app/app/frontend/settings/api_keys/api_key_created_modal_body.scss \
+           rsx/app/frontend/settings/api_keys/
+
+    That also replaces add_api_key_modal_form.jqhtml, which is rewritten. If you
+    have customised that file, merge instead of overwriting.
+
+    No bundle edit is needed - the module's bundle includes the directory, and
+    components are discovered by name.
+
+CHANGES REQUIRED
+
+    File: /rsx/resource/config/rsx.php
+    -------------------------------------------------------------------------
+    Under the existing 'api' => [ ... ] block, beside 'key_prefix', add your own
+    named presets. THE FRAMEWORK NEVER NAMES A SCOPE - this array is yours, in
+    the same way #[Auth_Check] names are yours. Framework core does not read the
+    key; only your own controller does. These are the template's, over the
+    template's endpoints - replace them with presets over YOUR /api/vN/ surface:
+
+        // Named scope presets offered in the Settings > API Keys mint modal.
+        //
+        // 'rules' is one Grant|Deny METHOD /api/vN/pattern per line (`*` is
+        // exactly one segment, `**` is zero or more and only as the last
+        // segment). TICKING SEVERAL PRESETS IS SET UNION AND IS
+        // ORDER-INDEPENDENT: the decision is by pattern specificity with a Deny
+        // winning any tie, never by the order the rules were concatenated.
+        //
+        // Every preset below grants GET /api/v1/me, the identity endpoint a
+        // client calls at setup to check its own key. A scoped key that cannot
+        // reach it looks broken to a well-written integration on its first call.
+        'scope_presets' => [
+            [
+                'name' => 'Read-only',
+                'description' => 'Every GET endpoint; no writes.',
+                'rules' => "Grant GET /api/v1/**",
+            ],
+            [
+                'name' => 'Contacts & clients',
+                'description' => 'Read and write contacts and clients, including client document attachments.',
+                'rules' => "Grant GET /api/v1/me\n"
+                    . "Grant GET /api/v1/contacts/**\n"
+                    . "Grant POST /api/v1/contacts/**\n"
+                    . "Grant GET /api/v1/clients/**\n"
+                    . "Grant POST /api/v1/clients/**",
+            ],
+            [
+                'name' => 'Files',
+                'description' => 'Upload files and read stored file content. Attaching a file to a record needs that record\'s preset as well.',
+                'rules' => "Grant GET /api/v1/me\n"
+                    . "Grant GET /api/v1/files/**\n"
+                    . "Grant POST /api/v1/files/**",
+            ],
+        ],
+
+    File: /rsx/app/frontend/settings/api_keys/settings_api_keys_controller.php
+    -------------------------------------------------------------------------
+    Add to the use block:
+
+        use App\RSpade\Core\Api\Api_Catalog;
+        use App\RSpade\Core\Api\Api_Scopes;
+
+    In create_key(), AFTER the name validation and BEFORE Session::get_user(),
+    insert the mode + rule assembly:
+
+        // THE SCOPE RULES ARE BUILT HERE, FROM NAMES - never from rule text the
+        // browser computed. The preview panel unions the same presets
+        // client-side so the operator can see the result, but what is stored is
+        // re-derived from config on the server: a ticked preset is a NAME, and
+        // the browser cannot widen it by editing the rules it was shown.
+        $access_mode = $params['access_mode'] ?? '';
+        $scopes = null;
+
+        // The mode is answered EXPLICITLY. Treating an unrecognised value as
+        // unrestricted would mean a broken form silently mints the widest key
+        // there is, which is the one failure this endpoint must not have.
+        if ($access_mode !== 'unrestricted' && $access_mode !== 'scoped') {
+            return response_form_error(
+                'Please correct the errors below.',
+                ['access_mode' => 'Choose whether this key is unrestricted or scoped.']
+            );
+        }
+
+        if ($access_mode === 'scoped') {
+            $preset_names = is_array($params['presets'] ?? null) ? $params['presets'] : [];
+            $preset_rules = static::_expand_scope_presets($preset_names);
+
+            if ($preset_rules === null) {
+                return response_form_error(
+                    'Please correct the errors below.',
+                    ['presets' => 'One of those presets no longer exists. Reload the page and choose again.']
+                );
+            }
+
+            $text = trim($preset_rules . "\n" . trim((string) ($params['scopes'] ?? '')));
+
+            if ($text === '') {
+                return response_form_error(
+                    'Please correct the errors below.',
+                    ['scopes' => 'A scoped key needs at least one rule. Tick a preset, write a rule, or choose Unrestricted.']
+                );
+            }
+
+            try {
+                $scopes = Api_Scopes::canonicalise($text);
+            } catch (\InvalidArgumentException $e) {
+                // The parser's own message names the offending line verbatim.
+                return response_form_error('Please correct the errors below.', ['scopes' => $e->getMessage()]);
+            }
+        }
+
+    Pass the rules to the mint, and return them:
+
+        $result = Api_Key_Model::generate(
+            user_id: $user->id,
+            name: $name,
+            environment: 'live',
+            scopes: $scopes            // <-- added
+        );
+
+        return [
+            ...
+            'scopes' => $result['model']->scopes,   // <-- added
+        ];
+
+    Add three endpoints and three private helpers to the same class:
+
+        /**
+         * Ajax endpoint: the app's named scope presets, for the mint modal.
+         */
+        #[Ajax_Endpoint]
+        public static function get_scope_presets(Request $request, array $params = [])
+        {
+            if (!Session::has_api_access()) {
+                return response_unauthorized('API access is not enabled for your account');
+            }
+
+            $presets = [];
+
+            foreach (static::_scope_presets() as $preset) {
+                $presets[] = [
+                    'name' => $preset['name'],
+                    'description' => $preset['description'] ?? '',
+                    'rules' => $preset['rules'] ?? '',
+                ];
+            }
+
+            return ['presets' => $presets];
+        }
+
+        /**
+         * Ajax endpoint: which endpoints would this rule text actually reach?
+         *
+         * A MALFORMED RULE IS A NORMAL ANSWER HERE, not a failure: the operator
+         * is mid-keystroke and the panel's job is to say what is wrong with what
+         * they have written so far.
+         */
+        #[Ajax_Endpoint]
+        public static function preview_scopes(Request $request, array $params = [])
+        {
+            if (!Session::has_api_access()) {
+                return response_unauthorized('API access is not enabled for your account');
+            }
+
+            $scopes = trim((string) ($params['scopes'] ?? ''));
+
+            try {
+                $groups = Api_Catalog::resolve_for_scopes(1, $scopes === '' ? null : $scopes);
+            } catch (\InvalidArgumentException $e) {
+                return ['error' => $e->getMessage(), 'unrestricted' => false, 'groups' => []];
+            }
+
+            return [
+                'error' => null,
+                'unrestricted' => Api_Scopes::is_unrestricted($scopes === '' ? null : $scopes),
+                'groups' => static::_preview_groups($groups),
+            ];
+        }
+
+        /**
+         * Ajax endpoint: one key's scope rules.
+         *
+         * KEYS ARE IMMUTABLE AFTER MINT - there is no edit endpoint, and
+         * narrowing a key means revoking it and minting a replacement. The
+         * ownership rule lives in this body rather than in the #[Auth] gate: a
+         * key belonging to somebody else answers exactly as one that does not
+         * exist.
+         */
+        #[Ajax_Endpoint]
+        public static function get_key_scopes(Request $request, array $params = [])
+        {
+            if (!Session::has_api_access()) {
+                return response_unauthorized('API access is not enabled for your account');
+            }
+
+            $user = Session::get_user();
+            if (!$user) {
+                return response_error(Ajax::ERROR_AUTH_REQUIRED);
+            }
+
+            $key = Api_Key_Model::where('id', $params['id'] ?? null)
+                ->where('user_id', $user->id)
+                ->first();
+
+            if (!$key) {
+                return response_error(Ajax::ERROR_NOT_FOUND, 'API key not found');
+            }
+
+            return [
+                'id' => $key->id,
+                'name' => $key->name,
+                'scopes' => $key->scopes,
+                'unrestricted' => $key->is_unrestricted(),
+            ];
+        }
+
+        /**
+         * The configured presets, always as a list of arrays.
+         */
+        private static function _scope_presets(): array
+        {
+            $presets = config('rsx.api.scope_presets', []);
+
+            return is_array($presets) ? $presets : [];
+        }
+
+        /**
+         * The rule text for a set of preset NAMES, or null when one of them is
+         * not configured. An unknown name is REFUSED rather than skipped:
+         * silently dropping it would mint a key narrower than the operator
+         * ticked, and they would find out from a 403 weeks later.
+         */
+        private static function _expand_scope_presets(array $names): ?string
+        {
+            $by_name = [];
+            foreach (static::_scope_presets() as $preset) {
+                $by_name[$preset['name']] = $preset['rules'] ?? '';
+            }
+
+            $lines = [];
+            foreach ($names as $name) {
+                if (!array_key_exists($name, $by_name)) {
+                    return null;
+                }
+                $lines[] = $by_name[$name];
+            }
+
+            return implode("\n", $lines);
+        }
+
+        /**
+         * Flatten Api_Catalog's grouped catalogue to what the preview renders.
+         */
+        private static function _preview_groups(array $groups): array
+        {
+            $out = [];
+
+            foreach ($groups as $group) {
+                $endpoints = [];
+
+                foreach ($group['endpoints'] as $endpoint) {
+                    foreach ($endpoint['methods'] as $method) {
+                        $endpoints[] = ['method' => $method, 'pattern' => $endpoint['pattern']];
+                    }
+                }
+
+                $out[] = ['name' => $group['name'], 'endpoints' => $endpoints];
+            }
+
+            return $out;
+        }
+
+    File: /rsx/app/frontend/settings/api_keys/api_keys_datagrid.php
+    -------------------------------------------------------------------------
+    Add to the use block:
+
+        use App\RSpade\Core\Api\Api_Scopes;
+
+    In transform_records(), directly after unset($record['key_hash']);
+
+        // Scoping in one column: unrestricted, or how many rules narrow the
+        // key. The COUNT and not the rules - a table cell is not where anyone
+        // reads a rule set. The rules are one click away, in the view modal.
+        $scopes = $record['scopes'] ?? null;
+        $record['is_scoped'] = !Api_Scopes::is_unrestricted($scopes);
+        $rule_count = $record['is_scoped'] ? count(Api_Scopes::parse((string) $scopes)) : 0;
+        $record['scope_summary'] = $record['is_scoped']
+            ? $rule_count . ' rule' . ($rule_count === 1 ? '' : 's')
+            : 'Unrestricted';
+
+        // The rule text itself is fetched by the view modal (get_key_scopes),
+        // so it does not ride along on every row of every page.
+        unset($record['scopes']);
+
+    File: /rsx/app/frontend/settings/api_keys/api_keys_datagrid.jqhtml
+    -------------------------------------------------------------------------
+    In <Slot:DG_Table_Header>, after the Key column:
+
+        <th>Scope</th>
+
+    and widen the Actions header:
+
+        <th style="width: 110px;">Actions</th>
+
+    In <Slot:row>, after the Key <td>:
+
+        <td>
+            <% if (row.is_scoped) { %>
+                <span class="badge bg-secondary"><%= row.scope_summary %></span>
+            <% } else { %>
+                <span class="text-muted"><%= row.scope_summary %></span>
+            <% } %>
+        </td>
+
+    and replace the Actions <td> with an icon-only button GROUP (icon-only
+    groups use the outline style; every other button in the app is filled):
+
+        <td>
+            <div class="btn-group btn-group-sm">
+                <button class="btn btn-outline-secondary" data-action="view_scope" data-id="<%= row.id %>" title="View Scope">
+                    <i class="bi bi-eye"></i>
+                </button>
+                <% if (row.status === 'active') { %>
+                    <button class="btn btn-outline-danger" data-action="revoke" data-id="<%= row.id %>" title="Revoke Key">
+                        <i class="bi bi-x-circle"></i>
+                    </button>
+                <% } %>
+            </div>
+        </td>
+
+    File: /rsx/app/frontend/settings/api_keys/api_keys_datagrid.js
+    -------------------------------------------------------------------------
+    In on_ready(), before the revoke handler:
+
+        // Handle view-scope button clicks
+        this.$.on('click', '[data-action="view_scope"]', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const $btn = $(e.currentTarget);
+
+            await Api_Keys_DataGrid._show_key_scopes($btn.data('id'));
+        });
+
+    And add, on the class:
+
+        /**
+         * The read-only scope view for one key. A dialog with no endpoint behind
+         * it, so it is Modal.show() around a component rather than Modal.form().
+         */
+        static async _show_key_scopes(key_id) {
+            const $container = $('<div>');
+            const body = $container.component('Api_Key_Scopes_Modal_Body', { key_id: key_id }).component();
+
+            await new Promise((resolve) => {
+                body.on('ready', () => resolve());
+            });
+
+            await Modal.show({
+                title: 'API Key Scope',
+                body: body.$,
+                buttons: [{
+                    label: 'Close',
+                    value: true,
+                    class: 'btn-primary',
+                    default: true,
+                }],
+                max_width: 640,
+                closable: true,
+                close_on_submit: true,
+            });
+        }
+
+    File: /rsx/app/frontend/settings/api_keys/add_api_key_modal.js
+    -------------------------------------------------------------------------
+    Pass the new key's rules to the created-key modal body:
+
+        const key_display = $container.component('Api_Key_Created_Modal_Body', {
+            name: result.name,
+            api_key: result.key,
+            scopes: result.scopes          // <-- added
+        }).component();
+
+    File: /rsx/app/frontend/settings/api_keys/api_key_created_modal_body.jqhtml
+    -------------------------------------------------------------------------
+    Before the closing </Define:...>, after the API Key block, add the scope. It
+    is shown HERE and not only in the grid because this is the moment the
+    operator can still act on it - the key is immutable after mint, so a rule set
+    that turned out wrong means revoking this key and generating another:
+
+        <div class="mt-3">
+            <label class="form-label fw-bold">Scope</label>
+            <% if (!this.args.scopes) { %>
+                <div class="text-muted">Unrestricted - this key carries every permission your account has.</div>
+            <% } else { %>
+                <pre class="Api_Key_Created_Modal_Body__rules"><%= this.args.scopes %></pre>
+            <% } %>
+        </div>
+
+    File: /rsx/theme/components/inputs/select/select_with_description_input.jqhtml
+    -------------------------------------------------------------------------
+    The widget rendered a bare, unstyled <select>. Add the Bootstrap class:
+
+        <select $sid="input" class="form-select" <% if (this.args.disabled) { %>disabled<% } %>>
+
+ACTION REQUIRED
+
+    1. AUDIT YOUR GET ENDPOINTS FOR API-GET-PURE-01 (every app with an API)
+
+       "Read-only" is expressible in the scope language only as a GET grant, so
+       the value of `Grant GET /api/v1/**` rests entirely on GET being
+       side-effect free. That is now enforced at scan time.
+
+       THE MANIFEST BUILD NOW FAILS when a GET-only #[Api_Endpoint] handler's own
+       body contains any of:
+
+           ->save(   ->delete(   ->update(   ::create(   ->raw_bulk(
+           DB::statement(  DB::insert(  DB::update(  DB::delete(
+           Task::dispatch(
+
+       You will find out immediately - the build names the file, the method and
+       the token it found. There is nothing to search for pre-emptively; if your
+       build succeeds after the pull, you have no violations the rule can see.
+
+       WHEN IT FIRES, there are exactly two correct answers:
+
+         (a) MOVE THE WRITE. If the endpoint mutates anything a caller would
+             consider state, it is a POST endpoint that was declared GET. Change
+             methods: ['GET'] to methods: ['POST'] and tell your consumers.
+
+         (b) DECLARE THE EXCEPTION, if the write is genuinely bookkeeping the
+             caller asked for (a read receipt, a last-seen stamp):
+
+                 /**
+                  * Latest inbox messages.
+                  *
+                  * @API-GET-PURE-01-EXCEPTION stamps last_polled_at for the
+                  * caller's own connector; no user-visible state changes.
+                  */
+
+             THE RATIONALE IS REQUIRED. A bare tag still fails the build,
+             because recording that somebody wanted the rule off is not the same
+             as recording a reason.
+
+       WHAT THE RULE CANNOT SEE: only the handler's OWN body is scanned. A
+       private helper it calls is not followed. That is the honest limit of a
+       literal-token rule, and it is why (b) exists - if you have GET endpoints
+       whose writes hide behind a helper, the rule will not catch them and a
+       Grant GET rule set will be broader than it looks. Read your GET handlers
+       once, now, while the list is short.
+
+    2. NOTHING TO DO FOR EXISTING KEYS
+
+       Every key in your database has scopes NULL and stays UNRESTRICTED. No
+       credential changes behaviour, and no integration breaks. Scoping is
+       opt-in, per key, at mint time.
+
+    3. IF YOU MINT KEYS FROM A SCRIPT
+
+       rsx:api:key:create and rsx:api:key:temp take a repeatable --scope:
+
+           php artisan rsx:api:key:temp --user=importer@example.com \
+             --scope="Grant GET /api/v1/**" --json
+
+       A malformed rule exits non-zero with error.code scopes_invalid and mints
+       nothing. Omitting --scope keeps the old behaviour exactly.
+
+VERIFICATION
+
+    Manifest build (the GET-purity rule):
+
+        php artisan rsx:manifest:build      # or simply load any page
+
+    The UI, after copying the files:
+
+        php artisan rsx:debug /frontend/settings/api_keys --user=<your id>
+
+    Open Generate New Key, choose Scoped, tick a preset: the Effective access
+    panel lists the endpoints the rules reach. Type a broken rule
+    ("Grant SNARF /api/v1/x") - the panel and the field both show the parser's
+    message naming the line, and the mint is refused.
+
+    End to end, with a real key:
+
+        php artisan rsx:api:key:create --user=1 --name="scope test" \
+          --scope="Grant GET /api/v1/me" --json
+
+        curl -H "Authorization: Bearer <key>" https://your.host/api/v1/me
+        # 200, and key.scopes echoes the rule
+
+        curl -H "Authorization: Bearer <key>" https://your.host/api/v1/contacts
+        # 403 {"error":{"code":"insufficient_scope",
+        #               "required":"GET /api/v1/contacts"}}
+
+        php artisan rsx:api:key:list --user=1     # Scope column reads "1 rule"

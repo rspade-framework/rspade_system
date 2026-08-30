@@ -37,6 +37,7 @@ class Api_Key_Command extends Command
                             {--name= : Human-readable key name (default: "CLI key")}
                             {--expires= : Expiry as an ISO datetime or a relative span like "30 days". Omit for no expiry}
                             {--environment=live : Key environment: live or test}
+                            {--scope=* : Scope rule ("Grant GET /api/v1/contacts/**"), repeatable. Omit for an unrestricted key}
                             {--json : Output as JSON}';
 
     protected $description = 'Create an external API key for a user (the plaintext is shown once)';
@@ -55,13 +56,17 @@ class Api_Key_Command extends Command
             if ($expires_option !== null && trim((string) $expires_option) !== '') {
                 $expires_at = Api_Key_Cli_Support::parse_expiry((string) $expires_option);
             }
+
+            // Validated before anything is minted: a rule set that cannot be read must not
+            // become a credential somebody believes is narrow.
+            $scopes = Api_Key_Cli_Support::parse_scopes($this->option('scope'));
         } catch (Api_Cli_Error $e) {
             return Api_Key_Cli_Support::report_error($this, $e, $as_json);
         }
 
         $name = (string) ($this->option('name') ?: 'CLI key');
 
-        $result = Api_Key_Model::generate($user->id, $name, $environment, null, $expires_at);
+        $result = Api_Key_Model::generate($user->id, $name, $environment, null, $expires_at, $scopes);
         $api_access = Api_Key_Cli_Support::api_access_enabled($user);
 
         if ($as_json) {
@@ -79,6 +84,14 @@ class Api_Key_Command extends Command
         $this->line('  Name:    ' . $result['model']->name);
         $this->line('  Id:      ' . $result['model']->id);
         $this->line('  Expires: ' . ($expires_at ? Rsx_Time::format_datetime($expires_at->toIso8601String()) : 'never'));
+        $this->line('  Scope:   ' . Api_Key_Cli_Support::key_scope_summary($result['model']));
+
+        // The rules in full, echoed back canonicalised, because this is the one moment the
+        // operator can still see they wrote the rule they meant to write.
+        foreach (preg_split('/\n/', (string) $result['model']->scopes, -1, PREG_SPLIT_NO_EMPTY) as $rule) {
+            $this->line('           ' . $rule);
+        }
+
         $this->newLine();
         $this->line('  KEY (shown once, store it now):');
         $this->line('  ' . $result['key']);

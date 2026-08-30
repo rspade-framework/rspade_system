@@ -185,6 +185,24 @@ class Api_Docs_Catalog {
     }
 
     /**
+     * Whether the adopted key carries scope rules: true (scoped), false (unrestricted), or
+     * null when no key is adopted.
+     *
+     * Three-valued deliberately - see Rsx_Api_Docs::rsxapp_data. A listing drawn for a
+     * scoped key is a listing of what THAT CREDENTIAL can reach, which is a narrower claim
+     * than what its owner can reach, and the console says which.
+     */
+    static key_scoped() {
+        const cat = Api_Docs_Catalog.raw();
+
+        if (!cat || !isset(cat.key_scoped)) {
+            return null;
+        }
+
+        return cat.key_scoped;
+    }
+
+    /**
      * Total endpoints listed for a version, across every resource.
      */
     static endpoint_count(version) {

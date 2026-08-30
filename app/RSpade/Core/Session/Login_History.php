@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Session;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Session\User_Agent;
 
@@ -17,7 +18,7 @@ use App\RSpade\Core\Session\User_Agent;
  *   Session_Cleanup_Service (rsx.sessions.login_history_retention_days).
  *
  * - FAILURES are EPHEMERAL. record_failure() writes no row at all: it increments two redis
- *   counters (per email, per IP) that expire on rsx.sessions.login_failure_window_minutes, and
+ *   counters (per email, per IP) that expire on rsx.sessions.login_throttle.window_minutes, and
  *   emits one Log::warning() line. That log line is the forensic record; the counters exist only
  *   to answer the throttling question "how many failures in the window".
  *
@@ -30,8 +31,13 @@ use App\RSpade\Core\Session\User_Agent;
  *   "who attacked this account, from where") is no longer answerable from this API. The window
  *   is the horizon. Anything longer must come from the log.
  *
- * Throttling built on the counters FAILS OPEN: under maintenance mode redis is stopped, the
- * increments are dropped and the counts read 0. A cache outage must not lock users out.
+ * ENFORCEMENT LIVES IN Login_Throttle, not here: record_failure() hands every failure to it
+ * (per client IP), and RsxAuth::attempt() refuses a locked-out address before any lookup. The
+ * counters below remain the readable per-email/per-IP statistic they always were, and nothing
+ * enforces the per-email one.
+ *
+ * Under maintenance mode redis is stopped, the increments are dropped and the counts read 0 -
+ * the throttle is inert while the web tier is answering 503 anyway.
  *
  * Similar to Session class design - static methods for developers to interact with system
  * tables without needing to know the underlying table structure.
@@ -105,6 +111,13 @@ class Login_History
         RsxCache::increment_with_ttl(self::_email_counter_key($email), $window_seconds);
         RsxCache::increment_with_ttl(self::_ip_counter_key($ip_address), $window_seconds);
 
+        // Every recorded failure feeds the framework throttle - password misses, unknown
+        // addresses, and whatever outcomes the application records here itself (a second
+        // factor, an account status). The throttle keeps its own per-IP counter and reads
+        // the client IP the same way every other framework seam does, so a CLI caller
+        // (no remote party) is not throttled.
+        Login_Throttle::record_failure();
+
         $context = [
             'email' => $email,
             'ip_address' => $ip_address,
@@ -126,10 +139,10 @@ class Login_History
      */
     private static function _failure_window_seconds(): int
     {
-        $minutes = (int) config('rsx.sessions.login_failure_window_minutes', 15);
+        $minutes = (int) config('rsx.sessions.login_throttle.window_minutes', 15);
 
         if ($minutes <= 0) {
-            shouldnt_happen('rsx.sessions.login_failure_window_minutes must be a positive number of minutes');
+            shouldnt_happen('rsx.sessions.login_throttle.window_minutes must be a positive number of minutes');
         }
 
         return $minutes * 60;
@@ -200,7 +213,7 @@ class Login_History
      * Get count of failed login attempts for an email within the failure window
      * Useful for rate limiting / lockout logic
      *
-     * THE ANSWER IS BOUNDED BY rsx.sessions.login_failure_window_minutes. Failures live in a
+     * THE ANSWER IS BOUNDED BY rsx.sessions.login_throttle.window_minutes. Failures live in a
      * counter that expires with that window, so a request for a LARGER window returns the
      * window's count, not a longer history: the 30-day failed-attempt count that a row-backed
      * table could answer is not answerable from an ephemeral store. $minutes is retained so

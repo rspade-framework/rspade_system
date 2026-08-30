@@ -1,0 +1,284 @@
+LOGIN BRUTE-FORCE THROTTLE (framework-enforced) + login_failure_window_minutes REMOVED
+Date: 2026-08-30
+
+SUMMARY
+    The framework now throttles its own authentication surface. Login_Throttle counts
+    FAILURES per client IP and locks the address out; RsxAuth::attempt() refuses a
+    locked-out address as its FIRST statement by THROWING Auth_Throttled_Exception.
+    The feature is ON by default.
+
+    Two things downstream must do by hand:
+
+      1. The config key rsx.sessions.login_failure_window_minutes is GONE. If your
+         app overrides it, rename it - there is no alias and no deprecation shim.
+      2. Every login function you wrote must CATCH Auth_Throttled_Exception, or a
+         throttled visitor gets an unhandled exception page instead of a message.
+
+    And one thing to delete: any hand-rolled ">= N failed attempts" lockout you built
+    on Login_History::get_failed_attempts_count*(). It is now a second, weaker throttle
+    sitting beside the framework's.
+
+    This is both a Category 2 change (core contract) and a Category 1 change (the two
+    template login controllers changed) - both parts are below.
+
+THE CHANGE
+    Config: rsx.sessions.login_failure_window_minutes is REPLACED by the block
+
+        'login_throttle' => [
+            'enabled'         => true,   // count and enforce at all
+            'attempts'        => 10,     // failures from one IP inside the window
+            'window_minutes'  => 15,     // how long the failure counter lives
+            'lockout_minutes' => 15,     // how long the address is refused afterwards
+        ],
+
+    window_minutes plays the old key's role exactly: it is still the window that bounds
+    Login_History::get_failed_attempts_count() and get_failed_attempts_count_by_ip().
+    There is ONE window, not two.
+
+    New: App\RSpade\Core\Auth\Login_Throttle
+
+        require_not_throttled(?string $ip = null): void   throws when locked out
+        record_failure(?string $ip = null): void          counts one failure
+        retry_after_seconds(?string $ip = null): int      0 when free
+        reset(?string $ip = null): void                   release an address
+
+        $ip defaults to Session::get_client_ip(). A caller with NO client IP (CLI,
+        tasks, tests) is never throttled - there is no remote party to throttle.
+
+    New: App\RSpade\Core\Auth\Auth_Throttled_Exception
+        Message: exactly "You're doing that too fast". Property: retry_after_seconds.
+
+    Wiring you inherit automatically:
+        - RsxAuth::attempt() calls require_not_throttled() before the lookup.
+        - Login_History::record_failure() calls Login_Throttle::record_failure(), so
+          every failure YOU record (a bad second factor, a disabled account) already
+          feeds the throttle.
+
+    Behavior: FAIL CLOSED. A cache error propagates and the login fails loud rather
+    than proceeding unthrottled. The one tolerated degradation is maintenance mode,
+    where redis is deliberately stopped and the throttle is inert.
+
+ACTION REQUIRED
+
+    1. RENAME THE CONFIG KEY (only if you override it)
+
+       Search your app config:
+
+           grep -rn "login_failure_window_minutes" rsx/
+
+       In rsx/resource/config/rsx.php, replace
+
+           'sessions' => [
+               'login_failure_window_minutes' => 30,
+           ],
+
+       with
+
+           'sessions' => [
+               'login_throttle' => [
+                   'window_minutes' => 30,
+               ],
+           ],
+
+       (The config merge is deep, so overriding one key of the block is enough; the
+       other three keep the framework defaults.) An app that never overrode the old
+       key has nothing to do here.
+
+    2. CATCH Auth_Throttled_Exception IN EVERY LOGIN FUNCTION
+
+       Find every call site:
+
+           grep -rn "RsxAuth::attempt" rsx/
+
+       A throttled attempt THROWS. Uncaught, your visitor gets an error page instead
+       of a message. Wrap the attempt and render the message:
+
+           use App\RSpade\Core\Auth\Auth_Throttled_Exception;
+
+           try {
+               $authenticated = RsxAuth::attempt($credentials);
+           } catch (Auth_Throttled_Exception $e) {
+               $error = $e->getMessage();          // "You're doing that too fast"
+           }
+
+       An Ajax login endpoint answers response_form_error($e->getMessage()).
+
+       DO NOT collapse it into your "invalid email or password" branch. A refusal is
+       not a wrong password - the user's password may be perfectly correct.
+
+    3. DELETE YOUR OWN THROTTLE
+
+       Search for hand-rolled lockouts built on the failure counters:
+
+           grep -rn "get_failed_attempts_count" rsx/
+
+       A block of the shape
+
+           if (Login_History::get_failed_attempts_count($email) >= 5) {
+               return response_error(Ajax::ERROR_GENERIC, 'Too many failed attempts');
+           }
+
+       is now a second throttle beside the framework's, with a different threshold, a
+       different key (email, which the attacker chooses) and a different message.
+       Delete it and tune rsx.sessions.login_throttle instead. Reading the counts to
+       DISPLAY them (a "failed attempts in the last 15 minutes" stat, an alert) is
+       still fine - it is only the enforcement that has moved.
+
+    4. THROTTLE ANY LOGIN PATH THAT DOES NOT GO THROUGH attempt()
+
+       A flow that verifies a password itself (a portal login, a custom identity
+       model) and does not record to Login_History gets neither half for free. Do
+       both, in this order:
+
+           try {
+               Login_Throttle::require_not_throttled();
+           } catch (Auth_Throttled_Exception $e) {
+               // render $e->getMessage() as the form error and return
+           }
+
+           if (!$user || !$user->check_password($password)) {
+               Login_Throttle::record_failure();
+               $error = 'Invalid email or password. Please try again.';
+           }
+
+       A SECOND FACTOR needs this too - a 6-digit code is a million guesses inside a
+       30-second window:
+
+           Login_Throttle::require_not_throttled();          // catch it
+
+           if (!$verified) {
+               Login_History::record_failure($email, Login_History::STATUS_FAILED_2FA,
+                                             null, $login_user->id);
+               return response_form_error('That code is not valid');
+           }
+
+       Login_History::record_failure() ALREADY feeds the throttle. Never call both on
+       the same event, or the failure counts twice.
+
+TEMPLATE DIFFS (Category 1)
+
+AFFECTED FILES
+    /rsx/app/login/login_controller.php
+    /rsx/portal/auth/Portal_Login_Controller.php
+
+    File: /rsx/app/login/login_controller.php
+    -------------------------------------------------------------------------
+    Add the import:
+
+        use App\RSpade\Core\Auth\Auth_Throttled_Exception;
+
+    Replace the validation/attempt chain inside the POST branch. BEFORE:
+
+            // Validate email
+            if (empty($posted_email)) {
+                $error = 'Email address is required';
+            } elseif (!filter_var($posted_email, FILTER_VALIDATE_EMAIL)) {
+                $error = 'Please enter a valid email address';
+            } elseif (empty($request->input('password'))) {
+                $error = 'Password is required';
+            } elseif (RsxAuth::attempt($credentials)) {
+                ... success handling ...
+            } else {
+                $error = 'Invalid email or password. Please try again.';
+            }
+
+    AFTER:
+
+            // Validate email
+            //
+            // THROTTLE: RsxAuth::attempt() refuses a client IP that has spent its
+            // failure budget by THROWING Auth_Throttled_Exception (rsx:man session,
+            // LOGIN THROTTLE) - a refusal is not a wrong password, so it must not be
+            // reported as one. Catch it around the attempt and show its message; it
+            // is already the user-facing string and deliberately says nothing about
+            // which accounts exist or when to try again.
+            $throttled = null;
+
+            try {
+                $authenticated = false;
+
+                if (empty($posted_email)) {
+                    $error = 'Email address is required';
+                } elseif (!filter_var($posted_email, FILTER_VALIDATE_EMAIL)) {
+                    $error = 'Please enter a valid email address';
+                } elseif (empty($request->input('password'))) {
+                    $error = 'Password is required';
+                } else {
+                    $authenticated = RsxAuth::attempt($credentials);
+                }
+            } catch (Auth_Throttled_Exception $e) {
+                $throttled = $e->getMessage();
+            }
+
+            if ($throttled !== null) {
+                $error = $throttled;
+            } elseif ($authenticated) {
+                ... success handling, unchanged ...
+            } elseif ($error === null) {
+                $error = 'Invalid email or password. Please try again.';
+            }
+
+    The final branch is `elseif ($error === null)` rather than a bare `else` because
+    the validation messages are now set inside the try block and must survive.
+
+    File: /rsx/portal/auth/Portal_Login_Controller.php
+    -------------------------------------------------------------------------
+    Add the imports:
+
+        use App\RSpade\Core\Auth\Auth_Throttled_Exception;
+        use App\RSpade\Core\Auth\Login_Throttle;
+
+    At the TOP of the else branch that runs the credential check - before
+    Portal_Session::get_site_id() and the find_by_email() lookup - add:
+
+                // BRUTE-FORCE THROTTLE. The portal verifies the password itself rather
+                // than going through RsxAuth::attempt(), so it does the two things
+                // attempt() would have done: refuse a client IP that has spent its
+                // failure budget BEFORE the lookup (no enumeration from a locked-out
+                // address), and count the miss afterwards. Nothing here records to
+                // Login_History - that store is the staff identity's - so the throttle
+                // is fed directly and nothing is double counted.
+                // See rsx:man session, LOGIN THROTTLE.
+                try {
+                    Login_Throttle::require_not_throttled();
+                } catch (Auth_Throttled_Exception $e) {
+                    // The refusal message IS the user-facing string.
+                    return rsx_view('Portal_Login_Index', [
+                        'error' => $e->getMessage(),
+                        'posted_email' => $posted_email,
+                        'message' => $params['message'] ?? null,
+                        'client_id' => $client_id,
+                    ]);
+                }
+
+    And in the credential-miss branch, count the failure:
+
+                } else {
+                    Login_Throttle::record_failure();
+                    $error = 'Invalid email or password. Please try again.';
+                }
+
+VERIFICATION
+    Config:
+
+        php artisan tinker --execute="print_r(config('rsx.sessions.login_throttle'));"
+        grep -rn "login_failure_window_minutes" rsx/          # must find nothing
+
+    Behavior, against a running site (adjust the address to whatever your proxy
+    presents as the client IP):
+
+        # 10 wrong passwords from one address, then the CORRECT password
+        for i in $(seq 1 11); do
+            curl -s -H "X-Forwarded-For: 198.51.100.7" \
+                 --data-urlencode "email=you@example.com" \
+                 --data-urlencode "password=wrong" \
+                 --data-urlencode "__turnstile=inactive" \
+                 https://your-host/login | grep -o "doing that too fast"
+        done
+
+    The 11th request answers "You're doing that too fast" even with the right
+    password; a request from a different address is unaffected. Release an address
+    with Login_Throttle::reset('198.51.100.7').
+
+    Then re-read your own login screens: a throttled POST must render the message as
+    an ordinary form error, never as an error page.

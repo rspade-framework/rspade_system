@@ -603,7 +603,7 @@ HTTP ENDPOINTS
         GET  /_icon_by_extension/:extension                  File-type icon
 
     EVERY ONE OF THESE EXCEPT /_icon_by_extension ALSO ACCEPTS AN API KEY.
-    Authorization: Bearer rsk_... authenticates the request exactly as a session
+    Authorization: Bearer rsx_... authenticates the request exactly as a session
     cookie would, so an integration reaches bytes with no browser (/_preview/pdf,
     in File_Preview_Controller, likewise). A bad Bearer is a 401 - it never
     degrades to anonymous; no Bearer at all is still anonymous as before.
