@@ -1,0 +1,110 @@
+CATEGORY: 2 - ACTION REQUIRED (find and convert hand-injected <script> tags in your own JS)
+TITLE: JS-DOM-01 now flags script-tag injection at HIGH severity, in BOTH
+       directions - createElement('script') and $('<script ...>') - and points
+       at Rsx.load_external()
+DATE: 2026-08-31
+
+--------------------------------------------------------------------------------
+WHY YOU ARE READING THIS
+--------------------------------------------------------------------------------
+
+After this pull, `php artisan rsx:check` reports JS-DOM-01 at HIGH severity for
+two shapes in your application JavaScript that it treated differently before:
+
+    document.createElement('script')     (either quoting)
+    $('<script src="...">')              (any spelling with attributes)
+
+`createElement('script')` was already flagged - but with the GENERIC remediation
+telling you to write `$('<' + tagName + '>')` instead. That advice was wrong for
+this one tag, and following it introduced a real defect (below). The jQuery form
+was not flagged at all.
+
+If your app has either shape, your next check run goes red where it did not
+before. Find them now:
+
+    php artisan rsx:check
+    grep -rn "createElement" rsx/ --include=*.js
+    grep -rn "<script" rsx/ --include=*.js
+
+Every other tag is unchanged: `createElement('div')` still gets the ordinary
+medium-severity "use jQuery element creation" advice.
+
+--------------------------------------------------------------------------------
+THE FIX
+--------------------------------------------------------------------------------
+
+An external script is DECLARED, not injected. Put it in a *.externals.php file
+beside the feature that needs it, and load it by identifier:
+
+    // rsx/app/frontend/reports/charts.externals.php
+    <?php
+
+    return [
+        'chartjs' => [
+            'js'    => ['https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js'],
+            'realm' => 'staff',
+        ],
+    ];
+
+    // in the component that needs it
+    async on_load() {
+        await Rsx.load_external('chartjs');
+        this.state.chart = new Chart(this.$sid('canvas')[0], { ... });
+    }
+
+You get four things the hand-injected version cannot have:
+
+  - The Content-Security-Policy whitelist DERIVES from the declaration. The
+    policy always enforces, so an undeclared script is a BLOCKED script:
+    hand-injection does not merely violate a lint rule, it does not work.
+  - A sealed build mirrors the URL locally and serves it same-origin. A
+    hand-injected URL is still fetched from the vendor at request time.
+  - load_external() is memoized per page and returns a promise that resolves on
+    the real load event.
+  - The readiness handshake, for vendors that call a global instead of firing
+    load. See `php artisan rsx:man external_resources`.
+
+--------------------------------------------------------------------------------
+WHY THE OLD ADVICE WAS WRONG, AND WHY THE JQUERY FORM IS NOW FLAGGED TOO
+--------------------------------------------------------------------------------
+
+jQuery NEVER inserts a live script node. domManip special-cases scripts: it
+disables the node, inserts it, then re-executes the source through _evalUrl() -
+a synchronous, async:false $.ajax GET plus globalEval. Consequences, all silent:
+
+  - The element is never fetched by the browser, so its load and error events
+    NEVER FIRE. A promise keyed on them hangs forever. In the field this showed
+    up as a lazily-loaded panel rendering permanently blank in the NORMAL,
+    CDN-reachable case.
+  - Subresource Integrity is silently BYPASSED. `integrity` and `crossorigin`
+    sit on a node nothing fetches; the XHR response is eval'd with no SRI check.
+    The security pin becomes decorative.
+  - The fetch is a synchronous XHR on the main thread.
+
+`<link rel=stylesheet>` is NOT special-cased, so the jQuery form is fine for CSS.
+The rule only flags scripts.
+
+--------------------------------------------------------------------------------
+IF YOU ARE DOING SOMETHING ELSE
+--------------------------------------------------------------------------------
+
+A GENUINELY LOCAL, NON-EXTERNAL SCRIPT you must construct by hand: use the native
+DOM API (not jQuery, for the reasons above) and mark the file with a rationale'd
+marker:
+
+    // @JS-DOM-01-EXCEPTION <why this script cannot be declared>
+
+VENDORED THIRD-PARTY CODE is out of scope and always was: anything under
+vendor/, node_modules/ or the mirrored .cdn-cache/ is skipped, so a minified
+bundle or a test spec carrying literal '<script>' strings raises nothing.
+
+--------------------------------------------------------------------------------
+SEE ALSO
+--------------------------------------------------------------------------------
+
+    php artisan rsx:man external_resources  - the declaration format, readiness,
+                                              mirroring
+    php artisan rsx:man csp                 - why an undeclared script is a
+                                              blocked script
+    php artisan rsx:check                   - the rule, with its full
+                                              remediation text

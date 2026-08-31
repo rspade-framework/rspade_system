@@ -2,51 +2,85 @@
 
 namespace App\RSpade\Commands\Rsx;
 
-use App\Console\Commands\FrameworkDeveloperCommand;
-use App\RSpade\Core\Debug\Debugger;
+use App\RSpade\Core\Logging\Rsx_Logrotate;
+use Illuminate\Console\Command;
 
 /**
- * RSX Log Rotate Command
+ * rsx:logrotate - rotate, compress and prune storage/logs on demand.
  *
- * Rotates all development logs (Laravel and nginx).
- * Only available in non-production environments.
+ * The same rotation Log_Maintenance_Service::rotate() runs nightly, reachable by hand.
+ * Nothing here assumes an OS logrotate exists: the framework does its own.
+ *
+ * IT RUNS EVEN WHEN rsx.logging.rotation.enabled IS FALSE, and says so in one line.
+ * The config flag governs the unattended sweep; typing the command IS the consent.
+ *
+ * --directory exists so the rotation can be exercised against a fixture tree instead
+ * of the live logs (the cli test does exactly that). It is an ordinary documented
+ * option, not a framework-internal --_ flag, because an operator rotating some other
+ * log directory is a legitimate thing to want.
+ *
+ * Silent-success house style: one summary line, or --json for a machine reader.
+ *
+ * See: php artisan rsx:man logrotate
  */
-class Log_Rotate_Command extends FrameworkDeveloperCommand
+class Log_Rotate_Command extends Command
 {
-    /**
-     * The name and signature of the console command.
-     *
-     * @var string
-     */
-    protected $signature = 'rsx:logrotate';
+    protected $signature = 'rsx:logrotate
+                            {--directory= : Directory to rotate (default: storage/logs)}
+                            {--days-uncompressed= : Generations kept plain (default: rsx.logging.rotation.days_uncompressed)}
+                            {--days-retention= : Oldest generation kept (default: rsx.logging.rotation.days_retention)}
+                            {--json : Machine-readable JSON output}';
 
-    /**
-     * The console command description.
-     *
-     * @var string
-     */
-    protected $description = 'Rotate all development logs (Laravel and nginx) - development only';
+    protected $description = 'Rotate, compress and prune the log directory';
 
-    /**
-     * Execute the console command.
-     */
-    public function handle()
+    public function handle(): int
     {
-        // Check environment - throw fatal error in production
-        if (app()->environment('production')) {
-            throw new \RuntimeException('FATAL: rsx:logrotate command is not available in production environment. This is a development-only debugging tool.');
+        $directory = $this->option('directory') ?: storage_path('logs');
+
+        $days_uncompressed = $this->option('days-uncompressed') !== null
+            ? (int) $this->option('days-uncompressed')
+            : (int) config('rsx.logging.rotation.days_uncompressed');
+
+        $days_retention = $this->option('days-retention') !== null
+            ? (int) $this->option('days-retention')
+            : (int) config('rsx.logging.rotation.days_retention');
+
+        $report = Rsx_Logrotate::rotate($directory, $days_uncompressed, $days_retention);
+
+        $rotated = 0;
+        $compressed = 0;
+        $deleted = 0;
+
+        foreach ($report as $entry) {
+            if ($entry['rotated']) {
+                $rotated++;
+            }
+
+            $compressed += count($entry['compressed']);
+            $deleted += count($entry['deleted']);
         }
-        
-        $this->info('Rotating development logs...');
-        
-        // Rotate all logs
-        Debugger::logrotate();
-        
-        $this->info('[OK] Logs rotated successfully:');
-        $this->info('  - Laravel log');
-        $this->info('  - Nginx access log');
-        $this->info('  - Nginx error log');
-        
+
+        if ($this->option('json')) {
+            $this->line(json_encode([
+                'directory' => $directory,
+                'days_uncompressed' => $days_uncompressed,
+                'days_retention' => $days_retention,
+                'scheduled_rotation_enabled' => (bool) config('rsx.logging.rotation.enabled'),
+                'rotated' => $rotated,
+                'compressed' => $compressed,
+                'deleted' => $deleted,
+                'files' => $report,
+            ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+            return 0;
+        }
+
+        if (!config('rsx.logging.rotation.enabled')) {
+            $this->line('[INFO] Scheduled rotation is disabled (rsx.logging.rotation.enabled); rotating anyway because you asked.');
+        }
+
+        $this->line("[OK] Rotated {$rotated} files ({$compressed} compressed, {$deleted} deleted)");
+
         return 0;
     }
 }

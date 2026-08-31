@@ -219,6 +219,104 @@ class FileSanitizer extends Rpc_Client_Abstract
     }
     
     /**
+     * Blank out TEMPLATE comment blocks, preserving every byte position and line break.
+     *
+     * The extension-driven sanitize() below leaves .jqhtml untouched and runs the PHP
+     * tokenizer over .blade.php - neither of which knows what a `<%-- --%>` or a
+     * `{{-- --}}` is. A rule that matches on markup therefore reads illustrative examples
+     * inside documentation comments as real code (a component doc block showing
+     * `<tr data-href="/url">` is the house example). Comment bodies are replaced with
+     * spaces rather than removed, so line and column numbers still address the original.
+     */
+    public static function blank_template_comments(string $content): string
+    {
+        $patterns = [
+            '/<%--.*?--%>/s',       // jqhtml
+            '/\{\{--.*?--\}\}/s',   // blade
+            '/<!--.*?-->/s',        // html
+        ];
+
+        foreach ($patterns as $pattern) {
+            $content = preg_replace_callback(
+                $pattern,
+                static function (array $match): string {
+                    // Keep newlines so the line count never moves; blank everything else.
+                    return preg_replace('/[^\n]/', ' ', $match[0]);
+                },
+                $content
+            );
+        }
+
+        return $content;
+    }
+
+    /**
+     * Blank out JavaScript comments, preserving every byte position and line break.
+     *
+     * sanitize_javascript() blanks string CONTENTS as well, which is exactly wrong for a
+     * rule whose subject IS the string content (a URL literal). This keeps the strings and
+     * removes only the comments, with a scanner that tracks quoting so a `//` inside
+     * "https://example.com" is never mistaken for a comment. A `/` that opens a regex
+     * literal cannot be confused with a comment opener: `//` is a comment in every
+     * position where it is legal, and `/*` is not a valid regex start.
+     */
+    public static function blank_js_comments(string $content): string
+    {
+        $out = '';
+        $length = strlen($content);
+        $i = 0;
+        $quote = null;
+
+        while ($i < $length) {
+            $char = $content[$i];
+            $next = $i + 1 < $length ? $content[$i + 1] : '';
+
+            if ($quote !== null) {
+                $out .= $char;
+                if ($char === '\\' && $i + 1 < $length) {
+                    $out .= $next;
+                    $i += 2;
+                    continue;
+                }
+                if ($char === $quote) {
+                    $quote = null;
+                }
+                $i++;
+                continue;
+            }
+
+            if ($char === "'" || $char === '"' || $char === '`') {
+                $quote = $char;
+                $out .= $char;
+                $i++;
+                continue;
+            }
+
+            if ($char === '/' && $next === '/') {
+                while ($i < $length && $content[$i] !== "\n") {
+                    $out .= ' ';
+                    $i++;
+                }
+                continue;
+            }
+
+            if ($char === '/' && $next === '*') {
+                $end = strpos($content, '*/', $i + 2);
+                $end = $end === false ? $length : $end + 2;
+                for (; $i < $end; $i++) {
+                    $out .= $content[$i] === "\n" ? "\n" : ' ';
+                }
+                continue;
+            }
+
+            $out .= $char;
+            $i++;
+        }
+
+        return $out;
+    }
+
+    /**
      * Sanitize file based on extension
      * Note: PHP takes content, JavaScript takes file_path (matching monolith behavior)
      */

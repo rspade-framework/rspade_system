@@ -109,6 +109,25 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
    - JavaScript version of fallback/legacy detection
    - Severity: Critical
 
+### Database Rules (`Rules/Database/`)
+
+1. **MigrationModelReference_CodeQualityRule** (MIGRATION-MODEL-01)
+   - A migration may not reference a model class or `Type_Ref_Registry`
+   - A migration is a forward-only historical record that must replay from scratch
+     forever; a model class is current code that gets renamed and deleted
+   - Flags `use` imports of a `*_Model` / `Type_Ref_Registry`, any `Type_Ref_Registry::`
+     reference, and a static call / `new` / `instanceof` / `::class` on a `*_Model`
+     symbol. A `'*_Model'` STRING LITERAL is data and is never flagged
+   - Token-stream detection (comments and string literals can never produce a violation)
+   - SCOPE IS OUTSIDE THE MANIFEST: migration directories are not indexed, so the rule
+     enumerates `MigrationPaths::get_all_migration_files()` itself through the
+     `check_migrations()` entry point the checker calls once per run (the same
+     mechanism as `check_root()`), and `get_file_patterns()` is empty
+   - Honors `@MIGRATION-MODEL-01-EXCEPTION` ITSELF, and REQUIRES a rationale after the
+     marker - a bare marker is its own violation. (The checker's generic exception
+     handling never sees these files, since they do not go through `check_file()`.)
+   - Severity: High
+
 ### Common Rules (`Rules/Common/`)
 
 1. **FilenameCaseRule** (FILE-CASE-01)
@@ -130,7 +149,25 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
    - Enforces proper test organization
    - Severity: Medium
 
-5. **RouteExistsRule** (ROUTE-EXISTS-01)
+5. **HardcodedInternalUrl_CodeQualityRule** (URL-HARDCODE-01)
+   - An internal path in an `href` must be produced by a Route() helper
+   - DENY BY DEFAULT: a trimmed value starting with `/` is a violation unless it is an
+     allowed form - a whole-value `Rsx(_Portal)::Route()` / `Rsx(_Portal).Route()` call,
+     a fragment, a scheme, the site root, a static asset root, a framework `/_` service
+     path, or a known static extension in a value with NO interpolation
+   - Interpolation is a POSITIVE signal, never a skip (the predecessor read the dot in
+     `<%= t.id %>` as a file extension and skipped the href)
+   - Portal-aware BY PATH: a file under `rsx/portal/` is resolved against the portal
+     route table and told to use `Rsx_Portal.Route()`; resolution only ENRICHES the
+     suggestion (it names the destination action), never decides whether to flag
+   - Scans `*.jqhtml`, `*.blade.php`, `*.js`, `*.php`; reads the ORIGINAL bytes and
+     blanks comments itself, because the JS sanitizer blanks string CONTENTS - the very
+     text this rule inspects
+   - Honors `@URL-HARDCODE-01-EXCEPTION` on the line or the line above, and REQUIRES a
+     rationale after the marker
+   - Severity: High
+
+6. **RouteExistsRule** (ROUTE-EXISTS-01)
    - Validates Rsx::Route() calls reference existing routes
    - Checks controller/method combinations exist in manifest
    - Suggests placeholder URLs for unimplemented routes

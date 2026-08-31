@@ -238,10 +238,16 @@ BOUNDARIES
           1. Delete the model class as usual.
           2. `php artisan rsx:health` - read the referencing rows for its type
              ref (a WARN row per retired type ref).
-          3. Repoint or delete those rows. A cleanup migration resolves the id
-             with Type_Ref_Registry::find_id_by_class_name('Old_Model') - the
-             one lookup that does NOT auto-create and does NOT require the class
-             to still exist (class_to_id() throws for exactly these classes).
+          3. Repoint or delete those rows. A cleanup MIGRATION does this in raw
+             SQL against _type_refs, with the class name as a string literal -
+             it may not reference the registry at all (MIGRATION-MODEL-01):
+
+                 DELETE FROM _type_refs WHERE class_name = 'Old_Model'
+
+             Outside a migration, Type_Ref_Registry::find_id_by_class_name(
+             'Old_Model') is the one lookup that does NOT auto-create and does
+             NOT require the class to still exist (class_to_id() throws for
+             exactly these classes).
           4. `php artisan rsx:type_refs:prune` - drops registry rows with no
              live class AND no referencing data. It REFUSES, listing
              table.column (count), while any data still points at one.
@@ -253,6 +259,16 @@ BOUNDARIES
         {relation}_type / {relation}_id pair. POLY-01 flags these.
 
 CODE QUALITY RULE
+    MIGRATION-MODEL-01 - No Application Code In A Migration
+    (CodeQuality/Rules/Database/MigrationModelReference_CodeQualityRule.php)
+
+        An rsx:check rule (severity high). A migration may not name a model
+        class or Type_Ref_Registry: it must replay from scratch forever, and
+        those symbols are current code that gets renamed and deleted. Resolve a
+        type-ref id with the get-or-create closure shown under CONVERTING
+        EXISTING COLUMNS. A class name as a STRING is never flagged. Full
+        contract: rsx:man migrations.
+
     POLY-01 - Polymorphic Type-Ref Declaration
     (CodeQuality/Rules/Manifest/MorphStringPattern_CodeQualityRule.php)
 
@@ -580,10 +596,28 @@ CONVERTING EXISTING COLUMNS
     With data to preserve:
 
         // 1. Every class the column names needs a _type_refs row BEFORE the
-        //    mapping UPDATE. Auto-registration does that for you - one call per
-        //    distinct class currently stored in the column.
-        Type_Ref_Registry::class_to_id('Contact_Model');
-        Type_Ref_Registry::class_to_id('Project_Model');
+        //    mapping UPDATE. A migration may not call the registry to make one
+        //    (MIGRATION-MODEL-01 - the registry validates against the LIVE
+        //    manifest, so a retired class breaks every future replay). Get-or-
+        //    create the row directly, class name as a STRING, table name
+        //    hardcoded - one call per distinct class stored in the column:
+        $type_ref_id = function (string $class_name, string $table_name): int {
+            $existing = DB::select(
+                "SELECT id FROM _type_refs WHERE class_name = ?", [$class_name]
+            );
+            if (!empty($existing)) {
+                return (int) $existing[0]->id;
+            }
+            DB::statement(
+                "INSERT INTO _type_refs (class_name, table_name, created_at, updated_at)
+                 VALUES (?, ?, NOW(3), NOW(3))",
+                [$class_name, $table_name]
+            );
+            return (int) DB::getPdo()->lastInsertId();
+        };
+
+        $type_ref_id('Contact_Model', 'contacts');
+        $type_ref_id('Project_Model', 'projects');
 
         // 2. Map the stored class names to their ids IN PLACE. Values still
         //    holding a Laravel FQCN need the basename first:

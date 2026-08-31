@@ -221,6 +221,13 @@ class CodeQualityChecker
             if (method_exists($rule, 'check_required_models')) {
                 $rule->check_required_models();
             }
+
+            // Check for special check_migrations method (MigrationModelReferenceRule).
+            // Migration directories are outside the manifest, so a rule about migrations
+            // has to enumerate them itself.
+            if (method_exists($rule, 'check_migrations')) {
+                $rule->check_migrations();
+            }
             
             // Check for special check_rsx_commands method (RsxCommandsDeprecatedRule)
             if (method_exists($rule, 'check_rsx_commands')) {
@@ -259,6 +266,13 @@ class CodeQualityChecker
             // Check for special check_required_models method (RequiredModelsRule)
             if (method_exists($rule, 'check_required_models')) {
                 $rule->check_required_models();
+            }
+
+            // Check for special check_migrations method (MigrationModelReferenceRule).
+            // Migration directories are outside the manifest, so a rule about migrations
+            // has to enumerate them itself.
+            if (method_exists($rule, 'check_migrations')) {
+                $rule->check_migrations();
             }
         }
         

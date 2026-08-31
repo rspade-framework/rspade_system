@@ -1,0 +1,142 @@
+CATEGORY: 2 - ACTION REQUIRED (find and convert model / Type_Ref_Registry references
+          in your own migrations)
+TITLE: A migration may no longer reference a model class or Type_Ref_Registry
+       (MIGRATION-MODEL-01); type-ref ids come from a get-or-create against _type_refs
+DATE: 2026-08-30
+
+--------------------------------------------------------------------------------
+WHY YOU ARE READING THIS
+--------------------------------------------------------------------------------
+
+After this pull, `php artisan rsx:check` reports MIGRATION-MODEL-01 for every
+migration that names a model class or Type_Ref_Registry. If your app has any, your
+next check run goes red - it did not before.
+
+This REVERSES earlier guidance. `rsx/resource/migrations/CLAUDE.md` used to tell you
+to resolve polymorphic type-ref ids with Type_Ref_Registry::class_to_id() and to never
+query _type_refs directly. That is now backwards, and the shipped file says so.
+
+Find yours:
+
+    php artisan rsx:check
+    grep -rn "Type_Ref_Registry\|_Model" rsx/resource/migrations/ database/migrations/
+
+(grep also matches comments and SQL strings, which are FINE - see below. The check run
+is the authoritative list.)
+
+--------------------------------------------------------------------------------
+WHY
+--------------------------------------------------------------------------------
+
+A migration is a FORWARD-ONLY HISTORICAL RECORD that must replay cleanly from scratch
+forever. A model class is CURRENT CODE that gets renamed and deleted.
+
+class_to_id() validates the class name against the LIVE MANIFEST and auto-creates the
+row, so it requires the class to exist RIGHT NOW. Delete or rename that model and
+every from-scratch replay dies:
+
+    Cannot create type ref for 'Event_Model': Class not found in manifest.
+
+...at a migration nobody has touched in a year, in a file nobody thinks to look at.
+This is not hypothetical: it is a field report - a model refactor deleted a class, and
+the next from-scratch test-database build failed on a migration from months earlier.
+Ten migrations in that codebase carried the same pattern.
+
+The migration that names a model has the same fault with a longer fuse.
+
+--------------------------------------------------------------------------------
+WHAT IS FLAGGED
+--------------------------------------------------------------------------------
+
+In CODE only, in any file under a migration directory:
+
+  - `use ...\Something_Model;` and `use ...\Type_Ref_Registry;`
+  - any `Type_Ref_Registry::` reference
+  - a static call, `new`, `instanceof` or `::class` on a `*_Model` symbol
+
+NOT flagged, deliberately: a class name inside a STRING literal, and anything in a
+comment. Detection is over the PHP token stream. `'Event_Model'` as SQL data is the
+correct thing to write and is what the fix below relies on.
+
+--------------------------------------------------------------------------------
+THE CONVERSION
+--------------------------------------------------------------------------------
+
+BEFORE
+
+    use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
+    ...
+    $contact_id = Type_Ref_Registry::class_to_id('Contact_Model');
+    $project_id = Type_Ref_Registry::class_to_id('Project_Model');
+
+    DB::statement("
+        UPDATE activities SET eventable_type_new = {$contact_id}
+        WHERE eventable_type = 'Contact_Model'
+    ");
+
+AFTER  (delete the `use` line as well)
+
+    $type_ref_id = function (string $class_name, string $table_name): int {
+        $existing = DB::select("SELECT id FROM _type_refs WHERE class_name = ?", [$class_name]);
+        if (!empty($existing)) {
+            return (int) $existing[0]->id;
+        }
+        DB::statement(
+            "INSERT INTO _type_refs (class_name, table_name, created_at, updated_at) VALUES (?, ?, NOW(3), NOW(3))",
+            [$class_name, $table_name]
+        );
+        return (int) DB::getPdo()->lastInsertId();
+    };
+
+    $contact_id = $type_ref_id('Contact_Model', 'contacts');
+    $project_id = $type_ref_id('Project_Model', 'projects');
+
+    DB::statement("
+        UPDATE activities SET eventable_type_new = {$contact_id}
+        WHERE eventable_type = 'Contact_Model'
+    ");
+
+The closure is get-or-create, so ids are still never hardcoded and the migration is
+still correct on a fresh install and in every environment. The table name is hardcoded
+for the same reason the class name is a string: asking a model for its table is asking
+the model to exist.
+
+Paste the closure into each migration that needs it. It is deliberately NOT a shared
+helper - a shared helper is one more piece of current code a historical record would
+depend on.
+
+A migration that reads or writes a table the model happens to own converts the same
+way: raw SQL against the table name.
+
+--------------------------------------------------------------------------------
+WHEN TO USE THE EXCEPTION MARKER
+--------------------------------------------------------------------------------
+
+One case is legitimate: DATA SEEDING that needs model BEHAVIOUR raw SQL cannot
+reproduce - a file-upload pipeline, an encryption cast, a factory with side effects.
+That migration is knowingly coupled to code that may be deleted, and says so in its
+docblock:
+
+    /**
+     * @MIGRATION-MODEL-01-EXCEPTION <why raw SQL cannot do this>
+     */
+
+THE RATIONALE IS REQUIRED. A bare marker is itself a MIGRATION-MODEL-01 violation: the
+marker suppresses the rule for the whole file permanently, and the rationale is all a
+future reader has to judge that by.
+
+Schema work and type-ref lookups are never the exception. Convert those.
+
+The shipped template app carries exactly one exception, and it is worth reading as the
+worked example:
+system/app/RSpade/resource/reference_app/resource/migrations/2026_07_16_143237_import_sample_documents.php
+- it imports sample documents THROUGH the attachment pipeline (content-addressed
+dedup, blob storage, the extraction-index kick), which no raw SQL can reproduce.
+
+--------------------------------------------------------------------------------
+SEE ALSO
+--------------------------------------------------------------------------------
+
+    php artisan rsx:man migrations    - MIGRATION RULES / No Application Code
+    php artisan rsx:man polymorphic   - CONVERTING EXISTING COLUMNS, retiring a model
+    php artisan rsx:check             - the rule, with its full remediation text

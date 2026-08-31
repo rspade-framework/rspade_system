@@ -226,6 +226,23 @@ class Manifest
     }
 
     /**
+    * The baked #[Command] table: command name => ['class', 'method', 'description'].
+    *
+    * Populated by Task_Command_ManifestSupport at build time and read by
+    * Task_Command_Registrar at console boot. Absent (empty) on a tree whose manifest has
+    * never been built - the aliases appear with the first build, like every other thing
+    * the manifest provides.
+    *
+    * @return array<string, array{class: string, method: string, description: string}>
+    */
+    public static function get_task_commands(): array
+    {
+        static::init();
+
+        return static::$data['data']['task_commands'] ?? [];
+    }
+
+    /**
     * Get the autoloader class map for simplified class name resolution
     * @return array Map of simple class names to arrays of FQCNs
     */

@@ -323,9 +323,8 @@ TROUBLESHOOTING
         further hosts of its own), add those origins to
         rsx.csp.additional_sources instead.
 
-        While csp.report_only is true (the default) nothing is actually
-        blocked - the browser reports and loads it anyway, and the warning says
-        so. Do not go hunting a breakage that did not happen.
+        The policy ALWAYS enforces, so the resource really did not load. The
+        refusal is also recorded in storage/logs/csp_violations.log.
 
     "Unknown external resource '<id>'"
         Thrown synchronously by load(). Either a typo (the message lists every

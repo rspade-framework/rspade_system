@@ -1,6 +1,6 @@
 ---
 name: external-resources
-description: Loading an external CDN library, vendor widget or third-party script into an RSX page - declaring it in a *.externals.php file, loading it by identifier with Rsx.load_external(), the readiness contract, sealed-build mirroring, and how the Content-Security-Policy derives from the declaration. Use when adding a CDN library or vendor script, wiring Google Analytics or a tag manager, diagnosing a "Refused to load ... Content Security Policy" or "[RSX CSP]" console warning, hitting "Unknown external resource", triaging storage/logs/csp_violations.log, or deciding whether to enforce the policy.
+description: Loading an external CDN library, vendor widget or third-party script into an RSX page - declaring it in a *.externals.php file, loading it by identifier with Rsx.load_external(), the readiness contract, sealed-build mirroring, and how the Content-Security-Policy derives from the declaration. Use when adding a CDN library or vendor script, wiring Google Analytics or a tag manager, diagnosing a "Refused to load ... Content Security Policy" or "[RSX CSP]" console warning, hitting "Unknown external resource", being flagged by JS-DOM-01 for document.createElement('script') or $('<script>'), triaging storage/logs/csp_violations.log, or deciding whether to enforce the policy.
 ---
 
 # External Resources and CSP
@@ -66,9 +66,9 @@ Identifiers are one **flat namespace**, `lowercase_with_underscores`. A duplicat
 
 ## CSP
 
-Ships **report-only** by default (`csp.report_only => true`): violations POST to `/_csp-report` and land in `storage/logs/csp_violations.log`, and nothing is blocked. Framework inline scripts carry a **nonce** (`'unsafe-inline'` never appears in script-src); style-src keeps `'unsafe-inline'` and deliberately has **no nonce** (a nonce would make browsers ignore it and break RSX's pervasive inline styles).
+**Always enforcing.** There is one header name (`Content-Security-Policy`) and no observe-only mode: an undeclared resource is a BLOCKED resource. Every refusal is also POSTed to `/_csp-report` and lands in `storage/logs/csp_violations.log` - `tail -f` that while adding a widget. Framework inline scripts carry a **nonce** (`'unsafe-inline'` never appears in script-src); style-src keeps `'unsafe-inline'` and deliberately has **no nonce** (a nonce would make browsers ignore it and break RSX's pervasive inline styles).
 
-**Triage, then flip.** Every log line has exactly one correct fix:
+**Triage a block.** Every log line has exactly one correct fix:
 
 | Violation | Fix |
 |---|---|
@@ -76,8 +76,6 @@ Ships **report-only** by default (`csp.report_only => true`): violations POST to
 | An origin a DECLARED script fetches on its own (analytics, tag manager) | `rsx.csp.additional_sources` (widen-only; `object-src` refused) |
 | An inline `<script>` in app markup | Move the code into a bundled `.js` file - **never** reach for the nonce |
 | `eval` / `Function` from framework code | **STOP and escalate** - `'unsafe-eval'` is a framework decision, not an app one |
-
-Then set `csp.report_only => false`. Report-only is a silent state; the flip is a prelaunch task.
 
 ---
 
@@ -87,6 +85,7 @@ Then set `csp.report_only => false`. Report-only is a silent state; the flip is 
 - **`Unknown external resource '<id>'`** - thrown SYNCHRONOUSLY (a typo is a programming error); the message lists every declared identifier.
 - **Per-install configuration in a declared URL** - a declared URL is a CONSTANT (the CSP origin and the mirror filename derive from it). Supply ids/keys at runtime through the vendor's own bootstrap, in bundled code.
 - **`mirror:true` on a dynamic vendor endpoint** - works in development, breaks in a sealed build.
+- **Hand-injecting the tag** - `document.createElement('script')` or `$('<script src=...>')` appended to the head. `rsx:check` flags both at HIGH severity (JS-DOM-01) and the fix is always this skill: declare, then `load_external()`. Two reasons, either one sufficient: an undeclared script is a BLOCKED script under an enforcing policy, and jQuery never inserts a live script node at all - `domManip` disables it and re-executes through `_evalUrl()` (a synchronous XHR plus `globalEval`), so load/error events never fire and SRI is silently bypassed. `<link rel=stylesheet>` is not special-cased; the jQuery form is fine for CSS.
 - **Inventing a timeout** because a load "hangs" - the loader has none by design.
 
 Full contract: `php artisan rsx:man external_resources` and `php artisan rsx:man csp`. Worked examples: `system/app/RSpade/Core/Js/turnstile.externals.php` (framework), and `lib/analytics/` in the reference app (`system/app/RSpade/resource/reference_app/lib/analytics/` downstream, `/rsx/lib/analytics/` in the monorepo).

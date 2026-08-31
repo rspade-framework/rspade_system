@@ -1,6 +1,6 @@
 ---
 name: migrations
-description: RSX database migrations - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, automatic schema normalization and audit columns, and the datadir snapshot that auto-rolls-back a failed run (and the three conditions that decide whether it is taken at all). Use when creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, or wondering whether it is safe to run migrate.
+description: RSX database migrations - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, the self-containment rule (no model class and no Type_Ref_Registry - MIGRATION-MODEL-01), automatic schema normalization and audit columns, and the datadir snapshot that auto-rolls-back a failed run (and the three conditions that decide whether it is taken at all). Use when creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, or wondering whether it is safe to run migrate.
 ---
 
 # RSX Database Migrations
@@ -110,6 +110,45 @@ The system auto-normalizes types after migration. You can write simpler SQL:
 **Auto-added columns - NEVER declare these yourself.** The schema-hygiene pass adds `created_at`/`updated_at TIMESTAMP(3)` plus the polymorphic authorship PAIRS (`created_by_id` + `created_by_type`, `updated_by_id` + `updated_by_type`, and `deleted_by_id` + `deleted_by_type` wherever the table has `deleted_at`), and converges any older spelling by rename.
 
 **Never reference them positionally (`AFTER updated_by`) or by a pre-pair name** - the rename would leave your `ALTER` pointing at a column that no longer exists.
+
+---
+
+## A Migration Never References Application Code
+
+A migration is a **forward-only historical record that must replay cleanly from scratch forever**. A model class is **current code** that gets renamed and deleted. Naming one couples the two, and the day that class is retired a from-scratch replay of the whole chain hard-fails at a file nobody has touched in a year.
+
+So a migration carries **no model class, no `Type_Ref_Registry`, no service** - only raw SQL and plain PHP. `rsx:check` enforces it as **MIGRATION-MODEL-01** (severity high; detection is over the PHP token stream, so a class name in a comment or a string literal is never a violation).
+
+`Type_Ref_Registry::class_to_id('Foo_Model')` is how this usually gets broken: it validates the name against the LIVE manifest, so once `Foo_Model` is deleted every replay dies with `Cannot create type ref for 'Foo_Model': Class not found in manifest.` Resolve the id against the table instead, class name as a **string**, table name hardcoded:
+
+```php
+$type_ref_id = function (string $class_name, string $table_name): int {
+    $existing = DB::select("SELECT id FROM _type_refs WHERE class_name = ?", [$class_name]);
+    if (!empty($existing)) {
+        return (int) $existing[0]->id;
+    }
+    DB::statement(
+        "INSERT INTO _type_refs (class_name, table_name, created_at, updated_at) VALUES (?, ?, NOW(3), NOW(3))",
+        [$class_name, $table_name]
+    );
+    return (int) DB::getPdo()->lastInsertId();
+};
+
+$contact_id = $type_ref_id('Contact_Model', 'contacts');
+DB::statement("UPDATE activities SET eventable_type = {$contact_id} WHERE eventable_type = 'Contact_Model'");
+```
+
+Ids are still never hardcoded - the closure resolves or creates the row at replay time, so it is correct on a fresh install and in every environment.
+
+**The one exception** is data seeding that genuinely needs model BEHAVIOUR raw SQL cannot reproduce (a file pipeline, an encryption cast, a factory with side effects). It declares itself in the file docblock, and the rationale is required - a bare marker is itself a violation:
+
+```php
+/**
+ * @MIGRATION-MODEL-01-EXCEPTION <why raw SQL cannot do this>
+ */
+```
+
+Schema work and type-ref lookups are never the exception; convert those.
 
 ---
 
@@ -260,6 +299,7 @@ Violations show clear error messages with remediation advice.
 |-------|----------|
 | "Found forbidden Schema builder usage" | Replace with `DB::statement()` |
 | "Validation failed" | Check migration for prohibited patterns |
+| MIGRATION-MODEL-01 from `rsx:check` | Drop the model / registry reference - resolve type-ref ids with the `_type_refs` closure above |
 | Foreign key constraint fails | Ensure column types match exactly |
 
 ## More Information

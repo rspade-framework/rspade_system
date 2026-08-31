@@ -1,0 +1,172 @@
+TASK_COMMANDS(7)                 RSX Framework Manual                 TASK_COMMANDS(7)
+
+NAME
+       task_commands - giving a #[Task] its own artisan command with #[Command]
+
+SYNOPSIS
+       #[Task('<task description>')]
+       #[Command('<prefix:name>', '<command description>')]
+       public static function do_work(Task_Instance $task, array $params = []) { }
+
+       php artisan <prefix:name> [--key=value ...] [--debug] [-q]
+
+DESCRIPTION
+       An application does not write artisan command classes. It writes tasks, and
+       annotates the ones that deserve a name:
+
+           #[Task('Import the nightly vendor feed')]
+           #[Command('myapp:import', 'Import the nightly vendor feed')]
+           public static function import(Task_Instance $task, array $params = [])
+           {
+               $task->info('Fetching');
+               $task->update_progress(50, 'Parsing');
+               return ['rows' => 1500];
+           }
+
+       That declaration IS the command. There is no class to write, no file to place, no
+       Kernel to edit, and no registration call anywhere in the application. The manifest
+       discovers the attribute at build time; the framework registers one thin command per
+       declaration at console boot.
+
+           $ php artisan myapp:import --since=2026-08-01
+           [2026-08-31 09:12:04] [info] Fetching                      <- stderr
+           [2026-08-31 09:12:09] [info] [50%] Parsing                 <- stderr
+           {                                                          <- stdout
+               "rows": 1500
+           }
+
+       A command declared this way is EXACTLY
+
+           php artisan rsx:task:run <Service> <method> [--key=value ...]
+
+       under a friendlier name: the same argv parsing, the same --debug, the same output
+       contract, the same exit codes, the same code path. Nothing about how a task behaves
+       changes because it acquired a name, and a task never learns that it has one.
+
+       An application therefore has one way to write CLI-invocable work, not two. Anything
+       reachable from cron, from a deploy script or from an operator's shell is a #[Task],
+       which means it is also dispatchable in the background, schedulable with #[Schedule],
+       pollable through Task::status(), and recorded in _tasks like every other run.
+
+THE ATTRIBUTE
+       #[Command(string $name, string $description)]
+
+       $name         The artisan command name. MUST contain a 'prefix:name' segment and
+                     MUST NOT begin 'rsx:'. Both halves are non-empty.
+       $description  The line `php artisan list` prints beside the command. Required.
+
+       Named arguments work: #[Command(name: 'myapp:import', description: 'Import')].
+
+       #[Command] is meaningful ONLY on a method that also carries #[Task]. It may be
+       repeated to give one task two names, though there is rarely a reason to.
+
+       Attributes here are reflection-only: never define a Command attribute class.
+
+WHAT IS REGISTERED
+       One Task_Alias_Command per declaration - Task_Run_Command with the service and the
+       method already decided. Its signature is
+
+           <name> {--debug}
+
+       plus the same free-form --key=value argv parsing rsx:task:run has, so every option
+       an invocation passes arrives in the task's $params (Laravel's own built-ins - and
+       --debug - are never passed through). A JSON value is decoded: --data='{"a":1}'
+       arrives as an array. A bare --flag arrives as boolean true.
+
+       The command appears in `php artisan list` under its own prefix, with its
+       description, and in `php artisan rsx:task:list` in the COMMAND column beside the
+       task that declares it ('-' for a task that declares none).
+
+OUTPUT CONTRACT
+       Shared verbatim with rsx:task:run, and the reason a task's console output is worth
+       piping.
+
+       STDOUT is the VALUE and nothing else - the task's return value as JSON, pretty
+       printed. --debug wraps it as {"success": true, "result": ...}. On a failure it is
+       {"success": false, "error": ..., "error_type": ..., "trace": ...} and the command
+       exits 1. Nothing else is ever written there: no banner, no progress, no summary.
+
+       STDERR is the NARRATION - every $task->info() / error() / debug() line, written
+       live and flushed immediately, formatted exactly as the lines in the _tasks.logs
+       column. A console transcript and Task::status()['logs'] therefore read identically.
+       update_progress($percent, $message) is an ordinary info line reading "[50%] msg".
+
+           php artisan myapp:import | jq .rows      # the narration goes to the terminal
+           php artisan myapp:import 2>/dev/null     # the narration is discarded
+           php artisan myapp:import -q              # the narration is never produced
+           php artisan myapp:import 2>&1 | tee log  # both, interleaved
+
+       -q / --quiet suppresses the narration and NEVER the value: the JSON is written at
+       quiet verbosity precisely so a scripted caller can silence everything but the
+       answer.
+
+       THE SINK IS THE RUNNER'S, NOT THE TASK'S. The stream is attached by the command,
+       through Task::internal()'s fourth argument, and by nothing else. Application code
+       calling Task::internal() from a web request or from another task passes three
+       arguments and prints to nobody's console; a queued or scheduled run writes its log
+       lines to the database exactly as it always has. A task's own code cannot tell the
+       difference and must not try to.
+
+BUILD-TIME RULES
+       Every rule is enforced by Task_Command_ManifestSupport during the manifest build and
+       fails as a RuntimeException naming the file and the method. A violating declaration
+       breaks the build until it is fixed - there is no warning tier.
+
+       #[Command] on a method with no #[Task]
+             "#[Command] may only annotate a #[Task] method"
+             There is nothing for the command to run. Add #[Task('...')], or remove the
+             #[Command].
+
+       A name with no prefix segment
+             "A command name needs a 'prefix:name' segment"
+             'import' squats on artisan's root namespace and collides with whatever
+             Laravel adds next. Use 'myapp:import'.
+
+       A name beginning 'rsx:'
+             "The 'rsx:' prefix belongs to the framework"
+             Name the command after the application.
+
+       A name already taken
+             "One command name names exactly one task" (another #[Command]), or
+             "That name is already a framework command" (the first token of a $signature
+             under app/RSpade/Commands or app/Console/Commands, read from source at build time). Choose another
+             name; a #[Command] never shadows one.
+
+       A missing or empty description
+             "The second argument is the description and is required"
+             It is the line `php artisan list` prints. A command nobody can identify in a
+             listing is not finished.
+
+       The table these produce is manifest data['task_commands'], read back with
+       Manifest::get_task_commands(). A tree whose manifest has never been built has no
+       table, so nothing is registered and artisan boots normally - the aliases appear with
+       the first build, like everything else the manifest provides.
+
+WHEN NOT TO
+       Not every task wants a name. Add #[Command] when a HUMAN or a SCRIPT invokes the
+       work directly - a maintenance chore, an import, a report, a one-off repair.
+
+       Leave it off when:
+
+       - the task is only ever dispatched by application code. It is already reachable as
+         `rsx:task:run <Service> <method>` when somebody needs to poke it by hand.
+       - the task is purely #[Schedule]d. The cron tick runs it; a name in `artisan list`
+         invites a hand-run of something that is nobody's business to run by hand.
+       - what you actually want is FRAMEWORK plumbing - something that must work on a tree
+         too broken to boot, or before the manifest exists. That is a hand-written command
+         in app/RSpade/Commands (see rsx:man artisan_commands), and it is the framework's
+         to write, not an application's.
+
+       A task is not made better by having a command. It is made reachable.
+
+SEE ALSO
+       rsx:man tasks - #[Task], #[Schedule], dispatch, status, the worker pool
+       rsx:man artisan_commands - hand-written framework commands and why they are unlike
+       skill rspade:task-commands - the recipe, a worked transcript, the FATAL catalogue
+       skill rspade:background-tasks - writing the task in the first place
+       system/app/RSpade/resource/reference_app/services/seeder_service.php - rsx_app:seed
+
+AUTHORS
+       RSX Framework Team
+
+RSX Framework                     August 2026                     TASK_COMMANDS(7)

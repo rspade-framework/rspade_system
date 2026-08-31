@@ -1,0 +1,128 @@
+CONTENT-SECURITY-POLICY NOW ALWAYS ENFORCES
+Date: 2026-08-31
+
+SUMMARY
+    The framework's Content-Security-Policy no longer has an observe-only mode.
+    There is one header name, Content-Security-Policy, and it BLOCKS. The
+    config key that used to pick between observing and enforcing
+    (rsx.csp.report_only) is gone from the framework entirely.
+
+    ON PULL, EVERY PAGE OF YOUR APPLICATION ENFORCES IMMEDIATELY. If your app
+    has been running with the policy observing - which was the shipped default
+    - a resource it loads that is not DECLARED stops loading the moment this
+    release is deployed. Read ACTION REQUIRED before pulling into production.
+
+THE CHANGE
+    Previously the policy shipped as Content-Security-Policy-Report-Only: the
+    browser evaluated it, posted a report for every violation, and loaded the
+    resource anyway. Turning it on was an application decision, made once, by
+    hand, at launch - and nothing broke, warned or failed if nobody ever made
+    it. An app could launch with the reporting and none of the protection.
+
+    That optionality is removed. One way to do things, and it fails loud: an
+    undeclared resource is a blocked resource, in every mode, in every install.
+
+    The collector is UNCHANGED and is not going away. The policy still carries
+    report-uri /_csp-report, so a blocked resource is also REPORTED, and
+    storage/logs/csp_violations.log remains the triage tool - `tail -f` it
+    while adding a third-party widget.
+
+THE FIX
+    In /system/ (arrives automatically via the submodule):
+
+      - Rsx_Csp::is_report_only() and Rsx_Csp::HEADER_REPORT_ONLY are DELETED.
+        compose() always returns the Content-Security-Policy header name.
+      - The "never overwrite an existing policy" check no longer looks for the
+        report-only header - nothing emits it any more.
+      - rsx.csp.report_only is removed from system/config/rsx.php.
+        rsx.csp.enabled remains: an EMERGENCY KILL-SWITCH that emits no header
+        at all. It is not a quiet mode - it deletes the protection and says so.
+      - window.rsxapp.csp.report_only is no longer exported, and the
+        development [RSX CSP] console warning says "blocked" unconditionally.
+      - The prelaunch checklist's CSP entry is DELETED. There is nothing left
+        to flip, so there is nothing left to audit at launch. (The remaining
+        entries were renumbered: the former ENTRY 7 datetime audit is now
+        ENTRY 6, ENTRY 8 is now ENTRY 7, ENTRY 9 is now ENTRY 8.)
+
+    Your own 'report_only' key, if you still have one, is INERT: the rsx config
+    is a plain deep merge with no schema, so an unknown key is neither an error
+    nor an effect. It cannot bring the observe-only mode back, and it will not
+    tell you it did nothing. Delete it.
+
+ACTION REQUIRED
+    DO THIS BEFORE PULLING THIS RELEASE INTO PRODUCTION.
+
+    1. If your app has been observing (rsx/resource/config/rsx.php carried
+       'report_only' => true, or the key was absent and the framework default
+       applied), you have never seen the policy block anything. Run the sweep
+       BEFORE you deploy:
+
+         a. Deploy this release to a development or staging environment first.
+
+         b. Exercise EVERY screen, in BOTH realms: dashboards and lists, every
+            form, file upload and document preview, print views, error screens,
+            the login / password-reset / invitation flows, and every
+            third-party widget (payment, maps, chat, analytics, captcha). A
+            violation only appears if a real page load produces it.
+
+         c. Read storage/logs/csp_violations.log after the pass:
+
+              cat storage/logs/csp_violations.log | jq -r \
+                '.report | "\(.["effective-directive"]) <- \(.["blocked-uri"])"' \
+                | sort | uniq -c | sort -rn
+
+         d. Triage every distinct line to exactly one of three fixes:
+
+              - A resource the PAGE loads itself -> declare it in a
+                *.externals.php file beside the feature and load it with
+                Rsx.load_external('<identifier>').
+              - An origin a DECLARED script fetches on its OWN (an analytics or
+                tag-manager loader pulling further vendor code) ->
+                rsx.csp.additional_sources in rsx/resource/config/rsx.php.
+                That key is for this transitive case and nothing else.
+              - An inline <script> in your own markup -> move the code into a
+                bundled .js file (with a page guard for a Blade page). Do NOT
+                reach for the nonce; it is for framework-emitted bootstrap
+                markup.
+
+         e. Walk the app once more and confirm the log stays clean. THEN
+            deploy to production.
+
+    2. Remove 'report_only' from the 'csp' block in
+       rsx/resource/config/rsx.php. It does nothing now, and leaving it there
+       reads like a setting that is in force.
+
+    3. If triage produces violations naming eval, the Function constructor, or
+       inline styles the FRAMEWORK itself emits, STOP and raise it upstream.
+       Adding 'unsafe-eval' (or a nonce to style-src, which makes browsers
+       ignore 'unsafe-inline' and breaks RSX rendering wholesale) hands back
+       most of what CSP is for, and that is a framework decision.
+
+       You can run part of that gate before deploying anything:
+
+         php artisan rsx:check
+
+       JS-EVAL-01 flags eval() and new Function() in bundled JavaScript; the
+       supported replacement is Manifest.get_class_by_name(name). See
+       upstream_changes/eval_prohibited_08_24.txt.
+
+    4. Note what is NOT covered: an #[FPC] public page's cached HTML is
+       replayed by the proxy without the header, so those pages carry no
+       policy. A public page whose protection matters should not be #[FPC].
+
+VERIFICATION
+    On a deployed host:
+
+        curl -sI https://your.host/ | grep -i content-security-policy
+
+    It must read Content-Security-Policy. Content-Security-Policy-Report-Only
+    can no longer be emitted by anything in the framework; if you see it, some
+    non-RSpade layer (a proxy, a web-server config) is adding it.
+
+    Then walk the application with the browser console open. A blocked resource
+    prints the browser's own refusal followed by an [RSX CSP] warning naming
+    the directive, the blocked URI and the remedy, and lands in
+    storage/logs/csp_violations.log.
+
+    See: php artisan rsx:man csp   (TRIAGE)
+         php artisan rsx:man external_resources

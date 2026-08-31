@@ -57,14 +57,11 @@
  * - log_browser_errors - Log JavaScript errors to Laravel log
  *   Reason: User preference for client-side error tracking
  *
- * - csp.report_only - Observe violations vs enforce the policy
- *   Reason: Rollout decision - an app flips this once its violation log is clean
- *
  * - csp.additional_sources - Extra CSP sources for TRANSITIVE externals
  *   Reason: Application-specific; a script whose own further loads only the app knows
  *
  * - csp.enabled - Emit a policy at all
- *   Reason: Application-specific escape hatch; the framework default is on
+ *   Reason: Application-specific EMERGENCY KILL-SWITCH; the framework default is on
  *
  * - response.default_view - Default view when controller doesn't specify
  *   Reason: Application-specific default
@@ -231,6 +228,7 @@ return [
         \App\RSpade\Core\SPA\Spa_ManifestSupport::class,
         \App\RSpade\Core\Api\Api_Endpoint_ManifestSupport::class,
         \App\RSpade\Core\Externals\Externals_ManifestSupport::class,
+        \App\RSpade\Core\Task\Task_Command_ManifestSupport::class,
         // Auth gates run LAST: the consolidated #[Auth] index covers every surface
         // kind the modules above register.
         \App\RSpade\Core\Auth\Auth_ManifestSupport::class,
@@ -724,6 +722,57 @@ return [
         // Default filter: emit every channel. Set to whitelist/blacklist/specific
         // (with the matching whitelist/blacklist/specific_channel key) to narrow.
         'filter_mode' => 'all',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Log Rotation
+    |--------------------------------------------------------------------------
+    |
+    | RSpade rotates storage/logs itself. NOTHING here assumes an OS logrotate:
+    | the containers this framework ships to carry logrotate CONFIGS and no
+    | logrotate BINARY, and Laravel's own 'daily' channel only rotates Monolog's
+    | own dated files - it never compresses, never prunes anything it did not
+    | write, and never touches csp_violations.log or ide-formatter.log.
+    |
+    | The sweep is Log_Maintenance_Service::rotate(), a #[Schedule('daily at
+    | 12:00am')] framework task, and the same rotation is available on demand as
+    | `php artisan rsx:logrotate`.
+    |
+    | Generations are logrotate-style numeric suffixes on each `*.log` at the TOP
+    | level of storage/logs: name.log -> name.log.1 -> name.log.2 -> ...
+    |
+    |   generations 1 .. days_uncompressed            stay PLAIN
+    |   generations days_uncompressed+1 .. days_retention   are GZIPPED (.gz)
+    |   generations past days_retention               are DELETED
+    |
+    | With the shipped 3 / 21 that is 3 plain days you can grep and tail without
+    | thinking, 18 compressed days behind them, and nothing older than three
+    | weeks on disk. Because the sweep runs once a day, a generation number is a
+    | day count - hence the key names.
+    |
+    | .env.dist ships LOGROTATE_ENABLED=true, LOGROTATE_DAYS_UNCOMPRESSED=3 and
+    | LOGROTATE_DAYS_RETENTION=21, and the env-heal contract appends any of those
+    | keys that an existing .env lacks on the next development boot. The code
+    | defaults below are what applies when a key is absent entirely, and they are
+    | deliberately CONSERVATIVE: rotation off until an .env says otherwise.
+    |
+    | See: php artisan rsx:man logrotate
+    |
+    */
+    'logging' => [
+        'rotation' => [
+            // Run the scheduled sweep at all. `rsx:logrotate` runs regardless -
+            // an explicit invocation is its own consent - and says so.
+            'enabled' => env('LOGROTATE_ENABLED', false),
+
+            // How many of the most recent generations stay uncompressed.
+            'days_uncompressed' => env('LOGROTATE_DAYS_UNCOMPRESSED', 3),
+
+            // The oldest generation kept. Anything numbered higher is deleted.
+            // Must be >= days_uncompressed.
+            'days_retention' => env('LOGROTATE_DAYS_RETENTION', 21),
+        ],
     ],
 
     /*
@@ -1672,21 +1721,14 @@ return [
     */
     'csp' => [
         // Emit a policy at all. False = no header on any response, anywhere.
+        //
+        // AN EMERGENCY KILL-SWITCH, NOT A QUIET MODE. The policy always ENFORCES:
+        // there is one header name and an undeclared resource is a blocked
+        // resource. Turning this off deletes the protection outright and says so;
+        // it is not a way to keep reporting while blocking nothing. Every blocked
+        // resource is still POSTed to /_csp-report and lands in
+        // storage/logs/csp_violations.log - that log is the triage tool.
         'enabled' => true,
-
-        // True = the header is Content-Security-Policy-Report-Only: the browser
-        // REPORTS violations to /_csp-report and blocks nothing.
-        //
-        // ROLLOUT: ship report-only, run the app, then read
-        // storage/logs/csp_violations.log. Every line is something a real page
-        // tried to load that the policy would have blocked. Triage each one -
-        // either declare it in a *.externals.php file (a resource the page loads
-        // itself) or add it to additional_sources (a transitive load, below) -
-        // and when the log stays clean, flip this to false to ENFORCE.
-        //
-        // Report-only is a silent state: nothing breaks and nothing tells you the
-        // policy is not actually protecting anything. That flip is a launch task.
-        'report_only' => true,
 
         // directive => [sources] merged into the composed policy.
         //

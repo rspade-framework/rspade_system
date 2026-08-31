@@ -1,0 +1,90 @@
+LOG ROTATION IS NOW ON BY DEFAULT, AND IT DELETES OLD LOGS
+Date: 2026-08-31
+
+SUMMARY
+    RSpade now rotates storage/logs itself: a nightly framework task shifts each
+    *.log to a numbered generation, gzips the ones past the plain band, and
+    DELETES the ones past retention. The shipped defaults keep 3 plain days and
+    18 compressed days - 21 in total - and nothing older.
+
+    It arrives ON. .env.dist ships LOGROTATE_ENABLED=true, and a key missing
+    from an existing .env is appended from .env.dist on the next development
+    boot. So on the pull after this release, your logs start rotating and, three
+    weeks later, start being deleted. That is a silent behavior change on a
+    directory some installs treat as an archive, which is why this document
+    exists.
+
+    If your retention obligations are longer than 21 days, or you ship logs off
+    the box some other way, read ACTION REQUIRED before deploying.
+
+WHY
+    Nothing was rotating them. Laravel's `daily` channel rotates only the dated
+    files Monolog itself writes - it never compresses, never prunes anything it
+    did not create, and never sees storage/logs/csp_violations.log. And the OS
+    `logrotate` binary is NOT present in the shipped containers: they carry
+    config files in /etc/logrotate.d and no program to read them, so those
+    configs are inert. A log left alone grows for the life of the container.
+
+WHAT IT TOUCHES
+    Files matching *.log at the TOP LEVEL of storage/logs, and nothing else.
+    Not recursive, no other extension. In a stock install that is laravel.log,
+    csp_violations.log and ide-formatter.log, plus anything your own app writes
+    there.
+
+        name.log -> name.log.1 -> name.log.2 -> ... -> name.log.N[.gz]
+
+            generations 1 .. LOGROTATE_DAYS_UNCOMPRESSED     plain
+            ... up to LOGROTATE_DAYS_RETENTION               gzipped (.gz)
+            past LOGROTATE_DAYS_RETENTION                    DELETED
+
+    The current log is RENAMED and a fresh empty one is created with the same
+    mode, so every per-call appender keeps writing. A long-lived process holding
+    an open handle keeps writing into the renamed .1 until it reopens - benign,
+    and the same thing OS logrotate does.
+
+ACTION REQUIRED
+    1. Decide whether 21 days is enough for you. If your retention obligation is
+       longer, set the keys in your OWN .env before this release reaches
+       production:
+
+         LOGROTATE_DAYS_UNCOMPRESSED=3
+         LOGROTATE_DAYS_RETENTION=90
+
+       Values already present in your .env are never touched by env-heal, so
+       setting them ahead of the pull is sufficient. days_retention must be
+       greater than or equal to days_uncompressed, and both must be positive.
+
+    2. To keep rotation OFF entirely, set:
+
+         LOGROTATE_ENABLED=false
+
+       Note that a DELETED line comes back on the next boot - remove a setting
+       by setting it EMPTY, never by deleting the line. `false` is the spelling
+       that turns it off.
+
+    3. If you ship logs off the box (a shipper tailing laravel.log, a syslog
+       forwarder, an external aggregator), confirm it survives a rename. A
+       tailer following the FILE NAME is fine; one following the inode will keep
+       reading the rotated generation until it reopens.
+
+    4. If you have written your own cron entry or script that rotated
+       storage/logs, DELETE IT. Two rotators over one directory shift
+       generations twice a day and halve your effective retention.
+
+VERIFICATION
+    Run it by hand, against a copy or against the real directory - the command
+    runs whether or not the scheduled sweep is enabled, and says so:
+
+        php artisan rsx:logrotate --directory=/tmp/log-fixture
+        php artisan rsx:logrotate --json
+
+    Confirm the nightly task is registered (it appears after the next
+    rsx:task:process tick, which is the cron entry):
+
+        php artisan rsx:tasks:list
+
+    A row reading Log_Maintenance_Service::rotate with a next run at the coming
+    midnight is the schedule.
+
+    See: php artisan rsx:man logrotate
+         php artisan rsx:man config_rsx   (LOG ROTATION)

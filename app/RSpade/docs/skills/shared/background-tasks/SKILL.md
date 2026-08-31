@@ -37,6 +37,12 @@ php artisan rsx:tasks:list                                    # running instance
 $id = Task::dispatch('Report_Service', 'generate', ['month' => 12]);
 ```
 
+**A task worth invoking by hand gets its own artisan command** - add
+`#[Command('myapp:report', 'Generate the monthly report')]` beside the `#[Task]` and
+`php artisan myapp:report --month=12` is the line above under a friendlier name. Console
+runs put the VALUE on stdout and the `$task->info()` NARRATION on stderr. Skill
+`rspade:task-commands`; `rsx:man task_commands`.
+
 `dispatch()` inserts a pending row **and**, when the task is due now, spawns a detached worker so it starts within ~1 second. It **returns a pollable id** - for an `#[Exclusive]`/`#[Debounce]` identity that coalesces onto an already-pending run, the id of that pending row. Options: `queue` (a label), `timeout`, and `scheduled_for` - **a future `scheduled_for` is the only thing that defers the run.** `Task::internal($service, $task, $params)` runs it in-process and returns the task's value.
 
 ### `Task::status($id)` returns an ARRAY
@@ -75,7 +81,7 @@ $task->info($message);                                  // logging (timestamped,
 $task->error($message);
 $task->debug($message);
 $task->log($level, $message);                           // two args - the one-arg form is a TypeError
-$task->update_progress(int $percent, ?string $message = null);   // 0-100
+$task->update_progress(int $percent, ?string $message = null);   // 0-100, logs "[45%] msg"
 $task->set_result($value);                              // publish a result mid-run
 $task->heartbeat();                                     // call periodically in a long task
 $dir = $task->get_temp_dir();                           // auto-deleted on completion/failure

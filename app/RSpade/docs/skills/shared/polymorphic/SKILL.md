@@ -82,6 +82,31 @@ CREATE TABLE activities (
 );
 ```
 
+### In a migration
+
+A migration may not call `Type_Ref_Registry` (or any model class): it must replay from scratch forever, and the registry validates the name against the LIVE manifest, so a retired model breaks every future replay. **MIGRATION-MODEL-01** enforces this. Get-or-create the row directly, class name as a **string literal**, table name hardcoded:
+
+```php
+$type_ref_id = function (string $class_name, string $table_name): int {
+    $existing = DB::select("SELECT id FROM _type_refs WHERE class_name = ?", [$class_name]);
+    if (!empty($existing)) {
+        return (int) $existing[0]->id;
+    }
+    DB::statement(
+        "INSERT INTO _type_refs (class_name, table_name, created_at, updated_at) VALUES (?, ?, NOW(3), NOW(3))",
+        [$class_name, $table_name]
+    );
+    return (int) DB::getPdo()->lastInsertId();
+};
+
+$contact_id = $type_ref_id('Contact_Model', 'contacts');
+DB::statement("UPDATE activities SET eventable_type = {$contact_id} WHERE eventable_type = 'Contact_Model'");
+```
+
+Everywhere OUTSIDE a migration, `Type_Ref_Registry::class_to_id()` remains the API.
+
+---
+
 ---
 
 ## Usage

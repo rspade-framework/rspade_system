@@ -77,6 +77,67 @@ MIGRATION RULES
        - Don't add created_at/updated_at (added automatically)
        - Don't add created_by_id/_type or updated_by_id/_type (added automatically)
 
+   No Application Code (MIGRATION-MODEL-01)
+       A migration is a FORWARD-ONLY HISTORICAL RECORD that must replay cleanly from
+       scratch forever. A model class is CURRENT CODE that gets renamed and deleted.
+       Naming one couples the two, and the day that class is retired a from-scratch
+       replay of the whole chain hard-fails at a file nobody has touched in a year.
+
+       A migration therefore contains no model class, no Type_Ref_Registry, and no
+       service - only raw SQL and plain PHP. Prohibited:
+
+       - use imports of a *_Model class or of Type_Ref_Registry
+       - Type_Ref_Registry:: anything (class_to_id() is the offender in the field:
+         it validates the name against the LIVE MANIFEST and refuses a class that no
+         longer exists)
+       - a static call, new, instanceof or ::class on a *_Model symbol
+
+       A class name written as a STRING is data, not a symbol, and is never flagged -
+       that is what makes the resilient pattern work. Resolve a polymorphic type-ref
+       id with a get-or-create against _type_refs, class name as a string, table name
+       hardcoded:
+
+           $type_ref_id = function (string $class_name, string $table_name): int {
+               $existing = DB::select(
+                   "SELECT id FROM _type_refs WHERE class_name = ?", [$class_name]
+               );
+               if (!empty($existing)) {
+                   return (int) $existing[0]->id;
+               }
+               DB::statement(
+                   "INSERT INTO _type_refs (class_name, table_name, created_at, updated_at)
+                    VALUES (?, ?, NOW(3), NOW(3))",
+                   [$class_name, $table_name]
+               );
+               return (int) DB::getPdo()->lastInsertId();
+           };
+
+           $contact_id = $type_ref_id('Contact_Model', 'contacts');
+           DB::statement("
+               UPDATE activities SET eventable_type = {$contact_id}
+               WHERE eventable_type = 'Contact_Model'
+           ");
+
+       Ids are still never hardcoded: the closure resolves or creates the row at
+       replay time, so it is correct on a fresh install and in every environment.
+
+       THE ONE EXCEPTION is data seeding that genuinely needs model BEHAVIOUR raw SQL
+       cannot reproduce - a file pipeline, an encryption cast, a factory with side
+       effects. That migration is knowingly coupled to code that may be deleted, and
+       says so in its docblock:
+
+           /**
+            * @MIGRATION-MODEL-01-EXCEPTION <why raw SQL cannot do this>
+            */
+
+       The rationale is REQUIRED - a bare marker is itself a violation of the rule.
+       Schema work and type-ref lookups are never the exception; convert those.
+
+       Enforced by php artisan rsx:check, severity high. The rule reads the migration
+       runner's own file list, so every migration directory and nested subdirectory is
+       covered. Detection is over the PHP token stream: a class name in a comment or a
+       string literal is never a violation.
+
    down() Method Removal
        The migration system automatically removes down() methods from migration files.
        Migrations are forward-only - database changes should never be reversed.
@@ -260,6 +321,18 @@ VALIDATION SYSTEM
                  name VARCHAR(255),
                  created_at TIMESTAMP NULL DEFAULT NULL
              )');
+
+   Code-Quality Validation
+       The automatic validator above runs at migrate time and covers the Schema
+       builder and down(). The self-containment rule is a code-quality rule instead:
+
+           MIGRATION-MODEL-01   no model class, no Type_Ref_Registry
+                                (php artisan rsx:check - see MIGRATION RULES)
+
+       It is checked by rsx:check rather than by the runner because a coupled
+       migration runs FINE today - it fails years later, on a replay, after the class
+       it names has been deleted. Catching it at authoring time is the only moment
+       the fix is cheap.
 
 MIGRATION LOCATIONS AND ORDERING
 

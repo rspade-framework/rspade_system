@@ -26,7 +26,7 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
  * The alternative (per-identifier argument tracing) needs a real JS expression parse and
  * would fire on every wrapped value written in a shape the tracer did not model. A rule
  * that cries wolf gets ignored, so this one under-reports instead. The prelaunch
- * checklist (ENTRY 7) carries the manual sweep that covers what the regex cannot reach.
+ * checklist (ENTRY 6) carries the manual sweep that covers what the regex cannot reach.
  */
 class JqhtmlDatetimeFormatting_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -202,9 +202,9 @@ class JqhtmlDatetimeFormatting_CodeQualityRule extends CodeQualityRule_Abstract
             "  without the programmer's approval (see CodeQuality/CLAUDE.md).\n\n" .
             "  If the value turns out to be a calendar fact stored in a DATETIME column, that is a\n" .
             "  SCHEMA defect, not a display one. Format it correctly here and raise the column: the\n" .
-            "  prelaunch checklist ENTRY 7 covers the DATETIME-vs-DATE column audit.\n\n" .
+            "  prelaunch checklist ENTRY 6 covers the DATETIME-vs-DATE column audit.\n\n" .
             "See: php artisan rsx:man time\n" .
-            "     php artisan rsx:man prelaunch_checklist (ENTRY 7 - the display + column audit)\n" .
+            "     php artisan rsx:man prelaunch_checklist (ENTRY 6 - the display + column audit)\n" .
             "     MODEL-FETCH-DATE-01 - the server-side twin, which forbids pre-formatting a date\n" .
             "     inside a model's fetch() so that the template stays the one place formatting happens.";
     }

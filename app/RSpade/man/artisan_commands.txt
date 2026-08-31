@@ -11,15 +11,28 @@ SYNOPSIS
        php artisan <command> [--flags]
 
 DESCRIPTION
-       Framework commands live in app/RSpade/Commands/; the application's own live in
-       app/Console/Commands/. Both are registered by app/Console/Kernel.php:
+       This page is about FRAMEWORK commands, which live in app/RSpade/Commands/ and are
+       registered by app/Console/Kernel.php:
 
-           $this->load(__DIR__.'/Commands');           // Application commands
            $this->load(__DIR__.'/../RSpade/Commands'); // Framework commands
 
        Laravel's load() walks the directory recursively and registers every class
        extending Illuminate\Console\Command. Subdirectories are organisational only -
        they carry no meaning to the loader.
+
+       AN APPLICATION WRITES NO COMMAND CLASSES AT ALL. All of system/ is framework
+       property, overwritten by every framework update, so nothing an application owns can
+       live there. An application declares a command by annotating a #[Task]:
+
+           #[Task('Import the nightly feed')]
+           #[Command('myapp:import', 'Import the nightly feed')]
+
+       and the framework registers one thin alias per declaration from the manifest's baked
+       table - see rsx:man task_commands. That alias is rsx:task:run with the service and
+       method already decided, so an application has ONE way to write invocable work rather
+       than two. Everything below describes the framework's own hand-written commands,
+       which exist for the plumbing a task cannot be: work that must run on a tree too
+       broken to boot, or before the manifest exists.
 
        COMMANDS ARE NOT MANIFEST-INDEXED. app/RSpade/Commands is absent from
        config('rsx.manifest.scan_directories'), and deliberately so. Everything the
@@ -142,6 +155,7 @@ OUTPUT CONVENTIONS
        passes, never by an interactive question.
 
 SEE ALSO
+       rsx:man task_commands - how an APPLICATION declares a command (#[Command] on a task)
        rsx:man maintenance_mode - the intercepted pair, and what the stubs stand in for
        rsx:man rsx_git - the intercepted git proxy
        rsx:man rsx_upstream - the intercepted framework pull

@@ -49,7 +49,10 @@ LIVE TREE (<project>/storage/)
                       (Rsx_File_Paths::blob_root()).                        [omit]
     framework/        Laravel cache/, sessions/, testing/, views/.          [omit]
     app/              Laravel "public"/"temp" local disk roots.             [omit]
-    logs/             laravel.log*, ide-formatter.log, ssr-fpc-errors.log.  [omit]
+    logs/             laravel.log*, ide-formatter.log, ssr-fpc-errors.log.
+                      Every top-level *.log here is rotated, compressed and
+                      pruned by the framework's own nightly sweep - no OS
+                      logrotate is assumed. rsx:man logrotate.               [omit]
     db_backups/       mysqldump cache for rsx:test --fresh, keyed by a hash
                       of all migrations (survives rsx:clean).               [omit]
 

@@ -27,6 +27,18 @@ class Task_Instance
     private bool $is_immediate;
 
     /**
+     * A writable stream every log line is echoed to, live, or null.
+     *
+     * Set ONLY by a console RUNNER (rsx:task:run and the #[Command] aliases, which pass
+     * STDERR). Application code calling Task::internal() never sets one, so a web request
+     * or another task prints nothing. This is display only: the in-memory log array and
+     * the queued DB writes are unaffected by its presence.
+     *
+     * @var resource|null
+     */
+    private $console_sink = null;
+
+    /**
      * The row's next_run_at when this instance was loaded from the database, or null.
      *
      * A non-null value means this row is a recurring #[Schedule] TRACKER, which changes
@@ -289,7 +301,25 @@ class Task_Instance
     }
 
     /**
+     * Attach (or detach, with null) the live console sink.
+     *
+     * The runner owns this decision. Every subsequent log() line is written to the stream
+     * and flushed immediately, so an operator watches a long task narrate itself instead
+     * of receiving one dump at the end.
+     *
+     * @param resource|null $stream An open writable stream, or null to detach.
+     */
+    public function set_console_sink($stream): void
+    {
+        $this->console_sink = $stream;
+    }
+
+    /**
      * Add a log message
+     *
+     * The line's shape is identical on every channel - the in-memory array, the _tasks.logs
+     * column and the console sink all get the same text, so a console transcript and
+     * Task::status()['logs'] read the same.
      *
      * @param string $level Log level (info, error, debug)
      * @param string $message Log message
@@ -299,6 +329,11 @@ class Task_Instance
         $timestamp = date('Y-m-d H:i:s');
         $log_line = "[{$timestamp}] [{$level}] {$message}";
         $this->logs[] = $log_line;
+
+        if ($this->console_sink !== null) {
+            fwrite($this->console_sink, $log_line . "\n");
+            fflush($this->console_sink);
+        }
 
         if (!$this->is_immediate && $this->id !== null) {
             DB::table('_tasks')
@@ -343,6 +378,9 @@ class Task_Instance
     /**
      * Update task progress percentage
      *
+     * Logged as an ordinary info line reading "[45%] message" (or "[45%]" with no
+     * message), so it reaches every channel log() reaches - the console sink included.
+     *
      * @param int $percent Progress percentage (0-100)
      * @param string|null $message Optional progress message
      */
@@ -351,9 +389,9 @@ class Task_Instance
         $percent = max(0, min(100, $percent));
 
         if ($message) {
-            $this->info("Progress: {$percent}% - {$message}");
+            $this->info("[{$percent}%] {$message}");
         } else {
-            $this->info("Progress: {$percent}%");
+            $this->info("[{$percent}%]");
         }
     }
 

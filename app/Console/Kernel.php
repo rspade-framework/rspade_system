@@ -21,6 +21,11 @@ class Kernel extends ConsoleKernel
         $this->load(__DIR__.'/Commands');           // Application commands
         $this->load(__DIR__.'/../RSpade/Commands'); // Framework commands
 
+        // One artisan command per #[Command]-annotated #[Task]. An application declares a
+        // command by annotating the task, never by writing a class - see
+        // rsx:man task_commands.
+        \App\RSpade\Core\Task\Task_Command_Registrar::register();
+
         require base_path('routes/console.php');
     }
 

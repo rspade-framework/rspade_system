@@ -29,10 +29,13 @@ use App\RSpade\Core\Rsx;
  * 'unsafe-inline', and RSX (jqhtml, view transitions, every style="" attribute in the tree)
  * depends on inline styles pervasively. Adding one here would break rendering everywhere.
  *
- * ROLLOUT. `csp.report_only` (default true) picks the header NAME: report-only observes and
- * reports without blocking anything, which is how a policy is proven before it is enforced.
- * `csp.enabled` (default true) turns the whole thing off - compose() then returns null and no
- * header is emitted at all.
+ * IT ALWAYS ENFORCES. There is one header name, `Content-Security-Policy`, and an undeclared
+ * resource fails visibly. The policy still names `report-uri /_csp-report`, so the violation
+ * collector keeps recording every refusal to storage/logs/csp_violations.log - that log is the
+ * triage tool for a blocked resource, not an observe-only mode.
+ *
+ * `csp.enabled` (default true) is an EMERGENCY KILL-SWITCH, not a quiet mode: compose() returns
+ * null and no header is emitted at all.
  *
  * OUT OF SCOPE: responses that never reach the RSX dispatchers (vendor error pages, ignition)
  * carry no policy. AssetHandler's static-HTML responses set their own and are left alone.
@@ -44,11 +47,8 @@ class Rsx_Csp
     /** Where violation reports are posted. Served by Csp_Report_Controller. */
     public const REPORT_PATH = '/_csp-report';
 
-    /** The header name when the policy is enforced. */
+    /** The one header name. The policy always enforces. */
     public const HEADER_ENFORCE = 'Content-Security-Policy';
-
-    /** The header name while the policy is only observed. */
-    public const HEADER_REPORT_ONLY = 'Content-Security-Policy-Report-Only';
 
     /**
      * Directives a config `additional_sources` entry may never touch.
@@ -123,14 +123,6 @@ class Rsx_Csp
     }
 
     /**
-     * Observe-only (true) or enforce (false)?
-     */
-    public static function is_report_only(): bool
-    {
-        return (bool) config('rsx.csp.report_only', true);
-    }
-
-    /**
      * The header this realm's pages should carry, or null when CSP is disabled.
      *
      * @param string $realm 'staff' or 'portal'
@@ -180,10 +172,12 @@ class Rsx_Csp
             $parts[] = empty($sources) ? $directive : $directive . ' ' . implode(' ', $sources);
         }
 
+        // The collector still runs under enforcement: the browser BLOCKS the resource and
+        // reports it, and the log is where a blocked resource is triaged from.
         $parts[] = 'report-uri ' . self::REPORT_PATH;
 
         return [
-            'header' => static::is_report_only() ? self::HEADER_REPORT_ONLY : self::HEADER_ENFORCE,
+            'header' => self::HEADER_ENFORCE,
             'value' => implode('; ', $parts),
         ];
     }
@@ -209,7 +203,7 @@ class Rsx_Csp
             return;
         }
 
-        if ($response->headers->has(self::HEADER_ENFORCE) || $response->headers->has(self::HEADER_REPORT_ONLY)) {
+        if ($response->headers->has(self::HEADER_ENFORCE)) {
             return;
         }
 

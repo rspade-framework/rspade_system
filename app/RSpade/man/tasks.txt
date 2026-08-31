@@ -56,8 +56,16 @@ EXECUTION MODES
 
     1. Immediate (synchronous)
        php artisan rsx:task:run Service_Name task_name --param=value
-       Runs in-process, prints to STDOUT, no queue row, no timeout. Also available in
-       code as Task::internal($service, $task, $params), which returns the task's value.
+       Runs in-process, no queue row, no timeout. STDOUT is the return value as JSON and
+       nothing else; STDERR carries the task's log lines live (-q silences them, never the
+       value) - see OUTPUT CONTRACT in rsx:man task_commands. Also available in code as
+       Task::internal($service, $task, $params), which returns the task's value and, called
+       from application code, prints nothing anywhere.
+
+       A task worth invoking by hand gets its own artisan command by adding
+       #[Command('myapp:name', 'Description')] beside its #[Task]. That alias IS this line
+       under a friendlier name - same params, same output, same exit codes. Full treatment:
+       rsx:man task_commands.
 
     2. Background (async)
        $id = Task::dispatch($service, $task, $params, $options);
@@ -84,6 +92,7 @@ TASK_INSTANCE API
 
     Progress and result:
         $task->update_progress(int $percent, ?string $message = null)  // 0-100, logged
+                                                    // logs as "[45%] message", or "[45%]"
         $task->set_result($value)                                      // JSON result, mid-run
     (There is no set_status() / progress() method.)
 
@@ -286,7 +295,9 @@ EXECUTION TIMEOUT
 COMMANDS
 
     php artisan rsx:task:run Service method [--param=value]   Run synchronously (CLI)
-    php artisan rsx:task:list                                 List discovered tasks
+    php artisan rsx:task:list                                 List discovered tasks, with
+                                                              the #[Command] each is
+                                                              reachable as (or '-')
     php artisan rsx:tasks:list                                Running instances + every schedule
     php artisan rsx:task:process [--once] [--force-scheduled] The cron tick (below)
     php artisan rsx:task:worker  [--max-time=300]             A pool worker (spawned for you)
@@ -472,4 +483,7 @@ HISTORICAL NOTE
     The web side's counterpart global lock is gone too - see rsx:man locks.
 
 SEE ALSO
+    task_commands.txt - #[Command]: giving a task its own artisan command, and the
+        stdout-is-the-value / stderr-is-the-narration output contract every console run has
     locks.txt - cluster/system locks, wait-forever timeouts, semaphores (see LOCKS above)
+    logrotate - Log_Maintenance_Service::rotate, the framework's own nightly storage/logs sweep

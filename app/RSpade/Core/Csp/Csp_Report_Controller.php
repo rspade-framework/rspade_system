@@ -22,8 +22,9 @@ use App\RSpade\Core\Time\Rsx_Time;
  * NOT A CSRF SURFACE: the collector reads nothing and writes nothing but its own log, so it is
  * exempt at the Rsx_Csrf::enforce seam (which sees the path constant, not this class).
  *
- * NO TABLE IN v1. Triage is `tail`/`jq` over the log file; a report is diagnostic exhaust
- * during rollout, not application data.
+ * IT REPORTS UNDER ENFORCEMENT. The policy always blocks; report-uri means every refusal is
+ * also recorded here, so the log is how a blocked resource is diagnosed - `tail -f` it while
+ * adding a widget. NO TABLE IN v1: triage is `tail`/`jq` over the file, not application data.
  *
  * DEPLOYMENT NOTE: the path is served by the STAFF dispatcher. With the default prefix-based
  * portal detection a portal page posts here fine (/_csp-report is not under the portal

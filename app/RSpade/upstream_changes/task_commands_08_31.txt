@@ -1,0 +1,134 @@
+CATEGORY: 2 - ACTION REQUIRED (re-point anything parsing "Progress: N%"; move a
+           hand-written app command onto #[Command]; rsx/commands/ is gone)
+TITLE: #[Command] on a #[Task] gives it an artisan command; update_progress() now
+       logs "[45%] msg"
+DATE: 2026-08-31
+
+--------------------------------------------------------------------------------
+WHY YOU ARE READING THIS
+--------------------------------------------------------------------------------
+
+Three things changed that your code may be sitting on.
+
+1. update_progress() CHANGED ITS LOG FORMAT.
+
+       before:  [2026-08-31 09:12:09] [info] Progress: 45% - Parsing
+       after:   [2026-08-31 09:12:09] [info] [45%] Parsing
+
+   Nothing throws. If you parse task logs, you get no error - you get zero
+   matches, silently. Find every reader now:
+
+       grep -rn "Progress: " rsx/
+
+   Anything scanning _tasks.logs, or Task::status($id)['logs'], for a progress
+   percentage moves to the new shape. The percent is now the first thing on the
+   line after the level, in square brackets:
+
+       preg_match('/\[(\d+)%\]/', $line, $m)
+
+   Rows written BEFORE this pull keep the old text - they are historical log
+   lines and nothing rewrites them. A reader that must cope with both for a
+   while is your call; the framework only ever writes the new form.
+
+2. rsx/commands/ IS GONE.
+
+   The directory was an empty placeholder and was never the way to add a
+   command; item 3 is. If you have real command classes in rsx/commands/ they
+   were never registered by anything and never ran. Delete the directory:
+
+       rmdir rsx/commands 2>/dev/null || true
+
+   The framework does not recreate it.
+
+3. AN APPLICATION NOW DECLARES ARTISAN COMMANDS ON ITS TASKS.
+
+   Nothing you have breaks - this is a new capability - but it retires the
+   pattern of writing a Laravel command class, which was never workable
+   downstream anyway: all of system/ is framework property and is overwritten by
+   every framework pull, so a command class placed in app/Console/Commands/ is
+   destroyed by the next update.
+
+--------------------------------------------------------------------------------
+CONVERTING A HAND-WRITTEN COMMAND
+--------------------------------------------------------------------------------
+
+If you kept a command class somewhere in system/ (and re-added it after every
+pull, or lost it), move the body into a #[Task] and name it:
+
+    // BEFORE - a Laravel command class, wherever you had been hiding it
+    class Import_Command extends Command
+    {
+        protected $signature = 'myapp:import {--since=}';
+        protected $description = 'Import the nightly vendor feed';
+
+        public function handle()
+        {
+            $this->info('Fetching');
+            ...
+            $this->line("Imported {$rows} rows");
+            return 0;
+        }
+    }
+
+    // AFTER - /rsx/services/import_service.php
+    class Import_Service extends Rsx_Service_Abstract
+    {
+        #[Task('Import the nightly vendor feed')]
+        #[Command('myapp:import', 'Import the nightly vendor feed')]
+        public static function import(Task_Instance $task, array $params = [])
+        {
+            $task->info('Fetching');
+            ...
+            return ['rows' => $rows];
+        }
+    }
+
+`php artisan myapp:import --since=2026-08-01` then works exactly as before, and
+the work is now also dispatchable in the background, schedulable with #[Schedule]
+and pollable through Task::status().
+
+Four things to get right while converting:
+
+  - $this->option('since') becomes $params['since']. Every --key=value option
+    arrives in $params; a bare --flag arrives as true; a JSON value is decoded.
+  - $this->info()/line()/error() become $task->info()/error(). Never echo, never
+    print: the framework decides which stream (and whether) a line is written to.
+  - THE RETURN VALUE IS STDOUT. Return the result as data; the runner prints it
+    as JSON. Do not print it yourself.
+  - A failure is a THROWN exception, not a `return 1`. The runner turns it into
+    the JSON error on stdout and exit 1, with the [error] line on stderr.
+
+The declaration is validated at manifest-build time and fails LOUDLY: the name
+needs a `prefix:` segment, may not begin `rsx:`, may not collide with another
+#[Command] or with a framework command, and the description is required. See
+`rsx:man task_commands` for the message-by-message catalogue.
+
+--------------------------------------------------------------------------------
+WHILE YOU ARE HERE: THE CONSOLE OUTPUT CONTRACT
+--------------------------------------------------------------------------------
+
+rsx:task:run and every #[Command] alias now split their two kinds of output:
+
+    STDOUT  the VALUE - the task's return value as JSON, and nothing else
+    STDERR  the NARRATION - every $task->info()/error()/debug() line, live
+
+    php artisan myapp:import | jq .rows     # value to jq, narration to the terminal
+    php artisan myapp:import 2>/dev/null    # discard the narration
+    php artisan myapp:import -q             # never produce it (the value still prints)
+
+If you had scripts doing `php artisan rsx:task:run ... 2>&1 | jq`, the 2>&1 is
+now wrong - drop it, or use 2>/dev/null. A script that already piped stdout alone
+is unaffected: the JSON on stdout is byte-for-byte what it always was.
+
+Application code is unaffected in the other direction: Task::internal() called
+from a web request or from another task prints nothing to anybody's console, and
+queued/scheduled runs write their log lines to _tasks exactly as before.
+
+--------------------------------------------------------------------------------
+SEE ALSO
+--------------------------------------------------------------------------------
+
+    php artisan rsx:man task_commands
+    php artisan rsx:man tasks
+    skill rspade:task-commands
+    system/app/RSpade/resource/reference_app/services/seeder_service.php  (rsx_app:seed)

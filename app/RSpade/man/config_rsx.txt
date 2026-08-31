@@ -224,15 +224,15 @@ TURNSTILE
 CONTENT SECURITY POLICY
     'csp' => [
         'enabled'            => true,
-        'report_only'        => true,
         'additional_sources' => [],
     ]
 
-    Every dispatched HTML page carries a composed per-realm policy. enabled
-    false emits no header anywhere. report_only true (the default) sends
-    Content-Security-Policy-Report-Only: violations are POSTed to /_csp-report
-    and appended to storage/logs/csp_violations.log, and nothing is blocked -
-    flip it to false to enforce once that log stays clean.
+    Every dispatched HTML page carries a composed per-realm policy, and it
+    ALWAYS ENFORCES: the header is Content-Security-Policy and an undeclared
+    resource is a blocked resource. Every refusal is POSTed to /_csp-report and
+    appended to storage/logs/csp_violations.log, which is the triage tool.
+    enabled false emits no header anywhere - an emergency kill-switch that
+    deletes the protection, not a quiet observe mode.
 
     additional_sources (directive => [sources]) is merged WIDEN-ONLY and exists
     ONLY for TRANSITIVE externals: origins a declared script goes on to fetch
@@ -318,6 +318,23 @@ CONSOLE DEBUG
     enable_get_trace all live in USER config (application preferences).
     Per-mode stripping is driven by RSX_MODE (production strips every
     console_debug() call site). See: php artisan rsx:man console_debug
+
+LOG ROTATION
+    'logging' => [
+        'rotation' => [
+            'enabled' => env('LOGROTATE_ENABLED', false),
+            'days_uncompressed' => env('LOGROTATE_DAYS_UNCOMPRESSED', 3),
+            'days_retention' => env('LOGROTATE_DAYS_RETENTION', 21),
+        ],
+    ]
+
+    RSpade rotates storage/logs itself; no OS logrotate is assumed anywhere.
+    Generations 1..days_uncompressed stay plain, days_uncompressed+1..
+    days_retention are gzipped, older are deleted - so the shipped 3/21 is
+    3 plain days plus 18 compressed. enabled governs the nightly task only;
+    rsx:logrotate runs regardless. .env.dist ships true/3/21, and env-heal
+    appends a missing key to an existing .env on the next development boot.
+    See: php artisan rsx:man logrotate
 
 FILE SUBSYSTEM
     'attachments' => [
@@ -600,6 +617,6 @@ TROUBLESHOOTING
 SEE ALSO
     app_mode, console_debug, dispatch, external_api, login_redirect, portal,
     document_search, tasks, realtime, fpc, email, time, dependencies, locks,
-    turnstile, csp, external_resources
+    turnstile, csp, external_resources, logrotate
 
 CONFIG_RSX(1)                  RSpade Manual                  CONFIG_RSX(1)

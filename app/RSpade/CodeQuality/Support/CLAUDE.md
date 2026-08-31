@@ -53,7 +53,22 @@ Server failure → fatal error (no fallback). Server must start or code quality 
 Before RPC: 900+ Node.js process spawns during manifest build (~30-60s overhead)
 After RPC: Single Node.js process, reused across all sanitizations (~1-2s startup overhead)
 
-### Parallel to JS Parser
+## Comment blanking (no RPC)
+
+Two pure-PHP helpers on `FileSanitizer` for rules whose subject IS a string literal, so
+the string-blanking `sanitize_javascript()` is the wrong tool:
+
+```php
+FileSanitizer::blank_template_comments($content);  // <%-- --%>, {{-- --}}, <!-- -->
+FileSanitizer::blank_js_comments($content);        // // and /* */, quote-aware
+```
+
+Both replace comment bodies with spaces and keep every newline, so line and column
+numbers still address the original file. `blank_js_comments()` tracks quoting, so a `//`
+inside `"https://example.com"` is never read as a comment opener. Used by
+URL-HARDCODE-01; `sanitize()` itself is unchanged, so no other rule's view moves.
+
+## Parallel to JS Parser
 This architecture mirrors the JS parser RPC server pattern. See `/app/RSpade/Core/JsParsers/CLAUDE.md` for detailed RPC pattern documentation.
 
 ## Js_CodeQuality_Rpc - RPC Server Architecture

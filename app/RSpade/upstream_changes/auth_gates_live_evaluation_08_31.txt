@@ -1,0 +1,50 @@
+CATEGORY: 2 - ACTION REQUIRED (delete your Auth_Gates::reset_memo() calls; audit
+          your #[Auth_Check] bodies)
+TITLE: Auth gates evaluate LIVE on every ask - the per-request decision cache and
+       Auth_Gates::reset_memo() are gone
+DATE: 2026-08-31
+
+--------------------------------------------------------------------------------
+WHY YOU ARE READING THIS
+--------------------------------------------------------------------------------
+
+Auth_Gates used to memoize each check's result for the life of the process, keyed
+by realm and check name. The key carried NO IDENTITY, so the moment one process
+served two identities - impersonation, the headless API identity swap behind a
+bearer key, a CLI job looping over users, an in-process test harness - the second
+identity was silently handed the first one's verdict. Wrong, plausible, silent,
+and it reads as a bug in your own Permission class.
+
+The cache is deleted. Every ask now runs the check body.
+
+--------------------------------------------------------------------------------
+1. DELETE YOUR reset_memo() CALLS
+--------------------------------------------------------------------------------
+
+    grep -rn "reset_memo" rsx/
+
+Auth_Gates::reset_memo() no longer exists: a surviving call is a fatal "Call to
+undefined method". Delete the line. There is nothing to replace it with - it only
+ever existed to invalidate the cache that is gone. Any identity fencing AROUND it
+(Session::_set_api_identity() / _reset_api_identity(), impersonation teardown)
+stays exactly as it is: that is about identity, and is still required.
+
+--------------------------------------------------------------------------------
+2. AUDIT YOUR #[Auth_Check] BODIES
+--------------------------------------------------------------------------------
+
+    grep -rn "Auth_Check" rsx/
+
+A check body now runs on EVERY ask - every gated surface, every gate list, every
+inline Permission::can_x(), and every build of the window.rsxapp grants map. Keep
+it to in-memory resolution: a role comparison, a permission-set lookup, an
+environment flag.
+
+If a body queries the database or calls a service on each invocation, hoist that
+work into a model-layer cache with its own explicit invalidation and leave the
+check reading the resolved value. Framework core's worked example: User_Model
+caches a user's supplementary permission rows on the record, and
+User_Permission_Model bumps a per-user cache generation on every grant, deny and
+remove.
+
+Details: php artisan rsx:man auth_gates (EVALUATION IS LIVE).

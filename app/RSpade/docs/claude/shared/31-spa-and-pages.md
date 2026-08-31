@@ -21,7 +21,7 @@ A **layout** extends `Spa_Layout` and its template MUST contain a `$sid="content
 
 **Routing rules**: **only GET and POST** (no PUT/PATCH/DELETE), no resource routes, `:param` path params, signature always `(Request $request, array $params = [])` with both verbs in the SAME method (`$request->is_post()`); file responses use `Response::download()`/`file()`.
 
-**All URLs are generated with `Rsx::Route()` / `Rsx.Route()` — hardcoded URLs are forbidden** and `rsx:check` flags them: `Rsx::Route('Frontend_Controller::view', $id)`, with extra array keys becoming a query string.
+**All URLs are generated with `Rsx::Route()` / `Rsx.Route()` (portal: `Rsx_Portal::Route()` / `Rsx_Portal.Route()`) — hardcoded URLs are forbidden** and `rsx:check` flags them (`URL-HARDCODE-01`, high; an interpolated path counts, and a portal file gets the portal spelling): `Rsx::Route('Frontend_Controller::view', $id)`, with extra array keys becoming a query string.
 
 **Modules and bundles**: scaffold with `rsx:app:module:create` / `:module:feature:create` (SPA by default, `--blade` for the server-rendered ladder) / `:submodule:create` / `rsx:app:component:create`. **One bundle per module**, compiled JIT on web request — never a manual build step.
 

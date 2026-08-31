@@ -431,8 +431,9 @@ AUTH GATES
             }
 
         A marked method must be public static, PARAMETERLESS, declared
-        ': bool', uniquely named within its realm, and cheap (it runs once per
-        page render to build the client export; results memoize per request).
+        ': bool', uniquely named within its realm, and cheap - it is evaluated
+        LIVE on every ask, with nothing cached between asks (auth_gates(7),
+        EVALUATION IS LIVE).
         Marking is what makes it referenceable from #[Auth], exported to
         window.rsxapp.auth, and mirrored as a generated JS
         Permission.can_manage_users().

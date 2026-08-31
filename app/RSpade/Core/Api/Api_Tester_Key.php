@@ -98,15 +98,14 @@ class Api_Tester_Key
      * is the same headless, cookie-less identity Api_Dispatcher establishes for a Bearer
      * call, so the answer is the real one rather than an approximation of it.
      *
-     * Three things make that safe:
+     * Two things make that safe:
      *   - the identity is torn down in a finally, so it never leaks into the rest of the
      *     render no matter how the loop exits;
-     *   - Auth_Gates memoizes per realm|check for the whole request, so the memo is reset on
-     *     the way IN (or the viewer's already-evaluated answers would be reused for the key's
-     *     user) and again on the way OUT (or the key user's answers would leak back to the
-     *     viewer). Missing either reset produces a wrong answer that still looks plausible,
-     *     which is why both are here rather than at the call site;
      *   - it answers a VISIBILITY question only. Nothing downstream trusts this list.
+     *
+     * The identity fence is the WHOLE fence: Auth_Gates evaluates every check live, so the
+     * answers follow whichever identity is installed at the moment of the ask and there is
+     * nothing to invalidate on either side of the swap.
      *
      * The ADOPTED-KEY answer is gates INTERSECTED with the key's own scope rules - see
      * accessible_targets_for_key(), which this delegates to.
@@ -203,9 +202,9 @@ class Api_Tester_Key
      *
      * Split out because the CLI asks it too - rsx:api:openapi scopes its document to a user
      * named by --user, and there is no session there to adopt a key into. The fencing
-     * described above is the whole reason this is ONE implementation rather than two: the
-     * identity swap, and both memo resets around it, are easy to get subtly wrong and the
-     * wrong answer still looks plausible.
+     * described above is the whole reason this is ONE implementation rather than two: an
+     * identity swap that is not torn down is easy to get subtly wrong, and the wrong answer
+     * still looks plausible.
      *
      * @return array<string, bool>
      */
@@ -214,7 +213,6 @@ class Api_Tester_Key
         $targets = [];
 
         Session::_set_api_identity((int) $user->login_user_id, (int) $user->site_id, (int) $user->id);
-        Auth_Gates::reset_memo();
 
         try {
             foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
@@ -224,7 +222,6 @@ class Api_Tester_Key
             }
         } finally {
             Session::_reset_api_identity();
-            Auth_Gates::reset_memo();
         }
 
         return $targets;

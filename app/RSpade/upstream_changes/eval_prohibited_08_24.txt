@@ -18,8 +18,9 @@ Find them now:
 
 This is not a style rule. The Content-Security-Policy the framework emits carries
 no 'unsafe-eval', deliberately, so each of these lines is a CSP violation on every
-page that loads the bundle. If you have been running CSP in report-only mode and
-wondering what was in your log, this is very likely all of it.
+page that loads the bundle - and the policy enforces, so the call does not run.
+If you have been wondering what is filling storage/logs/csp_violations.log, this
+is very likely all of it.
 
 --------------------------------------------------------------------------------
 THE FIX, FOR THE CASE THAT IS ALMOST ALWAYS YOURS

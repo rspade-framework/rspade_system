@@ -902,9 +902,9 @@ DOCS AND TESTER PAGE
     Api_Tester_Key::accessible_targets() establishes the same headless identity
     Api_Dispatcher uses (Session::_set_api_identity), evaluates
     Auth_Gates::can_access per endpoint, and tears the identity down in a
-    finally. Auth_Gates memoizes per realm|check for the whole request, so the
-    memo is reset on the way IN and again on the way OUT - miss either and the
-    filter silently reflects the wrong user while still looking plausible.
+    finally. The identity fence is the whole fence: Auth_Gates evaluates every
+    check live, so the answers follow whichever identity is installed at the
+    moment of the ask and there is nothing to invalidate around the swap.
 
     The adopted key is remembered as an ID in session-scoped storage
     (Session::put_value), which the browser never names and therefore cannot

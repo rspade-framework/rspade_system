@@ -272,6 +272,79 @@ COMMON PATTERNS
         // Generate navigation links
         <a href="<?= Rsx::Route('Dashboard_Index_Controller') ?>">Dashboard</a>
 
+HARDCODED URLS ARE A LINT FAILURE (URL-HARDCODE-01)
+    Every internal URL is generated. `rsx:check` enforces it on href values with
+    URL-HARDCODE-01, severity HIGH, over .jqhtml, .blade.php, .js and .php.
+
+    The rule is DENY BY DEFAULT: an href value whose trimmed text starts with "/"
+    is a violation unless it is one of the allowed forms. It does not ask whether
+    the literal resolves to a known route - the paths that break hardest are
+    exactly the ones that do not resolve at scan time.
+
+    INTERPOLATION IS A POSITIVE SIGNAL. href="/clients/<%= id %>" is flagged
+    harder than href="/clients", not skipped: a constructed path is the job
+    Route() exists to do, and a dot inside an expression is never read as a file
+    extension.
+
+    Allowed (never flagged):
+
+        Form                                        Example
+        ----------------------------------------    ---------------------------------------
+        The whole value is a Route() call           href="<%= Rsx.Route('X_Action') %>"
+                                                    href="<%= Rsx_Portal.Route('P_Action') %>"
+                                                    href="{{ Rsx::Route('X_Controller') }}"
+                                                    href="{{ Rsx_Portal::Route('P_Controller') }}"
+                                                    href="${Rsx.Route('X_Action')}"      (JS)
+        Fragment                                    href="#", href="#section"
+        Absolute or protocol-relative               href="https://...", href="//cdn..."
+        Non-http scheme                             href="mailto:...", href="tel:...",
+                                                    href="javascript:void(0)"
+        Site root                                   href="/"
+        Static asset roots                          /assets/ /css/ /js/ /images/ /img/
+                                                    /fonts/ /storage/
+        Framework service paths                     /_compiled/ /_vendor/ /_download/
+                                                    /_download_zip/ /_inline/ /_thumbnail/
+                                                    /_preview/ /_icon_by_extension/
+                                                    /_upload /_ajax/
+        A file with a known static extension        href="/favicon.ico"
+        (only when the value has no interpolation)
+
+    Flagged (every one of these is a violation):
+
+        href="/contacts"                        a bare internal path
+        href="/contacts/view/<%= row.id %>"     interpolated jqhtml
+        href="/contacts/view/{{ $id }}"         interpolated blade
+        `<a href="/contacts/view/${id}">`       a JS template literal
+        '<a href="/clients/' + id + '">'        JS concatenation
+        $el.attr('href', '/settings')           the attribute set from JS
+        window.location.href = '/dashboard'     a navigation written as a literal
+
+    PORTAL AWARENESS. A file under rsx/portal/ is treated as a portal screen -
+    decided by PATH, not by class analysis - and its suggestion names
+    Rsx_Portal.Route() resolved against the PORTAL route table; everything else
+    gets Rsx.Route() against the staff table. This matters because the portal is
+    browsed under the /_portal/ prefix: Spa.dispatch strips that prefix to MATCH
+    a route but writes the URL to history verbatim, so only Rsx_Portal.Route()
+    puts it back and a bare /messages/3 stays bare. That hole shipped a real
+    navigation bug.
+
+    Where the literal path resolves to a known route, the finding NAMES the
+    destination and carries the parameters through:
+
+        href="/contacts/view/<%= row.id %>"
+        ->  href="<%= Rsx.Route('Contacts_View_Action', {id: row.id}) %>"
+
+    THE EXCEPTION. A literal that is deliberately not a route - a path served by
+    something other than the router - carries the marker on its own line or the
+    line above it, and a rationale is REQUIRED (a bare marker suppresses nothing):
+
+        <a href="/legacy-entry">   <%-- @URL-HARDCODE-01-EXCEPTION - served by the
+                                       legacy mount, not by the router --%>
+
+    A value inside a comment (<%-- --%>, {{-- --}}, <!-- -->, //, /* */, #) never
+    fires: comment bodies are blanked before matching, so an illustrative href in
+    a component doc block is not code.
+
 TROUBLESHOOTING
     Route Not Found:
         - Verify controller exists and has #[Route] attribute
@@ -294,6 +367,7 @@ TROUBLESHOOTING
         - Ensure route pattern matches expected parameters
 
 SEE ALSO
+    portal - Rsx_Portal::Route() and the /_portal/ prefix
     auth_gates - #[Auth] gates on routes, and can_access link visibility
     controller - Controller patterns and route attributes
     bundle_api - Bundle system and JavaScript integration

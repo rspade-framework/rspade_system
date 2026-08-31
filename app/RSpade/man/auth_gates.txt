@@ -159,11 +159,10 @@ DEFINING AN AUTH CHECK
       un-marking an inherited gate would silently change what a surface
       naming it means.
     - CHEAP AND PURE: read resolved state (Session, the resolved permission
-      set, environment facts); never query per call. Every marked check runs
-      once per page render to build the client export, and results are
-      memoized per request - a check executes at most once per request no
-      matter how many surfaces, map-building passes, or inline calls consult
-      it.
+      set, environment facts); never query per call. Every ask runs the body -
+      see EVALUATION IS LIVE - so a body that is expensive is expensive on
+      every surface, every gate list, every inline call and every client
+      export build.
 
     A check may consider ANY user- or environment-scoped fact, not only roles
     and ACLs: whether the account is a trial or an enterprise plan, whether
@@ -258,13 +257,45 @@ HOW THE CHECKS RUN - THE SEAMS
         design; it is the design: the client copy makes the UI truthful, the
         server copies make it safe.
 
+EVALUATION IS LIVE
+    An #[Auth_Check] is evaluated LIVE every time it is asked, with no caching
+    between asks. Every surface a request touches, every gate list, every
+    inline Permission::can_x(), and every build of the client grants map runs
+    the body again.
+
+    That is a deliberate trade, and the reason is identity. A decision cache
+    caches WHAT THE ANSWER WAS; to be correct it would have to be keyed by WHO
+    ASKED, and one process serving two identities is not exotic -
+    impersonation, the headless API identity swap behind a bearer key, a CLI
+    job looping over users, an in-process test harness. An answer that outlives
+    the identity it was computed for is wrong, plausible and completely silent:
+    it reads as a bug in the application's own permission code, which is where
+    the diagnostic time goes. Correctness here is unconditional, and the cost
+    moves to the layer that can invalidate properly.
+
+    THE COST LANDS ON CHECK AUTHORS. Keep the body to in-memory resolution - a
+    role comparison, a permission-set lookup, an environment flag. A check that
+    queries the database, calls a service, or does real work on each invocation
+    is the wrong shape.
+
+    Hoist that work into a MODEL-LAYER CACHE with its own explicit
+    invalidation, and keep the check itself a read of the resolved value. The
+    worked example is in framework core: User_Model caches a user's
+    supplementary permission rows on the record, and User_Permission_Model
+    bumps a per-user cache generation on every grant, deny and remove, so the
+    rows reload exactly when they go stale and never otherwise. The permission
+    set is therefore resolved once and invalidated at the moment it actually
+    becomes stale, while a check reading it stays a handful of array
+    operations that may safely run on every ask.
+
 THE CLIENT AUTH STATE - HOW window.rsxapp IS POPULATED
     At page render, after the session is resolved and alongside the existing
     user payload, the rsxapp assembler:
 
         1. Executes every #[Auth_Check] method registered for the active
-           realm, once each (memoized - inline calls during the same request
-           reuse these results).
+           realm, once each. Like every other ask, these run LIVE; nothing
+           earlier in the request is reused, and nothing here is kept for
+           what comes later.
         2. Ships ONLY the names that returned true:
 
                window.rsxapp.auth = { "is_logged_in": 1,
@@ -336,7 +367,7 @@ CAN_ACCESS - TARGET-DERIVED LINK VISIBILITY
     affordances cannot and should not predict.
 
     Resolution:
-        PHP: gate list from the manifest -> execute (memoized).
+        PHP: gate list from the manifest -> execute (live, every call).
         JS, SPA-action target: gate list from the bundled action metadata
              (the @auth decorators are already in the compiled bundle) ->
              every name present in window.rsxapp.auth?

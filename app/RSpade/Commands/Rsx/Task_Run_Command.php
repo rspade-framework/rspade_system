@@ -8,6 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
+use Symfony\Component\Console\Output\OutputInterface;
 use App\RSpade\Core\Task\Task;
 
 /**
@@ -18,9 +19,13 @@ use App\RSpade\Core\Task\Task;
  * Execute task methods from CLI with JSON output.
  * Designed for background jobs, seeders, maintenance, and automation.
  *
- * OUTPUT MODES:
- * 1. Default: Raw JSON response (just the return value)
- * 2. --debug: Wrapped response with {success, result}
+ * OUTPUT CONTRACT (shared with every #[Command] alias - see rsx:man task_commands):
+ * STDOUT is the VALUE and nothing else: the task's return value as JSON (--debug wraps it
+ * as {success, result}; a failure prints the JSON error and exits 1). It is written at
+ * quiet verbosity so `-q` suppresses the narration without swallowing the result.
+ * STDERR is the NARRATION: every $task->info()/error()/debug() line, live and unbuffered,
+ * formatted exactly as the _tasks.logs lines. `-q`/`--quiet` turns it off, and
+ * `2>/dev/null` discards it - so `php artisan ... | jq` works with no flags at all.
  *
  * USAGE EXAMPLES:
  * php artisan rsx:task:run Service task_name                    # Basic execution
@@ -87,14 +92,37 @@ class Task_Run_Command extends Command
     }
 
     /**
+     * The service this invocation runs.
+     *
+     * An alias registered from a #[Command] attribute overrides this with its fixed
+     * service (see Task_Alias_Command); rsx:task:run reads it from argv.
+     */
+    protected function resolve_service(): string
+    {
+        return (string) $this->argument('service');
+    }
+
+    /**
+     * The task method this invocation runs. See resolve_service().
+     */
+    protected function resolve_task(): string
+    {
+        return (string) $this->argument('task');
+    }
+
+    /**
      * Execute the console command.
      */
     public function handle()
     {
-        // Get command arguments
-        $service = $this->argument('service');
-        $task = $this->argument('task');
+        $service = $this->resolve_service();
+        $task = $this->resolve_task();
         $debug_mode = $this->option('debug');
+
+        // STDERR carries the task's narration, live. The sink is set by the RUNNER and
+        // never by the task system itself: Task::internal() called from application code
+        // prints nothing to anybody's console.
+        $console_sink = $this->output->isQuiet() ? null : STDERR;
 
         // Parse all remaining options as task parameters
         // We need to manually parse from $_SERVER['argv'] because Laravel validates options
@@ -144,7 +172,7 @@ class Task_Run_Command extends Command
 
         try {
             // Execute the task
-            $response = Task::internal($service, $task, $params);
+            $response = Task::internal($service, $task, $params, $console_sink);
 
             // Output response based on mode
             if ($debug_mode) {
@@ -171,7 +199,10 @@ class Task_Run_Command extends Command
     protected function output_json($data): void
     {
         $json = json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-        $this->line($json);
+
+        // VERBOSITY_QUIET here means "print at every verbosity, quiet included". The value
+        // IS the command's primary result: -q silences the narration, never the answer.
+        $this->output->writeln($json, OutputInterface::VERBOSITY_QUIET);
     }
 
     /**

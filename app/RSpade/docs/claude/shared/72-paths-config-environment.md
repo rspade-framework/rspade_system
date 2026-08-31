@@ -6,7 +6,7 @@
 
 Volatile storage lives at **`<project>/storage`**, one level ABOVE the Laravel base path; `storage_path()` follows it automatically. Inside it: `rsx-build/` (build artifacts), `rsx-tmp/` (temp caches), `flock/` (system-lock files), `rsx-framework/` (updater ledger + maintenance flag — deliberately NOT `storage/framework/`, Laravel's own tree).
 
-**Project layout**: `rsx/` is your code (`app/` modules, `models/`, `lib/`, `services/`, `handlers/`, `commands/`, `public/`, `resource/`, `theme/`); `system/` is the framework. **Path-agnostic rules**: ANY directory named **`resource/`** is framework-ignored (exception: `/rsx/resource/config/`); ANY directory named **`public/`** is web-accessible and framework-ignored. **Classes are found by NAME, not path** — no imports, no manual namespaces.
+**Project layout**: `rsx/` is your code (`app/` modules, `models/`, `lib/`, `services/`, `handlers/`, `public/`, `resource/`, `theme/`); `system/` is the framework. **Path-agnostic rules**: ANY directory named **`resource/`** is framework-ignored (exception: `/rsx/resource/config/`); ANY directory named **`public/`** is web-accessible and framework-ignored. **Classes are found by NAME, not path** — no imports, no manual namespaces.
 
 **Config is two-tier**: framework `/system/config/rsx.php` (**never modify**) + user `/rsx/resource/config/rsx.php`, deep-merged. **`system/app/Http/Kernel.php` is framework-OWNED** (hard-synced by every framework update, tamper-gated against local edits) — an app's own HTTP middleware is declared in `config('rsx.middleware')` (append-only: it runs AFTER the framework stack). **Use `env()` ONLY for deployment-specific values** (`DB_PASSWORD`, `REDIS_HOST`); application behavior belongs in a config file, under version control.
 

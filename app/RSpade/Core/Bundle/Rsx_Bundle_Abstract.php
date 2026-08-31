@@ -466,13 +466,6 @@ abstract class Rsx_Bundle_Abstract
         // tags it appends for a declared external resource.
         $rsxapp_data['csp_nonce'] = Rsx_Csp::nonce();
 
-        // Whether the policy only OBSERVES. The dev violation catcher says so when it
-        // explains a violation, so a developer is never told a page was blocked when the
-        // browser merely reported it.
-        $rsxapp_data['csp'] = [
-            'report_only' => Rsx_Csp::is_report_only(),
-        ];
-
         // Add time data for Rsx_Time initialization
         $rsxapp_data['server_time'] = \App\RSpade\Core\Time\Rsx_Time::now_iso();
         $rsxapp_data['user_timezone'] = \App\RSpade\Core\Time\Rsx_Time::get_user_timezone();

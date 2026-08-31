@@ -114,11 +114,19 @@ class Permission extends Permission_Abstract
 - **NO PARAMETERS.** A check answers "may THIS USER use this kind of surface" from identity state alone. This is what makes complete client-side resolution possible: a no-argument check exports as a single boolean. **The moment you want an argument you are writing a record-level check** - it belongs inside the function body.
 - **DECLARED `: bool` RETURN.** The seams treat anything not exactly `true` as deny (null, 0, `''`, a forgotten return all refuse), and the declared type catches the sloppiness statically.
 - **UNIQUE NAME within the realm.** The registry is built over the whole lineage from `Permission_Abstract` down, so an override of a marked ancestor check that OMITS `#[Auth_Check]` is also fatal - silently un-marking an inherited gate would silently change what every surface naming it means.
-- **CHEAP AND PURE.** Read resolved state (Session, the resolved permission set, environment facts); never query per call. Every marked check runs once per page render to build the client export, and results are **memoized per request** - a check executes at most once per request no matter how many surfaces or inline calls consult it.
+- **CHEAP AND PURE.** Read resolved state (Session, the resolved permission set, environment facts); never query per call. See EVALUATION IS LIVE below - the body runs on every ask, so an expensive body is expensive everywhere.
 
 **Built-ins** (on `Permission_Abstract`, marked, inherited by every app): `public` (always true - the explicit open marker) and `is_logged_in`. `Portal_Permission_Abstract` carries the portal realm's equivalents. **Do NOT re-declare an inherited built-in** on your `Permission` class - the registry already resolves it, and an override that forgets the attribute is a build error.
 
 A check may consider ANY user- or environment-scoped fact - trial vs enterprise plan, CLI vs web, debug site. What it may NOT consider is **the specific record being acted on**.
+
+### Evaluation is live
+
+**An `#[Auth_Check]` is evaluated LIVE every time it is asked - nothing is cached between two asks.** Every surface, every gate list, every inline `Permission::can_x()` and every build of the client grants map runs the body again.
+
+The reason is identity. A decision cache caches *what the answer was*; to be correct it would have to be keyed by *who asked* - and one process serving two identities is ordinary (impersonation, the headless API identity swap behind a bearer key, a CLI job looping over users, an in-process test harness). An answer that outlives its identity is wrong, plausible and silent, and reads as a bug in the application's own `Permission` code.
+
+**So the cost lands on you, the check author.** Keep the body to in-memory resolution - a role comparison, a permission-set lookup, an environment flag. A check that queries the database or calls a service on each invocation is the wrong shape: hoist that work into a **model-layer cache with explicit invalidation** and keep the check a read of the resolved value. Worked example in framework core: `User_Model` caches a user's supplementary permission rows on the record, and `User_Permission_Model` bumps a per-user cache generation on every grant/deny/remove, so the rows reload exactly when they go stale.
 
 ### The generated JS twin
 

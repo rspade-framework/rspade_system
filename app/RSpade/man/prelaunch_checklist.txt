@@ -551,107 +551,7 @@ ENTRY 5: PORTAL EXPERIENCE BOUNDARY (the staff facade answering portal questions
 
 --------------------------------------------------------------------------------
 
-ENTRY 6: CONTENT-SECURITY-POLICY ROLLOUT (report-only is a silent state)
-
-    What to audit
-        Whether the application has actually TURNED ON its Content-Security-
-        Policy, and whether every external resource it loads is DECLARED rather
-        than hand-injected.
-
-        RSpade emits a composed per-realm policy on every dispatched HTML page,
-        but it ships as Content-Security-Policy-REPORT-ONLY
-        (config rsx.csp.report_only, default true): the browser evaluates the
-        policy, posts every violation to /_csp-report, and loads the resource
-        anyway. Nothing is blocked. An application that launches in that state
-        has the reporting and NONE of the protection, and nothing anywhere will
-        tell you - no error, no warning, no failed build. That is precisely why
-        this is a checklist entry and not a lint rule.
-
-        FIRST: read `php artisan rsx:man csp` and
-        `php artisan rsx:man external_resources` IN FULL. This audit directs you
-        to them; it does not restate the declaration format or the composed
-        directive set.
-
-    The audit
-        1. Exercise EVERY screen in the application, in BOTH realms, against a
-           build with report_only still true. A violation only appears if a real
-           page load produces it, so this is a walk-the-whole-app pass:
-           dashboards and lists, every form, file upload and document preview,
-           print views, error screens, the login / password-reset / invitation
-           flows, and every third-party widget (payment, maps, chat, analytics,
-           captcha).
-
-        2. Read storage/logs/csp_violations.log. One JSON line per report:
-
-               cat storage/logs/csp_violations.log | jq -r \
-                 '.report | "\(.["effective-directive"]) <- \(.["blocked-uri"])"' \
-                 | sort | uniq -c | sort -rn
-
-        3. Triage every distinct line to one of exactly three fixes (below).
-
-        4. When a FULL pass adds no new lines, set
-           'csp' => ['report_only' => false] in rsx/resource/config/rsx.php,
-           and walk the application once more with it enforcing.
-
-        5. Confirm the header on a live page:
-
-               curl -sI https://your.host/ | grep -i content-security-policy
-
-           It must read Content-Security-Policy, not -Report-Only.
-
-    Triage rules (one correct fix per violation)
-        A resource the PAGE loads itself
-            Declare it in a *.externals.php file beside the feature and load it
-            with Rsx.load_external('<identifier>'). The whitelist derives from
-            the declaration; there is no header to edit.
-
-        An origin a DECLARED script fetches on its OWN (an analytics or
-        tag-manager loader pulling further vendor code)
-            Add it to rsx.csp.additional_sources. That key exists for exactly
-            this transitive case and nothing else.
-
-        An inline <script> in your own markup
-            Move the code into a bundled .js file (with a page guard for a Blade
-            page). Do NOT reach for the nonce - it is for framework-emitted
-            bootstrap markup, and stamping application markup with it defeats
-            the directive that makes script-src worth having.
-
-    ESCALATE, do not self-medicate
-        If triage produces violations naming eval, the Function constructor, or
-        inline styles the framework itself emits, STOP and raise it upstream
-        BEFORE enforcing. Adding 'unsafe-eval' (or a nonce to style-src, which
-        makes browsers ignore 'unsafe-inline' and breaks RSX rendering
-        wholesale) hands back most of what CSP is for, and whether the framework
-        needs such a source is a FRAMEWORK decision, not an application one.
-        Enforcing with a hole in it is worse than enforcing late.
-
-    Dos and don'ts
-        DO   walk every screen before flipping. An unexercised screen reports
-             nothing, and the clean log is then a lie.
-        DO   re-run the audit whenever a third-party widget is added later.
-        DON'T ship with report_only true and call the policy "enabled".
-        DON'T fix a violation by widening additional_sources when the page loads
-             the resource directly - that hides the drift the registry exists to
-             prevent, and the sealed build will not mirror it.
-        DON'T disable the policy (csp.enabled false) to make a violation go
-             away. That is not a fix, it is a deletion of the feature.
-        DON'T assume public #[FPC] pages are covered - the FPC proxy replays a
-             cached body without the header. A public page whose protection
-             matters should not be #[FPC].
-        DO   verify /_csp-report is reachable from the portal too if you serve
-             the portal on a DEDICATED DOMAIN (the collector is routed by the
-             staff dispatcher; the default path-prefix portal is fine).
-
-    Related
-        php artisan rsx:man csp
-        php artisan rsx:man external_resources
-    php artisan rsx:man time
-        upstream_changes/csp_and_external_resources_08_18.txt
-
-
---------------------------------------------------------------------------------
-
-ENTRY 7: DATETIME DISPLAY AND DATETIME-vs-DATE COLUMNS (timezone correctness)
+ENTRY 6: DATETIME DISPLAY AND DATETIME-vs-DATE COLUMNS (timezone correctness)
 
     What to audit
         Two related things, both invisible until the wrong person in the wrong
@@ -848,7 +748,7 @@ ENTRY 7: DATETIME DISPLAY AND DATETIME-vs-DATE COLUMNS (timezone correctness)
 
 --------------------------------------------------------------------------------
 
-ENTRY 8: $required ASTERISKS WITH NO SERVER RULE (form validation completeness)
+ENTRY 7: $required ASTERISKS WITH NO SERVER RULE (form validation completeness)
 
     What to audit
         Whether every $required=true on a <Form_Field> has a real validation rule
@@ -926,7 +826,7 @@ ENTRY 8: $required ASTERISKS WITH NO SERVER RULE (form validation completeness)
 
 --------------------------------------------------------------------------------
 
-ENTRY 9: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and the
+ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and the
          client IP your proxy actually presents)
 
     What to audit

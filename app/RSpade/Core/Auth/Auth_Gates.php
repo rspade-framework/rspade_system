@@ -21,9 +21,16 @@ use App\RSpade\Core\Portal\Rsx_Portal;
  * the portal realm); the dispatch seams call gates_pass().
  *
  * SEMANTICS
- * - A check's result is MEMOIZED per request, per realm: a marked check body runs
- *   at most once no matter how many surfaces, map-building passes, or inline calls
- *   consult it.
+ * - LIVE: a check body runs on EVERY ask. There is no cache between asks, in this
+ *   class or anywhere else in the gate layer. A decision cache here would have to be
+ *   keyed by identity, and the one that used to live here was not: it was keyed by
+ *   realm and check name only, so it silently handed the previous identity's answer
+ *   to the next one the moment a single process served two - which impersonation and
+ *   the API identity swap both do. The answer was wrong, plausible, and silent.
+ *   The cost of evaluating live is pushed onto check AUTHORS instead: a check body
+ *   must be cheap enough to run every time (see DEFINING AN AUTH CHECK in the man
+ *   page), and anything expensive belongs in a model-layer cache that can invalidate
+ *   itself properly.
  * - STRICT: only an exact `true` grants. Anything else (null, 0, '', a forgotten
  *   return) denies - fail-closed.
  * - An UNKNOWN check name THROWS, listing the realm's defined names. A typo must
@@ -37,9 +44,6 @@ class Auth_Gates
     public const REALM_STAFF = Auth_ManifestSupport::REALM_STAFF;
     public const REALM_PORTAL = Auth_ManifestSupport::REALM_PORTAL;
     public const REALM_ANY = Auth_ManifestSupport::REALM_ANY;
-
-    /** @var array<string, bool> Memoized check results keyed "realm|name". */
-    protected static array $_memo = [];
 
     /** @var array|null Test seam: replaces the manifest check registry when set. */
     protected static ?array $_checks_for_testing = null;
@@ -69,7 +73,11 @@ class Auth_Gates
     // =========================================================================
 
     /**
-     * Execute one named check for a realm.
+     * Execute one named check for a realm, LIVE.
+     *
+     * The body runs on every ask - nothing between two asks is cached, so an answer
+     * can never outlive the identity it was computed for. See SEMANTICS above for
+     * why the decision cache that used to sit here was removed rather than keyed.
      *
      * @param string $check_name Name as spelled in #[Auth(...)] / @auth(...)
      * @param string $realm self::REALM_STAFF or self::REALM_PORTAL
@@ -78,12 +86,6 @@ class Auth_Gates
      */
     public static function evaluate(string $check_name, string $realm): bool
     {
-        $memo_key = $realm . '|' . $check_name;
-
-        if (array_key_exists($memo_key, static::$_memo)) {
-            return static::$_memo[$memo_key];
-        }
-
         $checks = static::get_checks($realm);
 
         if (!isset($checks[$check_name])) {
@@ -99,14 +101,8 @@ class Auth_Gates
         $class = $checks[$check_name]['class'];
         $method = $checks[$check_name]['method'];
 
-        $result = $class::$method();
-
         // Strict: anything that is not exactly true denies.
-        $granted = ($result === true);
-
-        static::$_memo[$memo_key] = $granted;
-
-        return $granted;
+        return $class::$method() === true;
     }
 
     /**
@@ -225,10 +221,8 @@ class Auth_Gates
     /**
      * The GRANTS-ONLY check map shipped as window.rsxapp.auth.
      *
-     * Every #[Auth_Check] registered for the realm is evaluated (through the
-     * memoized evaluate(), so a check the page render already consulted at a
-     * dispatch seam does not execute a second time), and only the names that
-     * returned true appear:
+     * Every #[Auth_Check] registered for the realm is evaluated - live, like every
+     * other ask - and only the names that returned true appear:
      *
      *     ['public' => 1, 'is_logged_in' => 1, 'can_view_billing' => 1]
      *
@@ -476,26 +470,15 @@ class Auth_Gates
     {
         static::$_checks_for_testing = $checks;
         static::$_surfaces_for_testing = $surfaces;
-        static::$_memo = [];
     }
 
     /**
-     * Drop memoized results and any installed test index.
+     * Drop any installed test index, restoring manifest-backed resolution.
      */
     public static function _reset_for_testing(): void
     {
-        static::$_memo = [];
         static::$_checks_for_testing = null;
         static::$_surfaces_for_testing = null;
-    }
-
-    /**
-     * Drop memoized results only. The rsxapp assembler and the dispatch seams share
-     * one snapshot per request; this exists for the request-boundary reset.
-     */
-    public static function reset_memo(): void
-    {
-        static::$_memo = [];
     }
 
     // =========================================================================

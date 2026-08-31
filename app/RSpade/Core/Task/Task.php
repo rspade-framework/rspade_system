@@ -35,10 +35,14 @@ class Task
      * @param string $rsx_service Service name (e.g., 'Seeder_Service')
      * @param string $rsx_task Task/method name (e.g., 'seed_clients')
      * @param array $params Parameters to pass to the task
+     * @param resource|null $console_sink RUNNER-ONLY. A writable stream every log line is
+     *        echoed to, live. rsx:task:run and the #[Command] aliases pass STDERR; every
+     *        other caller passes nothing, so a web request or a task calling another task
+     *        prints nothing to anyone's console.
      * @return mixed The response from the task method
      * @throws Exception
      */
-    public static function internal($rsx_service, $rsx_task, $params = [])
+    public static function internal($rsx_service, $rsx_task, $params = [], $console_sink = null)
     {
         // Get manifest to find service
         $manifest = Manifest::get_all();
@@ -106,6 +110,10 @@ class Task
             'default',
             true  // immediate execution
         );
+
+        if ($console_sink !== null) {
+            $task_instance->set_console_sink($console_sink);
+        }
 
         // Mark as started
         $task_instance->mark_started();

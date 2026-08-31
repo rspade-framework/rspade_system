@@ -1,0 +1,174 @@
+LOGROTATE(1)                        RSpade Manual                        LOGROTATE(1)
+
+NAME
+    logrotate - rotate, compress and prune storage/logs, on a nightly schedule and on
+    demand
+
+SYNOPSIS
+    php artisan rsx:logrotate [--directory=<path>] [--days-uncompressed=<n>]
+                              [--days-retention=<n>] [--json]
+
+    Config:  rsx.logging.rotation.{enabled,days_uncompressed,days_retention}
+    Task:    App\RSpade\Core\Logging\Log_Maintenance_Service::rotate
+    Engine:  App\RSpade\Core\Logging\Rsx_Logrotate::rotate()
+
+DESCRIPTION
+    RSpade rotates its own log directory. NOTHING in the framework assumes an OS
+    `logrotate` exists, and nothing should be written that does: the containers this
+    framework ships to carry logrotate CONFIG FILES in /etc/logrotate.d and no logrotate
+    BINARY, so those configs are inert and a log left to itself grows for the life of the
+    container.
+
+    Laravel is not the answer either. Its `daily` channel rotates only the dated files
+    Monolog itself writes - it never compresses, it never prunes anything it did not
+    create, and it never sees storage/logs/csp_violations.log or ide-formatter.log. What
+    the framework needs is retention over the WHOLE directory, which is what this is.
+
+    Three pieces, in one direction:
+
+        Rsx_Logrotate            pure and static; takes a directory and two numbers,
+                                 reports what it did, reads no config
+        Log_Maintenance_Service  the nightly #[Schedule('daily at 12:00am')] task
+        rsx:logrotate            the same rotation on demand
+
+CONFIG
+    rsx.logging.rotation.enabled              env LOGROTATE_ENABLED             (code default false)
+    rsx.logging.rotation.days_uncompressed    env LOGROTATE_DAYS_UNCOMPRESSED   (code default 3)
+    rsx.logging.rotation.days_retention       env LOGROTATE_DAYS_RETENTION      (code default 21)
+
+    The tracked .env.dist ships LOGROTATE_ENABLED=true, LOGROTATE_DAYS_UNCOMPRESSED=3 and
+    LOGROTATE_DAYS_RETENTION=21. Per the env-heal contract, a key MISSING from an existing
+    .env is APPENDED from .env.dist on the next development boot and values are never
+    touched - so an existing install GAINS these three keys, with rotation ON, without
+    anybody editing anything. The code defaults above are the narrower thing that applies
+    when a key is absent from the environment entirely: rotation off until an .env says
+    otherwise.
+
+    `enabled` governs the UNATTENDED sweep only. `rsx:logrotate` runs whether it is true or
+    false - typing the command is its own consent - and prints one [INFO] line saying so
+    when the scheduled sweep is disabled.
+
+    days_retention must be >= days_uncompressed, and both must be positive. An incoherent
+    pair is shouldnt_happen(), not a silent coercion.
+
+THE ROTATION
+    Files matching *.log at the TOP LEVEL of the directory, and nothing else. Never
+    recursive, never another extension. notes.txt, app.log.old and nested/inner.log are all
+    invisible to this.
+
+    Generations are logrotate-style numeric suffixes:
+
+        name.log -> name.log.1 -> name.log.2 -> ... -> name.log.N[.gz]
+
+            1 .. days_uncompressed                     stay PLAIN
+            days_uncompressed+1 .. days_retention      GZIPPED, named .N.gz
+            past days_retention                        DELETED
+
+    With the shipped 3 / 21 that is three plain days you can grep and tail without
+    thinking, eighteen compressed days behind them, and nothing older than three weeks on
+    disk. Because the sweep runs once a day, a generation number IS a day count - which is
+    what the key names mean.
+
+    One pass, in order:
+
+        1. Skip name.log entirely if it is 0 bytes. It has nothing worth a generation, and
+           rotating it would push a real generation one step closer to deletion for
+           nothing.
+        2. Shift every existing generation from the HIGHEST number down, so a rename never
+           lands on an occupied name: .N -> .N+1, and .N.gz -> .N+1.gz.
+        3. Rename name.log to name.log.1 and create an empty name.log with the ORIGINAL
+           FILE'S MODE.
+        4. Gzip every plain generation now numbered above days_uncompressed. The plain file
+           is unlinked only after the .gz exists and is non-empty, so a failed compression
+           costs the .gz and never the log.
+        5. Delete every generation, plain or gz, now numbered above days_retention.
+
+    RENAME-BASED, NOT COPYTRUNCATE, AND THE OPEN-HANDLE NOTE
+        Because step 3 renames rather than truncates, every PER-CALL appender - Monolog
+        opening the file per request, php-fpm, the CSP violation collector - lands in the
+        new file immediately.
+
+        A LONG-LIVED process that is holding an open handle keeps writing into the RENAMED
+        file through its inode until it next reopens. Those lines are not lost; they are
+        one generation early, in name.log.1. This is benign, it is exactly what OS
+        logrotate does without a postrotate reopen, and it is not worth the copytruncate
+        trade - copytruncate loses whatever is written between the copy and the truncate,
+        which is a real hole rather than a cosmetic one.
+
+    FAILURES ARE LOUD
+        A failed rename, a failed gzip, a directory that is not there, or a generation
+        found both plain AND gzipped - each throws naming the path. Nothing is suppressed
+        with @ and nothing is skipped silently except the two documented cases (a missing
+        log, and a 0-byte log).
+
+    THE REPORT
+        rotate() returns an array keyed by log basename:
+
+            'laravel.log' => [
+                'rotated'    => bool,    // false when there was nothing to rotate
+                'skipped'    => ?string, // why, when rotated is false ('empty')
+                'shifted'    => array,   // ['laravel.log.1' => 'laravel.log.2', ...]
+                'compressed' => array,   // names as they were BEFORE .gz was appended
+                'deleted'    => array,   // names removed
+            ]
+
+THE TASK
+    Log_Maintenance_Service::rotate() is FRAMEWORK CORE, not an application service, so
+    every app inherits the sweep with nothing to wire. An unrotated log directory filling a
+    disk is not a per-application decision.
+
+        #[Task('Rotate, compress and prune storage/logs')]
+        #[Exclusive]
+        #[Schedule('daily at 12:00am')]
+
+    Midnight because a generation number is meant to read as a day count: rotating at a
+    fixed daily boundary makes laravel.log.3 mean "three days ago" rather than "three runs
+    ago". #[Exclusive] because a slow run - a very large log being gzipped - overlapping
+    its own next tick would shift generations twice for one day.
+
+    With rotation disabled the task returns silently: the operator turned it off and does
+    not need to be told again every night.
+
+COMMAND
+    php artisan rsx:logrotate
+
+        --directory=<path>          Directory to rotate. Default storage/logs. An ordinary
+                                    documented option, not a --_ internal flag: rotating
+                                    some other log directory is a legitimate thing to want,
+                                    and it is also how the test suite exercises the command
+                                    without the real logs in the blast radius.
+        --days-uncompressed=<n>     Override rsx.logging.rotation.days_uncompressed
+        --days-retention=<n>        Override rsx.logging.rotation.days_retention
+        --json                      Machine-readable payload instead of the summary line
+
+    Silent-success house style - one line:
+
+        [OK] Rotated 4 files (6 compressed, 2 deleted)
+
+    preceded, when the scheduled sweep is disabled, by:
+
+        [INFO] Scheduled rotation is disabled (rsx.logging.rotation.enabled); rotating anyway because you asked.
+
+TROUBLESHOOTING
+    Nothing rotated and the command said 0 files
+        Every *.log in the directory was 0 bytes. That is the documented skip, not a
+        failure.
+
+    A generation exists both plain and gzipped
+        The framework never produces that pair, so somebody put one there by hand. It
+        throws rather than guessing which one is real; delete the wrong one.
+
+    A process is still writing into name.log.1 after a rotation
+        Expected for a long-lived process holding an open handle - see the open-handle note
+        above. It corrects itself the next time that process reopens the file.
+
+    The nightly sweep never runs
+        `php artisan rsx:tasks:list` should show a Log_Maintenance_Service::rotate tracker
+        with a next run at the coming midnight. If there is no row, the scheduler has not
+        reconciled yet - that happens on the next `rsx:task:process` tick, which is the
+        cron entry.
+
+SEE ALSO
+    tasks, config_rsx, csp, storage_directories, health
+
+LOGROTATE(1)                        RSpade Manual                        LOGROTATE(1)

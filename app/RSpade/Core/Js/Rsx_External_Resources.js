@@ -264,13 +264,8 @@ class Rsx_External_Resources {
         const directive = event.effectiveDirective || event.violatedDirective || '(unknown directive)';
         const blocked = event.blockedURI || '(inline)';
 
-        // report_only means the browser REPORTED this and loaded the resource anyway; saying
-        // "blocked" then would send a developer hunting a breakage that did not happen.
-        const report_only = window.rsxapp.csp.report_only;
-        const verb = report_only ? ' reported (not blocked, the policy is report-only) ' : ' blocked ';
-
         console.warn(
-            '[RSX CSP] ' + directive + verb + blocked + '\n'
+            '[RSX CSP] ' + directive + ' blocked ' + blocked + '\n'
             + '  RSpade derives its Content-Security-Policy from DECLARED external resources.\n'
             + '  Declare the resource in a *.externals.php file beside the feature that needs it,\n'
             + "  then load it by identifier with Rsx.load_external('<identifier>').\n"

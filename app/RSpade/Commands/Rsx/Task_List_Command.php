@@ -15,7 +15,8 @@ use App\RSpade\Core\Service\Rsx_Service_Abstract;
  * RSX Task List Command
  * ===================
  *
- * Lists all available tasks organized by service
+ * Lists all available tasks organized by service, with the artisan command each task is
+ * reachable as (its #[Command] name) or '-' when it has none.
  */
 class Task_List_Command extends Command
 {
@@ -40,6 +41,12 @@ class Task_List_Command extends Command
     {
         $manifest = Manifest::get_all();
         $services = [];
+
+        // The baked #[Command] table, re-keyed by the task it names.
+        $commands_by_target = [];
+        foreach (Manifest::get_task_commands() as $command_name => $row) {
+            $commands_by_target[$row['class'] . '::' . $row['method']] = $command_name;
+        }
 
         // Find all services and their tasks
         foreach ($manifest as $file_path => $info) {
@@ -66,15 +73,13 @@ class Task_List_Command extends Command
                     // Look for Task attribute
                     foreach ($method_info['attributes'] as $attr_name => $attr_instances) {
                         if ($attr_name === 'Task' || str_ends_with($attr_name, '\\Task')) {
-                            // Extract description from first attribute instance
-                            $description = '';
-                            if (!empty($attr_instances) && isset($attr_instances[0]['arguments'][0])) {
-                                $description = $attr_instances[0]['arguments'][0];
-                            }
+                            // Positional attribute arguments are stored under integer keys.
+                            $description = $attr_instances[0][0] ?? '';
 
                             $service_tasks[] = [
                                 'name' => $method_name,
-                                'description' => $description
+                                'description' => is_string($description) ? $description : '',
+                                'command' => $commands_by_target[$info['fqcn'] . '::' . $method_name] ?? '-',
                             ];
                         }
                     }
@@ -95,13 +100,17 @@ class Task_List_Command extends Command
         $this->info('Available Tasks:');
         $this->newLine();
 
+        $this->line('    ' . str_pad('TASK', 30) . str_pad('COMMAND', 26) . 'DESCRIPTION');
+        $this->newLine();
+
         foreach ($services as $service_name => $tasks) {
             $this->line("  <fg=cyan>{$service_name}</>");
 
             foreach ($tasks as $task) {
-                $task_name = str_pad($task['name'], 25);
+                $task_name = str_pad($task['name'], 30);
+                $command = str_pad($task['command'], 26);
                 $description = $task['description'] ?: '(no description)';
-                $this->line("    <fg=green>{$task_name}</> - {$description}");
+                $this->line("    <fg=green>{$task_name}</><fg=yellow>{$command}</>{$description}");
             }
 
             $this->newLine();
