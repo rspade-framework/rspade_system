@@ -1,6 +1,9 @@
 API KEY SCOPES ARE NOW BARE PATH PATTERNS
 Date: 2026-09-01
 
+IF YOU DO NOTHING: an API key that carried a Deny rule is left unconverted, is
+    read as malformed, and silently denies EVERY request it used to serve.
+
 SUMMARY
     The API key scope language shipped on 2026-08-30 has been replaced. It was
 
@@ -76,9 +79,11 @@ THE CHANGE
     #[Api_Endpoint] handler from writing - unchanged. Hand out a narrow key by
     naming the paths you mean.
 
-    ITS REPLACEMENT IS A FLAG ON THE KEY, not a scope: read-only API keys ship
-    in the same release (api_read_only_keys_09_01.txt). A key minted read-only
-    may execute GET requests only, whatever its scopes allow.
+    ITS REPLACEMENT IS A FLAG ON THE KEY, not a scope: _api_keys.read_only
+    ships in the same release, arrives by migration defaulting to 0, and is
+    enforced by the dispatcher before the scopes are consulted. A key minted
+    read-only may execute GET requests only, whatever its scopes allow. See
+    `php artisan rsx:man external_api` (READ-ONLY KEYS).
 
 THE FIX
     In /system/ (arrives automatically via the submodule):

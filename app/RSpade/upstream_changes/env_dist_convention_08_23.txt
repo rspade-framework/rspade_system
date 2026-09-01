@@ -3,6 +3,10 @@ TITLE: .env.dist is now a TRACKED, hand-curated file at the project root, and ev
        key in it reaches .env by itself; APP_ENV and APP_DEBUG are no longer read
 DATE: 2026-08-23
 
+IF YOU DO NOTHING: a project with no .env.dist at its root refuses to boot, web
+    and CLI alike, and a deploy step calling `artisan down` silently stops
+    taking the site down.
+
 --------------------------------------------------------------------------------
 WHY YOU ARE READING THIS
 --------------------------------------------------------------------------------

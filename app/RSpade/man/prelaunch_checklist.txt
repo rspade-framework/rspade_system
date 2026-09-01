@@ -827,9 +827,6 @@ ENTRY 7: $required ASTERISKS WITH NO SERVER RULE (form validation completeness)
 
     Related
         php artisan rsx:man form_conventions
-    php artisan rsx:man template_app
-    php artisan rsx:man external_api
-    php artisan rsx:man email
         php artisan rsx:man external_api    (the other caller that sends blanks)
 
 
@@ -1259,6 +1256,69 @@ ENTRY 11: GET ENDPOINTS THAT WRITE (what a read-only API key actually promises)
         rsx/app/api/CLAUDE.md               the template's API surface
 
 
+--------------------------------------------------------------------------------
+
+ENTRY 12: MONEY ARITHMETIC IN A FLOAT (amounts that drift)
+
+    What to audit
+        Every place your application COMPUTES with an amount - price, total,
+        budget, rate, fee, tax, balance, subtotal, discount, salary, cost. The
+        property to verify is that no amount is ever added, multiplied, divided,
+        summed, split or rounded as a PHP float. The supported answer is
+        brick/money, guaranteed present on every install; its API and the rest of
+        the declared standard library live in
+        `php artisan rsx:man standard_library`.
+
+    Why it matters
+        A float cannot hold most decimal amounts. 0.1 + 0.2 is
+        0.30000000000000004 in PHP as in every other language with doubles, and
+        an integer past 2^53 loses its last digits outright. Nothing throws. The
+        error accumulates through a line-item loop and surfaces as an invoice off
+        by a cent nobody can account for - found by a customer, after launch, in
+        data somebody now has to reconcile by hand.
+
+    Guidelines
+        Enumerate the hits, then read every one that touches an amount:
+
+            grep -rn --include="*.php" -e "(float)" -e "floatval(" rsx/
+            grep -rn --include="*.php" "number_format" rsx/
+            grep -rnE --include="*.php" \
+              '\$[a-z_]+->(price|total|amount|budget|rate|fee|tax|balance|subtotal|cost|salary)[^;]*[-+*/]' rsx/
+            grep -rn --include="*.php" -e "->price =" -e "->total =" \
+              -e "->amount =" -e "->budget =" rsx/
+
+        A hit is FINE when the value only TRAVELS - assigned to a column, put in
+        a payload, compared for emptiness. A hit is a BUG when the value is
+        COMPUTED with. Convert those: Money::of($string_or_int, 'USD') for the
+        value, ->plus() / ->multipliedBy() / ->dividedBy() for the arithmetic,
+        an explicit RoundingMode on anything that can produce more scale than the
+        currency has, and ->formatTo($locale) or ->getAmount() for display.
+
+        Read your JavaScript the same way: an amount computed in the browser is
+        the same bug with a shorter fuse.
+
+    Dos and don'ts
+        DO pass a DECIMAL model attribute straight into Money::of(). It arrives
+             as a string; casting it to a float on the way in throws away the
+             precision you came for.
+        DO state the rounding mode explicitly. brick/money THROWS rather than
+             guessing, and that exception is telling you a rounding decision was
+             being made silently before.
+        DO let a mixed-currency addition throw. If that fires in your code, it
+             found a real bug.
+        DON'T keep money on bcmath because the extension is now declared.
+             brick/money needs no extension and carries the currency with the
+             amount.
+        DON'T treat "it has always looked right" as a pass. The failure is
+             fractions of a cent per operation, until it is not.
+
+    Related
+        php artisan rsx:man standard_library   (brick/money, and the rest of the
+                                                guaranteed library)
+        system/app/RSpade/resource/reference_app/lib/formatters.php
+                                               (Formatters::currency)
+
+
 SEE ALSO
     php artisan rsx:man login_redirect
     php artisan rsx:man session
@@ -1274,3 +1334,4 @@ SEE ALSO
     php artisan rsx:man form_conventions
     php artisan rsx:man template_app
     php artisan rsx:man external_api
+    php artisan rsx:man standard_library

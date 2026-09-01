@@ -1,6 +1,11 @@
 ATTACHMENT_THUMBNAIL - THUMBNAILS ARE A COMPONENT NOW, AND OFFICE DOCUMENTS RENDER ASYNCHRONOUSLY
 Date: 2026-08-22
 
+IF YOU DO NOTHING: a thumbnails.renderers entry naming
+    Libreoffice_Thumbnail_Renderer, or a call to
+    Search_Index_Service::index_pending, now names a class that no longer exists
+    and fatals.
+
 SUMMARY
     Two contract changes land together, and they are the same change seen from two
     sides.
@@ -26,8 +31,9 @@ SUMMARY
     referenced Search_Index_Service::index_pending, Libreoffice_Thumbnail_Renderer or
     the libreoffice_thumbnail semaphore.
 
-    The /rsx/ template diff for this change is a SEPARATE document:
-    attachment_thumbnail_template_08_22.txt. This one is the core contract.
+    The converted template is the worked example, and it ships with your
+    release: system/app/RSpade/resource/reference_app/ - every file below can
+    be opened in full rather than reconstructed from this document.
 
 THE CHANGE
     Rendering pipeline

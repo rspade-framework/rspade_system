@@ -1,6 +1,10 @@
 THE INITIAL USER - id 1 by contract, and one event to decorate it
 Date: 2026-08-24
 
+IF YOU DO NOTHING: a migration of yours that seeds rows for user id 1 now runs
+    BEFORE that account exists, so every fresh install and every test baseline
+    is built without those rows.
+
 SUMMARY
     The application's first account is now created by ONE framework function,
     App\RSpade\Core\Env\Rsx_Initial_User::create(), which assigns id 1 to BOTH

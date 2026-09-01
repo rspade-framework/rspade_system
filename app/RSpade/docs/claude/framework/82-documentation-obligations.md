@@ -35,14 +35,14 @@ The rule above governs EVERY change. This mandate is the heavier checklist that 
 2. **The shared fragment(s)** — **write it ONCE**; the downstream view assembles the same file.
 3. **The reference app (`/rsx/`)** — make it demonstrate the new way. **This item ships**: `bin/publish` vendors `/rsx/` into every release at `system/app/RSpade/resource/reference_app/`, where a downstream developer reads it as pristine, release-current ground truth. A feature the reference app does not demonstrate is a silent lie in a file that looks canonical. Never mark a contract change done with this item outstanding.
 4. **The relevant man page(s)** — the full treatment.
-5. **`upstream_changes/*.txt`** — the migration: how to find and convert EXISTING downstream code.
+5. **`upstream_changes/*.txt`** — the migration, **ONLY when the gate is met**: no mandatory `IF YOU DO NOTHING: <one concrete breakage>` line, no document.
 6. **`man/prelaunch_checklist.txt`** — ONLY when the change does not self-correct through a thrown exception or failed build (a silent behavior change), and so needs a human eye.
 
 **Cite the reference app by path.** `system/app/RSpade/resource/reference_app/...` resolves in BOTH environments (here a symlink to `/rsx/`, downstream real files), so a man page, skill or `upstream_changes` document may point at a concrete file and be correct everywhere. RSpade's wiring is implicit, and a worked example settles what prose cannot.
 
 **Keep the audiences separate.** Always-on knowledge describes how to write code with the feature TODAY — audit sweeps, "find your existing call sites" and conversion steps belong in `upstream_changes/`; recurring pre-launch verification belongs in the prelaunch checklist. Mixing migration prose into always-on knowledge bloats what every reader loads on every task.
 
-**An `upstream_changes` document exists ONLY when the end user must MANUALLY act** — it is NOT a changelog, and self-applying behavior (the submodule update, environment updates, migrations) needs no document (owner ruling 2026-08-04). A recurring FRAMEWORK-INTERNAL audit goes instead to `docs.dev/audits/framework_internal_audit_checklist.md`.
+**An `upstream_changes` document exists ONLY when the end user must MANUALLY act or something concrete BREAKS** — proved by its mandatory `IF YOU DO NOTHING:` line, which `bin/publish` enforces. Not a changelog: self-applying behavior, a lint rule, a loud-failing removal and an optional adoption each need no document. A recurring FRAMEWORK-INTERNAL audit goes instead to `docs.dev/audits/framework_internal_audit_checklist.md`.
 
 ### External requests
 

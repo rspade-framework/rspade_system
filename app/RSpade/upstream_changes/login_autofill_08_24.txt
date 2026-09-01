@@ -3,6 +3,9 @@ TITLE: RSPADE_DEBUG_DOMAIN_SUFFIX and Rsx::is_debug_site() are REMOVED; login
        credential auto-fill is now the boolean RSPADE_LOGIN_AUTOFILL
 DATE: 2026-08-24
 
+IF YOU DO NOTHING: any call to the deleted Rsx::is_debug_site() - typically an
+    #[Auth_Check] gating your dev tools - fatals when that line runs.
+
 --------------------------------------------------------------------------------
 WHY YOU ARE READING THIS
 --------------------------------------------------------------------------------

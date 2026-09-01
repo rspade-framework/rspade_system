@@ -3,6 +3,9 @@ TITLE: The global array_first() and array_last() helpers are REMOVED - PHP 8.5 a
        Laravel 13 claim those names; use Arr::first() / Arr::last()
 DATE: 2026-08-24
 
+IF YOU DO NOTHING: every array_first() / array_last() call in your app fatals
+    with "Call to undefined function" the moment that line runs.
+
 --------------------------------------------------------------------------------
 WHY YOU ARE READING THIS
 --------------------------------------------------------------------------------
@@ -46,28 +49,6 @@ wanted the closure back, wrap it: Arr::first($rows, $cb, fn () => $theClosure).
 
 In a Blade template where importing is awkward, the facade root works the same:
 \Illuminate\Support\Arr::first(...).
-
---------------------------------------------------------------------------------
-WHY THEY WERE REMOVED RATHER THAN RENAMED
---------------------------------------------------------------------------------
-
-PHP 8.5 defines array_first() and array_last() as NATIVE functions taking only
-the array. Laravel 13 depends on symfony/polyfill-php85, which defines the same
-two functions on earlier PHP versions.
-
-Composer loads a dependency's autoloaded files BEFORE the root package's, so the
-polyfill wins the race and RSpade's declaration becomes a fatal redeclare at
-boot - the application does not start at all.
-
-Guarding the declaration with function_exists() was considered and rejected. It
-stops the fatal and replaces it with something worse: our callback-taking
-implementation silently becomes the one-argument native version, so every
-array_first($rows, $callback) call fails with an argument error at a line that
-looks correct, far from the cause.
-
-Since the helpers were a verbatim copy of Arr::first()/Arr::last(), keeping a
-renamed duplicate would have meant carrying two spellings of one function
-forever. They are gone instead.
 
 --------------------------------------------------------------------------------
 WHAT IS UNAFFECTED

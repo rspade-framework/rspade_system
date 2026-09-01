@@ -1,6 +1,10 @@
 EMAIL DELIVERY - ONE EMAIL IS ONE CLASS, AND MAIL ACTUALLY SENDS
 Date: 2026-08-31
 
+IF YOU DO NOTHING: every Rsx_Mail::send() / send_to_contact() /
+    send_to_portal_user() call in your app fatals - the methods no longer exist
+    - and that mail is never sent.
+
 SUMMARY
     Outbound email is wired end to end: the queue drain now builds a real MIME
     message and hands it to a real SMTP (or sendmail) transport. Along with it, the

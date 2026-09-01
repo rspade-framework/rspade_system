@@ -4,6 +4,10 @@ TITLE: #[Command] on a #[Task] gives it an artisan command; update_progress() no
        logs "[45%] msg"
 DATE: 2026-08-31
 
+IF YOU DO NOTHING: anything parsing "Progress: N%" out of task logs silently
+    matches nothing (the line is now "[45%] msg"), and a script piping
+    rsx:task:run with 2>&1 feeds narration into its JSON parser.
+
 --------------------------------------------------------------------------------
 WHY YOU ARE READING THIS
 --------------------------------------------------------------------------------

@@ -1,6 +1,11 @@
 TEMPLATE-APP CLAUDE SKILLS: SKILLS WHOSE SUBJECT LIVES IN /rsx/ MOVED INTO /rsx/
 Date: 2026-09-01
 
+IF YOU DO NOTHING: the five skills that moved into the template never reach your
+    fork, and every reference to rspade:modals, rspade:crud-patterns,
+    rspade:forms, rspade:form-input, rspade:scss or rspade:portal names a skill
+    that no longer exists.
+
 SUMMARY
     Six framework skills documented features whose CODE lives in /rsx/ - your
     application's own, forkable code. Downstream those skill files are immutable

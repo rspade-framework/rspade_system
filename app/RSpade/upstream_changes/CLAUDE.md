@@ -1,15 +1,61 @@
 # Upstream Changes Log
 
-## THE GATE (owner ruling 2026-08-04): manual action required, or no document
+## THE GATE: manual action required, or no document
 
-An upstream_changes document exists ONLY when the end user must DO something to their
-environment or their own code BY HAND. It is **NOT a changelog** - "what changed upstream"
-is already carried by the framework-update commit body / `git log -- system/` /
-`framework_update_history.dat`, and self-applying behavior (owned-zone sync, environment
-updates via `system/bin/environment_updates/`, migrations) needs NO document, however large
-the change. Before authoring, ask: *"with this release applied, is there anything left that
-only the downstream developer can do?"* If the honest answer is no - FYIs, precautionary
-backups, and "be aware that..." notes do not count - do not create the document.
+An upstream_changes document exists ONLY when the downstream developer must DO
+something to their environment or their own code BY HAND, or something concrete
+BREAKS if they do not. It is **NOT a changelog** - "what changed upstream" is
+already carried by the framework-update commit body / `git log -- system/` /
+`framework_update_history.dat`, and self-applying behavior (the submodule pull,
+environment updates via `system/bin/environment_updates/`, migrations) needs NO
+document, however large the change.
+
+**A document reporting work the framework already did is noise, and noise trains
+developers to ignore the whole directory.** That cost is paid by the next
+document, the one that actually matters.
+
+### `IF YOU DO NOTHING:` is MANDATORY in every document
+
+Every document carries a line beginning exactly `IF YOU DO NOTHING: ` - at
+column 0, uppercase, with the colon - naming ONE concrete breakage: what fails,
+silently or loudly, if the developer ignores the document. It sits in the
+preamble, after the CATEGORY/TITLE/DATE (or TITLE/Date) header block and before
+the first body section. It need not be line 1.
+
+```
+IF YOU DO NOTHING: three weeks after this release, every file in storage/logs
+    older than 21 days is deleted, permanently and without warning.
+```
+
+**If you cannot write a specific breakage, the document must not exist.** Not a
+vaguer line, not a document without the line - no document. "Your fork could
+adopt this", "be aware that", "we have improved X" are not breakages.
+
+`bin/publish` enforces this: a document with no `IF YOU DO NOTHING:` line
+carrying real content FAILS the publish, by name, before any release work
+begins.
+
+### Worked examples
+
+| Change | Document? | Why |
+|---|---|---|
+| A new framework migration ships | **No** | `migrate` applies it. Nothing left for the developer. |
+| A new environment update script | **No** | `post-update.sh` self-applies it, silently. |
+| Any file under `system/` changed | **No** | ALL of `system/` is overwritten by the pull. |
+| A new or stricter LINT RULE | **No** | `rsx:check` goes red and names the fix. It self-corrects. |
+| An artisan command removed or renamed | **No** | The first call fails loud, naming the command. |
+| A new optional feature or capability | **No** | Nothing existing behaves differently. Adoption is not a breakage. |
+| A performance or behavior change with no contract change | **No** | Nothing downstream is written or invoked differently. |
+| A `/rsx/` template UI improvement | **No** | The fork may adopt it at leisure, or never. |
+| A `/rsx/` TEMPLATE CHANGE | **ONLY** when the fork BREAKS or loses a documented capability without it - never because it COULD adopt something new |
+| A DEFAULT changed silently (old code keeps running, differently) | **Yes** | Nothing fails; only an audit finds it. Also a prelaunch-checklist candidate. |
+| An exposed dependency retired or majored | **Yes** (Category 2) | Must include the adopt/re-record remedy. |
+| A deleted or re-signatured API that call sites depend on | **Yes** | Call sites must be FOUND and converted; a production path nobody exercises locally fatals otherwise. |
+| A data migration leaving rows that need a human decision | **Yes** | Only the developer knows what those rows were meant to mean. |
+
+A borderline case is decided by writing the `IF YOU DO NOTHING:` line first. If
+the line is honest and concrete, write the document; if writing it is a struggle,
+that is the answer.
 
 ## Critical: Understanding the Purpose
 
@@ -47,14 +93,18 @@ coexist - any given document belongs to one category or the other.
 
 ### Category 1: `/rsx/` template diffs
 
-Create a document when **ANY file in `/rsx/` is modified** that users would want
-to replicate into their fork:
-- New features are added to `/rsx/` files
-- Bug fixes are made to `/rsx/` files
-- Patterns or APIs change in `/rsx/` files
+The fork gets nothing automatically here, so when a document IS warranted it
+carries the exact code to copy.
 
-The user gets nothing automatically here (their `/rsx/` is their own fork), so
-the document carries the exact code to copy.
+**But "their `/rsx/` is their own fork" is not by itself a reason to write one.**
+A template change earns a document ONLY when the fork BREAKS without it, or
+loses a capability the framework documents it as having - a template file that
+must change because a framework contract moved underneath it, a template screen
+whose text now describes a language that no longer exists, a template guard the
+absence of which now throws. A template improvement the fork may adopt at
+leisure, or never, gets NO document: it ships in the reference app at
+`system/app/RSpade/resource/reference_app/`, which is where a developer looking
+for the current way finds it.
 
 ### Category 2: `/system/` core behavior / API-contract changes
 
@@ -122,6 +172,8 @@ Pick the structure matching the document's category.
 FEATURE NAME
 Date: YYYY-MM-DD
 
+IF YOU DO NOTHING: <the one concrete thing that fails - mandatory, see THE GATE>
+
 SUMMARY
     Brief description of what changed and why users might want it.
 
@@ -151,6 +203,8 @@ An `AFFECTED FILES: /rsx/...` list makes no sense here - the changed file lives 
 ```
 FEATURE NAME
 Date: YYYY-MM-DD
+
+IF YOU DO NOTHING: <the one concrete thing that fails - mandatory, see THE GATE>
 
 SUMMARY
     Brief description of the core change and who it affects.

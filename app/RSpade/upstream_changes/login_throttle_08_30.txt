@@ -1,6 +1,10 @@
 LOGIN BRUTE-FORCE THROTTLE (framework-enforced) + login_failure_window_minutes REMOVED
 Date: 2026-08-30
 
+IF YOU DO NOTHING: a throttled visitor gets an unhandled-exception page instead
+    of a login error, and an app that overrode login_failure_window_minutes
+    silently falls back to the framework's 15-minute window.
+
 SUMMARY
     The framework now throttles its own authentication surface. Login_Throttle counts
     FAILURES per client IP and locks the address out; RsxAuth::attempt() refuses a

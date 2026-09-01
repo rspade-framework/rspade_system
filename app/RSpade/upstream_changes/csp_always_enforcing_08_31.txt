@@ -1,6 +1,10 @@
 CONTENT-SECURITY-POLICY NOW ALWAYS ENFORCES
 Date: 2026-08-31
 
+IF YOU DO NOTHING: every script, stylesheet, font and frame your pages load
+    without DECLARING it is blocked by the browser the moment this release is
+    deployed.
+
 SUMMARY
     The framework's Content-Security-Policy no longer has an observe-only mode.
     There is one header name, Content-Security-Policy, and it BLOCKS. The
@@ -102,9 +106,16 @@ ACTION REQUIRED
 
          php artisan rsx:check
 
-       JS-EVAL-01 flags eval() and new Function() in bundled JavaScript; the
-       supported replacement is Manifest.get_class_by_name(name). See
-       upstream_changes/eval_prohibited_08_24.txt.
+       JS-EVAL-01 flags eval() and new Function() in bundled JavaScript. The
+       policy carries no 'unsafe-eval', so each of those lines is a blocked
+       call, not merely a lint finding. Nearly every eval() in an RSpade app is
+       resolving a class from its name as a string; the supported replacement
+       is a map lookup that executes nothing:
+
+           const cls = Manifest.get_class_by_name(name);   // the class, or null
+
+       Delete the identifier-guarding regex and the try/catch around it as well
+       - both existed only to make eval() survivable.
 
     4. Note what is NOT covered: an #[FPC] public page's cached HTML is
        replayed by the proxy without the header, so those pages carry no

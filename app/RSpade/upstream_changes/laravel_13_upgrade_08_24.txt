@@ -2,6 +2,10 @@ CATEGORY: 2 - ACTION REQUIRED (PHP 8.3 on your host; audit your own rsx/ code)
 TITLE: The framework moved from Laravel 10 to Laravel 13 (10 -> 11 -> 12 -> 13)
 DATE: 2026-08-24
 
+IF YOU DO NOTHING: on a host below PHP 8.3 the application does not boot at all,
+    and an untyped configure() override in a command of yours fatals every
+    artisan invocation.
+
 --------------------------------------------------------------------------------
 WHAT ARRIVES BY ITSELF
 --------------------------------------------------------------------------------

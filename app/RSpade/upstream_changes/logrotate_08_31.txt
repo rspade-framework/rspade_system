@@ -1,6 +1,9 @@
 LOG ROTATION IS NOW ON BY DEFAULT, AND IT DELETES OLD LOGS
 Date: 2026-08-31
 
+IF YOU DO NOTHING: three weeks after this release, every file in storage/logs
+    older than 21 days is deleted, permanently and without warning.
+
 SUMMARY
     RSpade now rotates storage/logs itself: a nightly framework task shifts each
     *.log to a numbered generation, gzips the ones past the plain band, and

@@ -1,6 +1,10 @@
 RSX_FORM CONTRACT - ONE FORM ENGINE IN FRAMEWORK CORE
 Date: 2026-08-27
 
+IF YOU DO NOTHING: an app carrying its own copy of the old form engine breaks on
+    the first submit, and its inputs that override val() silently never receive
+    a value.
+
 SUMMARY
     The form engine is now framework core and has ONE contract. Rsx_Form,
     Form_Input_Abstract and Form_Errors live in system/app/RSpade/Core/Forms/
