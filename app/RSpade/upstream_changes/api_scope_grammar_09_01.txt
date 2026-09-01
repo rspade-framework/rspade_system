@@ -1,0 +1,329 @@
+API KEY SCOPES ARE NOW BARE PATH PATTERNS
+Date: 2026-09-01
+
+SUMMARY
+    The API key scope language shipped on 2026-08-30 has been replaced. It was
+
+        Grant|Deny METHOD /api/vN/pattern
+
+    with `*` matching one segment, `**` matching the rest, and the most specific
+    matching rule winning. It is now ONE BARE PATH PATTERN PER LINE, and every
+    line is a GRANT:
+
+        /api/v1/contacts/*
+        /api/v1/clients/#/view
+        /api/?/me
+
+    There is no keyword, no HTTP method, no deny form and no `**`.
+
+    THREE THINGS REACH YOU HERE.
+
+    1. A framework MIGRATION rewrites your existing scoped keys in place. Most
+       convert exactly and keep working. A key that carried a `Deny` rule is
+       NOT converted and stops working - deliberately, fail closed. (Section:
+       ACTION REQUIRED, item A.)
+
+    2. Your own scope-creation UI text and your `scope_presets` config describe
+       a language that no longer exists, and your presets will be REFUSED by the
+       validator. (Section: ACTION REQUIRED, items B and D.)
+
+    3. Any code of yours that stores a scope must now catch
+       Api_Scope_Validation_Exception instead of InvalidArgumentException.
+       (Section: ACTION REQUIRED, item C.)
+
+    Full contract: php artisan rsx:man external_api (section KEY SCOPES).
+
+THE CHANGE
+
+    THE GRAMMAR.
+
+      - A scope starts with '/', and its first two segments are 'api' and a
+        VERSION - a 'vN' literal, or '?' or '#'.
+      - '?', '#' and '*' are the ONLY wildcards, and each occupies a WHOLE
+        segment. '/api/v1/foo*', '/api/v1/?_id' and '/api/v1/b#r' are refused.
+      - '?' matches exactly one non-empty segment of any shape.
+      - '#' matches exactly one all-digits segment.
+      - '*' may appear ONLY as the LAST segment, and matches the prefix itself
+        AND everything below it: '/api/v1/files/*' reaches '/api/v1/files',
+        '/api/v1/files/abc' and '/api/v1/files/abc/text'.
+      - Everything else is a literal, compared exactly and case-sensitively.
+      - A trailing slash is meaningless on both sides, and the query string is
+        never part of the match: '/api/v1/clients', '/api/v1/clients/' and
+        '/api/v1/clients?page=2' are one path - and none of them matches
+        '/api/v1/clients/view'.
+
+    WHAT DID NOT CHANGE. NULL or blank scopes is still unrestricted. Any scope
+    still makes the key deny-by-default. Scopes still only SUBTRACT from the
+    holder's live permissions, and the #[Auth] gates still run afterwards. The
+    denial is still 403 insufficient_scope, still logged in _api_request_log.
+
+    WHAT ELSE IS NEW.
+
+      - 'required' in the 403 body is now the matched ROUTE PATTERN
+        ("/api/v1/clients/:id/delete"), not "METHOD /request/path".
+      - A MALFORMED STORED SCOPE is ignored for matching and STILL COUNTS as a
+        registered scope. A key whose scopes cannot be read therefore denies
+        EVERYTHING - it fails closed - and logs one warning per request:
+        "API key #7: ignoring malformed scope '<text>' - <reason>".
+      - Dispatch is documented as ROUTE-ONLY: an API request resolves against
+        declared #[Api_Endpoint] route patterns and nothing else. There is no
+        by-name (Class::method) channel and none may be added, because a scope
+        is a path pattern and a second addressing scheme would bypass it.
+
+    THE READ-ONLY PRESET IS GONE, AND CANNOT COME BACK. A scope carries no HTTP
+    method, so "every GET endpoint" is not expressible. What guarantees a read
+    grant instead is API-GET-PURE-01, the manifest-scan rule that forbids a GET
+    #[Api_Endpoint] handler from writing - unchanged, and now the whole of the
+    read-only story. Hand out a narrow key by naming the paths you mean.
+
+THE FIX
+    In /system/ (arrives automatically via the submodule):
+
+        Core/Api/Api_Scopes.php                  rewritten to the grammar above
+        Core/Api/Api_Scope_Validation_Exception.php   NEW
+        Core/Api/Api_Dispatcher.php              path-only check, route-pattern
+                                                 'required', route-only comment
+        Core/Api/Rsx_Api_Bearer.php              files-subtree clamp
+        Core/Api/Api_Catalog.php                 resolve_for_scopes()
+        Core/Api/Api_Tester_Key.php              reaches_route()
+        Core/Api/Api_Key_Model.php               canonicalize/has_malformed_scopes
+        Commands/Rsx/Api_Key_*.php               --scope
+        database/migrations/2026_09_01_090000_convert_api_key_scopes_to_path_grammar.php
+
+    Api_Scopes::parse(), ::canonicalise() (British spelling), ::specificity()
+    and ::targets_matching() are GONE. The replacements are ::validate(),
+    ::normalize(), ::matches(), ::parse_all(), ::canonicalize(),
+    ::count_scopes(), ::decide($scopes, $path, $key_id = null) and
+    ::reaches_route($scopes, $route_pattern).
+
+ACTION REQUIRED
+
+    A. RE-SCOPE THE KEYS THE MIGRATION COULD NOT CONVERT.
+
+    `php artisan migrate` rewrites _api_keys.scopes for you. A key whose every
+    line was a Grant converts exactly: the keyword and method are dropped, `**`
+    becomes `*`, a lone `*` segment becomes `?`, duplicates collapse. It grants
+    the same paths it always did, for both verbs rather than one - the only
+    direction the conversion can go, and safe because API-GET-PURE-01 already
+    guarantees a GET endpoint does not write.
+
+    A KEY CARRYING ANY `Deny` RULE IS NOT CONVERTED. A Deny is a carve-out: some
+    subset of a broader grant was meant to be unreachable, and the new language
+    cannot say so. Guessing would either widen the key (dropping the Deny - a
+    privilege escalation performed by a migration) or narrow it silently. So the
+    text is LEFT AS IT IS, which under the new grammar is malformed, which means
+    the key DENIES EVERYTHING until somebody re-scopes it deliberately.
+
+    The migration prints the ids:
+
+        [WARNING] 2 key(s) carried a Deny rule and were NOT converted: 7, 12
+
+    For each one: work out what the Deny was carving out, express the remainder
+    as grants, then revoke and re-mint (keys are immutable after creation):
+
+        php artisan rsx:api:key:list --user=<id> --json      # read the old text
+        php artisan rsx:api:key:delete <id> --force          # revoke
+        php artisan rsx:api:key:create --user=<id> --name="..." \
+            --scope="/api/v1/billing/*" --scope="/api/v1/me"
+
+    Example. The old pair
+
+        Grant POST /api/v1/invoices/**
+        Deny  POST /api/v1/invoices/*/void
+
+    has no single-scope equivalent. Name the operations you meant instead:
+
+        /api/v1/invoices
+        /api/v1/invoices/create
+        /api/v1/invoices/#/update
+
+    AUDIT EVERY SCOPED KEY EITHER WAY, converted or not. Run
+    `php artisan rsx:api:key:list --user=<id>` for each user who holds keys and
+    read the Scope column: 'unrestricted', a scope count, or a count carrying
+    '(malformed - denies all)'.
+
+    B. REWRITE YOUR MINT UI's EXPLANATORY TEXT.
+
+    Your /rsx/ is your fork, so nothing there changes on its own, and text
+    describing Grant/Deny/METHOD/`**` is now wrong. The template's version is
+    the worked example, at
+
+        system/app/RSpade/resource/reference_app/app/frontend/settings/
+            api_keys/add_api_key_modal_form.jqhtml
+
+    It replaces the old "Custom rules" field help with a short help line plus a
+    grammar block. Copy it verbatim if your modal is still the template's:
+
+        <Form_Field $label="Custom scopes"
+            $help="One path pattern per line. Each one is a GRANT - there is no way to write a denial, because a key with any scope at all can reach nothing else.">
+            <Text_Input $sid="custom_scopes" $name="scopes" $type="textarea" $rows=4 $max_length=-1
+                $placeholder="/api/v1/tasks/*" />
+        </Form_Field>
+
+        <div class="Add_Api_Key_Modal_Form__grammar">
+            <div class="Add_Api_Key_Modal_Form__grammar_title">How a scope is written</div>
+            <ul>
+                <li>A scope is a path, starting <code>/api/</code> then a version:
+                    <code>/api/v1/clients/42/view</code>.</li>
+                <li><code>?</code> stands for exactly one segment of any kind:
+                    <code>/api/v1/clients/?/view</code>. It is allowed as the version too
+                    (<code>/api/?/clients</code>), for a key that should follow the API
+                    into its next version.</li>
+                <li><code>#</code> stands for exactly one segment of digits:
+                    <code>/api/v1/clients/#/view</code> reaches client 42 and not client
+                    "settings".</li>
+                <li><code>*</code> stands for the rest of the path and may only be the
+                    LAST segment. It covers the prefix itself as well as everything below
+                    it: <code>/api/v1/clients/*</code> reaches
+                    <code>/api/v1/clients</code> and
+                    <code>/api/v1/clients/42/attachments</code> alike.</li>
+                <li>Each wildcard is a WHOLE segment. <code>/api/v1/cli*</code>,
+                    <code>/api/v1/?_id</code> and <code>/api/v1/x#</code> are rejected -
+                    they would look like patterns and match nothing.</li>
+                <li>A trailing slash means nothing on either side, and a query string is
+                    never part of the match: <code>/api/v1/clients</code>,
+                    <code>/api/v1/clients/</code> and
+                    <code>/api/v1/clients?page=2</code> are one and the same path.</li>
+                <li>Everything else is matched literally, letter for letter.</li>
+            </ul>
+            <div class="Add_Api_Key_Modal_Form__grammar_title">How they are applied</div>
+            <ul>
+                <li>Every scope GRANTS. The moment a key has one, everything it does not
+                    name is refused - so there is nothing to write a denial for.</li>
+                <li>A scope never widens the key beyond what your account may do. It can
+                    only take away.</li>
+                <li>A scope that does not follow the rules above is refused here. One that
+                    somehow reaches the key anyway is ignored for matching and STILL
+                    counts, so such a key can call nothing at all.</li>
+            </ul>
+        </div>
+
+    The $sid rename (custom_rules -> custom_scopes) needs the matching line in
+    add_api_key_modal_form.js:
+
+        const custom = str(this.sid('custom_scopes').val()).trim();
+
+    and the SCSS block for the grammar text is in
+    add_api_key_modal_form.scss in the same reference-app directory.
+
+    Two more strings in that module were "rules" and are now "scopes": the
+    Api_Key_Scopes_Modal_Body label ("Rules" -> "Scopes", with its BEM class
+    __rules -> __scopes) and the datagrid's scope_summary ("3 rules" -> "3
+    scopes"). Neither is load-bearing; change them so your UI does not describe
+    a language that is gone.
+
+    C. CATCH THE NEW EXCEPTION WHERE YOU STORE A SCOPE.
+
+    Api_Key_Model::generate() and ::set_scopes() now throw
+    Api_Scope_Validation_Exception (extends RuntimeException) instead of
+    InvalidArgumentException, and its MESSAGE is the human-readable rule that
+    was broken - hand it straight to the form:
+
+        use App\RSpade\Core\Api\Api_Scope_Validation_Exception;
+        use App\RSpade\Core\Api\Api_Scopes;
+
+        try {
+            $scopes = Api_Scopes::canonicalize($text);
+        } catch (Api_Scope_Validation_Exception $e) {
+            return response_form_error($e->getMessage(), ['scopes' => $e->getMessage()]);
+        }
+
+    Find your call sites:
+
+        grep -rn "canonicalise\|Api_Scopes::parse\|targets_matching\|specificity" rsx/
+        grep -rn "InvalidArgumentException" rsx/ | grep -i scope
+
+    Reading a stored value NEVER throws any more, so if you were catching around
+    a read (a preview panel, a listing), drop the try/catch and read
+    Api_Scopes::parse_all($scopes)['malformed'] instead - it returns
+    [scope text => reason] for the lines that could not be understood.
+
+    D. REWRITE YOUR SCOPE PRESETS.
+
+    config('rsx.api.scope_presets') entries carry 'scopes' now, not 'rules', and
+    every value must satisfy the new grammar - the old ones will be REFUSED at
+    mint. The template's block, to copy and edit:
+
+        // rsx/resource/config/rsx.php
+        'scope_presets' => [
+            [
+                'name' => 'Everything in v1',
+                'description' => 'Every endpoint of API version 1, including ones added later.',
+                'scopes' => "/api/v1/*",
+            ],
+            [
+                'name' => 'Any version',
+                'description' => 'Every endpoint of every API version, including versions that do not exist yet.',
+                'scopes' => "/api/?/*",
+            ],
+            [
+                'name' => 'Contacts & clients',
+                'description' => 'Contacts and clients, including their document attachments.',
+                'scopes' => "/api/v1/me\n"
+                    . "/api/v1/contacts/*\n"
+                    . "/api/v1/clients/*",
+            ],
+            [
+                'name' => 'Files',
+                'description' => 'Upload files and read stored file content.',
+                'scopes' => "/api/v1/me\n"
+                    . "/api/v1/files/*",
+            ],
+        ],
+
+    THE 'Read-only' PRESET IS GONE. It was "Grant GET /api/v1/**", and a scope
+    has no method to express it with. Do not try to re-create it; name the read
+    paths you mean, and rely on API-GET-PURE-01 for the guarantee that a GET
+    endpoint does not write.
+
+    If your app reads presets anywhere itself, the array key changed:
+
+        grep -rn "scope_presets" rsx/
+        grep -rn "\['rules'\]" rsx/app/frontend/settings/api_keys/
+
+VERIFICATION
+
+    1. The migration ran and said what it did:
+
+        php artisan migrate
+        # [OK] API key scopes converted to the path grammar: N key(s).
+        # [WARNING] ... carried a Deny rule and were NOT converted: <ids>
+
+    2. Every key's scopes read as bare paths, and none is malformed:
+
+        php artisan rsx:api:key:list --user=1 --all --json | jq -r '.data.keys[].scopes'
+        php artisan rsx:api:key:list --user=1 --all      # Scope column
+
+       A row reading '(malformed - denies all)' is a key from item A.
+
+    3. A scoped key reaches what it names and nothing else:
+
+        KEY=$(php artisan rsx:api:key:temp --user=1 --expires="1 hour" \
+              --scope="/api/v1/me" --json | jq -r .data.key)
+
+        curl -s https://your.host/api/v1/me \
+             -H "Authorization: Bearer $KEY"          # 200
+
+        curl -s https://your.host/api/v1/contacts \
+             -H "Authorization: Bearer $KEY" | jq .
+        # {"error":{"code":"insufficient_scope",
+        #           "message":"This API key is not scoped for this endpoint",
+        #           "required":"/api/v1/contacts"}}
+
+    4. A malformed scope is refused at the door:
+
+        php artisan rsx:api:key:create --user=1 --scope="/api/v1/foo*" --json
+        # {"ok":false,...,"error":{"code":"scopes_invalid",
+        #   "message":"a wildcard must be a whole segment: '/api/v1/foo*'"}}
+
+    5. Your mint modal shows that same message under the scopes field when an
+       operator types a bad scope, and the effective-access panel lists the
+       endpoints a good one reaches.
+
+    6. Every configured preset validates:
+
+        php artisan tinker --execute="
+          foreach (config('rsx.api.scope_presets') as \$p) {
+            \App\RSpade\Core\Api\Api_Scopes::canonicalize(\$p['scopes']);
+            echo \$p['name'], \" OK\n\";
+          }"

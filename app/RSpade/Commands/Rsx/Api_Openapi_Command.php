@@ -35,7 +35,7 @@ use App\RSpade\Core\Api\Rsx_Api_Docs;
  * --compact is for piping into something that does not care.
  *
  * --user and --key both NARROW the document, and --key narrows it further than --user can:
- * gates alone versus gates intersected with that key's scope rules. Generating a client from
+ * gates alone versus gates intersected with that key's scopes. Generating a client from
  * the key-narrowed document means every operation in it is one the key can actually call.
  */
 class Api_Openapi_Command extends Command
@@ -43,7 +43,7 @@ class Api_Openapi_Command extends Command
     protected $signature = 'rsx:api:openapi
                             {--user= : Narrow the document to what this user (id or email) may actually call}
                             {--site= : Site id, to disambiguate an email held in more than one site}
-                            {--key= : Narrow to one API key id - its user\'s gates INTERSECTED with the key\'s own scope rules. Composable with --user, which must then name that key\'s user}
+                            {--key= : Narrow to one API key id - its user\'s gates INTERSECTED with the key\'s own scopes. Composable with --user, which must then name that key\'s user}
                             {--compact : Emit without pretty-printing}';
 
     protected $description = 'Write the OpenAPI 3.1 document to stdout (optionally narrowed to one user or one API key)';
@@ -78,7 +78,7 @@ class Api_Openapi_Command extends Command
      *
      *   (none)          every published endpoint - what a public openapi.json is.
      *   --user          what that identity's #[Auth] gates admit.
-     *   --key           that key's user's gates INTERSECTED with the key's own scope rules,
+     *   --key           that key's user's gates INTERSECTED with the key's own scopes,
      *                   which is the document the holder of that key can actually use.
      *
      * --key IMPLIES ITS USER, so --user is redundant with it - but redundant is not the same

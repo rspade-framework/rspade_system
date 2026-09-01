@@ -36,7 +36,7 @@ a key from elsewhere still works, whoever is holding it.
             <% const scoped = Api_Docs_Catalog.key_scoped(); %>
             <% if (scoped !== null) { %>
                 <span class="Api_Key_Bar__scope <%= scoped ? 'Api_Key_Bar__scope--scoped' : '' %>"
-                      title="<%= scoped ? 'This key carries scope rules that narrow it below its owner\'s authority.' : 'This key carries its owner\'s full authority.' %>"><%= scoped ? 'scoped' : 'unrestricted' %></span>
+                      title="<%= scoped ? 'This key carries scopes that narrow it below its owner\'s authority.' : 'This key carries its owner\'s full authority.' %>"><%= scoped ? 'scoped' : 'unrestricted' %></span>
             <% } %>
             <button type="button" $sid="clear" class="Api_Key_Bar__btn Api_Key_Bar__btn--ghost">Clear</button>
         </div>

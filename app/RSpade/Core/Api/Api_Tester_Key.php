@@ -107,7 +107,7 @@ class Api_Tester_Key
      * answers follow whichever identity is installed at the moment of the ask and there is
      * nothing to invalidate on either side of the swap.
      *
-     * The ADOPTED-KEY answer is gates INTERSECTED with the key's own scope rules - see
+     * The ADOPTED-KEY answer is gates INTERSECTED with the key's own scopes - see
      * accessible_targets_for_key(), which this delegates to.
      *
      * @return array<string, bool>|null
@@ -130,15 +130,15 @@ class Api_Tester_Key
     }
 
     /**
-     * Which targets can ONE KEY reach: its user's gates INTERSECTED with its own scope rules.
+     * Which targets can ONE KEY reach: its user's gates INTERSECTED with its own scopes.
      *
      * The two questions are genuinely different and both have to be asked. #[Auth] answers
      * "may this user use this surface at all"; the key's scopes answer "may this credential,
      * which its holder deliberately narrowed". A console that showed either one alone would
      * lie in one of two ways - listing endpoints a scoped key gets a 403 from, or listing
-     * endpoints the rules permit but the user's permissions do not.
+     * endpoints the scopes permit but the user's permissions do not.
      *
-     * SCOPES SUBTRACT, so this is an intersection and never a union: a rule can only remove
+     * SCOPES SUBTRACT, so this is an intersection and never a union: a scope can only remove
      * a target the gates already admitted. An unrestricted key is exactly its user's answer.
      *
      * @return array<string, bool> 'Class::method' => reachable
@@ -157,14 +157,13 @@ class Api_Tester_Key
             return $targets;
         }
 
-        // Which endpoints the RULES reach, keyed the same way the gate answers are. Every
-        // catalogue row carries both halves Api_Scopes needs (pattern + methods), and one
-        // granted verb is enough for the endpoint to be listed - the console lists
-        // endpoints, not verbs.
+        // Which endpoints the SCOPES reach, keyed the same way the gate answers are. A scope
+        // carries no method, so an endpoint is reached or it is not - there is no per-verb
+        // half-answer for the console to render.
         $granted = [];
 
         foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
-            if (empty(Api_Scopes::targets_matching($key->scopes, [$endpoint]))) {
+            if (!Api_Scopes::reaches_route($key->scopes, (string) $endpoint['pattern'])) {
                 continue;
             }
 
@@ -179,7 +178,7 @@ class Api_Tester_Key
     }
 
     /**
-     * Is the adopted key SCOPED (carrying rules that narrow it below its holder's
+     * Is the adopted key SCOPED (carrying scopes that narrow it below its holder's
      * authority), UNRESTRICTED (false), or is there no adopted key at all (null)?
      *
      * Three-valued because the console distinguishes all three: "no key" is a different

@@ -33,7 +33,7 @@ class Rsx_Api_Bearer
 {
     /**
      * The representative path the file-serving web routes are scope-checked against - one
-     * concrete member of the /api/v1/files/** subtree. See authenticate_web_request().
+     * concrete member of the /api/v1/files subtree. See authenticate_web_request().
      */
     private const FILES_SUBTREE_PROBE = '/api/v1/files/anything';
 
@@ -111,12 +111,12 @@ class Rsx_Api_Bearer
      *     handed whatever an anonymous visitor may see.
      *
      * A SCOPED key is clamped here too, and it must be: these routes serve the very bytes
-     * GET /api/v1/files/{key} describes, on a URL that carries no /api/vN/ path for a rule to
+     * GET /api/v1/files/:key describes, on a URL that carries no /api/vN/ path for a scope to
      * match. Without this check a key scoped away from files would be refused by the API and
      * then handed the same file on /_download - the scope would be advisory. So a scoped key
-     * is evaluated against the synthetic target GET /api/v1/files/{key}: the question asked is
-     * "does any grant reach the files subtree", and the representative single-segment path
-     * below is how decide() is asked it. A key with no such grant gets the same
+     * is evaluated against a SYNTHETIC path inside the files subtree: the question asked is
+     * "does any scope reach the files subtree", and the representative single-segment path
+     * below is how decide() is asked it. A key with no such scope gets the same
      * insufficient_scope 403 the dispatcher returns.
      *
      * The 403 body names no 'required' target, unlike the dispatcher's: the synthetic path is
@@ -138,7 +138,7 @@ class Rsx_Api_Bearer
             return Rsx_Api::error($auth['error'][0], $auth['error'][1], 401);
         }
 
-        if (!Api_Scopes::decide($auth['key']->scopes, 'GET', self::FILES_SUBTREE_PROBE)) {
+        if (!Api_Scopes::decide($auth['key']->scopes, self::FILES_SUBTREE_PROBE, (int) $auth['key']->id)) {
             return Rsx_Api::error(
                 'insufficient_scope',
                 'This API key is not scoped for this endpoint',

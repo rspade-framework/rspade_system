@@ -501,6 +501,11 @@
             "created_at": "2026-08-31T12:28:58+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe create_email_attachments_table"
+        },
+        "2026_09_01_080212_convert_api_key_scopes_to_path_grammar.php": {
+            "created_at": "2026-09-01T08:02:12+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe convert_api_key_scopes_to_path_grammar"
         }
     }
 }

@@ -17,12 +17,12 @@ use App\RSpade\Core\Models\User_Model;
  * - Keys are hashed before storage (plaintext never stored)
  * - Key prefix stored for identification without exposing full key
  * - Keys can be revoked (soft disable) or have expiration dates
- * - A key may be SCOPED below its holder's authority: the scopes column carries
- *   newline-delimited Grant|Deny METHOD path-pattern rules, whose entire meaning lives in
- *   Api_Scopes. NULL means unrestricted; any rule makes the key deny-by-default. Scopes
- *   subtract only - they never grant what the user lacks.
+ * - A key may be SCOPED below its holder's authority: the scopes column carries one bare
+ *   path-pattern grant per line, whose entire meaning lives in Api_Scopes. NULL means
+ *   unrestricted; any scope makes the key deny-by-default. Scopes subtract only - they never
+ *   grant what the user lacks.
  *
- * @see Api_Scopes for the rule language, matching and the decision
+ * @see Api_Scopes for the grammar, matching and the decision
  * @see external_api.txt for full documentation
  *
  * @property int $id
@@ -98,13 +98,13 @@ class Api_Key_Model extends Rsx_System_Model_Abstract
      * @param string $environment 'live' or 'test'
      * @param int|null $user_role_id Optional role override
      * @param \Carbon\Carbon|null $expires_at Optional expiration date
-     * @param string|null $scopes Optional scope rules (see Api_Scopes); null mints an
-     *                            unrestricted key carrying the user's full authority
+     * @param string|null $scopes Optional scopes, one path pattern per line (see Api_Scopes);
+     *                            null mints an unrestricted key carrying the user's full authority
      * @return array{key: string, model: Api_Key_Model} Plaintext key and saved model
      *
-     * @throws \InvalidArgumentException when $scopes carries a malformed rule - the key is
-     *         never minted, because a rule set that cannot be read must not become a
-     *         credential somebody believes is narrow.
+     * @throws Api_Scope_Validation_Exception when $scopes carries a scope that does not
+     *         satisfy the grammar - the key is never minted, because a scope set that cannot
+     *         be read must not become a credential somebody believes is narrow.
      */
     public static function generate(
         int $user_id,
@@ -130,9 +130,9 @@ class Api_Key_Model extends Rsx_System_Model_Abstract
         $model->user_role_id = $user_role_id;
         $model->expires_at = $expires_at;
         $model->is_revoked = false;
-        // Canonicalised before the row is written, so what is stored is what Api_Scopes
-        // reads back - and a malformed rule throws here rather than at first request.
-        $model->scopes = $scopes === null ? null : Api_Scopes::canonicalise($scopes);
+        // Normalized before the row is written, so what is stored is what Api_Scopes reads
+        // back - and a malformed scope throws here rather than at first request.
+        $model->scopes = Api_Scopes::canonicalize($scopes);
         $model->save();
 
         return [
@@ -142,22 +142,35 @@ class Api_Key_Model extends Rsx_System_Model_Abstract
     }
 
     /**
-     * Set this key's scope rules and save.
+     * Set this key's scopes and save.
      *
-     * The text is canonicalised (one `Grant METHOD /path` per line, duplicates collapsed) and
-     * validated first: a malformed rule throws and NOTHING is written. A null or rule-free
-     * text clears the scoping, returning the key to its holder's full authority.
+     * The text is normalized (one path pattern per line, duplicates collapsed) and validated
+     * first: a malformed scope throws and NOTHING is written. A null or empty text clears the
+     * scoping, returning the key to its holder's full authority.
      *
-     * @throws \InvalidArgumentException naming the offending line.
+     * @throws Api_Scope_Validation_Exception naming the offending scope.
      */
     public function set_scopes(?string $scopes): void
     {
-        $this->scopes = $scopes === null ? null : Api_Scopes::canonicalise($scopes);
+        $this->scopes = Api_Scopes::canonicalize($scopes);
         $this->save();
     }
 
     /**
-     * Does this key carry its holder's full authority (no scope rules)?
+     * Does this key carry a scope that does not satisfy the grammar?
+     *
+     * Every write path validates, so the only way to get one is a hand-edited row - and the
+     * key then denies EVERYTHING, because a malformed scope is ignored for matching yet still
+     * counts as a registered scope. Surfaced so an operator can be told which key to re-scope
+     * rather than being left to read a log line.
+     */
+    public function has_malformed_scopes(): bool
+    {
+        return !empty(Api_Scopes::parse_all($this->scopes)['malformed']);
+    }
+
+    /**
+     * Does this key carry its holder's full authority (no scopes)?
      */
     public function is_unrestricted(): bool
     {
@@ -165,17 +178,17 @@ class Api_Key_Model extends Rsx_System_Model_Abstract
     }
 
     /**
-     * This key's parsed scope rules - [] for an unrestricted key.
+     * This key's usable scopes - [] for an unrestricted key.
      *
-     * @return array<int, array{action: string, method: string, pattern: string}>
+     * MALFORMED SCOPES ARE NOT HERE, because they grant nothing. They still narrow the key
+     * (see has_malformed_scopes()), so a caller counting these to decide "is this key
+     * narrowed" is asking the wrong question - is_unrestricted() answers that one.
+     *
+     * @return array<int, string>
      */
     public function get_scope_rules(): array
     {
-        if ($this->scopes === null) {
-            return [];
-        }
-
-        return Api_Scopes::parse($this->scopes);
+        return Api_Scopes::parse_all($this->scopes)['valid'];
     }
 
     /**

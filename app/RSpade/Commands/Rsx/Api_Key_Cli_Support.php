@@ -10,6 +10,7 @@ namespace App\RSpade\Commands\Rsx;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 use App\RSpade\Core\Api\Api_Key_Model;
+use App\RSpade\Core\Api\Api_Scope_Validation_Exception;
 use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -244,26 +245,26 @@ class Api_Key_Cli_Support
     }
 
     /**
-     * The scope rules named by a repeatable --scope, as ONE canonical text - or null when
-     * none was given, which mints a key carrying its holder's full authority.
+     * The scopes named by a repeatable --scope, as ONE canonical text - or null when none was
+     * given, which mints a key carrying its holder's full authority.
      *
-     * REPEATABLE RATHER THAN NEWLINE-EMBEDDED because a rule set is a list, and a list is
+     * REPEATABLE RATHER THAN NEWLINE-EMBEDDED because a scope set is a list, and a list is
      * what a shell can build:
      *
-     *     --scope="Grant GET /api/v1/contacts/**" --scope="Deny POST /api/v1/contacts/**"
+     *     --scope="/api/v1/contacts/*" --scope="/api/v1/clients/#/view"
      *
      * Passing one string with embedded newlines is still accepted (Api_Scopes splits on
-     * them) - a provisioning script that already holds a rule set as text should not have to
+     * them) - a provisioning script that already holds a scope set as text should not have to
      * take it apart to pass it.
      *
      * VALIDATED HERE, BEFORE THE MINT. Api_Key_Model::generate() would refuse a malformed
-     * rule too, but doing it here means the refusal joins the same Api_Cli_Error path every
+     * scope too, but doing it here means the refusal joins the same Api_Cli_Error path every
      * other bad flag takes - one exit code, one JSON error shape - and it happens before
-     * anything is written, so a rejected rule set never leaves a key behind.
+     * anything is written, so a rejected scope set never leaves a key behind.
      *
      * @param array<int, string>|string|null $scope_option the raw --scope value(s)
      *
-     * @throws Api_Cli_Error naming the offending line, when a rule is malformed
+     * @throws Api_Cli_Error naming the offending scope, when one is malformed
      */
     public static function parse_scopes($scope_option): ?string
     {
@@ -276,19 +277,23 @@ class Api_Key_Cli_Support
         }
 
         try {
-            return Api_Scopes::canonicalise($text);
-        } catch (\InvalidArgumentException $e) {
+            return Api_Scopes::canonicalize($text);
+        } catch (Api_Scope_Validation_Exception $e) {
             throw new Api_Cli_Error('scopes_invalid', $e->getMessage());
         }
     }
 
     /**
-     * A key's scoping in one column: 'unrestricted', or how many rules narrow it.
+     * A key's scoping in one column: 'unrestricted', or how many scopes narrow it.
      *
-     * The RULE COUNT rather than the rules themselves, because a list column is not where
-     * anyone reads a rule set - the question a listing answers is "is this key narrowed at
-     * all", and the answer that matters is the difference between none and some. The rules
+     * The SCOPE COUNT rather than the scopes themselves, because a list column is not where
+     * anyone reads a scope set - the question a listing answers is "is this key narrowed at
+     * all", and the answer that matters is the difference between none and some. The scopes
      * are in --json, in full.
+     *
+     * A MALFORMED scope counts, and says so. It grants nothing while still making the key
+     * deny-by-default, so a key that can call nothing must never read as '1 scope' and look
+     * ordinary.
      */
     public static function key_scope_summary(Api_Key_Model $key): string
     {
@@ -296,9 +301,14 @@ class Api_Key_Cli_Support
             return 'unrestricted';
         }
 
-        $count = count($key->get_scope_rules());
+        $count = Api_Scopes::count_scopes($key->scopes);
+        $summary = $count . ' scope' . ($count === 1 ? '' : 's');
 
-        return $count . ' rule' . ($count === 1 ? '' : 's');
+        if ($key->has_malformed_scopes()) {
+            $summary .= ' (malformed - denies all)';
+        }
+
+        return $summary;
     }
 
     /**
@@ -334,9 +344,9 @@ class Api_Key_Cli_Support
             'expires_at' => $key->expires_at ? Rsx_Time::to_iso($key->expires_at) : null,
             'last_used_at' => $key->last_used_at ? Rsx_Time::to_iso($key->last_used_at) : null,
             'created_at' => Rsx_Time::to_iso($key->created_at),
-            // The canonical rule text, or null for a key carrying its holder's full
+            // The canonical scope text, or null for a key carrying its holder's full
             // authority. The full text and not a summary: the consumer is a script, and a
-            // script that has to re-derive the rules from '3 rules' cannot.
+            // script that has to re-derive the scopes from '3 scopes' cannot.
             'scopes' => $key->scopes,
         ];
     }

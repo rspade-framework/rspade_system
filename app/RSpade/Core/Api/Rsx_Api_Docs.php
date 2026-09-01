@@ -121,7 +121,7 @@ class Rsx_Api_Docs
                 'restricted' => $restricted,
                 'key_prefix' => Api_Tester_Key::current_prefix(),
                 // Three-valued: null when no key is adopted, otherwise whether that key
-                // carries scope rules. The console says which, because "everything this
+                // carries scopes. The console says which, because "everything this
                 // key can reach" and "everything its owner can reach" are different
                 // sentences and the reader cannot tell them apart from a listing alone.
                 'key_scoped' => Api_Tester_Key::current_is_scoped(),

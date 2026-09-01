@@ -49,7 +49,7 @@ class Identity_Api_Controller extends Rsx_Api_Controller_Abstract
      *     "prefix": "rsx_live_ab12...",
      *     "expires_at": "2027-01-01T00:00:00.000Z",
      *     "last_used_at": "2026-08-25T14:02:11.418Z",
-     *     "scopes": "Grant GET /api/v1/billing/**"
+     *     "scopes": "/api/v1/billing/*"
      *   }
      * }
      */
@@ -74,11 +74,11 @@ class Identity_Api_Controller extends Rsx_Api_Controller_Abstract
                 'expires_at' => $key ? $key->expires_at : null,
                 'last_used_at' => $key ? $key->last_used_at : null,
 
-                // The key's own scope rules, canonical text, or null when the key carries
-                // its holder's full authority. A client that gets a 403 insufficient_scope
-                // can read here exactly what it IS allowed to call, without an operator
-                // having to describe the key over chat - and it tells nobody anything they
-                // do not already hold, since they sent the key.
+                // The key's own scopes, canonical text, or null when the key carries its
+                // holder's full authority. A client that gets a 403 insufficient_scope can
+                // read here exactly what it IS allowed to call, without an operator having
+                // to describe the key over chat - and it tells nobody anything they do not
+                // already hold, since they sent the key.
                 'scopes' => $key ? $key->scopes : null,
             ],
         ];

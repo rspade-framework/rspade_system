@@ -27,7 +27,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * "Temporary (CLI)" answers both without anyone having to check the expiry column.
  *
  * --scope is accepted here for the same reason it exists on key:create, and matters MORE: a
- * job that needs to read one resource can mint a key that can only read that resource, so a
+ * job that needs one resource can mint a key that can only reach that resource, so a
  * credential leaked out of a log for its remaining fifty minutes leaks that much authority
  * and no more.
  */
@@ -44,7 +44,7 @@ class Api_Key_Temp_Command extends Command
                             {--site= : Site id, to disambiguate an email held in more than one site}
                             {--expires=1 hour : Lifetime as a relative span ("30 minutes", "24 hours") or an ISO datetime}
                             {--environment=live : Key environment: live or test}
-                            {--scope=* : Scope rule ("Grant GET /api/v1/contacts/**"), repeatable. Omit for an unrestricted key}
+                            {--scope=* : Scope path pattern ("/api/v1/contacts/*"), repeatable. Omit for an unrestricted key}
                             {--json : Output as JSON}';
 
     protected $description = 'Mint a short-lived external API key that expires on its own';
@@ -82,8 +82,8 @@ class Api_Key_Temp_Command extends Command
         $this->line('  Expires: ' . Rsx_Time::format_datetime($expires_at->toIso8601String()));
         $this->line('  Scope:   ' . Api_Key_Cli_Support::key_scope_summary($result['model']));
 
-        foreach (preg_split('/\n/', (string) $result['model']->scopes, -1, PREG_SPLIT_NO_EMPTY) as $rule) {
-            $this->line('           ' . $rule);
+        foreach (preg_split('/\n/', (string) $result['model']->scopes, -1, PREG_SPLIT_NO_EMPTY) as $scope) {
+            $this->line('           ' . $scope);
         }
 
         $this->newLine();

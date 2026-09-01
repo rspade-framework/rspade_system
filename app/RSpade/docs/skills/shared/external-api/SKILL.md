@@ -1,6 +1,6 @@
 ---
 name: external-api
-description: "Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, key scopes (Grant|Deny METHOD path rules in _api_keys.scopes), file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version, uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, narrowing a key with scope rules or scope presets (config('rsx.api.scope_presets')), or diagnosing a 401 before route match, a 403 insufficient_scope, an API-GET-PURE-01 manifest-build failure, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument."
+description: "Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, key scopes (bare path patterns in _api_keys.scopes), file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version, uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, narrowing a key with scopes or scope presets (config('rsx.api.scope_presets')), or diagnosing a 401 before route match, a 403 insufficient_scope, an API-GET-PURE-01 manifest-build failure, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument."
 ---
 
 # External API
@@ -74,8 +74,8 @@ Keys are minted and revoked at **Settings > API Keys** (the plaintext key is sho
 **The namespace exists so a SCRIPT can grant itself access to this API and then use it** — an importer or an exporter mints a key, calls `/api/vN` with `Authorization: Bearer <key>` like any other client, and exits. There is no privileged CLI channel into the API: the CLI mints a credential, and the script speaks the same HTTP the outside world speaks.
 
 ```bash
-php artisan rsx:api:key:create --user=<id|email> [--site=] [--name=] [--expires=] [--environment=live|test] [--scope=<rule>]... [--json]
-php artisan rsx:api:key:temp   --user=<id|email> [--site=] [--expires="1 hour"] [--scope=<rule>]... [--json]
+php artisan rsx:api:key:create --user=<id|email> [--site=] [--name=] [--expires=] [--environment=live|test] [--scope=<path>]... [--json]
+php artisan rsx:api:key:temp   --user=<id|email> [--site=] [--expires="1 hour"] [--scope=<path>]... [--json]
 php artisan rsx:api:key:list   --user=<id|email> [--site=] [--all] [--json]
 php artisan rsx:api:key:delete <id> [--purge] [--force] [--json]
 php artisan rsx:api:openapi    [--user=<id|email>] [--site=] [--compact]
@@ -232,34 +232,53 @@ Dev calls must use the `APP_URL` host or loopback; CSRF N/A (no cookie session);
 
 ## Key scopes
 
-A key otherwise carries its holder's **entire** authority. `_api_keys.scopes` narrows one key; `Api_Scopes` (static, pure) is the whole meaning.
+A key otherwise carries its holder's **entire** authority. `_api_keys.scopes` narrows one key; `Api_Scopes` (static, pure) is the whole meaning. **A scope is a bare PATH PATTERN and it is a GRANT** — no keyword, no method, no deny form.
 
 ```
-Grant GET  /api/v1/billing/*
-Grant POST /api/v1/billing/*
-Deny  POST /api/v1/invoices/*/void
+/api/v1/contacts/*
+/api/v1/clients/#/view
+/api/?/me
 ```
 
-- Keyword `Grant`/`Deny`, method `GET`/`POST`, pattern matched against the **full path with `/api/vN/` retained**. `*` = exactly one segment; `**` = zero or more, **last segment only**; a wildcard is a whole segment (`foo*` is refused). Blank lines and `#` comments ignored. A malformed line **throws naming the line**, at save — never at first request.
-- **NULL/blank = unrestricted.** Any rule flips the key to **deny-by-default**, so a preset never writes a blanket Deny.
-- **Specificity decides, not order** (more literals, then fewer wildcards; a **Deny wins any tie**). That is what makes combining two rule sets set union — order-independent, so a mint UI has no ordering to get wrong.
-- **Scopes subtract only**: `effective = the user's LIVE permissions ∩ the rules`. Evaluated per request, never frozen at mint. A rule can never grant what the user lacks.
+- Starts `/api/<version>/…`, where `<version>` is a `vN` literal, `?` or `#`.
+- `?` = one segment of any shape. `#` = one all-digits segment. `*` = **last segment only**, and it covers **the prefix itself plus everything below it** (`/api/v1/files/*` reaches `/api/v1/files`, `/api/v1/files/abc` and `/api/v1/files/abc/text`).
+- **Each wildcard is a WHOLE segment** — `/api/v1/foo*`, `/api/v1/?_id`, `/api/v1/b#r` are validation errors.
+- Literals match **exactly, case-sensitively** (what the router does). **Trailing slash and query string are meaningless on both sides** — `/api/v1/clients`, `/api/v1/clients/` and `/api/v1/clients?page=2` are one path, and none matches `/api/v1/clients/view`.
+- **NULL/blank = unrestricted.** Any scope flips the key to **deny-by-default**, so there is nothing to deny and no way to write a denial. Ticking two presets is set union, order-independent.
+- **The method is not part of a scope.** "Read-only" is not expressible; `API-GET-PURE-01` is what makes a read grant meaningful instead.
+- **A malformed stored scope is IGNORED for matching and STILL COUNTS** — so a key whose only scope is malformed denies everything and **fails closed**, logging `API key #<id>: ignoring malformed scope '<text>' - <reason>` once per request evaluation. Predicate: `$key->has_malformed_scopes()`.
+- **Scopes subtract only**: `effective = the user's LIVE permissions ∩ the scopes`. Evaluated per request, never frozen at mint.
 - Dispatcher order: verb gate → bearer auth → route match → **SCOPE** → param validation → `#[Auth]` gates → controller.
+- **Dispatch is ROUTE-ONLY.** Requests resolve against declared `#[Api_Endpoint]` patterns by path and nothing else; there is deliberately no by-name (`Class::method`) channel and **none may be added** — a scope is a path pattern, so a second addressing scheme would be a scope bypass.
 
-**Two different 403s.** `insufficient_scope` (`{"error":{"code","message","required":"POST /api/v1/x"}}`) means *mint a wider key*; `forbidden` from the gates means *ask your administrator for the permission*. Both are logged in `_api_request_log`. The file-serving web routes (`/_file/`, `/_thumbnail/`, …) clamp a scoped key against the synthetic target `GET /api/v1/files/**` and answer the same 403.
+**Validation is one function, one exception.** `Api_Scopes::validate($scope)` throws `Api_Scope_Validation_Exception` whose message IS the rule that was broken. Every write path runs it and the **first** bad scope refuses the whole set, writing nothing — `generate()`, `set_scopes()`, `--scope`, and your own endpoint:
 
-**`API-GET-PURE-01`** — a GET-only handler's body may not contain `->save(` `->delete(` `->update(` `::create(` `->raw_bulk(` `DB::statement|insert|update|delete(` `Task::dispatch(`; it is a **manifest-build failure**, because "read-only" is only expressible as a GET grant. Escape: `@API-GET-PURE-01-EXCEPTION <rationale>` in the method docblock — **the rationale is required**, a bare tag still fails. Only the handler's own body is scanned; a private helper it calls is not followed.
+```php
+try {
+    $scopes = Api_Scopes::canonicalize($text);
+} catch (Api_Scope_Validation_Exception $e) {
+    return response_form_error($e->getMessage(), ['scopes' => $e->getMessage()]);
+}
+```
 
-**Presets are APP data.** The framework never names a scope. `config('rsx.api.scope_presets')` (`[['name','description','rules'], …]`) is read by the app's key UI and by nothing in core — mirroring how `Auth_Gates` never names a permission.
+**One matcher, in PHP.** `Api_Scopes::matches()` is the only implementation. A preview or a narrowed listing **asks a PHP endpoint** — never a JavaScript twin, which would drift from what the dispatcher does.
+
+**Two different 403s.** `insufficient_scope` (`{"error":{"code","message","required":"/api/v1/clients/:id/delete"}}` — `required` is the matched **route pattern**) means *mint a wider key*; `forbidden` from the gates means *ask your administrator for the permission*. Both are logged in `_api_request_log`. The file-serving web routes (`/_file/`, `/_thumbnail/`, …) clamp a scoped key against a synthetic path in the files subtree and answer the same 403.
+
+**`API-GET-PURE-01`** — a GET-only handler's body may not contain `->save(` `->delete(` `->update(` `::create(` `->raw_bulk(` `DB::statement|insert|update|delete(` `Task::dispatch(`; it is a **manifest-build failure**, because a scope carries no method and a read grant's read-only-ness rests entirely on it. Escape: `@API-GET-PURE-01-EXCEPTION <rationale>` in the method docblock — **the rationale is required**, a bare tag still fails. Only the handler's own body is scanned; a private helper it calls is not followed.
+
+**Presets are APP data.** The framework never names a scope. `config('rsx.api.scope_presets')` (`[['name','description','scopes'], …]`) is read by the app's key UI and by nothing in core — mirroring how `Auth_Gates` never names a permission.
 
 ```php
 Api_Key_Model::generate($user_id, $name, 'live', null, null, $scopes);
 $key->is_unrestricted();  $key->get_scope_rules();  $key->set_scopes($text);
-Api_Scopes::decide($scopes, 'GET', '/api/v1/contacts');   // the dispatcher's question
-Api_Catalog::resolve_for_scopes(1, $scopes);              // pure: takes TEXT, not a key
+$key->has_malformed_scopes();
+Api_Scopes::decide($scopes, '/api/v1/contacts', $key_id);  // the dispatcher's question
+Api_Scopes::reaches_route($scopes, '/api/v1/contacts/:id'); // does it reach an ENDPOINT
+Api_Catalog::resolve_for_scopes(1, $scopes);                // pure: takes TEXT, not a key
 ```
 
-**Keys are immutable after mint** — no edit endpoint anywhere; revoke and re-mint. `GET /api/v1/me` reports `key.scopes`; `rsx:api:key:list` shows a rule count (full text under `--json`); `rsx:api:openapi --key=<id>` narrows the document to gates ∩ that key's rules.
+**Keys are immutable after mint** — no edit endpoint anywhere; revoke and re-mint. `GET /api/v1/me` reports `key.scopes`; `rsx:api:key:list` shows a scope count (full text under `--json`); `rsx:api:openapi --key=<id>` narrows the document to gates ∩ that key's scopes.
 
 ## Config
 

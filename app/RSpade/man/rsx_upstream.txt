@@ -304,4 +304,7 @@ SEE ALSO
     rsx:man class_override              the supported way to change framework code
     rsx:man upstream_changes            mandatory manual migrations
     rsx:man framework_fork              taking ownership of the framework
+    rsx:man framework_debug_and_contrib
+                                        debugging framework core and sending
+                                        a patch upstream
     rsx:man maintenance_mode            the window the update raises

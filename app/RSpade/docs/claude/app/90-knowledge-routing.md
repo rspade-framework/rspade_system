@@ -9,5 +9,6 @@ The framework's instructions (everything imported alongside this file) live unde
 - **App reference docs** → `rsx/resource/man/*.txt` (`rsx:man` serves them; format in that directory's CLAUDE.md). Create one when an app feature has non-obvious details.
 - **App pre-launch audits** → `rsx/resource/audits/prelaunch_checklist.md` (review it AND `rsx:man prelaunch_checklist` before going live).
 - Maintain the `#[Auth_Check]` vocabulary list in your `CLAUDE.md` (see the app-context fragment's mandate).
+- **A defect in `system/` itself** → `rsx:man framework_debug_and_contrib` (the contributor role, the patch + change-request workflow).
 
 `php artisan rsx:man <topic>` is the framework's contract tier; `rsx:man` with no argument lists topics. When a framework instruction seems wrong, it may have been superseded — check `rsx:framework:status` and the update history before working around it, and report it upstream rather than editing `system/`.

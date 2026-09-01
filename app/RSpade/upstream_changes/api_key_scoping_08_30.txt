@@ -1,3 +1,12 @@
+SUPERSEDED IN PART BY api_scope_grammar_09_01.txt (2026-09-01)
+    The scope RULE LANGUAGE this document describes - Grant|Deny METHOD path,
+    `**`, specificity with Deny winning ties - no longer exists. A scope is now
+    one bare path pattern per line, always a grant. Everything else here still
+    stands: the UI module, the presets config, API-GET-PURE-01, and the fact
+    that a NULL-scope key is unaffected. If you have not applied this document
+    yet, apply it and then apply api_scope_grammar_09_01.txt, which carries the
+    replacement text and preset block verbatim.
+
 API KEY SCOPING - SCOPE MANAGEMENT UI, AND THE GET-PURITY RULE
 Date: 2026-08-30
 

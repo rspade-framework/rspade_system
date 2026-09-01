@@ -706,10 +706,11 @@ TESTING
     it one. A test sets it, and clears it in a finally; nothing in the framework or an
     application ever assigns it at runtime.
 
-    A test host is usually a .dev. hostname, so the dev-site recipient gate is live for every
-    send. A test whose subject is not the gate whitelists its domain past it; a test whose
-    subject IS the gate pins the transport host to a non-loopback value, because the gate
-    does not engage on a transport that cannot leave the box.
+    A test host is usually a .dev. hostname, and the dev-site recipient gate engages only in
+    delivery mode 'live'. Under the shipped default ('aiosmtpd') the gate is inert, so a test
+    whose subject IS the gate pins config('rsx.mail.delivery') to 'live' (with a non-loopback
+    host, since nothing is sent) and a test that merely needs a deliverable row leaves the
+    default alone or whitelists its domain.
 
     Asserting a send is asserting the ROW: email_class, category_id, status_id, to_address,
     dev_original_to, rendered_html/rendered_text, headers.

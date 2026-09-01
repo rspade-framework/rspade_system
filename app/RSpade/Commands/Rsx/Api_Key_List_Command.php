@@ -23,8 +23,8 @@ use App\RSpade\Core\Time\Rsx_Time;
  * stop working" is a question that needs the dead keys visible.
  *
  * SCOPE is a column here for the same reason: "why did this key get a 403 from an endpoint
- * its user can reach" is answered by the difference between 'unrestricted' and '3 rules',
- * and nothing else in the listing would say it. The rules themselves are in --json.
+ * its user can reach" is answered by the difference between 'unrestricted' and '3 scopes',
+ * and nothing else in the listing would say it. The scopes themselves are in --json.
  */
 class Api_Key_List_Command extends Command
 {

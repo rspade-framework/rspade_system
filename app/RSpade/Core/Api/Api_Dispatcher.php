@@ -29,9 +29,9 @@ use App\RSpade\Core\Models\User_Model;
  *   2. Bearer authentication FIRST (uniform 401 across the namespace, no route probing) -
  *      establishes a headless, cookie-less Session identity via Session::_set_api_identity();
  *   3. exact-match route resolution over the 'api' routes (unknown -> 404);
- *   4. the KEY's scope rules (Api_Scopes) - a scoped key that does not reach this endpoint
- *      is refused with insufficient_scope 403 BEFORE its params are read, so it learns
- *      nothing about an endpoint it may not call;
+ *   4. the KEY's scopes (Api_Scopes) - a scoped key whose path patterns do not reach this
+ *      endpoint is refused with insufficient_scope 403 BEFORE its params are read, so it
+ *      learns nothing about an endpoint it may not call;
  *   5. declarative param validation against baked #[Api_Param] specs (422 per field);
  *   6. declarative #[Auth] gates (403 forbidden);
  *   7. controller invocation (no auth of its own - the controller trusts this dispatcher);
@@ -121,6 +121,19 @@ class Api_Dispatcher
 
     /**
      * Dispatch an API request. Always returns a Response; never returns null.
+     *
+     * EXTERNAL API REQUESTS RESOLVE ONLY AGAINST DECLARED ROUTE PATTERNS. The one and only
+     * way to reach a handler here is a URL that matches an #[Api_Endpoint] pattern baked into
+     * the manifest, exact-match, by path - see _match_route(). There is deliberately NO
+     * by-name channel: nothing resolves a request by controller class plus action name the way
+     * Rsx::Route('Class::method') addresses a web route or /_ajax/Class/method addresses an
+     * internal Ajax endpoint.
+     *
+     * THAT ABSENCE IS LOAD-BEARING AND MUST NEVER BE FILLED IN. A key's scope is a PATH
+     * PATTERN. A second way to address the same handler would be a URL no scope was written
+     * against, so every scoped key in existence would silently reach every endpoint through
+     * it - a scope bypass, delivered as a convenience feature. If a handler needs to be
+     * reachable, it gets a route.
      */
     public static function dispatch(string $url, string $method = 'GET', array $extra_params = [], ?Request $request = null): Response
     {
@@ -185,13 +198,21 @@ class Api_Dispatcher
         // ("ask your administrator"), and an integrator cannot act on the two the same
         // way. Scopes only ever subtract from the user's live permissions - the gates
         // still run for a key that clears its scope.
-        if (!Api_Scopes::decide($api_key->scopes, $method, $path)) {
+        //
+        // The KEY ID is handed in so a malformed stored scope logs a warning naming the key
+        // it belongs to. Such a scope grants nothing and still counts, so the key denies
+        // everything: it fails closed, loudly enough to be diagnosed.
+        //
+        // 'required' is the matched ROUTE PATTERN, not the request path: it is the thing a
+        // scope would have to reach, and its ':id' tokens say which segments are the caller's
+        // to fill in. A concrete path would read as though only that one URL were grantable.
+        if (!Api_Scopes::decide($api_key->scopes, $path, (int) $api_key->id)) {
             $response = self::_error(
                 'insufficient_scope',
                 'This API key is not scoped for this endpoint',
                 403,
                 null,
-                ['required' => $method . ' ' . $path]
+                ['required' => rtrim($route['pattern'], '/')]
             );
             self::_log($request, $start, $method, $path, $handler, 403, $api_key_id, $user_id, $site_id, $response);
 
@@ -430,7 +451,7 @@ class Api_Dispatcher
      * Build a {"error":{"code","message","fields"?}} JSON response with the given status.
      *
      * $extra merges additional keys INTO the error object - insufficient_scope carries
-     * "required": "POST /api/v1/x", the exact target the caller would need a rule for.
+     * "required": "/api/v1/x/:id", the route pattern the caller would need a scope for.
      */
     private static function _error(
         string $code,

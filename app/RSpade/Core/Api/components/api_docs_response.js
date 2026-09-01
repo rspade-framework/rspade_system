@@ -48,7 +48,8 @@ function api_render_response($target, prefix, status, status_text, ms, pretty) {
     parts.push('<span class="' + prefix + '__timing">' + ms + ' ms</span>');
     parts.push('</div>');
     // An insufficient_scope refusal is the one error whose REMEDY is not in the message.
-    // The body says the key is not scoped for this endpoint; the 'required' field says which
+    // The body says the key is not scoped for this endpoint; the 'required' field names the
+    // route pattern a scope would have to reach
     // rule would have to exist, verbatim in the rule language - so it is lifted out of the
     // JSON rather than left for the reader to find in it.
     const required = api_scope_required(pretty);

@@ -1,0 +1,2545 @@
+FRAMEWORK_DEBUG_AND_CONTRIB(1)   RSpade Manual   FRAMEWORK_DEBUG_AND_CONTRIB(1)
+
+NAME
+    framework_debug_and_contrib - debug framework core, send a patch upstream
+
+    Diagnosing and patching a defect inside system/ from a downstream
+    application, and handing the change to the framework maintainer.
+
+SYNOPSIS
+    # 1. reproduce, with evidence
+    php artisan rsx:debug /the/broken/route --screenshot-path=/tmp/before.png
+    php artisan rsx:ajax Some_Controller some_method --args='{"id":1}'
+
+    # 2. read the subsystem's man pages, then the source under system/
+    php artisan rsx:man dispatch
+    php artisan rsx:man framework_debug_and_contrib
+
+    # 3. patch under system/ (development mode only), verify downstream
+    php artisan rsx:check
+
+    # 4. capture the patch out of the submodule before it is discarded
+    mkdir -p rsx/resource/framework_requests
+    git -C system add -A
+    git -C system diff --cached > \
+        rsx/resource/framework_requests/2026_09_01_thumbnail_preset.patch
+    git -C system reset -q
+
+    # 5. write the change request beside it, hand both to the maintainer
+    $EDITOR rsx/resource/framework_requests/2026_09_01_thumbnail_preset.md
+
+    # 6. when the release lands - the patch is discarded by the pull itself
+    php artisan rsx:framework:pull
+    php artisan rsx:framework:upstream_changes
+    php artisan rsx:framework:status
+
+DESCRIPTION
+    Everything under system/ is framework property. It is a git submodule
+    tracking the framework distribution, it is overwritten in full by every
+    php artisan rsx:framework:pull, and the supported way for an application
+    to change framework behaviour is a CLASS OVERRIDE in rsx/ - never an edit
+    to system/. That rule is not softened anywhere on this page.
+
+    But some defects are not overridable. A bug inside a compiler stage, a
+    dispatcher, the manifest builder or a background worker has no seam an
+    application can reach; the only person who can fix it is the framework
+    maintainer, and the only person who can see it is you. This page describes
+    the narrow, temporary arrangement that closes that gap: the framework
+    maintainer authorises a downstream developer, for the duration of ONE
+    task, to read and patch framework core in place, and to hand the result
+    upstream as a FRAMEWORK CHANGE REQUEST carrying a patch.
+
+    This page equips the reader with the framework author's knowledge so that
+    a defect in system/ can be diagnosed and patched, with the patch handed
+    upstream. It is written for a senior developer, or for an LLM working on
+    their behalf, who already knows the application layer and now needs to
+    understand how the framework itself is put together.
+
+    It is in three parts:
+
+      THE ROLE and THE PROCEDURE - what the authorisation grants, and the
+      exact sequence on both sides of the handoff.
+
+      WHAT IS ALREADY ON YOUR DISK - the framework's own working notes, which
+      ship inside system/ but are not loaded for you, and the short list of
+      things that do not ship at all.
+
+      SUBSYSTEM PRIMERS - one section per framework subsystem, at "how the
+      pieces fit" depth. They are not a replacement for the man pages; they
+      are the orientation that makes the source readable in an afternoon
+      instead of a week.
+
+THE ROLE
+    Being authorised as a framework contributor grants exactly one thing:
+    permission to edit files under system/ for the duration of one task, in
+    DEVELOPMENT mode, on your own machine.
+
+    It grants nothing else. In particular it never grants permission to flip
+    a safety check. IS_FRAMEWORK_DEVELOPER stays as it is. RSX_MODE is not
+    hand-edited. There is no skip-validation flag, no disabling of a code
+    quality rule that is in the way, no bypassing of a guard that refuses an
+    operation. The role is permission to READ and PATCH framework code, not
+    permission to route around the framework's own refusals. If a guard
+    blocks you, that is the finding - report it, do not defeat it.
+
+    The scope rule is the ordinary one, applied harder. Do what the task
+    asks and nothing more. Framework core is shared by every application on
+    every box that will ever take this release; a drive-by rename, a tidy-up
+    of surrounding code or an unrequested refactor inside a patch is noise
+    that the maintainer must review, and it is the reason a patch gets sent
+    back. One defect, one root cause, one minimal change.
+
+    Two consequences of the mode restriction, both structural:
+
+      A sealed build (debug or production) refuses writes under the build
+      output tree and never rebuilds from source, so a patch you make there
+      changes nothing that is served. Diagnose and patch in development.
+
+      Your framework tests do not exist on this disk. The framework's own
+      test suite is stripped from every release (see WHAT IS ALREADY ON YOUR
+      DISK). The maintainer runs it against your patch; your job is to state
+      in the request exactly what you verified and how.
+
+    You are not being asked to become the framework's maintainer. You are
+    being asked to produce a diagnosis good enough that the maintainer can
+    accept, test and ship the fix without re-deriving it.
+
+THE PROCEDURE
+    Steps 1 through 9 are yours. THE UPSTREAM SIDE is informational: knowing
+    what happens to the patch is what makes the request document's shape
+    obvious.
+
+  1. Reproduce and localise
+    A change request without a reproducer cannot be accepted, because there
+    is nothing to test the fix against. Reduce the symptom to the smallest
+    thing you can state:
+
+        php artisan rsx:debug /the/broken/route
+        php artisan rsx:debug /the/broken/route --user=<id|email>
+        php artisan rsx:debug /portal/screen --portal --portal-user=<id|email>
+        php artisan rsx:ajax Some_Controller some_method --args='{"id":1}'
+        php artisan rsx:task:run Some_Service some_method
+
+    Add console_debug('CHANNEL', ...) probes either side of the seam you
+    suspect and set CONSOLE_DEBUG_FILTER to that channel. Read
+    storage/logs/. Then CONFIRM THE FAILURE IS IN system/ AND NOT IN YOUR OWN
+    CALL SITE: the overwhelming majority of "framework bugs" are an
+    application contract violated one frame up the stack, and the framework's
+    error messages usually say which. Keep the reproducer - it goes verbatim
+    into the request.
+
+  2. Read the subsystem's man pages before opening the source
+    THE MAN PAGES ARE THE MOST ACCURATE ACCOUNT OF THE INTERNALS THAT SHIPS.
+    They are the contract tier, maintained as part of every change that moves
+    observable behaviour, and they routinely answer in a paragraph what costs
+    an hour of reading source. Read the pages, then this page's primer, then
+    the code. The trap this ordering avoids: what looks like a bug is
+    frequently a documented refusal - the framework fails loud on purpose in
+    a great many places.
+
+  3. Patch under system/
+    Development mode only. Edit in place; there is no build step and no
+    bundle to rebuild, because a manifest or bundle change is live on the
+    next request.
+
+    Do not commit the application while system/ is dirty - not because it is
+    dangerous but because it accomplishes nothing. The application repository
+    records the submodule as a GITLINK: one commit SHA naming which framework
+    revision this checkout uses. Uncommitted edits inside system/ change no
+    SHA, so they can never be staged into an application commit and can never
+    be recovered from its history. THE PATCH FILE FROM STEP 5 IS THE ONLY
+    DURABLE COPY OF YOUR WORK.
+
+    Never patch system/vendor/ or system/node_modules/. Both are framework
+    managed and committed upstream; a change there is a dependency decision,
+    not a code fix. Report the need instead.
+
+  4. Verify downstream
+    The reproducer must pass. Then run php artisan rsx:check - but know what
+    it does and does not cover: DOWNSTREAM THE CHECKER SKIPS FRAMEWORK FILES
+    ENTIRELY, so it proves your own code is still clean and says nothing
+    about your patch. The automated gate that DOES cover framework source is
+    the set of manifest-time rules, which fire on the next build in
+    development. See primer 12.
+
+    Exercise the neighbouring paths by hand: a framework function usually has
+    more callers than the one you were looking at, and you cannot grep for
+    the ones living in other applications. Record what you did - the
+    framework's own test suite is not on this disk, so your verification
+    narrative is the only evidence that travels with the patch.
+
+  5. Capture the patch
+    CAPTURE BEFORE YOU PULL ANYTHING. The next pull destroys the working tree
+    without asking (step 8).
+
+        mkdir -p rsx/resource/framework_requests
+        git -C system add -A
+        git -C system diff --cached > \
+            rsx/resource/framework_requests/<YYYY_MM_DD>_<slug>.patch
+        git -C system reset -q
+
+    The staging round trip is what makes NEW FILES appear in the diff: git
+    diff alone shows only tracked modified content, and a patch that silently
+    drops a new class is worse than no patch. The reset leaves the index as
+    it was, with your edits still in the working tree.
+
+    Read the patch before handing it over. Line-ending churn, an editor's
+    reformat of an untouched function, or a stray vendor path all mean the
+    capture was wrong.
+
+  6. Write the request document
+    Beside the patch, same basename, .md. Shape and example below.
+
+  7. Hand both files to the framework maintainer
+    They are yours to keep or delete afterwards; the maintainer archives
+    their own copy.
+
+  8. When you are told the release is out
+    THE PULL DISCARDS YOUR PATCH, DELIBERATELY AND WITHOUT REPORTING IT. The
+    updater runs git reset --hard inside the submodule, then git clean -fdx,
+    then checks out the upstream tip. No prompt, no check, no summary of what
+    was thrown away - because from the updater's point of view a modification
+    inside a checkout of somebody else's repository is drift, not work. That
+    is correct, and it is why step 5 exists.
+
+        php artisan rsx:framework:pull
+        php artisan rsx:framework:upstream_changes
+        php artisan rsx:framework:upstream_changes:show <name>
+        php artisan rsx:framework:upstream_changes:mark <name> --fulfilled
+        php artisan rsx:framework:status
+
+    Apply any upstream_changes documents the pull reports - those are the
+    manual migrations that do not self-apply - then re-run your reproducer
+    against the shipped fix. It is not unusual for the maintainer to have
+    solved the problem differently or more broadly: VERIFY THE BEHAVIOUR, NOT
+    THE DIFF. Note also that the pull rebuilds and raises a maintenance
+    window even when the framework was already up to date.
+
+  9. Only now, commit the application work
+    With system/ clean and back on a released revision, the application
+    commit means what it says. The pull has already committed the new
+    submodule pointer itself.
+
+  THE UPSTREAM SIDE (informational)
+    The maintainer applies your patch inside the framework monorepo, where
+    system/ is authored source rather than a checkout:
+
+        git apply --directory=system <your-file>.patch
+
+    Then: review against the framework's house rules, write the FRAMEWORK
+    TEST that pins the behaviour, update every documentation tier the change
+    moved, author an upstream_changes document if downstream code must now be
+    written or invoked differently, and publish a release.
+
+    Two things follow for you. The maintainer needs to know which man page
+    currently states the OLD behaviour - you have just read those pages and
+    they have not. And if your change alters a downstream-visible contract,
+    SAY SO PLAINLY: they write the migration document, but only if they know
+    one is needed.
+
+  WHAT CAN GO WRONG
+    The fix is really a class override. If the behaviour can be changed by
+    replacing a class in rsx/ under the same name, that is the supported
+    answer, it survives every update, and it needs no request at all. Check
+    rsx:man class_override BEFORE writing a patch.
+
+    The patch touches vendor/ or node_modules/. Framework managed; see step 3.
+
+    You are in a sealed build. debug and production are compiled once and
+    immutable: source edits change nothing that is served, and the build tree
+    refuses writes. Reproduce on a development box.
+
+    You pulled before capturing. The work is gone - the reset is
+    unconditional and the working tree is backed up nowhere.
+
+    You "fixed" a guard instead of the defect. Disabling a check, widening a
+    permission, adding a fallback around a loud failure, or removing a rule
+    that flagged your patch are all FINDINGS TO REPORT, never patches to send.
+
+THE FRAMEWORK CHANGE REQUEST
+    Two files, same basename, in rsx/resource/framework_requests/:
+
+        2026_09_01_thumbnail_preset.patch
+        2026_09_01_thumbnail_preset.md
+
+    The date is absolute, always - a request that says "last week" is
+    unreadable by the time it is triaged. The slug names the defect, not the
+    file you changed.
+
+    The document is Markdown with nine parts. Keep it short: the patch
+    carries the code, the document carries the reasoning the patch cannot.
+
+        Title       The defect as an assertion, one line, symbol or config
+                    key backticked. The sentence a maintainer could paste
+                    into a commit body.
+        Severity    Your grade with a parenthetical justifying it. What is
+                    unavailable, to whom, and whether there is a workaround.
+        Symptom     The exact error text, route, command or invocation.
+                    VERBATIM, stack frame included. Never paraphrase an
+                    error message.
+        Evidence    Paths and line numbers inside system/, one per line,
+                    each with a few words on what that line does. This is
+                    the section that makes a request cheap to accept - it is
+                    the maintainer's map back to your reading.
+        Root cause  One paragraph: what the code does, what it should do,
+                    why they differ. If you are not certain, say which part
+                    you inferred.
+        Proposed change
+                    What the patch does, in prose. A maintainer should be
+                    able to predict the diff from it. One sentence on any
+                    approach you considered and rejected.
+        Verification performed downstream
+                    The reproducer before and after, the commands you ran,
+                    what else you exercised. State plainly that the
+                    framework test suite was not available to you.
+        Documentation affected
+                    Which man page, skill or fragment states the OLD
+                    behaviour. You have read them; the maintainer has not.
+                    "None" is information too.
+        Compatibility
+                    Does this change something a downstream application can
+                    observe, invoke or trip over? If yes, say exactly what,
+                    and that a migration document is likely needed. The
+                    maintainer writes it - if they know.
+
+    The maintainer appends a DISPOSITION section to their copy when the
+    request is triaged, with a verdict per item and an absolute date. You
+    will normally see that verdict as a release, not as a document.
+
+  Example (abridged)
+
+        # `Attachment_Thumbnail` ignores the configured preset width
+
+        **Date:** 2026-09-01
+        **Severity:** P2 - every avatar renders at the built-in default; no
+        application-side workaround, because an app never builds a thumbnail
+        URL itself.
+
+        ## Symptom
+        With a custom preset declared in rsx/resource/config/rsx.php, a
+        rendered `<Attachment_Thumbnail $attachment_id=...>` is served at the
+        default dimensions. No error is raised; the picture is simply the
+        wrong size.
+
+        ## Evidence
+        system/app/RSpade/Core/Files/... :NNN - preset name resolved
+        system/app/RSpade/Core/Files/... :NNN - the config is read from the
+          framework array rather than the merged one
+
+        ## Root cause
+        The preset lookup reads the framework config array directly instead
+        of the merged two-tier value, so an application-declared preset is
+        never seen. The name resolves; the dimensions do not.
+
+        ## Proposed change
+        Read the merged config through the ordinary accessor at the single
+        lookup site. One line. No behaviour change for an application that
+        declares no preset of its own.
+
+        ## Verification performed downstream
+        Reproducer: `php artisan rsx:debug /clients/1` with the preset
+        declared - before, the served image is the default size; after, it
+        matches. `php artisan rsx:check` clean. Also exercised the
+        placeholder branch and an unknown preset name, which still fails
+        loud as before. The framework test suite is not present on this disk.
+
+        ## Documentation affected
+        `rsx:man thumbnails` describes preset declaration as working today,
+        so no wording change is needed if the patch is accepted.
+
+        ## Compatibility
+        An application that declared a preset and silently got the default
+        will now get the declared size. Visible change; a migration note is
+        probably warranted.
+
+WHAT IS ALREADY ON YOUR DISK
+    The framework's own working notes ship inside system/. They are not
+    loaded into your session and nothing points at them, because they are
+    written for whoever is editing the framework - which, for this task, is
+    you. Open them as ordinary files. Paths are relative to
+    system/app/RSpade/ unless stated.
+
+  The monorepo's always-on knowledge: docs/claude/framework/
+    Ten fragments. Downstream your session loads docs/claude/shared/ plus
+    docs/claude/app/; this third bucket is deliberately not imported, because
+    it is true only where the framework is authored.
+
+      00-development-context.md   The framework's conduct rules: no
+                                  backwards-compatibility layers, delete the
+                                  old implementation, one pattern per
+                                  feature. READ THIS FIRST - it explains why
+                                  a "compatible" patch gets rejected.
+      10-ide-tooling.md           The pre-boot editor endpoints and their
+                                  local-file grant.
+      11-framework-testing.md     How the framework suite is organised - what
+                                  the maintainer will run against your patch.
+      21-migration-classification.md
+                                  Framework-core vs template-app migrations.
+                                  Read if your patch adds a table.
+      22-system-columns.md        The leading-underscore column convention
+                                  and the three seams that enforce it.
+      70-monorepo-environment.md  Where things live when the framework is
+                                  authored, the two dependency layers, the
+                                  --_ internal-flag convention.
+      80-distribution-and-publishing.md
+                                  How a release is assembled - the other end
+                                  of the pull you will run.
+      81-git-and-conflicts.md     Commit discipline in the monorepo.
+      82-documentation-obligations.md
+                                  Documentation is part of the change, and
+                                  the six-artifact mandate for a contract
+                                  change. This is what your request
+                                  document's "Documentation affected"
+                                  section feeds.
+      90-knowledge-routing.md     Which tier knowledge belongs in. Read
+                                  before proposing a documentation fix.
+
+  The framework-side skills: docs/skills/framework/
+    Three. The files ship, but the plugin manifest that makes skills loadable
+    is rewritten at publish to point at the downstream set, so nothing
+    surfaces these automatically. Open them directly.
+
+      framework-dependencies/     Adding or retiring a package inside
+                                  system/, and the standing commitment an
+                                  exposed package creates.
+      publishing-a-release/       What the publish script does, gate by gate.
+      shipping-a-contract-change/ Working the six-artifact mandate. The
+                                  clearest statement of what the maintainer
+                                  must do with your patch.
+
+  Colocated CLAUDE.md files, by subsystem
+    Each sits beside the code it describes and documents internals a
+    downstream developer normally has no reason to know. They are the fastest
+    orientation there is for their directory.
+
+      Core/CLAUDE.md                  Main_Abstract's middleware hooks
+      Core/Manifest/CLAUDE.md         working on the manifest itself
+      Core/Ajax/CLAUDE.md             the unified Ajax surface
+      Core/Bundle/CLAUDE.md           the two-tier bundle architecture
+      Core/SPA/CLAUDE.md              the SPA runtime (STALE - see primer 8)
+      Core/Portal/CLAUDE.md           the framework half of the portal
+      Core/Task/CLAUDE.md             the task system's implementation
+      Core/Realtime/CLAUDE.md         Redis to relay to browser
+      Core/Files/CLAUDE.md            a pointer into the file man pages
+      Core/Files/THUMBNAILS.md        the thumbnail cache behind the
+                                      component: filenames, LRU, quotas
+      Core/Database/CLAUDE.md         migration policy and snapshotting
+      Core/Database/TypeRefs/CLAUDE.md
+                                      how a polymorphic discriminator becomes
+                                      a BIGINT
+      Core/JsParsers/CLAUDE.md        the Node RPC architecture and the one
+                                      way to build an RPC client
+      Core/JsParsers/README.md        why the RPC servers exist at all
+      Integrations/Jqhtml/CLAUDE.md   template compilation over the same RPC
+      CodeQuality/CLAUDE.md           the checker's architecture
+      CodeQuality/Rules/CLAUDE.md     every rule class, grouped
+      CodeQuality/RuntimeChecks/CLAUDE.md
+                                      convention enforcement that throws at
+                                      runtime, and how it differs from a
+                                      genuine runtime requirement
+      CodeQuality/Support/CLAUDE.md   the sanitizers and their RPC server
+      Commands/CLAUDE.md              why rsx:check refuses that directory,
+                                      and pre-boot command interception
+      Commands/Restricted/CLAUDE.md   the guardrails blocking destructive
+                                      Laravel commands
+      BuildUI/CLAUDE.md               the live rebuild terminal
+      Lib/Flash/CLAUDE.md             flash alerts across redirects and Ajax
+      man/CLAUDE.md                   how a man page is written
+      upstream_changes/CLAUDE.md      the AUTHOR's side of the mandates you
+                                      consume - the gate deciding whether one
+                                      is written, and the two structures
+      resource/vscode_extension/CLAUDE.md
+                                      the editor extension
+      ../../bin/environment_updates/CLAUDE.md
+                                      self-detecting idempotent scripts that
+                                      repair an environment after an update
+      ../../bin/rsx-lockd/CLAUDE.md   the standalone lock daemon
+
+  What does NOT ship
+    Three things are absent by design.
+
+      THE FRAMEWORK TEST SUITE (app/RSpade/tests/). Excluded from every
+      release, so rsx:test --framework has nothing to run downstream. The
+      maintainer runs it against your patch - which is why your request
+      carries a verification section written by hand.
+
+      FIVE MAN PAGES, stripped at publish because they document how the
+      framework is BUILT rather than how it is used: manifest_api,
+      manifest_build, ast_sourcecode_parsers, code_quality and
+      vs_code_extension. The primers below carry the essentials of the first
+      four; nothing else downstream does. If a shipped man page refers you to
+      one of these, it is referring you to a page you do not have, and that
+      is a documentation defect worth reporting.
+
+      THE MONOREPO'S DEVELOPMENT TREE, which holds audits, research and the
+      maintainer's request index. None of it is needed to write a patch.
+
+  The rule
+    READ THE SHIPPED MAN PAGES FOR THE SUBSYSTEM BEFORE TOUCHING IT. They
+    ship because they are the contract, they are maintained as part of every
+    change that moves observable behaviour, and they are more accurate than
+    any summary - including this one. The primers tell you how the pieces fit
+    together; the man pages tell you what each piece promises.
+
+SUBSYSTEM PRIMERS
+    Fourteen sections, each ending in a References block. They are written to
+    be read in an afternoon and to make the source navigable, not to replace
+    the man pages - where a primer and a man page disagree, believe the man
+    page, and where a man page and the code disagree, believe the code and
+    report the page.
+
+    Read the request lifecycle first even if your defect is elsewhere. Almost
+    every framework question is really a question about where in this
+    sequence something happens.
+
+  THE REQUEST LIFECYCLE, END TO END
+    nginx
+        Three server blocks ship in the reference nginx configuration: the
+        plain http site, an identical site that asserts https to PHP for a
+        deployment behind a TLS terminator, and a LOOPBACK-ONLY backend block
+        that exists solely for the full-page cache to call back into. The
+        backend block is never published.
+
+        Location routing matters when you are hunting a request that does not
+        arrive: /ws goes to the realtime relay, the build UI has its own two
+        ports, and /_ajax/ IS ROUTED TO A SEPARATE PHP-FPM POOL - a deliberate
+        split that prevents a server-side render calling back into itself
+        from deadlocking on the pool it is already occupying. Everything else
+        falls through try_files to the full-page-cache proxy.
+
+    fpc-proxy -> nginx backend
+        The proxy sits in front of the site and passes almost everything
+        straight through. It never caches a non-GET request, never caches a
+        request carrying the session cookie, and fails OPEN when its cache
+        store is unavailable. On a miss it proxies to the loopback backend
+        block, and it stores the response ONLY if PHP marked it cacheable
+        with a response header. The cache key is the path plus sorted query,
+        namespaced by the build key, so a rebuild invalidates everything at
+        once. Primer 11 covers the rest.
+
+    php-fpm -> system/public/index.php
+        The entry script runs a series of PRE-BOOT handlers, before composer's
+        autoloader, so that they still answer when the tree is half-synced.
+        In order:
+
+            1  .env symlink invariant (a real file where the symlink belongs
+               shadows the project-root .env)
+            2  storage symlink invariant
+            3  submodule revision sync - 503 when the checked-out framework
+               revision is not the one the application recorded
+            4  .env heal - reconcile against the tracked defaults file
+            5  first-run screen when the app URL has not been set
+            6  the /_ide/service* endpoints - authorised FIRST, then an
+               explicit handler allowlist, then exit. Deliberately placed
+               BEFORE the maintenance gate so the editor keeps working
+               during a window.
+            7  the maintenance flag is stat'ed ONCE and frozen into a
+               constant for the process
+            8  the maintenance gate - 503 with Retry-After and the operator's
+               own reason text
+            9  composer autoload
+           10  bootstrap/app.php, then the HTTP kernel
+
+        Note what is NOT here, because it is a common wrong assumption:
+        static assets and the CSP report endpoint are ordinary framework
+        routes inside the dispatcher, not pre-boot handlers.
+
+    bootstrap/app.php
+        Chains the application-layer autoloader after the framework's; points
+        the storage path at the PROJECT's storage directory (one level above
+        the Laravel base path); points the ENVIRONMENT path at the project
+        root, so the env commands write outside the submodule; resolves the
+        hostname token in the app URL before configuration loads; and binds
+        the framework's own exception handler.
+
+    Laravel boot -> Rsx_Framework_Provider
+        Provider order is fixed in the app config, and one provider must
+        precede Laravel's router provider in order to swap in the restricted
+        router (GET and POST only, resource routes throw). Laravel's own
+        session provider is COMMENTED OUT - RSpade has its own.
+
+        The framework provider's register() merges the framework config, then
+        deep-merges the application's config over it. Its boot() enforces the
+        required PHP extensions, enforces the URL scheme, and then does the
+        five things that make an RSX application exist: Manifest::init(),
+        the type-ref morph map, the autoloader, requiring every classless
+        application PHP file, and finally locating the single Main class and
+        calling Main::init().
+
+        MAIN::INIT() RUNS IN PROVIDER BOOT - once per process, on artisan
+        commands too. It is not per-dispatch and cannot eject anybody.
+
+    The dispatcher is reached through a 404
+        This surprises everyone. The framework registers no route table with
+        Laravel. An exception handler at low priority catches Laravel's
+        NotFoundHttpException and calls Dispatcher::dispatch(). So an RSX
+        action always runs INSIDE Laravel's exception handling, which is why
+        an abort() inside an action is caught and converted explicitly -
+        otherwise it would throw during handling of the first exception and
+        surface as a 500. Under the Playwright test header a different
+        handler dispatches RSX at a much higher priority instead, so the
+        usual bootstrapper never fires; that is worth knowing before you set
+        a breakpoint while debugging through the render harness.
+
+    Dispatcher::dispatch(), in order
+            revision/transaction state reset for this request
+            Manifest::init()
+            route-attribute validation (non-production)
+            hostname guard, first-user setup
+            PORTAL FORK -> Portal_Dispatcher, returns
+            /api/vN FORK -> Api_Dispatcher, returns (before assets, before
+              the FPC marker, so an API response never gets either)
+            CSRF enforcement, POST only
+            development signed-identity header (after CSRF, before gates,
+              so a harness identity is visible to #[Auth])
+            asset handler - and a MISS FALLS THROUGH to the route table,
+              which is what lets a route serve a generated file at a
+              natural filename
+            HEAD rewritten to GET, original method remembered
+            route lookup
+            no match -> the default controller/action pattern, then
+              Main::pre_dispatch, then Main::unhandled_route, then the
+              framework's own not-found screen. It is never Laravel's 404.
+            parameter merge: extra params, then query string, then route
+              params
+            full-page-cache eligibility
+            handler class loaded
+            #[Auth] GATES EVALUATED
+            Main::pre_dispatch, then the controller's own pre_dispatch -
+              neither wrapped in a try/catch, because a throwing
+              pre_dispatch is a denial and must not be swallowed
+            the action
+            the post-dispatch action event
+            response build, cache marker, transform
+
+        THE ORDER THAT MATTERS: gates run BEFORE Main::pre_dispatch, before
+        the controller's pre_dispatch, and before the action. This is why
+        pre_dispatch performs no authorization anywhere - by the time it
+        runs, authorization has already happened.
+
+    The parallel portal dispatcher
+        Same shape, different table and different realm. Its distinguishing
+        steps are a once-per-process Portal_Main::init() - the documented
+        place to declare the portal's site - and a URL normalisation that
+        strips the portal prefix before matching. CSRF is the identical call
+        into the identical implementation. Gate evaluation names the portal
+        realm explicitly, and a denial renders the portal-flavoured screen.
+        One ordering difference: the staff dispatcher runs its development
+        identity header AFTER CSRF, the portal one BEFORE.
+
+    References
+      Man pages: dispatch, routing, controller, auth_gates, csrf, portal,
+      fpc, app_mode, error_handling.
+      Colocated: Core/CLAUDE.md, Core/Portal/CLAUDE.md.
+      Source: system/public/index.php, system/bootstrap/,
+      Core/Providers/Rsx_Framework_Provider.php,
+      Core/Providers/Rsx_Dispatch_Bootstrapper_Handler.php,
+      Core/Dispatch/Dispatcher.php, Core/Portal/Portal_Dispatcher.php,
+      Core/Base/Main_Abstract.php, system/app/Http/Kernel.php,
+      system/config/app.php, system/bin/fpc-proxy.js,
+      resource/docker/nginx/site.conf.
+
+  1. THE MANIFEST
+    Nothing in RSpade is registered. There is no service-provider list, no
+    route file, no PSR-4 map you maintain, and no import statement that
+    matters. Instead one index - the manifest - is built by scanning the
+    tree, and everything else reads from it. If you understand the manifest
+    you understand why the framework has no configuration.
+
+    WHAT IT SCANS. config('rsx.manifest.scan_directories'), relative to
+    base_path() - which is system/, not the project root. The list covers
+    rsx/ (the application, reached through a symlink), Core, Integrations,
+    Bundles, CodeQuality, Lib and a few more. A configured path that does not
+    exist is a fatal error, not a skipped entry. Two exclusion lists apply:
+    file basenames (CLAUDE.md, .gitkeep, ...) and directory basenames
+    (vendor, node_modules, storage, public, resource, .git, playwright).
+    That is where the path-agnostic rules come from: ANY directory named
+    resource/ or public/ is invisible to the framework, anywhere in the tree.
+
+    Every file under a scan root is indexed with its path, mtime, size and
+    hash. The EXTENSION decides what further parsing happens:
+
+        .php            token-parsed for namespace/class/extends/implements;
+                        in non-production the file may be rewritten in place
+                        by the PHP fixer, and is then re-parsed
+        .php.upstream   parsed for class metadata only; never rewritten
+        .externals.php  indexed, deliberately kept out of every PHP code path
+        .blade.php      view id, @rsx_id, sections, @extends
+        .js             classes, extends, imports/exports, decorators
+        anything else   handed to the extension registry - which is how
+                        .scss and .jqhtml are processed, each registered by
+                        its integration's service provider
+
+    THE PHASES. One driver, Manifest::_refresh_manifest(), in Core/Manifest/.
+    It can RESTART itself (a goto to the top) when a class override renames a
+    file out from under it, when it finds a stale index entry, or when a
+    code-quality auto-rename fires.
+
+        1  Collect files. Recursive scan, exclusions, change set computed
+           from mtime and size into a changed-files list.
+        2  Parse tokens. Deleted files dropped; changed files parsed WITHOUT
+           being loaded; every class reference normalised to its simple name;
+           the PHP fixer rewrites namespaces, use statements and inline
+           FQCNs; then the class-override pass runs and may restart the
+           build; then the composer classmap is validated.
+        3  Load dependencies. The changed PHP is required, parents before
+           children, so that reflection can run in phase 4.
+        4  Reflect. Class attributes and PUBLIC STATIC METHOD attributes,
+           parameters, abstractness, traits. Then the class indexes, the
+           event-handler index and the classless-file index are collated.
+        5  Modules. The autoloader class map is built and the autoloader
+           registered; then every class in config('rsx.manifest_support')
+           runs in the order it is listed. That roster is where routes,
+           portal routes, SPA actions, models, jqhtml, API endpoints,
+           externals, task commands, emails and - last, deliberately - auth
+           gates are indexed. Auth runs last because it must see every
+           surface the others registered.
+        6  Stubs. Each integration generates its manifest stubs (this is
+           where the JS-side controller and model stubs come from).
+        7  Save and finalise. Editor stubs, save the cache, clear views, and
+           in development run the manifest-time code-quality checks.
+
+    At the end of init() the manifest fires rsx.rebuilt (plus a per-mode
+    variant) if this process rebuilt, and then always rsx.ready - once per
+    process, handlers inline. That is the earliest safe hook for framework
+    code that needs a complete index.
+
+    THE BUILD-TIME FATAL PATTERN. A code-quality rule can declare that it
+    runs during the manifest scan. On the first violation the helper marks
+    the manifest BAD - which immediately re-saves the cache with the poison
+    flag set - and then throws, printing rule id, message, file:line, the
+    offending line and the remediation text. The poison flag is the
+    interesting part: phase 7 has already saved a clean cache, so the
+    offending file's mtime is current and an incremental build would consider
+    it unchanged. The flag forces the NEXT load to discard the cache
+    entirely and rebuild in full, so the rule fires again, and again, until
+    the source is fixed. A manifest-build FATAL is genuinely unskippable, and
+    that is by design - it is the mechanism behind every -01 rule id you see
+    described as "a manifest-build FATAL".
+
+    THE AUTOLOADER. Core/Autoloader.php, registered with SPL AFTER composer
+    so vendor resolution is untouched. Given any class name it reduces it to
+    the SIMPLE NAME - the last segment - looks that up in the manifest, and
+    requires the file. If the requested fully-qualified name still does not
+    exist but the real one does, it calls class_alias(). That single line is
+    why namespaces are cosmetic for RSX classes, why imports are
+    unnecessary, why the manifest can rewrite a namespace without breaking
+    callers, and why UNIQUE SIMPLE CLASS NAMES ACROSS THE ENTIRE CODEBASE is
+    the load-bearing invariant of the framework. A duplicate simple name that
+    is not a valid class override is a hard build failure.
+
+    The autoloader also installs a narrow error-handler carve-out: it
+    swallows exactly the E_WARNING raised from composer's own ClassLoader.php
+    when composer bare-includes a classmap entry whose file the override pass
+    renamed away. Everything else delegates to the previously registered
+    handler. Without it Laravel promotes that warning to a fatal mid-autoload
+    and the RSX loader never gets its turn. It is scoped to one file and one
+    warning - not a fallback.
+
+    CLASS OVERRIDES. Copy a framework class into rsx/ under the same class
+    name. Copy-and-replace, never extends - extending the class you are
+    overriding is a hard build error. During phase 2 the framework twin is
+    renamed to <file>.php.upstream, dropped from the index, and the build
+    restarts. Every archive prints a line naming the class and both paths, so
+    a class can never leave the build silently. If your rsx/ copy disappears,
+    the .upstream file is renamed back. Two refusals exist and each prints
+    its own line: the rsx/ twin is not actually on disk (a stale index
+    entry - dropped, build restarts, nothing renamed), and the manifest is
+    already poisoned (its file list is not evidence). The second refusal
+    exists because a poisoned index once archived brand-new framework classes
+    as twins of deleted rsx/ copies.
+
+    The .upstream churn lives inside system/, so a framework pull discards it
+    and the next build recreates it. It is always-local state; it is never
+    committed. JavaScript has no override mechanism at all - a duplicate JS
+    class name is simply fatal.
+
+    WHEN A REBUILD HAPPENS. Manifest::init() is the only entry point; there
+    is no public rebuild(). In DEVELOPMENT it validates the cache and, if
+    stale, takes a SYSTEM lock (this box's disk, waits forever, no timeout),
+    re-checks under the lock and rebuilds incrementally - so every request
+    and every command transparently rebuilds what changed. In debug and
+    production the cache is REQUIRED: no cache and no authorised build is a
+    RuntimeException telling you to run the prod refresh. Sealed builds never
+    rebuild. This is the concrete reason the contributor procedure is
+    development-mode only.
+
+    Incremental means only mtime/size-changed files are reprocessed. A FULL
+    rebuild happens on the poison flag, a missing cache, or --clean. Force
+    one after editing the manifest itself or the bundle compiler.
+
+    THE CACHE. storage/rsx-build/manifest_data.php - a var_export()ed array
+    loaded with include, under the PROJECT's storage directory, one level
+    above the Laravel base path, never derived from base_path(). Siblings in
+    the same directory are the generated JS stubs, the compiled bundles and
+    the build key. Inspect it with:
+
+        php artisan rsx:manifest:show [--classes|--files] [--filter=<ext>]
+        php artisan rsx:manifest:stats [--detailed]
+        php artisan rsx:manifest:dump --format=json [--class=<Name>]
+        php artisan rsx:manifest:schema_dump
+        php artisan rsx:manifest:build [--force|--clean|--build-debug]
+
+    rsx:manifest:build refuses to be invoked in-process and prints the
+    spawn form instead. Programmatically the sequence is Manifest::clear()
+    (which also unlinks the cache file) then Manifest::init().
+
+    ATTRIBUTES ARE NEVER CLASSES. Attribute extraction is agnostic: the
+    reflection layer reads the attribute NAME and its raw ARGUMENTS and stops
+    - it never instantiates, never validates, and never requires a backing
+    class to exist. Names are stored simple (Route, not the FQCN) and the
+    value is a LIST of argument sets, one per occurrence, which is what makes
+    repeatable attributes natural. Only PUBLIC STATIC methods are indexed,
+    which is the usual reason an attribute "does not appear".
+
+    Two consequences bite a patch. Never define an attribute class - the
+    linter that strips its use statement is correct. And NEVER put a class
+    constant in an attribute argument: reflection resolves arguments before
+    the autoloader is ready and the scan dies.
+
+    The reflection API a patch reaches for: get_with_attribute() (rows of
+    file, class, fqcn, type, method, instances), get_routes(),
+    get_task_commands(), php_find_class(), php_get_metadata_by_class(),
+    php_get_extending() (concrete only), php_is_subclass_of(),
+    php_is_abstract(), php_get_lineage(), php_get_subclasses_of(), and the
+    js_* twins of each. Every find/get throws when not found - there are no
+    silent nulls. The browser has a Manifest of its own, built at bundle
+    compile time, with get_class_by_name(), get_extending(),
+    js_get_subclasses_of(), get_decorators() and has_decorator().
+
+    References
+      Man pages: class_override, config_rsx, coding_standards, app_mode.
+      NOT ON YOUR DISK: manifest_api, manifest_build (stripped at publish -
+      this primer is their downstream replacement).
+      Colocated: Core/Manifest/CLAUDE.md.
+      Source: Core/Manifest/ (Manifest.php plus the _Manifest_*_Helper
+      classes and Modules/), Core/Autoloader.php,
+      Core/Integration_Service_Provider_Abstract.php,
+      config/rsx.php (manifest, manifest_modules, manifest_support).
+
+  2. DISPATCH, ROUTING AND AUTH GATES
+    THE ROUTE TABLE IS BUILT AT MANIFEST TIME, from attributes, and stored
+    twice. Once keyed by PATTERN, for matching an incoming URL; once keyed by
+    TARGET - "Simple_Class::method" - for generating one. Both are sorted for
+    determinism. Four manifest-support classes write into those same two
+    tables: ordinary routes, SPA actions (whose target key is the bare action
+    class name), API endpoints, and the portal's own pair, which writes into
+    a SEPARATE portal table. Each row carries its methods, its type, the
+    class and method, the pattern, and the merged GATE LIST from the class
+    and method attributes.
+
+    A duplicate pattern across any two route types is a build failure, and
+    /api/vN is reserved - declaring an ordinary route there throws.
+
+    MATCHING IS BY SPECIFICITY, NOT DECLARATION ORDER. Patterns are scored:
+    a pattern with no parameter and no wildcard scores far above everything
+    else, each additional segment adds, and wildcards and optional or
+    required parameters subtract. The highest-scoring pattern that accepts
+    the verb wins. After a match the dispatcher RE-VERIFIES that the target
+    method still carries a route attribute in the manifest, and throws loudly
+    if it does not - a stale index must not dispatch.
+
+    URL GENERATION is Rsx::Route() / Rsx.Route() (portal: Rsx_Portal::Route()
+    and its JS twin), and hardcoded URLs are a code-quality finding. One
+    branch is worth knowing: if the target method carries #[Ajax_Endpoint],
+    Rsx::Route() returns the Ajax URL directly without consulting the target
+    table at all. Otherwise it looks up the target, picks the best route
+    among those whose parameters it can satisfy (preferring MORE parameters),
+    and fills the pattern; extra array keys become a query string. A target
+    miss falls through to an SPA-action lookup by bare class name.
+
+    THE MAIN HOOKS are three, and their names are exactly:
+
+        Main::init()            once per process, in provider boot
+        Main::pre_dispatch()    per dispatch, AFTER the gates
+        Main::unhandled_route() per dispatch, only when nothing matched
+
+    The portal has an identical trio on its own base class. pre_dispatch is
+    for tenant setup, interstitials and redirects - never for authorization,
+    which has already happened by then.
+
+    THE GATES. #[Auth] is mandatory on every dispatchable surface, and
+    CLOSED BY DEFAULT IS A MANIFEST-BUILD RULE, NOT A RUNTIME ONE. The build
+    fails with a per-violation worklist when a surface has no gate; the
+    dispatcher itself simply skips evaluation when the gate list is empty.
+    That distinction matters when you are debugging: a surface reaching an
+    action ungated means the INDEX says it has no gates, which is a build
+    problem, not a dispatcher problem.
+
+    Evaluation happens at six seams, one per transport, and each calls into
+    Auth_Gates:
+
+        #[Route] / #[SPA]                   the staff dispatcher
+        #[Portal_Route] / @portal_spa       the portal dispatcher
+        #[Ajax_Endpoint]                    the Ajax handler
+        #[Ajax_Endpoint_Model_Fetch]        the ORM controller, both entries
+        #[Api_Endpoint]                     the API dispatcher, after bearer
+                                            authentication and after scope
+        the SPA client                      before painting a screen
+
+    Two evaluation forms exist and the difference is deliberate. The plain
+    form THROWS on an unknown check name - correct for application code
+    asking a question. The AT-SEAM form logs a warning and DENIES instead,
+    because a dispatcher must not turn a typo into a 500 that exposes the
+    surface's existence. Checks are evaluated LIVE on every ask and are never
+    cached between asks, and only a strict boolean true permits.
+
+    A REALM check runs before any name resolves, at the transports reachable
+    from both realms - staff and portal check registries are separate
+    namespaces, so a cross-realm name is a build error rather than a runtime
+    surprise. can_access() answers "would every gate on this target pass",
+    throwing on an unknown target; a non-throwing variant returns null for
+    absent-or-denied and is the primitive behind link visibility. The browser
+    receives GRANTS ONLY - a denied check is omitted, never sent as false.
+
+    ERROR SCREENS EXIST TWICE, and they are not the same machinery.
+
+    The PHP side renders a full page: unauthorized (an unidentified visitor
+    gets the redirect capture plus a 302 to the realm's login; an identified
+    one gets a themed 403), not found, and fatal. It renders through a plain
+    Laravel view, deliberately, so that it still renders when the manifest is
+    what broke, and production suppresses all exception detail. Customise it
+    by class override.
+
+    The JS side has the same three names but mounts a component into the LIVE
+    layout's content area - no navigation, no round trip. Its bodies are
+    application-owned theme components, and there is no override machinery on
+    that side. Its fatal deliberately never renders the error object; that
+    goes to the console only.
+
+    One more branch to know when a response looks wrong: an abort() produces
+    a themed screen only when the request accepts HTML. A thumbnail, preview,
+    inline or download URL gets a bare status and plain text instead, because
+    an HTML document there would be served as the file.
+
+    References
+      Man pages: dispatch, routing, controller, auth_gates, spa, portal,
+      external_api, error_handling, coding_standards.
+      Colocated: Core/CLAUDE.md, Core/Portal/CLAUDE.md, Core/SPA/CLAUDE.md.
+      Source: Core/Dispatch/ (Dispatcher, Route_ManifestSupport,
+      RouteResolver, AssetHandler), Core/Auth/ (Auth_Gates,
+      Auth_ManifestSupport), Core/Errors/Error_Screens.php,
+      Core/SPA/Error_Screens.js, Core/Rsx.php, Core/Portal/Rsx_Portal.php,
+      Core/Base/Main_Abstract.php.
+      Skills: rspade:auth-gates, rspade:spa, rspade:portal.
+
+  3. THE AJAX ENVELOPE AND HANDLERS
+    An Ajax endpoint is a public static method with #[Ajax_Endpoint] and its
+    mandatory #[Auth]. There is no route, no URL and no wiring, because the
+    manifest GENERATES A JAVASCRIPT STUB for every controller that has at
+    least one. The stubs are written to storage/rsx-build/js-stubs/, one file
+    per controller, and injected back into the manifest as real file entries
+    (that directory is not scanned). Each generated method is a one-liner
+    that calls the framework Ajax client with a HARDCODED literal path, and
+    the path is also attached to the function object. Regeneration keys on
+    the controller's mtime plus a hash that folds in the template file
+    itself, so editing the generator regenerates every stub.
+
+    THE URLS, all POST:
+
+        /_ajax/:controller/:action     an endpoint
+        /_ajax/_batch                  the batching transport
+        /_ajax/Orm_Controller/fetch    model fetch
+        /_ajax/Orm_Controller/fetch_relationship
+        /_upload                       the browser upload transport
+        /_csp-report                   CSP violation reports
+
+    Each has a portal twin declared as a second attribute on the SAME
+    handler, and the client rebases the path onto the portal prefix. The
+    transport controller itself is declared public: authorization happens one
+    level down, on the target endpoint.
+
+    THE SERVER PATH, in order: mark the response mode, find the class by
+    basename in the manifest, verify it is a controller, verify the method
+    carries the attribute, reset the revision/transaction state for this
+    call, EVALUATE THE GATES, extract parameters, run the controller's
+    pre_dispatch, call the endpoint, fire the post-dispatch event, branch on
+    a special response, and format.
+
+    EVERY RESPONSE IS HTTP 200, success and failure alike, because the
+    envelope carries the outcome:
+
+        {_success:true,  _ajax_return_value: ..., _server_time,
+         _user_timezone, [console_debug], [flash_alerts]}
+        {_success:false, error_code, reason, metadata, _server_time,
+         _user_timezone, [console_debug], [flash_alerts]}
+
+    The one exception is a FATAL, which throws and is rendered by the Ajax
+    exception handler. Note the wire field names: reason and metadata - not
+    message and errors. The error codes are validation, not_found,
+    unauthorized, auth_required, fatal and generic, plus two the client
+    raises on its own (a server error for any 5xx, a network error for a
+    dead or timed-out transport).
+
+    A guard worth knowing: returning an array that itself has a boolean
+    _success or success key throws a teaching error, because that array
+    would be indistinguishable from an envelope.
+
+    THE IN-PROCESS CHANNEL is Ajax::internal(), which runs the same endpoint
+    but converts each special response into a TYPED EXCEPTION instead of an
+    envelope - auth-required, unauthorized, form-error, not-found (a subclass
+    of form-error) and fatal. That is the channel the CLI tool uses.
+
+    THE CLIENT is Core/Js/Ajax.js. Ajax.call() accepts either a string path
+    or the stub function itself, then branches to the batching or the direct
+    transport depending on a runtime flag. It is deliberately NOT an async
+    function, so that the promise it returns is the identity the global
+    unhandled-rejection gate matches. On the way back it drains
+    console_debug output, syncs the server time and user timezone, processes
+    flash alerts, re-instantiates models inside the return value, and then
+    either resolves with the unwrapped value or rejects with an error object
+    carrying the code and metadata.
+
+    CSRF is the X-CSRF-Token header (the body field is _csrf_token). It is
+    attached at ONE chokepoint - the jQuery ajax override - which is why a
+    raw fetch() misses it, and why a portal upload must use the framework's
+    upload helper rather than hand-rolling a fetch.
+
+    WHERE TO BREAK. On the server: the endpoint call site in the Ajax
+    handler (the class, action and parameters are all in scope), the gate
+    evaluation, the envelope formatters, the transport controller, and the
+    CSRF rejection. On the client: the request construction, the resolve, the
+    reject, and the header attachment. On the route side: the route match,
+    the gate line and the action call in the dispatcher.
+
+    MODEL FETCH is the same machinery with one framework endpoint per model.
+    #[Ajax_Endpoint_Model_Fetch] makes the surface exist and its mandatory
+    #[Auth] is evaluated BEFORE any model code, with a denial returning the
+    same generic not-found as a missing row. Record-level rules live in the
+    fetch() body, not in the gate. The ORM controller class is declared
+    public and realm-agnostic precisely because the per-model gate is the
+    real boundary.
+
+    References
+      Man pages: ajax_error_handling, model_fetch, controller, csrf,
+      external_api, routing.
+      Colocated: Core/Ajax/CLAUDE.md.
+      Source: Core/Ajax/ (Ajax.php, Ajax_Batch_Controller),
+      Core/Dispatch/Ajax_Endpoint_Controller.php,
+      Core/Controller/Controller_BundleIntegration.php,
+      Core/Database/Orm_Controller.php, Core/Js/Ajax.js,
+      Core/Js/Rsx_Jq_Helpers.js, Core/Js/Rsx_Js_Model.js,
+      storage/rsx-build/js-stubs/ (the generated output).
+      Skills: rspade:ajax-error-handling, rspade:model-fetch.
+
+  4. SESSIONS, CSRF AND THE PORTAL REALM
+    ONE COOKIE, ONE ROW, TWO IDENTITIES. A single cookie names a single row
+    in _sessions, and that row carries BOTH identity sets side by side: the
+    staff login user with its site and impersonator, and the portal user with
+    its own site and impersonator. Both being populated at once is normal,
+    not a bug - one browser, one session, two experiences.
+
+    Session is unusual in that the model IS the facade: the class extends the
+    system model base and every static reader and writer hangs off it.
+    Portal_Session is NOT a model - it is a static facade over the portal
+    property subset, and its CSRF methods delegate straight to Session,
+    because there is exactly one token.
+
+    TOKEN IMMUTABILITY. The session token is minted exactly once, when the
+    session row is created. Resuming re-emits the SAME value, which only
+    refreshes browser-side expiry and can never desync from the row. The CSRF
+    token is minted once the same way. An identity change - login, logout,
+    impersonation - is a RECORD UPDATE, not a new token.
+
+    READERS CREATE NOTHING; WRITERS CREATE A SESSION IF NEEDED. The class
+    header lists which is which, and the distinction is load-bearing:
+    get_session_id() is a writer, returns int, and is NEVER null, so a
+    null-ish test on it is dead code that already created the session it
+    meant to prevent - a manifest-build FATAL enforces that. "Is there a
+    session?" is has_session(), which creates nothing.
+
+    THE PORTAL FORK is Rsx_Portal::is_portal_request(), memoized per process,
+    resolved from the configured portal domain if there is one and otherwise
+    from the URL prefix, and false on the CLI. THE SAME PREDICATE drives the
+    active auth realm, the error screens' realm, and the ORM's choice between
+    fetch() and portal_fetch(). Application code that must fork forks on
+    THIS - never on whether somebody is logged in. Identity is not
+    experience.
+
+    CSRF ENFORCEMENT is two call sites - the staff dispatcher and the portal
+    dispatcher - into one implementation, on POST only. It has two layers:
+
+        An ORIGIN/REFERER check on every POST, session or not. An absent
+        header allows (a non-browser caller); a present one must host-match.
+        This is what closes login CSRF on anonymous authentication forms.
+
+        A SYNCHRONIZER TOKEN on session-bearing POSTs only, header first then
+        body field, compared constant-time. No session means no token check.
+
+    Three exemptions, and they are the whole list: the CSP report endpoint
+    (the one POST a browser makes with no page and no token), the mail
+    unsubscribe path (which carries its own signature, and whose one-click
+    POSTs are server-to-server), and the external API - exempt by
+    construction, because the API fork returns before the CSRF seam is
+    reached. GET is never checked.
+
+    A rejection renders its response DIRECTLY and throws it, so no handler
+    can embellish it: the Ajax and upload paths get the ordinary unauthorized
+    envelope at HTTP 200, and everything else gets a plain 419.
+
+    Brute-force throttling is the framework's and is on by default: the
+    authentication entry point refuses a locked-out client address as its
+    first statement, before the identity lookup, by throwing - so a login
+    function catches that exception and renders its message rather than
+    reporting a wrong password.
+
+    References
+      Man pages: session, csrf, portal, auth_gates, login_redirect,
+      initial_user, acls.
+      Colocated: Core/Portal/CLAUDE.md.
+      Source: Core/Session/ (Session.php, Rsx_Csrf.php),
+      Core/Portal/ (Portal_Session.php, Rsx_Portal.php,
+      Portal_Dispatcher.php, Portal_Main_Abstract.php),
+      Core/Auth/ (RsxAuth.php, Login_Throttle.php, Login_History.php),
+      Core/Js/Rsx_Csrf.js.
+      Skills: rspade:session-auth, rspade:portal, rspade:permissions-acl.
+
+  5. FILE STORAGE, THUMBNAILS, RENDER, PREVIEW AND SEARCH
+    One idea explains the whole subsystem: identical bytes are stored,
+    converted, extracted and rendered EXACTLY ONCE. Everything else follows
+    from where that boundary sits.
+
+    TWO MODELS. File_Storage_Model is the physical blob, one row per distinct
+    byte sequence, in _file_storage. File_Attachment_Model is the logical
+    upload - name, mime, owner, tenant - in _file_attachments, pointing at a
+    blob. N attachments share one blob. The blob has NO site_id and cannot
+    have one: two tenants uploading the same file get one blob.
+
+    CONTENT ADDRESSING. Rsx_File_Paths is the single choke point for every
+    on-disk path: a storage root (config-overridable for test isolation
+    only), then uploads/, rsx-thumbnails/ and rsx-renditions/ beneath it. A
+    blob lives at uploads/<hash[0:2]>/<hash[2:4]>/<hash>, and the path is
+    DERIVED every call - never persisted. Ingest hashes with sha256, and on a
+    hash hit compares byte by byte; a genuine collision increments the hash
+    as a base-16 number and retries. A row whose file has gone missing is
+    rewritten in place rather than duplicated. Never write a bare
+    storage_path('uploads') anywhere else: that reopens the hole the choke
+    point exists to close.
+
+    THE CLAIM FLOW. An upload arrives unattached, carrying a 64-hex key. The
+    application then claims it onto a record:
+
+        $a = File_Attachment_Model::find_by_key($key);
+        $a->can_user_assign_this_file();     // structural, not per-user
+        $a->attach_to($record, $category);   // single-file: detaches the old
+        $a->add_to($record, $category);      // multi-file
+        $record->find_attachment($id_or_key, $category);   // null unless ours
+
+    can_user_assign_this_file() checks two things only: the attachment is
+    unattached, and it belongs to the current realm's site. It is
+    deliberately NOT an ownership test, which is what lets an API identity
+    claim a file. find_attachment() tests key before id, because a 64-digit
+    numeric key would otherwise be read as an id.
+
+    THE UPLOAD GATE IS A PRECONDITION. With no file.upload.authorize handler
+    registered, both transports THROW - because trigger_gate() defaults OPEN,
+    and an open gate here would be an anonymous upload endpoint. Absence is a
+    misconfigured application, not a bad request.
+
+    TWO TRANSPORTS, ONE IMPLEMENTATION. The browser posts to /_upload, which
+    is declared with BOTH a staff route and a portal route on one handler, so
+    a portal upload dispatches as a portal request and its CSRF verifies
+    against the portal session. An integration posts multipart to
+    /api/v1/files. Both land in Rsx_File_Upload::accept(), which runs, in
+    order: the size ceiling (before the gate), the authorize gate with a
+    realm-honest user, the SERVER-DERIVED site_id (client input is never
+    consulted), a params filter, a hard strip of every fileable_* key so a
+    request-borne upload can never arrive pre-attached, creation, and a
+    completion action. It returns an outcome array, never a Response - each
+    transport renders its own error shape. Bytes come back out over the
+    ordinary web routes (/_download/:key, /_inline/:key, /_thumbnail/*,
+    /_preview/pdf/:key), each of which accepts a Bearer key exactly like a
+    cookie.
+
+    A detail worth knowing before you debug a mis-routed document: the raw
+    SNIFFED mime is kept as a security boundary for serving, but processing
+    and routing use a pipeline mime derived extension-first, because
+    libmagic's OOXML sniff is per-file flaky and can report a zip.
+
+    DISPOSAL. delete() is a soft delete - it ENTERS a recoverable retention
+    window and destroys nothing. File_Disposal_Service is the sole
+    blob-release authority and every blob-touching pass serialises on one
+    named write lock. The lifecycle is live -> deleted (recoverable) ->
+    destroyed (a tombstone row that persists forever). A blob is pinned by
+    any attachment that is live OR merely retained, and by any queued email
+    that references it; at zero it is unlinked and its derived caches -
+    rendition and thumbnails - are purged with it. Scheduled passes handle
+    the daily destroy/release, a monthly deep sweep including disk orphans,
+    and a six-hourly sweep that soft-deletes unclaimed uploads (which is what
+    bounds the useful life of an upload key). Two hooks: a destroy HOLD gate
+    that can defer an attachment to the next run, and a destroyed ACTION.
+    force_destroy() is the only immediate erasure; it bypasses the gate but
+    still fires the announcement.
+
+    THUMBNAILS. Presets are named in config (profile, gallery, icon_small,
+    icon_large ship; applications add their own). The controller is public at
+    the gate level and delegates per-file authorization to a
+    file.thumbnail.authorize gate; download and inline require that gate AND
+    a download gate. Routes are /_thumbnail/preset/:key/:preset_name and
+    /_thumbnail/dynamic/:key/:type/:width/:height?, plus an extension-icon
+    route. Cached output is WebP under rsx-thumbnails/{preset,dynamic}/,
+    keyed by hash, with a long immutable max-age and an LRU quota per tier.
+
+    THE FIRST BRANCH IS RENDER STATE, NOT THE CACHE. A blob that is PENDING
+    or FAILED serves the extension-icon placeholder with Cache-Control:
+    no-store, and the cache is neither read nor written - writing an icon
+    under the real key would poison it permanently, because a cache hit is a
+    cache hit. A RENDERED blob is rasterised from page 1 of its PDF
+    rendition; a rendition that has been evicted while the row still says
+    RENDERED self-heals by requeueing. The renderer registry maps mime
+    patterns to renderer classes, and OFFICE MIMES ARE DELIBERATELY ABSENT
+    from it - an entry there would mean converting inside a web request.
+
+    <Attachment_Thumbnail $attachment_id=...> is the only sanctioned way to
+    display one, and an application never builds a thumbnail URL. It
+    subscribes in on_create() - before the fetch, so a render completing
+    mid-load cannot strand the placeholder - and its callback is refresh(),
+    never reload().
+
+    THE RENDER PIPELINE. Document_Render_Service::render_pending() is a
+    single #[Exclusive] task on a ten-minute schedule, kicked promptly when a
+    genuinely new blob is stored. It owns every heavy document operation;
+    before it existed, one Word document was converted three times by
+    competing web requests. THE QUEUE IS TWO COLUMNS ON THE BLOB, with no
+    side table: a render is owed while the status is PENDING, and an
+    extraction is owed while is_indexed is 0. Rendering and extraction have
+    separate master switches, and with rendering off the queue narrows to the
+    extraction predicate - otherwise the loop would spin forever on a row
+    that can never leave PENDING.
+
+    RENDER STATE LIVES ON THE BLOB. NOT_REQUIRED is the DEFAULT, because
+    ingest sees only bytes and cannot know the mime; the ATTACHMENT flips it
+    to PENDING once it knows the extension, through an idempotent request
+    that only ever moves NOT_REQUIRED -> PENDING. That idempotence is the
+    dedup story, and it is why a new upload can never silently retry a FAILED
+    blob. RENDERED and FAILED are the outcomes; FAILED IS TERMINAL and is
+    never swept again - only an explicit rerender revives it. The unit of
+    work never throws: any error becomes FAILED plus a recorded reason.
+    Publication of a rendition is atomic (temp file beside the destination,
+    then rename), and a successful render PURGES the thumbnail cache for that
+    hash - required, not tidy-up, because the placeholder icon may be sitting
+    under the real key.
+
+    Read the states with $attachment->get_render_status() and
+    ->get_extraction_status() (null while extraction is pending; otherwise
+    EXTRACTED, FAILED or UNSUPPORTED). Both deliberately read the storage id
+    directly rather than resolving the blob, because a display question must
+    not materialise bytes.
+
+    THE ONE SANCTIONED TIMEOUT IN THIS SUBSYSTEM is rsx.libreoffice.timeout,
+    120 seconds. It bounds ONE invocation of an external binary that can
+    genuinely wedge - never any of our own work - and expiry degrades to a
+    working outcome: the blob is marked FAILED with a reason, the icon is
+    served, the queue moves on. The config entry carries its own 599/601
+    justification. Match that bar or do not add a timeout.
+
+    SEARCH. _search_indexes holds one row per deduplicated BLOB, and its
+    statuses are always terminal - EXTRACTED, FAILED, UNSUPPORTED. There is
+    no stored PENDING: the ABSENCE of a row, expressed as is_indexed = 0, IS
+    the queue. THE ROW HAS NO site_id AND CANNOT, so
+    File_Attachment_Model::search_text() returns an Eloquent BUILDER that the
+    application MUST site-scope. It keeps the matching blob ids as a SQL
+    sub-select rather than plucking them into PHP, because a broad match is
+    six figures of rows. This is the one place the framework does not scope
+    for you, and it is a structural consequence of dedup, not an oversight.
+    An extractor registry maps mime patterns to extractors; an unmatched mime
+    is UNSUPPORTED, not FAILED, so it never pollutes the failure signal.
+    Truncation at the configured byte ceiling is RECORDED in the row, never
+    silent. Reindex with rsx:search:reindex, which requires exactly one
+    selector and fails loud otherwise.
+
+    THE THREE RESOLVE CHAINS. Each is a trigger_resolve: the first non-null
+    handler wins, null declines, and an out-of-contract return is a
+    shouldnt_happen.
+
+        document.extract_text       return text, or a status array.
+                                    Declined -> the rendition shortcut, then
+                                    the extractor registry, then UNSUPPORTED.
+        document.preview_rendition  return a Response (full takeover) or a
+                                    path to a PDF the framework serves.
+                                    Runs AFTER both auth gates. Declined ->
+                                    the blob itself for a PDF, the produced
+                                    rendition for a RENDERED document, 415
+                                    otherwise.
+        document.thumbnail_render   return WebP bytes. Declined -> the
+                                    rendition path, then the renderer
+                                    registry, then the extension icon.
+
+    Preview VIEWER selection is not a chain - it is an ordered mime map ending
+    in a catch-all icon viewer. <Document_Preview $attachment_id=...> shows
+    "Preparing preview..." until the rendition exists and swaps on a realtime
+    frame; it re-emits child events as preview_loaded and page_changed
+    (preview_loaded, because loaded is a reserved jqhtml event name).
+
+    OPERATING IT. rsx:documents:status (read-only counts),
+    rsx:documents:failed (two tables, two different remedies),
+    rsx:documents:rerender (exactly one selector), rsx:search:reindex,
+    rsx:thumbnails:stats / :clean / :generate. rsx:health carries a Document
+    Render Backlog row plus rows for the two external binaries.
+
+    References
+      Man pages: file_upload, file_disposal, thumbnails, documents,
+      document_search, libreoffice, event_hooks, realtime.
+      Colocated: Core/Files/CLAUDE.md, Core/Files/THUMBNAILS.md.
+      Source: Core/Files/ (File_Storage_Model, File_Attachment_Model,
+      Rsx_File_Paths, Rsx_File_Upload, File_Attachment_Controller,
+      File_Disposal_Service, Document_Render_Service, File_Rendition_Service,
+      Libreoffice), Core/Search/, Core/Preview/, Core/Api/,
+      config/rsx.php (files, attachments, thumbnails, preview, search,
+      libreoffice).
+      Skills: rspade:file-attachments, rspade:document-preview.
+
+  6. THE TASK RUNNER, LOCKS AND SUBPROCESSES
+    ONE TABLE, _tasks, AND NO SIDE TABLES. Every queued job and every
+    recurring schedule is a row in it. The status vocabulary is pending,
+    running, completed, failed, killed, and the last three are terminal for a
+    ONE-SHOT row. A recurring job is distinguished from a one-shot by exactly
+    one predicate - it has a next_run_at (and a cron expression) - and that
+    predicate is the tracker test everywhere in the code. On a tracker,
+    completed_at means LAST SUCCESSFUL RUN and the row never reaches a
+    terminal state.
+
+    ONE TICK OF rsx:task:process does four things in order, and is silent
+    when there is nothing to do:
+
+        1  REAP. Load every running row. If the worker pid is alive, enforce
+           the row's timeout (or the configured default; zero on both means
+           unbounded) and kill it if it is over. If the pid is dead and the
+           row has been running longer than the stuck threshold, recycle a
+           tracker back to pending and fail a one-shot. This is the only
+           place a task timeout is enforced, so its granularity is the cron
+           interval.
+        2  REVIVE STRANDED SCHEDULES. Any tracker sitting in failed or
+           killed goes back to pending, loudly, touching only the status -
+           the failure record survives.
+        3  RECONCILE SCHEDULES against the manifest: insert a missing
+           tracker; delete and reinsert one whose expression changed, so the
+           next run time is recomputed; delete one whose method is gone.
+        4  ADMIT AND SPAWN. If there is pending work, compute the deficit
+           between the configured worker cap and the live worker count, and
+           spawn that many detached workers.
+
+    THE TICK NEVER BECOMES A WORKER. A worker is a separate process
+    (rsx:task:worker) that admits itself against a Redis-backed registry -
+    a single atomic script that prunes dead heartbeats and refuses when the
+    cap is reached - loops until its time budget, heartbeats each iteration,
+    and deregisters in a finally.
+
+    DEQUEUE IS A SECOND GATE. One global named lock is held across the row
+    selection and the status flip, and RELEASED BEFORE THE TASK RUNS.
+    Priority is one-shots first, in creation order, then due trackers by next
+    run time. The queue column is a LABEL - the worker does not filter on it.
+
+    COALESCING. #[Exclusive] and #[Debounce(n)] are the same mechanism;
+    exclusive is debounce with a zero delay. The invariant is ONE RUNNING
+    PLUS AT MOST ONE PENDING per class-and-method - the distributed
+    translation of the JavaScript debounce helper. On enqueue, a lock named
+    for the identity is taken (WAITING FOREVER - an earlier version dropped
+    the enqueue after a few seconds, which was the bug), and an existing
+    pending row is returned instead of inserting a second. On dispatch, the
+    run lock is attempted NON-BLOCKING, and "not acquired" is an answer, not
+    a failure: a tracker advances its next run and stays pending, an
+    on-demand row is skipped so the worker does not spin. On completion, any
+    coalesced pending row is re-anchored to now plus the delay. Declaring
+    both attributes is a code-quality violation.
+
+    THESE GUARD ONE IDENTITY AGAINST ITSELF AND NOTHING ELSE. They do not
+    protect a shared table from other writers. Tasks run concurrently and
+    unguarded; a task shares tables with web requests and with other tasks,
+    and must never assume it is the only writer. Use a lock for that.
+
+    FAILURE AND RETRY. Both kinds settle through one class, which is the sole
+    terminal writer. A completed tracker returns to pending with its failure
+    counter cleared; a completed one-shot is completed. A failure writes the
+    error, the timestamp and an incremented consecutive-failure counter in
+    ONE atomic update - a tracker returns to pending with a reason string, a
+    one-shot becomes failed. THE ROW NEVER PASSES THROUGH A TERMINAL STATE ON
+    ITS WAY BACK TO PENDING. A kill sends a term signal, polls, then a kill
+    signal, and recycles or terminates the same way. The next run time is
+    advanced BEFORE the run, under the dequeue lock, so cadence holds across
+    a slow or crashed run.
+
+    THERE IS NO RETRY MECHANISM. A failed one-shot stays failed. A schedule
+    "retries" only by firing again on its cadence. Repeated failures surface
+    through a health check, not through escalation.
+
+    THE THREE ENTRY POINTS:
+
+        Task::dispatch($service, $method, $params, $options): ?int
+            enqueue and, when due, spawn; returns a pollable id
+        Task::status($id): ?array
+            the pollable view
+        Task::internal($service, $method, $params): mixed
+            SYNCHRONOUS, in-process, NO ROW AT ALL
+
+    internal() resolves the service by basename through the manifest,
+    requires the service base class and the #[Task] attribute, resets the
+    revision state, calls an optional pre-task hook whose non-null return
+    short-circuits, runs, and JSON round-trips the result.
+
+    #[Command] AND THE CONSOLE CONTRACT. An artisan command in RSpade is a
+    #[Task] with a name attached; an application writes no command classes.
+    The manifest bakes the mapping and refuses at build time on five rules:
+    no #[Task]; no prefix in the name; a reserved framework prefix; a
+    collision with another command or a framework signature; a missing
+    description. At boot a registrar turns each entry into an alias command.
+
+    The output contract: STDOUT IS THE VALUE - pretty JSON, written at quiet
+    verbosity so -q never suppresses it. STDERR IS THE NARRATION - every log
+    line, live. --debug wraps the value in a success envelope; a thrown error
+    prints a failure envelope and exits 1. Arguments are parsed from the raw
+    argv, so a task command takes free-form flags; values beginning with a
+    brace or bracket are JSON-decoded.
+
+    LOCKS. Two families, and conflating them is the classic mistake.
+
+        CLUSTER locks are served by a standalone lock daemon over a socket:
+        named read and write locks, per-site read and write locks, an upgrade
+        from read to write, and counting semaphores. They coordinate every
+        process that can reach the daemon.
+
+        SYSTEM locks are flock files under the project's storage directory.
+        This box only, WRITE only - a read system lock is an impossible
+        condition and says so. They are for a resource that is local by
+        nature, such as the manifest cache.
+
+    THE DAEMON HAS NO LEASE, NO TTL, NO RENEWAL AND NO HEARTBEAT. THE
+    CONNECTION IS THE LOCK: when a connection drops, everything it held is
+    released and the queues are re-run. One connection per script execution,
+    opened lazily on the first cluster lock and closed at shutdown -
+    deliberately not persistent, or an FPM worker would carry one request's
+    locks into the next. A timeout argument is a WAIT BUDGET only and
+    defaults to waiting forever.
+
+    Grants are FIFO per name, from the head of one ordered queue: a writer at
+    the head grants only when there are no holders and stops the pass; a
+    reader at the head grants and the pass continues, so readers batch.
+    Nothing bypasses a waiter except group inheritance. DEADLOCK IS REFUSED
+    AT ENQUEUE, BEFORE PARKING, by walking holders and waiters, and the
+    refusal names the cycle.
+
+    If the daemon restarts while a lock is held, everything it held is gone.
+    The client discovers it only at release time, when the release reports
+    the lock was not held - the framework then LOGS LOUDLY that mutual
+    exclusion was not in force. Release never throws; a transport failure is
+    the answer. ALWAYS RELEASE IN A FINALLY.
+
+    Rsx_Artisan IS THE ONLY SANCTIONED WAY TO SPAWN php artisan:
+
+        Rsx_Artisan::passthru($command, $args): int
+        Rsx_Artisan::run($command, $args, &$output, $env): int
+        Rsx_Artisan::dispatch_detached($command, $args, $propagate = false)
+
+    The command name and every argv token are escaped separately; the PHP
+    binary is chosen correctly for the SAPI (the fpm binary cannot run a
+    script); everything is invoked through an explicit bash, never the
+    implicit /bin/sh. The synchronous forms attach the framework-internal
+    --_lock-group flag so the child INHERITS the parent's cluster locks;
+    the detached form does not, and additionally closes inherited flock file
+    descriptors, because a POSIX flock lives on the open file description and
+    would otherwise be held for the child's whole life.
+
+    WHY IT IS A MANDATE: a cluster lock belongs to a CONNECTION, and a
+    subprocess opens its own. A parent holding a lock while blocking in
+    waitpid, with the child queued behind that same lock, is a permanent hang
+    THE DEADLOCK DETECTOR STRUCTURALLY CANNOT SEE - the parent's half of the
+    cycle is an operating-system wait, not a lock wait. It wedged a framework
+    test run for twelve hours across sixteen call sites. A code-quality rule
+    enforces it; an in-process Artisan::call() needs none of this.
+
+    A worker checkpoints the lock state before each task and releases
+    everything acquired since, in a finally, warning about each leak.
+
+    MAINTENANCE MODE DEGRADES THIS SUBSYSTEM DELIBERATELY AND SILENTLY. The
+    CLI gate is pre-boot and autoload-free: the task processor and worker are
+    refused outright, the task runner is refused without a force flag, and
+    everything else - migrate included - runs normally. Inside the window,
+    CLUSTER LOCKS ARE GRANTED AS NO-OPS: a token that holds nothing, cannot
+    time out, and releases normally. That is correct, because every writer
+    the lock would exclude has already been stopped. System flock locks are
+    UNTOUCHED, since their contenders are exactly what maintenance does not
+    stop. The cache misses and drops writes; realtime frames are discarded.
+    A connection failure with NO maintenance flag on disk stays as loud as
+    ever.
+
+    References
+      Man pages: tasks, task_commands, locks, maintenance_mode, health,
+      realtime, revisions.
+      Colocated: Core/Task/CLAUDE.md, bin/rsx-lockd/CLAUDE.md.
+      Source: Core/Task/ (Task.php, Task_Instance, Task_Status,
+      Task_Concurrency, Task_Worker_Registry, Task_Killer, Task_Lock,
+      Cleanup_Service, Task_Command_ManifestSupport, Task_Alias_Command),
+      Commands/Rsx/Task_Process_Command.php, Task_Worker_Command.php,
+      Task_Run_Command.php, Core/Locks/ (RsxLocks.php, Lockd_Client.php),
+      Core/Console/Rsx_Artisan.php, system/bin/rsx-lockd/,
+      config/rsx.php (tasks, locks).
+      Skills: rspade:background-tasks, rspade:task-commands,
+      rspade:locks-and-subprocesses, rspade:maintenance-mode.
+
+  7. BUNDLES AND JS/SCSS COMPILATION
+    TWO KINDS OF BUNDLE. A MODULE bundle is the top-level, page-rendered
+    entry point - one per module. An ASSET bundle is a co-located dependency
+    manifest, never built standalone. Including a module bundle from a module
+    bundle throws. Asset bundles are AUTO-DISCOVERED during a directory scan:
+    a scanned PHP file whose class subclasses the asset base is promoted to a
+    bundle rather than added as a file, and a bundle discovered that way may
+    not itself scan directories - to scan, it must be named explicitly in its
+    parent's include list. A required-bundles list is prepended
+    unconditionally to every bundle; rendering a second bundle on one page
+    throws, naming both call sites.
+
+    INCLUDE ORDERING IS LOAD-BEARING AND IS NEVER GLOBALLY RE-SORTED.
+    Explicit entries keep authored order; only files found by a DIRECTORY
+    SCAN are sorted, by checkout-relative path, so two byte-identical
+    checkouts emit identical bytes. SCSS depends on this, because variables
+    and mixins defined earlier are used later. JS ordering hoists known
+    inheritance and decorator dependencies through a depth-first pass but
+    otherwise preserves input order - a previous global re-sort inverted
+    declared order and produced temporal-dead-zone crashes downstream.
+
+    THE watch KEY declares cache-invalidation INPUTS that are never compiled
+    in - the classic case being a vendored stylesheet parameterised by a
+    first-party variables file. A watch target that does not exist is a build
+    error naming the bundle.
+
+    JIT COMPILATION happens on the request that renders the bundle, and on a
+    direct hit to a missing compiled file - IN DEVELOPMENT ONLY. A sealed
+    build never compiles: it looks for the cached artifact and throws a
+    message naming the production refresh command if it is absent.
+
+    THE CACHE KEY, computed per bucket (vendor and app compile separately),
+    folds in the content hash of every included file AND every watched file,
+    the npm declarations, the lockfile hashes for vendor, and the auth mirror
+    stubs for app. THE HASHES ARE SORTED BEFORE HASHING, so the key depends
+    on the input SET and never on resolution order. A missing input file is
+    an impossible-condition assertion, not a skipped entry.
+
+    OUTPUT lands in storage/rsx-build/bundles/ as
+    <Bundle_Name>__<vendor|app>.<8 hex>.<js|css>; identical vendor input sets
+    across different bundles produce the SAME filename and are shared. Files
+    are served from /_compiled/ with a long immutable cache header, and a
+    miss there deliberately does NOT fall through to the route table - a
+    missing artifact is a build problem and must be loud. Inspect with
+    rsx:bundle:show and rsx:bundle:compile (which refuses in-process
+    invocation); watch the BUNDLE, BUNDLE_SORT, JQHTML and RPC debug
+    channels; intermediates are readable under storage/rsx-tmp/.
+
+    THE PIPELINE IS ONE METHOD, not a set of stage classes: the sealed-build
+    short circuit; prepend required bundles; resolve the bundle tree; split
+    vendor from app; check the caches; take a SYSTEM lock and re-check under
+    it; run the registered processors in priority order, each receiving the
+    whole flat file list by reference (SCSS, then jqhtml); assemble the JS -
+    emitting each PHP file's generated stub AT that file's include position,
+    then the dependency sort, then npm declarations, auth mirrors, compiled
+    templates, concrete model classes, and the generated manifest, route,
+    portal-route and externals modules; transform and concatenate; minify
+    when the mode says so. The decorator runtime is forced to first position.
+
+    THE NODE RPC SERVERS. Parsing and transformation would otherwise spawn a
+    Node process per file - over a thousand per build. Instead there are
+    long-running Node servers, one per family, speaking LINE-DELIMITED JSON
+    over UNIX DOMAIN SOCKETS in storage/rsx-tmp/. Six families: the JS
+    metadata parser, the JS transformer, the minifier, the jqhtml template
+    compiler, and two for the code-quality checker. Every server implements
+    ping, its own verb, and shutdown.
+
+    ONE BASE CLASS OWNS THE ENTIRE LIFECYCLE; a client declares three
+    constants and nothing else:
+
+        class Js_Parser extends Rpc_Client_Abstract {
+            protected const RPC_SERVER_SCRIPT = '...server.js';
+            protected const RPC_SOCKET        = 'storage/rsx-tmp/...sock';
+            protected const RPC_LABEL         = 'JS Parser';
+        }
+
+    then calls ensure_rpc_server() before its first request and does its own
+    marshalling and caching. Failure is FATAL - there is no single-file
+    fallback anywhere.
+
+    Four lifecycle details matter when debugging one. The spawn closes
+    inherited lock file descriptors, because an inherited flock would be held
+    for the daemon's whole idle life. The process is given NO TIMEOUT - a
+    daemon runs as long as it is useful. A sidecar file records the SHA of
+    the server script at spawn, so a daemon is reused only when the socket
+    exists, the recorded SHA matches the script on disk, and a ping answers -
+    which is what invalidates a stale daemon after an edit or a framework
+    pull. And the process handle is published only AFTER the first successful
+    ping, because publishing earlier left a non-null handle after a failed
+    start and every later caller died on a missing socket.
+
+    THE ONE SANCTIONED TIMEOUT HERE is the readiness wait,
+    rsx.javascript.rpc_server_ready_wait_ms. It bounds a wait on an external
+    party, degrades to a loud evidence-carrying error, and CAPS THE READINESS
+    WAIT AND NEVER THE WORK; its config entry states all of that beside the
+    value, and it is the house example of a justified timeout. On expiry the
+    diagnosis is built BEFORE anything is killed, so a slow start is not
+    reported as a crash. Lifetime differs by SAPI: on the CLI the daemon dies
+    with the artisan process; UNDER PHP-FPM IT SURVIVES THE REQUEST and is
+    reused. A reaper exists, called by the clean command and by maintenance.
+
+    THE VENDORED BABEL DECORATOR PLUGIN. Upstream's decorator transform DROPS
+    THE MODULE-SCOPE NAME BINDING of a decorated class declaration that has
+    static members. RSpade concatenates transform output into a SHARED,
+    NON-MODULE bundle scope, and other files, templates and the SPA registry
+    reference classes by bare name - so the missing binding is a runtime
+    reference error: a white screen with NO BUILD-TIME SIGNAL. The vendored
+    fork re-emits the binding at the producer, in the AST. Its bundle is
+    generated; do not hand-edit it.
+
+    That fork RETIRED an output-shape matcher that used to patch the emitted
+    destructuring pattern - and that silently stopped matching when a
+    browser-target data update changed the shape, white-screening the page.
+    The replacement is FAIL-CLOSED: a plugin records every top-level
+    decorated class name before the transform and afterwards THROWS, naming
+    class and file, if the binding is absent from program scope. The same
+    pass renames generated helpers with a per-file hash so concatenated files
+    cannot collide. The transform cache key includes a TOOLCHAIN FINGERPRINT
+    - the fork's hash, the Babel version, the server and CLI script hashes -
+    so swapping any part of the toolchain orphans every cache entry, which is
+    separate from the daemon's provenance check.
+
+    THE /** @decorator */ MARKER: only a function marked as a decorator may
+    be used as one, and the manifest fails the build on an unauthorised
+    decorator. In a file with no class the bare marker form is rewritten into
+    a comment before Babel sees it; in a class file it is left as real
+    decorator syntax.
+
+    JQHTML COMPILATION happens at BUNDLE COMPILE, in a processor pass - not
+    at manifest build and not at Blade render. A template compiles to an IIFE
+    assigning a template variable, with a self-registration call appended ON
+    THE SAME LINE as the sourcemap comment so mappings do not shift.
+    TEMPLATES SELF-REGISTER WHEN THEIR COMPILED JS EXECUTES; there is no
+    separate template manifest. Two cache layers are keyed differently on
+    purpose: the inner one by absolute path and mtime, the outer one - whose
+    filename participates in bundle ordering - by RELATIVE path and content,
+    because a checkout-dependent name would change concatenation order
+    between byte-identical checkouts. Compiled templates are appended AFTER
+    the generated stubs, because templates call mirrored auth checks at
+    render time. Blade is a different path: a precompiler rewrites
+    capitalised tags into component mounts server-side and explicitly refuses
+    block and slot content.
+
+    SCSS is dart-sass run IN-PROCESS AS A ONE-SHOT NODE SCRIPT - not an RPC
+    server. All the SCSS in a bucket compiles as ONE unit through a generated
+    master file importing each source in bundle-resolution order, wrapped in
+    marker comments used for the development file-boundary banners. Failure
+    is detected by the output file not existing. @import IS PROHIBITED in a
+    non-vendor file and throws, with the reason in the message: it bypasses
+    bundle dependency management, so the file belongs in the include list.
+    Vendor trees keep their own import graph behind a single entry file.
+
+    MODE POLICY IS ONE SET OF PREDICATES on the manifest, and this is the
+    whole story:
+
+        auto-rebuild            development only
+        minify                  strict production only
+        inline sourcemaps       the logical inverse of minify
+        cache external assets   any production-like mode
+        strip console_debug     strict production only
+        include debug info      development and debug
+
+    THERE IS NO INDEPENDENT SOURCEMAP TOGGLE. The compiler never adds a map
+    at the bundle layer; the transformer emits an inline map per file and the
+    concatenators rebuild one combined map. MINIFICATION IS WHAT REMOVES
+    THEM. console_debug stripping is a pure-function list handed to the
+    minifier, so a debug build keeps both readable code and working output.
+
+    SEALED-BUILD EXTERNAL MIRRORING is an explicit build step that walks
+    every declared external resource and downloads it into a committed cache
+    directory (deliberately NOT under storage, so it survives a clean and a
+    mode switch), served afterwards from /_vendor/. ANY DOWNLOAD FAILURE
+    ABORTS THE WHOLE BUILD. The step exists because external declarations are
+    resolved by the CLIENT at runtime, so nothing in the compile would
+    otherwise touch them. At request time a sealed build that finds a mirror
+    missing throws a message naming the file, the source URL and the refresh
+    command: A SEALED BUILD NEVER DOWNLOADS AT REQUEST TIME.
+
+    References
+      Man pages: bundle_api, js_decorators, scss, jqhtml, npm, app_mode,
+      external_resources, csp, console_debug.
+      NOT ON YOUR DISK: ast_sourcecode_parsers (stripped at publish - the RPC
+      section above is its downstream replacement).
+      Colocated: Core/Bundle/CLAUDE.md, Core/JsParsers/CLAUDE.md,
+      Core/JsParsers/README.md, Integrations/Jqhtml/CLAUDE.md.
+      Source: Core/Bundle/ (Rsx_Bundle_Abstract, Rsx_Module_Bundle_Abstract,
+      Rsx_Asset_Bundle_Abstract, BundleCompiler, Minifier, Cdn_Cache,
+      resource/concat-js.js, resource/concat-css.js),
+      Core/JsParsers/ (Rpc_Client_Abstract, Js_Parser, Js_Transformer,
+      resource/js-parser-server.js, resource/js-transformer-server.js,
+      resource/babel-plugin-decorators/),
+      Integrations/Jqhtml/, Integrations/Scss/Scss_BundleProcessor.php,
+      Core/Dispatch/AssetHandler.php, Commands/Rsx/Prod_Build_Command.php,
+      config/rsx.php (required_bundles, bundle_aliases, bundle_processors,
+      javascript).
+      Skills: rspade:bundles, rspade:js-decorators, rspade:scss-rules,
+      rspade:external-resources.
+
+  8. THE SPA RUNTIME
+    A module renders ONE Blade page containing a single root element and its
+    bundle; everything after that is client-side. THE ROUTE TABLE IS BUILT IN
+    THE BROWSER AT BOOT, not read from a generated file: the runtime walks
+    every class in the client-side manifest, picks the action subclasses, and
+    registers each declared pattern. The server indexes the same actions into
+    its own table, and each row carries TWO gate lists - the PHP bootstrap's
+    gates, evaluated by the server dispatcher, and the JS action's gates,
+    evaluated only client-side.
+
+    DISPATCH, in order: the leave guard; the SPA-disabled check; a
+    re-entrancy guard that QUEUES a nested dispatch and runs it afterwards;
+    cache resets and the start event; absolute-URL handling; THE HASH IS
+    STRIPPED BEFORE ROUTE MATCHING, because a hash is page state; a same-URL
+    navigation deliberately falls back to a browser reload; an unmatched
+    route goes to the server, as does a route belonging to a DIFFERENT SPA
+    module so the other bundle can bootstrap; history is pushed or replaced
+    carrying scroll position and parked form data; THE AUTH GATE; scroll
+    handling; the layout chain; session validation. Spa.redirect() is exactly
+    dispatch with a replacing history entry, and it is the one for a
+    programmatic redirect.
+
+    THE GATE'S PLACEMENT IS THE LOAD-BEARING DETAIL: it is evaluated after
+    history has moved and BEFORE ANYTHING IS INSTANTIATED, so a denied action
+    never constructs, and the denial renders AT THE REQUESTED URL, mirroring
+    the server. The client compares the action's declared checks against the
+    exported grants map - grants only, active realm. CLIENT GATES ARE UX, NOT
+    SECURITY: the server runs the same named gates on every call the action
+    makes.
+
+    THE LAYOUT CHAIN is the outermost layouts plus the action. The runtime
+    walks from the root comparing each mounted container against the target
+    name, finds the DIVERGENCE POINT, reuses everything above it and destroys
+    from there down. Actions are never reused. Two thrown errors enforce the
+    contract: a layout must contain an element tagged as the content slot,
+    and the root element must exist.
+
+    LAYOUTS ARE AWAITED, THE ACTION IS NOT. Layouts are awaited only to the
+    point of being rendered, so navigation paints while the action still
+    loads; the action is mounted fire-and-forget and its ready state is
+    chained. Two consequences before you debug boot order: an action's data
+    may not be populated when the navigation is considered complete, and A
+    THROW FROM THE ACTION'S ASYNC LOAD DOES NOT REACH THE DISPATCH CATCH - it
+    surfaces as an unhandled rejection, which disables the SPA and drops the
+    page to browser navigation with the half-rendered action still on screen.
+
+    THE PAGE TITLE has two stages, and the framework never assigns the
+    document title except for one loader hint - the assignment lives in the
+    application's layout. A fixed title from the decorator is painted
+    SYNCHRONOUSLY at dispatch; a data-dependent title comes from an override,
+    and the decorator's value is then deliberately NOT painted, because it is
+    generic route metadata and painting it would flash a wrong title. An
+    override must begin by awaiting the action's load, because the resolver
+    runs at dispatch time.
+
+    LINK INTERCEPTION is a delegated document click. NOT intercepted: no
+    href; a modifier key; any target attribute; a non-primary button; an
+    empty or bare-hash href; the same path and query as the current URL; a
+    different host; and - the important one - ANY URL WITH NO MATCHING SPA
+    ROUTE, which the server handles. THERE IS NO OPT-OUT ATTRIBUTE AND NONE
+    IS NEEDED, because only known SPA routes are ever claimed. Do not invent
+    one.
+
+    SESSION VALIDATION runs fire-and-forget after each navigation, skipped on
+    the initial load and on history navigation. It asks a public,
+    realm-agnostic endpoint for the caller's own session state and compares
+    the build key, a session hash, the user and the site. THE REFRESH IS
+    location.reload(), DELIBERATELY: replacing a URL with itself is a
+    FRAGMENT navigation on a hashed URL, which the browser performs without
+    fetching the document - so on any hashed URL the refresh silently never
+    happened and the page ran on with stale state. A network error does not
+    block navigation.
+
+    THE THREE TERMINAL ERROR OUTCOMES all render INSIDE THE LIVE LAYOUT with
+    no navigation and no round trip: unauthorized, not-found and fatal. The
+    not-found screen exists for a dispatch that targets the CURRENT URL when
+    nothing claims it - navigating away would reload the unroutable URL
+    forever. The fatal screen sends the error object to the console and never
+    renders it. Each mounts an application-owned theme component and throws
+    if that component is not registered.
+
+    References
+      Man pages: spa, routing, auth_gates, jqhtml, blade_to_spa_conversion,
+      error_handling, pagedata.
+      Colocated: Core/SPA/CLAUDE.md (STALE - it describes a class-property
+      routing design that no longer exists; trust the source).
+      Source: Core/SPA/ (Spa.js, Spa_Action.js, Spa_Layout.js,
+      Spa_Decorators.js, Error_Screens.js, Spa_App.blade.php,
+      Spa_ManifestSupport.php, Spa_Session_Controller.php, Default_Layout),
+      Core/Js/Rsx.js.
+      Skills: rspade:spa, rspade:jqhtml, rspade:crud-patterns.
+
+  9. REALTIME
+    PHP publishes to Redis, a Node relay holds the browser sockets, the
+    browser refetches through ordinary gated Ajax. FRAMES ARE
+    NOTIFICATION-ONLY - a frame says "something changed, go look", never what
+    changed. That single rule is what makes the system safe by construction:
+    the data still arrives through a gated endpoint, so a subscription can
+    never leak more than a fetch would.
+
+    PUBLISH. Realtime::publish() writes a small JSON frame to a per-site
+    Redis channel, with a separate literal channel for the control plane. The
+    transport is a RAW Redis client, deliberately not the framework's cache
+    facade, because the facade prefixes channel names and the relay's
+    unprefixed pattern subscription would never see them.
+
+    Commit semantics live one layer up. Emissions are BUFFERED and flushed
+    after the database transaction commits; a rollback clears the buffer. On
+    the CLI they transmit at flush. IN A WEB REQUEST THEY ARE STAGED INTO AN
+    OUTBOX, deduplicated, and published in the terminating callback - after
+    the response has been sent. Frames coalesce per site and model: one
+    record becomes an id, several become a chunked id list.
+
+    THE RELAY is a single Node process listening on one TCP port, proxied at
+    /ws. It refuses to start without the application key. It authenticates
+    each socket against a short-lived connection token, heartbeats, and
+    enforces a per-frame message cap. Its subscription registry is a Redis
+    set that the relay rewrites atomically and refreshes on a timer, so if
+    the relay dies the key expires and the emitter side self-heals. Because
+    it is ONE shared process, a single uncaught throw kills realtime for
+    every connected user - which is why its token validation is written to
+    shape-check before it compares.
+
+    THE BROWSER connects to a URL built from the request's HTTP HOST -
+    including the port - and downgrades to a plain socket when the page is
+    not https, which is what makes realtime work under the render harness on
+    a local URL. Reconnect is exponential with a cap; one socket per tab; a
+    message queued while the socket is down is DROPPED, never replayed.
+
+    THE CONNECTION TOKEN is minted by an Ajax endpoint that is declared
+    PUBLIC and realm-agnostic. It carries the realm, the user, the site, the
+    session if there is one, and a short expiry, signed with the application
+    key. It is minted for anonymous callers too, and it GATES NOTHING - it
+    proves only that a real client asked. Note the realm is taken from the
+    REQUEST'S EXPERIENCE, not from who is signed in, and the session id is
+    read only if a session already exists, because asking for one would
+    create a session as a side effect of opening a socket.
+
+    THE TOPIC IS THE SOLE ENFORCEMENT BOUNDARY. A topic class implements
+    can_subscribe(array $filter = []): bool, and the subscribe path throws on
+    false. The controller has no gate of its own. Site scoping narrows
+    reachability; it is not a permission check. A code-quality rule flags a
+    topic that declares no auth requirement, and flags harder when the
+    can_subscribe body contains no recognisable identity check at all.
+
+    MODELS. `public static $realtime = true;` publishes on every committed
+    save and delete. The site is resolved realm-aware: the row's own column,
+    else the portal site on a portal request, else the staff session's.
+    #[Realtime_Touch] on a child's belongsTo cascades to the parent -
+    breadth-first, with a visited set and a depth cap - and a touched parent
+    is queued BY IDENTITY, never hydrated. A touch never writes the parent
+    row and fires regardless of the parent's own flag. Bulk writes are
+    fetched and iterated when a realtime or lifecycle surface exists;
+    ->raw_bulk() and raw SQL are not covered, which is why $record->
+    realtime_emit() exists.
+
+    #[Emitter] DOES NOT POLL. Recompute is write-kicked: a non-silent save
+    marks emitters dirty, and the commit flush dispatches a debounced task -
+    but only when there is actually a watching subscriber for that topic. The
+    engine hashes the computed value against a per-identity Redis key.
+    Unchanged means nothing is sent; changed means store and publish; and a
+    MISSING hash means store AND publish, which is the belt against a
+    subscribe-seed race, a wiped cache and an expired key.
+
+    CLIENT AND RESYNC. Subscriptions are ref-counted by a canonical
+    topic-plus-filter key and auto-stop when a component is destroyed. EVERY
+    (RE)SUBSCRIBE FIRES THE CALLBACK ONCE AS A RESYNC rather than replaying
+    missed messages, which is why every callback must be written as an
+    idempotent refetch. Live messages are trailing-debounced per entry; a
+    resync fires immediately and cancels the pending debounce. The component
+    subscribe helper is idempotent per topic-and-filter per instance -
+    without that, a reload cycle stacks callbacks exponentially. A
+    subscription registered before the first load GATES that load on the
+    subscription, so the first fetch is race-free.
+
+    refresh() in a realtime callback, never reload(): refresh refetches and
+    repaints only if the data actually changed, while reload repaints
+    unconditionally and destroys transient child state.
+
+    OPERATIONS. The feature is off unless enabled; with it off, both token
+    endpoints refuse, publishing returns early, nothing buffers, and the
+    client helper returns an inert handle - but the model-level assertion
+    still throws, deliberately, in every environment. Maintenance mode drops
+    frames with one warning per process and reports an empty registry,
+    because a throw there would abort a migration inside the update window.
+    rsx:health carries a Realtime Relay row: INFO when disabled, otherwise a
+    short loopback probe that FAILS and names the supervisor program.
+
+    References
+      Man pages: realtime, csp, session, portal, tasks, health.
+      Colocated: Core/Realtime/CLAUDE.md.
+      Source: Core/Realtime/ (Realtime.php, Realtime_Emissions,
+      Realtime_Topic_Abstract, Model_Changed_Topic, Realtime_Controller,
+      Realtime_Emitter_Service, Realtime_Touch_Registry),
+      Core/Js/Rsx_Realtime.js, Core/Bundle/Rsx_Bundle_Abstract.php,
+      system/bin/realtime-server.js, resource/docker/nginx/site.conf,
+      resource/docker/supervisor/conf.d/realtime.conf.
+      Skill: rspade:realtime.
+
+  10. EMAIL DELIVERY
+    An email is a CLASS, not a call. It lives in rsx/emails/ beside its blade
+    template, extends the email base, and declares four members that the
+    manifest enforces as BUILD FATALS: a category constant (transactional,
+    notification or marketing), a subject method, a data method returning
+    plain scalars, and a static sample factory. The blade carries an id
+    matching the class basename, and a duplicate basename is fatal. The
+    category constant is read FROM THE SOURCE FILE rather than by reflection,
+    because the manifest builds before the autoloader is ready.
+
+    Sending is a fluent envelope on the instance - recipients, copies, reply
+    address, attachments, embedded images, a dedupe key, a send-at time, a
+    subject record - terminating in send(), which enqueues. THE MESSAGE IS
+    ALWAYS QUEUED; nothing is sent inline, so a slow or dead mail host can
+    never slow a user's action.
+
+    Enqueue runs in a load-bearing order: resolve the tenant realm-aware,
+    honour the dedupe key by returning the existing row, apply the blocklist
+    for anything non-transactional, apply the dev-site gate, FREEZE the
+    subject and data into a descriptor, persist attachments into the
+    content-addressed blob store, and kick the drain.
+
+    THE QUEUE is email_queue with companion recipient and attachment tables
+    (and a parallel set for SMS). Statuses: PENDING, SENDING, SENT, FAILED,
+    BLOCKED (never queued at all - the audit row is the point) and
+    SUPPRESSED (rendered and recorded, deliberately never handed to a
+    transport; terminal, and NOT a failure).
+
+    THE DRAIN is an #[Exclusive] task on a one-minute schedule. In order: the
+    mode check, a reclaim of rows stranded mid-send by a previous runner (no
+    age threshold and no timeout - exclusivity is the proof no other runner
+    exists), a stale sweep, the transport and banner check, then the claim
+    loop.
+
+    THE BUILDER has four stages: render the HTML with subject, branding and
+    an unsubscribe URL injected; inline the CSS; rewrite root-relative image
+    sources into embedded parts, THROWING on one it cannot resolve; and
+    derive the text alternative from a text template if one exists, otherwise
+    from the HTML. The stylesheet is the application's if present, otherwise
+    the framework's - one file wins, there is no merge. The message id is
+    minted here, not in the transport, and non-transactional mail gets the
+    standard list-unsubscribe headers. The rendered bodies are written back
+    onto the row before sending, so a suppressed or failed row still shows
+    exactly what would have gone out.
+
+    THE FOUR DELIVERY MODES are aiosmtpd, live, suppressed and disabled.
+    Selection is ONE config key read in ONE place, and an unrecognised value
+    THROWS rather than degrading to "not live". aiosmtpd pins the local
+    development catcher and ignores the transport configuration block
+    entirely, so a stale host setting cannot redirect a development box at a
+    real relay. live is the only mode that reads the transport block and the
+    only one the dev-site gate applies to. suppressed builds and records but
+    hands nothing to a transport. disabled does not even claim a row.
+
+    THE DEV CATCHER is a small Python SMTP server writing to a maildir, on
+    one loopback SMTP port, WITH NO WEB UI AND NO HTTP LISTENER AT ALL - a
+    deliberate choice, because a loopback HTTP service is reachable by
+    anything that can make the application fetch a URL. Its identifying
+    banner is a contract: the transport probes the greeting and refuses a
+    mismatch per message, so the message retries rather than the drain dying.
+
+    THE FAILURE POLICY HAS THREE CLASSES, and they behave differently on
+    purpose:
+
+        A server error for THIS message counts an attempt and retries with a
+        delay, becoming FAILED at the attempt cap.
+        A transport that is UNREACHABLE releases the row without counting an
+        attempt; the runner rebuilds the transport and retries the same row
+        exactly once, and a second failure throws and kills the whole drain
+        loudly with every remaining row still pending.
+        A build or render error is terminal immediately, with no retry,
+        because it is a code bug.
+
+    THE STALE WINDOW is queue hygiene, not a timeout: a pending row whose due
+    time is older than the configured number of days is failed with a message
+    naming the resend command. The resend path sets the next attempt to now
+    rather than nulling it, because nulling would re-age the row and make the
+    named remedy a permanent no-op.
+
+    THE DEV-SITE GATE is a second, independent layer keyed on the hostname
+    containing a development marker, and it returns TRUE on any resolution
+    error, for safety. It applies only in live mode - the other three modes
+    already cannot reach a real person. Four outcomes: an address whitelist
+    match delivers as-is; a domain whitelist match delivers as-is; a catchall
+    redirects while recording the real address; and NO MATCH WITH NO CATCHALL
+    is suppressed at enqueue time. Note that the first and last leave the
+    address untouched and mean opposite things.
+
+    UNSUBSCRIBE is a public route taking the address, category, site and a
+    signature, CSRF-exempt because a one-click POST is server-to-server. The
+    SITE COMES FROM THE SIGNATURE, NEVER FROM THE SESSION - the blocklist is
+    per tenant. Anything missing, malformed, tampered with, or naming the
+    transactional category gets one indistinguishable 404. Transactional mail
+    always delivers and ignores the blocklist.
+
+    OPERATING IT: rsx:mail:test (which sends and then drains synchronously,
+    so the reported status is real), rsx:mail:queue, rsx:mail:show and
+    rsx:mail:resend. There are no SMS commands, because the SMS mirror has
+    only two modes and no provider - its drain claims each row and marks it
+    suppressed, shaped like the mail runner on purpose so that wiring a
+    provider means replacing one try body.
+
+    References
+      Man pages: email, sms, tasks, config_rsx, health.
+      Source: Core/Mail/ (Rsx_Mail.php, Rsx_Email_Abstract,
+      Mail_Queue_Service, Rsx_Mail_Builder, Rsx_Mail_Transport,
+      Mail_Unsubscribe_Controller, Email_ManifestSupport),
+      Core/Models/Email_Queue_Model.php, Core/Sms/,
+      Commands/Rsx/Mail_*.php, system/bin/mail_catcher.py,
+      config/rsx.php (mail, sms),
+      resource/reference_app/emails/ (worked examples).
+      Skill: rspade:email-and-sms.
+
+  11. THE FPC PROXY
+    A full-page cache in front of the site, for ANONYMOUS GET responses that
+    a route has explicitly opted in with #[FPC]. It is off by default.
+
+    THE CHAIN. nginx serves static files itself, routes the Ajax path to a
+    separate PHP pool, and sends everything else through try_files to the
+    Node proxy. On a miss the proxy calls back into a LOOPBACK-ONLY nginx
+    server block, which is the one that actually reaches PHP. So a request
+    can traverse nginx twice, and the second pass is invisible from outside
+    the box. Ports come from the environment with conventional defaults.
+
+    WHAT IS CACHED is decided in PHP, not in the proxy. The dispatcher marks
+    a response cacheable only when the matched method carries #[FPC], the
+    method is GET, there is no post data and no upload, and the visitor is
+    NOT LOGGED IN. It then blanks every cookie but the session cookie for the
+    duration of the request, so that controller code produces identical
+    output for every anonymous visitor regardless of tracking cookies, and on
+    the way out it sets the marker header and REMOVES Set-Cookie. Build-time
+    rules keep #[FPC] off endpoints where it would be nonsense.
+
+    BYPASS CONDITIONS in the proxy, in order: any method other than GET or
+    HEAD; the SESSION COOKIE BEING PRESENT AT ALL; and an unavailable cache
+    store, which passes straight through - THE PROXY FAILS OPEN, so "the
+    cache stopped working" looks like "the site got slower", never like an
+    error. HEAD may read from the cache but never populates it.
+
+    THE CACHE KEY is the path plus the query with its parameters SORTED, so
+    two orderings of the same query collide correctly, namespaced by the
+    BUILD KEY - the manifest hash, written to a file at manifest save, which
+    the proxy watches. Rotating the build key deletes nothing; new requests
+    simply compute new keys and the old entries are never read again.
+
+    THE ENTRY stores the status, content type, an ETag derived from the body,
+    a timestamp and either the body or a redirect location. Note the header
+    asymmetry, which is the single most important thing to know here: a MISS
+    forwards the backend's headers, but A HIT CONSTRUCTS A FRESH RESPONSE
+    WITH ONLY THREE HEADERS - content type, ETag and the cache-status header.
+    A conditional request matching the ETag returns 304.
+
+    Tell a hit from a miss by the X-FPC-Cache header. The internal marker the
+    dispatcher sets is stripped on every path and never reaches a client.
+
+    A KNOWN OPEN ITEM FOLLOWS DIRECTLY FROM THAT ASYMMETRY: the
+    Content-Security-Policy header is applied at the dispatcher seam, so it
+    is present on a miss - but the cache entry stores no headers beyond the
+    content type, so A CACHED PAGE IS SERVED WITH NO POLICY AT ALL, and the
+    nonce baked into its HTML is inert. #[FPC] pages are therefore outside
+    the policy's coverage today. The two possible resolutions are that a
+    public page whose protection matters should not be cached, or that the
+    proxy must learn to cache and replay the header with the body. The CSP
+    man page states this in its own triage section; do not "fix" it with a
+    patch that changes the contract without agreeing the direction first.
+
+    PURGE. The framework's purge helper scans and deletes the keys for the
+    current build key - SCAN, never a blocking key enumeration - and can
+    purge one URL by reconstructing its key with the same sorting. Both
+    return cleanly when the feature is off without touching the store; when
+    it is ON, a connection failure is an impossible-condition assertion,
+    because a developer-invoked purge that cannot reach the store must never
+    silently report "nothing to clear" and let stale pages serve forever.
+
+    A CONFIGURATION TRAP: the Node proxy reads the environment file itself
+    with its own parser and never sees the Laravel configuration cache, so a
+    value changed only in a config file will not reach it. The mirrored
+    config key exists for the health probe, and says so.
+
+    HEALTH. Disabled produces one INFO row. Enabled produces a store
+    reachability row that can FAIL, and a proxy liveness row that is WARN AND
+    NEVER FAIL - architecturally, because the nginx fallback means a dead
+    proxy still serves the site through PHP. A dead proxy is a performance
+    regression, not an outage, and must not flip the health exit code.
+
+    References
+      Man pages: fpc, csp, caching, health, dispatch, app_mode.
+      Source: Core/FPC/Rsx_FPC.php, Core/Dispatch/Dispatcher.php,
+      Core/Csp/Rsx_Csp.php, system/bin/fpc-proxy.js,
+      resource/docker/nginx/site.conf,
+      resource/docker/supervisor/conf.d/fpc-proxy.conf,
+      config/rsx.php (fpc).
+
+  12. THE CODE-QUALITY CHECKER
+    ONE CLASS PER RULE, DISCOVERED BY GLOB - deliberately not through the
+    manifest, so the checker still works when the manifest is what broke. The
+    glob is EXACTLY ONE DIRECTORY DEEP under the rules directory, and a rule
+    file is token-scanned without being loaded, then required, then
+    instantiated. A rule must extend the rule base class LITERALLY: an
+    intermediate base class breaks discovery silently.
+
+    A rule implements five methods - id, name, description, file patterns,
+    and the check itself - and may override a handful of marked-replaceable
+    ones: whether it applies to console commands, whether it is enabled,
+    whether it runs during the manifest scan, whether it is incremental, and
+    its default severity. Violations are reported with a file, a line, a
+    message, an optional snippet and a REMEDIATION, and the remediation is
+    written for the blocked reader, because agents are instructed to trust it
+    as authoritative.
+
+    THE RULE ID IS THE API. It appears in output, in every exception marker
+    in every downstream application, and in agent memory. Renaming one
+    silently un-suppresses every existing exception comment in the world.
+
+    TWO ENFORCEMENT TIERS. An ordinary rule runs under rsx:check, reports,
+    and exits non-zero. A rule that declares itself a manifest-scan rule is a
+    BUILD FATAL: the exception's own constructor poisons the manifest, so the
+    failure survives across runs and forces a full rebuild until the source
+    is fixed. Manifest-time rules run only in development, only when
+    something changed, and never during a migration. They come in two
+    sub-kinds - incremental ones see only changed files, non-incremental ones
+    run once with full context and should guard themselves against repeating.
+
+    Two things about manifest-time rules that a patch must know: they receive
+    RAW file bytes, not sanitised ones; and THE CHECKER'S GENERIC EXCEPTION
+    SKIP IS NOT APPLIED TO THEM, so such a rule must honour its own exception
+    marker or it cannot be suppressed at all.
+
+    SEVERITIES are critical, high, medium and low, plus a fifth - convention
+    - which is routed to a separate stream, is invisible without the
+    convention flag, and always exits zero. Otherwise any violation at all
+    exits non-zero; there is no severity threshold.
+
+    THE EXCEPTION-MARKER CONTRACT is @<RULE-ID>-EXCEPTION - <rationale>, and
+    THE GENERIC IMPLEMENTATION IS A FILE-WIDE SKIP: before invoking a rule
+    the checker reads the original bytes and, if the marker appears ANYWHERE
+    in the file, skips that rule for THE WHOLE FILE. So placement does not
+    narrow suppression unless the rule itself implements line checking - and
+    the way to find out is to grep the rule's own source for the marker. Some
+    rules require a rationale and treat a bare marker as its own violation.
+    Granting an exception is never an autonomous decision.
+
+    THE SANITIZERS run before matching, and their asymmetry bites. PHP is
+    tokenised and only comments are removed, with blank lines substituted so
+    line numbers survive - STRING LITERALS ARE INTACT. JavaScript has
+    comments removed AND string literal CONTENTS blanked through an AST pass,
+    so a rule whose subject is a string literal cannot use the sanitised
+    form. Templates, Blade and SCSS are passed through UNSANITISED, and there
+    are pure-PHP comment blankers for those, both preserving line and column.
+
+    TWO NODE RPC HELPERS back the checker, on the same socket architecture as
+    the build: a sanitizer server and a lint/analysis server. Roughly nine
+    hundred Node spawns per build became one process each. The lint call is
+    fatal on failure; the analysis call degrades silently. Readiness uses the
+    framework's one sanctioned timeout.
+
+    RUNTIME CHECKS are a different thing in the same tree: convention
+    enforcement that throws a deliberately-named "you are doing it wrong"
+    exception at runtime, with a verbose remediation. The cardinal test is
+    "would the code still run if I commented out this check?" - yes means it
+    belongs there, no means it is a genuine requirement and must stay inline
+    with the algorithm it documents. Moving a real requirement into that
+    directory strips the algorithm's stated constraints out of the code a
+    reader is reading.
+
+    RUNNING ONE RULE: YOU CANNOT. There is no rule-selection flag - the man
+    page's is labelled a future feature. The real signature takes optional
+    paths plus flags for JSON, silence, convention mode, pre-commit tests and
+    a maximum. The practical narrowing is a SINGLE FILE plus JSON output,
+    filtered on the violation type.
+
+    WHAT A FRAMEWORK PATCH MUST EXPECT. Three things, and the first is the
+    important one:
+
+        DOWNSTREAM, rsx:check NEVER CHECKS FRAMEWORK FILES AT ALL. Everything
+        under the framework tree is filtered out unless a framework-developer
+        configuration flag is set, and it is false in every release. So a
+        patch to system/ gets ZERO checker coverage on your box, and
+        manifest-time rules - which do still fire, in development - are your
+        only automated gate. Run rsx:check anyway, to prove your patch broke
+        nothing in your OWN code.
+
+        The framework's command directory is refused on purpose. Do not add
+        it to a scan list to "fix" that; read the file yourself.
+
+        A syntax error stops all further rules for that file. "No violations"
+        on a file that will not parse is not a pass.
+
+    Adding a rule is one class in one file, one directory deep, extending the
+    base directly - no registry, nothing to wire. Default the manifest-scan
+    declaration to false; promoting a rule to build-fatal is a maintainer
+    decision, because it runs on every file change and can poison the build.
+
+    References
+      Man pages: coding_standards, error_handling, testing.
+      NOT ON YOUR DISK: code_quality (stripped at publish - this primer is
+      its downstream replacement).
+      Colocated: CodeQuality/CLAUDE.md, CodeQuality/Rules/CLAUDE.md,
+      CodeQuality/RuntimeChecks/CLAUDE.md, CodeQuality/Support/CLAUDE.md,
+      Commands/CLAUDE.md.
+      Source: CodeQuality/ (CodeQualityChecker, CodeQuality_Violation,
+      Rules/CodeQualityRule_Abstract, Support/RuleDiscovery,
+      Support/FileSanitizer, Support/ViolationCollector, RuntimeChecks/),
+      Commands/Rsx/Rsx_Check_Command.php,
+      Core/Manifest/_Manifest_Quality_Helper.php.
+
+  13. CONFIG, ENV AND MODES
+    CONFIG IS TWO TIERS, DEEP-MERGED at provider registration: the framework
+    file under the Laravel config directory, then the application's own file
+    merged over it, then an additional-config environment seam last, which is
+    how the test runner injects settings.
+
+    The merge semantics are worth knowing exactly. NUMERICALLY-KEYED ENTRIES
+    APPEND WITH DE-DUPLICATION, so framework list arrays are ADDITIVE and an
+    application can never replace one. String keys whose value is an array
+    recurse; string keys whose value is a scalar replace. THERE IS NO DELETE
+    VERB - an application cannot remove a framework key or an entry from a
+    framework list; the closest act is overwriting a scalar.
+
+    ENV HEALING propagates keys DOWNHILL through a chain of defaults files
+    into the local environment file. A key MISSING below has its source line
+    APPENDED VERBATIM under a dated comment; A KEY ALREADY PRESENT IS LEFT
+    UNTOUCHED WHATEVER ITS VALUE - nothing is overwritten, deleted or
+    reordered. The consequence is the rule everyone eventually learns the
+    hard way: DISABLE A SETTING BY LEAVING IT EMPTY, because a deleted line
+    is a missing key and comes back on the next boot. Key sync runs in
+    development only; the credential check and the key mint run everywhere,
+    and both throw rather than guess. The healer also repairs the symlink
+    invariant, and its dry-run previews the SYMLINK drift only - not the key
+    sync, the credential validation or the key mint.
+
+    RSX_MODE IS THE ONLY MODE SOURCE. Laravel's environment and debug flag
+    are DERIVED from it in the application config, and the conventional
+    environment keys for those are read NOWHERE - there is no second switch
+    to set and no way for the two to disagree. The reader is memoized,
+    accepts short aliases, and throws on anything else. One writer exists,
+    used by the production commands.
+
+    THE TRAP: the "is production" predicate is true for DEBUG MODE TOO -
+    it means "production-like". STRICT production is that predicate AND NOT
+    debug. Nearly every mode-dependent behaviour keys on one or the other,
+    and confusing them is the most common mode bug.
+
+    THE THREE MODES. Development auto-rebuilds and compiles just in time,
+    unminified, with full debugging. DEBUG AND PRODUCTION ARE SEALED BUILDS -
+    compiled once by an explicit command, then immutable, with no
+    auto-rebuild and a loud failure for a missing artifact. Debug is the
+    sealed production-LIKE local build, keeping unminified code, sourcemaps
+    and debug output, and exists to reproduce a production-only issue.
+    Strict production minifies, drops sourcemaps and strips debug calls.
+
+    THE SEAL is a file inside the build directory it guards, pinning the
+    mode, the build key, the commit if there is one, and a SHA for every
+    build artifact. It counts as sealed only in a production-like mode, so a
+    stray seal in a development checkout locks nothing. Authorisation to
+    write under the seal requires the CLI and an explicit act - never an
+    environment variable - so a web request can never be authorised. A
+    refused write names the path and points at the refresh command.
+
+    THE LIFECYCLE COMMANDS are enable (optionally the debug variant),
+    refresh - REBUILD AND RE-SEAL IN PLACE, WHICH IS WHAT YOU RUN AFTER
+    PULLING CODE ONTO A PRODUCTION HOST - disable, verify (which compares
+    every artifact's hash against the seal and is the cluster drift check),
+    and export.
+
+    WHY THE CONTRIBUTOR PROCEDURE IS DEVELOPMENT-MODE ONLY. Six reasons, and
+    they compound:
+
+        NOTHING RECOMPILES. Auto-rebuild is literally "is development", and
+        the bundle compiler short-circuits on it. In a sealed mode a source
+        edit under system/ changes nothing that is served - a SILENT NO-OP,
+        the worst failure mode there is.
+
+        WORSE, IT CAN GO HALF-LIVE. PHP class bodies load from disk, but the
+        manifest's INDEX of classes, routes, attributes, gates and stubs is
+        frozen. Add a method and it is picked up; add a class, a route, a
+        gate or an endpoint and it is not. Strict production compounds this,
+        because its optimised autoloader forbids the filesystem fallback.
+
+        YOU CANNOT FIX IT IN PLACE. Writes into the build directory are
+        refused, the clean command refuses, and the build refuses without
+        authorisation.
+
+        THE SEAL BECOMES A LIE. A rebuilt patch mints a new build key and new
+        hashes, so the box no longer matches what was distributed - and other
+        nodes share cache entries keyed on that build key.
+
+        MANIFEST-TIME CODE-QUALITY RULES DO NOT RUN outside development,
+        which removes the one automated gate on framework source.
+
+        THE ENVIRONMENT THE PATCH ASSUMES - the supervised services, the lock
+        daemon, the RPC servers, snapshot-protected migrations - is a
+        development environment.
+
+    References
+      Man pages: config_rsx, app_mode, storage_directories, framework_fork,
+      migrations, caching.
+      Source: config/rsx.php, config/app.php, helpers.php (array_merge_deep),
+      Core/Providers/Rsx_Framework_Provider.php, Core/Rsx.php,
+      Core/Prod/ (Rsx_Env_Symlink, Rsx_Prod_Env, Rsx_Prod_Seal),
+      Commands/Rsx/Prod_*.php, Commands/Rsx/Env_Heal_Command.php,
+      system/bootstrap/ (rsx_env_link.php, rsx_env_heal.php,
+      rsx_container_gate.php).
+      Skills: rspade:environment-config,
+      rspade:application-modes-deployment.
+
+  14. DIAGNOSIS TOOLS
+    THE EXCEPTION CHAIN. One handler is bound at bootstrap and consults a
+    configured list of context handlers, sorted by priority, taking the FIRST
+    NON-NULL response. A carried response exception short-circuits the whole
+    chain and is returned verbatim - which is how the CSRF rejection and an
+    explicit abort-with-response reach the client unembellished. The
+    registered contexts, in priority order, are CLI, Ajax, API, the render
+    harness, the RSX dispatch bootstrapper, and finally the web renderer.
+
+        CLI            ANSI text to stderr, then exit 1. It returns no
+                       response, so nothing downstream runs. Class, relative
+                       file and line, wrapped message, the last ten frames,
+                       and the console-debug block outside production.
+        Ajax           HTTP 200 ALWAYS. Strict production returns a generic
+                       message with no file, line or frames; development and
+                       debug add all of them plus the debug output.
+        API            HTTP 500 with a coded error object; the message is
+                       generic in production.
+        Web            A 404 or 403 renders the themed screen; ANY OTHER
+                       HTTP STATUS RETURNS NULL and keeps Laravel's own view.
+                       In development with the debug flag it also returns
+                       null, so the rich developer error page renders.
+                       Otherwise the themed fatal screen.
+
+    The error screens render through a standalone view with NO BUNDLE, NO
+    MANIFEST AND NO SPA - deliberately, so that the error screen survives a
+    broken build - and exception detail is null in production.
+
+    shouldnt_happen() ALWAYS THROWS, IN EVERY MODE, in both languages. There
+    is no environment branch; development and production differ only in how
+    the resulting throwable is rendered. It is for a broken assumption, never
+    for expected input.
+
+    rsx_dump_die() prints the location, the values in a concise form, and a
+    THREE-FRAME summary - not a full stack trace - and then dies. It has no
+    production guard, so never leave one behind.
+
+    console_debug('CHANNEL', ...) exists in both languages with matching
+    gates. The channel is NORMALISED - uppercased, brackets stripped,
+    non-alphanumerics turned into underscores - so a two-word channel becomes
+    one underscored token. CONSOLE_DEBUG_FILTER WINS OVER ALL CONFIGURATION,
+    is a comma-separated list, and is an EXACT MATCH: no wildcards, no globs,
+    no negation, and the literal word ALL means a channel actually named ALL
+    everywhere except the render harness, which maps it to its own flag. On
+    the CLI output goes to stderr; over HTTP it is BATCHED and flushed from a
+    shutdown function, so it survives a fatal.
+
+    PRODUCTION STRIPPING IS TWO INDEPENDENT MECHANISMS, both keyed to STRICT
+    production: the client configuration block is omitted, so the JS helper
+    no-ops; and the call sites themselves are dropped by the minifier as pure
+    functions. DEBUG MODE STRIPS NEITHER - both languages go dark together
+    only in strict production.
+
+    rsx:debug renders a route through a real browser with full JavaScript
+    execution. It is refused outright in production. The flags that matter
+    most here:
+
+        --user=<id|email>            authenticate as a staff identity
+        --portal --portal-user=<..>  the portal realm (the second requires
+                                     the first)
+        --eval=<js>                  evaluate JavaScript in the page
+        --console --console-log      page console output
+        --console-debug-filter=<ch>  the debug channels, --console-debug-all
+                                     for everything
+        --xhr-dump --xhr-list        the Ajax traffic
+        --wait-for=<selector>        wait before capturing
+        --expect-element=<selector>  assert, for a scripted check
+        --dump-element=<selector>    dump one element
+        --dump-dimensions=<sel>      layout geometry
+        --screenshot-path=<path>     PASS AN ABSOLUTE PATH - a relative one
+                                     resolves against the framework
+                                     directory, not your project root
+        --screenshot-width=<px|preset>
+                                     named device widths, or a bare integer
+        --post=<json> --headers --cookies --follow-redirects --storage
+
+    It exits non-zero on an HTTP status of 400 or more, on ANY console error,
+    or on any network failure - so a clean exit is a stronger statement than
+    it looks.
+
+    rsx:health runs every declared health check and EXITS 1 IF AND ONLY IF AT
+    LEAST ONE ROW IS A FAIL; warnings and informational rows never flip the
+    exit code. A check that throws becomes one failing row and never aborts
+    the report, and ONE CHECK MAY RETURN SEVERAL ROWS, so the row count is
+    larger than the number of checks. rsx:heal runs the remedy a row names,
+    has no run-everything flag, and lists the targets when invoked bare. Its
+    policy is normative: A HEALER CREATES ONLY WHAT IS DEFINITIONALLY ABSENT,
+    and anything present-but-wrong is REFUSED with a report of what was
+    found, never repaired - a silent repair is exactly what fail-loud
+    forbids.
+
+    THE REST OF THE KIT. rsx:task:list and the kill commands for the queue;
+    rsx:mail:queue and rsx:mail:show for the mail queue; db:query for direct
+    SQL, which caps an unbounded SELECT at a small number of rows;
+    rsx:ajax to call an endpoint from the command line; rsx:routes and
+    rsx:manifest:show for the index; rsx:bundle:show for a bundle's
+    composition; rsx:documents:status and rsx:search:reindex for the document
+    pipeline; and rsx:logrotate for the logs, which live under the PROJECT's
+    storage directory, one level above the Laravel base path.
+
+    On the debugger controller: there IS a framework debugger controller, but
+    it exposes only two Ajax endpoints for shipping browser console output
+    and browser errors back to the server. THERE IS NO SHIPPED DEBUG PAGE,
+    profiler or diagnostic route in the framework - the development screens
+    you may have seen belong to the starter application.
+
+    References
+      Man pages: error_handling, rsx_debug, console_debug, health,
+      logrotate, testing, ajax_error_handling, caching.
+      Source: Core/Exceptions/ (Rsx_Exception_Handler and the per-context
+      handlers), Core/Errors/Error_Screens.php, Core/SPA/Error_Screens.js,
+      Core/Debug/ (Debugger.php, Debugger_Controller.php),
+      Core/Health/ (Health_Check_Runner, Heal_Runner),
+      Core/Logging/, helpers.php, Core/Js/error.js, Core/Js/Debugger.js,
+      Commands/Rsx/Route_Debug_Command.php, system/bin/route-debug.js,
+      config/rsx.php (console_debug, logging, exception_handlers).
+      Skills: rspade:rsx-debug, rspade:rsx-testing.
+
+HOUSE RULES THAT BITE A FRAMEWORK PATCH
+    These are the framework's own standing rules. A patch that violates one
+    is sent back, usually without further discussion, so read the list before
+    you write and again before you capture.
+
+    NEVER ADD A TIMEOUT. Not a setTimeout, not a process timeout, not a lock
+    lease or TTL, not a watchdog deadline, not a "safety" cap on how long a
+    loop, copy, query or wait may run. Apply the 599/601 test out loud: a
+    timeout of N seconds asserts the operation is correct at N-1 seconds and
+    broken at N+1 - so say why 599 is acceptable here and 601 is not. If you
+    cannot answer from what the operation actually does, the number is
+    arbitrary and the timeout must not exist. "Give it room" is
+    self-refuting: if you are widening the number because the work is
+    legitimately slow, you have conceded that slowness is normal, which is
+    the argument for no cap at all. The one narrow legitimate case - bounding
+    a wait on an EXTERNAL party that may never answer, where expiry degrades
+    to a working outcome - is a PROPOSAL to the maintainer, never your
+    decision, and a sanctioned one is written down beside its value. The
+    document-render subsystem's external-binary bound is the house example of
+    the bar to meet.
+
+    FAIL LOUD, NO SILENT FALLBACKS. No fallback systems, no alternative code
+    paths, no blanket try/catch. An exception handler FORMATS an error; it
+    never wraps one and never substitutes a value. Catch only what you
+    handle specifically. shouldnt_happen() is the impossible-condition
+    assertion in both languages - for a broken assumption, never for expected
+    input. Never continue after a security failure.
+
+    SPAWN ARTISAN ONLY THROUGH Rsx_Artisan. Enforced by ARTISAN-SPAWN-01.
+    See primer 6 for the hang it prevents.
+
+    FRAMEWORK-INTERNAL FLAGS USE THE --_ CONVENTION. Prefixed with --_,
+    declared as no input option, stripped from argv pre-boot. They appear in
+    no help output and can never raise an unknown-option error. Use one for a
+    switch whose only caller is another framework command; a user-facing
+    flag stays an ordinary option.
+
+    A LEADING UNDERSCORE ON A COLUMN MEANS SYSTEM COLUMN. It is stripped from
+    every model payload, skipped by the generated JS stubs, and excluded from
+    every revision diff. So framework state on an application table is named
+    with one underscore - and an application-facing column never is, because
+    it would silently never reach the browser. Double underscore is
+    untouched; those are the framework's own payload keys.
+
+    ATTRIBUTES ARE NEVER CLASSES. Never define an attribute class; the linter
+    stripping its use statement is correct. Never put a class constant in an
+    attribute argument - reflection resolves arguments before the autoloader
+    is ready and the manifest scan dies.
+
+    PARENT-CALL CHAINING (PHP-PARENT-CHAIN-01). An override MUST call the
+    same method on its parent unless the nearest declaring ancestor is
+    abstract, marked replaceable, or a vendor class. A manifest-build FATAL.
+
+    NO BACKWARDS COMPATIBILITY LAYERS. Delete the old implementation when you
+    change one; do not add a compatible second path, a deprecation shim or a
+    "legacy" branch. Two systems doing the same thing is the defect, not the
+    mitigation. One pattern per feature, one way to do things.
+
+    SILENT SUCCESS. No news is good news. Speak for problems and for the
+    primary result, and nothing else. Professional ASCII only in framework
+    output - no emoji, no box-drawing, no decorative unicode - with the
+    established [OK] / [ERROR] / [WARNING] markers.
+
+    DO THE WHOLE JOB, AND BOUND RESULT SETS PROPERLY. A function does exactly
+    what its name says, in its entirety. Never truncate a database result set
+    to save memory - iterate it. A bare LIMIT that silently truncates is the
+    bug; it is right only when it IS the mechanism or when the caller asked
+    for N. See the $unbounded declaration and the result-set helper.
+
+    NEVER RESTART PHP OR NGINX to make a change take effect in development.
+    Opcode caching is off; a change is already live. If it is not, the
+    problem is elsewhere and restarting hides it.
+
+    NEVER COMMIT VENDOR CHURN, and never patch vendor or node_modules. Those
+    trees are framework-managed and shipped by the maintainer.
+
+    DOCUMENTATION IS PART OF THE CHANGE - BUT IT IS THE UPSTREAM SIDE'S
+    OBLIGATION, NOT YOURS. The maintainer must update every tier the change
+    moved. Your job is to NAME the page in the request document, because you
+    have read it and they have not. Do not ship documentation edits inside
+    your patch unless the maintainer asked for them: a documentation change
+    is frequently a design decision wearing documentation clothing, and it is
+    theirs to make.
+
+SEE ALSO
+  The framework boundary and the update
+    rsx:man rsx_upstream                the update, from your side
+    rsx:man framework_pull_mechanics    how a release is built and delivered
+    rsx:man class_override              the supported way to change framework
+                                        behaviour without a patch
+    rsx:man upstream_changes            the mandatory manual migrations
+    rsx:man framework_fork              taking ownership of the framework
+    rsx:man rsx_git                     the git proxy that keeps system/ in
+                                        step
+    rsx:man template_app                the starter application you forked
+    rsx:man maintenance_mode            the window an update raises
+
+  Dispatch, routing and authorization
+    rsx:man dispatch          rsx:man routing         rsx:man controller
+    rsx:man auth_gates        rsx:man acls            rsx:man session
+    rsx:man csrf              rsx:man portal          rsx:man login_redirect
+    rsx:man initial_user      rsx:man external_api    rsx:man spa
+    rsx:man blade_to_spa_conversion     rsx:man pagedata
+
+  Data, models and the ORM
+    rsx:man model             rsx:man model_fetch     rsx:man enums
+    rsx:man migrations        rsx:man model_normalization
+    rsx:man polymorphic       rsx:man revisions       rsx:man detail_tables
+    rsx:man database_schema_architecture
+    rsx:man model_indexes     rsx:man actors
+
+  Client-side and assets
+    rsx:man bundle_api        rsx:man jqhtml          rsx:man scss
+    rsx:man js_decorators     rsx:man js_functions    rsx:man npm
+    rsx:man responsive        rsx:man semantic_composition
+    rsx:man external_resources          rsx:man csp
+
+  Files, documents and search
+    rsx:man file_upload       rsx:man file_disposal   rsx:man thumbnails
+    rsx:man documents         rsx:man document_search rsx:man libreoffice
+    rsx:man csv_exports
+
+  Background work and infrastructure
+    rsx:man tasks             rsx:man task_commands   rsx:man locks
+    rsx:man realtime          rsx:man email           rsx:man sms
+    rsx:man fpc               rsx:man caching         rsx:man logrotate
+    rsx:man health
+
+  Configuration, modes and operations
+    rsx:man config_rsx        rsx:man app_mode
+    rsx:man storage_directories         rsx:man dependencies
+    rsx:man artisan_commands
+    rsx:man prelaunch_checklist
+
+  Diagnosis, conventions and testing
+    rsx:man error_handling    rsx:man rsx_debug       rsx:man console_debug
+    rsx:man ajax_error_handling         rsx:man testing
+    rsx:man coding_standards  rsx:man helpers         rsx:man standard_library
+    rsx:man framework_divergences
+
+  Not available downstream
+    manifest_api, manifest_build, ast_sourcecode_parsers, code_quality and
+    vs_code_extension are stripped at publish. Primers 1, 7 and 12 above are
+    their downstream replacements.
+
+RSX Framework      Last updated 2026-09-01       FRAMEWORK_DEBUG_AND_CONTRIB(1)

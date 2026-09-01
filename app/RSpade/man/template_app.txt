@@ -290,5 +290,6 @@ NOTES
 
 SEE ALSO
     portal(3), spa(3), crud(3), jqhtml(3), model_fetch(3), enum(3), coding_standards(3)
+    rsx_upstream(1), class_override(1), framework_debug_and_contrib(1)
 
 RSX Framework              Last updated 2026-09-01              TEMPLATE_APP(3)

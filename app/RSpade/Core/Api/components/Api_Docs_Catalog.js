@@ -185,7 +185,7 @@ class Api_Docs_Catalog {
     }
 
     /**
-     * Whether the adopted key carries scope rules: true (scoped), false (unrestricted), or
+     * Whether the adopted key carries scopes: true (scoped), false (unrestricted), or
      * null when no key is adopted.
      *
      * Three-valued deliberately - see Rsx_Api_Docs::rsxapp_data. A listing drawn for a
