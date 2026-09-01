@@ -123,14 +123,21 @@ CDN ASSETS
     everywhere. Both 'js' and 'css' lists are accepted, each entry a map with
     at least 'url'.
 
-    In development the tags point at the remote URL, and the emitter declares
-    each origin to the CSP composer as it writes it, so the page's policy
-    permits exactly what it emitted. In both sealed modes the asset is
-    MIRRORED locally during the build (rsx/resource/.cdn-cache/, committed to
-    git) and served from /_vendor/{cached_filename} - same-origin, so it drops
-    out of the policy entirely. A sealed build never downloads at request time:
-    a missing mirror file THROWS naming the file and the remedy.
-    See: php artisan rsx:man csp
+    EVERY MODE MIRRORS THE ASSET. It is downloaded into
+    rsx/resource/.cdn-cache/ (committed to git) on first compile and the tag
+    points at /_vendor/{mirror_filename} - on a development box exactly as in a
+    sealed build. Because the copy is same-origin, a cdn_asset contributes
+    NOTHING to the CSP policy in any mode, and the store is where a compile
+    goes for the bytes rather than the network.
+
+    A declared 'integrity' hash is VERIFIED at download and a mismatch fails
+    the compile; the attribute itself is not emitted, since the asset is served
+    from our own origin. An unreachable URL fails the compile naming it.
+
+    A sealed web request never downloads: a missing mirror file THROWS naming
+    the file and rsx:prod:refresh. In development the same miss is a 404 naming
+    rsx:cdn_externals:refresh.
+    See: php artisan rsx:man csp, php artisan rsx:man external_resources
 
     CHOOSING BETWEEN THE TWO. cdn_assets is a HEAD asset: fetched on every page
     the bundle serves, whether or not anything uses it. The external-resources

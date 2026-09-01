@@ -343,12 +343,28 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
         file_put_contents_safe($script_file, $script);
         
         // Run the compilation (set working directory to project root for node_modules access)
-        $command = 'cd ' . escapeshellarg(base_path()) . ' && node ' . escapeshellarg($script_file) . ' 2>&1';
-        $output = shell_exec('bash -c ' . escapeshellarg($command));
-        
-        // Check for errors
+        // Explicit bash (never the implicit /bin/sh), with the exit code as the last line.
+        $command = 'cd ' . escapeshellarg(base_path()) . ' && node ' . escapeshellarg($script_file);
+        $raw = shell_exec('bash -c ' . escapeshellarg("({$command} 2>&1); echo \$?"));
+
+        $lines = explode("\n", trim((string) $raw));
+        $exit_code = (int) array_pop($lines);
+        $output = trim(implode("\n", $lines));
+
+        // A non-zero exit is a failure even when an output file exists: the script writes
+        // the stylesheet BEFORE it optimizes it, so a postcss failure leaves un-optimized
+        // bytes on disk. Presence of the file proves nothing; the exit code does.
+        if ($exit_code !== 0) {
+            @unlink($output_file);
+            @unlink($script_file);
+
+            throw new \RuntimeException("SCSS compilation failed ({$input_file}):\n" . $output);
+        }
+
         if (!file_exists($output_file)) {
-            throw new \RuntimeException("SCSS compilation failed: " . $output);
+            @unlink($script_file);
+
+            throw new \RuntimeException("SCSS compilation produced no output ({$input_file}):\n" . $output);
         }
 
         // Clean up script file
@@ -484,8 +500,12 @@ async function optimizeWithPostCSS(file) {
         fs.writeFileSync(file, result.css);
         console.log('PostCSS optimization complete');
     } catch (error) {
-        console.error('PostCSS optimization failed:', error.message);
-        // Don't fail the build if postcss fails
+        // FAIL LOUD. This used to log and continue, which shipped un-optimized,
+        // un-prefixed CSS from a production build with nothing but a line in a captured
+        // stdout to say so. A stylesheet that did not survive its own build step is not a
+        // stylesheet we ship.
+        console.error('PostCSS optimization failed:', error.stack || error.message);
+        process.exit(1);
     }
 }
 

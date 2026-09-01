@@ -1,6 +1,6 @@
 ---
 name: document-preview
-description: "Previewing, rendering and searching inside documents in RSX - the ONE background render worker (Document_Render_Service) that produces a PDF rendition and extracts text in a single pass, the render_status_id state machine on the blob (NOT_REQUIRED/PENDING/RENDERED/FAILED), the <Document_Preview> component with its \"Preparing preview...\" state and preview_loaded/page_changed events, the server-side viewer registry and how to override it, the three document.* resolve chains (extract_text, preview_rendition, thumbnail_render), EXTRACTED/FAILED/UNSUPPORTED extraction statuses, search_text() with mandatory site scoping, and rsx:documents:status/failed/rerender plus rsx:search:reindex triage. Use when showing a PDF or Office document in a page, searching inside uploaded files, plugging in a custom viewer or converter, or debugging a document that shows a placeholder icon, a preview stuck on \"Preparing preview...\", or missing extracted text."
+description: "Previewing, rendering and searching inside documents in RSX - the ONE background render worker (Document_Render_Service) that produces a PDF rendition and extracts text in a single pass, the render_status_id state machine on the blob (NOT_REQUIRED/PENDING/RENDERED/FAILED), the <Document_Preview> component with its \"Preparing preview...\" state and preview_loaded/page_changed events, its extracted-text sibling <Document_Text_Preview> with its \"(Extracting Text...)\" and \"(Document Text Unavailable)\" notices, the server-side viewer registry and how to override it, the three document.* resolve chains (extract_text, preview_rendition, thumbnail_render), EXTRACTED/FAILED/UNSUPPORTED extraction statuses, search_text() with mandatory site scoping, and rsx:documents:status/failed/rerender plus rsx:search:reindex triage. Use when showing a PDF or Office document in a page, searching inside uploaded files, plugging in a custom viewer or converter, or debugging a document that shows a placeholder icon, a preview stuck on \"Preparing preview...\", a text panel stuck on \"(Extracting Text...)\", or missing extracted text."
 ---
 
 # Document preview and search
@@ -36,7 +36,17 @@ Operating it is `rsx:documents:status | :failed | :rerender` — see **Reindex a
 <Document_Preview $attachment_id=this.data.doc.id />
 ```
 
-Args: `$attachment_id` (**required** — the component throws without it), `$page` (initial page for paginated viewers, default 1), `$width`/`$height` (px; omitted = fill the container).
+Args: `$attachment_id` (**required** — the component throws without it), `$page` (initial page for paginated viewers, default 1), `$width`/`$height` (px; omitted = fill the container), `$fit` (`"width"` default, or `"contain"` — anything else throws).
+
+**`$fit` is how the page is scaled inside the space you gave it.** `width` scales to the frame's width, so a portrait page in a wide short pane overflows and the frame scrolls. `contain` scales by `min(frame_width/page_width, frame_height/page_height)` so the whole page is visible, and sizes the canvas in explicit CSS px rather than `width:100%`.
+
+```jqhtml
+<Document_Preview $attachment_id=this.data.doc.id $fit="contain" $height=800 />
+```
+
+**`contain` requires a host with a bounded height** — that is what it divides by. Give it `$height`, or mount it in an element that has a real height. With a `height:auto` host it **falls back to the width fit** rather than rendering at a zero scale. Only paginated viewers act on `$fit`; `Image_Viewer` and `Icon_Viewer` already fit both axes in CSS.
+
+**Resizing re-renders.** A paginated viewer watches its frame with a `ResizeObserver` and re-rasterizes the current page when the box changes, so a pane that grows gets a sharp page instead of a stretched bitmap. The callback is debounced (200 ms) so a drag or an animated collapse issues one re-render, not thirty; an unchanged box renders nothing.
 
 **States.** The component subscribes to the attachment in `on_create()` and reads `render_status_id` from `get_preview_info()`, so it repaints itself when the render lands:
 
@@ -59,9 +69,42 @@ on_ready() {
 
 `preview_loaded` carries `{pages, width, height, ratio}`; `page_changed` carries `{page}`.
 
+**`width`/`height`/`ratio` describe the page currently rendered, not the document.** They are re-reported on every render, so on a mixed-orientation file they change as the reader pages through it — read `ratio` as "the shape of the page you are looking at".
+
 **It is `preview_loaded`, NOT `loaded`.** `loaded` is a reserved jqhtml lifecycle event, fired internally with no payload — a custom event of the same name collides with it. This is the worked instance of the reserved-event rule in the jqhtml docs; if you add your own viewer, name its events the same way.
 
 **Degraded uploads**: when an image's bytes could not be parsed, the attachment carries `preview_unavailable` and the component renders a "Preview unavailable" card instead of instantiating a viewer. Nothing throws.
+
+---
+
+## Showing a document's text
+
+```jqhtml
+<Document_Text_Preview $attachment_id=this.data.doc.id />
+```
+
+The sibling of `Document_Preview`: same attachment, same subscribe-then-swap story, but it renders the **extracted text** instead of the picture. Args are `$attachment_id` (**required** - it throws without it) and `$width`/`$height` (px; omitted = fill the container). There are no events and no public methods - the args are the whole surface.
+
+Four states, one of which is always painted:
+
+| State | When | Renders |
+|---|---|---|
+| loading | the first fetch has not answered | `(Loading...)` |
+| `pending` | no index row yet - extraction is queued | `(Extracting Text...)` |
+| `available` | text was extracted | the text, newlines preserved |
+| `error` / `unsupported` | extraction FAILED (terminal), a degraded upload, a file type carrying no text, an extraction that yielded nothing, or a gate refusal | `(Document Text Unavailable)` |
+
+The three unavailable causes collapse into one notice on purpose: they are the same answer to a reader. An operator tells them apart with `rsx:search:reindex --status` and `rsx:documents:failed`.
+
+**Typography is inherited, by contract.** `document_text_preview.scss` sets no `font-family`, `font-size`, `color` or `line-height` - only layout, scrolling and `white-space: pre-wrap`. Style the element you mount it into:
+
+```jqhtml
+<div class="my-panel__text font-monospace small">
+    <Document_Text_Preview $attachment_id=this.data.doc.id />
+</div>
+```
+
+Behind it is `File_Preview_Controller::get_extracted_text`, returning `{status, text}` in the same vocabulary as `GET /api/v1/files/:key/text`. It runs the **content** gate cascade - `file.thumbnail.authorize` **then** `file.download.authorize`, the pair `/_download` runs - not the metadata gate `get_preview_info` runs, because extracted text is often the whole document. Text is returned uncapped up to `config('rsx.search.max_text_bytes')`.
 
 ---
 
@@ -83,7 +126,7 @@ Register your own in `rsx/resource/config/rsx.php` under the same key:
 ] + config('rsx.preview.viewers')],
 ```
 
-The three built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{url, extension, file_name, page}`. So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `preview_loaded`/`page_changed`.
+The three built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{url, extension, file_name, page, fit}`. So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `preview_loaded`/`page_changed`.
 
 **PDF renditions**: `/_preview/pdf/:key` serves the PDF pdf.js actually loads, and it is **serve-only — it never converts**. A PDF blob is served as-is; a mime listed in `rsx.preview.convertible` is served from the cached rendition at `storage/rsx-renditions/{blob-hash}.pdf` (LRU-swept to `rsx.preview.quota_max_bytes`) **but only when the blob is RENDERED** — otherwise it 404s naming the render state. Anything else is 415. A RENDERED blob whose rendition was LRU-evicted re-queues itself and 404s for that one request, rather than showing an error over a cache eviction. The route is **dual-gated** (`file.thumbnail.authorize` AND `file.download.authorize`), so your file-access hooks apply to previews exactly as they do to downloads. pdf.js itself is lazy-served from `/_preview/pdfjs.mjs` (+ `pdf_worker.mjs`) out of the committed `node_modules` and is **never bundled**.
 

@@ -1815,15 +1815,19 @@ return [
     |   browsers ignore 'unsafe-inline', which would break every style="" in the
     |   tree). This is deliberate, not an oversight.
     |
-    | Per-mode behavior (RSX_MODE):
-    | - development: declared external assets are fetched from their own origins,
-    |   so those origins are whitelisted; dev bundle CDN assets whitelist
-    |   themselves as they are emitted; ws:// is permitted alongside wss:// to
-    |   match the realtime client's plain-http downgrade.
-    | - debug / production (sealed): mirrorable external assets are served from
-    |   this build's own /_vendor/ copy, so their origins LEAVE the whitelist and
-    |   collapse into 'self'. Only mirror:false entries (a widget that must run
-    |   from its vendor's origin) stay named. Strict production drops ws://.
+    | - Mirrored assets are served from this build's own /_vendor/ copy in EVERY
+    |   mode, so their origins never appear in the policy at all - they collapse
+    |   into 'self'. That covers a bundle's cdn_assets, mirror:true externals and
+    |   the remote references inside compiled CSS (a stylesheet's @font-face
+    |   files included). Only mirror:false entries (a widget that must run from
+    |   its vendor's origin) stay named.
+    | - A mirror:false STYLESHEET whose fonts live on another host names that
+    |   host in its own declaration, `csp => ['font-src' => [...]]`. Nothing
+    |   infers a font host from a stylesheet's origin.
+    |
+    | Per-mode behavior (RSX_MODE): only ws:// differs - it is permitted alongside
+    | wss:// outside strict production, matching the realtime client's plain-http
+    | downgrade.
     |
     | Each declaration's own `csp` extras (frames it opens, hosts it calls at
     | runtime) apply in EVERY mode - mirroring an asset does not change what the
@@ -1861,6 +1865,36 @@ return [
         // object-src is refused outright: it is set to 'none' as hardening, and
         // appending to "nothing" would loosen it while reading like an addition.
         'additional_sources' => [],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Vendor Mirror
+    |--------------------------------------------------------------------------
+    |
+    | Every remote asset the application serves is mirrored to a FILE in
+    | rsx/resource/.cdn-cache/ and served from /_vendor/ - the same code path in
+    | every mode, so a development page and a sealed build load byte-identical
+    | assets and the CSP has no external origin to whitelist.
+    |
+    | See: php artisan rsx:man external_resources
+    |
+    */
+
+    'cdn_externals' => [
+        // The User-Agent every mirror download sends - curl in Cdn_Cache and node in
+        // the CSS localizer alike, so both halves of one fetch look like one client.
+        //
+        // WHY A MODERN BROWSER UA, and not an "RSpade/1.0" that would be honest about
+        // who we are: Google Fonts and CDNs like it CONTENT-NEGOTIATE on this header.
+        // A modern browser is served woff2 plus per-script unicode-range subsets; an
+        // unrecognized agent is served one fat legacy TTF for the whole family. What we
+        // mirror is what the browser will be handed, so we must ask the way it asks.
+        //
+        // CHANGING THIS CHANGES WHAT A URL MIRRORS. The store is keyed by URL, not by
+        // the response, so an existing file is NOT re-fetched when this value changes -
+        // run php artisan rsx:cdn_externals:refresh to re-fetch under the new agent.
+        'user_agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
     ],
 
     /*

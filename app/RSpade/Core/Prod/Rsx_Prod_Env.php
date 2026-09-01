@@ -34,6 +34,15 @@ use App\RSpade\Core\Rsx;
 class Rsx_Prod_Env
 {
     /**
+     * Testing seam: redirect clear_rsx_caches() at a scratch storage root.
+     *
+     * Same shape as Cdn_Cache::$_testing_cache_dir - it relocates the target, it does
+     * not disable the operation. A test asserting that a command clears the build
+     * caches must not empty the developer's real storage/rsx-build to do it.
+     */
+    public static ?string $_testing_storage_root = null;
+
+    /**
      * Read the current RSX_MODE straight from the .env file (not env(), which is
      * frozen at process boot).
      */
@@ -137,8 +146,10 @@ class Rsx_Prod_Env
      */
     public static function clear_rsx_caches(): void
     {
+        $root = self::$_testing_storage_root ?? storage_path();
+
         foreach (['rsx-build', 'rsx-tmp'] as $type) {
-            $path = storage_path($type);
+            $path = $root . '/' . $type;
             if (is_dir($path)) {
                 self::_clear_directory_contents($path);
             }

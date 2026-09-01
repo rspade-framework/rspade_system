@@ -245,6 +245,29 @@ CONTENT SECURITY POLICY
     See: php artisan rsx:man csp
     See: php artisan rsx:man external_resources
 
+CDN EXTERNALS
+    'cdn_externals' => [
+        'user_agent' => 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 ...',
+    ]
+
+    Every remote asset the application serves is mirrored to a FILE in
+    rsx/resource/.cdn-cache/ (git-tracked) and served from /_vendor/ - one code
+    path in every mode, so a development page and a sealed build load
+    byte-identical assets and the CSP has no external origin to whitelist.
+
+    user_agent is the User-Agent every mirror download sends - curl in Cdn_Cache
+    and node in the CSS localizer alike. It spells a MODERN BROWSER on purpose:
+    Google Fonts and CDNs like it content-negotiate on this header, serving a
+    modern agent woff2 plus per-script unicode-range subsets and anything else
+    one fat legacy TTF. What we mirror is what the browser will be handed, so we
+    must ask the way it asks. Empty throws.
+
+    Changing it changes what a URL mirrors, but does NOT invalidate anything: the
+    store is keyed by URL, so an existing file is never re-fetched. Run
+    php artisan rsx:cdn_externals:refresh to re-fetch under the new agent.
+
+    See: php artisan rsx:man external_resources
+
 ANALYTICS (template app)
     'analytics' => [
         'measurement_id' => env('GOOGLE_ANALYTICS_ID', ''),

@@ -76,8 +76,10 @@ RSX-BUILD DIRECTORY
         js-stubs/            generated JS stubs for the Internal (Ajax) API
         js-model-stubs/      generated JS model classes (fetch/enum/relationships)
         prod_seal.json       sealed-build record (prod/debug modes only)
-        cdn-cache/           only present when a build cached CDN assets here;
-                             the live dev cache lives at rsx/resource/.cdn-cache/
+        (no cdn-cache/)      the mirrored-externals store is NOT under storage.
+                             It lives at rsx/resource/.cdn-cache/, is git-tracked
+                             and is written by every mode's compile - a source
+                             artifact, not a build output.
 
     There is NO routes.php / route_metadata.php here. Laravel's route cache (prod
     only, via optimize:cache) is bootstrap/cache/routes-v7.php, outside storage.

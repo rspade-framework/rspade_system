@@ -51,6 +51,7 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
         $rotated = 0;
         $compressed = 0;
         $deleted = 0;
+        $renumbered = 0;
 
         foreach ($report as $entry) {
             if ($entry['rotated']) {
@@ -59,10 +60,18 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
 
             $compressed += count($entry['compressed']);
             $deleted += count($entry['deleted']);
+            $renumbered += count($entry['renumbered']);
         }
 
         if ($rotated > 0 || $compressed > 0 || $deleted > 0) {
             $task->info("Rotated {$rotated} log(s); compressed {$compressed}, deleted {$deleted}");
+        }
+
+        // A repair is worth a line of its own: it means the numbering on disk had
+        // gaps or a shared slot, which is a thing an operator may want to know
+        // happened even though it is not an error.
+        if ($renumbered > 0) {
+            $task->info("Renumbered {$renumbered} generation(s) into contiguous order before rotating");
         }
 
         return $report;

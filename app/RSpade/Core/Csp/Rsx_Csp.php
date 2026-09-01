@@ -16,10 +16,14 @@ use App\RSpade\Core\Rsx;
  * never hand-written:
  *
  * - Framework inline scripts carry a NONCE. `'unsafe-inline'` never appears in script-src.
- * - External hosts come from the declarative registry (Rsx_Externals::csp_hosts_for_realm),
- *   so an undeclared resource is a blocked resource and policy cannot drift from code.
- * - The bundle's development-mode CDN assets whitelist themselves as they are emitted (see
- *   note_asset_origin below); a sealed build serves them from /_vendor and needs nothing.
+ * - Every external origin in the policy comes from exactly three places, and there are no
+ *   others: (1) the asset origins of `mirror:false` externals, (2) every external's declared
+ *   `csp` extras, (3) config `rsx.csp.additional_sources`. The first two arrive together from
+ *   Rsx_Externals::csp_hosts_for_realm(), so an undeclared resource is a blocked resource and
+ *   policy cannot drift from code.
+ * - A MIRRORED asset contributes NOTHING, in any mode: bundle cdn_assets, mirror:true
+ *   externals and the remote references inside a compiled stylesheet are all served from our
+ *   own /_vendor/, which 'self' already covers.
  *
  * THE NONCE IS REQUEST-SCOPED AND MEMOIZED. Everything that emits an inline <script> during a
  * request must stamp the SAME value the header carries, including Debugger's shutdown-time
@@ -64,21 +68,6 @@ class Rsx_Csp
     protected static ?string $_nonce = null;
 
     /**
-     * directive => origins, contributed by asset emission during this request.
-     *
-     * Development serves bundle CDN assets from their own hosts (a sealed build mirrors them
-     * to /_vendor, which is same-origin and needs no whitelist entry). Rather than
-     * re-deriving that set by walking every bundle definition at header time, the emitter
-     * declares what it emitted: Rsx_Bundle_Abstract calls note_asset_origin() on exactly the
-     * branches that write an external URL into the page. The whitelist is therefore EXACTLY
-     * what this response loads - never a superset - and costs one array append per asset.
-     *
-     * Ordering is safe: the view (and so the bundle HTML) is fully rendered before the
-     * dispatcher transforms the response and asks for the header.
-     */
-    protected static array $_asset_origins = [];
-
-    /**
      * The nonce for this request. Stable for the whole request, minted lazily.
      */
     public static function nonce(): string
@@ -91,18 +80,7 @@ class Rsx_Csp
     }
 
     /**
-     * Record an external origin this response actually loads an asset from.
-     *
-     * @param string $directive 'script-src' or 'style-src'
-     * @param string $url the absolute external URL being emitted
-     */
-    public static function note_asset_origin(string $directive, string $url): void
-    {
-        static::$_asset_origins[$directive][] = Rsx_Externals::url_origin($url);
-    }
-
-    /**
-     * Drop the request-scoped state (nonce + noted origins).
+     * Drop the request-scoped state (the nonce).
      *
      * The testing seam, and the same shape Rsx_Turnstile::_reset_request_state() uses: a PHP
      * test process is one long request, so a test asserting nonce STABILITY and a test
@@ -111,7 +89,6 @@ class Rsx_Csp
     public static function _reset_request_state(): void
     {
         static::$_nonce = null;
-        static::$_asset_origins = [];
     }
 
     /**
@@ -136,17 +113,11 @@ class Rsx_Csp
 
         $directives = static::_base_directives();
 
-        // Assets this response emitted from an external host (development CDN assets).
-        foreach (static::$_asset_origins as $directive => $origins) {
-            static::_add_sources($directives, $directive, $origins);
-            static::_add_stylesheet_fonts($directives, $directive, $origins);
-        }
-
-        // Declared external resources: asset origins still fetched externally in this mode,
-        // plus each entry's runtime csp extras (frames it opens, hosts it calls).
+        // Declared external resources: the asset origins of the mirror:false entries (a
+        // mirrored asset is served from /_vendor/ and needs no entry), plus every entry's
+        // runtime csp extras (frames it opens, hosts it calls, fonts its stylesheet names).
         foreach (Rsx_Externals::csp_hosts_for_realm($realm) as $directive => $sources) {
             static::_add_sources($directives, $directive, $sources);
-            static::_add_stylesheet_fonts($directives, $directive, $sources);
         }
 
         // Config widening. ONLY for transitive externals - a script that loads further
@@ -257,29 +228,6 @@ class Rsx_Csp
         }
 
         return $directives;
-    }
-
-    /**
-     * An external stylesheet's origin also serves that stylesheet's fonts.
-     *
-     * DERIVED, not configured: a webfont stylesheet @font-face's against its OWN origin as a
-     * matter of course (bootstrap-icons on jsdelivr does exactly this), so an origin already
-     * trusted to deliver CSS - which can restyle the entire page - is trusted for the font
-     * files that CSS names. Without this every icon font would report a font-src violation
-     * that no declaration could ever fix, since nothing in our code names the font URL.
-     *
-     * @param array $directives
-     * @param string $directive the directive the origins were contributed for
-     * @param array $sources
-     * @return void
-     */
-    protected static function _add_stylesheet_fonts(array &$directives, string $directive, array $sources): void
-    {
-        if ($directive !== 'style-src') {
-            return;
-        }
-
-        static::_add_sources($directives, 'font-src', $sources);
     }
 
     /**

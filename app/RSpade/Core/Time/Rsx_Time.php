@@ -519,7 +519,13 @@ class Rsx_Time
             return 0;
         }
 
-        return $start_carbon->diffInSeconds($end_carbon, false);
+        // Carbon 3's diffIn*() family returns a FLOAT. This function promises whole
+        // seconds, so the narrowing is deliberate and spelled out: (int) truncates toward
+        // zero, which is Carbon 2's behaviour and the convention every relative-time
+        // formatter follows ("59 minutes ago" at 59.6, a deadline never reported reached
+        // early). An implicit float-to-int narrowing is a deprecation today and a
+        // TypeError in PHP 9 - an intentional lossy conversion is always written down.
+        return (int) $start_carbon->diffInSeconds($end_carbon, false);
     }
 
     /**

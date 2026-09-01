@@ -149,11 +149,12 @@ class AssetHandler
                    preg_match('/^[A-Za-z0-9_]+__app\.[a-f0-9]{16}\.(js|css)$/', $filename);
         }
 
-        // Check if this is a vendor CDN cache request
+        // Check if this is a vendor CDN cache request. ONE pattern decides what the store
+        // can name, and it lives on Cdn_Cache - fonts and images are in there too now, so
+        // a js|css-only test here would send a mirrored .woff2 to route dispatch and 404.
         if (str_starts_with($path, '/_vendor/')) {
-            // Validate filename format: alphanumeric_hash.(js|css)
             $filename = substr($path, 9); // Remove '/_vendor/'
-            return preg_match('/^[A-Za-z0-9_-]+_[a-f0-9]{12}\.(js|css)$/', $filename);
+            return (bool) preg_match(\App\RSpade\Core\Bundle\Cdn_Cache::FILENAME_PATTERN, $filename);
         }
 
         // Check if path has a file extension
@@ -709,12 +710,14 @@ class AssetHandler
     }
 
     /**
-     * Serve a cached CDN vendor file
+     * Serve a mirrored external asset out of the local store.
      *
-     * Serves files from the CDN cache directory (rsx/resource/.cdn-cache/)
-     * with strict filename validation to prevent path traversal.
+     * Serves files from the CDN cache directory (rsx/resource/.cdn-cache/) with strict
+     * filename validation to prevent path traversal. Serving makes no mode distinction:
+     * every mode's pages name /_vendor/ URLs and every mode reads the same store. Only what
+     * a MISS means differs, and that is about the store's state, not the page's - see below.
      *
-     * @param string $path The requested path (e.g., /_vendor/lodash_abc123456789.js)
+     * @param string $path The requested path (e.g., /_vendor/<md5>_lodash.js)
      * @param Request $request
      * @return Response
      * @throws NotFoundHttpException
@@ -724,9 +727,9 @@ class AssetHandler
         // Extract filename from path
         $filename = substr($path, 9); // Remove '/_vendor/'
 
-        // Strict filename validation - only allow safe characters
-        // Format: name_hash.ext where name is alphanumeric/underscore/hyphen, hash is 12 hex chars
-        if (!preg_match('/^[A-Za-z0-9_-]+_[a-f0-9]{12}\.(js|css)$/', $filename)) {
+        // Strict filename validation - only allow exactly what Cdn_Cache can produce
+        // (md5 of the source URL, a safe readable tail, a known asset extension).
+        if (!preg_match(\App\RSpade\Core\Bundle\Cdn_Cache::FILENAME_PATTERN, $filename)) {
             throw new NotFoundHttpException("Invalid vendor filename: {$filename}");
         }
 
@@ -746,13 +749,17 @@ class AssetHandler
 
         // Check if file exists.
         //
-        // In a mirroring (sealed) mode this is NOT a 404: the page asked for a file the
-        // build was supposed to have mirrored, so the mirror is incomplete or was deleted.
-        // Fail LOUD naming the file and the remedy - never silently re-download at request
-        // time (Cdn_Cache refuses that too), and never let a broken build look like a
+        // A miss is never a re-download: Cdn_Cache refuses a request-time fetch, so the only
+        // question is which broken state to name.
+        //
+        // Sealed: the build was supposed to have mirrored this file, so the mirror is
+        // incomplete or was deleted - fail LOUD rather than let a broken build look like a
         // missing page.
+        //
+        // Development: the store is populated by the compile that names the file, so a miss
+        // says that compile never ran on this box (or the store was emptied).
         if (!file_exists($file_path)) {
-            if (\App\RSpade\Core\Manifest\Manifest::_should_cache_cdn()) {
+            if (\App\RSpade\Core\Rsx::is_production()) {
                 throw new \RuntimeException(
                     "Missing mirrored external asset: {$filename}\n" .
                     "  Expected in: " . \App\RSpade\Core\Bundle\Cdn_Cache::get_cache_directory() . "\n" .
@@ -762,7 +769,13 @@ class AssetHandler
                 );
             }
 
-            throw new NotFoundHttpException("Vendor file not found: {$filename}");
+            throw new NotFoundHttpException(
+                "Vendor file not found: {$filename}\n" .
+                '  Expected in: ' . \App\RSpade\Core\Bundle\Cdn_Cache::get_cache_directory() . "\n" .
+                "  The compile that names this file has never run on this box, or the store was\n" .
+                "  emptied. Reload the page (development compiles on request), or populate the\n" .
+                '  store directly: php artisan rsx:cdn_externals:refresh'
+            );
         }
 
         // Verify the file is actually in the cache directory (belt and suspenders)
@@ -781,10 +794,20 @@ class AssetHandler
         // Create binary file response
         $response = new BinaryFileResponse($file_path);
 
-        // Set appropriate content type
-        $extension = pathinfo($filename, PATHINFO_EXTENSION);
-        $mime_type = $extension === 'js' ? 'application/javascript' : 'text/css';
-        $response->headers->set('Content-Type', $mime_type . '; charset=utf-8');
+        // Set appropriate content type.
+        //
+        // The store holds more than scripts and stylesheets: a localized stylesheet's font
+        // and image references are mirrored here too, so the type comes from the same map
+        // every other asset route uses. Every Cdn_Cache::EXTENSIONS entry has a row in it;
+        // a charset belongs on text only.
+        $extension = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        $mime_type = static::$mime_types[$extension] ?? 'application/octet-stream';
+
+        if ($extension === 'js' || $extension === 'css') {
+            $mime_type .= '; charset=utf-8';
+        }
+
+        $response->headers->set('Content-Type', $mime_type);
 
         // Set cache headers - 1 month cache for vendor CDN files
         // These files are versioned by their content hash in the filename

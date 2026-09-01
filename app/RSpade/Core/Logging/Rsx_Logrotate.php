@@ -28,6 +28,17 @@ namespace App\RSpade\Core\Logging;
  *
  * Since the scheduled sweep runs once a day, a generation number is a day count.
  *
+ * A NUMBER IS ONE SLOT, WHATEVER THE FORM. The shift moves .N.gz to .N+1.gz
+ * exactly as it moves .N to .N+1, so a compressed chain is never overrun by a
+ * plain one. And before shifting, the generations on disk are RENUMBERED
+ * contiguously from 1 in AGE ORDER (mtime descending; plain before gz on a tie).
+ * That repair is not a courtesy for hand-edited directories - this algorithm
+ * produces the states it fixes: raising $days_uncompressed between runs leaves a
+ * plain generation standing on a number the previous run's gz chain already
+ * holds, and an interrupted run leaves gaps. Both are legitimate distinct
+ * generations, so they are renumbered - through temporary names, so no rename
+ * can clobber a file - and never deleted or refused.
+ *
  * RENAME-BASED, NOT COPYTRUNCATE. The current log is RENAMED to `.1` and a fresh
  * empty `name.log` is created with the original file's mode. Every per-call
  * appender - Monolog opening the file per request, php-fpm, the CSP collector -
@@ -41,7 +52,8 @@ namespace App\RSpade\Core\Logging;
  * FAILURES ARE LOUD. A rename or a gzip that does not succeed throws naming the
  * path; nothing here is suppressed with @ and nothing is skipped silently except
  * the two documented cases (a missing log, and a 0-byte log with nothing in it
- * worth a generation).
+ * worth a generation). A numbering the rotation itself can produce is not a
+ * failure and does not throw - see the renumbering above.
  *
  * See: php artisan rsx:man logrotate
  */
@@ -64,6 +76,7 @@ class Rsx_Logrotate
      *                 'laravel.log' => [
      *                   'rotated'    => bool,   // false when there was nothing to rotate
      *                   'skipped'    => ?string,// why, when rotated is false
+     *                   'renumbered' => array,  // the pre-shift repair, ['laravel.log.4.gz' => 'laravel.log.6.gz', ...]
      *                   'shifted'    => array,  // ['laravel.log.1' => 'laravel.log.2', ...]
      *                   'compressed' => array,  // ['laravel.log.4', ...] (names BEFORE .gz)
      *                   'deleted'    => array,  // ['laravel.log.22.gz', ...]
@@ -163,6 +176,7 @@ class Rsx_Logrotate
         $entry = [
             'rotated' => false,
             'skipped' => null,
+            'renumbered' => [],
             'shifted' => [],
             'compressed' => [],
             'deleted' => [],
@@ -177,15 +191,23 @@ class Rsx_Logrotate
             return $entry;
         }
 
-        $generations = self::_find_generations($directory, $log_name);
+        // Settle whatever numbering is on disk into a contiguous 1..K before
+        // touching it. A settings change between runs, or a run interrupted
+        // partway, can leave a gap or leave .N and .N.gz sharing one slot - both
+        // are states this algorithm itself produces, so they are repaired here
+        // rather than refused.
+        $entry['renumbered'] = self::_normalise_generations($directory, $log_name);
 
         // Shift from the highest number DOWN so a rename never lands on an
-        // occupied name.
-        krsort($generations);
+        // occupied name. A generation is ONE SLOT whatever its form: .N.gz moves
+        // to .N+1.gz exactly as .N moves to .N+1.
+        $generations = self::_scan_generations($directory, $log_name);
 
-        foreach ($generations as $number => $suffix) {
-            $from = $log_name . '.' . $number . $suffix;
-            $to = $log_name . '.' . ($number + 1) . $suffix;
+        usort($generations, fn ($a, $b) => $b['number'] <=> $a['number']);
+
+        foreach ($generations as $generation) {
+            $from = $generation['name'];
+            $to = $log_name . '.' . ($generation['number'] + 1) . $generation['suffix'];
 
             self::_rename($directory . '/' . $from, $directory . '/' . $to);
 
@@ -211,16 +233,16 @@ class Rsx_Logrotate
 
         // Settle the shifted set: compress what has aged out of the plain band,
         // delete what has aged out of retention entirely.
-        foreach (self::_find_generations($directory, $log_name) as $number => $suffix) {
-            $name = $log_name . '.' . $number . $suffix;
+        foreach (self::_scan_generations($directory, $log_name) as $generation) {
+            $name = $generation['name'];
 
-            if ($number > $days_retention) {
+            if ($generation['number'] > $days_retention) {
                 self::_unlink($directory . '/' . $name);
                 $entry['deleted'][] = $name;
                 continue;
             }
 
-            if ($number > $days_uncompressed && $suffix === '') {
+            if ($generation['number'] > $days_uncompressed && $generation['suffix'] === '') {
                 self::_compress($directory . '/' . $name);
                 $entry['compressed'][] = $name;
             }
@@ -233,39 +255,113 @@ class Rsx_Logrotate
     }
 
     /**
-     * Find the existing numbered generations of one log.
+     * Renumber one log's generations contiguously from 1, newest first.
+     *
+     * THE REPAIR. The numbering on disk is not guaranteed to be a contiguous
+     * 1..K: a days_uncompressed that grew between runs leaves a plain generation
+     * standing on a number an older gz chain already holds, and an interrupted
+     * run leaves gaps. Neither is an impossible state and neither loses data, so
+     * both are settled deterministically instead of refused.
+     *
+     * THE ORDER IS AGE: mtime descending (newest gets 1), plain before gz on a
+     * tie, then the existing number - so a plain generation and a gz generation
+     * that collided on one number both survive, adjacent, in the order they were
+     * written. Every file keeps its own form; nothing is compressed, deleted or
+     * read here.
+     *
+     * The renames go through temporary names first, so no rename can ever land
+     * on a file that has not moved out of the way yet.
      *
      * @param string $directory Directory holding the log
      * @param string $log_name Basename of the current log
-     * @return array generation number => '' for a plain file, '.gz' for a compressed one
+     * @return array Only the names that MOVED: ['laravel.log.4.gz' => 'laravel.log.6.gz', ...]
      */
-    private static function _find_generations(string $directory, string $log_name): array
+    private static function _normalise_generations(string $directory, string $log_name): array
+    {
+        $generations = self::_scan_generations($directory, $log_name);
+
+        if (empty($generations)) {
+            return [];
+        }
+
+        usort($generations, function (array $a, array $b) {
+            if ($a['mtime'] !== $b['mtime']) {
+                return $b['mtime'] <=> $a['mtime'];
+            }
+
+            if ($a['suffix'] !== $b['suffix']) {
+                return $a['suffix'] === '' ? -1 : 1;
+            }
+
+            return $a['number'] <=> $b['number'];
+        });
+
+        $renumbered = [];
+
+        foreach ($generations as $index => $generation) {
+            $target = $log_name . '.' . ($index + 1) . $generation['suffix'];
+
+            if ($target !== $generation['name']) {
+                $renumbered[$generation['name']] = $target;
+            }
+        }
+
+        if (empty($renumbered)) {
+            return [];
+        }
+
+        $temporary = [];
+
+        foreach ($generations as $index => $generation) {
+            $temporary[$index] = $log_name . '.rotate-tmp-' . ($index + 1);
+
+            self::_rename($directory . '/' . $generation['name'], $directory . '/' . $temporary[$index]);
+        }
+
+        foreach ($generations as $index => $generation) {
+            $target = $log_name . '.' . ($index + 1) . $generation['suffix'];
+
+            self::_rename($directory . '/' . $temporary[$index], $directory . '/' . $target);
+        }
+
+        return $renumbered;
+    }
+
+    /**
+     * Find the existing numbered generations of one log.
+     *
+     * A LIST rather than a number-keyed map, because two files may legitimately
+     * be standing on the same number (see _normalise_generations).
+     *
+     * @param string $directory Directory holding the log
+     * @param string $log_name Basename of the current log
+     * @return array One entry per generation file:
+     *               ['name' => 'laravel.log.4.gz', 'number' => 4, 'suffix' => '.gz', 'mtime' => 1234567890]
+     */
+    private static function _scan_generations(string $directory, string $log_name): array
     {
         $pattern = '/^' . preg_quote($log_name, '/') . '\.(\d+)(\.gz)?$/';
         $generations = [];
+
+        clearstatcache();
 
         foreach (scandir($directory) as $file) {
             if (!preg_match($pattern, $file, $matches)) {
                 continue;
             }
 
-            if (!is_file($directory . '/' . $file)) {
+            $path = $directory . '/' . $file;
+
+            if (!is_file($path)) {
                 continue;
             }
 
-            $number = (int) $matches[1];
-            $suffix = $matches[2] ?? '';
-
-            // A plain and a gzipped copy of the same generation cannot both be
-            // right; the framework never produces the pair, so somebody put one
-            // there by hand.
-            if (isset($generations[$number])) {
-                shouldnt_happen(
-                    "Rsx_Logrotate: generation {$number} of {$log_name} exists both plain and gzipped in {$directory}"
-                );
-            }
-
-            $generations[$number] = $suffix;
+            $generations[] = [
+                'name' => $file,
+                'number' => (int) $matches[1],
+                'suffix' => $matches[2] ?? '',
+                'mtime' => filemtime($path),
+            ];
         }
 
         return $generations;
@@ -327,6 +423,14 @@ class Rsx_Logrotate
 
         if (!is_file($gz_path) || filesize($gz_path) === 0) {
             throw new \RuntimeException("Rsx_Logrotate: {$gz_path} is missing or empty after compression - {$path} left in place");
+        }
+
+        // The .gz inherits the plain file's modification time, because the
+        // renumbering repair reads mtime as the generation's AGE. Left at the
+        // moment of compression it would make a freshly gzipped old generation
+        // look NEWER than the plain generations in front of it.
+        if (!touch($gz_path, filemtime($path))) {
+            throw new \RuntimeException("Rsx_Logrotate: could not carry the modification time onto {$gz_path}");
         }
 
         self::_unlink($path);

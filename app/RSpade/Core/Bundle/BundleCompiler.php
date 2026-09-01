@@ -2300,6 +2300,10 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
 
                 $css_content = $this->_compile_css_files($css_files);
 
+                // Pull every remote reference the compiled CSS still names into the local
+                // mirror. Runs BEFORE minification so the minifier sees final urls.
+                $css_content = $this->_localize_css_externals($css_content, $type);
+
                 // Minify CSS in strict production only (strips sourcemaps, debug keeps them).
                 // Policy: Manifest::_should_minify().
                 if (Manifest::_should_minify()) {
@@ -2772,15 +2776,52 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
     }
 
     /**
+     * Localize every remote reference inside a compiled bundle stylesheet.
+     *
+     * An application's own SCSS may `@import url(https://fonts.googleapis.com/...)`, and a
+     * vendored stylesheet may name a font on a CDN. Either way the browser would reach an
+     * external host at render time - a CSP violation, and a dependency on that host being
+     * up. So the remote `@import`s are spliced in and every absolute `url()` is mirrored
+     * into the local store and rewritten to /_vendor/<name>.
+     *
+     * The base URL is EMPTY: this stylesheet is a local concatenation with no origin, so
+     * only absolute and protocol-relative references are localizable (the node localizer
+     * resolves a relative reference only under an absolute base). A relative url() in
+     * application SCSS names a path on our own origin and is left alone.
+     *
+     * Throws on any failure - Cdn_Cache::_localize_css() carries node's report, naming the
+     * URL that could not be mirrored. Nothing is caught: a stylesheet we cannot localize is
+     * a stylesheet we must not ship.
+     *
+     * @param string $css_content the concatenated bundle CSS
+     * @param string $type the bundle type being compiled ('app', 'core', ...) - narration only
+     */
+    protected function _localize_css_externals(string $css_content, string $type): string
+    {
+        if (!str_contains($css_content, 'url(') && !str_contains($css_content, '@import')) {
+            return $css_content;
+        }
+
+        console_debug('BUNDLE', "localize-css: {$this->bundle_name}__{$type}.css");
+
+        return Cdn_Cache::_localize_css($css_content, '');
+    }
+
+    /**
      * Prepare CDN assets for rendering
      *
-     * In development mode: returns assets as-is (loaded from CDN URLs)
-     * In production-like modes: ensures assets are cached and adds cached_filename
-     * so rendering can use /_vendor/{filename} URLs
+     * EVERY asset, in EVERY mode, is mirrored into the local store and carries the
+     * cached_filename the /_vendor/ URL is built from. There is ONE code path: a dev box
+     * serves the same bytes from the same place a sealed build does, so an asset that
+     * works in development cannot break at seal time.
+     *
+     * A cache miss downloads where downloading is permitted and refuses LOUD where it is
+     * not - that predicate lives in Cdn_Cache, not here. The compiler does not know or
+     * care what mode it is in.
      *
      * @param array $assets CDN assets array
      * @param string $type 'js' or 'css'
-     * @return array Prepared assets with cached_filename in production modes
+     * @return array Prepared assets, each carrying cached_filename
      */
     protected function _prepare_cdn_assets(array $assets, string $type): array
     {
@@ -2796,85 +2837,17 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
             $deduplicated[] = $asset;
         }
 
-        // Development: return deduplicated (use CDN URLs directly). Production-like
-        // modes cache locally and serve from /_vendor/. Policy: _should_cache_cdn().
-        if (!Manifest::_should_cache_cdn()) {
-            return $deduplicated;
-        }
-
-        // In production-like modes, ensure cached and add filename
         $prepared = [];
         foreach ($deduplicated as $asset) {
             $url = $asset['url'];
 
-            // Ensure the asset is cached (downloads if not already)
-            Cdn_Cache::get($url, $type);
-
-            // Add cached filename for /_vendor/ URL generation
-            $asset['cached_filename'] = Cdn_Cache::get_cache_filename($url, $type);
+            // Ensure the asset is mirrored (downloads if not already) and record the
+            // filename the /_vendor/ URL is built from.
+            $asset['cached_filename'] = Cdn_Cache::ensure($url, $type, $asset['integrity'] ?? null);
             $prepared[] = $asset;
         }
 
         return $prepared;
-    }
-
-    /**
-     * Get local file paths for cached CDN assets (DEPRECATED)
-     *
-     * Used in production-like modes to include CDN assets in concat scripts
-     * for proper sourcemap handling.
-     *
-     * @param string $type 'js' or 'css'
-     * @return array Array of local file paths to cached CDN files
-     * @deprecated CDN assets are now served via /_vendor/ URLs, not merged into bundles
-     */
-    protected function _get_cdn_cache_file_paths(string $type): array
-    {
-        $file_paths = [];
-        $assets = $this->cdn_assets[$type] ?? [];
-
-        if (empty($assets)) {
-            return $file_paths;
-        }
-
-        // Sort assets: jQuery first, then others alphabetically
-        $jquery_assets = [];
-        $other_assets = [];
-
-        foreach ($assets as $asset) {
-            $url = $asset['url'] ?? '';
-            if (stripos($url, 'jquery') !== false) {
-                $jquery_assets[] = $asset;
-            } else {
-                $other_assets[] = $asset;
-            }
-        }
-
-        usort($other_assets, function ($a, $b) {
-            return strcmp($a['url'] ?? '', $b['url'] ?? '');
-        });
-
-        $sorted_assets = array_merge($jquery_assets, $other_assets);
-
-        // Get cache file path for each asset (downloads if not cached)
-        // If download fails, let it throw - CDN assets are required
-        foreach ($sorted_assets as $asset) {
-            $url = $asset['url'] ?? '';
-            if (empty($url)) {
-                continue;
-            }
-
-            // This will download and cache if not already cached
-            Cdn_Cache::get($url, $type);
-
-            // Get the cache file path
-            $cache_path = Cdn_Cache::get_cache_path($url, $type);
-            if (file_exists($cache_path)) {
-                $file_paths[] = $cache_path;
-            }
-        }
-
-        return $file_paths;
     }
 
     /**
@@ -3260,14 +3233,22 @@ JS;
      * Bake the declared external-resource map into the bundle (Rsx_External_Resources._define)
      *
      * The map is the client half of the *.externals.php registry: identifier => resolved
-     * urls + integrity + readiness, already mode-resolved by Rsx_Externals (raw external URLs
-     * in development, /_vendor/ copies in a sealed build). The loader reaches a resource by
-     * identifier only, and the CSP whitelist derives from the same declarations.
+     * urls + integrity + readiness, already resolved by Rsx_Externals (a /_vendor/ copy for
+     * every mirror:true entry in EVERY mode, the raw external URL only for mirror:false).
+     * The loader reaches a resource by identifier only, and the CSP whitelist derives from
+     * the same declarations.
      *
      * Realm: see _detect_bundle_realm(). Entries declaring 'both' appear in either realm's map.
      */
     protected function _create_javascript_externals(): ?string
     {
+        // Populate the mirror BEFORE the map is baked: every url the map names for a
+        // mirror:true entry resolves to /_vendor/, in every mode, so the file has to be
+        // on disk by the time a page asks for it. mirror_externals() covers BOTH realms in
+        // one call and is a pure hit-check against a warm store, so calling it here - once
+        // per compile, since only the 'app' type emits the externals map - is enough.
+        Cdn_Cache::mirror_externals();
+
         $realm = $this->_detect_bundle_realm();
         $map = Rsx_Externals::resolved_map_for_realm($realm);
 

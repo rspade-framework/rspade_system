@@ -20,6 +20,9 @@ SYNOPSIS
         php artisan rsx:prod:build [--force] [--authorized]
         php artisan rsx:prod:export [--path=./rsx-export]
 
+    CDN externals mirror (development only):
+        php artisan rsx:cdn_externals:refresh
+
 DESCRIPTION
     RSpade runs in one of three modes. RSX_MODE (read from the project-root
     .env, and written only by rsx:mode:set) is the SINGLE source of truth for
@@ -37,6 +40,15 @@ DESCRIPTION
         JIT on the web request. Everything is live the instant a file is
         saved. Full debugging: console_debug() works, inline sourcemaps,
         debug info in window.rsxapp.
+
+        A dev box is as important as a prod box. A primary goal of RSpade is
+        that development mode runs on a production environment and still
+        behaves reliably and securely. The only major differences in a
+        sealed build are that it skips the environment checks and dynamic
+        source rebuilds (slightly faster), minifies JS, and suppresses
+        diagnostic dumps on errors. Every other feature - CSP enforcement
+        included - works identically in every mode. A feature that "only
+        breaks in dev" is a broken feature, not a dev-mode allowance.
 
     debug and production ("prod modes")
         Both are SEALED builds. A sealed build is compiled ONCE by an
@@ -125,6 +137,13 @@ THE SEALED BUILD LIFECYCLE
         deploy health check. (It carries no environment-sanity rows: app.env
         and app.debug derive from RSX_MODE, so nothing can disagree with the
         seal except the mode itself, which the drift check already reports.)
+
+    rsx:cdn_externals:refresh
+        The ONE expiry for the CDN externals mirror (rsx/resource/.cdn-cache/):
+        it empties the store, clears the compiled bundle caches, re-mirrors every
+        declaration and recompiles, so every mirrored asset is re-fetched.
+        Refused on a sealed host - there the mirror is the copy the build
+        shipped with, and rsx:prod:refresh is the command that rebuilds it.
 
     rsx:mode:set dev|debug|prod
         Kept for muscle memory. It is a thin delegator so there is exactly
@@ -354,38 +373,63 @@ BUNDLE OUTPUT
     ordering exists to avoid temporal-dead-zone reference errors in the
     concatenated output.
 
-CDN ASSET HANDLING
-    In development, CDN assets (Bootstrap, jQuery, etc.) load directly from
-    their remote URLs as declared in the bundles.
+EXTERNAL ASSET MIRRORING
+    THERE IS NO DEVELOPMENT EXCEPTION. Every mode mirrors every external
+    asset into the application's own store and serves it from /_vendor/ -
+    a development box behaves exactly like a sealed build. What is mirrored:
 
-    In BOTH prod modes (debug and production), CDN assets are cached locally
-    so the build does not depend on CDN availability at request time:
-
-        - Fetched during the build and stored in:
-              rsx/resource/.cdn-cache/
-          (committed to git - NOT under storage/ - so the cache survives
-          rsx:clean and mode switches, and CI builds are reproducible).
-        - Served to the browser from /_vendor/{cached_filename}.
-
-    Two producers populate that mirror, and both run at BUILD time:
-
-        - Bundle cdn_assets are mirrored by the compiler as it emits them
-          (step [3/5], Compiling bundles).
-        - DECLARED EXTERNAL RESOURCES (*.externals.php) are mirrored by their
-          own explicit step, [2/5] Mirroring external assets, which runs
-          before the bundles compile. They need one: nothing renders them at
-          build time - the client loads them at runtime by identifier - so
-          nothing else would ever discover the URL. Entries declared
-          mirror:false (a vendor endpoint serving dynamic per-client bytes) are
-          skipped and keep fetching from their origin in every mode.
+        - Every bundle cdn_assets entry (Bootstrap, jQuery, ...).
+        - Every mirror:true *.externals.php entry.
           See: php artisan rsx:man external_resources
+        - Every remote reference INSIDE compiled CSS: a @import url(https://...)
+          in application SCSS, an absolute url() for a font or an image, and
+          the @font-face files a downloaded stylesheet itself points at. A
+          remote @import is spliced in place, recursively, preserving its
+          media/supports/layer prelude.
 
-    A SEALED BUILD NEVER DOWNLOADS AT REQUEST TIME. If a mirrored file is
-    missing when a page asks for it, the request THROWS naming the file and the
-    remedy (re-run rsx:prod:refresh) - it does not silently curl the asset. The
-    loud failure is the feature: a sealed build is meant to be self-contained.
+    Left alone: data:, fragment-only, root-relative and relative references.
+    (A relative url() in application SCSS is handled by nothing - it resolves
+    against the compiled bundle's own URL, as it always did.)
 
-    Cached CDN assets are served SEPARATELY via /_vendor/ URLs. They are NOT
+    THE STORE
+        rsx/resource/.cdn-cache/, one flat directory of files named
+        <md5(url)>_<safe basename>.<ext> and served from
+        /_vendor/<that filename>. It is COMMITTED TO GIT - not under storage/ -
+        so it survives rsx:clean and mode switches, and CI builds are
+        reproducible. It is URL-keyed: a present file is by definition the
+        right file, nothing expires on its own, and a compile only ever ADDS.
+        Commit the files a compile adds; git status shows them.
+
+    WHO DOWNLOADS
+        Development web requests, any CLI invocation, and the production build
+        (its explicit "[2/5] Mirroring external assets" step, then the
+        compile). Externals need that dedicated step because nothing renders
+        them at build time - the client loads them at runtime by identifier.
+
+        A SEALED WEB REQUEST NEVER DOWNLOADS. A miss while sealed THROWS,
+        naming the file, the store directory and rsx:prod:refresh. A miss in
+        development is a 404 naming rsx:cdn_externals:refresh (the compile
+        that names the file never ran on this box, or the store was emptied).
+
+    FAILING LOUD
+        An unfetchable reference FAILS THE COMPILE, naming the URL - a
+        stylesheet's references with a JSON failure list. A declared integrity
+        hash is verified against the downloaded bytes in every mode and a
+        mismatch throws. A production SCSS compile whose postcss pass fails
+        now fails too, rather than shipping un-optimized CSS.
+
+    THE ONE EXPIRY
+        php artisan rsx:cdn_externals:refresh - empties the store, clears the
+        compiled bundle caches, mirrors the declared externals and compiles
+        EVERY bundle (which is what makes the store complete). It REFUSES on a
+        sealed host; there the rebuild command is rsx:prod:refresh.
+
+    CSP
+        A mirrored asset contributes NOTHING to the policy in any mode: it is
+        same-origin, which 'self' already covers. Only mirror:false entries put
+        an origin in the header. See: php artisan rsx:man csp
+
+    Mirrored assets are served SEPARATELY via /_vendor/ URLs. They are NOT
     merged or inlined into the compiled bundle files. Cache filenames derive
     from a hash of the URL, so a version bump in a bundle definition creates
     a new cache file and stops referencing the old one - no manual
@@ -567,8 +611,9 @@ GITIGNORE
         /rsx-export/
 
     Each deployment generates a fresh export; it should not be committed.
-    (rsx/resource/.cdn-cache/, by contrast, IS committed - it is a build
-    input.)
+    (rsx/resource/.cdn-cache/, by contrast, IS committed - it is a source
+    artifact, written by every mode's compile and reviewed like any other
+    source. Commit what a compile adds.)
 
 SEE ALSO
     bundle_api(3), manifest_api(3), storage_directories(3), config_rsx(3)

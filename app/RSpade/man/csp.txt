@@ -104,28 +104,22 @@ THE COMPOSED DIRECTIVE SET
 
     Merged in, in this order:
 
-    1. ASSET ORIGINS THIS RESPONSE ACTUALLY EMITTED. In development a bundle's
-       cdn_assets load from their own hosts; the emitter declares each one as
-       it writes it (Rsx_Bundle_Abstract -> Rsx_Csp::note_asset_origin), so the
-       whitelist is EXACTLY what this page loads and never a superset. In a
-       sealed build those assets are served from /_vendor (same-origin) and
-       contribute nothing.
+    1. MIRRORED ASSETS CONTRIBUTE NOTHING, IN ANY MODE. A bundle's cdn_assets, a
+       mirror:true external and the remote references inside a compiled
+       stylesheet are all served from our own /_vendor/ copy - same-origin,
+       already covered by 'self' - on a development box exactly as in a sealed
+       build.
 
     2. DECLARED EXTERNAL RESOURCES for the realm
-       (Rsx_Externals::csp_hosts_for_realm): each entry's js origins into
-       script-src and css origins into style-src - but only while still fetched
-       externally, so a mirrored entry drops out of a sealed build's policy -
-       plus each entry's own `csp` extras (the frames it opens, the hosts it
-       calls), which apply in EVERY mode.
+       (Rsx_Externals::csp_hosts_for_realm): a mirror:false entry's js origins
+       into script-src and css origins into style-src - those are the only
+       assets the browser still fetches externally - plus each entry's own
+       `csp` extras (the frames it opens, the hosts it calls, the font hosts
+       its stylesheet names), which apply whether or not it is mirrored. A
+       mirror:false STYLESHEET whose fonts live on another host declares those
+       hosts itself in `csp => ['font-src' => [...]]`.
 
-    3. AN EXTERNAL STYLESHEET'S ORIGIN ALSO JOINS font-src, derived rather than
-       configured. A webfont stylesheet @font-face's against its own origin as
-       a matter of course, and nothing in our code names the font file - so
-       without this every icon font would report a violation no declaration
-       could fix. An origin already trusted to deliver CSS (which can restyle
-       the whole page) is trusted for the fonts that CSS names.
-
-    4. CONFIG rsx.csp.additional_sources, WIDEN-ONLY. Sources are APPENDED;
+    3. CONFIG rsx.csp.additional_sources, WIDEN-ONLY. Sources are APPENDED;
        they can never replace or remove the framework's hardening, and
        downstream config deep-merges additively on top. A directive the base
        policy did not declare is CREATED seeded with 'self' (it was falling
@@ -223,6 +217,12 @@ TRIAGE
         file and load it with Rsx.load_external().
       - An origin a DECLARED script fetches on its own ->
         rsx.csp.additional_sources.
+      - A FONT (or an image) named by a stylesheet -> ask first whether the
+        compile localized it. A mirrored stylesheet's fonts are downloaded and
+        rewritten to /_vendor/, so a font-src refusal under one means the
+        reference was RELATIVE (nothing resolves those) rather than that a host
+        is missing. Under a mirror:false stylesheet, declare the font host in
+        that entry's csp => ['font-src' => [...]].
       - An inline <script> in application markup -> move the code into a
         bundled .js file. Do not reach for the nonce.
 
@@ -296,15 +296,11 @@ API REFERENCE
         Stamp a dispatched response, subject to the HTML-only and
         already-has-a-policy rules above. Non-responses are ignored.
 
-    note_asset_origin(string $directive, string $url): void
-        Declare an external origin this response actually emitted an asset
-        from. Called by the bundle emitter; application code never calls it.
-
     is_enabled(): bool
         The config read, in one place.
 
     _reset_request_state(): void
-        Testing seam - drops the nonce and noted origins.
+        Testing seam - drops the request-scoped nonce.
 
     Constants: REPORT_PATH, HEADER_ENFORCE, UNWIDENABLE_DIRECTIVES.
 
@@ -355,6 +351,18 @@ TROUBLESHOOTING
         php artisan rsx:man external_resources. If it is a transitive load by
         a declared script, add the origin to rsx.csp.additional_sources.
 
+    A font is blocked (font-src)
+        Two questions, in order. DID THE COMPILE LOCALIZE IT? A mirrored
+        stylesheet - a bundle cdn_asset, a mirror:true external, or a remote
+        @import in application SCSS - has its @font-face files mirrored to
+        /_vendor/ in every mode, and needs no font host in the policy at all.
+        IS THE REFERENCE RELATIVE? Relative url() references are left alone by
+        the localizer, so a relative font path in application SCSS resolves
+        against the compiled bundle URL and is nobody's to whitelist - make it
+        root-relative. Only a mirror:false stylesheet genuinely needs a host,
+        declared in its own csp => ['font-src' => [...]]. The framework no
+        longer infers a font host from a stylesheet's origin.
+
     An inline <script> in a Blade page is blocked
         Move the code into a bundled .js file with a page guard. Application
         inline scripts are not nonce-stamped and never will be - the nonce
@@ -394,4 +402,4 @@ SEE ALSO
 
 VERSION
     RSpade Framework 1.0
-    Last Updated: 2026-08-31
+    Last Updated: 2026-09-01

@@ -1,0 +1,38 @@
+// Document_Text_Preview - the extracted-text sibling of Document_Preview.
+//
+// DELIBERATELY NO TYPOGRAPHY. There is no font-family, font-size, color or line-height rule in
+// this file, because the component's contract is that the text inherits the host's typography: a
+// page that wants it monospaced, smaller or muted says so on the element it mounts this into.
+// Layout, scrolling and whitespace handling are this file's whole job.
+.Document_Text_Preview {
+    display: block;
+    width: 100%;
+    height: 100%;
+
+    &__frame {
+        width: 100%;
+        height: 100%;
+    }
+
+    &__notice {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        font-style: italic;
+        text-align: center;
+    }
+
+    &__text {
+        width: 100%;
+        height: 100%;
+        overflow-y: auto;
+        // pre-wrap renders the extracted text's own newlines and keeps the column alignment an
+        // extraction carries in runs of spaces (the template interpolates ESCAPED text, not
+        // htmlbr(), for exactly this reason); overflow-wrap breaks the long unbroken runs
+        // (URLs, tables flattened to one line) that would otherwise force horizontal scrolling.
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+    }
+}

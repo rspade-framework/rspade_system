@@ -74,17 +74,41 @@ THE ROTATION
         1. Skip name.log entirely if it is 0 bytes. It has nothing worth a generation, and
            rotating it would push a real generation one step closer to deletion for
            nothing.
-        2. Shift every existing generation from the HIGHEST number down, so a rename never
-           lands on an occupied name: .N -> .N+1, and .N.gz -> .N+1.gz.
-        3. Rename name.log to name.log.1 and create an empty name.log with the ORIGINAL
+        2. RENUMBER the generations already on disk contiguously from 1, in AGE ORDER, so
+           the shift starts from a settled numbering. See THE RENUMBERING below.
+        3. Shift every existing generation from the HIGHEST number down, so a rename never
+           lands on an occupied name: .N -> .N+1, and .N.gz -> .N+1.gz. A NUMBER IS ONE
+           SLOT WHATEVER THE FORM - a compressed generation moves exactly like a plain one,
+           and a plain chain never overruns a gz chain.
+        4. Rename name.log to name.log.1 and create an empty name.log with the ORIGINAL
            FILE'S MODE.
-        4. Gzip every plain generation now numbered above days_uncompressed. The plain file
+        5. Gzip every plain generation now numbered above days_uncompressed. The plain file
            is unlinked only after the .gz exists and is non-empty, so a failed compression
-           costs the .gz and never the log.
-        5. Delete every generation, plain or gz, now numbered above days_retention.
+           costs the .gz and never the log. The .gz inherits the plain file's modification
+           time, because step 2 reads mtime as the generation's age.
+        6. Delete every generation, plain or gz, now numbered above days_retention. Because
+           step 2 settled the numbering first, SHRINKING days_retention between runs prunes
+           exactly the oldest generations rather than whatever happens to carry a high
+           number.
+
+    THE RENUMBERING
+        The numbering found on disk is not guaranteed to be a contiguous 1..K, and the
+        rotation itself is what produces the states that are not: RAISING
+        days_uncompressed between runs leaves a plain generation standing on a number the
+        previous run's gz chain already holds, and a run interrupted partway leaves gaps.
+        Neither is an error and neither file is redundant - both are real generations
+        holding real log lines.
+
+        So before anything is shifted, every .N and .N.gz of one log is collected and
+        renumbered 1..K contiguously in AGE ORDER: modification time descending (newest
+        becomes .1), plain before gz on a tie, then the existing number. Each file keeps
+        its own form; nothing is compressed, read or deleted by the repair, and the
+        renames go through temporary names (name.log.rotate-tmp-N) so no rename can land
+        on a file that has not moved out of the way yet. The moves are reported under
+        'renumbered', and the task and the command each say one line when it happened.
 
     RENAME-BASED, NOT COPYTRUNCATE, AND THE OPEN-HANDLE NOTE
-        Because step 3 renames rather than truncates, every PER-CALL appender - Monolog
+        Because step 4 renames rather than truncates, every PER-CALL appender - Monolog
         opening the file per request, php-fpm, the CSP violation collector - lands in the
         new file immediately.
 
@@ -96,10 +120,11 @@ THE ROTATION
         which is a real hole rather than a cosmetic one.
 
     FAILURES ARE LOUD
-        A failed rename, a failed gzip, a directory that is not there, or a generation
-        found both plain AND gzipped - each throws naming the path. Nothing is suppressed
-        with @ and nothing is skipped silently except the two documented cases (a missing
-        log, and a 0-byte log).
+        A failed rename, a failed gzip, or a directory that is not there - each throws
+        naming the path. Nothing is suppressed with @ and nothing is skipped silently
+        except the two documented cases (a missing log, and a 0-byte log). A numbering the
+        rotation itself can produce - a gap, or one number carrying both a plain and a
+        gzipped generation - is not a failure: it is repaired by THE RENUMBERING above.
 
     THE REPORT
         rotate() returns an array keyed by log basename:
@@ -107,7 +132,8 @@ THE ROTATION
             'laravel.log' => [
                 'rotated'    => bool,    // false when there was nothing to rotate
                 'skipped'    => ?string, // why, when rotated is false ('empty')
-                'shifted'    => array,   // ['laravel.log.1' => 'laravel.log.2', ...]
+                'renumbered' => array,   // the pre-shift repair, ['laravel.log.4.gz' => 'laravel.log.6.gz', ...]
+            'shifted'    => array,   // ['laravel.log.1' => 'laravel.log.2', ...]
                 'compressed' => array,   // names as they were BEFORE .gz was appended
                 'deleted'    => array,   // names removed
             ]
@@ -140,6 +166,8 @@ COMMAND
         --days-uncompressed=<n>     Override rsx.logging.rotation.days_uncompressed
         --days-retention=<n>        Override rsx.logging.rotation.days_retention
         --json                      Machine-readable payload instead of the summary line
+                                    (carries a `renumbered` count alongside rotated /
+                                    compressed / deleted)
 
     Silent-success house style - one line:
 
@@ -149,14 +177,19 @@ COMMAND
 
         [INFO] Scheduled rotation is disabled (rsx.logging.rotation.enabled); rotating anyway because you asked.
 
+    and, when the numbering on disk had to be repaired first, by:
+
+        [INFO] Renumbered 3 generation(s) into contiguous order before rotating.
+
 TROUBLESHOOTING
     Nothing rotated and the command said 0 files
         Every *.log in the directory was 0 bytes. That is the documented skip, not a
         failure.
 
     A generation exists both plain and gzipped
-        The framework never produces that pair, so somebody put one there by hand. It
-        throws rather than guessing which one is real; delete the wrong one.
+        Not an error, and nothing to do about it by hand. The next rotation renumbers both
+        files into adjacent generations in age order and says so - see THE RENUMBERING.
+        Deleting either one would lose log data.
 
     A process is still writing into name.log.1 after a rotation
         Expected for a long-lived process holding an open handle - see the open-handle note

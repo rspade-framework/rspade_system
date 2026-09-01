@@ -1644,15 +1644,20 @@ SUBSYSTEM PRIMERS
     THEM. console_debug stripping is a pure-function list handed to the
     minifier, so a debug build keeps both readable code and working output.
 
-    SEALED-BUILD EXTERNAL MIRRORING is an explicit build step that walks
-    every declared external resource and downloads it into a committed cache
-    directory (deliberately NOT under storage, so it survives a clean and a
-    mode switch), served afterwards from /_vendor/. ANY DOWNLOAD FAILURE
-    ABORTS THE WHOLE BUILD. The step exists because external declarations are
-    resolved by the CLIENT at runtime, so nothing in the compile would
-    otherwise touch them. At request time a sealed build that finds a mirror
-    missing throws a message naming the file, the source URL and the refresh
-    command: A SEALED BUILD NEVER DOWNLOADS AT REQUEST TIME.
+    EXTERNAL MIRRORING HAPPENS IN EVERY MODE. Every bundle cdn_asset, every
+    mirror:true external and every remote reference inside compiled CSS is
+    downloaded into a committed store (rsx/resource/.cdn-cache/, deliberately
+    NOT under storage, so it survives a clean and a mode switch) and served
+    from /_vendor/. ANY DOWNLOAD FAILURE ABORTS THE COMPILE, naming the URL.
+    The production build additionally runs an explicit mirroring STEP over the
+    declared externals, because those are resolved by the CLIENT at runtime and
+    nothing in the compile would otherwise touch them.
+
+    Downloading is a BUILD activity: development web requests, any CLI, and the
+    build itself may download; a SEALED WEB REQUEST NEVER DOES, and a miss
+    throws naming the file, the store and rsx:prod:refresh. The store is
+    URL-keyed and never self-expires - rsx:cdn_externals:refresh is the one
+    expiry, and it refuses on a sealed host.
 
     References
       Man pages: bundle_api, js_decorators, scss, jqhtml, npm, app_mode,

@@ -43,8 +43,8 @@ DESCRIPTION
     What this replaces: hand-injected <script> tags, document.write, an
     appendChild of a vendor URL in a component's on_load(), and a copy-pasted
     vendor snippet in a Blade head. None of them work under the policy, and
-    none of them survive a sealed build, which serves mirrored copies from the
-    application's own origin.
+    none of them survive a build of any kind, which serves mirrored copies
+    from the application's own origin.
 
     A resource loaded at page-load time by the BUNDLE (a CSS framework, a
     global library present on every page) is a different thing: that is the
@@ -87,14 +87,19 @@ SPEC KEYS
 
     integrity   Map of DECLARED url => subresource-integrity hash string. A key
                 that is not one of this entry's own js/css URLs is an error.
-                The hash is applied (with crossorigin="anonymous") only while
-                the URL is still fetched from its external host - a mirrored
-                copy is served from our own origin and carries no external
-                hash, so integrity silently does not apply to it.
+                The hash is VERIFIED AT DOWNLOAD, in every mode, against the
+                bytes the mirror stores: sha256-, sha384- or sha512- followed
+                by a base64 digest, and a mismatch THROWS and fails the
+                compile. It is EMITTED as an integrity attribute (with
+                crossorigin="anonymous") only while the URL is still fetched
+                from its external host - a mirrored copy is same-origin and
+                carries no external hash - so the attribute survives on a
+                mirror:false entry only.
 
-    mirror      Bool, default TRUE. True means "a sealed build should serve a
-                local copy of these bytes from /_vendor/" (see PER-MODE URL
-                RESOLUTION). Set it FALSE for a resource whose bytes are
+    mirror      Bool, default TRUE. True means "serve a local copy of these
+                bytes from /_vendor/" - IN EVERY MODE, a development box
+                exactly like a sealed build (see URL RESOLUTION). Set it FALSE
+                for a resource whose bytes are
                 dynamic - a vendor endpoint that serves per-client or
                 per-challenge JavaScript (Turnstile's api.js, Google's
                 gtag.js). A mirrored copy of such a resource would be stale and
@@ -120,6 +125,17 @@ SPEC KEYS
                 which is implied by the script URL and none of which mirroring
                 changes. The ASSET origins themselves are derived from js/css
                 and are never listed here.
+
+                A mirror:false STYLESHEET whose @font-face files live on
+                another host MUST name that host here:
+
+                    'csp' => ['font-src' => ['https://fonts.gstatic.com']],
+
+                Nothing derives it. The framework once inferred font-src from
+                a stylesheet's own origin; that heuristic is gone, because it
+                was wrong in both directions - it guessed the wrong host as
+                often as the right one, and a mirrored stylesheet needs no
+                entry at all.
 
                 Origins the script loads TRANSITIVELY at its own discretion
                 (an analytics loader fetching further Google origins) cannot be
@@ -155,49 +171,110 @@ THE READINESS CONTRACT
         saying so. That is the callback_param mismatch: the parameter name in
         the spec and the parameter name in the URL must be the same string.
 
-PER-MODE URL RESOLUTION
-    Development
-        The raw declared URL. The browser fetches from the vendor's own host,
-        and that host is in the CSP whitelist.
+URL RESOLUTION
+    THERE IS NO PER-MODE ANSWER, because there is no development exception.
+    One declaration yields one URL in every mode:
 
-    Sealed builds (debug and production)
-        A mirror:true entry resolves to /_vendor/{cached_filename} - a local
-        copy fetched during the build and served from the application's own
-        origin. The build is then SELF-CONTAINED: nothing a page needs depends
-        on a third-party host being reachable at request time. Because the copy
-        is same-origin, the vendor host DROPS OUT of the CSP whitelist.
+        mirror: true (default)
+            /_vendor/{mirror_filename} - a local copy served from the
+            application's own origin, on a development box exactly as in a
+            sealed build. The vendor host is never contacted at render time
+            and appears in no CSP directive.
 
-        A mirror:false entry resolves to its raw URL in every mode, and its
-        origin stays in the whitelist in sealed builds too.
+        mirror: false
+            The raw declared URL. The browser fetches from the vendor's own
+            host, so that origin joins the policy - in every mode.
 
-    THE MIRROR IS POPULATED BY THE BUILD, NEVER AT REQUEST TIME.
-    rsx:prod:enable / rsx:prod:refresh run an explicit step - "[2/5] Mirroring
-    external assets..." - that downloads every mirror:true URL into
-    rsx/resource/.cdn-cache/ (committed to git, so builds are reproducible and
-    the cache survives rsx:clean). A sealed build that finds a mirror file
-    missing THROWS, naming the file and the remedy; it never falls back to a
-    runtime download. Resolution itself is pure: it computes a filename and
-    never touches the network.
+    Resolution itself is PURE: Rsx_Externals::resolve_url() computes a
+    filename and never touches the network.
 
-    Filenames come from the same Cdn_Cache naming the bundle's cdn_assets use,
-    so both halves name the same file and a URL version bump simply produces a
-    new one - there is no cache to invalidate by hand.
+WHO POPULATES THE MIRROR
+    The store is rsx/resource/.cdn-cache/, one flat directory of files, KEYED
+    BY URL and committed to git. A file that is present is by definition the
+    right file, so nothing expires on its own and no compile ever deletes.
+
+    Three producers download into it, and all three are BUILD activities:
+
+        - A development web request, as the bundle compiles.
+        - Any CLI invocation of the compiler.
+        - The production build's own explicit step, "[2/5] Mirroring external
+          assets", which runs before the bundles compile. Externals need that
+          step because nothing renders them at build time - the client loads
+          them at runtime by identifier - so nothing else would discover the
+          URL.
+
+    A SEALED WEB REQUEST NEVER DOWNLOADS. A miss while sealed THROWS, naming
+    the file, the store directory and rsx:prod:refresh. A miss in development
+    is a 404 naming rsx:cdn_externals:refresh - it means the compile that
+    names the file has never run on this box, or the store was emptied.
+
+    COMMIT WHAT A COMPILE ADDS. New files under rsx/resource/.cdn-cache/ show
+    up in git status after a compile; they are source, not build output.
+
+    THE ONE EXPIRY is php artisan rsx:cdn_externals:refresh, which empties the
+    store, clears the compiled bundle caches, mirrors every declared external
+    and then COMPILES EVERY BUNDLE - that last step is what makes the store
+    complete, since a bundle never compiled on this box has never produced its
+    files. Run it when a declared URL's bytes changed upstream, when
+    rsx.cdn_externals.user_agent changed, or to clear orphans. It REFUSES on a
+    sealed host, where the rebuild command is rsx:prod:refresh.
+
+    Filenames come from the same Cdn_Cache naming rule the bundle's cdn_assets
+    use, so both halves name the same file and a URL version bump simply
+    produces a new one - there is no cache to invalidate by hand.
+
+FAILING LOUD
+    An unfetchable reference FAILS THE COMPILE. A DNS failure, a non-2xx
+    response or a declared URL with no cached copy stops the build naming the
+    URL; a stylesheet's unreachable @import or url() fails it with a JSON
+    failure list. Nothing silently degrades to an un-localized reference,
+    because that would ship a page that reaches an external host the policy
+    does not permit.
+
+    A declared integrity hash is verified against the downloaded bytes and a
+    mismatch throws. A stale or wrong hash therefore fails the compile in
+    every mode.
 
 HOW THE CSP WHITELIST DERIVES
     For a realm, Rsx_Externals::csp_hosts_for_realm() returns directive =>
     origins built from the entries visible in that realm:
 
-        - Every js URL's origin joins script-src, and every css URL's origin
-          joins style-src - but ONLY while that URL is still fetched
-          externally: in a sealed build the mirrored ones are same-origin and
-          contribute nothing.
-        - An external stylesheet's origin ALSO joins font-src. A webfont
-          stylesheet @font-face's against its own origin as a matter of course,
-          and no declaration in the tree can name the font file.
-        - Each entry's declared csp extras merge in ALWAYS, in every mode.
+        - A mirror:false entry's js origins join script-src and its css
+          origins join style-src. Those are the only assets the browser still
+          fetches externally.
+        - A MIRRORED entry contributes NOTHING, in any mode. It is served from
+          /_vendor/, which 'self' already covers.
+        - Each entry's declared csp extras merge in ALWAYS, mirrored or not -
+          they describe what the resource DOES, which mirroring does not
+          change. A mirror:false stylesheet's font hosts arrive HERE, because
+          the entry declared them; nothing infers them.
 
     The composer adds those to the framework's base directives. Nothing else
     grants an external origin. See: php artisan rsx:man csp
+
+WEBFONT CDNS
+    A webfont CDN needs no special handling and nothing to whitelist. Both
+    spellings just work:
+
+        // application SCSS
+        @import url(https://fonts.googleapis.com/css2?family=Inter&display=swap);
+
+        // or a bundle cdn_assets css entry with that same URL
+
+    The compile fetches the stylesheet, mirrors it, and follows it: every
+    @font-face src it names is downloaded into the same store and rewritten to
+    /_vendor/. The page loads the stylesheet and its woff2 files from its own
+    origin, so neither fonts.googleapis.com nor fonts.gstatic.com appears in
+    the policy, and neither is contacted at render time.
+
+    This is why rsx.cdn_externals.user_agent is a MODERN BROWSER string: a
+    webfont CDN serves woff2 and unicode-range subsets only to one, and hands
+    an unrecognised agent fat legacy formats instead. Changing the agent
+    changes what a URL mirrors - refresh to re-fetch under the new one.
+
+    The only case still needing a declaration is a mirror:false stylesheet,
+    which is fetched externally and whose font host must be named in its own
+    csp => ['font-src' => [...]].
 
 JAVASCRIPT API
     Rsx.load_external(identifier) -> Promise
@@ -308,20 +385,26 @@ RSX VS LARAVEL
     (what the loader appends) and the policy (what the browser permits) are
     DERIVED from it. Discovery is the manifest's, exactly like every other kind
     of RSX file - no registration, no service provider, no config array to keep
-    in sync. And because resolution is mode-aware, the same declaration yields
-    a CDN fetch in development and a self-contained local copy in a sealed
-    production build, with no second spelling anywhere.
+    in sync. And because there is no development exception, the same
+    declaration yields the same self-contained local copy on a laptop and in a
+    sealed production build - one spelling, one behaviour to reason about.
 
 TROUBLESHOOTING
     "Refused to load ... because it violates the following Content Security
     Policy directive" (browser console)
-        Something injected a resource that is not declared. In development the
-        framework prints a follow-up [RSX CSP] warning naming the directive,
+        Something injected a resource that is not declared, OR a mirror:false
+        stylesheet is pulling fonts from an undeclared host. In development
+        the framework prints a follow-up [RSX CSP] warning naming the
+        directive,
         the blocked URI and the remedy. The fix is a DECLARATION, never a
         hand-edited header: add a *.externals.php entry and load it by
-        identifier. If it is a TRANSITIVE load (a declared script fetching
-        further hosts of its own), add those origins to
-        rsx.csp.additional_sources instead.
+        identifier. If it is a FONT blocked under a mirror:false stylesheet,
+        add the font host to that entry's csp => ['font-src' => [...]]; if the
+        stylesheet is mirrored, its fonts were localized and a font-src refusal
+        means the reference was RELATIVE and unresolvable, not that a host is
+        missing. If it is a TRANSITIVE load (a declared script fetching further
+        hosts of its own), add those origins to rsx.csp.additional_sources
+        instead.
 
         The policy ALWAYS enforces, so the resource really did not load. The
         refusal is also recorded in storage/logs/csp_violations.log.
@@ -337,18 +420,42 @@ TROUBLESHOOTING
         The callback_param name and the URL's query parameter disagree. The URL
         must pass the global's name as ?<p>=<global_name>.
 
-    Sealed build throws about a missing mirror file
+    "Missing mirrored external asset: <file>" (sealed)
         The build's mirror step did not run, or the .cdn-cache file was
         deleted. Re-run rsx:prod:refresh (or rsx:prod:enable). A sealed build
         never downloads at request time by design; the loud error is the
         feature.
 
+    "Vendor file not found: <file>" (development 404)
+        The compile that names this file has never run on this box, or the
+        store was emptied. Reload the page - development compiles on request -
+        or populate the store directly with rsx:cdn_externals:refresh.
+
+    "Failed to localize external references in <stylesheet>"
+        A remote @import or url() inside a stylesheet could not be fetched:
+        the JSON failure list names each URL. Usually the URL is wrong or the
+        host is unreachable from the build box. This fails the compile on
+        purpose - shipping the un-localized reference would ship a CSP
+        violation.
+
+    "Integrity mismatch for <url>"
+        The declared hash does not match the bytes the vendor served. Either
+        the upstream file changed (update the hash) or the URL is not what you
+        think it is. This is verified in EVERY mode now, so a stale hash that a
+        sealed build used to drop silently is a loud compile failure.
+
+    "Failed to download external asset: <url>"
+        DNS failure, a non-2xx response, or an empty body, with no cached copy
+        to fall back on.
+
     "Duplicate external resource identifier '<id>'" at manifest build
         Two files declare the same identifier. Identifiers are one flat
         namespace - rename one. The error names both files.
 
-    The resource loads in development and 404s in a sealed build
-        A mirror:true entry whose bytes are dynamic. Declare mirror:false.
+    The resource is stale, or serves per-client bytes that are now wrong
+        A mirror:true entry whose bytes are DYNAMIC (a vendor endpoint serving
+        per-client or per-challenge JavaScript). Declare mirror:false - it is
+        the only way an asset stays external.
 
     The declaration is ignored entirely
         The file is manifest-invisible (under resource/ or public/), or its
@@ -363,4 +470,4 @@ SEE ALSO
 
 VERSION
     RSpade Framework 1.0
-    Last Updated: 2026-08-18
+    Last Updated: 2026-09-01

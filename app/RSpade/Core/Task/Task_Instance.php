@@ -222,6 +222,10 @@ class Task_Instance
             if ($is_tracker) {
                 $update['worker_pid'] = null;
                 $update['consecutive_failures'] = 0;
+                // A recycled failure writes status_reason so the listing can say what went
+                // wrong; a later success must clear it, or the row reads as failing forever
+                // beside a zero failure count.
+                $update['status_reason'] = null;
             }
 
             DB::table('_tasks')->where('id', $this->id)->update($update);

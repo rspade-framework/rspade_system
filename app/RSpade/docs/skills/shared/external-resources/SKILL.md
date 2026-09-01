@@ -1,6 +1,6 @@
 ---
 name: external-resources
-description: "Loading an external CDN library, vendor widget or third-party script into an RSX page - declaring it in a *.externals.php file, loading it by identifier with Rsx.load_external(), the readiness contract, sealed-build mirroring, and how the Content-Security-Policy derives from the declaration. Use when adding a CDN library or vendor script, wiring Google Analytics or a tag manager, diagnosing a \"Refused to load ... Content Security Policy\" or \"[RSX CSP]\" console warning, hitting \"Unknown external resource\", being flagged by JS-DOM-01 for document.createElement('script') or $('<script>'), triaging storage/logs/csp_violations.log, or deciding whether to enforce the policy."
+description: "Loading an external CDN library, vendor widget or third-party script into an RSX page - declaring it in a *.externals.php file, loading it by identifier with Rsx.load_external(), the readiness contract, the rsx/resource/.cdn-cache mirror store that every mode serves from /_vendor/, and how the Content-Security-Policy derives from the declaration. Use when adding a CDN library or vendor script, using a webfont CDN or a Google Fonts @import in SCSS, wiring Google Analytics or a tag manager, running php artisan rsx:cdn_externals:refresh, committing files a compile added under .cdn-cache, diagnosing a \"Refused to load ... Content Security Policy\" or \"[RSX CSP]\" console warning, a blocked font-src, \"Failed to localize external references\", \"Integrity mismatch for\", \"Failed to download external asset\", \"Missing mirrored external asset\", \"Vendor file not found\", hitting \"Unknown external resource\", being flagged by JS-DOM-01 for document.createElement('script') or $('<script>'), triaging storage/logs/csp_violations.log, or deciding whether to enforce the policy."
 ---
 
 # External Resources and CSP
@@ -56,11 +56,23 @@ Identifiers are one **flat namespace**, `lowercase_with_underscores`. A duplicat
 
 ---
 
-## Modes
+## Mirroring - there is NO development exception
 
-- **Development**: raw URL; the vendor host is in the CSP whitelist.
-- **Sealed (debug/production)**: `mirror:true` entries are mirrored at build time (`[2/5] Mirroring external assets`) into `rsx/resource/.cdn-cache/` and served from `/_vendor/` - same-origin, so the host drops out of the policy. `mirror:false` keeps its raw URL and its whitelist entry.
-- **A sealed build NEVER downloads at request time.** A missing mirror file throws; re-run `rsx:prod:refresh`.
+**One declaration, one URL, in every mode.** A `mirror:true` entry (the default) resolves to `/_vendor/<md5(url)>_<name>.<ext>` on a development box exactly as in a sealed build, so its host appears in NO policy anywhere. `mirror:false` keeps its raw URL and its whitelist entry - it is the only way an asset stays external.
+
+The store is `rsx/resource/.cdn-cache/`: URL-keyed, **git-tracked, a source artifact**. A present file is the right file, nothing self-expires, a compile only ever ADDS - **commit the files a compile adds** (`git status` shows them).
+
+**Who downloads**: development web requests, any CLI, and the production build (`[2/5] Mirroring external assets`, then the compile). A **sealed web request never downloads** - a miss throws naming the file, the store and `rsx:prod:refresh`. A **development** miss is a 404 naming `rsx:cdn_externals:refresh`.
+
+**Fails loud**: an unfetchable URL fails the compile naming it; a stylesheet's unreachable `@import`/`url()` fails it with a JSON failure list (`Failed to localize external references`); a declared `integrity` hash is verified at download in every mode and a mismatch throws. The `integrity` ATTRIBUTE is emitted only for `mirror:false` (a mirrored asset is same-origin).
+
+**The one expiry** is `php artisan rsx:cdn_externals:refresh` - empties the store, clears compiled bundle caches, mirrors declared externals, then compiles **every** bundle (that last step is what makes the store complete). Refuses on a sealed host.
+
+### Webfont CDNs just work
+
+A Google Fonts `@import` in application SCSS, or the same URL as a `cdn_assets` css entry, needs **nothing whitelisted**: the compile mirrors the stylesheet and follows it, downloading every `@font-face` woff2 and rewriting it to `/_vendor/`. `config('rsx.cdn_externals.user_agent')` is a modern browser UA precisely so a font CDN serves woff2 and unicode-range subsets; changing it changes what a URL mirrors (refresh to re-fetch).
+
+**The one case that still needs a declaration**: a `mirror:false` STYLESHEET whose fonts live on another host must name it in its own `'csp' => ['font-src' => ['https://...']]`. Nothing infers a font host from a stylesheet's origin.
 
 ---
 
@@ -74,6 +86,8 @@ Identifiers are one **flat namespace**, `lowercase_with_underscores`. A duplicat
 |---|---|
 | A resource the page loads itself | Declare it in `*.externals.php`, load by identifier |
 | An origin a DECLARED script fetches on its own (analytics, tag manager) | `rsx.csp.additional_sources` (widen-only; `object-src` refused) |
+| A FONT under a MIRRORED stylesheet | Its fonts were localized, so a `font-src` refusal means the reference was **relative** (nothing resolves those) - make it root-relative |
+| A FONT under a `mirror:false` stylesheet | Declare the host in that entry's `csp => ['font-src' => [...]]` |
 | An inline `<script>` in app markup | Move the code into a bundled `.js` file - **never** reach for the nonce |
 | `eval` / `Function` from framework code | **STOP and escalate** - `'unsafe-eval'` is a framework decision, not an app one |
 

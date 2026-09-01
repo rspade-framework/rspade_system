@@ -1050,19 +1050,6 @@ class Manifest
     }
 
     /**
-     * Check if CDN assets should be cached locally and served from /_vendor/
-     *
-     * In every production-like mode (debug AND strict production). Development
-     * loads CDN assets directly from their external URLs; both sealed-build modes
-     * cache them locally so the build is self-contained. This is the single source
-     * of truth for the CDN-caching decision (BundleCompiler::_prepare_cdn_assets).
-     */
-    public static function _should_cache_cdn(): bool
-    {
-        return \App\RSpade\Core\Rsx::is_production();
-    }
-
-    /**
      * Check if console_debug() calls should be stripped from compiled output
      *
      * Strict production mode ONLY. Debug builds keep console_debug working. Feeds

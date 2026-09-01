@@ -50,6 +50,7 @@ class Log_Rotate_Command extends Command
         $rotated = 0;
         $compressed = 0;
         $deleted = 0;
+        $renumbered = 0;
 
         foreach ($report as $entry) {
             if ($entry['rotated']) {
@@ -58,6 +59,7 @@ class Log_Rotate_Command extends Command
 
             $compressed += count($entry['compressed']);
             $deleted += count($entry['deleted']);
+            $renumbered += count($entry['renumbered']);
         }
 
         if ($this->option('json')) {
@@ -69,6 +71,7 @@ class Log_Rotate_Command extends Command
                 'rotated' => $rotated,
                 'compressed' => $compressed,
                 'deleted' => $deleted,
+                'renumbered' => $renumbered,
                 'files' => $report,
             ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
 
@@ -77,6 +80,10 @@ class Log_Rotate_Command extends Command
 
         if (!config('rsx.logging.rotation.enabled')) {
             $this->line('[INFO] Scheduled rotation is disabled (rsx.logging.rotation.enabled); rotating anyway because you asked.');
+        }
+
+        if ($renumbered > 0) {
+            $this->line("[INFO] Renumbered {$renumbered} generation(s) into contiguous order before rotating.");
         }
 
         $this->line("[OK] Rotated {$rotated} files ({$compressed} compressed, {$deleted} deleted)");

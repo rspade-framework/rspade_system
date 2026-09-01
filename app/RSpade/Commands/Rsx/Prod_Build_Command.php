@@ -5,7 +5,6 @@ namespace App\RSpade\Commands\Rsx;
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Bundle\Cdn_Cache;
 use App\RSpade\Core\Bundle\Minifier;
-use App\RSpade\Core\Externals\Rsx_Externals;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 use App\RSpade\Core\Rsx;
@@ -242,44 +241,20 @@ class Prod_Build_Command extends Command
     /**
      * Download every declared external asset the build will serve from /_vendor/.
      *
-     * One code path with the resolver: the asset type passed here is the SAME
-     * Rsx_Externals::url_asset_type() that resolve_url() uses to name the file, so what is
-     * written is exactly what a page will ask for. mirror:false entries are skipped - they
-     * are declared to stay on their own origin in every mode.
-     *
-     * A failed download fails the build (Cdn_Cache throws).
+     * One code path with the resolver: Cdn_Cache::mirror_externals() writes exactly the
+     * files Rsx_Externals::resolve_url() names, and a failed download throws.
      *
      * @return bool false when the build should abort
      */
     private function _mirror_declared_externals(): bool
     {
-        $mirrored = 0;
+        try {
+            $mirrored = Cdn_Cache::mirror_externals(fn ($line) => $this->line($line));
+        } catch (Exception $e) {
+            $this->error("      Failed: {$e->getMessage()}");
+            Cdn_Cache::$_build_phase = false;
 
-        foreach (Rsx_Externals::all() as $identifier => $entry) {
-            if (!$entry['mirror']) {
-                $this->line("      Skipping (mirror:false): {$identifier}");
-                continue;
-            }
-
-            foreach (array_merge($entry['js'], $entry['css']) as $url) {
-                $type = Rsx_Externals::url_asset_type($url);
-                $filename = Cdn_Cache::get_cache_filename($url, $type);
-                $cached = Cdn_Cache::is_cached($url, $type);
-
-                $this->line("      {$identifier}: {$url}");
-                $this->line('        -> ' . $filename . ($cached ? ' (cached)' : ' (downloading)'));
-
-                try {
-                    Cdn_Cache::get($url, $type);
-                } catch (Exception $e) {
-                    $this->error("        Failed: {$e->getMessage()}");
-                    Cdn_Cache::$_build_phase = false;
-
-                    return false;
-                }
-
-                $mirrored++;
-            }
+            return false;
         }
 
         $this->line("      {$mirrored} external assets mirrored");

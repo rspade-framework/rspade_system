@@ -276,11 +276,6 @@ sync_submodule() {
     git -C "$SYSTEM_DIR" reset --hard --quiet HEAD 2>/dev/null || true
     git -C "$SYSTEM_DIR" clean -qfdx 2>/dev/null || true
 
-    # And the caches, which are about to describe the wrong framework. Best-effort:
-    # a stale cache is a rebuild away, an unsynced framework is not.
-    artisan rsx:clean --silent >/dev/null 2>&1 \
-        || warn "rsx:clean reported a problem; the framework revision is still being updated."
-
     # The recorded commit may not be in the local object store yet - a colleague
     # updated the framework, so their revision arrived as a gitlink with no
     # objects behind it.
@@ -312,6 +307,23 @@ sync_submodule() {
         err "[ERROR] Failed to check out framework revision ${recorded:0:12} in system/."
         err "        Fix it with: git submodule update --init --recursive"
         return 1
+    fi
+
+    # And the caches, which describe the framework that was just replaced. This runs
+    # AFTER the checkout on purpose: system/artisan refuses to boot while the recorded
+    # revision and the checkout disagree (bootstrap/rsx_submodule_sync.php), and between
+    # the reset above and this checkout they ALWAYS disagree - an rsx:clean placed there
+    # never ran once, and its refusal was the "reported a problem" warning every revision
+    # change printed. --_no-system-reset: the submodule was reset directly above.
+    #
+    # Best-effort - a stale cache is a rebuild away, an unsynced framework is not - but a
+    # failure is REPORTED with its exit code and what the command said, never swallowed:
+    # the moment the step fails is the one moment the explanation exists.
+    local clean_output clean_rc=0
+    clean_output="$(artisan rsx:clean --silent --_no-system-reset 2>&1)" || clean_rc=$?
+    if [ "$clean_rc" -ne 0 ]; then
+        warn "rsx:clean exited ${clean_rc}; the framework revision is still being updated. It said:"
+        printf '%s\n' "$clean_output" | tail -n 8 | sed 's/^/    /' >&2
     fi
 
     # The framework just changed underneath a manifest that describes the old one.

@@ -111,7 +111,9 @@ class Bootstrap_Icons_Bundle extends Rsx_Asset_Bundle_Abstract
 }
 ```
 
-In development the tag points at the remote URL and the emitter declares its origin to the CSP composer. In both sealed modes the asset is mirrored into `rsx/resource/.cdn-cache/` at build time and served from `/_vendor/` (same-origin) - **a sealed build never downloads at request time; a missing mirror file throws.**
+**Every mode mirrors it.** The asset is downloaded into `rsx/resource/.cdn-cache/` (git-tracked - commit what a compile adds) on first compile and the tag points at `/_vendor/<md5(url)>_<name>.<ext>` - a development box exactly like a sealed build, so a `cdn_asset` contributes nothing to the CSP policy anywhere. A declared `integrity` hash is verified at download and a mismatch fails the compile; an unreachable URL fails it too. A **sealed** web request never downloads (a miss throws naming `rsx:prod:refresh`); a development miss is a 404 naming `rsx:cdn_externals:refresh`.
+
+The same localization applies to compiled CSS: a `@import url(https://fonts.googleapis.com/...)` in application SCSS, and the `@font-face` woff2 files the downloaded stylesheet names, are all mirrored and rewritten to `/_vendor/`. A webfont CDN therefore needs nothing whitelisted.
 
 **Anything loaded ON DEMAND goes through the external-resources registry instead** - declare it in a `*.externals.php` file beside the feature and `await Rsx.load_external('identifier')`. Nothing is fetched until code asks for it, and only the registry supports a staff/portal realm split, a readiness handshake and per-entry CSP extras. **There is no `'cdn:'` include prefix** - that syntax was never implemented.
 

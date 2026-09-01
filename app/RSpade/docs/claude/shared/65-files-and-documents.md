@@ -22,6 +22,8 @@ Framework-core, no app wiring, all of it keyed on the **deduplicated blob**. An 
 
 **`<Document_Preview $attachment_id=... />`** shows "Preparing preview…" until the rendition exists, then the viewer (PDF via pdf.js, Office via the rendition, images and icons otherwise).
 
+**`<Document_Text_Preview $attachment_id=... />`** is its sibling and shows the extracted text, `(Extracting Text...)` until extraction lands, inheriting the host element's typography by contract.
+
 **Operating it**: `rsx:documents:status`, `rsx:documents:failed`, `rsx:documents:rerender`, plus a "Document Render Backlog" row in `rsx:health`. **`rsx.libreoffice.timeout` (120s) is the ONE sanctioned bound in this subsystem** — it caps an external binary that can wedge, and nothing else here is timed.
 
 Skills: `rspade:file-attachments` (claim flow, URLs, displaying files, disposal hooks, ZIP downloads), `rspade:document-preview` (the render pipeline, viewer registry, the three `document.*` resolve chains, reindex triage, deps). Details: `rsx:man file_upload`, `rsx:man thumbnails`, `rsx:man document_search`, `rsx:man documents`.

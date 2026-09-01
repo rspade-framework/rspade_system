@@ -18,12 +18,14 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  * Two questions this class answers, and they are separate:
  *
- * - WHERE does the browser fetch the asset from? `resolve_url()` - the raw external URL in
- *   development, the locally mirrored `/_vendor/{file}` copy in a sealed build (the same
- *   predicate and the same filenames the bundle compiler's CDN assets use). Resolution is
- *   PURE: it never downloads anything. Populating the mirror is a build step.
- * - WHAT must the CSP permit? `csp_hosts_for_realm()` - the external origins still contacted
- *   in that mode, plus each entry's declared runtime `csp` extras.
+ * - WHERE does the browser fetch the asset from? `resolve_url()` - the locally mirrored
+ *   `/_vendor/{file}` copy whenever the entry declares `mirror`, and the raw external URL
+ *   only when it declares `mirror => false`. ONE answer in every mode: a dev box serves the
+ *   same page a sealed box serves. Resolution is PURE: it never downloads anything;
+ *   populating the mirror is the compiler's job (Cdn_Cache::mirror_externals()).
+ * - WHAT must the CSP permit? `csp_hosts_for_realm()` - the asset origins of the
+ *   `mirror:false` entries (mirrored assets are same-origin and contribute nothing), plus
+ *   every entry's declared runtime `csp` extras.
  *
  * See: php artisan rsx:man external_resources
  */
@@ -101,20 +103,21 @@ class Rsx_Externals
     /**
      * The URL the browser should actually request.
      *
-     * Development serves the raw external URL. Sealed builds (debug and strict production)
-     * serve the locally mirrored copy from /_vendor/, so the build is self-contained -
-     * exactly the policy Manifest::_should_cache_cdn() states for bundle CDN assets, reusing
-     * Cdn_Cache's filenames so both halves name the same file.
+     * A mirrored entry is ALWAYS served from our own /_vendor/ copy - in development exactly
+     * as in a sealed build - reusing Cdn_Cache's filenames so the store and the page name the
+     * same file. There is no development exception: `mirror => false` is the only way an
+     * asset stays external, and a `mirror:false` STYLESHEET whose fonts live on another host
+     * must name those hosts itself in its `csp => ['font-src' => [...]]` extras.
      *
-     * PURE: no download, no filesystem write. The mirror is populated by the build.
+     * PURE: no download, no filesystem write. The mirror is populated by the compiler.
      */
     public static function resolve_url(string $url, bool $mirror): string
     {
-        if (!$mirror || !Manifest::_should_cache_cdn()) {
+        if (!$mirror) {
             return $url;
         }
 
-        return '/_vendor/' . Cdn_Cache::get_cache_filename($url, static::url_asset_type($url));
+        return '/_vendor/' . Cdn_Cache::filename_for($url, static::url_asset_type($url));
     }
 
     /**
@@ -172,20 +175,19 @@ class Rsx_Externals
     /**
      * The CSP sources a realm's policy must permit, as directive => origins.
      *
-     * Asset origins are only whitelisted while the browser still fetches from them:
-     * in development that is every entry; in a sealed build the mirrored ones collapse
-     * to '/_vendor' (same-origin, already covered by 'self') and only mirror:false
-     * entries remain. Each entry's declared `csp` extras merge in ALWAYS - they describe
-     * what the script does at runtime (frames it opens, hosts it calls), which mirroring
-     * the asset does not change.
+     * An asset origin is whitelisted only while the browser still fetches from it, which
+     * means only for a `mirror:false` entry - a mirrored asset is served from /_vendor/ in
+     * every mode, is same-origin, and is already covered by 'self'. Each entry's declared
+     * `csp` extras merge in ALWAYS - they describe what the script does at runtime (frames it
+     * opens, hosts it calls, font hosts its stylesheet names), which mirroring does not
+     * change.
      */
     public static function csp_hosts_for_realm(string $realm): array
     {
         $directives = [];
-        $assets_are_external = !Manifest::_should_cache_cdn();
 
         foreach (static::all_for_realm($realm) as $entry) {
-            if ($assets_are_external || !$entry['mirror']) {
+            if (!$entry['mirror']) {
                 foreach ($entry['js'] as $url) {
                     $directives['script-src'][] = static::url_origin($url);
                 }

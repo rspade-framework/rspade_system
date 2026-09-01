@@ -7,7 +7,7 @@ is a pointer, not a second copy.
 - **Deletion, retention, blob release, disposal hooks**: `rsx:man file_disposal`
 - **Thumbnails, `<Attachment_Thumbnail>`, the render state machine, the renderer registry**: `rsx:man thumbnails`
 - **The render pipeline in operation (`rsx:documents:status|failed|rerender`)**: `rsx:man documents`
-- **Text extraction, full-text search, `<Document_Preview>`, PDF renditions**: `rsx:man document_search`
+- **Text extraction, full-text search, `<Document_Preview>` / `<Document_Text_Preview>`, PDF renditions**: `rsx:man document_search`
 - **Headless soffice, invoked only by the render worker**: `rsx:man libreoffice`
 - Skills: `rspade:file-attachments` (working with attachments), `rspade:document-preview`
 

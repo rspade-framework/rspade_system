@@ -1,0 +1,148 @@
+EXTERNAL ASSETS ARE MIRRORED IN EVERY MODE
+Date: 2026-09-01
+
+IF YOU DO NOTHING: the first bundle compile after this pull FAILS - loudly, on a
+    development box - for any cdn_assets entry whose declared integrity hash no
+    longer matches the bytes the CDN serves, and for any stylesheet that
+    references a remote URL the build box cannot reach. Both were previously
+    masked (a sealed build dropped the integrity attribute; an unreachable
+    reference silently stayed external), so a fork that has never verified either
+    finds out when its pages stop compiling.
+
+SUMMARY
+    There is no longer a development exception for external assets. Every bundle
+    cdn_assets entry, every mirror:true *.externals.php entry, and every remote
+    reference INSIDE compiled CSS is downloaded into rsx/resource/.cdn-cache/ on
+    first compile in EVERY mode and served from /_vendor/. A mirrored asset is
+    same-origin, so it contributes nothing to the Content-Security-Policy
+    anywhere.
+
+    This affects a fork in four concrete ways: a previously-masked bad integrity
+    hash now fails the compile, an unreachable stylesheet reference now fails the
+    compile, a mirror:false stylesheet loses its fonts unless it declares them,
+    and the store's filenames changed so the fork's existing .cdn-cache files are
+    orphaned.
+
+THE CHANGE
+    Previously, development fetched external assets straight from their origin
+    and only a sealed build mirrored them. Two code paths meant a resource could
+    work all through development and break the first time it was sealed - and it
+    meant a development page's CSP had to whitelist CDN hosts that a sealed page
+    did not.
+
+    Now one path serves both. Downloading is a BUILD activity: development web
+    requests, any CLI, and the production build may download; a SEALED WEB
+    REQUEST NEVER DOES.
+
+    Three further behaviors changed with it:
+
+    1. INTEGRITY IS VERIFIED AT DOWNLOAD, IN EVERY MODE. A declared sha256/384/512
+       hash is checked against the downloaded bytes and a mismatch THROWS. The
+       integrity ATTRIBUTE is emitted only for mirror:false entries (a mirrored
+       asset is served from our own origin, where an external hash is meaningless).
+       Before, a sealed build simply dropped the attribute, so a stale hash was
+       never detected anywhere.
+
+    2. CSS IS LOCALIZED. A compiled stylesheet's remote @import is fetched and
+       spliced in place (recursively, preserving its media/supports/layer
+       prelude), and every absolute url() - fonts, images - is mirrored into the
+       same store and rewritten to /_vendor/. data:, fragment-only, root-relative
+       and relative references are left alone. An unfetchable reference fails the
+       compile with a JSON failure list; nothing degrades silently.
+
+    3. THE style-src -> font-src HEURISTIC IS GONE. The framework used to add an
+       external stylesheet's own origin to font-src, guessing that its fonts lived
+       there. That guess was wrong as often as it was right (Google Fonts serves
+       CSS from fonts.googleapis.com and fonts from fonts.gstatic.com), and it is
+       unnecessary for a mirrored stylesheet, whose fonts are now localized.
+       Rsx_Csp::note_asset_origin() is deleted.
+
+THE FIX
+    In /system/ core - arrives automatically via the submodule, nothing to copy:
+    Cdn_Cache (one naming rule <md5(url)>_<basename>.<ext>, verbatim bytes,
+    ensure(), integrity verification, the download-permission predicate),
+    Core/Bundle/resource/localize-css-externals.js (replacing inline-css-urls.js
+    and its base64 data-URI inlining), BundleCompiler, the /_vendor/ route, and
+    the new command rsx:cdn_externals:refresh.
+
+ACTION REQUIRED
+    1. AUDIT THE THREE DECLARATION SITES. External URLs enter the build from
+       exactly three places; look at all three in your fork:
+
+         - Bundle cdn_assets lists (classes extending Rsx_Bundle_Abstract /
+           Rsx_Asset_Bundle_Abstract). Verify every declared 'integrity' hash is
+           current, or remove it - a wrong hash is now a hard compile failure.
+           You can confirm a hash with:
+
+               curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A
+
+         - Every *.externals.php file. Confirm each entry's mirror setting is
+           what you actually want. mirror:true (the default) is right for a
+           static library; mirror:false is for a vendor endpoint whose bytes are
+           dynamic (per-client or per-challenge JavaScript).
+
+         - Application SCSS carrying absolute URLs - @import url(https://...) or
+           url(https://...) for a font or an image. These are now fetched at
+           compile time, so the URL must be reachable from your build box.
+
+    2. DECLARE FONT HOSTS FOR ANY mirror:false STYLESHEET. If a css entry is
+       mirror:false and its @font-face files live on another host, that host is
+       no longer inferred and the fonts will be BLOCKED. Name it in the entry:
+
+           'vendor_widget_css' => [
+               'css'    => ['https://vendor.example.com/widget.css'],
+               'mirror' => false,
+               'csp'    => ['font-src' => ['https://fonts.vendor.example.com']],
+           ],
+
+       A MIRRORED stylesheet needs nothing - its fonts were localized.
+
+    3. REFRESH AND COMMIT THE STORE. The filename rule changed, so every file
+       already in your rsx/resource/.cdn-cache/ is orphaned; new files under the
+       new names appear untracked the first time a page compiles. Run the refresh
+       once, on a development box, and commit the result:
+
+           php artisan rsx:cdn_externals:refresh
+           git add rsx/resource/.cdn-cache
+           git status                 # review, then commit
+
+       The command empties the store, clears the compiled bundle caches, mirrors
+       every declared external and then compiles EVERY bundle - that last step is
+       what makes the store complete, since a bundle that has never compiled on
+       this box has never produced its files. It REFUSES on a sealed host; the
+       store is a git-tracked SOURCE artifact, refreshed and reviewed on a
+       development box. On a sealed host the rebuild command is rsx:prod:refresh.
+
+       From here on, a compile only ever ADDS to the store. Commit what it adds.
+
+    4. DELETE OBSOLETE additional_sources FONT ENTRIES. If your
+       rsx/resource/config/rsx.php lists a font host in
+       csp.additional_sources ONLY to whitelist the fonts of a stylesheet that is
+       now mirrored, remove it - it grants an origin nothing fetches any more.
+       Keep entries that cover genuinely TRANSITIVE loads (the gtag.js example in
+       the template config is the correct use of that key), and keep any host a
+       mirror:false resource needs.
+
+VERIFICATION
+    Compile cleanly, then read the page:
+
+        php artisan rsx:cdn_externals:refresh
+
+    A clean run ends with "[OK] CDN externals store refreshed: N files". A
+    failure names the URL that could not be fetched or the hash that did not
+    match - fix the declaration, do not work around the error.
+
+    Then load any page and confirm in the browser's network panel that every
+    external stylesheet, script and font is served from your own origin under
+    /_vendor/, and that no request leaves for a CDN host. Check the response's
+    Content-Security-Policy header names only origins you deliberately kept
+    external (mirror:false entries and declared csp extras).
+
+    Finally, watch storage/logs/csp_violations.log while exercising the app. A
+    font-src refusal under a MIRRORED stylesheet means the reference was
+    RELATIVE (the localizer leaves those alone); under a mirror:false stylesheet
+    it means step 2 is still outstanding.
+
+    See: php artisan rsx:man external_resources
+         php artisan rsx:man csp
+         php artisan rsx:man app_mode

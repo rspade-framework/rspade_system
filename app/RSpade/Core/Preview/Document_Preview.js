@@ -16,6 +16,12 @@ class Document_Preview extends Component {
         if (this.args.page === undefined || this.args.page === null) {
             this.args.page = 1;
         }
+        if (this.args.fit === undefined || this.args.fit === null) {
+            this.args.fit = 'width';
+        }
+        if (this.args.fit !== 'width' && this.args.fit !== 'contain') {
+            throw new Error('Document_Preview: $fit must be "width" or "contain", got "' + this.args.fit + '"');
+        }
 
         // A convertible document's rendition is produced by a background worker, so the preview
         // this component paints first may be a waiting state. Subscribing HERE - before the first
@@ -50,6 +56,7 @@ class Document_Preview extends Component {
                 extension: this.data.info.extension,
                 file_name: this.data.info.file_name,
                 page: this.args.page || 1,
+                fit: this.args.fit || 'width',
             });
         }
 

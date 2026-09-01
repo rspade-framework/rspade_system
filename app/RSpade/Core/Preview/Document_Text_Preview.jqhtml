@@ -1,0 +1,66 @@
+<%--
+Document_Text_Preview
+
+Renders the EXTRACTED TEXT of a file attachment - the sibling of <Document_Preview>, which renders
+the document's picture. One reads File_Preview_Controller::get_extracted_text, the other
+get_preview_info; neither knows anything about the other.
+
+Extraction is asynchronous: the background render/extract worker produces the text a few seconds
+AFTER the upload, not during it. So this component owns a WAITING state, subscribes to its
+attachment id in on_create(), and swaps from "(Extracting Text...)" to the text when the worker's
+frame arrives - no reload, no polling.
+
+States, in the order the template tests them:
+  error_data set         the endpoint refused, or the attachment is
+                         gone (the ONLY failures reaching the catch)  -> (Document Text Unavailable)
+  info === null          the first load has not answered yet          -> (Loading...)
+  status 'pending'       no index row yet - extraction is queued     -> (Extracting Text...)
+  status 'error'         extraction failed (terminal), a degraded
+                         upload, or the caller may not read the file -> (Document Text Unavailable)
+  status 'unsupported'   this file type carries no extractable text  -> (Document Text Unavailable)
+  status 'available'
+    with empty text      the document genuinely contains no text     -> (Document Text Unavailable)
+    with text            the extracted text                          -> the text, newlines kept
+
+Args:
+  $attachment_id  (required) - the File_Attachment_Model id to read. Throws if absent.
+  $width/$height  (optional) - fixed dimensions in px; omitted -> fills the container (100%).
+
+Events: none. Public methods: none. The args are the entire surface.
+
+TYPOGRAPHY IS INHERITED, BY CONTRACT. The SCSS sets no font-family, font-size, colour or
+line-height, so the text takes the host's. A page that wants it monospaced or smaller says so on
+the element it mounts this into.
+--%>
+<Define:Document_Text_Preview tag="div">
+    <% if (!this.args.attachment_id) { throw new Error('Document_Text_Preview requires $attachment_id'); } %>
+    <%
+        const _w = this.args.width ? (int(this.args.width) + 'px') : '100%';
+        const _h = this.args.height ? (int(this.args.height) + 'px') : '100%';
+        const _frame_style = 'width:' + _w + ';height:' + _h + ';';
+
+        const _info = this.data.error_data ? { status: 'error', text: null } : this.data.info;
+        const _has_text = _info && _info.status === 'available' && _info.text !== null && _info.text !== '';
+    %>
+    <div class="Document_Text_Preview__frame" style="<%= _frame_style %>">
+        <% if (!_info) { %>
+            <div class="Document_Text_Preview__notice">(Loading...)</div>
+        <% } else if (_info.status === 'pending') { %>
+            <%-- The realtime subscription in on_create brings us back here the moment the worker
+                 finishes the extraction pass. --%>
+            <div class="Document_Text_Preview__notice">(Extracting Text...)</div>
+        <% } else if (!_has_text) { %>
+            <%-- error / unsupported / an extraction that yielded nothing. All three are the same
+                 answer to the reader: there is no text to show. The operator distinguishes them
+                 with rsx:search:reindex --status. --%>
+            <div class="Document_Text_Preview__notice">(Document Text Unavailable)</div>
+        <% } else { %>
+            <%-- Escaped interpolation, NOT htmlbr(): the frame is white-space:pre-wrap, so the
+                 newlines in the extracted text already render as line breaks. htmlbr() would add a
+                 <br> BESIDE each surviving newline (nl2br keeps it) and double-space the whole
+                 document. pre-wrap also preserves the column alignment an extraction carries in
+                 runs of spaces, which nl2br cannot express. --%>
+            <div class="Document_Text_Preview__text"><%= this.data.info.text %></div>
+        <% } %>
+    </div>
+</Define:Document_Text_Preview>

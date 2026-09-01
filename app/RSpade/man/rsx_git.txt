@@ -28,9 +28,9 @@ DESCRIPTION
 WHAT IT DOES WHEN THE REVISIONS DISAGREE
         maintenance window up
           -> reset the submodule hard, discard untracked files
-          -> rsx:clean (caches)
           -> fetch, if the recorded revision is not in the local object store
           -> check out the recorded revision
+          -> rsx:clean --_no-system-reset (caches)
           -> rebuild (manifest + bundles)
         maintenance window down
         -> report pending migrations
@@ -43,6 +43,13 @@ WHAT IT DOES WHEN THE REVISIONS DISAGREE
     artisan to boot - and the checkout must not depend on that. A developer
     whose tree is too broken to run php is the developer most likely to be
     pulling a fix.
+
+    rsx:clean runs AFTER the checkout, never between the reset and it: artisan
+    refuses to boot while the recorded revision and the checkout disagree (the
+    pre-boot guard, below), and in that gap they always disagree. Its failure,
+    should it fail, is reported with the exit code and the command's own
+    output; the sync continues either way, because a stale cache is a rebuild
+    away and an unsynced framework is not.
 
 WHICH SUBCOMMANDS TRIGGER IT
         pull merge rebase cherry-pick revert checkout switch restore reset stash

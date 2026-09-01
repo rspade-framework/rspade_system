@@ -23,9 +23,25 @@ Args:
   $attachment_id  (required) - the File_Attachment_Model id to preview. Throws if absent.
   $page           (optional) - initial page for paginated viewers (default 1).
   $width/$height  (optional) - fixed dimensions in px; omitted -> fills the container (100%).
+  $fit            (optional) - how a paginated page is scaled inside the frame:
+                    "width"   (default) scale to the frame's WIDTH; a portrait page overflows
+                              vertically and the frame scrolls. Unchanged behaviour.
+                    "contain" scale so the WHOLE page is visible:
+                              min(frame_width/page_width, frame_height/page_height).
+                              REQUIRES A HOST WITH BOUNDED HEIGHT - $height, or a host element
+                              with a real height - since that is what the fit divides by. Given
+                              none (height:auto), it falls back to the width fit.
+                  Any other value throws. Only paginated viewers act on it; Image_Viewer and
+                  Icon_Viewer already fit both axes and are not given it.
+
+  A paginated viewer also re-renders the current page when the frame changes size (debounced), so
+  a pane that grows re-rasters at the new size instead of stretching the old bitmap.
 
 Events OUT (re-emitted from the active viewer):
-  'preview_loaded' {pages, width, height, ratio}  (NOT 'loaded' - that is a reserved jqhtml
+  'preview_loaded' {pages, width, height, ratio}  - width/height/ratio describe the page CURRENTLY
+                                                   RENDERED, not the document, so on a mixed-
+                                                   orientation file they change with the page.
+                                                  (NOT 'loaded' - that is a reserved jqhtml
                                                    lifecycle event fired internally with no data)
   'page_changed'   {page}
 
@@ -72,7 +88,7 @@ Public methods (delegate to the active viewer; no-op before it is ready):
         <% } else if (this.data.info) { %>
             <% const _v = this.data.info.viewer; %>
             <% if (_v === 'Pdf_Viewer' && this.data.info.urls.rendition) { %>
-                <Pdf_Viewer $sid="viewer" $url=this.data.info.urls.rendition $page=(this.args.page||1) />
+                <Pdf_Viewer $sid="viewer" $url=this.data.info.urls.rendition $page=(this.args.page||1) $fit=this.args.fit />
             <% } else if (_v === 'Pdf_Viewer') { %>
                 <%-- Resolves to Pdf_Viewer but has no rendition and is in no render state that
                      explains why (a blob that was never materialized). Fall through to the icon

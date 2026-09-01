@@ -273,6 +273,16 @@ OPTIONAL PARAMETERS
     and additive evolution (a new option never shifts an existing signature). Existing
     non-conforming signatures are swept to this standard as a backlog item (B-57).
 
+LOSSY CONVERSIONS ARE SPELLED OUT
+    An intentional lossy conversion is always written explicitly - (int), (int) round(),
+    (int) floor() - never left to an implicit narrowing through a return type, a typed
+    parameter or an array index. A bare implicit float-to-int narrowing is
+    indistinguishable from an oversight, is a deprecation today ("Implicit conversion
+    from float ... to int loses precision") and a TypeError in PHP 9. Carbon 3's diffIn*()
+    family, `/` division (always a float in PHP) and microtime()/millisecond arithmetic
+    are the usual producers; state the rounding mode where it matters, and widen the
+    signature to float instead when the precision is actually wanted.
+
 FILE STRUCTURE RESTRICTIONS
     PHP Files Without Classes (in ./rsx directory):
         PHP utility files without classes may only contain at global scope:

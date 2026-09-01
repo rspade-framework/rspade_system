@@ -2,7 +2,8 @@ DOCUMENT_SEARCH(1)                RSpade Manual                DOCUMENT_SEARCH(1
 
 NAME
     document_search - document text extraction, full-text search, and in-browser
-    document preview (Document_Preview + pdf.js + PDF renditions)
+    document preview (Document_Preview + pdf.js + PDF renditions, and its
+    extracted-text sibling Document_Text_Preview)
 
 SYNOPSIS
     The pipeline (background, framework-internal):
@@ -17,7 +18,8 @@ SYNOPSIS
         $attachment->get_extraction_status()                   // ?int (null = pending)
 
     Preview (in-browser):
-        <Document_Preview $attachment_id=this.args.id />
+        <Document_Preview $attachment_id=this.args.id />        // the picture
+        <Document_Text_Preview $attachment_id=this.args.id />   // the extracted text
         config('rsx.preview.*')   File_Preview_Controller  (/_preview/pdf/:key)
 
     CLI:
@@ -32,7 +34,8 @@ DESCRIPTION
     and renders documents in the browser, both as framework-core features every app
     inherits. Neither requires any app wiring: an upload is queued for extraction
     automatically, and <Document_Preview> renders a PDF/Office/image attachment with
-    no per-format branching in the page.
+    no per-format branching in the page. <Document_Text_Preview> is its sibling: same
+    attachment, same waiting-then-swap behavior, but it renders the extracted TEXT.
 
     Both systems key their work on the DEDUPLICATED blob (File_Storage_Model), not on
     the logical attachment. Identical bytes are extracted once and converted to a PDF
@@ -270,15 +273,54 @@ DOCUMENT_PREVIEW COMPONENT
 
         <Document_Preview $attachment_id=this.args.id />
         <Document_Preview $attachment_id=42 $page=3 $width=600 $height=800 />
+        <Document_Preview $attachment_id=42 $fit="contain" />
 
     Args:
         $attachment_id  (required) File_Attachment_Model id. Throws if absent.
         $page           (optional) initial page for paged viewers (default 1).
         $width/$height  (optional) fixed px; omitted -> fills the container (100%).
+        $fit            (optional) how a paged page is scaled inside the frame.
+                        "width" (default) or "contain"; anything else THROWS.
+
+    FIT MODES. $fit answers the one geometry question the host cannot express from
+    outside: how the rendered page is scaled inside the space the host gave it.
+
+        width    (default) scale to the frame's WIDTH:
+                 scale = frame_width / page_width. A portrait page in a wide, short
+                 pane is taller than the pane and the frame scrolls. This is the
+                 historical behaviour and it is unchanged.
+        contain  scale so the ENTIRE page is visible:
+                 scale = min(frame_width/page_width, frame_height/page_height).
+                 The canvas is then sized in EXPLICIT CSS px (not width:100%), so the
+                 bitmap paints at exactly the size it was rasterized for.
+
+    $fit="contain" REQUIRES A HOST WITH BOUNDED HEIGHT - it is dividing by that
+    height. Give the component a $height, or mount it in an element that has a real
+    height of its own. Given a height:auto host there is nothing to divide by, and
+    contain FALLS BACK to the width fit rather than rendering at a zero scale. The
+    height is measured on .Document_Preview__frame, the box the host's dimensions
+    actually land on; the viewer's own root has no height but the canvas's, so
+    measuring it would be circular.
+
+    Only PAGED viewers act on $fit. Image_Viewer and Icon_Viewer already fit both
+    axes by CSS and are not given it. An APP-registered viewer receives it in its
+    instantiation args and may do as it likes with it.
+
+    RESIZE. A paged viewer observes the frame (a ResizeObserver) and RE-RENDERS the
+    current page when the frame's box changes - so a pane that grows re-rasterizes
+    at the new size instead of stretching the old bitmap up. The callback is
+    debounced (200ms) so a drag or an animated column collapse issues one re-raster,
+    not one per frame; a box that did not actually move renders nothing. Both fits
+    re-render: "width" re-rasterizes on a width change, "contain" on either axis.
 
     Events OUT (re-emitted from the active viewer; listen on the Document_Preview):
         'preview_loaded' {pages, width, height, ratio}
         'page_changed'   {page}
+
+        width/height/ratio describe the page CURRENTLY RENDERED, not the document.
+        They are re-reported on every render, so on a mixed-orientation file they
+        change as the reader pages through it. Read 'ratio' as "the shape of the
+        page you are looking at", never as a document-wide fact.
 
         The load event is 'preview_loaded', NOT 'loaded' - 'loaded' is a reserved
         jqhtml lifecycle event fired internally with no payload, so a custom event may
@@ -324,7 +366,58 @@ DOCUMENT_PREVIEW COMPONENT
     rsx/resource/config/rsx.php. A built-in viewer is rendered directly by the
     Document_Preview template; an APP-registered viewer name is instantiated
     dynamically into the host element in on_ready with {url, extension, file_name,
-    page}.
+    page, fit}.
+
+DOCUMENT_TEXT_PREVIEW COMPONENT
+    <Document_Text_Preview> renders the EXTRACTED TEXT of an attachment - the sibling
+    of <Document_Preview>, which renders its picture. Neither knows about the other;
+    a page may mount either, both, or neither.
+
+        <Document_Text_Preview $attachment_id=this.data.doc.id />
+        <Document_Text_Preview $attachment_id=42 $width=600 $height=400 />
+
+    Args:
+        $attachment_id  (required) File_Attachment_Model id. Throws if absent.
+        $width/$height  (optional) fixed px; omitted -> fills the container (100%).
+
+    There are no events and no public methods. The args are the entire surface.
+
+    STATES. Four, and the component paints exactly one of them:
+
+        state        when                              renders
+        ---------------------------------------------------------------------------
+        (loading)    the first fetch has not answered  (Loading...)
+        pending      no index row yet - extraction is  (Extracting Text...)
+                     still queued
+        available    text was extracted                the text, newlines preserved
+        error /      extraction FAILED (terminal), a   (Document Text Unavailable)
+        unsupported  degraded upload, a file type with
+                     no extractable text, an extraction
+                     that yielded nothing, or a caller
+                     the gate refused
+
+    The three unavailable causes deliberately collapse into ONE notice: they are the
+    same answer to a reader. An operator distinguishes them with
+    rsx:search:reindex --status and rsx:documents:failed.
+
+    TYPOGRAPHY IS INHERITED, BY CONTRACT. document_text_preview.scss declares no
+    font-family, font-size, color or line-height - only layout, scrolling and
+    white-space:pre-wrap. A page that wants the text monospaced, smaller or muted
+    says so on the element it mounts the component into.
+
+    REALTIME. The component subscribes to its attachment in on_create() exactly as
+    <Document_Preview> and <Attachment_Thumbnail> do, so when the background pass
+    finishes and emits its frame the notice swaps to the text with no reload and no
+    polling. On a realtime-disabled box "(Extracting Text...)" persists until the next
+    navigation - there is deliberately no polling.
+
+    ENDPOINT. File_Preview_Controller::get_extracted_text (#[Ajax_Endpoint]) returns
+    {status: available|pending|error|unsupported, text: string|null} - the same
+    vocabulary GET /api/v1/files/:key/text uses, so a page and an integration describe
+    the same document the same way. It runs the CONTENT gate cascade
+    (file.thumbnail.authorize THEN file.download.authorize), NOT the metadata gate
+    get_preview_info runs: extracted text is often the whole document, so it is gated
+    like the bytes. Text is returned uncapped up to config('rsx.search.max_text_bytes').
 
 SERVER SURFACES
     GET /_preview/pdf/:key   (File_Preview_Controller::pdf_rendition)
@@ -345,6 +438,10 @@ SERVER SURFACES
         A RENDERED blob whose rendition file has been LRU-evicted re-queues itself and
         404s for this one request rather than showing an error over a cache eviction -
         the same self-heal the thumbnail path performs.
+
+    POST get_extracted_text  (#[Ajax_Endpoint])
+        The payload <Document_Text_Preview> reads: {status, text}. See
+        DOCUMENT_TEXT_PREVIEW COMPONENT above for the vocabulary and the gate cascade.
 
     POST get_preview_info  (#[Ajax_Endpoint])
         Server-side viewer resolution consumed by <Document_Preview>: returns
@@ -455,7 +552,10 @@ REINDEX COMMAND
 DEMO
     /dev/document_preview - a template SPA page that previews the seeded sample
     documents (a multi-page PDF and an Office doc) through <Document_Preview>,
-    exercising pagination and the extracted-text surface. Run it with:
+    exercising pagination, and shows the same document's text through
+    <Document_Text_Preview>. Its Reset Extraction / Extract Now buttons make the async
+    extraction observable by hand: the notice reappears, then swaps back to the text
+    over the realtime frame, with no reload. Run it with:
 
         php artisan rsx:debug /dev/document_preview --user=1
 
@@ -467,7 +567,8 @@ RSX VS LARAVEL
     Preview:
         Laravel: wire a JS PDF library and a server raster route per format by hand.
         RSX:     <Document_Preview $attachment_id=...> resolves the viewer server-side;
-                 pdf.js is lazy-served from node_modules, never bundled.
+                 pdf.js is lazy-served from node_modules, never bundled. The extracted
+                 text is <Document_Text_Preview $attachment_id=...>, same one arg.
     Extension:
         Laravel: subclass drivers / swap service bindings.
         RSX:     one #[OnEvent] resolve handler per stage (extract / rendition /

@@ -602,25 +602,18 @@ abstract class Rsx_Bundle_Abstract
             return strcmp($a['url'], $b['url']);
         });
 
-        // Add CSS: jQuery first, then others
+        // Add CSS: jQuery first, then others.
+        //
+        // Every cdn_asset is mirrored into the local store and served from /_vendor/, so the
+        // page never names an external host and carries no integrity attribute: the file is
+        // same-origin and its hash was verified when Cdn_Cache::ensure() downloaded it.
         foreach (array_merge($jquery_css, $other_css) as $asset) {
-            // In production modes, use /_vendor/{filename} URL for cached assets
-            if (!empty($asset['cached_filename'])) {
-                $url = '/_vendor/' . $asset['cached_filename'];
-                $html[] = '<link rel="stylesheet" href="' . htmlspecialchars($url) . '">';
-            } else {
-                // Development mode: use CDN URL directly. Declare the origin so the CSP
-                // whitelists exactly what this page actually fetches externally.
-                Rsx_Csp::note_asset_origin('style-src', $asset['url']);
-
-                $tag = '<link rel="stylesheet" href="' . htmlspecialchars($asset['url']) . '"';
-                if (!empty($asset['integrity'])) {
-                    $tag .= ' integrity="' . htmlspecialchars($asset['integrity']) . '"';
-                    $tag .= ' crossorigin="anonymous"';
-                }
-                $tag .= '>';
-                $html[] = $tag;
+            if (empty($asset['cached_filename'])) {
+                shouldnt_happen('cdn_asset without a cached_filename: ' . $asset['url']);
             }
+
+            $url = '/_vendor/' . $asset['cached_filename'];
+            $html[] = '<link rel="stylesheet" href="' . htmlspecialchars($url) . '">';
         }
 
         // Add public directory CSS (with filemtime cache-busting)
@@ -630,25 +623,15 @@ abstract class Rsx_Bundle_Abstract
             $html[] = '<link rel="stylesheet" href="' . htmlspecialchars($asset['url']) . '?v=' . $mtime . '">';
         }
 
-        // Add JS: jQuery first, then others
+        // Add JS: jQuery first, then others. Mirrored and served from /_vendor/, exactly as
+        // the stylesheets above - no external host, no integrity attribute.
         foreach (array_merge($jquery_js, $other_js) as $asset) {
-            // In production modes, use /_vendor/{filename} URL for cached assets
-            if (!empty($asset['cached_filename'])) {
-                $url = '/_vendor/' . $asset['cached_filename'];
-                $html[] = '<script src="' . htmlspecialchars($url) . '" defer></script>';
-            } else {
-                // Development mode: use CDN URL directly. Declare the origin so the CSP
-                // whitelists exactly what this page actually fetches externally.
-                Rsx_Csp::note_asset_origin('script-src', $asset['url']);
-
-                $tag = '<script src="' . htmlspecialchars($asset['url']) . '" defer';
-                if (!empty($asset['integrity'])) {
-                    $tag .= ' integrity="' . htmlspecialchars($asset['integrity']) . '"';
-                    $tag .= ' crossorigin="anonymous"';
-                }
-                $tag .= '></script>';
-                $html[] = $tag;
+            if (empty($asset['cached_filename'])) {
+                shouldnt_happen('cdn_asset without a cached_filename: ' . $asset['url']);
             }
+
+            $url = '/_vendor/' . $asset['cached_filename'];
+            $html[] = '<script src="' . htmlspecialchars($url) . '" defer></script>';
         }
 
         // Add public directory JS (with filemtime cache-busting and defer)

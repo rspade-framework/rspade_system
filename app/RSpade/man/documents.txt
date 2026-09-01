@@ -12,7 +12,8 @@ SYNOPSIS
 DESCRIPTION
     Three operator commands over Document_Render_Service - the single background
     worker that turns an Office document into a PDF rendition (which feeds both the
-    thumbnail and <Document_Preview>) and extracts its text in the same pass.
+    thumbnail and <Document_Preview>) and extracts its text in the same pass - the
+    text <Document_Text_Preview> renders.
 
     The pipeline itself needs no operating: an attachment queues its blob on upload,
     the worker is kicked immediately and sweeps every 10 minutes, and FAILED is
@@ -200,7 +201,8 @@ WHEN TO REACH FOR WHICH
 
 SEE ALSO
     rsx:man thumbnails       Render state machine, caching, <Attachment_Thumbnail>
-    rsx:man document_search  Text extraction, search, Document_Preview
+    rsx:man document_search  Text extraction, search, Document_Preview and
+                             Document_Text_Preview
     rsx:man libreoffice      Headless soffice and its one sanctioned timeout
     rsx:man file_upload      Attachments and the deduplicated blob store
     rsx:man health           rsx:health and the Document Render Backlog row

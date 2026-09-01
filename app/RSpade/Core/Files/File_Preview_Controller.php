@@ -10,6 +10,7 @@ use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -33,6 +34,7 @@ use App\RSpade\Core\Session\Session;
  * GET /_preview/pdf_worker.mjs  - pdf.js worker module bytes (lazy-loaded)
  * POST (Ajax) get_preview_info  - {viewer, mime, file_name, extension, preview_unavailable,
  *                                  render_status_id, urls{rendition|null, inline, icon}} for a Document_Preview
+ * POST (Ajax) get_extracted_text - {status, text|null} for a Document_Text_Preview
  *
  * ================================================================================================
  * FILTER / GATE CHAINS
@@ -46,7 +48,8 @@ use App\RSpade\Core\Session\Session;
  *    security automatically protects the rendition), then the download gate (stricter download-only
  *    rules). First non-true response denies. Payload for each:
  *        ['attachment' => File_Attachment_Model, 'user' => User|null, 'request' => Request]
- *    get_preview_info runs ONLY the thumbnail gate (metadata, not full content).
+ *    get_preview_info runs ONLY the thumbnail gate (metadata, not full content);
+ *    get_extracted_text runs BOTH, because extracted text is the document's content.
  *
  * 2. document.preview_rendition (RESOLVE - Rsx::trigger_resolve, first non-null handler wins)
  *    Lets an app override or extend how an attachment becomes a PDF rendition (e.g. an external
@@ -456,6 +459,91 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
                 'icon' => Rsx::Route('File_Attachment_Controller::icon_by_extension', ['extension' => $attachment->file_extension]),
             ],
         ];
+    }
+
+    // ============================================================================================
+    // EXTRACTED TEXT
+    // ============================================================================================
+
+    /**
+     * The extracted document text for an attachment, for the <Document_Text_Preview> component.
+     *
+     * Security: the CONTENT gate cascade - file.thumbnail.authorize THEN file.download.authorize,
+     * exactly as pdf_rendition() runs it. Extracted text IS the document's content (often all of
+     * it), so it is gated like the bytes and NOT like the metadata get_preview_info() returns,
+     * which runs the thumbnail gate alone. A caller allowed to see that a file exists is not
+     * thereby allowed to read what is inside it.
+     *
+     * Vocabulary (identical to GET /api/v1/files/:key/text, so a page and an integration describe
+     * the same document the same way):
+     *     available    text was extracted - 'text' is the string (possibly '' for a text-free
+     *                  document, which is an ANSWER, not a failure).
+     *     pending      extraction has not run yet. The render/extract worker emits a realtime
+     *                  frame on this attachment when it lands, and the component refetches.
+     *     error        extraction failed (terminal - nothing retries it but rsx:search:reindex),
+     *                  or the upload itself was degraded (preview_unavailable).
+     *     unsupported  this file type carries no extractable text.
+     *
+     * @param Request $request
+     * @param array $params Requires attachment_id.
+     * @return array{status: string, text: string|null}
+     */
+    #[Ajax_Endpoint]
+    public static function get_extracted_text(Request $request, array $params = [])
+    {
+        $attachment_id = $params['attachment_id'] ?? null;
+        if (!$attachment_id) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_VALIDATION, 'attachment_id is required');
+        }
+
+        $attachment = File_Attachment_Model::find($attachment_id);
+        if (!$attachment) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND, 'Attachment not found');
+        }
+
+        // 'user' is realm-honest for the same reason get_preview_info's is: this endpoint is
+        // #[Auth_Realm('any')], so a portal page reaches it as a genuine PORTAL request and its
+        // gate must not be handed a staff-facade read.
+        $user = \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
+            ? \App\RSpade\Core\Portal\Portal_Session::get_portal_user()
+            : Session::get_user();
+
+        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+            'attachment' => $attachment,
+            'user' => $user,
+            'request' => $request,
+        ]);
+        if ($thumbnail_auth !== true) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
+        }
+
+        $download_auth = Rsx::trigger_gate('file.download.authorize', [
+            'attachment' => $attachment,
+            'user' => $user,
+            'request' => $request,
+        ]);
+        if ($download_auth !== true) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
+        }
+
+        // A degraded upload has no readable content at all - answer error without consulting the
+        // index, which for unparseable bytes would report a text-free extraction as 'available'.
+        if ($attachment->preview_unavailable) {
+            return ['status' => 'error', 'text' => null];
+        }
+
+        $status_id = $attachment->get_extraction_status();
+
+        // get_extracted_text() is called ONLY on the EXTRACTED branch: it routes through
+        // resolve_storage(), which materializes external bytes, and there is nothing to read in
+        // any other state. Text may be up to config('rsx.search.max_text_bytes') and is NOT
+        // truncated here - the component decides how to present it.
+        return match ($status_id) {
+            Search_Index_Model::STATUS_EXTRACTED => ['status' => 'available', 'text' => (string) $attachment->get_extracted_text()],
+            Search_Index_Model::STATUS_FAILED => ['status' => 'error', 'text' => null],
+            Search_Index_Model::STATUS_UNSUPPORTED => ['status' => 'unsupported', 'text' => null],
+            default => ['status' => 'pending', 'text' => null],
+        };
     }
 
     /**

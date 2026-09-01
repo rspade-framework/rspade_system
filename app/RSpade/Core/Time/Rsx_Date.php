@@ -250,7 +250,10 @@ class Rsx_Date
         $carbon1 = Carbon::createFromFormat('Y-m-d', $d1)->startOfDay();
         $carbon2 = Carbon::createFromFormat('Y-m-d', $d2)->startOfDay();
 
-        return $carbon1->diffInDays($carbon2, false);
+        // Carbon 3 returns a FLOAT here; both sides are at start-of-day so the value is
+        // always integral, and the explicit cast states that whole days are the promise
+        // (an implicit narrowing is deprecated now and a TypeError in PHP 9).
+        return (int) $carbon1->diffInDays($carbon2, false);
     }
 
     /**

@@ -5,7 +5,13 @@ Renders a PDF (the rendition url) via pdf.js onto a <canvas>, one page at a time
 lazy-loaded on first use from the framework streaming route (NOT in any bundle). The parent owns
 pagination UI; this viewer only exposes set_page(n)/get_page()/get_pages() and emits events.
 
-Arg: $url (the application/pdf source), $page (initial page, default 1).
+Arg: $url (the application/pdf source), $page (initial page, default 1), $fit (how the page is
+scaled inside the box the host gave - "width" (default) or "contain"; anything else throws).
+
+$fit="contain" requires a host with a BOUNDED HEIGHT to divide by; given none it falls back to the
+width fit rather than rendering at a zero scale. The viewer re-renders the current page when that
+box changes size (a debounced ResizeObserver), so growing the pane re-rasters instead of stretching
+the old bitmap.
 --%>
 <Define:Pdf_Viewer tag="div">
     <canvas $sid="canvas" class="Pdf_Viewer__canvas"></canvas>
