@@ -134,25 +134,52 @@ class Api_Catalog
      * the dispatcher skips it; the caller that wants to TELL somebody about it reads
      * Api_Scopes::parse_all()['malformed'] itself.
      *
+     * READ-ONLY IS THE OTHER AXIS, and it is the one a scope cannot express. $read_only
+     * narrows by VERB rather than by path: an endpoint keeps only the verbs a read-only key
+     * may use, so a GET-only endpoint is untouched, a POST-only endpoint disappears, and one
+     * declaring both is listed as GET alone. A resource left with no endpoints drops out.
+     * Unlike the scope narrowing above, this one does edit an endpoint's `methods` - the verb
+     * IS the question here, so listing a verb the key cannot use would be the lie.
+     *
      * @param int $version The catalogue version, as resolve_for_version() means it.
      * @param string|null $scopes Scope text; null/blank is unrestricted and narrows nothing.
+     * @param bool $include_hidden Include endpoints marked @api-hidden.
+     * @param bool $read_only Narrow to what a read-only key may call (GET verbs only).
      */
-    public static function resolve_for_scopes(int $version, ?string $scopes, bool $include_hidden = false): array
-    {
+    public static function resolve_for_scopes(
+        int $version,
+        ?string $scopes,
+        bool $include_hidden = false,
+        bool $read_only = false
+    ): array {
         $groups = static::resolve_for_version($version, $include_hidden);
 
-        if (Api_Scopes::is_unrestricted($scopes)) {
+        if (Api_Scopes::is_unrestricted($scopes) && !$read_only) {
             return $groups;
         }
 
+        $unrestricted = Api_Scopes::is_unrestricted($scopes);
         $out = [];
 
         foreach ($groups as $resource => $group) {
             $endpoints = [];
 
             foreach ($group['endpoints'] as $endpoint) {
-                if (!Api_Scopes::reaches_route($scopes, (string) $endpoint['pattern'])) {
+                if (!$unrestricted && !Api_Scopes::reaches_route($scopes, (string) $endpoint['pattern'])) {
                     continue;
+                }
+
+                if ($read_only) {
+                    $methods = array_values(array_filter(
+                        (array) $endpoint['methods'],
+                        static fn ($verb) => $verb === 'GET'
+                    ));
+
+                    if (empty($methods)) {
+                        continue;
+                    }
+
+                    $endpoint['methods'] = $methods;
                 }
 
                 $endpoints[] = $endpoint;

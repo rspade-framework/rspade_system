@@ -2,7 +2,7 @@
 Api_Key_Bar - the shared tester-key control.
 
 With a key adopted it also carries a SCOPE BADGE - 'scoped' or 'unrestricted' - read from
-the server's view of the adopted key. A listing drawn for a scoped key describes what that
+the server's view of the adopted key, plus a 'read-only' badge when that key may GET only. A listing drawn for a scoped key describes what that
 credential reaches, which is a narrower claim than what its owner reaches, and a reader
 comparing two consoles has no other way to tell which they are looking at.
 
@@ -37,6 +37,15 @@ a key from elsewhere still works, whoever is holding it.
             <% if (scoped !== null) { %>
                 <span class="Api_Key_Bar__scope <%= scoped ? 'Api_Key_Bar__scope--scoped' : '' %>"
                       title="<%= scoped ? 'This key carries scopes that narrow it below its owner\'s authority.' : 'This key carries its owner\'s full authority.' %>"><%= scoped ? 'scoped' : 'unrestricted' %></span>
+            <% } %>
+            <%-- The other axis, and a different sentence: 'scoped' says which PATHS the key
+                 reaches, 'read-only' says which VERBS it may use. A read-only key's listing
+                 has no write endpoints in it at all, so the badge is what stops that absence
+                 reading as "this API has no write endpoints". --%>
+            <% if (Api_Docs_Catalog.key_read_only()) { %>
+                <span class="Api_Key_Bar__scope Api_Key_Bar__scope--scoped"
+                      title="This key may execute GET requests only. Every other verb is refused."
+                      >read-only</span>
             <% } %>
             <button type="button" $sid="clear" class="Api_Key_Bar__btn Api_Key_Bar__btn--ghost">Clear</button>
         </div>

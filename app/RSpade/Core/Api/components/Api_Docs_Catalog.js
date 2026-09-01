@@ -203,6 +203,24 @@ class Api_Docs_Catalog {
     }
 
     /**
+     * Is the adopted key READ-ONLY (true), read+write (false), or is there no adopted key
+     * (null)?
+     *
+     * Three-valued for the same reason key_scoped() is. A read-only key's listing is missing
+     * every write endpoint, and a reader who does not know that reads the absence as "this
+     * API has no write endpoints".
+     */
+    static key_read_only() {
+        const cat = Api_Docs_Catalog.raw();
+
+        if (!cat || !isset(cat.key_read_only)) {
+            return null;
+        }
+
+        return cat.key_read_only;
+    }
+
+    /**
      * Total endpoints listed for a version, across every resource.
      */
     static endpoint_count(version) {

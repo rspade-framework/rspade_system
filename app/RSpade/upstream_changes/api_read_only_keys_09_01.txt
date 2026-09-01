@@ -1,0 +1,327 @@
+READ-ONLY API KEYS
+Date: 2026-09-01
+
+SUMMARY
+    An API key can now be minted READ-ONLY: it may execute GET requests and
+    nothing else. Every other verb is refused
+
+        403 {"error":{"code":"read_only_key",
+                      "message":"This API key is read-only: GET requests only."}}
+
+    before the key's scopes are even consulted.
+
+    This is the replacement for the 'Read-only' scope preset that the path
+    grammar removed on 2026-09-01 (see api_scope_grammar_09_01.txt). A scope is
+    a path pattern with no HTTP method in it, so "every read endpoint" cannot be
+    written as a scope; a flag on the KEY can say it, and the dispatcher
+    enforces it.
+
+    THREE THINGS REACH YOU HERE.
+
+    1. A framework MIGRATION adds _api_keys.read_only with DEFAULT 0, so every
+       key you already hold keeps exactly the authority it had. Nothing to do.
+
+    2. Your Settings > API Keys screen is YOUR fork, so the checkbox, the grid
+       column and the view-modal line do not appear on their own. The template's
+       code is below, to copy. (Section: ACTION REQUIRED, item A.)
+
+    3. The flag is only worth anything while every GET endpoint really is a
+       read. AUDIT YOUR OWN GET HANDLERS. (Section: ACTION REQUIRED, item B.)
+
+    Full contract: php artisan rsx:man external_api (sections GET IS FOR READS,
+    POST IS FOR WRITES and READ-ONLY KEYS).
+
+THE CHANGE
+
+    THE DESIGN RULE, WRITTEN DOWN. A GET endpoint is a READ. Anything that
+    changes application data - a create, an update, a delete, a state
+    transition, a send, a queued job that will do one of those - is a POST.
+    Incidental bookkeeping a GET performs is fine: a request log row, a
+    last-used or last-seen stamp, a view counter, a cache fill. The test is
+    whether a caller who never made the request could tell from the
+    application's own screens.
+
+    TWO HALVES, NEITHER WORTH ANYTHING ALONE.
+
+      - BUILD TIME, on the HANDLER: API-GET-PURE-01 (unchanged) fails the
+        manifest build when a GET-only #[Api_Endpoint] handler's body contains
+        ->save( ->delete( ->update( ::create( ->raw_bulk(
+        DB::statement|insert|update|delete( or Task::dispatch(.
+      - RUN TIME, on the CALLER: _api_keys.read_only refuses every non-GET
+        request made with that key.
+
+    A read-only key is a label rather than a promise if a GET can mutate.
+
+    WHERE IT IS DECIDED. Api_Dispatcher now runs
+
+        verb gate -> bearer auth -> READ_ONLY -> route match -> SCOPE
+        -> param validation -> #[Auth] gates -> controller
+
+    read_only sits BEFORE the route match, so a read-only key learns nothing
+    about which write endpoints exist (a POST to an unknown path is refused
+    identically to one that resolves), and BEFORE the scopes, so each refusal
+    names the thing the caller has to change:
+
+        read_only_key       this credential cannot write at all
+        insufficient_scope  mint a wider key
+        forbidden           ask your administrator for the permission
+
+    THE TWO NARROWINGS COMPOSE, and neither implies the other:
+
+        effective = the user's LIVE permissions
+                        INTERSECT the key's scopes
+                        INTERSECT (read_only ? GET only : every verb)
+
+    A read-only key may be unrestricted; a scoped key may still write.
+
+    SET AT MINT, NEVER CHANGED. Like the scopes, read_only is fixed when the key
+    is created and there is NO setter. To change a key's access, revoke it and
+    mint a replacement.
+
+THE FIX
+    In /system/ (arrives automatically via the submodule):
+
+        database/migrations/2026_09_01_093348_add_read_only_to_api_keys.php
+                                                 ALTER TABLE _api_keys ADD
+                                                 COLUMN read_only TINYINT(1)
+                                                 NOT NULL DEFAULT 0
+        Core/Api/Api_Key_Model.php               generate(..., $read_only=false),
+                                                 boolean cast, no setter
+        Core/Api/Api_Dispatcher.php              the read_only gate + 403
+                                                 read_only_key
+        Core/Api/Identity_Api_Controller.php     /me reports key.read_only
+        Core/Api/Api_Tester_Key.php              accessible_targets_for_key()
+                                                 drops non-GET endpoints;
+                                                 current_is_read_only()
+        Core/Api/Api_Catalog.php                 resolve_for_scopes(..., $read_only)
+        Core/Api/Rsx_Api_Docs.php                exports key_read_only
+        Core/Api/components/Api_Key_Bar.jqhtml   the 'read-only' badge
+        Commands/Rsx/Api_Key_Command.php         --read-only
+        Commands/Rsx/Api_Key_Temp_Command.php    --read-only
+        Commands/Rsx/Api_Key_List_Command.php    the Access column
+        Commands/Rsx/Api_Key_Cli_Support.php     key_access_summary(),
+                                                 'read_only' in --json
+
+    Api_Key_Model::generate()'s signature GAINED A SEVENTH PARAMETER, at the
+    end. Existing calls are unaffected:
+
+        Api_Key_Model::generate(
+            $user_id, $name, $environment = 'live', $user_role_id = null,
+            $expires_at = null, $scopes = null, $read_only = false
+        );
+
+    Api_Catalog::resolve_for_scopes() likewise gained a FOURTH parameter at the
+    end ($read_only = false). Existing two- and three-argument calls answer
+    exactly as before.
+
+ACTION REQUIRED
+
+    A. ADD THE CHECKBOX, THE COLUMN AND THE MODAL LINE TO YOUR OWN UI.
+
+    Your /rsx/ is your fork, so none of this arrives on its own. The template's
+    version is the worked example, at
+
+        system/app/RSpade/resource/reference_app/app/frontend/settings/api_keys/
+
+    A.1 THE MINT FORM. In add_api_key_modal_form.jqhtml, above the Access
+    field:
+
+        <%-- The VERB axis, and it is not a scope. A scope names paths and
+             carries no method, so "every GET endpoint" cannot be written as
+             one - which is why the old Read-only preset was removed rather
+             than rewritten. This checkbox is its replacement, enforced by the
+             dispatcher on the key itself. --%>
+        <div class="mb-3">
+            <Checkbox_Input $sid="read_only" $name="read_only"
+                $label="Read-only key (GET requests only)" />
+            <div class="form-text">
+                A read-only key may only READ. Any request that is not a GET is
+                refused outright, whatever its scopes allow - so a reporting or
+                export integration can hold a credential that cannot change
+                anything. This replaces the old "Read-only" scope preset: a
+                scope names paths and has no way to say "reads only". Like the
+                scopes, it is fixed when the key is created.
+            </div>
+        </div>
+
+    A.2 THE MINT ENDPOINT. In settings_api_keys_controller.php::create_key,
+    beside the existing scope handling:
+
+        // Only the literal '1' means read-only. A form that arrived garbled
+        // must never accidentally mint the WIDER key, so the narrow value is
+        // the one that has to be stated.
+        $read_only = (string) ($params['read_only'] ?? '0') === '1';
+
+        $result = Api_Key_Model::generate(
+            user_id: $user->id,
+            name: $name,
+            environment: 'live',
+            scopes: $scopes,
+            read_only: $read_only
+        );
+
+    and add it to the returned payload, so the "key created" dialog can show it:
+
+        'read_only' => (bool) $result['model']->read_only,
+
+    A.3 THE GRID. In api_keys_datagrid.php::transform_records:
+
+        $record['read_only'] = (bool) ($record['read_only'] ?? false);
+        $record['access_label'] = $record['read_only'] ? 'Read-only' : 'Read + write';
+
+    and in api_keys_datagrid.jqhtml, a header cell before Scope:
+
+        <th>Access</th>
+
+    with its row cell:
+
+        <td>
+            <% if (row.read_only) { %>
+                <span class="badge bg-secondary">Read-only</span>
+            <% } else { %>
+                <span class="text-muted">Read + write</span>
+            <% } %>
+        </td>
+
+    A.4 THE VIEW MODAL. get_key_scopes returns the flag:
+
+        'read_only' => (bool) $key->read_only,
+
+    api_key_scopes_modal_body.js carries it into this.data (default false in
+    on_create, assigned from the endpoint result in on_load), and the template
+    renders it above the Scopes block:
+
+        <div class="mb-3">
+            <label class="form-label fw-bold">Access</label>
+            <% if (this.data.read_only) { %>
+                <div class="text-muted">Read-only - this key may execute GET requests only.</div>
+            <% } else { %>
+                <div class="text-muted">Read + write - this key may GET and POST.</div>
+            <% } %>
+        </div>
+
+    A.5 THE EFFECTIVE-ACCESS PANEL (optional, recommended). If you kept the
+    template's <Api_Scope_Preview>, pass the flag through so the panel lists
+    only what the key being minted may actually call. preview_scopes reads it:
+
+        $read_only = (string) ($params['read_only'] ?? '0') === '1';
+
+        'groups' => static::_preview_groups(
+            Api_Catalog::resolve_for_scopes(1, $scopes, false, $read_only)
+        ),
+
+    the panel forwards it (api_scope_preview.js):
+
+        const result = await Frontend_Settings_Api_Keys_Controller.preview_scopes({
+            scopes: this.args.scopes || '',
+            read_only: this.args.read_only ? '1' : '0',
+        });
+
+    and the mint form sets it beside the scope text it already sets
+    (add_api_key_modal_form.js::_resolve_preview):
+
+        preview.args.read_only = this.sid('read_only').val() === '1';
+
+    B. AUDIT YOUR GET HANDLERS AGAINST THE READ-ONLY RULE.
+
+    A read-only key is a promise that the credential cannot change anything.
+    That promise is only as good as your GET endpoints. Find them:
+
+        grep -rn "methods: \['GET'\]" rsx/app/api/
+
+    For each one, read the handler and ask: does a caller who never made this
+    request see anything different on the application's own screens afterwards?
+
+      - NO  -> it is a read. Nothing to do.
+      - YES -> it is a write wearing a GET. MOVE IT TO POST. An external
+               consumer will have to change its call, which is why this is worth
+               finding now rather than after somebody hands out a read-only key.
+
+    API-GET-PURE-01 already fails the manifest build on the obvious shapes, so
+    most of this is done for you:
+
+        ->save(   ->delete(   ->update(   ::create(   ->raw_bulk(
+        DB::statement(  DB::insert(  DB::update(  DB::delete(
+        Task::dispatch(
+
+    Its limits are the reason to read the handlers anyway: it inspects ONLY the
+    handler's own body, so a write inside a private helper it calls is invisible
+    to it.
+
+    THE EXCEPTION MARKER, AND WHAT IT IS FOR. A docblock tag waives the rule for
+    one handler:
+
+        /**
+         * @API-GET-PURE-01-EXCEPTION records a read receipt the caller asked
+         * for; no user-visible state changes.
+         */
+
+    The RATIONALE IS REQUIRED - a bare tag fails the build, because recording
+    that somebody wanted the rule off is not the same as recording a reason.
+
+    USE IT for incidental bookkeeping only: a log row, a last-used or last-seen
+    stamp, a counter, a cache fill. NEVER use it to let a GET perform a
+    user-visible mutation. The waiver is not local - the rule is the reason a
+    read-only key means what it says, so a GET that mutates hollows out every
+    read-only key in your system, including the ones you have already handed to
+    somebody else.
+
+    Find the ones you already have and re-read their rationales:
+
+        grep -rn "API-GET-PURE-01-EXCEPTION" rsx/
+
+    This audit is also a standing prelaunch item, because nothing can lint the
+    helper-indirection gap: php artisan rsx:man prelaunch_checklist, ENTRY 11.
+
+VERIFICATION
+
+    1. The column exists and every existing key is unchanged:
+
+        php artisan migrate
+        php artisan rsx:api:key:list --user=1 --all
+        # the Access column reads read+write for every pre-existing key
+
+    2. A read-only key reads and cannot write:
+
+        KEY=$(php artisan rsx:api:key:temp --user=1 --read-only \
+              --expires="1 hour" --json | jq -r .data.key)
+
+        curl -s -H "Authorization: Bearer $KEY" \
+             https://your.host/api/v1/clients                    # 200
+
+        curl -s -X POST -H "Authorization: Bearer $KEY" \
+             -H 'Content-Type: application/json' --data '{}' \
+             https://your.host/api/v1/clients/create | jq .
+        # {"error":{"code":"read_only_key",
+        #           "message":"This API key is read-only: GET requests only."}}
+
+    3. The ORDER is right - read_only is decided before the scopes:
+
+        KEY=$(php artisan rsx:api:key:temp --user=1 --read-only \
+              --scope="/api/v1/contacts/*" --expires="1 hour" \
+              --json | jq -r .data.key)
+
+        curl -s -H "Authorization: Bearer $KEY" \
+             https://your.host/api/v1/clients | jq -r .error.code
+        # insufficient_scope   (the verb was fine; the path was not)
+
+        curl -s -X POST -H "Authorization: Bearer $KEY" \
+             -H 'Content-Type: application/json' --data '{}' \
+             https://your.host/api/v1/contacts/create | jq -r .error.code
+        # read_only_key        (the path was fine; the verb was not)
+
+    4. /me says what the key is:
+
+        curl -s -H "Authorization: Bearer $KEY" \
+             https://your.host/api/v1/me | jq .key.read_only
+        # true
+
+    5. Your own UI: tick "Read-only key" in Settings > API Keys, generate, and
+       confirm the grid's Access column reads Read-only and the view modal says
+       so. The effective-access panel (if you wired A.5) lists GET endpoints
+       only while the box is ticked.
+
+    6. Your GET handlers are reads (item B). The manifest build is the automatic
+       half:
+
+        php artisan rsx:check

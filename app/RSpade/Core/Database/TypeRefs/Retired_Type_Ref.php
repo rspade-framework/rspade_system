@@ -21,8 +21,9 @@ use RuntimeException;
  * WHY A POISON ALIAS AND NOT A BOOT THROW
  * ---------------------------------------
  * Throwing at registration would brick an entire app for a retired model that nothing
- * references - a latent data problem converted into a total outage. So the failure lands
- * at the POINT OF USE instead: the retired id IS registered in the morph map, pointing at
+ * references - and a retired row that nothing references is not a problem at all: it is a
+ * permanent, inert entry that keeps its id meaningful. So registration is SILENT (no throw,
+ * no warning, no health row) and the failure lands at the POINT OF USE instead: the retired id IS registered in the morph map, pointing at
  * a class whose constructor throws the full story. `morphTo()` does `new $class`
  * immediately, so the message appears at the exact frame that used to be cryptic, and
  * `whereHasMorph($relation, '*')` - which instantiates every plucked type - fails the same
@@ -107,9 +108,10 @@ class Retired_Type_Ref
     public static function message(int $id, string $class_name): string
     {
         return "Type ref {$id} (\"{$class_name}\") names a model class that no longer exists in the"
-            . " codebase. Run 'php artisan rsx:health' to see which tables and columns still hold"
-            . " this id, repoint or delete those rows, then drop the registry row with"
-            . " 'php artisan rsx:type_refs:prune' (or restore the class).";
+            . " codebase. The _type_refs row itself is inert and must be left alone - it is what"
+            . " keeps this id readable. What is wrong is the ROW that still points at it: run"
+            . " 'php artisan rsx:type_refs:orphans' to list every such row, then repoint or delete"
+            . " them (or restore the class).";
     }
 
     /**

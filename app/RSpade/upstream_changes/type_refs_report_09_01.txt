@@ -1,0 +1,102 @@
+CATEGORY: 2 - ACTION REQUIRED (remove any script or cron entry calling rsx:type_refs:prune)
+TITLE: rsx:type_refs:prune and the type-ref health check are GONE; the new
+       rsx:type_refs:orphans reports the DATA instead
+DATE: 2026-09-01
+
+--------------------------------------------------------------------------------
+WHY YOU ARE READING THIS
+--------------------------------------------------------------------------------
+
+A `_type_refs` row whose model class was renamed or deleted is HARMLESS. It is
+what still gives the integer stored in your data a name. Deleting it is the only
+action in this area that actually destroys information.
+
+The framework used to treat such a row as debris: it logged a warning on every
+boot, raised an `rsx:health` WARN, and shipped a command to delete it. All three
+are removed. A retired registry row is now inert, permanent and completely
+silent - no log line, no health row, nothing in `rsx:debug`.
+
+What replaces them is the question worth asking: which of YOUR ROWS still point
+at a type id that no longer resolves to a class. Those rows throw at the point of
+use, and they are yours to repoint or delete.
+
+--------------------------------------------------------------------------------
+WHAT YOU MUST DO
+--------------------------------------------------------------------------------
+
+1. Remove every caller of the deleted command. It no longer exists, so a cron
+   entry, deploy script or runbook step naming it now fails.
+
+       grep -rn "type_refs:prune" . --exclude-dir=system --exclude-dir=vendor \
+           --exclude-dir=node_modules --exclude-dir=.git
+
+2. Stop expecting the health row. If any tooling parses `rsx:health --json`
+   looking for a "Type References" row, it will not find one. Nothing else about
+   rsx:health changed.
+
+3. Do NOT write your own prune. There is deliberately no supported way to delete
+   a retired `_type_refs` row, and the DELETE you would hand-write is the failure
+   mode this change exists to prevent.
+
+--------------------------------------------------------------------------------
+THE NEW COMMAND
+--------------------------------------------------------------------------------
+
+    php artisan rsx:type_refs:orphans [--json]
+
+A report, and only a report. It counts, prints, executes nothing it prints, and
+always exits 0 - orphaned rows are information, not a failed command. No rows are
+loaded into memory: every number is a COUNT(*) ... GROUP BY.
+
+    $ php artisan rsx:type_refs:orphans
+
+    shared_items.item_type - 4 rows
+      SELECT * FROM shared_items WHERE item_type IN (12, 19)  -- Event_Model, Forum_Thread_Model
+
+    4 rows across 1 column. Repoint or delete them (or restore the class).
+    Never delete the _type_refs row - it is what keeps the id readable.
+
+With nothing to report:
+
+    [OK] No polymorphic rows point at a vanished model.
+
+An ORPHAN is a non-null type-ref value that is not a resolvable registry id. One
+definition, both shapes: an id whose `_type_refs` row names a vanished class, and
+an id with no `_type_refs` row at all (hand-written SQL, a restore from another
+environment, a registry row somebody deleted). An unregistered id prints as
+`19 (no _type_refs row)` in the trailing comment.
+
+`--json` emits a list of {table, column, count, type_ids: {id: class_name|null},
+select}.
+
+--------------------------------------------------------------------------------
+RETIRING A MODEL - THE PROCEDURE NOW
+--------------------------------------------------------------------------------
+
+  1. Delete the model class. Leave its `_type_refs` row alone.
+  2. `php artisan rsx:type_refs:orphans` - the rows still pointing at it.
+  3. Repoint or delete those rows. In a cleanup migration this is raw SQL with
+     the class name as a STRING LITERAL - a migration may not name the registry
+     (MIGRATION-MODEL-01).
+
+Outside a migration, `Type_Ref_Registry::find_id_by_class_name('Old_Model')`
+remains the one lookup that neither auto-creates nor requires the class to exist.
+
+--------------------------------------------------------------------------------
+BONUS: A TABLE RENAME NEEDS NOTHING FROM YOU
+--------------------------------------------------------------------------------
+
+`_type_refs` stores the table name as well as the class name. A migration that
+renames a table is now followed automatically: write the plain rename and nothing
+else, and the same `migrate` run updates the registry row, printing
+
+      Type ref Widget_Model: table old_widgets -> new_widgets
+
+Recognised: `RENAME TABLE a TO b` (multi-rename lists included) and
+`ALTER TABLE a RENAME [TO|AS] b`. This is self-applying - no action required.
+
+--------------------------------------------------------------------------------
+SEE ALSO
+--------------------------------------------------------------------------------
+
+    php artisan rsx:man polymorphic       (BOUNDARIES, RETIRING A MODEL)

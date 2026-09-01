@@ -122,6 +122,12 @@ class Rsx_Api_Bearer
      * The 403 body names no 'required' target, unlike the dispatcher's: the synthetic path is
      * not an endpoint the caller could ever call, and printing it would advertise a URL that
      * does not exist.
+     *
+     * A READ-ONLY KEY NEEDS NO CLAMP HERE. Every route that calls this method is declared
+     * GET-only (/_download, /_inline, /_thumbnail/*, /_download_zip, /_preview/pdf), so a
+     * read-only key may use all of them by definition - there is no verb to refuse. The day
+     * a non-GET route adopts this credential, it needs the dispatcher's read_only gate as
+     * well as this scope clamp.
      */
     public static function authenticate_web_request(Request $request): ?Response
     {

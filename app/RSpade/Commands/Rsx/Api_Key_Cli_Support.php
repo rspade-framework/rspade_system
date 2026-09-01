@@ -312,6 +312,19 @@ class Api_Key_Cli_Support
     }
 
     /**
+     * A key's ACCESS in one column: 'read-only' or 'read+write'.
+     *
+     * A separate column from Scope, because they are separate questions and a reader
+     * diagnosing a 403 needs to know which one refused: Scope says which PATHS the key may
+     * reach, Access says which VERBS it may use. A read-only key is refused with
+     * read_only_key before its scopes are ever consulted.
+     */
+    public static function key_access_summary(Api_Key_Model $key): string
+    {
+        return $key->read_only ? 'read-only' : 'read+write';
+    }
+
+    /**
      * Why a key is unusable, not merely that it is - revoked and expired call for different
      * responses from whoever is reading.
      */
@@ -341,6 +354,9 @@ class Api_Key_Cli_Support
             'key_prefix' => $key->key_prefix,
             'state' => static::key_state($key),
             'is_revoked' => (bool) $key->is_revoked,
+            // True for a key that may execute GET requests only. Fixed at mint, like the
+            // scopes - a script reading this is reading what the key IS, not a setting.
+            'read_only' => (bool) $key->read_only,
             'expires_at' => $key->expires_at ? Rsx_Time::to_iso($key->expires_at) : null,
             'last_used_at' => $key->last_used_at ? Rsx_Time::to_iso($key->last_used_at) : null,
             'created_at' => Rsx_Time::to_iso($key->created_at),

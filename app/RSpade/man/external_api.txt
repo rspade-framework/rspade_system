@@ -30,7 +30,7 @@ SYNOPSIS
 
     Provisioning a key from a script (see COMMAND LINE, under API KEYS):
         KEY=$(php artisan rsx:api:key:temp --user=1 --expires="2 hours" \
-              --scope="/api/v1/*" \
+              --scope="/api/v1/*" --read-only \
               --json | jq -r .data.key)
         php artisan rsx:api:openapi --user=1 > openapi.json
 
@@ -313,7 +313,12 @@ THE IDENTITY ENDPOINT - GET /api/v1/me
         {"user_id":1,"email":"...","site_id":1,
          "key":{"name":"...","prefix":"rsx_live_ab12...",
                 "expires_at":null,"last_used_at":"...",
+                "read_only":false,
                 "scopes":"/api/v1/billing/*"}}
+
+    key.read_only is true for a key that may execute GET requests only. A client
+    that just took a 403 read_only_key can confirm here that the refusal is the
+    KEY's shape rather than a permission it might be granted.
 
     key.scopes is the key's own canonical scope text, one path pattern per line,
     or null for an unrestricted key. A client that just took a 403
@@ -410,7 +415,7 @@ API KEYS
 
         ['key' => $plaintext, 'model' => $model] = Api_Key_Model::generate(
             $user_id, 'My integration', 'live', $user_role_id = null,
-            $expires_at = null, $scopes = null
+            $expires_at = null, $scopes = null, $read_only = false
         );  // returns ['key' => 'rsx_live_...', 'model' => Api_Key_Model]
 
         Api_Key_Model::find_by_key($plaintext)   // sha256 lookup, non-revoked,
@@ -419,8 +424,9 @@ API KEYS
 
     Columns: user_id, name, key_hash, key_prefix ({prefix}{env}_ + first chars,
     for display), user_role_id (RESERVED - see below), scopes (TEXT NULL, the
-    key's own scope set - see KEY SCOPES), last_used_at, expires_at, is_revoked,
-    timestamps.
+    key's own scope set - see KEY SCOPES), read_only (TINYINT(1) NOT NULL
+    DEFAULT 0 - GET requests only; see READ-ONLY KEYS), last_used_at, expires_at,
+    is_revoked, timestamps.
 
     KEY PREFIX. config('rsx.api.key_prefix'), default 'rsx_', is the leading
     token on newly minted keys: {prefix}{environment}_{random} -> rsx_live_xxx.
@@ -432,13 +438,18 @@ API KEYS
     revealed once), view (name, prefix, scope, created, last used), and revoke
     keys.
 
-    Minting asks for the key's ACCESS: Unrestricted (scopes NULL - the key
-    carries every permission its holder has) or Scoped, which offers the
+    Minting asks for the key's ACCESS on two independent axes. A "Read-only key
+    (GET requests only)" checkbox is the VERB axis; below it, Unrestricted
+    (scopes NULL - the key carries every permission its holder has) or Scoped is
+    the PATH axis, which offers the
     application's named presets, a free-text scope box with the whole grammar
     written out beside it, and a LIVE EFFECTIVE-ACCESS PANEL listing the
     endpoints the current union actually reaches, resolved by the server against
-    the real route table. The grid carries a Scope column (Unrestricted, or a
-    scope count) and a per-key read-only view of the scopes and their reach.
+    the real route table (and narrowed to GET verbs while Read-only is ticked, so
+    the panel never advertises a call the key would be refused on). The grid
+    carries an Access column (Read-only / Read + write) and a Scope column
+    (Unrestricted, or a scope count), plus a per-key view of both and of the
+    endpoints the key reaches.
 
     A KEY IS IMMUTABLE AFTER MINT: there is no edit screen and no update
     endpoint, because narrowing a credential already in service would change
@@ -458,11 +469,11 @@ API KEYS
 
         php artisan rsx:api:key:create --user=<id|email> [--site=] [--name=]
                                        [--expires=] [--environment=live|test]
-                                       [--scope=<rule>]... [--json]
+                                       [--scope=<rule>]... [--read-only] [--json]
         php artisan rsx:api:key:temp   --user=<id|email> [--site=]
                                        [--expires="1 hour"]
                                        [--environment=live|test]
-                                       [--scope=<rule>]... [--json]
+                                       [--scope=<rule>]... [--read-only] [--json]
         php artisan rsx:api:key:list   --user=<id|email> [--site=] [--all]
                                        [--json]
         php artisan rsx:api:key:delete <id> [--purge] [--force] [--json]
@@ -589,8 +600,9 @@ API KEYS
     scopes nothing by itself.
 
     --key=<_api_keys id> narrows further, and is the one to generate a client
-    from: gates INTERSECTED with that key's own scopes, so every operation
-    in the document is one the key can actually call. It implies its user, so
+    from: gates INTERSECTED with that key's own scopes, and with GET alone for a
+    READ-ONLY key, so every operation in the document is one the key can
+    actually call. It implies its user, so
     --user is redundant with it (naming a different user is refused, as is a
     revoked or expired key, which can reach nothing at all).
 
@@ -699,10 +711,11 @@ KEY SCOPES
     denial for, and no way to write one.
 
     THE METHOD IS NOT PART OF A SCOPE. GET and POST are indistinguishable to
-    this language, and "read-only" is not expressible in it - see
-    API-GET-PURE-01 below, which is what makes a read-only grant meaningful
-    instead. Ticking two presets is SET UNION, commutative and associative, so a
-    mint UI has no ordering to get right and no "which one wins" to explain.
+    this language, and "read-only" is not expressible in it. That is what the
+    key's own read_only flag is for - a separate axis, enforced separately; see
+    READ-ONLY KEYS below. Ticking two presets is SET UNION, commutative and
+    associative, so a mint UI has no ordering to get right and no "which one
+    wins" to explain.
 
     A MALFORMED STORED SCOPE IS IGNORED FOR MATCHING AND STILL COUNTS.
 
@@ -761,8 +774,14 @@ KEY SCOPES
 
     PIPELINE POSITION. Api_Dispatcher runs:
 
-        verb gate -> bearer auth -> route match -> SCOPE -> param validation
-        -> #[Auth] gates -> controller
+        verb gate -> bearer auth -> READ_ONLY -> route match -> SCOPE
+        -> param validation -> #[Auth] gates -> controller
+
+    Scope AFTER read_only, because the two answer different questions and the
+    integrator must be told which one refused: read_only is about the VERB and
+    names no path, a scope is about the PATH and names no verb. So a read-only
+    key with no scopes still GETs everything its holder may, and a read-only key
+    never reaches a POST handler even when a scope names its path.
 
     Scope BEFORE validation, so a key that may not reach an endpoint learns
     nothing about its parameters. Scope BEFORE the gates, so a too-narrow key is
@@ -810,10 +829,11 @@ KEY SCOPES
     /_download. That 403 names no 'required' target, because the synthetic path
     is not an endpoint anybody could call.
 
-    API-GET-PURE-01 - A GET ENDPOINT MAY NOT MUTATE. A scope carries no method,
-    so the read-only-ness of a read grant rests ENTIRELY on GET being
-    side-effect free. Api_Endpoint_ManifestSupport therefore fails the manifest
-    build when a GET-only handler's body contains
+    API-GET-PURE-01 - A GET ENDPOINT MAY NOT MUTATE. This is the build-time half
+    of the read-only guarantee; the runtime half is the key's read_only flag. See
+    GET IS FOR READS, POST IS FOR WRITES below for the design rule both enforce.
+    Api_Endpoint_ManifestSupport fails the manifest build when a GET-only
+    handler's body contains
 
         ->save(   ->delete(   ->update(   ::create(   ->raw_bulk(
         DB::statement(  DB::insert(  DB::update(  DB::delete(
@@ -895,6 +915,123 @@ KEY SCOPES
         $key->has_malformed_scopes()
         Api_Key_Model::generate(..., $scopes = null)
 
+
+GET IS FOR READS, POST IS FOR WRITES
+    THE DESIGN RULE. A GET endpoint is a READ. Anything that changes application
+    data - a create, an update, a delete, a state transition, a send, a queued
+    job that will do any of those - is a POST. There is no third verb to reach
+    for (the dispatcher accepts GET and POST and nothing else), so this is not a
+    style preference about REST: it is the ONLY thing that gives the word "read"
+    a meaning anywhere else in this document.
+
+    INCIDENTAL BOOKKEEPING IS FINE. A GET may write the things that are ABOUT
+    the request rather than about the data: a request log row, a last-used or
+    last-seen stamp, a view counter, a cache fill. The test is whether a caller
+    who never made the request could tell: if the only difference is in
+    telemetry, the endpoint is still a read. If a record the application's own
+    screens show has changed - a status, an owner, a total, a queue entry - it is
+    a write, and it belongs on POST.
+
+    TWO HALVES, AND NEITHER IS WORTH ANYTHING ALONE.
+
+      - BUILD TIME, on the HANDLER: API-GET-PURE-01 (see KEY SCOPES above) fails
+        the manifest build when a GET-only handler's body carries a write call.
+        The handler cannot lie about what it is.
+      - RUN TIME, on the CALLER: _api_keys.read_only refuses every non-GET
+        request made with that key, with 403 read_only_key. The credential
+        cannot be used for anything but reads.
+
+    The flag would be a label rather than a guarantee if a GET could mutate, and
+    the build rule would be an academic tidiness exercise if nothing could hand
+    out a GET-only credential. Together they add up to a promise an operator can
+    make to somebody else: "this key cannot change anything."
+
+    WHAT THE ESCAPE IS FOR. API-GET-PURE-01 reads only the handler's own body and
+    matches literal call shapes, so it cannot see a write inside a private helper
+    and it cannot tell a bookkeeping write from a real one.
+    '@API-GET-PURE-01-EXCEPTION <rationale>' in the method docblock waives it for
+    one handler, and the RATIONALE IS REQUIRED - a bare tag fails the build.
+    Waive it for the incidental bookkeeping described above, never to let a GET
+    perform a user-visible mutation: the rule is the reason a read-only key means
+    what it says, so an exception written to get a build green removes that
+    meaning for every key in the system.
+
+READ-ONLY KEYS
+    A key with _api_keys.read_only = 1 may execute GET requests and nothing else.
+    It is the runtime half of the guarantee above, and the answer to the request
+    the scope grammar cannot express - a scope is a path pattern with no method
+    in it, so "every read endpoint" cannot be written as a scope. (The former
+    'Read-only' scope preset was removed for exactly that reason; this flag
+    replaces it.)
+
+    THE REFUSAL. Any method other than GET, with any path:
+
+        {"error": {"code": "read_only_key",
+                   "message": "This API key is read-only: GET requests only."}}
+
+    403, and no 'required' target: nothing the caller could write in a scope
+    would make the request work.
+
+    WHERE IT IS DECIDED. After the bearer key resolves and BEFORE the route is
+    matched, so a read-only key learns nothing about which write endpoints exist:
+    a POST to a path that does not resolve is refused identically to one that
+    does. It is decided before the SCOPES for the same reason the scopes are
+    decided before the #[Auth] gates - each refusal must name the thing the
+    caller has to change:
+
+        read_only_key       this credential cannot write at all
+        insufficient_scope  mint a wider key
+        forbidden           ask your administrator for the permission
+
+    THE TWO NARROWINGS COMPOSE and neither implies the other. A read-only key may
+    be unrestricted; a scoped key may write. Effective authority is
+
+        the user's LIVE permissions
+            INTERSECT the key's scopes
+            INTERSECT (read_only ? GET only : every verb)
+
+    SET AT MINT, NEVER CHANGED. Like the scopes, read_only is fixed when the key
+    is created: Api_Key_Model::generate(..., $read_only = false) is the only
+    writer and there is NO setter. Widening a credential already in service would
+    change what it can do under the integration holding it, silently and with no
+    deploy. To change a key's access, revoke it and mint a replacement.
+
+    WHERE IT SHOWS.
+
+        Api_Key_Model::generate($user_id, $name, 'live', null, null, $scopes,
+                                $read_only = true)
+        $key->read_only                          bool (cast)
+        GET /api/v1/me                           key.read_only
+        rsx:api:key:create --read-only           mint one
+        rsx:api:key:temp   --read-only           mint a self-expiring one
+        rsx:api:key:list                         an Access column: read-only /
+                                                 read+write ('read_only' in
+                                                 --json)
+        Settings > API Keys                      the mint checkbox, the grid's
+                                                 Access column, the view modal
+        /apidocs                                 a 'read-only' badge, and a
+                                                 listing with the write
+                                                 endpoints removed
+
+    THE CONSOLE HIDES WHAT THE KEY CANNOT DO.
+    Api_Tester_Key::accessible_targets_for_key() drops every endpoint that
+    declares no GET verb, and Api_Catalog::resolve_for_scopes($version, $scopes,
+    $include_hidden, $read_only) keeps GET verbs alone - so a console or a
+    preview panel drawn for a read-only key never offers a call that would come
+    back read_only_key.
+
+    THE WEB BEARER ROUTES NEED NO CLAMP. Every route that accepts a Bearer key
+    outside /api/vN (/_download, /_inline, /_thumbnail/*, /_download_zip,
+    /_preview/pdf) is declared GET-only, so a read-only key may use all of them
+    by definition. A non-GET route adopting that credential would need this gate
+    as well as the files-subtree scope clamp.
+
+    A DISABLED WRITER IS NOT THIS. read_only narrows ONE CREDENTIAL;
+    users.is_api_access_enabled decides whether an identity may use the API at
+    all, and a role or an #[Auth] check decides what a person may do however they
+    signed in. Reach for read_only when the HOLDER is trusted and the INTEGRATION
+    only needs to read - a reporting job, an export, a dashboard, a key pasted
+    into somebody else's tool.
 
 VERSIONING
     Versioning is URL-only (/api/v1/..., /api/v2/...) and EXACT-MATCH at runtime

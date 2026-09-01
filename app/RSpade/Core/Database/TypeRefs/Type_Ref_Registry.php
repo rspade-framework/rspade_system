@@ -4,7 +4,6 @@ namespace App\RSpade\Core\Database\TypeRefs;
 
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use RuntimeException;
 use App\RSpade\Core\Cache\RsxCache;
@@ -66,7 +65,8 @@ class Type_Ref_Registry
      *
      * A registered class that no longer exists in the codebase is REFUSED here, on the
      * cache-hit path as well as the auto-create path: a retired model must not be able to
-     * accrue new references while its _type_refs row waits to be pruned.
+     * accrue NEW references. The refusal is about the WRITE, never about the row - the
+     * _type_refs row itself is inert and permanent.
      *
      * @param string $class_name Simple class name (e.g., "Contact_Model")
      * @return int The type ref ID
@@ -209,8 +209,9 @@ class Type_Ref_Registry
         static::_ensure_loaded();
 
         // Resolve once: not every registered class name still exists in the codebase
-        // (a renamed/removed model leaves its _type_refs row behind). A class that no
-        // longer resolves is NOT dropped - it is registered as a POISON alias whose
+        // (a renamed/removed model leaves its _type_refs row behind, permanently and by
+        // design - deleting it is what would turn old data into an unreadable integer).
+        // A class that no longer resolves is registered as a POISON alias whose
         // instantiation throws the full story at the point of use (Retired_Type_Ref).
         $resolved = [];
         $retired = [];
@@ -226,18 +227,12 @@ class Type_Ref_Registry
             }
         }
 
-        if (!empty($retired)) {
-            $pairs = [];
-            foreach ($retired as $class_name => $entry) {
-                $pairs[] = $entry['id'] . ' => ' . $class_name;
-            }
-            Log::warning(
-                '[TYPE-REF] ' . count($retired) . ' registered type ref(s) name a model class that no longer'
-                . ' exists: ' . implode(', ', $pairs) . '. Any record still referencing one throws at the'
-                . ' point of use. Run "php artisan rsx:health" for the referencing table/column counts,'
-                . ' then "php artisan rsx:type_refs:prune".'
-            );
-        }
+        // A retired row is NOT reported here, by design. Its mere existence is inert: the
+        // registry keeps the id readable, and nothing about a row that no data points at is
+        // wrong. Reporting it on every boot would put a permanent warning in the log of an
+        // app whose data is entirely healthy. The rows that DO matter - live data pointing
+        // at a vanished model - are what `php artisan rsx:type_refs:orphans` reports, on
+        // demand. See Type_Ref_Orphan_Report.
 
         if (empty($resolved) && empty($retired)) {
             return;
@@ -292,7 +287,7 @@ class Type_Ref_Registry
 
     /**
      * Does a class name still exist in the codebase? The public view of the resolution
-     * seam every registry read uses - the integrity audit (Type_Ref_Audit) asks with it,
+     * seam every registry read uses - the orphan report (Type_Ref_Orphan_Report) asks with it,
      * so "resolvable" means exactly the same thing there as it does here.
      */
     public static function class_resolves(string $class_name): bool

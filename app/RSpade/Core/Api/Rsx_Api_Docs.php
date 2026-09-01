@@ -125,6 +125,10 @@ class Rsx_Api_Docs
                 // key can reach" and "everything its owner can reach" are different
                 // sentences and the reader cannot tell them apart from a listing alone.
                 'key_scoped' => Api_Tester_Key::current_is_scoped(),
+                // Three-valued in the same way, and a different sentence again: a read-only
+                // key lists only the endpoints it may GET, and the reader is entitled to
+                // know that is why the write endpoints are absent.
+                'key_read_only' => Api_Tester_Key::current_is_read_only(),
                 'base_path' => self::$_base_path,
             ],
         ];

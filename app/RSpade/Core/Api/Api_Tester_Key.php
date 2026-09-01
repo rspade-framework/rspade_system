@@ -141,6 +141,11 @@ class Api_Tester_Key
      * SCOPES SUBTRACT, so this is an intersection and never a union: a scope can only remove
      * a target the gates already admitted. An unrestricted key is exactly its user's answer.
      *
+     * A READ-ONLY KEY IS NARROWED HERE TOO, and for the same reason the scopes are: the
+     * console must not offer a call the dispatcher will refuse. An endpoint declaring no GET
+     * verb is unreachable with such a key, so it is dropped - a third question ("which
+     * VERBS") answered alongside "may this user" and "may this credential".
+     *
      * @return array<string, bool> 'Class::method' => reachable
      */
     public static function accessible_targets_for_key(Api_Key_Model $key): array
@@ -152,6 +157,16 @@ class Api_Tester_Key
         }
 
         $targets = self::accessible_targets_for_user($user);
+
+        if ($key->read_only) {
+            foreach (Api_Catalog::get_endpoint_list(false) as $endpoint) {
+                if (in_array('GET', (array) $endpoint['methods'], true)) {
+                    continue;
+                }
+
+                $targets[$endpoint['class'] . '::' . $endpoint['method']] = false;
+            }
+        }
 
         if ($key->is_unrestricted()) {
             return $targets;
@@ -193,6 +208,24 @@ class Api_Tester_Key
         }
 
         return !$key->is_unrestricted();
+    }
+
+    /**
+     * Is the adopted key READ-ONLY (true), read+write (false), or is there no adopted key at
+     * all (null)?
+     *
+     * Three-valued for the same reason current_is_scoped() is: "no key" is a different thing
+     * to say than "a key that may write".
+     */
+    public static function current_is_read_only(): ?bool
+    {
+        $key = self::current();
+
+        if (!$key) {
+            return null;
+        }
+
+        return (bool) $key->read_only;
     }
 
     /**

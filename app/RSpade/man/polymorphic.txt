@@ -153,6 +153,9 @@ TYPE REFERENCE SYSTEM
         On read: Throws exception if ID doesn't exist in _type_refs table
         Null values: Allowed if the database column is nullable
 
+        A DEREFERENCE fails loud; the mere EXISTENCE of a registry row for a
+        vanished class does not. See BOUNDARIES.
+
 LARAVEL MORPH MAP INTEGRATION
     Type_Ref_Registry::register_morph_map() runs during framework boot and
     registers EVERY type ref under TWO aliases pointing at the same class:
@@ -206,16 +209,23 @@ BOUNDARIES
         degenerate query and throw. Write both columns together, or neither.
         (Both NULL reads as null; a valid type with a missing row reads as null.)
 
-    A RETIRED _type_refs row is not self-healing - but it is never silent.
-        If a model class is renamed or deleted, its _type_refs row remains and
-        no longer resolves to a class. The registry does not drop it; it fails
-        loud, on every path that could otherwise produce a phantom:
+    A _type_refs row whose class is gone is INERT, PERMANENT, and SILENT.
+        If a model class is renamed or deleted, its _type_refs row remains. The
+        framework does NOT report it - not at boot, not in rsx:debug, not in
+        rsx:health - and offers no way to delete it. That is deliberate:
+
+          - The row is HARMLESS. Nothing is wrong with a registry entry that no
+            data points at.
+          - DELETING it is what causes harm. Any row anywhere still holding that
+            integer loses the only record of what the integer meant. So there is
+            no prune command, and writing your own is a mistake.
+
+        The row stays a valid, named type ref for reading purposes. What still
+        fails loud is a DEREFERENCE - code that must produce a class and cannot:
 
         - REGISTRATION registers the retired id in the morph map under a POISON
-          alias (Retired_Type_Ref) whose instantiation throws, and emits one
-          Log::warning naming every retired (id, class_name) pair. Boot itself
-          never throws: a retired type ref that nothing references must not
-          brick an app.
+          alias (Retired_Type_Ref) whose instantiation throws. Boot itself never
+          throws and never warns.
         - morphTo() over such a column throws at `new $class` - the exact frame
           that used to say "Class name must be a valid object or a string" -
           with: Type ref 3 ("Event_Model") names a model class that no longer
@@ -223,34 +233,93 @@ BOUNDARIES
         - THE CAST (reading $model->parent_type) throws the same message.
           id_to_class() verifies the class still resolves; it never hands back a
           class name that names nothing.
-        - class_to_id() REFUSES a retired class, on the cached path too, so a
-          retirement stops new references accruing immediately.
+        - class_to_id() REFUSES a retired class, on the cached path too, so no
+          NEW references can accrue. The refusal is about the WRITE, never about
+          the row.
         - whereHasMorph($relation, '*') - which plucks distinct stored values
           and instantiates each - hits the poison alias and produces that same
           named error instead of a Laravel fatal. An explicit type list is still
           preferable to '*'.
 
-        SURFACING: `php artisan rsx:health` WARNs per retired row, naming the
-        referencing table.column and row count for each (or "harmless leftover"
-        when nothing points at it).
+    WHICH ROWS POINT AT A VANISHED MODEL
+        The one thing worth knowing is the opposite direction: which DATA still
+        holds a type id that no longer resolves. Those rows throw at the point of
+        use, and they are yours to repoint or delete.
 
-        RETIRING A MODEL - the checklist:
-          1. Delete the model class as usual.
-          2. `php artisan rsx:health` - read the referencing rows for its type
-             ref (a WARN row per retired type ref).
+            php artisan rsx:type_refs:orphans [--json]
+
+        A REPORT and only a report. It counts, it prints, it executes nothing it
+        prints, and it always exits 0 - orphaned rows are information, not a
+        failed command. No rows are ever loaded into memory: every number is a
+        COUNT(*) ... GROUP BY, and the SELECT is text.
+
+        A row is an ORPHAN when its type-ref column holds a non-null value that
+        is not a resolvable registry id. One definition, both shapes: an id whose
+        _type_refs row names a vanished class, and an id with no _type_refs row
+        at all (hand-written SQL, a restore from another environment, a registry
+        row somebody deleted).
+
+        The column inventory is the manifest's: every model's _type_ref_columns()
+        - its own $type_ref_columns declaration UNIONed with the framework audit
+        pairs (created_by_type / updated_by_type / deleted_by_type, type refs on
+        every table) - intersected with the columns each table actually has.
+
+        Sample output:
+
+            $ php artisan rsx:type_refs:orphans
+
+            shared_items.item_type - 4 rows
+              SELECT * FROM shared_items WHERE item_type IN (12, 19)  -- Event_Model, Forum_Thread_Model
+
+            4 rows across 1 column. Repoint or delete them (or restore the
+            class). Never delete the _type_refs row - it is what keeps the id
+            readable.
+
+        An id with no registry row prints as `19 (no _type_refs row)` in the
+        trailing comment. With nothing to report:
+
+            [OK] No polymorphic rows point at a vanished model.
+
+        --json emits a list of
+        {table, column, count, type_ids: {id: class_name|null}, select}.
+
+        Engine: Type_Ref_Orphan_Report (scan(), type_ref_columns_by_table(),
+        format_select()).
+
+    RETIRING A MODEL - the checklist:
+          1. Delete the model class as usual. Leave the _type_refs row alone;
+             it is not debris and there is nothing to clean up.
+          2. `php artisan rsx:type_refs:orphans` - the rows still pointing at it.
           3. Repoint or delete those rows. A cleanup MIGRATION does this in raw
-             SQL against _type_refs, with the class name as a string literal -
-             it may not reference the registry at all (MIGRATION-MODEL-01):
+             SQL, with the class name as a string literal - it may not reference
+             the registry at all (MIGRATION-MODEL-01):
 
-                 DELETE FROM _type_refs WHERE class_name = 'Old_Model'
+                 UPDATE shared_items SET item_type = NULL, item_id = NULL
+                  WHERE item_type = (SELECT id FROM _type_refs
+                                      WHERE class_name = 'Old_Model')
 
              Outside a migration, Type_Ref_Registry::find_id_by_class_name(
              'Old_Model') is the one lookup that does NOT auto-create and does
              NOT require the class to still exist (class_to_id() throws for
              exactly these classes).
-          4. `php artisan rsx:type_refs:prune` - drops registry rows with no
-             live class AND no referencing data. It REFUSES, listing
-             table.column (count), while any data still points at one.
+
+    A TABLE RENAME FOLLOWS ITSELF INTO _type_refs.
+        _type_refs stores class_name AND table_name, so renaming a table would
+        strand the registry row. The migrate pipeline handles it: every statement
+        `migrate` executes passes through one macro, which recognises
+
+            RENAME TABLE a TO b            (multi-rename lists included)
+            ALTER TABLE a RENAME [TO|AS] b
+
+        and, in the SAME migrate run, updates _type_refs.table_name, printing one
+        line per registry row it moved:
+
+            Type ref Widget_Model: table old_widgets -> new_widgets
+
+        RENAME COLUMN / RENAME INDEX / RENAME KEY are not table renames and are
+        not matched. A migration writes the plain rename and nothing else - it
+        must not (and by MIGRATION-MODEL-01 may not) touch the registry itself.
+        Implementation: Type_Ref_Table_Rename.
 
     Pivot-table morphs (morphToMany / morphedByMany) are not supported.
         Their discriminator lives on a pivot table that no model owns, so no
@@ -682,4 +751,4 @@ SECURITY CONSIDERATIONS
 SEE ALSO
     actors(7), model(7), form_conventions(7), enums(7)
 
-RSX Framework                     2026-08-09                     POLYMORPHIC(7)
+RSX Framework                     2026-09-01                     POLYMORPHIC(7)

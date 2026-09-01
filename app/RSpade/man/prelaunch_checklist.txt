@@ -828,6 +828,7 @@ ENTRY 7: $required ASTERISKS WITH NO SERVER RULE (form validation completeness)
     Related
         php artisan rsx:man form_conventions
     php artisan rsx:man template_app
+    php artisan rsx:man external_api
     php artisan rsx:man email
         php artisan rsx:man external_api    (the other caller that sends blanks)
 
@@ -1180,6 +1181,83 @@ ENTRY 10: LIVING DOCUMENTATION CURRENCY (rsx/**/CLAUDE.md and the app skills)
         php artisan rsx:man template_app   (LIVING DOCUMENTATION)
         rsx/resource/skills/CLAUDE.md      SKILL.md shape and the routing test
 
+--------------------------------------------------------------------------------
+
+ENTRY 11: GET ENDPOINTS THAT WRITE (what a read-only API key actually promises)
+
+    What to audit
+        Every #[Api_Endpoint] declared with methods: ['GET'], and whether it is
+        genuinely a READ - including the private helpers it calls, which the
+        build-time rule cannot see.
+
+        Enumerate them:
+
+            grep -rn "methods: \['GET'\]" rsx/app/api/
+            grep -rn "API-GET-PURE-01-EXCEPTION" rsx/
+
+        For each handler, ask one question: after this request, does a caller who
+        never made it see anything different on the application's own screens?
+        If yes, it is a write wearing a GET, and it belongs on POST.
+
+    Why it matters
+        An API key can be minted READ-ONLY (_api_keys.read_only): the dispatcher
+        refuses every non-GET request made with it, 403 read_only_key. That flag
+        is how an operator hands somebody else a credential and promises it cannot
+        change anything - a reporting job, an export, a dashboard, a key pasted
+        into a third-party tool.
+
+        The promise is only as good as the GET endpoints. A single GET that
+        mutates does not weaken one key; it hollows out EVERY read-only key in the
+        system, including the ones already issued to people who were told the
+        credential was safe. Nothing fails, nothing logs, and the operator has no
+        way to discover it from the outside.
+
+        API-GET-PURE-01 fails the manifest build on the obvious shapes (->save(,
+        ->delete(, ->update(, ::create(, ->raw_bulk(, DB::statement|insert|update|
+        delete(, Task::dispatch(), so most of this is already enforced. It reads
+        ONLY the handler's own body and matches literal call shapes: a write
+        inside a private helper the handler calls is invisible to it. That gap is
+        this entry.
+
+    Guidelines
+        1. Incidental bookkeeping is fine, and is what the exception marker is
+           for: a request log row, a last-used or last-seen stamp, a view counter,
+           a cache fill. The test is whether the difference is visible anywhere
+           but telemetry.
+        2. A user-visible mutation is never fine on a GET, however convenient the
+           URL is. Move it to POST and accept that an external consumer has to
+           change its call - that cost is paid once, now, rather than by everyone
+           holding a read-only key later.
+        3. Follow the helpers. If a GET handler delegates, read what it delegates
+           to. The lint stops at the handler's own body; this audit does not.
+        4. Re-read every @API-GET-PURE-01-EXCEPTION rationale you already have.
+           The rationale is required at build time, but nothing checks that it is
+           TRUE, and a waiver written to get a build green is exactly the shape of
+           the failure this entry exists to catch.
+        5. Then prove it from the outside, with a real key:
+
+               KEY=$(php artisan rsx:api:key:temp --user=1 --read-only \
+                     --expires="1 hour" --json | jq -r .data.key)
+
+           Walk the GET endpoints with it and confirm nothing in the application
+           changed afterwards.
+
+    Dos and don'ts
+        DO put every create, update, delete, state change, send and queued job on
+             POST, without exception.
+        DO waive API-GET-PURE-01 for telemetry, and write the rationale to be read
+             by somebody auditing it later, not to satisfy the build.
+        DON'T add a GET endpoint that "just marks it as seen" or "just bumps the
+             status". That is the entire failure mode.
+        DON'T reason about one endpoint in isolation. The question is never "is
+             this GET a problem" - it is "does every read-only key in this system
+             still mean what it says".
+
+    Related
+        php artisan rsx:man external_api    (GET IS FOR READS, POST IS FOR WRITES;
+                                             READ-ONLY KEYS)
+        rsx/app/api/CLAUDE.md               the template's API surface
+
 
 SEE ALSO
     php artisan rsx:man login_redirect
@@ -1195,3 +1273,4 @@ SEE ALSO
     php artisan rsx:man time
     php artisan rsx:man form_conventions
     php artisan rsx:man template_app
+    php artisan rsx:man external_api

@@ -52,7 +52,7 @@ The cast is automatically applied - no manual `$casts` needed.
 
 - **Eager loading is forbidden framework-wide**: `->with()` throws. Load the relation when you need it.
 - **A half-set pair fails loud.** `_type` null with `_id` set (or the reverse) is an error, not a partial record - **write both or neither**.
-- **A stale `_type_refs` row** (the model was renamed or deleted) throws on read, and makes `whereHasMorph($rel, '*')` fatal. Fix the registry row or the class name; do not code around it.
+- **A `_type_refs` row whose class was renamed or deleted is INERT, PERMANENT and SILENT** - nothing reports it and there is no command to delete it (deleting it is what would make old data unreadable). What throws is a DEREFERENCE: reading such a column, `morphTo()`, and `whereHasMorph($rel, '*')`, each naming the id and the class. Fix the DATA (see below) or restore the class; never code around it, and never delete the registry row.
 - **Pivot morphs are UNSUPPORTED.** `morphToMany()` / `morphedByMany()` put the `_type` column on a PIVOT TABLE that no model owns, so no `$type_ref_columns` declaration can ever apply to it. **Remedy: model the join table as a real model with its own `{relation}_type` / `{relation}_id` pair.**
 
 ## POLY-01
@@ -281,6 +281,37 @@ $activity->eventable_type = 'Contact_Model';
 // [NO] WRONG - fully qualified (get_class($model))
 $activity->eventable_type = 'App\\Models\\Contact_Model';
 ```
+
+## Retiring a model, and the orphan report
+
+Deleting a model class leaves its `_type_refs` row behind, permanently and by design. There is **no prune command** - the row is what still gives the stored integer a name.
+
+What is worth finding is the **data** still pointing at it:
+
+```bash
+php artisan rsx:type_refs:orphans [--json]
+```
+
+A report only: it counts, prints a pasteable `SELECT` per offending table/column, executes nothing it prints, and always exits 0.
+
+```
+shared_items.item_type - 4 rows
+  SELECT * FROM shared_items WHERE item_type IN (12, 19)  -- Event_Model, Forum_Thread_Model
+```
+
+An **orphan** is a non-null type-ref value that is not a resolvable registry id - which covers both an id whose row names a vanished class and an id with no row at all. `--json` gives `[{table, column, count, type_ids: {id: class_name|null}, select}]`.
+
+Retirement checklist: delete the class -> run the report -> repoint or delete the listed rows (a cleanup migration in raw SQL, class name as a string literal, per MIGRATION-MODEL-01) -> leave `_type_refs` alone. Outside a migration, `Type_Ref_Registry::find_id_by_class_name('Old_Model')` is the one lookup that neither auto-creates nor requires the class to exist.
+
+## Renaming a table
+
+`_type_refs` stores the table name too, and **the migrate pipeline follows a rename automatically** - write the plain `RENAME TABLE a TO b` (or `ALTER TABLE a RENAME TO b`) and nothing else. The same run updates `_type_refs.table_name` and prints one line per registry row moved:
+
+```
+  Type ref Widget_Model: table old_widgets -> new_widgets
+```
+
+A migration must never touch the registry itself (MIGRATION-MODEL-01).
 
 ## More Information
 

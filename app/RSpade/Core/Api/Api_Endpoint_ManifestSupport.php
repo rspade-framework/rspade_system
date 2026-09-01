@@ -37,9 +37,12 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * - The method MUST NOT also carry #[FPC], #[Route], #[SPA], or #[Ajax_Endpoint].
  * - API-GET-PURE-01: a GET-only handler's body MUST NOT contain a write call
  *   (->save( / ->delete( / ->update( / ::create( / ->raw_bulk( / DB::statement|insert|
- *   update|delete( / Task::dispatch(). 'Grant GET /api/v1/**' is the only way to express
- *   "read-only", and it is trustworthy only while GET cannot mutate. Escape hatch:
- *   '@API-GET-PURE-01-EXCEPTION <rationale>' in the method docblock, rationale required.
+ *   update|delete( / Task::dispatch(). This is the BUILD-TIME half of the read-only
+ *   guarantee - the runtime half is _api_keys.read_only, a key that may execute GET
+ *   requests only - and a read-only key is a label rather than a promise if a GET can
+ *   mutate. Escape hatch: '@API-GET-PURE-01-EXCEPTION <rationale>' in the method docblock,
+ *   rationale required; waive it for incidental bookkeeping (a log row, a last-used stamp),
+ *   never for a user-visible mutation.
  *
  * Docblock parsing:
  * - description: the first PARAGRAPH (consecutive non-tag lines).

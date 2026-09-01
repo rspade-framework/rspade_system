@@ -49,6 +49,7 @@ class Identity_Api_Controller extends Rsx_Api_Controller_Abstract
      *     "prefix": "rsx_live_ab12...",
      *     "expires_at": "2027-01-01T00:00:00.000Z",
      *     "last_used_at": "2026-08-25T14:02:11.418Z",
+     *     "read_only": false,
      *     "scopes": "/api/v1/billing/*"
      *   }
      * }
@@ -73,6 +74,12 @@ class Identity_Api_Controller extends Rsx_Api_Controller_Abstract
                 'prefix' => $key ? $key->key_prefix : null,
                 'expires_at' => $key ? $key->expires_at : null,
                 'last_used_at' => $key ? $key->last_used_at : null,
+
+                // Whether this credential may write at all. A client that just took a 403
+                // read_only_key can confirm the refusal is the KEY's shape rather than a
+                // permission it might be granted - and an integration can check at setup
+                // that the key it was handed is the one it was promised.
+                'read_only' => $key ? (bool) $key->read_only : null,
 
                 // The key's own scopes, canonical text, or null when the key carries its
                 // holder's full authority. A client that gets a 403 insufficient_scope can

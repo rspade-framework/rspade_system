@@ -17,6 +17,9 @@ use App\RSpade\Core\Models\User_Model;
  * - Keys are hashed before storage (plaintext never stored)
  * - Key prefix stored for identification without exposing full key
  * - Keys can be revoked (soft disable) or have expiration dates
+ * - A key may be READ-ONLY: read_only = 1 means it may execute GET requests only, and every
+ *   non-GET request with it is refused 403 read_only_key by Api_Dispatcher, before its scopes
+ *   are even consulted. The flag is set at mint and never changes - see generate().
  * - A key may be SCOPED below its holder's authority: the scopes column carries one bare
  *   path-pattern grant per line, whose entire meaning lives in Api_Scopes. NULL means
  *   unrestricted; any scope makes the key deny-by-default. Scopes subtract only - they never
@@ -34,6 +37,7 @@ use App\RSpade\Core\Models\User_Model;
  * @property \Carbon\Carbon|null $last_used_at
  * @property \Carbon\Carbon|null $expires_at
  * @property bool $is_revoked
+ * @property bool $read_only
  * @property \Carbon\Carbon $created_at
  * @property \Carbon\Carbon $updated_at
  */
@@ -57,6 +61,7 @@ use App\RSpade\Core\Models\User_Model;
  * @property int $updated_by_id
  * @property int $updated_by_type
  * @property string $scopes
+ * @property int $read_only
  *
  * @mixin \Eloquent
  */
@@ -82,6 +87,7 @@ class Api_Key_Model extends Rsx_System_Model_Abstract
 
     protected $casts = [
         'is_revoked' => 'boolean',
+        'read_only' => 'boolean',
         'last_used_at' => 'datetime',
         'expires_at' => 'datetime',
     ];
@@ -100,6 +106,13 @@ class Api_Key_Model extends Rsx_System_Model_Abstract
      * @param \Carbon\Carbon|null $expires_at Optional expiration date
      * @param string|null $scopes Optional scopes, one path pattern per line (see Api_Scopes);
      *                            null mints an unrestricted key carrying the user's full authority
+     * @param bool $read_only True mints a key that may execute GET requests only. A non-GET
+     *                        request with it is refused 403 read_only_key before its scopes are
+     *                        consulted, so a read-only key with no scopes still GETs everything
+     *                        its holder may. THERE IS NO SETTER: like its scopes, a key's
+     *                        read_only is fixed at mint, because widening a credential already
+     *                        in service would change what it can do under the integration
+     *                        holding it, silently. Revoke and mint a replacement instead.
      * @return array{key: string, model: Api_Key_Model} Plaintext key and saved model
      *
      * @throws Api_Scope_Validation_Exception when $scopes carries a scope that does not
@@ -112,7 +125,8 @@ class Api_Key_Model extends Rsx_System_Model_Abstract
         string $environment = 'live',
         ?int $user_role_id = null,
         ?\Carbon\Carbon $expires_at = null,
-        ?string $scopes = null
+        ?string $scopes = null,
+        bool $read_only = false
     ): array {
         // {prefix}{env}_{32 random chars}, e.g. rsx_live_xxxxx. The leading token is
         // config('rsx.api.key_prefix') so a product's keys read as its own; lookup is by
@@ -130,6 +144,9 @@ class Api_Key_Model extends Rsx_System_Model_Abstract
         $model->user_role_id = $user_role_id;
         $model->expires_at = $expires_at;
         $model->is_revoked = false;
+        // Stored explicitly, exactly as every other field is - the column's DEFAULT 0 is for
+        // the rows that already existed, never a substitute for saying what this key is.
+        $model->read_only = $read_only;
         // Normalized before the row is written, so what is stored is what Api_Scopes reads
         // back - and a malformed scope throws here rather than at first request.
         $model->scopes = Api_Scopes::canonicalize($scopes);

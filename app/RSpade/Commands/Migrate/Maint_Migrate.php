@@ -15,6 +15,8 @@ use Illuminate\Database\Console\Migrations\MigrateCommand;
 use App\Providers\AppServiceProvider;
 use App\RSpade\Core\Database\MigrationValidator;
 use App\RSpade\Core\Database\SqlQueryTransformer;
+use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
+use App\RSpade\Core\Database\TypeRefs\Type_Ref_Table_Rename;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\SchemaQuality\SchemaQualityChecker;
@@ -501,6 +503,7 @@ class Maint_Migrate extends Command
     {
         // Enable SQL query transformation for migrations
         SqlQueryTransformer::enable();
+        Type_Ref_Table_Rename::reset();
         $this->register_query_transformer();
 
         // Enable full query logging to stdout for migrations
@@ -673,6 +676,12 @@ class Maint_Migrate extends Command
         AppServiceProvider::disable_query_echo();
         SqlQueryTransformer::disable();
 
+        // TABLE RENAMES FOLLOW INTO _type_refs. Every statement this run executed passed
+        // through the macro above, so any RENAME TABLE / ALTER TABLE ... RENAME is already
+        // recorded; this applies them to _type_refs.table_name, in order, in the same run.
+        // Inside the snapshot window like everything else here, so a failure rolls back.
+        $this->apply_type_ref_table_renames();
+
         // THE POST-NORMALIZATION HOOK - the one seam an application has for "columns every
         // table of mine must have". Its position is the contract, and every clause of it
         // matters:
@@ -722,6 +731,29 @@ class Maint_Migrate extends Command
         }
 
         return $exitCode;
+    }
+
+    /**
+     * Apply the table renames this run executed to `_type_refs.table_name`, one narrative
+     * line per registry row updated.
+     *
+     * Silent when nothing was renamed, which is almost every run. The registry's cached map
+     * keys off class_name and is untouched by a table_name change, but it is refreshed
+     * anyway so nothing in this process is holding a stale row.
+     */
+    protected function apply_type_ref_table_renames(): void
+    {
+        $updated = Type_Ref_Table_Rename::apply();
+
+        if (empty($updated)) {
+            return;
+        }
+
+        foreach ($updated as $entry) {
+            $this->info('  Type ref ' . $entry['class_name'] . ': table ' . $entry['from'] . ' -> ' . $entry['to']);
+        }
+
+        Type_Ref_Registry::refresh();
     }
 
     /**
@@ -1235,6 +1267,16 @@ class Maint_Migrate extends Command
 
         DB::macro('statement', function ($query, $bindings = []) use ($original_statement) {
             $transformed = SqlQueryTransformer::transform($query);
+
+            // A table rename must be followed into _type_refs.table_name, and this is the
+            // one place every migration statement passes through. Observation only - the
+            // registry is updated once, after the run, by apply_type_ref_table_renames().
+            // Gated on the transformer so the macro (which outlives the command, DB::macro
+            // being global) is inert outside a migrate run.
+            if (SqlQueryTransformer::is_enabled()) {
+                Type_Ref_Table_Rename::observe($transformed);
+            }
+
             return DB::connection()->statement($transformed, $bindings);
         });
     }

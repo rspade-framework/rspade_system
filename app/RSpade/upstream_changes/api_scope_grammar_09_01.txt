@@ -73,8 +73,12 @@ THE CHANGE
     THE READ-ONLY PRESET IS GONE, AND CANNOT COME BACK. A scope carries no HTTP
     method, so "every GET endpoint" is not expressible. What guarantees a read
     grant instead is API-GET-PURE-01, the manifest-scan rule that forbids a GET
-    #[Api_Endpoint] handler from writing - unchanged, and now the whole of the
-    read-only story. Hand out a narrow key by naming the paths you mean.
+    #[Api_Endpoint] handler from writing - unchanged. Hand out a narrow key by
+    naming the paths you mean.
+
+    ITS REPLACEMENT IS A FLAG ON THE KEY, not a scope: read-only API keys ship
+    in the same release (api_read_only_keys_09_01.txt). A key minted read-only
+    may execute GET requests only, whatever its scopes allow.
 
 THE FIX
     In /system/ (arrives automatically via the submodule):

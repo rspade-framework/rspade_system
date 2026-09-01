@@ -26,6 +26,10 @@ use App\RSpade\Core\Time\Rsx_Time;
  * Settings > API Keys, where the question being asked is always "what is this and can it go".
  * "Temporary (CLI)" answers both without anyone having to check the expiry column.
  *
+ * --read-only is accepted here for the same reason, and matters MORE again: an export job
+ * that only reads should hold a credential that can only read, so a key leaked out of a log
+ * for its remaining fifty minutes cannot be used to change anything at all.
+ *
  * --scope is accepted here for the same reason it exists on key:create, and matters MORE: a
  * job that needs one resource can mint a key that can only reach that resource, so a
  * credential leaked out of a log for its remaining fifty minutes leaks that much authority
@@ -45,6 +49,7 @@ class Api_Key_Temp_Command extends Command
                             {--expires=1 hour : Lifetime as a relative span ("30 minutes", "24 hours") or an ISO datetime}
                             {--environment=live : Key environment: live or test}
                             {--scope=* : Scope path pattern ("/api/v1/contacts/*"), repeatable. Omit for an unrestricted key}
+                            {--read-only : Mint a key that may execute GET requests only; any other verb is refused 403 read_only_key}
                             {--json : Output as JSON}';
 
     protected $description = 'Mint a short-lived external API key that expires on its own';
@@ -62,7 +67,15 @@ class Api_Key_Temp_Command extends Command
             return Api_Key_Cli_Support::report_error($this, $e, $as_json);
         }
 
-        $result = Api_Key_Model::generate($user->id, static::KEY_NAME, $environment, null, $expires_at, $scopes);
+        $result = Api_Key_Model::generate(
+            $user->id,
+            static::KEY_NAME,
+            $environment,
+            null,
+            $expires_at,
+            $scopes,
+            (bool) $this->option('read-only')
+        );
         $api_access = Api_Key_Cli_Support::api_access_enabled($user);
 
         if ($as_json) {
@@ -80,6 +93,7 @@ class Api_Key_Temp_Command extends Command
         $this->line('  Name:    ' . $result['model']->name);
         $this->line('  Id:      ' . $result['model']->id);
         $this->line('  Expires: ' . Rsx_Time::format_datetime($expires_at->toIso8601String()));
+        $this->line('  Access:  ' . Api_Key_Cli_Support::key_access_summary($result['model']));
         $this->line('  Scope:   ' . Api_Key_Cli_Support::key_scope_summary($result['model']));
 
         foreach (preg_split('/\n/', (string) $result['model']->scopes, -1, PREG_SPLIT_NO_EMPTY) as $scope) {

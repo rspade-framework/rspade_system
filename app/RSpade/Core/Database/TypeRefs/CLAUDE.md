@@ -141,26 +141,38 @@ relation object, which is what you want for `withTrashed()`.
 - **Eager loading is forbidden framework-wide** (`->with()` throws). Not a type-ref limit.
 - **A half-set pair fails loud**: `_type` NULL with `_id` set makes Eloquent build a
   degenerate query and throw. Write both columns together or neither.
-- **A retired `_type_refs` row does not self-heal, but it is never silent**: see RETIRED
-  TYPE REFS below. Reading throws (relation, cast), writing is refused, and
-  `whereHasMorph($rel, '*')` produces the same named error. Prefer explicit type lists.
+- **A `_type_refs` row whose class is gone is inert, permanent and SILENT**: see RETIRED
+  TYPE REFS below. Nothing reports it and nothing may delete it. A DEREFERENCE still
+  throws (relation, cast, `whereHasMorph($rel, '*')`), and a write is refused. Prefer
+  explicit type lists.
 - **Pivot morphs (`morphToMany`/`morphedByMany`) are unsupported**: the discriminator lives
   on a pivot table no model owns, so no `$type_ref_columns` declaration can cover it. Model
   the join table as a real model with its own pair. POLY-01 flags them.
 
 ## Retired type refs (a model class that no longer exists)
 
-A deleted or renamed model leaves its `_type_refs` row behind. That row used to keep
-behaving like a valid type ref everywhere except the one path that resolves a relation,
-where it produced `Class name must be a valid object or a string` - naming no table, no
-column, no row and no class. Every path now fails loud instead:
+A deleted or renamed model leaves its `_type_refs` row behind. **That row is INERT,
+PERMANENT and SILENT, and there is no command to delete it.**
+
+- It is HARMLESS. A registry entry no data points at is not a defect, and reporting it at
+  boot would put a permanent warning in the log of an entirely healthy app. (It once did:
+  `register_morph_map()` emitted a `Log::warning` on every boot, which the `rsx:debug`
+  harness - it echoes new `laravel.log` entries - surfaced on every page render.)
+- DELETING it is what causes harm. Every row still holding that integer loses the only
+  record of what the integer meant. `rsx:type_refs:prune` existed and was **removed**;
+  do not reintroduce it, and do not hand-write the DELETE.
+
+What still fails loud is a DEREFERENCE - code that must produce a class and cannot. The
+row used to keep behaving like a valid type ref everywhere except the one path that
+resolves a relation, where it produced `Class name must be a valid object or a string` -
+naming no table, no column, no row and no class:
 
 | Path | Behavior |
 |---|---|
-| `register_morph_map()` | registers the retired id under a POISON alias (`Retired_Type_Ref`) and logs one `Log::warning` naming every retired `(id, class_name)` pair. It NEVER throws at boot - a retired ref nothing references must not brick the app. |
+| `register_morph_map()` | registers the retired id under a POISON alias (`Retired_Type_Ref`). No throw, no log, no health row. |
 | `morphTo()` / `whereHasMorph($rel, '*')` | `new $class` hits the poison class, whose constructor throws `Type ref 3 ("Event_Model") names a model class that no longer exists in the codebase...` |
 | `Rsx_Type_Ref_Cast::get()` -> `id_to_class()` | throws the same message instead of returning a phantom class name |
-| `Rsx_Type_Ref_Cast::set()` -> `class_to_id()` | REFUSES, on the cached path too, so a retired model cannot accrue NEW references |
+| `Rsx_Type_Ref_Cast::set()` -> `class_to_id()` | REFUSES, on the cached path too, so a retired model cannot accrue NEW references. About the WRITE, never about the row. |
 | `find_id_by_class_name()` | the ONE lookup that still answers - no validation, no auto-create (cleanup migrations) |
 
 **The poison mechanism**: Laravel's morph map maps alias => class-name string and does
@@ -170,18 +182,49 @@ Naming the id therefore needs one class per retired ref, and there is no file to
 `...\TypeRefs\Poison\Retired_Type_Ref_{id}` with a single `eval()` over a fully
 controlled template - and only ever runs when a retired type ref actually exists.
 
-**Auditing and pruning**:
+## Which rows point at a vanished model
+
+The question worth asking is the opposite direction - which DATA holds a type id that no
+longer resolves. Those rows throw at the point of use and are the operator's to repoint or
+delete.
 
 ```bash
-php artisan rsx:health            # WARN per retired row + referencing table.column (count)
-php artisan rsx:type_refs:prune   # drop retired rows nothing references; REFUSE the rest
+php artisan rsx:type_refs:orphans [--json]
 ```
 
-`Type_Ref_Audit` is the shared implementation (`unresolvable_type_refs()`,
-`reference_counts()`, `type_ref_columns_by_table()`); the reference sweep reads every
-model's `_type_ref_columns()` - the model's own declaration UNIONED with the framework
-audit pairs, which are type refs on every table. It runs only when something is already
-retired. Retirement checklist: `rsx:man polymorphic`, BOUNDARIES.
+A REPORT only: it counts, prints, executes nothing it prints, and always exits 0. An
+ORPHAN is a non-null type-ref value that is not a resolvable registry id - one predicate
+covering both an id whose row names a vanished class and an id with no row at all.
+
+```
+shared_items.item_type - 4 rows
+  SELECT * FROM shared_items WHERE item_type IN (12, 19)  -- Event_Model, Forum_Thread_Model
+```
+
+`Type_Ref_Orphan_Report` is the engine (`scan()`, `resolvable_ids()`, `registry_map()`,
+`type_ref_columns_by_table()`, `format_select()`). The column inventory reads every model's
+`_type_ref_columns()` - the model's own declaration UNIONed with the framework audit pairs,
+which are type refs on every table. **Nothing is ever loaded into memory**: every number is
+a `COUNT(*) ... GROUP BY`, and the SELECT is text for the operator.
+
+## A table rename follows itself into _type_refs
+
+`_type_refs` stores `class_name` AND `table_name`, so renaming a table would strand the
+registry row - and a migration cannot fix it itself (MIGRATION-MODEL-01 forbids naming the
+registry, and it would have to be remembered every time). The MIGRATE PIPELINE does it:
+`Maint_Migrate::register_query_transformer()` already routes every executed statement
+through one macro, which hands it to `Type_Ref_Table_Rename::observe()`;
+`execute_migrations()` then calls `apply_type_ref_table_renames()` in the SAME run.
+
+Recognised: `RENAME TABLE a TO b` (multi-rename lists included) and
+`ALTER TABLE a RENAME [TO|AS] b`. NOT matched: `RENAME COLUMN` / `RENAME INDEX` /
+`RENAME KEY`. Renames are kept as an ORDERED LIST and replayed in order, so a chain
+(a -> b, later b -> c) lands on the final name with no special case. One narrative line per
+registry row moved:
+
+```
+  Type ref Widget_Model: table old_widgets -> new_widgets
+```
 
 ## Query Builder Integration
 

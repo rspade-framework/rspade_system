@@ -1,6 +1,6 @@
 ---
 name: external-api
-description: "Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, key scopes (bare path patterns in _api_keys.scopes), file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version, uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, narrowing a key with scopes or scope presets (config('rsx.api.scope_presets')), or diagnosing a 401 before route match, a 403 insufficient_scope, an API-GET-PURE-01 manifest-build failure, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument."
+description: "Building externally-consumable REST endpoints with #[Api_Endpoint] and #[Api_Param] on Rsx_Api_Controller_Abstract - route rules, Bearer key auth and the headless session, param validation, response contract, versioning, key scopes (bare path patterns in _api_keys.scopes), file upload and download over the API, and the /apidocs tester. Use when exposing an API to an external consumer or integration, adding a new /api/vN/ route or version, uploading or downloading a file through the API (multipart/form-data, the 'file' param type, POST /api/v1/files, attaching an uploaded file to a record), minting API keys, narrowing a key with scopes or scope presets (config('rsx.api.scope_presets')) or with the read-only flag (--read-only, _api_keys.read_only), or diagnosing a 401 before route match, a 403 insufficient_scope, a 403 read_only_key, an API-GET-PURE-01 manifest-build failure, a 422 on an undeclared param, or a manifest scan that dies on an attribute argument."
 ---
 
 # External API
@@ -27,6 +27,8 @@ class Contacts_Api_Controller extends Rsx_Api_Controller_Abstract {
 - `#[Api_Param]` is repeatable, one per accepted parameter.
 - The docblock's `@api-response` sample is what `/apidocs` shows as the response shape.
 - `#[Auth]` is mandatory here as on every dispatchable surface.
+
+**GET IS FOR READS, POST IS FOR WRITES.** A GET endpoint is a READ; anything that changes application data — create, update, delete, a state change, a send, a queued job that will do one of those — is a POST. Incidental bookkeeping a GET performs (a request log row, a last-used stamp, a counter, a cache fill) is fine: the test is whether a caller who never made the request could tell from the app's own screens. This is not REST style — it is the only thing that gives "read" a meaning, and it is enforced from both ends: **`API-GET-PURE-01`** at build time on the handler, and **`_api_keys.read_only`** at runtime on the caller (see Read-only keys). Waive `API-GET-PURE-01` with `@API-GET-PURE-01-EXCEPTION <rationale>` for that incidental bookkeeping only — never to let a GET mutate, because the waiver removes the meaning of every read-only key in the system.
 
 ## Route rules (scan-enforced)
 
@@ -74,8 +76,8 @@ Keys are minted and revoked at **Settings > API Keys** (the plaintext key is sho
 **The namespace exists so a SCRIPT can grant itself access to this API and then use it** — an importer or an exporter mints a key, calls `/api/vN` with `Authorization: Bearer <key>` like any other client, and exits. There is no privileged CLI channel into the API: the CLI mints a credential, and the script speaks the same HTTP the outside world speaks.
 
 ```bash
-php artisan rsx:api:key:create --user=<id|email> [--site=] [--name=] [--expires=] [--environment=live|test] [--scope=<path>]... [--json]
-php artisan rsx:api:key:temp   --user=<id|email> [--site=] [--expires="1 hour"] [--scope=<path>]... [--json]
+php artisan rsx:api:key:create --user=<id|email> [--site=] [--name=] [--expires=] [--environment=live|test] [--scope=<path>]... [--read-only] [--json]
+php artisan rsx:api:key:temp   --user=<id|email> [--site=] [--expires="1 hour"] [--scope=<path>]... [--read-only] [--json]
 php artisan rsx:api:key:list   --user=<id|email> [--site=] [--all] [--json]
 php artisan rsx:api:key:delete <id> [--purge] [--force] [--json]
 php artisan rsx:api:openapi    [--user=<id|email>] [--site=] [--compact]
@@ -85,6 +87,7 @@ php artisan rsx:api:openapi    [--user=<id|email>] [--site=] [--compact]
 - **`--site` disambiguates, it does not select.** `users.id` is a global PK, so a numeric `--user` needs no site (a mismatched `--site` is refused). `users.email` is not unique across sites, so an email matching in two sites is **refused with the candidates listed** rather than a tenant being guessed.
 - **`--expires`** takes an ISO datetime or a relative span. On `create` there is **no default** — no expiry means "until revoked". `temp` defaults to `1 hour` and names every key it mints **`Temporary (CLI)`**, so `list` and Settings > API Keys both say what it is.
 - **`delete` revokes** and keeps the row, and its request-log history with it; **`--purge` removes the key outright and CASCADE-deletes that history** (`_api_request_log.api_key_id` is a real FK). That difference is the reason to prefer revoke. Under `--json` it **requires `--force`** — a prompt would write into the stream the script is parsing and then block forever.
+- **`--read-only`** mints a key that may execute GET requests only; `key:list` shows an Access column (`read-only` / `read+write`, `read_only` under `--json`).
 - **Minting is NOT gated on `users.is_api_access_enabled`** (shell access outranks any in-app permission, and a provisioning script must be able to mint for a user it is about to enable) — but `create`/`temp` **warn**, and report `api_access_enabled: false`.
 
 **The `--json` envelope**, one shape for every `key:*` command, stdout carrying JSON and nothing else:
@@ -245,10 +248,10 @@ A key otherwise carries its holder's **entire** authority. `_api_keys.scopes` na
 - **Each wildcard is a WHOLE segment** — `/api/v1/foo*`, `/api/v1/?_id`, `/api/v1/b#r` are validation errors.
 - Literals match **exactly, case-sensitively** (what the router does). **Trailing slash and query string are meaningless on both sides** — `/api/v1/clients`, `/api/v1/clients/` and `/api/v1/clients?page=2` are one path, and none matches `/api/v1/clients/view`.
 - **NULL/blank = unrestricted.** Any scope flips the key to **deny-by-default**, so there is nothing to deny and no way to write a denial. Ticking two presets is set union, order-independent.
-- **The method is not part of a scope.** "Read-only" is not expressible; `API-GET-PURE-01` is what makes a read grant meaningful instead.
+- **The method is not part of a scope.** "Read-only" is not expressible as a scope at all — that is what the key's own `read_only` flag is for (below).
 - **A malformed stored scope is IGNORED for matching and STILL COUNTS** — so a key whose only scope is malformed denies everything and **fails closed**, logging `API key #<id>: ignoring malformed scope '<text>' - <reason>` once per request evaluation. Predicate: `$key->has_malformed_scopes()`.
 - **Scopes subtract only**: `effective = the user's LIVE permissions ∩ the scopes`. Evaluated per request, never frozen at mint.
-- Dispatcher order: verb gate → bearer auth → route match → **SCOPE** → param validation → `#[Auth]` gates → controller.
+- Dispatcher order: verb gate → bearer auth → **read_only** → route match → **SCOPE** → param validation → `#[Auth]` gates → controller.
 - **Dispatch is ROUTE-ONLY.** Requests resolve against declared `#[Api_Endpoint]` patterns by path and nothing else; there is deliberately no by-name (`Class::method`) channel and **none may be added** — a scope is a path pattern, so a second addressing scheme would be a scope bypass.
 
 **Validation is one function, one exception.** `Api_Scopes::validate($scope)` throws `Api_Scope_Validation_Exception` whose message IS the rule that was broken. Every write path runs it and the **first** bad scope refuses the whole set, writing nothing — `generate()`, `set_scopes()`, `--scope`, and your own endpoint:
@@ -278,7 +281,24 @@ Api_Scopes::reaches_route($scopes, '/api/v1/contacts/:id'); // does it reach an 
 Api_Catalog::resolve_for_scopes(1, $scopes);                // pure: takes TEXT, not a key
 ```
 
-**Keys are immutable after mint** — no edit endpoint anywhere; revoke and re-mint. `GET /api/v1/me` reports `key.scopes`; `rsx:api:key:list` shows a scope count (full text under `--json`); `rsx:api:openapi --key=<id>` narrows the document to gates ∩ that key's scopes.
+**Keys are immutable after mint** — no edit endpoint anywhere; revoke and re-mint. `GET /api/v1/me` reports `key.scopes`; `rsx:api:key:list` shows a scope count (full text under `--json`); `rsx:api:openapi --key=<id>` narrows the document to gates ∩ that key's scopes ∩ its verbs.
+
+## Read-only keys
+
+`_api_keys.read_only = 1` means the key **may execute GET requests only**; every other verb is refused **403 `read_only_key`**, message `This API key is read-only: GET requests only.` It is the runtime half of the GET-is-for-reads rule above, and the answer to the thing a scope cannot say — a scope is a path pattern with no method in it, which is why the old `Read-only` scope preset was removed rather than rewritten.
+
+- **Decided after the bearer key resolves and BEFORE the route is matched**, so a read-only key learns nothing about which write endpoints exist, and **before the scopes**, so each refusal names what the caller must change: `read_only_key` (this credential cannot write) vs `insufficient_scope` (mint a wider key) vs `forbidden` (ask for the permission).
+- **The two narrowings compose and neither implies the other**: `effective = the user's LIVE permissions ∩ the key's scopes ∩ (read_only ? GET : every verb)`. A read-only key may be unrestricted; a scoped key may write.
+- **Set at mint, never changed** — `generate(..., $read_only)` is the only writer and there is **no setter**, exactly as with the scopes: widening a credential already in service would change what it can do under the integration holding it.
+- **The console hides what the key cannot do**: `Api_Tester_Key::accessible_targets_for_key()` drops every endpoint declaring no GET, and `Api_Catalog::resolve_for_scopes($v, $scopes, $hidden, $read_only)` keeps GET verbs alone — so a listing or a preview panel never offers a call that comes back `read_only_key`.
+- The Bearer-accepting web routes (`/_download`, `/_thumbnail/*`, …) are all GET, so they need no clamp of their own.
+
+```php
+Api_Key_Model::generate($user_id, $name, 'live', null, null, $scopes, $read_only = true);
+$key->read_only;                            // bool
+```
+
+`GET /api/v1/me` reports `key.read_only`; `rsx:api:key:create` / `:temp` take `--read-only`; `rsx:api:key:list` has an Access column; Settings > API Keys has the mint checkbox, the grid's Access column and the view modal; `/apidocs` shows a `read-only` badge.
 
 ## Config
 

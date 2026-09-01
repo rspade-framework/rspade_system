@@ -28,14 +28,16 @@ use App\RSpade\Core\Models\User_Model;
  *   1. verb gate (GET/POST only; HEAD and everything else -> 405);
  *   2. Bearer authentication FIRST (uniform 401 across the namespace, no route probing) -
  *      establishes a headless, cookie-less Session identity via Session::_set_api_identity();
- *   3. exact-match route resolution over the 'api' routes (unknown -> 404);
- *   4. the KEY's scopes (Api_Scopes) - a scoped key whose path patterns do not reach this
+ *   3. the KEY's read_only flag - a read-only key may execute GET requests only, and any
+ *      other verb is refused with read_only_key 403 before the route is even resolved;
+ *   4. exact-match route resolution over the 'api' routes (unknown -> 404);
+ *   5. the KEY's scopes (Api_Scopes) - a scoped key whose path patterns do not reach this
  *      endpoint is refused with insufficient_scope 403 BEFORE its params are read, so it
  *      learns nothing about an endpoint it may not call;
- *   5. declarative param validation against baked #[Api_Param] specs (422 per field);
- *   6. declarative #[Auth] gates (403 forbidden);
- *   7. controller invocation (no auth of its own - the controller trusts this dispatcher);
- *   8. bare-JSON response building (models serialize via toArray(); null -> 204).
+ *   6. declarative param validation against baked #[Api_Param] specs (422 per field);
+ *   7. declarative #[Auth] gates (403 forbidden);
+ *   8. controller invocation (no auth of its own - the controller trusts this dispatcher);
+ *   9. bare-JSON response building (models serialize via toArray(); null -> 204).
  *
  * EVERY request is recorded in _api_request_log (success and every failure path). An
  * uncaught Throwable from the endpoint is logged as a 500 row then rethrown to
@@ -181,6 +183,32 @@ class Api_Dispatcher
         $api_key_id = (int) $api_key->id;
         $user_id = (int) $user->id;
         $site_id = (int) $user->site_id;
+
+        // --- Read-only key gate ---
+        // A read-only key may execute GET requests and nothing else. This sits BEFORE the
+        // route match deliberately: the answer does not depend on which endpoint was asked
+        // for, so a read-only key learns nothing about which write endpoints exist - a
+        // non-GET request is refused identically whether the path resolves or not.
+        //
+        // It also sits before the SCOPES, and the two answer different questions. A scope
+        // says WHICH PATHS this credential may reach and carries no method; read_only says
+        // WHICH VERBS it may use and names no path. So a read-only key with no scopes still
+        // GETs everything its holder may, and a read-only key never reaches a POST handler
+        // even when a scope names its path.
+        //
+        // What makes the guarantee real is API-GET-PURE-01, the manifest-scan rule that
+        // forbids a GET handler from writing: the runtime half is here, the build-time half
+        // is in Api_Endpoint_ManifestSupport, and neither is worth anything alone.
+        if ($api_key->read_only && $method !== 'GET') {
+            $response = self::_error(
+                'read_only_key',
+                'This API key is read-only: GET requests only.',
+                403
+            );
+            self::_log($request, $start, $method, $path, null, 403, $api_key_id, $user_id, $site_id, $response);
+
+            return $response;
+        }
 
         // --- Route match (exact, api routes only) ---
         $route = self::_match_route($path, $method);

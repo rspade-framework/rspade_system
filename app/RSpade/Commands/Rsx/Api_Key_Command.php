@@ -38,6 +38,7 @@ class Api_Key_Command extends Command
                             {--expires= : Expiry as an ISO datetime or a relative span like "30 days". Omit for no expiry}
                             {--environment=live : Key environment: live or test}
                             {--scope=* : Scope path pattern ("/api/v1/contacts/*"), repeatable. Omit for an unrestricted key}
+                            {--read-only : Mint a key that may execute GET requests only; any other verb is refused 403 read_only_key}
                             {--json : Output as JSON}';
 
     protected $description = 'Create an external API key for a user (the plaintext is shown once)';
@@ -66,7 +67,15 @@ class Api_Key_Command extends Command
 
         $name = (string) ($this->option('name') ?: 'CLI key');
 
-        $result = Api_Key_Model::generate($user->id, $name, $environment, null, $expires_at, $scopes);
+        $result = Api_Key_Model::generate(
+            $user->id,
+            $name,
+            $environment,
+            null,
+            $expires_at,
+            $scopes,
+            (bool) $this->option('read-only')
+        );
         $api_access = Api_Key_Cli_Support::api_access_enabled($user);
 
         if ($as_json) {
@@ -84,6 +93,7 @@ class Api_Key_Command extends Command
         $this->line('  Name:    ' . $result['model']->name);
         $this->line('  Id:      ' . $result['model']->id);
         $this->line('  Expires: ' . ($expires_at ? Rsx_Time::format_datetime($expires_at->toIso8601String()) : 'never'));
+        $this->line('  Access:  ' . Api_Key_Cli_Support::key_access_summary($result['model']));
         $this->line('  Scope:   ' . Api_Key_Cli_Support::key_scope_summary($result['model']));
 
         // The scopes in full, echoed back normalized, because this is the one moment the
