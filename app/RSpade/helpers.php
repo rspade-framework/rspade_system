@@ -2014,12 +2014,22 @@ function _linkify_content(string $content, bool $new_window): string
 }
 
 /**
- * Convert a relative URL path to an absolute URL using the application hostname.
+ * Convert a relative URL path to an absolute URL for THIS installation.
  *
- * Always https: RSpade assumes upstream SSL termination and generates every URL as
- * https (APP_URL is https-enforced at boot). For same-origin links in HTML, use
- * relative URLs instead. Use this only when an absolute URL is required (emails,
- * external APIs, etc.).
+ * Scheme, host and a non-default port all come from the same pair of accessors the
+ * rest of the framework builds authorities with:
+ *
+ *   Web request  -> the scheme the BROWSER used (X-Forwarded-Proto aware) and the
+ *                   browsed authority, port included.
+ *   CLI / task   -> APP_URL, the single hostname source, parsed for all three.
+ *
+ * It is deliberately NOT hardcoded https on a hardcoded bare hostname any more: a
+ * development container published on http://localhost:8080 produced
+ * https://localhost, and an unsubscribe link or a password-reset link built from it
+ * pointed at a port nothing was listening on.
+ *
+ * Use it only where an absolute URL is genuinely required (emails, external APIs);
+ * same-origin links in HTML stay relative.
  *
  * @param string $path Relative URL path (e.g., "/_download/abc123")
  * @return string Absolute URL (e.g., "https://myapp.example.com/_download/abc123")
@@ -2031,5 +2041,5 @@ function rsx_absolute_url(string $path): string
         $path = '/' . $path;
     }
 
-    return 'https://' . \App\RSpade\Core\Rsx::get_hostname() . $path;
+    return \App\RSpade\Core\Rsx::get_scheme() . '://' . \App\RSpade\Core\Rsx::get_http_host() . $path;
 }

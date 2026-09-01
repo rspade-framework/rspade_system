@@ -34,6 +34,27 @@ SYNOPSIS
     class Portal_Dashboard_Action extends Spa_Action { }
 
 DESCRIPTION
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
+
+            rsx/portal/CLAUDE.md
+            rsx/portal/workspaces/CLAUDE.md
+            app skill: portal-app
+
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
+
+        This page is MIXED. The framework half - Portal_Session, Rsx_Portal,
+        Portal_Main_Abstract and the portal routing attributes (skill
+        rspade:portal-core) - is not subject to this notice. The template half -
+        the shipped portal screens and the app's own portal_main.php and
+        portal_permission.php - is.
+
     The portal is a complete, separate authenticated experience that runs
     PARALLEL to the main application. It has its own session, its own dispatch,
     its own routing table, and its own user identity - none of which touch the
@@ -1145,4 +1166,4 @@ SEE ALSO
     session(3), spa(3), auth(3), dispatch(3), class_override(3), config_rsx(3),
     migrations(3)
 
-RSX Framework              Last updated 2026-07-01                  PORTAL(3)
+RSX Framework              Last updated 2026-09-01                  PORTAL(3)

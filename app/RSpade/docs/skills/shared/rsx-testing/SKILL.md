@@ -1,6 +1,6 @@
 ---
 name: rsx-testing
-description: Writing and running RSpade tests with Rsx_Test_Abstract and php artisan rsx:test - test discovery, the __assert_* helper inventory, session/user impersonation helpers, per-test transactions, database baselines, and the selector algebra for narrowing a run. Use when writing a test for a feature you just built, adding a test class, choosing between --filter/--group/class-name selectors, deciding whether a class needs $requires_db_reset or --fresh, or diagnosing "test database is the same as the development database".
+description: "Writing and running RSpade tests with Rsx_Test_Abstract and php artisan rsx:test - test discovery, the __assert_* helper inventory, session/user impersonation helpers, per-test transactions, database baselines, and the selector algebra for narrowing a run. Use when writing a test for a feature you just built, adding a test class, choosing between --filter/--group/class-name selectors, deciding whether a class needs $requires_db_reset or --fresh, or diagnosing \"test database is the same as the development database\"."
 ---
 
 # RSpade testing

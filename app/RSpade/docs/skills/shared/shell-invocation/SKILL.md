@@ -1,6 +1,6 @@
 ---
 name: shell-invocation
-description: Invoking shell commands and repo scripts correctly in RSpade - always explicit bash, never sh or an implicit /bin/sh. Use when writing shell_exec/passthru/proc_open/exec_safe from PHP, child_process from node, registering a Claude Code hook or statusline, writing a git hook body, adding a supervisor or cron command line, calling one script from another, or diagnosing "Permission denied" on a script or "sh: 1: exec: 11: not found".
+description: "Invoking shell commands and repo scripts correctly in RSpade - always explicit bash, never sh or an implicit /bin/sh. Use when writing shell_exec/passthru/proc_open/exec_safe from PHP, child_process from node, registering a Claude Code hook or statusline, writing a git hook body, adding a supervisor or cron command line, calling one script from another, or diagnosing \"Permission denied\" on a script or \"sh: 1: exec: 11: not found\"."
 ---
 
 # Shell Invocation

@@ -1,6 +1,6 @@
 ---
 name: auth-gates
-description: Annotating dispatchable surfaces with #[Auth] and defining the check vocabulary with #[Auth_Check] - covering routes, SPA actions, Ajax endpoints, model fetch, API endpoints, realm declaration with #[Auth_Realm], and can_access()/Auth_Gates::accessible_route() link visibility. Use when adding or gating any #[Route] / #[SPA] / #[Ajax_Endpoint] / #[Ajax_Endpoint_Model_Fetch] / #[Api_Endpoint] / @route action, when the manifest build fails with MISSING GATE / UNKNOWN CHECK / CONTRADICTION, when writing a new Permission check, when a link or nav item must hide itself, or when a portal endpoint is being denied for the wrong realm.
+description: "Annotating dispatchable surfaces with #[Auth] and defining the check vocabulary with #[Auth_Check] - covering routes, SPA actions, Ajax endpoints, model fetch, API endpoints, realm declaration with #[Auth_Realm], and can_access()/Auth_Gates::accessible_route() link visibility. Use when adding or gating any #[Route] / #[SPA] / #[Ajax_Endpoint] / #[Ajax_Endpoint_Model_Fetch] / #[Api_Endpoint] / @route action, when the manifest build fails with MISSING GATE / UNKNOWN CHECK / CONTRADICTION, when writing a new Permission check, when a link or nav item must hide itself, or when a portal endpoint is being denied for the wrong realm."
 ---
 
 # Auth Gates
@@ -264,4 +264,4 @@ Separately fatal at scan time, before that pass: an `#[Auth_Check]` that is para
 - **`can_access()` throws "unknown target".** The spelling must match `Rsx::Route()` exactly; for a surface that may not exist in this install, use `Auth_Gates::accessible_route()` instead.
 - **Denial screens** are `Error_Screens` (PHP `unauthorized()`/`not_found()`/`fatal()`, JS `Error_Screens.unauthorized()`); customize the PHP side by class-overriding `Error_Screens`.
 
-Details: `php artisan rsx:man auth_gates`. Related: `rspade:permissions-acl`, `rspade:portal`, `rspade:session-auth`.
+Details: `php artisan rsx:man auth_gates`. Related: `rspade:permissions-acl`, `rspade:portal-core`, `rspade:session-auth`.

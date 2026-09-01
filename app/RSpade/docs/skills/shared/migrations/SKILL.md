@@ -1,6 +1,6 @@
 ---
 name: migrations
-description: RSX database migrations - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, the self-containment rule (no model class and no Type_Ref_Registry - MIGRATION-MODEL-01), automatic schema normalization and audit columns, and the datadir snapshot that auto-rolls-back a failed run (and the three conditions that decide whether it is taken at all). Use when creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, or wondering whether it is safe to run migrate.
+description: "RSX database migrations - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, the self-containment rule (no model class and no Type_Ref_Registry - MIGRATION-MODEL-01), automatic schema normalization and audit columns, and the datadir snapshot that auto-rolls-back a failed run (and the three conditions that decide whether it is taken at all). Use when creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, or wondering whether it is safe to run migrate."
 ---
 
 # RSX Database Migrations

@@ -38,6 +38,25 @@ SYNOPSIS
         config('rsx.api.log_retention_days')   Settings > API Keys   _api_request_log
 
 DESCRIPTION
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
+
+            rsx/app/api/CLAUDE.md
+            app skill: none - see rspade:external-api for the framework contract
+
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
+
+        This page is MIXED. The framework half - Rsx_Api_Controller_Abstract, the
+        #[Api_Endpoint] / #[Api_Param] attributes and the dispatcher - is not
+        subject to this notice. The template half - the v1 controllers this
+        application ships - is.
+
     The RSX external API exposes externally-consumable REST endpoints, distinct
     from #[Ajax_Endpoint] (which is a browser-only, cookie-session RPC channel
     with auto-generated JS stubs). An external endpoint is a static method,

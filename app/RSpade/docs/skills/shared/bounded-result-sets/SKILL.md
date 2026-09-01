@@ -1,6 +1,6 @@
 ---
 name: bounded-result-sets
-description: Returning and consuming whole database result sets in RSpade without truncating them or exhausting memory, using Rsx_Result_Set, keyset iteration, and the $unbounded declaration. Use when writing a function that returns "these records", consuming a framework API that returns a result set, adding or removing a LIMIT, deciding whether a model needs $unbounded, or responding to a DB-UNBOUNDED-01 finding or a [DB-UNBOUNDED] runtime warning.
+description: "Returning and consuming whole database result sets in RSpade without truncating them or exhausting memory, using Rsx_Result_Set, keyset iteration, and the $unbounded declaration. Use when writing a function that returns \"these records\", consuming a framework API that returns a result set, adding or removing a LIMIT, deciding whether a model needs $unbounded, or responding to a DB-UNBOUNDED-01 finding or a [DB-UNBOUNDED] runtime warning."
 ---
 
 # Bounded Result Sets

@@ -1,266 +1,739 @@
 EMAIL(7)                           RSpade Developer Manual                           EMAIL(7)
 
 NAME
-    Email - Queue-based email delivery with dev site safety and unsubscribe management
+    Email - one email is one class: queued, rendered, and delivered over SMTP
 
 SYNOPSIS
-    use App\RSpade\Core\Mail\Rsx_Mail;
+    // rsx/emails/welcome_email.php  (+ welcome_email.blade.php)
+    class Welcome_Email extends Rsx_Email_Abstract
+    {
+        const CATEGORY = self::TRANSACTIONAL;
 
-    Rsx_Mail::send($to, $subject, $template, $data, $category);
-    Rsx_Mail::send_to_contact($contact, $subject, $template, $data);
-    Rsx_Mail::send_to_portal_user($portal_user, $subject, $template, $data);
+        public function __construct(public User_Model $user, public string $login_url) {}
+
+        public function subject(): string { return 'Welcome to ' . config('rsx.name'); }
+        public function data(): array     { return ['name' => $this->user->get_printed_name()]; }
+        public static function sample(): static { ... }
+    }
+
+    (new Welcome_Email($user, $url))->to($user)->send();     // -> Email_Queue_Model
+
+    php artisan rsx:mail:test you@example.com
+    php artisan rsx:mail:queue [--status=failed] [--recipient=@example.com] [--limit=25]
+    php artisan rsx:mail:show <id>
+    php artisan rsx:mail:resend <id> [--force]
 
 DESCRIPTION
-    RSpade provides a queue-based email system where all emails are queued to the
-    database and processed asynchronously. Emails are never sent inline during a
-    request. The system includes automatic dev site safety gating, per-address
-    unsubscribe management, and an admin UI for monitoring.
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
 
-    Unlike Laravel's Mail facade, Rsx_Mail always queues. There is no "send now"
-    option. This prevents request blocking and ensures all emails are auditable
-    through the admin interface.
+            rsx/emails/CLAUDE.md
+            app skill: none - see rspade:email-and-sms for the framework contract
 
-SENDING EMAILS
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
 
-    Basic Send
-        Rsx_Mail::send(
-            'user@example.com',         // recipient
-            'Welcome',                  // subject
-            'Welcome_Email',            // template (rsx_id of blade file)
-            ['name' => 'John'],         // template data
-            Rsx_Mail::NOTIFICATION      // category (optional, default NOTIFICATION)
-        );
+        This page is MIXED. The framework half - Rsx_Email_Abstract, the queue and
+        its statuses, the delivery modes and the rsx:mail:* commands - is not
+        subject to this notice. The template half - the email classes this
+        application ships and email.scss - is.
 
-    Send to Contact
-        Rsx_Mail::send_to_contact(
-            $contact,                   // Contact_Model instance
-            'Subject',
-            'Template_Name',
-            $data,
-            Rsx_Mail::NOTIFICATION
-        );
+    An email an application sends is a CLASS in /rsx/emails/, co-located with the blade
+    template that renders it. The class carries its data as typed constructor arguments,
+    answers subject() and data(), and declares its category once. Nothing about a send is
+    passed around as loose strings.
 
-    Send to Portal User
-        Rsx_Mail::send_to_portal_user(
-            $portal_user,               // Portal_User_Model instance
-            'Subject',
-            'Template_Name',
-            $data,
-            Rsx_Mail::TRANSACTIONAL     // default for portal users
-        );
+    THE CLASS NAME IS THE IDENTITY. It is the blade's @rsx_id, it is the value in
+    email_queue.email_class, and it is the key in the manifest's baked email table.
 
-    Site Resolution
-        send() (and the blocklist API) scopes to the current Session site. A
-        sessionless send (from a #[Task] or CLI) resolves to site 0 (the Default
-        site); call Session::set_site_id($site_id) first to target a specific
-        tenant's blocklist/queue.
+    EVERY EMAIL IS QUEUED - never sent inline, in any context. send() writes a row and
+    dispatches the drain, so a slow or down mail host can never slow a user's action. The
+    drain runs within seconds; the once-a-minute schedule is only a sweeper for rows a
+    retry delay or a send_at() held back.
 
-EMAIL CATEGORIES
+    Delivery is real SMTP (or sendmail), built in one place from config('rsx.mail.delivery')
+    and, in 'live' mode only, config('rsx.mail.transport'). A fresh install is in
+    'aiosmtpd' mode - captured by the development catcher on this box - so nothing leaves
+    the box until an operator says MAIL_DELIVERY=live and where mail goes.
 
-    Three categories control unsubscribe behavior:
+WRITING AN EMAIL
 
-    Rsx_Mail::TRANSACTIONAL (1)
-        Always delivers. Ignores unsubscribe preferences.
-        Examples: password reset, invitation, verification, account changes.
+    Two files, one name, side by side in /rsx/emails/:
 
-    Rsx_Mail::NOTIFICATION (2)  [default]
-        Respects unsubscribe preferences. Skipped if recipient has opted out.
-        Examples: portal activity, shared content, reminders.
+        rsx/emails/user_invitation_email.php
+        rsx/emails/user_invitation_email.blade.php
 
-    Rsx_Mail::MARKETING (3)
-        Respects unsubscribe preferences. Skipped if recipient has opted out.
-        Examples: newsletters, promotions, announcements.
+    The class:
 
-    Transactional emails never check the blocklist. Notification and marketing
-    emails create a BLOCKED record in the queue (visible in admin UI) when the
-    recipient has opted out.
+        namespace Rsx\Emails;
 
-EMAIL TEMPLATES
+        use App\RSpade\Core\Mail\Rsx_Email_Abstract;
+        use App\RSpade\Core\Models\User_Model;
+        use App\RSpade\Core\Rsx;
 
-    Templates are Blade files in /rsx/emails/ with @rsx_id() directives.
-    They use Rsx_Mail_Layout::header() and footer() for the HTML email wrapper.
+        class User_Invitation_Email extends Rsx_Email_Abstract
+        {
+            const CATEGORY = self::TRANSACTIONAL;
 
-    File Location
-        /rsx/emails/
-            layouts/
-                email_layout_default.blade.php    (placeholder, layout is in PHP)
-            my_notification_email.blade.php       (your templates)
+            public function __construct(
+                public User_Model $user,
+                public string $invite_url
+            ) {
+            }
 
-    Template Structure
-        @rsx_id('My_Notification_Email')
-        {!! \App\RSpade\Core\Mail\Rsx_Mail_Layout::header($subject ?? '') !!}
+            public function subject(): string
+            {
+                return 'You\'re Invited to ' . config('rsx.name', 'RSpade');
+            }
 
-        <p>Hello {{ $name }},</p>
-        <p>Your content here.</p>
+            public function data(): array
+            {
+                return [
+                    'app_name' => config('rsx.name', 'RSpade'),
+                    'name' => trim($this->user->first_name . ' ' . $this->user->last_name),
+                    'invite_url' => $this->invite_url,
+                    'expiry_days' => config('rsx.auth.invite_expiration_days', 7),
+                ];
+            }
+
+            public static function sample(): static
+            {
+                $user = new User_Model();
+                $user->first_name = 'Ada';
+                $user->last_name = 'Lovelace';
+                $user->email = 'ada@example.com';
+
+                return new static($user, rsx_absolute_url(Rsx::Route(
+                    'Accept_Invite_Controller::index', ['code' => 'sample-invite-code']
+                )));
+            }
+        }
+
+    The blade (@rsx_id EQUALS the class basename):
+
+        @rsx_id('User_Invitation_Email')
+        {!! \App\RSpade\Core\Mail\Rsx_Mail_Layout::header($subject ?? 'You\'re Invited') !!}
+
+        <p>Hello{{ !empty($name) ? ' ' . e($name) : '' }},</p>
+
+        <p>You have been invited to join <strong>{{ $app_name }}</strong>.</p>
 
         <p style="text-align: center;">
-            <a href="{{ $action_url }}" class="email-button">Click Here</a>
+            <a href="{{ $invite_url }}" class="email-button">Accept Invitation</a>
         </p>
+
+        <p>This invitation expires in {{ $expiry_days }} days.</p>
 
         {!! \App\RSpade\Core\Mail\Rsx_Mail_Layout::footer($unsubscribe_url ?? null) !!}
 
-    Auto-Injected Variables
-        $subject           - Email subject line
-        $unsubscribe_url   - Signed unsubscribe URL (non-transactional only, null for transactional)
+    THE THREE MANDATORY MEMBERS. Each is a manifest-build FATAL when absent, with a
+    per-class worklist (Email_ManifestSupport):
 
-    CSS Classes Available in Templates
-        .email-button      - Blue CTA button (Bootstrap primary color)
-        .email-muted       - Small gray text
-        .email-divider     - Horizontal rule
+        const CATEGORY      TRANSACTIONAL | NOTIFICATION | MARKETING. There is no default
+                            because there is no safe one: TRANSACTIONAL over-delivers to
+                            people who opted out, NOTIFICATION silently drops mail somebody
+                            needed. It is a per-email editorial decision.
+        subject()           frozen into the row at send() time.
+        data()              the template variables, frozen likewise. Return plain scalars
+                            and arrays - this is JSON in the database, so a model instance
+                            here is a bug waiting for the record to change underneath it.
+        static sample()     a fully-constructed instance with plausible values, for
+                            previews, tests and `rsx:mail:test --email=`. Build it WITHOUT
+                            touching the database wherever the data allows: an unsaved model
+                            carrying the handful of fields the template reads is enough.
 
-UNSUBSCRIBE MANAGEMENT
+    A blade whose @rsx_id does not equal the class basename is the third FATAL.
 
-    Blocklist API
-        Rsx_Mail::is_blocked($email, Rsx_Mail::MARKETING);   // true/false
-        Rsx_Mail::block($email, Rsx_Mail::MARKETING);         // block category
-        Rsx_Mail::unblock($email, Rsx_Mail::MARKETING);       // unblock category
-        Rsx_Mail::block_all($email);                          // block all non-transactional
+    FROZEN MEANS FROZEN. subject() and data() are read ONCE, at send(). The drain never
+    asks the class anything again, so a message queued today and sent after a retry
+    tomorrow says exactly what the caller meant today.
 
-    Unsubscribe URLs
-        Auto-injected into non-transactional email templates as $unsubscribe_url.
-        URLs are HMAC-signed and verified on the unsubscribe endpoint.
+SENDING
 
-        Manual generation:
-        $url = Rsx_Mail::unsubscribe_url($email, Rsx_Mail::NOTIFICATION);
+    The fluent envelope, then send():
 
-    Verification:
-        Rsx_Mail::verify_unsubscribe_signature($email, $category, $sig);
+        (new Invoice_Email($invoice))
+            ->to($client, 'Accounts Payable')     // string+name, or an object with ->email
+            ->cc($manager)                        // repeated calls ACCUMULATE
+            ->bcc('archive@example.com')
+            ->reply_to($staff_user)               // a later call REPLACES the earlier one
+            ->attach($file_attachment)            // File_Attachment_Model or absolute path
+            ->attach_bytes($csv, 'lines.csv', 'text/csv')
+            ->embed('chart', $chart_attachment)   // template: <img src="cid:chart">
+            ->dedupe_key("invoice:{$invoice->id}:v{$invoice->version}")
+            ->send_at($iso)                       // EARLIEST it may go, not a guarantee
+            ->about($related_type, $related_id)   // polymorphic "what is this about"
+            ->send();                             // Email_Queue_Model
 
-    Models are FRAMEWORK-CORE: App\RSpade\Core\Models\Email_Queue_Model and
-    Email_Recipient_Model (the Rsx_Mail facade depends on them). Apps may override
-    via the class-override pattern. Email_Queue_Model::fetch() (an
-    #[Ajax_Endpoint_Model_Fetch], login-gated) loads one record for a developer
-    "Email Transaction Log" - full fields, no aliasing, plus status_id__label/__badge.
+    to() sets the single To; a later to() REPLACES it. A recipient is an address string
+    (with an optional display name) or any object exposing ->email - the name comes from
+    get_printed_name() when the method exists, else a trimmed first_name/last_name pair,
+    else nothing. Anything else throws: a silently dropped recipient is an email nobody
+    notices never arrived. send() with no to() throws too.
 
-QUEUE PROCESSING
+    dedupe_key is UNIQUE per site. When the key has been used before, send() returns THAT
+    row in whatever state it reached and enqueues nothing - a replayed webhook or a re-run
+    import cannot double-mail anybody.
 
-    ** REAL OUTBOUND DELIVERY IS NOT WIRED YET (backlogged). **
+    THE ORDER OF OPERATIONS AT ENQUEUE (Rsx_Mail::enqueue, and it is load-bearing):
 
-    The queue is processed by the core Mail_Queue_Service task:
+        1. Resolve the tenant from the EXPERIENCE being served - the portal site on a
+           portal request, the staff Session site otherwise. The site stamps the row AND
+           drives the blocklist lookup, so getting it wrong mails somebody who opted out.
+        2. Dedupe.
+        3. Blocklist (non-transactional only) - an opted-out address is RECORDED as a
+           BLOCKED row, never sent. The audit row is the point.
+        4. The dev-site recipient gate (below).
+        5. Freeze subject() and data() into the row.
+        6. Persist attachments into the content-addressed blob store.
+        7. Kick the drain (Task::dispatch), in every context except a test run.
+
+    A CLI importer, a #[Task] and a web request all kick the drain. The one exception is
+    the test runner, whose swapped database connection a detached worker would not see; a
+    test that wants the queue drained runs it explicitly.
+
+RECIPIENTS AND BLOCKLIST
+
+    Categories (Rsx_Email_Abstract:: and Rsx_Mail:: spell the same three):
+
+        TRANSACTIONAL (1)   Always delivers, ignores the blocklist. Password resets,
+                            invitations, receipts, security notices.
+        NOTIFICATION  (2)   Respects the opt-out.
+        MARKETING     (3)   Respects the opt-out.
+
+    Pick by what the message IS, not by how much you want it delivered.
+
+    Per-address preferences live in email_recipients, unique per site_id + address:
+
+        Rsx_Mail::is_blocked($email, Rsx_Mail::MARKETING);
+        Rsx_Mail::block($email, Rsx_Mail::MARKETING);
+        Rsx_Mail::unblock($email, Rsx_Mail::MARKETING);
+        Rsx_Mail::block_all($email);          // every non-transactional category
+
+    The same table carries per-recipient counters (total_sent, total_failed, last_sent_at),
+    incremented by the drain against the ORIGINAL address - on a dev host the envelope may
+    point at a catchall, and counting a developer's inbox would make the history
+    meaningless on exactly the boxes people read it on.
+
+ATTACHMENTS AND INLINE IMAGES
+
+    attach(File_Attachment_Model|string $source, ?string $name, ?string $mime)
+        A stored attachment REUSES its existing blob - nothing is copied, nothing is
+        re-hashed. A string is an absolute path on this box; its bytes enter the
+        content-addressed store, so the same file mailed to a thousand people is stored
+        once. Name and mime default to the source's.
+
+    attach_bytes(string $bytes, string $name, string $mime)
+        Bytes the caller generated. Name and mime are REQUIRED - there is nothing to infer
+        them from, and an attachment with a guessed type is one the recipient cannot open.
+
+    embed(string $cid, File_Attachment_Model|string $source)
+        An inline part the template references as <img src="cid:chart">. A cid: reference
+        with nothing embedded under that name is a BUILD FAILURE for the row, not a silent
+        hole in the message.
+
+    Rows land in email_attachments (disposition_id 1 = attachment, 2 = inline, plus cid and
+    sort_order) and are what PIN the blob against File_Disposal_Service. They cascade away
+    with the queue row at retention time.
+
+    A ROOT-RELATIVE <img src="/img/logo.png"> IS EMBEDDED AUTOMATICALLY. The builder
+    resolves it through the same public-asset lookup the web server uses and rewrites the
+    tag to a cid: part, because an image a message merely LINKS to is an image most clients
+    refuse to load. A src with a scheme, a protocol-relative host or a data: payload is left
+    exactly as written. A local src that resolves to nothing THROWS and the row is FAILED -
+    a broken image is a broken email, not a warning.
+
+STYLING
+
+    ONE STYLESHEET, and one file wins - there is no merge:
+
+        rsx/emails/email.scss                          the application's, when present
+        Core/Mail/resource/email.scss                  the framework default otherwise
+
+    It is compiled through the same node sass step the bundle build uses, cached under
+    storage/rsx-tmp by the SOURCE's content hash, then INLINED onto the elements and ALSO
+    injected as a <style> block in <head>. Both, deliberately: inlining is what actually
+    styles the message (Gmail and most of Outlook's history strip <style> outright), but a
+    media query cannot be inlined onto anything.
+
+    The default sheet ships .email-wrapper, .email-container, .email-header, .email-logo,
+    .email-body, .email-button, .email-muted, .email-divider and .email-footer.
+
+    Chrome comes from Rsx_Mail_Layout::header($subject) / ::footer($unsubscribe_url) and
+    reads config('rsx.mail.branding'): logo_url (an absolute URL or a public asset path -
+    absent, the masthead is the product name) and footer_text (replaces the default
+    copyright line). An app sets those in rsx/resource/config/rsx.php and never edits the
+    layout class.
+
+    Every template gets three variables it did not have to ask for: $subject, $branding,
+    and $unsubscribe_url (null for a transactional email, so its footer prints no link).
+
+THE TEXT PART
+
+    Every message is multipart: HTML plus text, always.
+
+    Write the text part yourself in a second blade whose @rsx_id is the class basename plus
+    _Text - welcome_email.text.blade.php carrying @rsx_id('Welcome_Email_Text'). It receives
+    the same variables as the HTML template.
+
+    With no such blade the builder DERIVES the text from the rendered HTML (Rsx_Mail_Text):
+    block elements become newlines, <a> becomes "text (url)", images are dropped, entities
+    are decoded and whitespace is collapsed.
+
+LINKS - AND THE RULE THAT ENFORCES THEM
+
+    A MAIL CLIENT HAS NO ORIGIN. Rsx::Route() produces a PATH; a root-relative href in a
+    message is a link to nowhere, and it fails silently in somebody else's inbox with the
+    queue row still saying Sent. Every URL in an email is absolute:
+
+        {{ rsx_absolute_url(Rsx::Route('Clients_View_Action', ['id' => $id])) }}
+
+    rsx_absolute_url($path) takes the scheme, host and non-default port from the request
+    when there is one and from APP_URL (the single hostname source) when there is not -
+    which is always for email, because messages are rendered in a background task.
+
+    AN EMAIL ALSO HAS NO BROWSER. Nothing in a mail client re-formats a datetime for the
+    reader, and nothing runs later to correct one that went out wrong: the message is frozen
+    the moment the transport takes it. Every datetime an email prints is formatted
+    SERVER-SIDE, in the recipient's zone - better still, formatted in data() so the frozen
+    row already carries the string.
+
+    Both are enforced by the code-quality rule EMAIL-TEMPLATE-01 (severity high), which
+    scans blades under any /emails/ directory and the framework's own /Core/Mail/. It flags
+    a bare {{ $something_at }} / {{ $something_date }} read and any Rsx::Route() /
+    Rsx_Portal::Route() call not wrapped in rsx_absolute_url(). A deliberate exception
+    declares itself on the line or the line above WITH a rationale (a bare marker suppresses
+    nothing):
+
+        {{-- @EMAIL-TEMPLATE-01-EXCEPTION - <why this is correct here> --}}
+
+THE QUEUE AND ITS STATUSES
+
+    email_queue is the whole message: envelope, frozen subject and template_data, both
+    rendered bodies once the builder has run, the headers the framework added, and what the
+    transport answered.
+
+        Id  Status       Meaning
+        --  -----------  --------------------------------------------------------------
+        1   Pending      Queued. Sendable when next_attempt_at is null or in the past.
+        2   Sending      Claimed by a drain, right now.
+        3   Sent         The transport accepted it. message_id_header, transport and
+                         transport_response record what happened.
+        4   Failed       Terminal. The server-error attempt cap was reached (the server's
+                         own reply in last_error), or the build failed, or the drain
+                         refused to send it because it was due more than
+                         rsx.mail.stale_after_days ago (last_error names rsx:mail:resend -
+                         see THE STALE-MESSAGE WINDOW).
+        5   Blocked      Never queued: the recipient had opted out of this category.
+        6   Suppressed   Rendered and recorded, deliberately not handed to a transport.
+                         Delivery mode is suppressed, or a dev host left no deliverable
+                         address. Terminal, and NOT a failure.
+
+    Columns worth knowing: email_class (the class, which is also the view id),
+    attempt_count (a first send IS an attempt), next_attempt_at, last_attempt_at,
+    last_error, message_id_header, transport, transport_response, dedupe_key (unique per
+    site), dev_original_to, rendered_html, rendered_text, headers, cc, bcc, reply_to,
+    related_type/related_id.
+
+    THE BUILDER WRITES THE RENDERED BODIES BEFORE THE SEND. A message that ends up
+    Suppressed or Failed still carries exactly what would have gone out, which is the only
+    way to answer "what did we almost send them" six months later.
+
+    Email_Queue_Model::fetch() is an #[Ajax_Endpoint_Model_Fetch] (login-gated) loading one
+    record for a developer-facing email log. The model is framework core; an app overrides
+    it with the class-override pattern, never by subclassing.
+
+THE DRAIN AND THE FAILURE POLICY
 
         php artisan rsx:task:run Mail_Queue_Service send_pending_queue
 
-    #[Exclusive] (one drain at a time, coalesced) + #[Schedule('*/5 * * * *')]
-    (every 5 minutes). Rsx_Mail::send() also kicks a prompt background drain
-    (Task::dispatch) on web requests. Requires cron:
-        * * * * * cd /var/www/html && php artisan rsx:task:process
+    Mail_Queue_Service::send_pending_queue is #[Task] #[Exclusive] #[Schedule('every
+    minute')]. #[Exclusive] coalesces the dispatches every send makes; the schedule is the
+    sweeper. It needs the ordinary task cron:
 
-    Current behavior (until real send is wired):
-    1. Picks up one PENDING record at a time (respects retry_at)
-    2. Renders the Blade template to HTML (stored in rendered_html, so a developer
-       can recover the content / a link that never left the box)
-    3. Marks the record STATUS_HELD_BACK ("Held (dev)") - recorded but NOT delivered.
-       Distinct from SENT, FAILED, and BLOCKED. Nothing is sent via SMTP.
+        * * * * * php artisan rsx:task:process
 
-    Status enum: 1 Pending, 2 Sending, 3 Sent, 4 Failed, 5 Blocked, 6 Held (dev).
+    The pass, in order:
 
-    A second scheduled task prunes old terminal (sent/failed/blocked/held-back) rows:
+        0. MODE. 'disabled' logs one line ("mail delivery is disabled - N message(s) left
+           pending") and RETURNS. The queue is FROZEN: nothing is claimed, nothing is
+           reclaimed, nothing is aged, and every row keeps the state it had, so turning
+           delivery back on sends exactly what was queued while it was off.
+        1. RECLAIM. Anything still SENDING was claimed by a runner that died mid-message -
+           #[Exclusive] proves no other runner exists right now, so no age threshold and no
+           timeout is needed or wanted. Those rows go back to PENDING with last_error
+           "reclaimed: previous drain ended mid-send"; the attempt is not counted.
+        2. CLAIM. claim_next() takes one row at a time with a conditional UPDATE
+           (PENDING -> SENDING), FIFO by created_at, skipping any row whose next_attempt_at
+           is still in the future. Two drains can never take the same message.
+        2b. STALE SWEEP (after the reclaim, so a rescued row is judged on how long it has
+           been WAITING). See THE STALE-MESSAGE WINDOW below.
+        3. Delivery mode 'suppressed' -> build anyway (so the bodies are recorded), then
+           mark_suppressed.
+        3b. Delivery mode 'aiosmtpd' -> the connection's SMTP greeting must contain
+           'aiosmtpd'. If it does not, this message is refused as a SERVER ERROR with
+           last_error "expected server aiosmtpd (...)" - attempt counted, next_attempt_at
+           pushed out, FAILED at the cap - and so is every other message under that
+           connection. The greeting is re-read after the one permitted reconnect. Nothing
+           ANSWERING at all is an outage, not a banner problem, and takes the
+           transport-failure path below.
+        4. Otherwise build and send.
 
+    THE TWO FAILURE CLASSES ARE NOT THE SAME FAILURE, and conflating them is how a queue
+    quietly destroys mail:
+
+        THE SERVER ANSWERED WITH AN ERROR FOR THIS MESSAGE (UnexpectedResponseException -
+        any reply code the SMTP command did not expect, 4xx and 5xx alike). The connection
+        is fine; this MESSAGE is the problem. attempt_count++, next_attempt_at pushed out by
+        rsx.mail.retry.delay_minutes, and FAILED at rsx.mail.retry.attempts with the
+        server's own words in last_error.
+
+        THE TRANSPORT COULD NOT BE REACHED (any other transport exception). Nothing about
+        the message was rejected, so the row goes back to PENDING with its attempt NOT
+        counted. The runner rebuilds the transport and retries THE SAME message once; if
+        that fails too it throws Mail_Transport_Unavailable_Exception and the whole drain
+        dies loudly, leaving every remaining row PENDING for the next kick or the next
+        minute's sweep. A mail host being down is an outage to see, not a budget for
+        messages to burn.
+
+        A BUILD OR RENDER ERROR is neither: it is a code bug no retry can fix, and the row
+        is FAILED immediately with the message.
+
+    The task returns ['sent', 'server_errors', 'failed', 'suppressed', 'reclaimed',
+    'stale'].
+
+THE STALE-MESSAGE WINDOW
+
+    config('rsx.mail.stale_after_days') - default 2, a plain config value with no env key.
+    At the start of every drain (in 'aiosmtpd', 'live' and 'suppressed'; NEVER in
+    'disabled', where the queue is frozen) one conditional UPDATE marks FAILED every
+    PENDING row whose
+
+        COALESCE(next_attempt_at, created_at) < now() - stale_after_days
+
+    with last_error exactly:
+
+        Timed out - email was queued too far in the past and never sent, use
+        'php artisan rsx:mail:resend <id>' to resend
+
+    THIS IS NOT A TIMEOUT, and do not describe it as one. It bounds no wait, no send, no
+    connection and no drain - those take as long as they take. It is QUEUE HYGIENE: the
+    safeguard against one system-configuration failure.
+
+        The scenario it guards against: the email queue silently stops working - a dead
+        transport, a misconfigured host, a stopped worker - and nobody notices for a
+        month. The moment it is repaired, the drain would flood a month of stale notices:
+        out of date, irrelevant, and impossible to retract.
+
+    So the drain REFUSES to send a message that should have gone out more than
+    stale_after_days ago, and marks the row FAILED with an error telling the operator
+    exactly how to resend it if they decide that message is still wanted. THE DECISION TO
+    SEND OLD MAIL BELONGS TO A HUMAN, NEVER TO THE DRAIN.
+
+    rsx:mail:resend IS THE DELIBERATE ESCAPE HATCH. Nothing is deleted: the row survives
+    with its frozen subject, data and attachments, and resending puts it straight back
+    (setting next_attempt_at to NOW, so a resent row is not set aside again by the very
+    next drain).
+
+    COALESCE, not created_at alone: a message scheduled with send_at() five days out is
+    not late until five days from now, and must NOT be born stale.
+
+    THERE IS NO SMS EQUIVALENT and there must not be - see rsx:man sms.
+
+    RETENTION. Mail_Queue_Service::cleanup, #[Schedule('daily at 3am')], deletes whole rows
+    (every terminal status) older than rsx.mail.retention_days - 30 by default; attachments
+    follow by FK cascade, and the blobs themselves remain File_Disposal_Service's business.
+    The same task prunes the development catcher's Maildir on the same window when one
+    exists. A caller that wants a different window passes it as a task parameter
+    (Task::dispatch('Mail_Queue_Service', 'cleanup', ['days' => 7])); rsx:task:run takes no
+    parameters and always uses the configured value.
+
+DELIVERY MODES AND THE DEV-SITE LAYER
+
+    TWO INDEPENDENT SAFETY LAYERS. Do not conflate them.
+
+    config('rsx.mail.delivery') is the master switch and is CONFIGURED, not derived. It has
+    FOUR values, and anything else THROWS (Rsx_Mail_Transport::delivery_mode() - one place,
+    so a typo is never silently read as "not live"):
+
+        aiosmtpd     THE SHIPPED DEFAULT. Captured by the development catcher on this box:
+                     SMTP to 127.0.0.1:1025, no encryption, no auth. THE ENTIRE
+                     rsx.mail.transport BLOCK IS IGNORED in this mode - driver, host, port,
+                     encryption, username and password are not read at all - so a box whose
+                     MAIL_HOST still names last year's relay cannot mail anybody by
+                     accident. The catcher must ADVERTISE ITSELF (see THE DEVELOPMENT
+                     CATCHER). Nothing leaves the box.
+        live         each row is handed to the transport built from rsx.mail.transport.
+                     This is the ONLY mode that reads that block, and the ONLY mode the
+                     dev-site recipient layer below applies to.
+        suppressed   each row is rendered, recorded, and marked Suppressed. Nothing is
+                     opened, nothing leaves.
+        disabled     THE QUEUE IS FROZEN. send() still queues and still kicks the drain
+                     (which is then a cheap no-op); the drain logs one line and returns.
+                     Rows stay Pending, untouched, and are NOT aged out by the stale sweep,
+                     so an install that turns delivery off for a week comes back to the
+                     mail it queued rather than a queue of failures.
+
+    The dev-site layer is keyed on the HOSTNAME (Rsx::is_dev_site() - the host contains
+    '.dev.') and applies per recipient IN 'live' MODE ONLY:
+
+        1. address whitelist match  -> deliver to the real recipient
+        2. domain whitelist match   -> deliver to the real recipient
+        3. catchall address set     -> redirect there, the real address recorded in
+                                       dev_original_to
+        4. neither                  -> NOTHING is deliverable from this host: the row is
+                                       written Suppressed at ENQUEUE time with the reason
+                                       "dev site: no whitelist match and no catchall"
+
+    Cases 1 and 4 both leave the address untouched and mean opposite things - one is "send
+    it", the other is "there is nowhere to send it".
+
+    WHY ONLY 'live'. The dev-site layer exists to stop a development box mailing REAL
+    people, and 'live' is the only mode whose messages can reach one: 'aiosmtpd' files
+    every message in a Maildir on this box, 'suppressed' never opens a transport, and
+    'disabled' never drains. Gating in those modes would mean a fresh install recorded
+    every message Suppressed and a developer never saw their own mail. Set
+    MAIL_DELIVERY=live and the gating is exactly what it always was.
+
+THE DEVELOPMENT CATCHER
+
+    The dev container runs system/bin/mail_catcher.py as [program:mail-catcher] under
+    supervisor: SMTP only, 127.0.0.1:1025, NO web UI and no HTTP listener of any kind,
+    writing a Maildir at storage/mail-catcher (config rsx.mail.catcher_maildir). It accepts
+    every recipient.
+
+    IT ADVERTISES ITSELF, AND THAT IS PART OF THE CONTRACT. Its SMTP greeting is
+
+        220 <host> aiosmtpd <version> (RSpade dev mail catcher)
+
+    and 'aiosmtpd' delivery mode refuses to hand a message to any connection whose greeting
+    does not contain 'aiosmtpd'. The mode's whole promise is that mail lands in a Maildir on
+    this box and reaches nobody, and the one thing that could break it is something ELSE
+    listening on 127.0.0.1:1025 - an ssh tunnel to a real relay, a developer's own MTA, a
+    port-forward left over from yesterday. Symfony's transport never exposes the 220 line,
+    so the framework opens its own socket, reads the greeting and says QUIT
+    (Rsx_Mail_Transport::probe_banner()).
+
+    aiosmtpd's own CLI advertises "Python SMTP <version>" and has no flag to change it,
+    which is why the catcher is a small module rather than `python3 -m aiosmtpd`. Check what
+    is actually listening with:
+
+        php artisan rsx:health          # the Mail transport row says whether it confirmed
+
+    A greeting mismatch FAILS every message as a server error with last_error "expected
+    server aiosmtpd (...)", and the health row says "server did not advertise aiosmtpd".
+
+    Read the last message it caught:
+
+        cat "$(ls -t storage/mail-catcher/new/* | head -1)"
+
+    Each file carries the delivery's X-Peer, X-MailFrom and X-RcptTo alongside the message's
+    own headers, so the envelope is readable next to the content. `rsx:mail:test` prints the
+    path of the newest file for you.
+
+    A production host has no catcher; the pruning step and the path lookup are no-ops when
+    the directory does not exist.
+
+UNSUBSCRIBE
+
+    Every NOTIFICATION and MARKETING message carries a signed link in its footer AND in a
+    List-Unsubscribe header pair (RFC 2369 + RFC 8058 List-Unsubscribe-Post), which is what
+    puts the mail client's own one-click button in front of the recipient - somebody who can
+    leave with one click does not leave by pressing "spam" instead.
+
+        GET|POST /_mail/unsubscribe?email=&category=&site=&sig=
+
+    THE SIGNATURE IS THE ENTIRE AUTHORIZATION: an HMAC-SHA256 over "email|category|site_id"
+    keyed with config('rsx.mail.unsubscribe_secret') or, absent one, app.key. Possession of
+    the link proves the holder received a message addressed to that address at that tenant,
+    which is exactly the authority needed to stop more of them. There is no login and no
+    session - a recipient is usually not a user of this application at all, and demanding a
+    login before honouring an opt-out is how a sender earns a spam complaint.
+
+    THE SITE COMES FROM THE SIGNATURE, never from the session: the blocklist is per tenant,
+    and a staff member happening to be logged in must not move another site's row.
+
+        GET     renders a standalone confirmation page and records NOTHING.
+        POST    scope=category (default) or scope=all, then the done page.
+        POST    with body List-Unsubscribe=One-Click (a provider, no browser, no token) is
+                scope category and answers 200 text/plain "Unsubscribed." with no redirect.
+
+    Anything missing, malformed, tampered with, or naming TRANSACTIONAL gets ONE
+    indistinguishable 404. The path is CSRF-exempt (a provider posts without a token; the
+    HMAC is the auth) and creates no session.
+
+    Mint one by hand with Rsx_Mail::unsubscribe_url($email, $category, $site_id); verify one
+    with Rsx_Mail::verify_unsubscribe_signature($email, $category, $site_id, $sig).
+
+CONFIGURATION
+
+    config('rsx.mail.*') in system/config/rsx.php; an app overrides branding (and nothing
+    else, normally) in rsx/resource/config/rsx.php.
+
+        Key                             Env                              Default
+        ------------------------------  -------------------------------  ------------------
+        delivery                        MAIL_DELIVERY                    aiosmtpd
+                                        (aiosmtpd | live | suppressed | disabled)
+        transport.driver                MAIL_TRANSPORT                   smtp
+        transport.host                  MAIL_HOST                        127.0.0.1
+        transport.port                  MAIL_PORT                        1025
+        transport.encryption            MAIL_ENCRYPTION                  '' ('' | tls | ssl)
+        transport.username              MAIL_USERNAME                    ''
+        transport.password              MAIL_PASSWORD                    ''
+        transport.sendmail_path         -                                /usr/sbin/sendmail -bs -i
+        from_address                    MAIL_FROM_ADDRESS                noreply@example.com
+        from_name                       MAIL_FROM_NAME                   '' (= rsx.name)
+        retry.attempts                  -                                3
+        retry.delay_minutes             -                                3
+        retention_days                  -                                30
+        stale_after_days                -                                2
+        unsubscribe_secret              -                                null (= app.key)
+        branding.logo_url               -                                null
+        branding.footer_text            -                                null
+        dev_site.catchall_address       EMAIL_DEV_CATCHALL_ADDRESS       ''
+        dev_site.address_whitelist      EMAIL_DEV_EMAIL_ADDRESS_WHITELIST ''
+        dev_site.domain_whitelist       EMAIL_DEV_EMAIL_DOMAIN_WHITELIST  ''
+        catcher_maildir                 -                                storage/mail-catcher
+        dkim_selector                   -                                null
+
+    encryption maps onto the two knobs that exist: '' is explicitly OFF (auto_tls=false, so
+    a transport does not silently start negotiating STARTTLS the day a server advertises
+    it), 'tls' requires STARTTLS on the plain port, 'ssl' is TLS from the first byte (the
+    historical port 465 shape).
+
+    THE WHOLE transport.* BLOCK IS READ IN 'live' MODE ONLY. In 'aiosmtpd' it is ignored
+    and the transport is 127.0.0.1:1025 with no encryption and no auth, by definition;
+    'suppressed' and 'disabled' never open a transport at all.
+
+    The whitelists are comma-separated. retry is the SMTP SERVER-ERROR policy only.
+    stale_after_days is queue hygiene, not a timeout - see THE STALE-MESSAGE WINDOW.
+    dkim_selector, when set, is the only reason rsx:health looks up a DKIM record.
+
+    There is no config/mail.php and no MAIL_MAILER: Rsx_Mail_Transport is the one place a
+    transport is constructed, and Laravel's Mail facade is not part of this system.
+
+OPERATIONS
+
+    rsx:mail:test - the smoke test for the whole chain
+        php artisan rsx:mail:test you@example.com [--email=Some_Email] [--json]
+
+        Enqueues the framework's own probe (Rsx_Mail_Test_Email) or, with --email, the
+        sample() of any email class the manifest knows, then DRAINS SYNCHRONOUSLY in this
+        process and reads the row back - so the status printed is the status the send
+        actually reached, not a detached worker's business. It prints the delivery mode, the
+        transport, the queue row, the status, the attempt count, the Message-ID, any last
+        error, the first lines of the SMTP conversation, and the catcher file to cat.
+
+        Exit 0 when the row reached Sent or Suppressed, 1 otherwise. In 'disabled' the drain
+        is not run at all, the row is left Pending, and the exit code is 0 - the queue being
+        frozen is the honest answer, not a failure. A transport that cannot be reached is
+        REPORTED, not stack-traced: the message stays PENDING for the next sweep. An unknown
+        --email value prints the list of known email classes.
+
+    rsx:mail:queue - what is in the queue right now
+        php artisan rsx:mail:queue [--status=] [--recipient=] [--limit=25] [--json]
+
+        With NO flags: the delivery mode, a count per status, and the age of the oldest row
+        still Pending - the numbers that say whether mail is moving.
+
+        With --status (pending|sending|sent|failed|blocked|suppressed) and/or --recipient
+        (a substring, matched against BOTH to_address and dev_original_to, so a message
+        redirected to a dev catchall is still found by who it was really for): the matching
+        rows newest first, up to --limit. An unknown --status is refused with the list.
+
+    rsx:mail:show - everything one row knows about itself
+        php artisan rsx:mail:show <id> [--json]
+
+        Every column except the rendered bodies, which are reported by LENGTH (dumping tens
+        of kilobytes of inlined HTML into a terminal buries the fields somebody opened this
+        to read); headers and template data pretty-printed; attachments with file name, MIME
+        type, disposition, cid and blob size. --json carries the bodies in full. Exit 1 when
+        there is no such row.
+
+    rsx:mail:resend - put a finished message back on the queue
+        php artisan rsx:mail:resend <id> [--force]
+
+        Resets status to Pending, attempt_count to 0, last_error to null and next_attempt_at
+        to NOW (not null - nulling it would age the row from its original created_at and the
+        stale sweep would fail it again immediately), then dispatches the drain. The row
+        keeps its identity, its frozen subject and data, and its attachments.
+
+        Works for Failed (including stale), Suppressed and Blocked. A PENDING or SENDING row
+        is refused as nothing to do (exit 0). A BLOCKED row REQUIRES --force and exits 1
+        without it: Blocked means the recipient asked not to receive this category, that is
+        a consent record, and a command that quietly overrode it would make the unsubscribe
+        link a lie. Exit 1 when there is no such row.
+
+    rsx:health - three Mail rows
+        Mail delivery        which of the four modes this install is in. INFO, never FAIL,
+                             for suppressed and disabled: those are settings somebody chose.
+        Mail transport       a read-only TCP connect to the transport's host:port (or the
+                             sendmail binary's executability), plus - in aiosmtpd mode - the
+                             greeting check. FAIL when it cannot be reached, and FAIL
+                             "server did not advertise aiosmtpd" when something else has the
+                             port; both remediations name [program:mail-catcher] in aiosmtpd
+                             mode. Not probed at all when delivery is suppressed
+                             or disabled.
+        Mail sender domain   whether the From domain publishes SPF, DMARC, and DKIM when a
+                             selector is configured. WARN, never FAIL - missing records mean
+                             spam folders, and the fix is at a registrar. INFO for an
+                             example.* sender or any mode but 'live': that is a development
+                             setup, not a deliverability problem.
+
+    Queue maintenance
+        php artisan rsx:task:run Mail_Queue_Service send_pending_queue
         php artisan rsx:task:run Mail_Queue_Service cleanup
 
-    #[Schedule('0 3 * * *')] (daily 3am). Deletes records older than 90 days (override
-    with --days=N).
+    The reference app's admin screens (copy them, or read them as worked examples):
+        system/app/RSpade/resource/reference_app/app/frontend/system/email_config/
+        system/app/RSpade/resource/reference_app/app/frontend/system/email_queue/
+        system/app/RSpade/resource/reference_app/app/frontend/system/email_recipients/
 
-    FUTURE real-send + retry policy (documented in the send task; NOT implemented):
-    render -> SMTP send; success -> mark_sent(); failure -> mark_failed(), where an
-    SMTP *connect* error does not count toward the strike limit (retry no sooner than
-    5 min), a *server* error does, giving up after config('rsx.mail.retry_max')
-    strikes (default 6). Needs a last_attempt_at column. Config:
-    config('rsx.mail.retry_max') / retry_backoff_minutes. See the backlog: "wire real
-    SMTP/SMS outbound delivery".
+TESTING
 
-DEV SITE EMAIL SAFETY
+    The test runner suppresses the automatic drain kick, so a test that wants the queue
+    drained runs it:
 
-    On dev sites (hostname contains .dev.), emails are automatically gated.
-    This prevents accidental delivery to real users during development.
+        Task::internal('Mail_Queue_Service', 'send_pending_queue');
 
-    Detection
-        Rsx::is_dev_site()     - true if hostname contains .dev.
+    Rsx_Mail_Transport::$override_for_tests is the ONE seam for watching the drain react to
+    a particular SMTP outcome - the runner constructs its own transport, so nobody can hand
+    it one. A test sets it, and clears it in a finally; nothing in the framework or an
+    application ever assigns it at runtime.
 
-    Environment Variables (.env)
-        EMAIL_DEV_CATCHALL_ADDRESS=dev@example.com
-            All non-whitelisted emails redirect to this address.
-            Original recipient stored in dev_original_to field.
+    A test host is usually a .dev. hostname, so the dev-site recipient gate is live for every
+    send. A test whose subject is not the gate whitelists its domain past it; a test whose
+    subject IS the gate pins the transport host to a non-loopback value, because the gate
+    does not engage on a transport that cannot leave the box.
 
-        EMAIL_DEV_SUPPRESS_EMAIL_DELIVERY=false
-            If true, emails render but are never delivered via SMTP.
-            Templates still render and are visible in admin UI.
-
-        EMAIL_DEV_EMAIL_ADDRESS_WHITELIST=safe@example.com,other@test.com
-            Comma-separated addresses that bypass catchall redirect.
-            These emails deliver to the real recipient on dev sites.
-
-        EMAIL_DEV_EMAIL_DOMAIN_WHITELIST=example.com,trusted.org
-            Comma-separated domains that bypass catchall redirect.
-            Any recipient @domain delivers to the real recipient.
-
-    Priority Order
-        1. Address whitelist match -> deliver normally
-        2. Domain whitelist match -> deliver normally
-        3. Catchall address set -> redirect to catchall
-        4. No catchall -> email queued but not delivered
-
-    Production sites (no .dev. in hostname) bypass all dev gating.
-
-HOSTNAME DETECTION
-
-    Rsx::get_hostname()
-        Returns the application hostname. Used by is_dev_site.
-
-        Resolution order:
-        - Web mode: uses request hostname (HTTP_HOST)
-        - CLI mode: uses the APP_URL host
-        - Production web: validates request hostname matches the APP_URL host
-
-    Environment Variable
-        APP_URL=https://myapp.example.com
-            The single source of the application hostname. The $HOSTNAME token
-            (APP_URL=https://$HOSTNAME) resolves to the OS hostname at boot, so a
-            dev/docker box needs no per-instance edit. Must be https.
-
-ADMIN UI
-
-    Three admin pages in the template app's System module. Reach them from the
-    sidebar section "System" -> "System Admin", then the "Email" group in the
-    System sublayout's own sidebar. They are NOT under "Settings" (that is a
-    separate item in the "Administration" nav section). The sidebar labels are
-    shorter than the breadcrumb titles, noted per page below.
-
-    Email Configuration (/frontend/system/email_config, sidebar "Configuration")
-        Read-only display of mail driver, SMTP settings, dev site status,
-        catchall/whitelist configuration, queue statistics.
-
-    Email Queue (/frontend/system/email_queue)
-        DataGrid of all queued emails. Search, filter by status. Preview
-        rendered HTML. Resend failed/blocked emails.
-
-    Email Recipients (/frontend/system/email_recipients, sidebar "Recipients")
-        Per-address tracking. Toggle blocklist status (notification/marketing/all).
-        View delivery stats (sent/failed counts, last sent date).
-
-DATABASE TABLES
-
-    email_queue
-        Stores every email with status, template data, rendered HTML, retry info.
-        Status: PENDING, SENDING, SENT, FAILED, BLOCKED
-        Category: TRANSACTIONAL, NOTIFICATION, MARKETING
-
-    email_recipients
-        Per-address blocklist and delivery statistics.
-        Fields: is_blocked_notification, is_blocked_marketing, is_blocked_all
-        Stats: total_sent, total_failed, last_sent_at
+    Asserting a send is asserting the ROW: email_class, category_id, status_id, to_address,
+    dev_original_to, rendered_html/rendered_text, headers.
 
 EXISTING TEMPLATES
 
-    Portal_Invitation_Email         - Portal user invitation with registration link
-    Portal_Password_Reset_Email     - Portal password reset with reset link
-    User_Invitation_Email           - Internal user invitation with accept link
-    Welcome_Email                   - Welcome email after account creation
-    Portal_Shared_Content_Email     - Shared content notification with message
+    Framework
+        Rsx_Mail_Test_Email             the rsx:mail:test probe. Dependency-free.
+
+    Reference app (rsx/emails/, all TRANSACTIONAL)
+        User_Invitation_Email           staff invitation carrying the single-use invite link
+        Welcome_Email                   after account creation
+        Portal_Invitation_Email         portal invitation with the registration link
+        Portal_Password_Reset_Email     portal password reset link
+        Portal_Request_Reply_Email      a reply landed on a portal request thread
+        Portal_Shared_Content_Email     content shared with a portal user
 
 SEE ALSO
-    php artisan rsx:man portal - Client portal system
-    php artisan rsx:task:list - View scheduled tasks
-    php artisan rsx:task:run Mail_Queue_Service send_pending_queue - Process email queue manually
+    php artisan rsx:man sms                 the deliberate mirror
+    php artisan rsx:man config_rsx          the config reference
+    php artisan rsx:man health              the health-check system
+    php artisan rsx:man tasks               #[Exclusive], #[Schedule], Task::dispatch
+    php artisan rsx:man file_upload         File_Attachment_Model, the blob store
+    php artisan rsx:man time                the datetime formatters an email must use
+    php artisan rsx:man portal              the experience fork the tenant resolution follows
 
-RSpade 1.0                           April 2026                                    EMAIL(7)
+RSpade 1.0                          August 2026                                    EMAIL(7)

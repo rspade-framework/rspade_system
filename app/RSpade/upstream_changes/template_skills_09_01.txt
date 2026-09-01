@@ -1,0 +1,117 @@
+TEMPLATE-APP CLAUDE SKILLS: SKILLS WHOSE SUBJECT LIVES IN /rsx/ MOVED INTO /rsx/
+Date: 2026-09-01
+
+SUMMARY
+    Six framework skills documented features whose CODE lives in /rsx/ - your
+    application's own, forkable code. Downstream those skill files are immutable
+    (system/ is overwritten by every framework pull) while the feature they
+    described is yours to change, so they went stale silently.
+
+    The skills whose subject is entirely yours have MOVED into the template app
+    (rsx/resource/skills/), where they are version-pinned to your fork and are
+    yours to edit. The MIXED ones were SPLIT: the framework kept the part that
+    describes framework classes, under a narrower name, and the template half
+    became a new app skill.
+
+    Nothing about how you write code changed. This document is about which
+    documentation file your Claude Code sessions load, and about picking up the
+    template halves into your own fork.
+
+THE LIVING-SKILL RULE (new)
+    A skill under rsx/resource/skills/ is LIVING DOCUMENTATION, exactly like a
+    CLAUDE.md under rsx/: it describes the CURRENT state of the directories it
+    covers, never what shipped. When you change one of those features, updating
+    the skill (and the companion CLAUDE.md files it names) is part of the change,
+    done in the same pass without being asked. Each moved skill carries a
+    "Living skill" note under its H1 saying which directories it owns. Framework
+    skills, man pages and fragments whose subject lives in rsx/ now point at the
+    living file and lose to it where the two disagree.
+
+FRAMEWORK SKILLS RENAMED (arrive automatically via the submodule; nothing to copy)
+    rspade:forms          ->  rspade:form-engine          (Rsx_Form, Form_Errors,
+                                                           Form_Utils, server-only
+                                                           validation, populate/
+                                                           set_loading, dirty parking)
+    rspade:form-input     ->  rspade:form-input-contract  (Form_Input_Abstract only)
+    rspade:scss           ->  rspade:scss-rules           (SCSS-SCOPE-01, BEM prefix,
+                                                           SCSS-SID-01, SCSS-ANIM-01,
+                                                           bundle include order)
+    rspade:portal         ->  rspade:portal-core          (Portal_Session, Rsx_Portal,
+                                                           Portal_Main_Abstract, routing
+                                                           attributes, the realm, the
+                                                           site declaration)
+
+FRAMEWORK SKILLS REMOVED (no replacement in system/ - they are now yours)
+    rspade:modals
+    rspade:crud-patterns
+
+    If your own notes, CLAUDE.md files or prompts name `rspade:modals` or
+    `rspade:crud-patterns`, repoint them at the app skills `modals` and
+    `crud-patterns` below. Likewise repoint any `rspade:forms`, `rspade:form-input`,
+    `rspade:scss` or `rspade:portal` reference to the new name above.
+
+AFFECTED FILES
+    /rsx/resource/skills/modals/SKILL.md                    (new - moved from system/)
+    /rsx/resource/skills/crud-patterns/SKILL.md             (new - moved from system/)
+    /rsx/resource/skills/form-components/SKILL.md           (new - split out)
+    /rsx/resource/skills/theme/SKILL.md                     (new - split out)
+    /rsx/resource/skills/portal-app/SKILL.md                (new - split out)
+    /rsx/resource/skills/semantic-components/SKILL.md       (edited - living-skill note)
+    /rsx/resource/skills/action-log-and-notifications/SKILL.md
+                                                            (edited - living-skill note)
+
+CHANGES REQUIRED
+
+    Copy the five new app skills into your fork. The release ships the template
+    app verbatim at system/app/RSpade/resource/reference_app/, so run these from
+    your project root:
+
+        cp -r system/app/RSpade/resource/reference_app/resource/skills/modals \
+              rsx/resource/skills/modals
+
+        cp -r system/app/RSpade/resource/reference_app/resource/skills/crud-patterns \
+              rsx/resource/skills/crud-patterns
+
+        cp -r system/app/RSpade/resource/reference_app/resource/skills/form-components \
+              rsx/resource/skills/form-components
+
+        cp -r system/app/RSpade/resource/reference_app/resource/skills/theme \
+              rsx/resource/skills/theme
+
+        cp -r system/app/RSpade/resource/reference_app/resource/skills/portal-app \
+              rsx/resource/skills/portal-app
+
+    If you already carry the two skills that shipped earlier and have NOT edited
+    them, refresh them the same way to pick up the living-skill note:
+
+        cp -r system/app/RSpade/resource/reference_app/resource/skills/semantic-components \
+              rsx/resource/skills/semantic-components
+
+        cp -r system/app/RSpade/resource/reference_app/resource/skills/action-log-and-notifications \
+              rsx/resource/skills/action-log-and-notifications
+
+    If you HAVE edited them, add the note by hand instead - the blockquote
+    immediately after the H1, naming the directories the skill describes.
+
+    Then read each copied skill against your own code. These are descriptions of
+    the TEMPLATE's state, and your fork has moved: fix every sentence that no
+    longer describes what your rsx/ actually does, delete sections about code you
+    removed, and add what you added. That editing pass IS the point of the move -
+    an unedited copy is a stale skill with your name on it.
+
+    You never create the .claude/skills/<name> symlinks: the environment update
+    system/bin/environment_updates/070_app_skills.sh regenerates them on every
+    framework pull, rsx:git pull, development build and container start.
+    Committing the skill directory is the whole distribution mechanism.
+
+VERIFICATION
+    php artisan rsx:health
+        The "Claude Skills" row is OK - no unlinked skill, no dangling link, no
+        blocked name. (php artisan rsx:heal claude-skills re-runs the wiring on
+        its own if a box's last build predates the copy.)
+
+    ls -la .claude/skills/
+        Shows one relative symlink per app skill - modals, crud-patterns,
+        form-components, theme, portal-app, plus whatever else you carry - each
+        pointing at ../../rsx/resource/skills/<name>, alongside the rspade
+        plugin link.

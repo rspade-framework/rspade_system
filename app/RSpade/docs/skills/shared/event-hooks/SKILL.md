@@ -1,6 +1,6 @@
 ---
 name: event-hooks
-description: The RSpade PHP event system - #[OnEvent] handlers discovered by the manifest, and the four trigger kinds (action, filter, gate, resolve) with their exact return contracts. Use when extending framework behavior at a documented hook, registering the mandatory file-upload gate, transforming data through a chain, intercepting a framework default with trigger_resolve, or firing your own application events.
+description: "The RSpade PHP event system - #[OnEvent] handlers discovered by the manifest, and the four trigger kinds (action, filter, gate, resolve) with their exact return contracts. Use when extending framework behavior at a documented hook, registering the mandatory file-upload gate, transforming data through a chain, intercepting a framework default with trigger_resolve, or firing your own application events."
 ---
 
 # Event Hooks

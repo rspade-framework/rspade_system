@@ -621,9 +621,15 @@ ENTRY 6: DATETIME DISPLAY AND DATETIME-vs-DATE COLUMNS (timezone correctness)
                  rsx/ --include='*.js' --include='*.jqhtml'
 
         5. Egress that never renders in a browser at all, and so is never caught by
-           looking at pages. Walk each one by hand:
+           looking at pages. EMAIL IS COVERED BY A RULE now - EMAIL-TEMPLATE-01
+           flags a raw *_at / *_date read in any blade under an /emails/ directory,
+           so clearing rsx:check clears the email half (re-verify every
+           @EMAIL-TEMPLATE-01-EXCEPTION marker the same way you re-verify a
+           JQHTML-DATETIME-01 one). What no rule reaches is a datetime an email
+           class formats - or fails to format - in its own data(), and every other
+           export. Walk those by hand:
 
-               grep -rnE '(_at|_date)\b' rsx/emails/
+               grep -rnE '(_at|_date)\b' rsx/emails/*.php
                grep -rniE 'build_csv|Csv.Writer|->download\(|Response::file|pdf' rsx/ \
                  --include='*.php'
 
@@ -821,6 +827,8 @@ ENTRY 7: $required ASTERISKS WITH NO SERVER RULE (form validation completeness)
 
     Related
         php artisan rsx:man form_conventions
+    php artisan rsx:man template_app
+    php artisan rsx:man email
         php artisan rsx:man external_api    (the other caller that sends blanks)
 
 
@@ -898,6 +906,281 @@ ENTRY 8: AUTHENTICATION THROTTLE COVERAGE (every credential-checking path, and t
         php artisan rsx:man auth
 
 
+--------------------------------------------------------------------------------
+
+ENTRY 9: OUTBOUND EMAIL (the transport, the sender domain, and the dev safety net)
+
+    What to audit
+        Whether this installation can actually deliver mail to real people, whether
+        receiving servers will believe it, and whether the two development safety
+        layers are in the state you intend for production.
+
+        FIRST: read `php artisan rsx:man email` IN FULL - in particular DELIVERY
+        MODES AND THE DEV-SITE LAYER and CONFIGURATION. This audit directs you
+        there and does not restate it.
+
+        A fresh install is in MAIL_DELIVERY=aiosmtpd - captured into a local Maildir
+        and nothing else. That is correct for development and wrong for launch, and
+        NOTHING BREAKS to tell you: the queue row says Sent, the catcher file is
+        written, and no human ever receives anything.
+
+    Why it matters
+        Every failure in this entry is invisible from inside the application. A
+        loopback transport looks healthy. A suppressed delivery mode looks healthy.
+        A From address on a domain with no SPF record sends successfully and lands
+        in a spam folder nobody looks in. The first evidence is a customer saying
+        they never got the invitation - and by then the password reset, the receipt
+        and the alert never arrived either.
+
+        The dev-site layer is the other direction of the same risk. It is keyed on
+        the hostname containing '.dev.', so a staging host named without it has no
+        net at all: the first import on that box mails every real address in the
+        database.
+
+    The audit
+        1. MAIL_DELIVERY=live, EXPLICITLY. It is the ONE value that makes this host
+           send mail, and the other three all look healthy while nobody receives
+           anything: 'aiosmtpd' (the shipped default) captures into a local Maildir,
+           'suppressed' renders and records and hands nothing to a transport, and
+           'disabled' freezes the queue entirely. Confirm which one this host is on:
+
+               php artisan rsx:health          # the three Mail rows
+
+           This one value moves THREE things at once: whether mail is handed to a
+           transport at all, whether the rsx.mail.transport.* block is even read
+           (only 'live' reads it), and whether the dev-site recipient gate engages
+           (only 'live' engages it).
+
+        2. MAIL_HOST/MAIL_PORT name the relay or MTA that actually sends for you,
+           with MAIL_ENCRYPTION and credentials to match. They are INERT until
+           MAIL_DELIVERY=live, so a box that looks configured may not be.
+
+        3. A real MAIL_FROM_ADDRESS on a domain you control, and MAIL_FROM_NAME set
+           (or deliberately left empty to use the product name). noreply@example.com
+           is the shipped placeholder and must not survive launch.
+
+        4. SPF, DKIM and DMARC published for that domain. The "Mail sender domain"
+           health row checks SPF and DMARC and, when rsx.mail.dkim_selector names
+           one, the DKIM record too. It WARNs rather than FAILs because the fix is a
+           DNS change at a registrar - it is still a launch blocker.
+
+        5. Send a real message to a real mailbox you can open, on the launch host:
+
+               php artisan rsx:mail:test you@your-real-domain.example
+
+           Then READ THE DELIVERED MESSAGE, not the queue row: check the From line,
+           the links (they must be absolute and must resolve to the launch host),
+           the images, the datetimes, and whether it landed in the inbox or in spam.
+
+        6. The dev-site whitelists and catchall are cleared, or intended. On a
+           production hostname they are inert; on any host whose name contains
+           '.dev.' they decide who receives mail. Confirm EMAIL_DEV_CATCHALL_ADDRESS,
+           EMAIL_DEV_EMAIL_ADDRESS_WHITELIST and EMAIL_DEV_EMAIL_DOMAIN_WHITELIST
+           say what you mean on every environment you operate, and that any staging
+           box you rely on this net for is actually named with '.dev.'.
+
+        7. Retention is chosen deliberately: rsx.mail.retention_days (default 30)
+           deletes whole queue rows - the rendered bodies with them. If a compliance
+           or support requirement needs longer, set it before the first month passes.
+
+        8. The stale window is chosen deliberately: rsx.mail.stale_after_days
+           (default 2). Any queued message still unsent that long after it was due is
+           REFUSED and marked Failed, naming `php artisan rsx:mail:resend <id>`. That
+           is what stops a queue nobody noticed was broken from flooding a month of
+           stale notices the moment somebody repairs it - the decision to send old
+           mail belongs to a human. Raise it only if this application genuinely sends
+           mail that is still worth receiving days late; lowering it below a day
+           risks refusing mail over a routine relay outage.
+
+        9. Every email class the app ships renders. Walk them:
+
+               php artisan rsx:mail:test you@example.com --email=Welcome_Email
+
+           for each class, and read each delivered message.
+
+        10. The task cron is installed and ticking (the "Task Scheduler Liveness"
+           health row). Without it the drain still runs on every send, but a message
+           held back by a retry delay or a send_at() waits forever.
+
+    Triage rules (one correct fix per finding)
+        MAIL_DELIVERY is not 'live' on a launch host
+            Set MAIL_DELIVERY=live, point MAIL_HOST/MAIL_PORT at the real relay, set
+            MAIL_ENCRYPTION and credentials, and re-run rsx:mail:test to a real
+            mailbox. Do not "test in production" by sending to a colleague from a box
+            still in aiosmtpd mode: it proves nothing, because nothing left. Verify
+            the "Mail delivery" health row says live via the relay you configured.
+
+        Missing SPF / DMARC / DKIM
+            A registrar DNS change, and it propagates - do it days before launch,
+            not on the morning.
+
+        Mail arrives but links are broken
+            APP_URL on the sending host is wrong, or a template built a URL without
+            rsx_absolute_url(). Clear EMAIL-TEMPLATE-01 in rsx:check first.
+
+        A staging host mailing real customers
+            The hostname has no '.dev.' in it. Rename it, or accept that the box has
+            no recipient net and set MAIL_DELIVERY=suppressed there.
+
+    Dos and don'ts
+        DO read the delivered message, in a real mailbox, on the real host.
+        DO treat a WARN on the sender-domain row as a blocker. It is the difference
+             between "sent" and "read".
+        DO check every environment separately. These are .env values, and .env is
+             never distributed.
+        DON'T assume a green queue means delivered mail. Sent means a transport
+             accepted the message; the catcher accepts everything.
+        DON'T leave the shipped noreply@example.com in place "for now".
+        DON'T rely on the dev-site gate on a host whose name cannot trigger it.
+
+    Related
+        php artisan rsx:man email
+        php artisan rsx:man config_rsx      (MAIL AND SMS)
+        php artisan rsx:man health          (the three Mail rows)
+        EMAIL-TEMPLATE-01                   server-side datetimes, absolute URLs
+
+
+--------------------------------------------------------------------------------
+
+ENTRY 10: LIVING DOCUMENTATION CURRENCY (rsx/**/CLAUDE.md and the app skills)
+
+    What to audit
+        Whether every living documentation file this application carries still
+        describes the application as it is TODAY: the per-directory CLAUDE.md files
+        under rsx/, and the application's own skills under rsx/resource/skills/.
+
+        FIRST: read the framework's LIVING DOCUMENTATION IN rsx/ rule (it is
+        always-on knowledge; `rsx:man template_app`, LIVING DOCUMENTATION restates
+        the convention). This audit does NOT restate the rule - it enumerates the
+        files and holds each one to it.
+
+        This audit is file-enumeration driven. Build the list first:
+
+            find rsx -name CLAUDE.md -not -path '*/resource/*'
+            ls rsx/resource/*/CLAUDE.md
+            ls rsx/resource/skills/*/SKILL.md
+
+        Every file the three commands print is in scope, and each is read
+        INDIVIDUALLY against the directory it documents. There is no sampling: a
+        file nobody checked is exactly the file that has been wrong the longest.
+
+        NOT in scope: system/app/RSpade/resource/reference_app/**. Those are the
+        pristine template copies that ship inside the framework release; they
+        describe the app as it was published, they are read-only, and
+        rsx:framework:pull overwrites them whole. Correcting one is meaningless.
+        Equally: the framework NEVER edits the files under rsx/ on a pull. Nothing
+        upstream will ever fix these for you - which is why they are on this list.
+
+    Why it matters
+        A living file is read as current by every LLM session and every developer
+        who opens the directory, and nothing breaks when it stops being true. A
+        stale WHAT IS HERE inventory sends the next change to a component that was
+        renamed a year ago; a HOW TO CUSTOMIZE section naming a seam that no longer
+        exists produces code written against a contract nobody implements; a
+        DIVERGENCES paragraph describing a divergence you have since abandoned
+        actively steers work AWAY from the framework behaviour you went back to.
+
+        Uneven currency is worse than none. A reader who finds one accurate file
+        trusts its neighbours, and the wrong one is indistinguishable from the
+        right one until the code disagrees.
+
+    The audit
+        For each file in the enumeration:
+
+        1. WHAT IS HERE matches `ls` of the directory. Every component, class or
+           file group listed still exists under that name; everything present that
+           a reader would need to know about is listed. Files added since the last
+           edit are the usual finding.
+
+        2. HOW IT IS USED names the real invocation - the current tag names,
+           arguments, endpoint names and neighbours. Follow one example from the
+           file into the code and confirm it still compiles as written.
+
+        3. HOW TO CUSTOMIZE names seams that EXIST. An "extend this", "override
+           that", "delete this directory" instruction is checked against the code,
+           not remembered.
+
+        4. RELATED still resolves: every `rsx:man <page>` renders, every skill name
+           is a skill that exists (framework skills were renamed when their subject
+           moved into the app), every sibling path is a real directory.
+
+        5. Any `## DIVERGENCES FROM FRAMEWORK DOCS` section still describes a REAL
+           divergence, one paragraph per divergence. A paragraph whose behaviour the
+           framework has since adopted as its own is DELETED - it is no longer a
+           divergence, and leaving it in claims a difference that does not exist.
+           The template ships no such section; every paragraph in one is a fork's
+           own deliberate departure and is re-justified here or removed.
+
+        6. A directory of shipped code this application DELETED has its file deleted
+           with it. Grep for the deleted directory's name across rsx/ and remove the
+           pointers too.
+
+        7. A directory this application ADDED that is a customization seam - a
+           component group, a module, a library of its own - gets a file, in the
+           shape the neighbouring files use (WHAT IS HERE / HOW IT IS USED / HOW TO
+           CUSTOMIZE / RELATED). A directory with no CLAUDE.md is undocumented; it
+           is never "documented elsewhere".
+
+        8. Each app skill's frontmatter `description` still triggers on the work it
+           covers: it names symbols, commands and literal error strings that are
+           still spelled that way in the code. A skill about a feature you removed
+           is deleted; a feature you added that has task vocabulary earns one.
+
+    Triage rules (one correct fix per finding)
+        The rule that governs every row below: FIX THE FILE, NEVER THE CODE. This
+        audit is a documentation audit. The application is the truth and the file is
+        the description of it.
+
+        Stale inventory (files listed that are gone, files present that are absent
+        from the list)
+            Rewrite WHAT IS HERE from the current `ls`. Do not patch one line - the
+            drift is usually broader than the line you noticed.
+
+        A section about code that no longer exists
+            Delete the section. There is no deprecation notice and no "used to" in
+            a living file; the file describes the present.
+
+        The file contradicts a framework man page or skill
+            Decide which way the contradiction runs. If this application is
+            DELIBERATELY different, that is a divergence: record it as one short
+            paragraph under `## DIVERGENCES FROM FRAMEWORK DOCS` (create the section
+            the first time one is needed) naming which framework document says what
+            and what this application does instead. If the difference is ACCIDENTAL
+            - the app drifted off a convention it meant to keep - that is a CODE
+            decision for the developer, made outside this audit. Note it, finish the
+            documentation pass, and take the code question separately.
+
+        A file that is thorough but was written for a different directory
+            (Usually a copy of a sibling.) Rewrite it against this directory or
+            delete it. A confidently wrong file costs more than no file.
+
+        A skill and a CLAUDE.md that disagree
+            The skill carries the how-to depth and the CLAUDE.md the inventory; they
+            overlap by design and must not conflict. Correct both in one pass -
+            they are companions and are updated together.
+
+    Dos and don'ts
+        DO read the directory before the file. The `ls` is the source; the file is
+          the claim.
+        DO update a living file in the SAME pass as the change that made it stale.
+          This entry is the safety net for what slipped through, not the mechanism.
+        DO delete a file whose directory is gone.
+        DON'T edit anything under system/app/RSpade/resource/reference_app/. It is
+          overwritten by every framework pull, and it is not your app.
+        DON'T "fix" the code to match the documentation. The code is what runs.
+        DON'T add a `## DIVERGENCES FROM FRAMEWORK DOCS` section pre-emptively, and
+          don't turn it into a changelog: no dates, no history, one paragraph per
+          live divergence.
+        DON'T leave a directory you added undocumented because "it follows the
+          obvious pattern". The reader cannot tell an undocumented directory from an
+          uninteresting one.
+
+    Related
+        LIVING DOCUMENTATION IN rsx/       the always-on rule this entry audits
+        php artisan rsx:man template_app   (LIVING DOCUMENTATION)
+        rsx/resource/skills/CLAUDE.md      SKILL.md shape and the routing test
+
+
 SEE ALSO
     php artisan rsx:man login_redirect
     php artisan rsx:man session
@@ -911,3 +1194,4 @@ SEE ALSO
     php artisan rsx:man external_resources
     php artisan rsx:man time
     php artisan rsx:man form_conventions
+    php artisan rsx:man template_app

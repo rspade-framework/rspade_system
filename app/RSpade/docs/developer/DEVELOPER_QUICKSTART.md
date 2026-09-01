@@ -242,7 +242,7 @@ rsx/
     services/       background tasks and integrations
     handlers/       event handlers
     commands/       your own artisan commands
-    emails/         Blade email templates
+    emails/         Email classes and their Blade templates
     portal/         the client portal (a parallel authenticated app)
     public/         static assets
     resource/       config overrides, migrations, your own docs and man pages
@@ -966,10 +966,12 @@ thumbnail URL. Office documents are converted to PDF by a background worker, so
 their thumbnail appears a few seconds after upload and swaps itself in over
 realtime. `rsx:man file_upload`, `rsx:man documents`.
 
-**Email and SMS.** Everything is queued, never sent inline, so a slow mail host
-can never slow a user's action. `Rsx_Mail::send($to, $subject, $template, $data,
-$category)`; categories decide whether unsubscribes apply. Templates are Blade
-files in `rsx/emails/`. `rsx:man email`.
+**Email and SMS.** One email is one class — `X_Email extends Rsx_Email_Abstract`
+in `rsx/emails/`, beside the Blade template that renders it — sent fluently:
+`(new Welcome_Email($user))->to($user)->send()`. Everything is queued and drained
+within seconds, never sent inline, so a slow mail host can never slow a user's
+action; the declared category decides whether unsubscribes apply. Smoke-test a
+host with `php artisan rsx:mail:test <address>`. `rsx:man email`.
 
 **Events.** Attribute-based hooks with no registration: a public static method in
 `rsx/handlers/` marked `#[OnEvent('some.event')]`. Four kinds — fire-and-forget

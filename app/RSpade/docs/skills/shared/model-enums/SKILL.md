@@ -1,6 +1,6 @@
 ---
 name: model-enums
-description: Implementing model enums in RSX with integer-backed values, constants, labels, and custom properties. Use when adding enum fields to models, working with status_id or type_id columns, accessing enum labels/properties via BEM-style syntax, or populating dropdowns with enum values.
+description: "Implementing model enums in RSX with integer-backed values, constants, labels, and custom properties. Use when adding enum fields to models, working with status_id or type_id columns, accessing enum labels/properties via BEM-style syntax, or populating dropdowns with enum values."
 ---
 
 # RSX Model Enums

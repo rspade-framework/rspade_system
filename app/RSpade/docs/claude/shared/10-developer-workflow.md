@@ -13,6 +13,7 @@
 | `rsx:health [--json]` | Verify dependencies, services, environment. **Exit 1 iff a FAIL; WARN/INFO advisory.** |
 | `rsx:heal <target>` · `--list` | Run the remedy a `rsx:health` row names. **Creates only what is definitionally absent**; anything present-but-wrong is REFUSED, never overwritten. |
 | `db:query "SQL" [--json] [--table]` | Execute MySQL directly. A SELECT with no `LIMIT` is capped at 25 rows. |
+| `rsx:mail:test <address>` | Send one real message through the configured transport and report what happened to it. Exit 0 on Sent/Suppressed. `rsx:man email`. |
 | `rsx:logrotate` | Rotate/compress/prune `storage/logs` on demand (the nightly task does it too). **No OS logrotate is assumed anywhere.** |
 | `rsx:database_and_storage_reset` | Drop every table and delete every stored file, then migrate to the fresh-install state. Refuses without `--yes` (plus `--force` under a sealed build), printing what it would destroy. **Never run it unasked.** `rsx:man migrations`. |
 | `rsx:db:rebuild_provision_cache_snapshot` | Rebuild the shipped schema cache a fresh database restores instead of replaying every migration. Development only; backs up and restores the live data. Skill/details: `rsx:man migrations`. |

@@ -13,8 +13,9 @@ use App\RSpade\Core\Task\Task;
  * Rsx_Sms - Framework SMS API (mirrors Rsx_Mail).
  *
  * One-call SMS sending. All messages are queued - never sent inline. Dev sites can
- * redirect/suppress outbound SMS. REAL OUTBOUND DELIVERY IS NOT WIRED YET: the send
- * task (Sms_Queue_Service) records each message as HELD_BACK. See the backlog.
+ * redirect outbound SMS to a catchall. THERE IS NO SMS PROVIDER: config
+ * rsx.sms.delivery is 'suppressed' and Sms_Queue_Service records each message
+ * SUPPRESSED. The queue, the blocklist and the dev gating are all real.
  *
  * Usage:
  *   Rsx_Sms::send('+15555550123', 'Your code is 4821', Rsx_Sms::TRANSACTIONAL);
@@ -25,6 +26,42 @@ class Rsx_Sms
     const TRANSACTIONAL = 1;
     const NOTIFICATION = 2;
     const MARKETING = 3;
+
+    /** Every claimed row is recorded SUPPRESSED - there is nothing to hand it to. */
+    const MODE_SUPPRESSED = 'suppressed';
+
+    /** The queue is frozen: the drain does nothing at all and rows stay PENDING. */
+    const MODE_DISABLED = 'disabled';
+
+    /**
+     * Every value rsx.sms.delivery may hold.
+     *
+     * The mail modes' vocabulary MINUS the two that need a transport. Keeping the two
+     * shared spellings identical is the point - an operator who knows what `disabled`
+     * means for mail knows what it means here - and refusing 'live' and 'aiosmtpd' out
+     * loud is better than accepting a word that would quietly do nothing.
+     */
+    const DELIVERY_MODES = [
+        self::MODE_SUPPRESSED,
+        self::MODE_DISABLED,
+    ];
+
+    /**
+     * What this install does with an SMS. One of the two MODE_* constants.
+     */
+    public static function delivery_mode(): string
+    {
+        $mode = strtolower(trim((string) config('rsx.sms.delivery', self::MODE_SUPPRESSED)));
+
+        if (!in_array($mode, self::DELIVERY_MODES, true)) {
+            throw new \RuntimeException(
+                "rsx.sms.delivery is '{$mode}' - THERE IS NO SMS PROVIDER, so the only modes are '"
+                . implode("', '", self::DELIVERY_MODES) . "'."
+            );
+        }
+
+        return $mode;
+    }
 
     /**
      * Queue an SMS for delivery.
@@ -57,19 +94,37 @@ class Rsx_Sms
         // Dev-site redirect (mirror of the email dev safety): capture the original
         // destination in dev_original_to when redirected/suppressed.
         $dev_original_to = null;
+        $dev_undeliverable = false;
         if (self::is_dev_mode()) {
-            [$actual_to, $dev_original_to] = self::_apply_dev_redirect($to);
+            [$actual_to, $dev_original_to, $dev_undeliverable] = self::_apply_dev_redirect($to);
             $to = $actual_to;
+        }
+
+        // A dev host with no whitelist match and no catchall has nowhere to send this,
+        // and that is known NOW - the row is recorded SUPPRESSED rather than queued.
+        // (The mail side does exactly this; the two facades stay one shape.)
+        if ($dev_undeliverable) {
+            return Sms_Queue_Model::enqueue_suppressed(
+                $site_id,
+                $to,
+                $body,
+                'dev site: no whitelist match and no catchall',
+                $category,
+                $related_type,
+                $related_id
+            );
         }
 
         $record = Sms_Queue_Model::enqueue(
             $site_id, $to, $body, $category, $dev_original_to, $related_type, $related_id
         );
 
-        // Drain the queue promptly via a background worker (coalesced + throttled).
-        // Skipped in console (tests/CLI/cron), where the 5-minute Sms_Queue_Service
-        // cron or a direct run handles processing.
-        if (!app()->runningInConsole()) {
+        // Drain the queue promptly via a background worker (coalesced by #[Exclusive]).
+        // Every context does this - a web request, a CLI importer, a task. The one
+        // exception is a test run: rsx:test swaps the default connection to 'test' for
+        // the whole run, and a detached worker booting against the DEVELOPER's database
+        // would drain rows it cannot see. A test that wants the drain runs it itself.
+        if (config('database.default') !== 'test') {
             Task::dispatch('Sms_Queue_Service', 'send_pending_queue');
         }
 
@@ -145,14 +200,6 @@ class Rsx_Sms
     // =========================================================================
 
     /**
-     * Whether delivery is suppressed (dev site with suppress flag).
-     */
-    public static function is_delivery_suppressed(): bool
-    {
-        return (bool) env('SMS_DEV_SUPPRESS_DELIVERY', false);
-    }
-
-    /**
      * Whether dev-site SMS gating is active (hostname-based, via Rsx::is_dev_site()).
      */
     public static function is_dev_mode(): bool
@@ -164,25 +211,27 @@ class Rsx_Sms
      * Apply dev-site SMS redirect logic. On dev sites:
      *   1. Number in whitelist -> deliver as-is
      *   2. Catchall number set  -> redirect to catchall (original captured)
-     *   3. Otherwise            -> stays queued, not delivered
+     *   3. Otherwise            -> NOTHING IS DELIVERABLE from this host; the third
+     *                              return value says so and send() records SUPPRESSED
      *
-     * @return array [actual_to, original_to_or_null]
+     * @return array{0: string, 1: ?string, 2: bool} [actual_to, original_to_or_null, undeliverable]
      */
     private static function _apply_dev_redirect(string $to): array
     {
-        $whitelist = env('SMS_DEV_NUMBER_WHITELIST', '');
+        $whitelist = config('rsx.sms.dev_site.number_whitelist', '');
         if ($whitelist) {
             $numbers = array_map('trim', explode(',', $whitelist));
             if (in_array($to, $numbers)) {
-                return [$to, null];
+                return [$to, null, false];
             }
         }
 
-        $catchall = env('SMS_DEV_CATCHALL_NUMBER');
+        $catchall = config('rsx.sms.dev_site.catchall_number');
         if ($catchall) {
-            return [$catchall, $to];
+            return [$catchall, $to, false];
         }
 
-        return [$to, null];
+        // The destination was not rewritten, so there is no 'original' to record.
+        return [$to, null, true];
     }
 }

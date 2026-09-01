@@ -1,6 +1,6 @@
 ---
 name: bundles
-description: RSX module bundles - defining a Rsx_Bundle_Abstract with its include list, the SCSS include-ordering rule, rendering the bundle into a Blade head, JIT compilation, output filenames, npm packages, auto-discovered Asset Bundles, and the 'watch' cache-invalidation key. Use when creating a new module and its bundle, adding a directory or npm package to a bundle's includes, declaring a 'watch' target for a compiled source tree, wondering why a component's JS or SCSS is not reaching the browser, when editing an SCSS partial does not change the compiled output, or when a build fails with "Bundle 'watch' target does not exist".
+description: "RSX module bundles - defining a Rsx_Bundle_Abstract with its include list, the SCSS include-ordering rule, rendering the bundle into a Blade head, JIT compilation, output filenames, npm packages, auto-discovered Asset Bundles, and the 'watch' cache-invalidation key. Use when creating a new module and its bundle, adding a directory or npm package to a bundle's includes, declaring a 'watch' target for a compiled source tree, wondering why a component's JS or SCSS is not reaching the browser, when editing an SCSS partial does not change the compiled output, or when a build fails with \"Bundle 'watch' target does not exist\"."
 ---
 
 # Bundle System

@@ -1,6 +1,6 @@
 ---
 name: permissions-acl
-description: Working with RSpade's role hierarchy and per-user ACL layer - users.role_id, user_permissions GRANT/DENY rows, the Permission facade (has_permission/has_role/can_admin_role/require_permission/require_role) and its JS mirror reading window.rsxapp.user.resolved_permissions. Use when adding a permission constant or a role, checking whether a user may do something inside a function body, preventing privilege escalation in a role-assignment UI, granting or denying a supplementary permission, or deciding whether a rule belongs in an ACL or an #[Auth] gate.
+description: "Working with RSpade's role hierarchy and per-user ACL layer - users.role_id, user_permissions GRANT/DENY rows, the Permission facade (has_permission/has_role/can_admin_role/require_permission/require_role) and its JS mirror reading window.rsxapp.user.resolved_permissions. Use when adding a permission constant or a role, checking whether a user may do something inside a function body, preventing privilege escalation in a role-assignment UI, granting or denying a supplementary permission, or deciding whether a rule belongs in an ACL or an #[Auth] gate."
 ---
 
 # Permissions and ACLs

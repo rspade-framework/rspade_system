@@ -202,10 +202,75 @@ APPLICATION SKILLS
     See rsx/resource/skills/CLAUDE.md in the reference app for the SKILL.md
     frontmatter shape and the skill-vs-CLAUDE.md-vs-man-page routing test.
 
-    SEEDED SKILLS. The reference app ships two of its own, so a new project starts
-    with worked examples of the shape: `semantic-components` (building UI from the
-    app's widget vocabulary) and `action-log-and-notifications` (the app's activity
-    and notification primitives).
+    SEEDED SKILLS. The reference app ships SEVEN of its own, so a new project starts
+    with worked examples of the shape and with task-triggered depth for the parts of
+    the app it will change first:
+
+        crud-patterns                the list/view/edit split and the DataGrid backend
+        form-components              Form_Field chrome, Rsx_Tabs, the input roster
+        modals                       the modal engine in rsx/lib/modal/
+        semantic-components          building UI from the app's widget vocabulary
+        theme                        tokens, responsive tiers, Bootstrap overrides
+        portal-app                   the shipped client-portal screens
+        action-log-and-notifications the app's activity and notification primitives
+
+    These describe APPLICATION code, so they live with it and are the fork's to
+    change. Where a subject spans both sides of the boundary the framework keeps the
+    narrower half under its own name - `rspade:form-engine` (Rsx_Form),
+    `rspade:form-input-contract` (Form_Input_Abstract), `rspade:scss-rules` (the lint
+    rules), `rspade:portal-core` (Portal_Session and the portal dispatcher) - and the
+    app skill above covers the template half.
+
+LIVING DOCUMENTATION
+    EVERY `CLAUDE.md` AND EVERY SKILL UNDER /rsx/ IS LIVING DOCUMENTATION: it
+    describes the CURRENT state of the directory it sits in, never what shipped. When
+    an implemented change alters the behaviour, contents or conventions of a directory
+    that carries one, updating that file is PART OF THE CHANGE, done in the same pass
+    without being asked. The canonical statement of the rule is the framework's
+    always-on knowledge (LIVING DOCUMENTATION IN rsx/); this section is its summary
+    for the reference app.
+
+    THE PER-DIRECTORY FILE. A customization seam - a component group, a module, a
+    library of its own - carries a `CLAUDE.md` in this shape:
+
+        # rsx/<path> - <one-line concept>
+
+        ## WHAT IS HERE      current inventory, one line per component or file group
+        ## HOW IT IS USED    the intended invocation and where it fits; the contract
+                             depth stays in the skill or man page, cited not restated
+        ## HOW TO CUSTOMIZE  the sanctioned seams: what to extend, copy, restyle,
+                             delete - and what never to touch, with the reason
+        ## RELATED           skills, man pages, sibling directories, worked examples
+
+    A directory with no `CLAUDE.md` is UNDOCUMENTED, never "documented elsewhere".
+
+    DIVERGENCES. A living file describes present behaviour only. It refers to how
+    something used to work in exactly one case: when the previous behaviour is still
+    stated by an immutable framework tier - a system/ skill, man page or fragment that
+    rsx:framework:pull keeps restating. Then the file grows a final section headed
+    `## DIVERGENCES FROM FRAMEWORK DOCS`, created the first time it is needed and
+    never pre-emptively, with one short paragraph per divergence: which framework
+    document says what, and what this application does instead. No changelog, no
+    dates, no "previously" - the framework text is the before, this file is the after.
+    THE SHIPPED TEMPLATE HAS NO SUCH SECTION; it is the fork's to add.
+
+    THE NOTICE ON THE OTHER SIDE. A framework man page, skill or fragment whose
+    subject lives in /rsx/ opens with a TEMPLATE FEATURE notice naming the living file
+    (and the app skill where one exists). Where the living file records a divergence,
+    IT WINS - the framework page remains the reference for how the feature was
+    designed and the conventions it was built to.
+
+    THE AUDIT. Currency is not linted. It is audited before launch:
+    `php artisan rsx:man prelaunch_checklist`, ENTRY 10 - LIVING DOCUMENTATION
+    CURRENCY, which enumerates every `CLAUDE.md` under /rsx/ and every skill in
+    rsx/resource/skills/ and holds each one against its directory's current contents.
+
+    THE PRISTINE BASELINE. The copies under
+    system/app/RSpade/resource/reference_app/ are NOT audited and are never edited:
+    they are the release-current template as published, overwritten whole by every
+    rsx:framework:pull. They are the baseline to diff YOUR living files against, not
+    files to correct. Nothing upstream ever edits the files under /rsx/.
+
 
 USING IT
     - As reference: read system/app/RSpade/resource/reference_app/ alongside these man
@@ -226,4 +291,4 @@ NOTES
 SEE ALSO
     portal(3), spa(3), crud(3), jqhtml(3), model_fetch(3), enum(3), coding_standards(3)
 
-RSX Framework              Last updated 2026-08-24              TEMPLATE_APP(3)
+RSX Framework              Last updated 2026-09-01              TEMPLATE_APP(3)

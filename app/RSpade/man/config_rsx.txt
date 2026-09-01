@@ -512,27 +512,98 @@ FULL PAGE CACHE
 
 MAIL AND SMS
     'mail' => [
-        'retry_max' => 6,
-        'retry_backoff_minutes' => [2, 4, 8, 15, 30, 60],
+        # aiosmtpd | live | suppressed | disabled. Anything else THROWS.
+        #   aiosmtpd   the development catcher on 127.0.0.1:1025 (THE DEFAULT); the
+        #              whole 'transport' block below is IGNORED, and the catcher's
+        #              SMTP greeting must say 'aiosmtpd'
+        #   live       real delivery through 'transport'; the .dev.-hostname
+        #              recipient gate applies in THIS MODE ONLY
+        #   suppressed built and recorded, handed to nobody
+        #   disabled   the queue is FROZEN - the drain returns, rows stay Pending
+        'delivery' => env('MAIL_DELIVERY', 'aiosmtpd'),
+        # READ IN 'live' MODE ONLY.
+        'transport' => [
+            'driver' => env('MAIL_TRANSPORT', 'smtp'),     # smtp | sendmail
+            'host' => env('MAIL_HOST', '127.0.0.1'),
+            'port' => (int) env('MAIL_PORT', 1025),
+            'encryption' => env('MAIL_ENCRYPTION', ''),    # '' | tls | ssl
+            'username' => env('MAIL_USERNAME', ''),
+            'password' => env('MAIL_PASSWORD', ''),
+            'sendmail_path' => '/usr/sbin/sendmail -bs -i',
+        ],
         'from_address' => env('MAIL_FROM_ADDRESS', 'noreply@example.com'),
-        'from_name' => null,
+        'from_name' => env('MAIL_FROM_NAME', ''),          # '' = rsx.name
+        'retry' => ['attempts' => 3, 'delay_minutes' => 3],
+        'retention_days' => 30,
+        # QUEUE HYGIENE, NOT A TIMEOUT. Guards against one configuration failure:
+        # the queue silently stops working for a month, and on repair the drain
+        # floods a month of stale, irrelevant, unretractable notices. The drain
+        # refuses to send anything due more than this many days ago and marks the
+        # row FAILED naming `rsx:mail:resend <id>` - the decision to send old mail
+        # belongs to a human. Due date is COALESCE(next_attempt_at, created_at), so
+        # a future send_at() is never born stale. Never runs in 'disabled'. email(7).
+        'stale_after_days' => 2,
         'unsubscribe_secret' => null,   # null = derived from app.key
+        'branding' => ['logo_url' => null, 'footer_text' => null],
+        'dev_site' => [
+            'catchall_address' => env('EMAIL_DEV_CATCHALL_ADDRESS', ''),
+            'address_whitelist' => env('EMAIL_DEV_EMAIL_ADDRESS_WHITELIST', ''),
+            'domain_whitelist' => env('EMAIL_DEV_EMAIL_DOMAIN_WHITELIST', ''),
+        ],
+        'catcher_maildir' => storage_path('mail-catcher'),
+        'dkim_selector' => null,        # set = rsx:health looks up the DKIM TXT
     ]
 
-    Framework defaults for the email queue. Real outbound delivery is not
-    yet wired; the send task marks processed emails HELD_BACK.
+    TWO INDEPENDENT SAFETY LAYERS, do not conflate them.
+
+    'delivery' is the master switch and is CONFIGURED, not derived, with FOUR
+    values (an unrecognised one throws). 'aiosmtpd' - the shipped default -
+    hands each row to the development catcher on this box and ignores the
+    'transport' block entirely; 'live' hands it to the configured transport;
+    'suppressed' renders and records it without sending; 'disabled' freezes
+    the queue so the drain does nothing and rows stay Pending. So a fresh
+    install delivers into a local Maildir and nothing leaves the box.
+
+    'dev_site' is the second layer, keyed on the HOSTNAME (Rsx::is_dev_site()
+    - the host contains '.dev.'), and it applies in 'live' MODE ONLY.
+    Each recipient is checked against the
+    address whitelist, then the domain whitelist, then redirected to the
+    catchall. No match and no catchall means the address is not deliverable
+    from this host and the row is recorded SUPPRESSED.
+
+    The dev_site layer does NOT engage in any other mode, because no other
+    mode can reach a real person: 'aiosmtpd' files every message in a Maildir
+    here, 'suppressed' never opens a transport, 'disabled' never drains.
+    Gating there would record every message SUPPRESSED on a fresh install.
+
+    'retry' is the SMTP SERVER-ERROR policy only: the server answered with an
+    error for that one message, so it retries on its own clock and FAILs at
+    the attempt cap with the server's reply recorded. A connection-level
+    failure is not this - the runner reconnects once and then dies loud,
+    leaving every row PENDING for the next sweep.
+
     See: php artisan rsx:man email
 
     'sms' => [
-        'provider' => env('SMS_PROVIDER', null),      # null = held-back
+        # suppressed | disabled ONLY - the mail vocabulary minus the two modes
+        # that need a transport. There is no SMS provider, so 'live' and
+        # 'aiosmtpd' are refused, and there is no stale_after_days mirror.
+        'delivery' => env('SMS_DELIVERY', 'suppressed'),
+        'provider' => env('SMS_PROVIDER', null),
         'from_number' => env('SMS_FROM_NUMBER', null),
         'credentials' => [ ...provider-specific env() ... ],
-        'retry_max' => 6,
-        'retry_backoff_minutes' => [2, 4, 8, 15, 30, 60],
+        'retry' => ['attempts' => 3, 'delay_minutes' => 3],
+        'retention_days' => 30,
+        'dev_site' => [
+            'catchall_number' => env('SMS_DEV_CATCHALL_NUMBER', ''),
+            'number_whitelist' => env('SMS_DEV_NUMBER_WHITELIST', ''),
+        ],
     ]
 
-    Mirror of the mail config for the SMS queue. Also not yet delivering;
-    processed messages are marked HELD_BACK. Keep secrets in .env.
+    Mirror of the mail config for the SMS queue. NO PROVIDER IS WIRED, so
+    'delivery' defaults to 'suppressed' and every message is recorded
+    STATUS_SUPPRESSED; the provider and credential keys are the shape a
+    future transport reads and are inert today. Keep secrets in .env.
 
 DATETIME
     'datetime' => [

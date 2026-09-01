@@ -1,6 +1,6 @@
 ---
 name: ajax-error-handling
-description: Handling Ajax errors in RSX including the {_success,_ajax_return_value} envelope, error codes, response_error()/response_form_error(), client-side error display, and Form_Utils. Use when implementing error handling for Ajax calls, returning per-field validation errors from an endpoint, deciding whether to wrap something in try/catch or let it bubble, or debugging an Ajax failure from the CLI with rsx:ajax.
+description: "Handling Ajax errors in RSX including the {_success,_ajax_return_value} envelope, error codes, response_error()/response_form_error(), client-side error display, and Form_Utils. Use when implementing error handling for Ajax calls, returning per-field validation errors from an endpoint, deciding whether to wrap something in try/catch or let it bubble, or debugging an Ajax failure from the CLI with rsx:ajax."
 ---
 
 # RSX Ajax Error Handling
@@ -167,7 +167,7 @@ error itself (an edit modal whose record fetch rejected) may call it directly:
 
 **Never `try/catch` a submit to "handle" a validation error** - swallowing it
 before the renderer sees it is how a failed save comes to look successful. Full
-contract: skill `rspade:forms`, `rsx:man form_conventions`.
+contract: skill `rspade:form-engine`, `rsx:man form_conventions`.
 
 ### With Form_Utils (bare-markup pages, e.g. login)
 

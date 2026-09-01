@@ -45,6 +45,9 @@ LIVE TREE (<project>/storage/)
     rsx-thumbnails/   generated WebP thumbnails (content-addressed).        [omit]
     rsx-renditions/   cached soffice->PDF renditions (content-addressed).   [omit]
     rsx-ide-bridge/   IDE bridge local-file grant token + passive guards.   [omit]
+    mail-catcher/     development SMTP catcher Maildir (cur/new/tmp): every
+                      message the local sink accepted, one file each. Pruned by
+                      the mail cleanup task past rsx.mail.retention_days.   [omit]
     uploads/          the content-addressed file-attachment BLOB STORE
                       (Rsx_File_Paths::blob_root()).                        [omit]
     framework/        Laravel cache/, sessions/, testing/, views/.          [omit]

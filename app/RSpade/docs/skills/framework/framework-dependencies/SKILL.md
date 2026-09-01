@@ -1,6 +1,6 @@
 ---
 name: framework-dependencies
-description: Adding or changing a dependency in the RSpade monorepo - installing inside system/, committing vendor and node_modules, when and how to add a package to the exposed_composer/exposed_npm lists, the standing commitment that exposure creates and the Category 2 upstream_changes obligation when one breaks or retires, and how the replace map is regenerated downstream. Use when the framework or the template app needs a new third-party package, or when retiring/major-bumping an exposed one.
+description: "Adding or changing a dependency in the RSpade monorepo - installing inside system/, committing vendor and node_modules, when and how to add a package to the exposed_composer/exposed_npm lists, the standing commitment that exposure creates and the Category 2 upstream_changes obligation when one breaks or retires, and how the replace map is regenerated downstream. Use when the framework or the template app needs a new third-party package, or when retiring/major-bumping an exposed one."
 ---
 
 # Framework dependencies (monorepo)

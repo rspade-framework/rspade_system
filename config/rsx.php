@@ -229,6 +229,7 @@ return [
         \App\RSpade\Core\Api\Api_Endpoint_ManifestSupport::class,
         \App\RSpade\Core\Externals\Externals_ManifestSupport::class,
         \App\RSpade\Core\Task\Task_Command_ManifestSupport::class,
+        \App\RSpade\Core\Mail\Email_ManifestSupport::class,
         // Auth gates run LAST: the consolidated #[Auth] index covers every surface
         // kind the modules above register.
         \App\RSpade\Core\Auth\Auth_ManifestSupport::class,
@@ -1571,22 +1572,114 @@ return [
     | Mail Configuration
     |--------------------------------------------------------------------------
     |
-    | Framework defaults for the email queue (Email_Queue_Model is core). The
-    | queue records every send; actual outbound delivery is not yet wired - the
-    | send task marks processed emails HELD_BACK. See: php artisan rsx:man email
+    | Outbound email: the queue (Email_Queue_Model), the transport it is handed
+    | to, and the two independent safety layers. See: php artisan rsx:man email
+    |
+    | 'delivery' is the master switch and is CONFIGURED, not derived: 'live'
+    | hands each row to the transport, 'suppressed' renders the message, records
+    | it, and records STATUS_SUPPRESSED without sending. The shipped transport
+    | default is SMTP to the loopback catcher, so a fresh install delivers into
+    | a local Maildir and nothing leaves the box even on 'live'.
+    |
+    | 'dev_site' is the SECOND, independent layer: on a hostname containing
+    | '.dev.' (Rsx::is_dev_site()) every recipient is checked against the
+    | whitelists and otherwise redirected to the catchall.
     |
     */
     'mail' => [
-        // Retry policy for the (future) real-send loop. Held-back emails do not retry.
-        'retry_max' => 6,
-        'retry_backoff_minutes' => [2, 4, 8, 15, 30, 60],
+        // What this install does with an email. FOUR modes, and nothing else is
+        // accepted - an unrecognised value throws (Rsx_Mail_Transport::delivery_mode()).
+        //
+        //   aiosmtpd   THE DEFAULT. Captured by the development catcher on this box:
+        //              SMTP to 127.0.0.1:1025, no encryption, no auth. The whole
+        //              'transport' block below is IGNORED in this mode, so a stale
+        //              MAIL_HOST cannot redirect a development install's mail at a real
+        //              relay. The catcher's SMTP greeting must contain 'aiosmtpd' or
+        //              every message is refused as a server error - see
+        //              system/bin/mail_catcher.py.
+        //   live       Real delivery through 'transport' below. The .dev.-hostname
+        //              recipient whitelist/catchall gate applies in THIS MODE ONLY.
+        //   suppressed Built and recorded (rendered_html/rendered_text land on the row),
+        //              never handed to a transport. Rows end SUPPRESSED.
+        //   disabled   The queue is FROZEN. The drain logs one line and returns; rows
+        //              stay PENDING, untouched, and nothing is marked stale.
+        'delivery' => env('MAIL_DELIVERY', 'aiosmtpd'),
 
-        // From address/name for outbound mail.
+        // IGNORED WHEN delivery = 'aiosmtpd'. Read only in 'live' mode.
+        'transport' => [
+            // smtp | sendmail
+            'driver' => env('MAIL_TRANSPORT', 'smtp'),
+            'host' => env('MAIL_HOST', '127.0.0.1'),
+            'port' => (int) env('MAIL_PORT', 1025),
+            // '' | tls | ssl
+            'encryption' => env('MAIL_ENCRYPTION', ''),
+            'username' => env('MAIL_USERNAME', ''),
+            'password' => env('MAIL_PASSWORD', ''),
+            'sendmail_path' => '/usr/sbin/sendmail -bs -i',
+        ],
+
         'from_address' => env('MAIL_FROM_ADDRESS', 'noreply@example.com'),
-        'from_name' => null,
+        // '' = use rsx.name
+        'from_name' => env('MAIL_FROM_NAME', ''),
+
+        // SMTP server-error policy: the server answered with an error for THIS
+        // message, so the message is retried on its own clock. A connection-level
+        // failure is NOT this - the runner reconnects once and then dies loud,
+        // leaving every row PENDING for the next sweep.
+        'retry' => [
+            'attempts' => 3,
+            'delay_minutes' => 3,
+        ],
+
+        // Whole queue rows (and their attachments, by FK cascade) are deleted
+        // this many days after they were created.
+        'retention_days' => 30,
+
+        // QUEUE HYGIENE, NOT A TIMEOUT. This bounds no wait, no send, no connection
+        // and no drain - those take as long as they take. It is the safeguard against
+        // ONE system-configuration failure:
+        //
+        //   The email queue silently stops working - a dead transport, a misconfigured
+        //   host, a stopped worker - and nobody notices for a month. The moment it is
+        //   repaired, the drain would flood a month of stale notices: out of date,
+        //   irrelevant, and impossible to retract.
+        //
+        // So the drain refuses to send a message that should have gone out more than
+        // this many days ago. It marks the row FAILED with an error telling the operator
+        // exactly how to resend it (`php artisan rsx:mail:resend <id>`) if they decide
+        // that message is still wanted. THE DECISION TO SEND OLD MAIL BELONGS TO A
+        // HUMAN, NEVER TO THE DRAIN. Nothing is deleted, and rsx:mail:resend is the
+        // deliberate escape hatch.
+        //
+        // Measured from COALESCE(next_attempt_at, created_at), never created_at alone: a
+        // message scheduled with send_at() three weeks out is not late until three weeks
+        // from now, and must not be born stale.
+        'stale_after_days' => 2,
 
         // Secret used to sign unsubscribe links (falls back to app.key).
         'unsubscribe_secret' => null,
+
+        // App-tier overrides: see rsx/resource/config/rsx.php.
+        'branding' => [
+            'logo_url' => null,
+            'footer_text' => null,
+        ],
+
+        // Dev-site (.dev. hostname) recipient gating - a second layer, independent
+        // of 'delivery'. Empty whitelists + empty catchall = nothing deliverable.
+        'dev_site' => [
+            'catchall_address' => env('EMAIL_DEV_CATCHALL_ADDRESS', ''),
+            'address_whitelist' => env('EMAIL_DEV_EMAIL_ADDRESS_WHITELIST', ''),
+            'domain_whitelist' => env('EMAIL_DEV_EMAIL_DOMAIN_WHITELIST', ''),
+        ],
+
+        // Where the development SMTP catcher writes its Maildir. Read by
+        // rsx:mail:test and pruned by the retention cleanup when it exists.
+        'catcher_maildir' => storage_path('mail-catcher'),
+
+        // Set to the DKIM selector this domain publishes to have rsx:health look
+        // up the corresponding TXT record. Null = no DKIM check.
+        'dkim_selector' => null,
     ],
 
     /*
@@ -1594,16 +1687,28 @@ return [
     | SMS Configuration
     |--------------------------------------------------------------------------
     |
-    | Framework defaults for the SMS queue (Sms_Queue_Model is core). Mirrors the
-    | mail config. Real outbound delivery is not yet wired - Sms_Queue_Service marks
-    | processed messages HELD_BACK. Dev safety via SMS_DEV_* env (catchall/whitelist/
-    | suppress), like EMAIL_DEV_*.
+    | The Rsx_Sms mirror of the mail block. NO PROVIDER IS WIRED: 'delivery'
+    | defaults to 'suppressed' and Sms_Queue_Service records every message
+    | STATUS_SUPPRESSED. The provider/credentials keys below are the shape a
+    | future transport reads; they are inert today.
     |
     */
     'sms' => [
-        // Sending service that will actually deliver SMS once real send is wired
-        // (see backlog). NOT used yet - Sms_Queue_Service currently marks messages
-        // HELD_BACK regardless. Common providers:
+        // suppressed | disabled. The mail modes' vocabulary, minus the two that need a
+        // transport: THERE IS NO SMS PROVIDER, so 'live' and 'aiosmtpd' are refused with
+        // a message saying so rather than silently doing nothing.
+        //
+        //   suppressed THE DEFAULT. Every claimed row is recorded SUPPRESSED ('no SMS
+        //              provider configured') - honest about a message that is not going.
+        //   disabled   The queue is FROZEN. The drain logs one line and returns; rows
+        //              stay PENDING, untouched.
+        //
+        // There is no stale-message window here (the mail side's rsx.mail.stale_after_days
+        // has no mirror): nothing can time out against a delivery path that does not exist.
+        'delivery' => env('SMS_DELIVERY', 'suppressed'),
+
+        // Sending service that will actually deliver SMS once a transport exists.
+        // Common providers:
         //   'twilio'      - Twilio
         //   'aws_sns'     - Amazon SNS (AWS)                 (also Amazon Pinpoint)
         //   'vonage'      - Vonage (formerly Nexmo)
@@ -1613,14 +1718,13 @@ return [
         //   'telnyx'      - Telnyx
         //   'infobip'     - Infobip
         //   'bandwidth'   - Bandwidth
-        // Leave null (or 'log') to keep the held-back / no-delivery behavior.
         'provider' => env('SMS_PROVIDER', null),
 
         // Sending number / sender id for outbound SMS.
         'from_number' => env('SMS_FROM_NUMBER', null),
 
-        // Provider auth credentials (used once real send is wired). Provider-specific:
-        // set only the ones your SMS_PROVIDER needs. Keep secrets in .env, never here.
+        // Provider auth credentials. Provider-specific: set only the ones your
+        // SMS_PROVIDER needs. Keep secrets in .env, never here.
         'credentials' => [
             // Twilio
             'twilio_account_sid' => env('SMS_TWILIO_ACCOUNT_SID'),
@@ -1642,9 +1746,19 @@ return [
             'auth_token' => env('SMS_AUTH_TOKEN'),
         ],
 
-        // Retry policy for the (future) real-send loop. Held-back messages do not retry.
-        'retry_max' => 6,
-        'retry_backoff_minutes' => [2, 4, 8, 15, 30, 60],
+        // Provider-error policy, mirroring rsx.mail.retry.
+        'retry' => [
+            'attempts' => 3,
+            'delay_minutes' => 3,
+        ],
+
+        'retention_days' => 30,
+
+        // Dev-site (.dev. hostname) destination gating, mirroring rsx.mail.dev_site.
+        'dev_site' => [
+            'catchall_number' => env('SMS_DEV_CATCHALL_NUMBER', ''),
+            'number_whitelist' => env('SMS_DEV_NUMBER_WHITELIST', ''),
+        ],
     ],
 
     /*

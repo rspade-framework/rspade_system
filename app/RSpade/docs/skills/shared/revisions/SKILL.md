@@ -1,6 +1,6 @@
 ---
 name: revisions
-description: Recording and reading per-model revision history in RSpade - opting a model in with $revisions and $revision_exclude, filing a child's writes under its parent with #[Revision_Parent], the one transaction per unit of work, reading it back with revisions() / revisions_including_children() / Revision_Model::diff(), storing Revision::transaction_id() on an application activity row, and suppressing a backfill with Revision::without(). Use when a screen must show what changed and who changed it, when adding $revisions to a model, when responding to a REVISION-01 manifest-build failure, when a bulk write records too many or no revisions, or when a read throws "unknown codec byte" or "unknown dictionary id".
+description: "Recording and reading per-model revision history in RSpade - opting a model in with $revisions and $revision_exclude, filing a child's writes under its parent with #[Revision_Parent], the one transaction per unit of work, reading it back with revisions() / revisions_including_children() / Revision_Model::diff(), storing Revision::transaction_id() on an application activity row, and suppressing a backfill with Revision::without(). Use when a screen must show what changed and who changed it, when adding $revisions to a model, when responding to a REVISION-01 manifest-build failure, when a bulk write records too many or no revisions, or when a read throws \"unknown codec byte\" or \"unknown dictionary id\"."
 ---
 
 # Revision history

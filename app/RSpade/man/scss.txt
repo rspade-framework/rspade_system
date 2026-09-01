@@ -38,6 +38,27 @@ SYNOPSIS
         }
 
 DESCRIPTION
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
+
+            rsx/theme/CLAUDE.md
+            rsx/theme/components/CLAUDE.md
+            app skill: theme
+
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
+
+        This page is MIXED. The framework half - the lint rules every SCSS file
+        in any RSX application obeys (SCSS-01's single-class wrap, the BEM prefix,
+        no <style> tags, how a bundle collects SCSS; skill rspade:scss-rules) - is
+        not subject to this notice. The template half - the theme itself, its
+        variables, tokens and Bootstrap overrides - is.
+
     RSX enforces a class-scoping convention for SCSS files to prevent CSS
     conflicts and ensure styles are self-contained. Every SCSS file in
     rsx/app/ or rsx/theme/components/ must wrap ALL rules inside a single

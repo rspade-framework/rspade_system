@@ -1,6 +1,6 @@
 ---
 name: dark-mode
-description: The per-identity theme preference (light/dark/auto) - login_users.dark_mode, Rsx_Dark_Mode, the rsx-dark body class rendered server-side before first paint, the app-declared theme attributes in config('rsx.theme.dark_mode.attributes'), Rsx_Dark_Mode_Controller, and why a saved change needs Spa.disable() rather than a reload. Use when adding or theming dark mode, building a theme setting, styling a component for dark, wiring a UI framework's theme attribute (data-bs-theme or equivalent), or diagnosing a white flash on load, a page that stays the old theme after saving, or CSS that ignores the theme.
+description: "The per-identity theme preference (light/dark/auto) - login_users.dark_mode, Rsx_Dark_Mode, the rsx-dark body class rendered server-side before first paint, the app-declared theme attributes in config('rsx.theme.dark_mode.attributes'), Rsx_Dark_Mode_Controller, and why a saved change needs Spa.disable() rather than a reload. Use when adding or theming dark mode, building a theme setting, styling a component for dark, wiring a UI framework's theme attribute (data-bs-theme or equivalent), or diagnosing a white flash on load, a page that stays the old theme after saving, or CSS that ignores the theme."
 ---
 
 # Dark mode
@@ -97,4 +97,4 @@ Nest it rather than opening a second top-level block, so the file stays `SCSS-SC
 
 ## Full reference
 
-`php artisan rsx:man dark_mode`. Related: `rspade:spa` (navigation and `Spa.disable()`), `rspade:scss` (component styling).
+`php artisan rsx:man dark_mode`. Related: `rspade:spa` (navigation and `Spa.disable()`), `rspade:scss-rules` (the enforced SCSS rules) and the app skill `theme` (the colour tokens).

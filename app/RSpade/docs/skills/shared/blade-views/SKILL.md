@@ -1,6 +1,6 @@
 ---
 name: blade-views
-description: Creating Blade views and server-rendered pages in RSX. Use when building SEO pages, login/auth pages, server-rendered content, working with @rsx_id, @rsx_page_data, or Blade-specific patterns.
+description: "Creating Blade views and server-rendered pages in RSX. Use when building SEO pages, login/auth pages, server-rendered content, working with @rsx_id, @rsx_page_data, or Blade-specific patterns."
 ---
 
 # RSX Blade Views

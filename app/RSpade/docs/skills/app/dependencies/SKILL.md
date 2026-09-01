@@ -1,6 +1,6 @@
 ---
 name: dependencies
-description: Adding PHP and JS packages to a downstream RSpade application - rsx:composer and rsx:npm, why you never run composer/npm inside system/, framework-provided packages that record instead of installing, the provides/adopt/re-record flow, reading the post-update reconciler's notices, getting an npm package into the browser through an Asset Bundle, lockfile and commit guidance, and the machine-generated replace map. Use when installing a package, hitting a refusal from the wrappers, or reacting to a reconciler notice after a framework update.
+description: "Adding PHP and JS packages to a downstream RSpade application - rsx:composer and rsx:npm, why you never run composer/npm inside system/, framework-provided packages that record instead of installing, the provides/adopt/re-record flow, reading the post-update reconciler's notices, getting an npm package into the browser through an Asset Bundle, lockfile and commit guidance, and the machine-generated replace map. Use when installing a package, hitting a refusal from the wrappers, or reacting to a reconciler notice after a framework update."
 ---
 
 # Managing application dependencies

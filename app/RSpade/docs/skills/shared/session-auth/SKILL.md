@@ -1,13 +1,13 @@
 ---
 name: session-auth
-description: Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::attempt() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifecycle windows and the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a "where you're signed in" screen, an admin sign-this-user-out button, an account-status check, or a "log in as user" feature - and see the csrf and login-redirect references for those two subsystems.
+description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::attempt() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifecycle windows and the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, or a \"log in as user\" feature - and see the csrf and login-redirect references for those two subsystems."
 ---
 
 # Sessions and Login
 
 `Session` is a static facade. **Never Laravel Auth, never `$_SESSION`.** The always-on fragment carries the API surface and the mandates; this skill is the how-to for the flows built on them.
 
-`Portal_Session` is the portal twin over the same row - see `rspade:portal`.
+`Portal_Session` is the portal twin over the same row - see `rspade:portal-core`.
 
 ---
 
@@ -231,7 +231,7 @@ Session::forget_value('draft');
 
 ## Tenant context
 
-`Session::set_site_id(int $id)` switches which site the staff session is operating in - it creates a session if none exists, and everything site-scoped follows it (the model global scope, mail, settings, time zones, throttling). It is the STAFF app's tenancy only; a portal request's site comes from the app's own declaration (`rspade:portal`).
+`Session::set_site_id(int $id)` switches which site the staff session is operating in - it creates a session if none exists, and everything site-scoped follows it (the model global scope, mail, settings, time zones, throttling). It is the STAFF app's tenancy only; a portal request's site comes from the app's own declaration (`rspade:portal-core`).
 
 A site-switcher endpoint validates membership itself - the framework will not check that the user belongs to the site you name:
 
@@ -262,4 +262,4 @@ Session::set_site_id((int) $params['site_id']);
 - **CSRF** - fully automatic; there is nothing to write. `references/csrf.md`.
 - **Intended-URL redirect** - `Login_Redirect`, the one sanitizer; wire every hop. `references/login-redirect.md`.
 
-Details: `php artisan rsx:man session`, `rsx:man auth`. Related: `rspade:auth-gates`, `rspade:permissions-acl`, `rspade:portal`, `rspade:turnstile`.
+Details: `php artisan rsx:man session`, `rsx:man auth`. Related: `rspade:auth-gates`, `rspade:permissions-acl`, `rspade:portal-core`, `rspade:turnstile`.

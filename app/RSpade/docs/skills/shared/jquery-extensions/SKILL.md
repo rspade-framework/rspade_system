@@ -1,6 +1,6 @@
 ---
 name: jquery-extensions
-description: RSX jQuery extensions including the click() override that auto-prevents default, .click_async() button busy-states, existence and viewport checks, component-aware traversal, form validation helpers, scrolling, and the width_group family. Use when working with click handlers, wiring a button to a server-side action, checking element existence or visibility, finding sibling components, syncing widths across elements, understanding why links don't navigate, or hitting the "$.ajax() is blocked" throw.
+description: "RSX jQuery extensions including the click() override that auto-prevents default, .click_async() button busy-states, existence and viewport checks, component-aware traversal, form validation helpers, scrolling, and the width_group family. Use when working with click handlers, wiring a button to a server-side action, checking element existence or visibility, finding sibling components, syncing widths across elements, understanding why links don't navigate, or hitting the \"$.ajax() is blocked\" throw."
 ---
 
 # RSX jQuery Extensions

@@ -112,6 +112,22 @@ FRAMEWORK INVENTORY
         Env Symlink              system/.env symlink to root .env intact
         LibreOffice (soffice)    headless soffice present (or disabled)
         Lock Server              rsx-lockd listening (INFO under maintenance)
+        Mail delivery            which of the four modes rsx.mail.delivery is
+                                 CONFIGURED to (aiosmtpd | live | suppressed |
+                                 disabled). INFO, never FAIL, for suppressed and
+                                 disabled.
+        Mail sender domain       SPF + DMARC (+ DKIM when rsx.mail.dkim_selector is
+                                 set) published for the From domain. WARN when
+                                 missing - the fix is a registrar DNS change; INFO
+                                 for an example.* sender or any mode but 'live'.
+        Mail transport           TCP connect to the transport's host:port (or the
+                                 sendmail binary), plus - in aiosmtpd mode - a check
+                                 that the SMTP greeting says 'aiosmtpd'. FAIL when it
+                                 cannot be reached, and FAIL "server did not
+                                 advertise aiosmtpd" when something else holds
+                                 127.0.0.1:1025; both remediations name
+                                 [program:mail-catcher] in aiosmtpd mode. Not probed
+                                 when delivery is suppressed or disabled. email(7).
         MySQL Connectivity       database reachable
         Node.js                  node binary present (relay, tooling)
         PHP                      version + every required extension (see PHP

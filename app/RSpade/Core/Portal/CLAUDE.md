@@ -41,4 +41,4 @@ the application half lives in `rsx/portal/` (which has its own CLAUDE.md).
 ## Pointers
 
 `rsx:man portal` · `rsx:man auth_gates` · `rsx:man session` ·
-skill `rspade:portal` · app side: `rsx/portal/CLAUDE.md`
+skill `rspade:portal-core` · app side: app skill `portal-app`, `rsx/portal/CLAUDE.md`

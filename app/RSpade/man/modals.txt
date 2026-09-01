@@ -2,6 +2,21 @@
 MODAL SYSTEM
 ================================================================================
 
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
+
+            rsx/lib/modal/CLAUDE.md
+            app skill: modals
+
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
+
+
 The Modal system provides a consistent, queue-managed interface for displaying
 dialogs throughout the application. All modals are managed by the static Modal
 class, which handles queuing, backdrop management, and user interactions.

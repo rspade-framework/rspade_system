@@ -20,6 +20,24 @@ SYNOPSIS
     }
 
 DESCRIPTION
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
+
+            rsx/theme/components/inputs/CLAUDE.md
+            app skill: form-components
+
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
+
+        This page is MIXED. The framework half - the Form_Input_Abstract contract
+        itself (skill rspade:form-input-contract) - is not subject to this notice.
+        The template half - the roster of shipped inputs - is.
+
     An input is a component that owns ONE named value. Form_Input_Abstract
     (framework core, Core/Forms/Form_Input_Abstract.js) owns the whole value
     contract - buffering, the val() getter/setter, events, the data-name

@@ -1,0 +1,352 @@
+EMAIL DELIVERY - ONE EMAIL IS ONE CLASS, AND MAIL ACTUALLY SENDS
+Date: 2026-08-31
+
+SUMMARY
+    Outbound email is wired end to end: the queue drain now builds a real MIME
+    message and hands it to a real SMTP (or sendmail) transport. Along with it, the
+    API changed shape completely.
+
+        Rsx_Mail::send($to, $subject, $template, $data, $category)   IS GONE
+        Rsx_Mail::send_to_contact(...)                               IS GONE
+        Rsx_Mail::send_to_portal_user(...)                           IS GONE
+        Rsx_Mail::is_delivery_suppressed()                           IS GONE
+
+    An email is now a CLASS in rsx/emails/, co-located with its blade:
+
+        (new User_Invitation_Email($user, $invite_url))->to($user)->send();
+
+    THIS BREAKS EVERY SEND CALL IN YOUR APPLICATION, loudly - the methods no longer
+    exist, so a stale call site is a fatal error the first time it runs, not a
+    silent behaviour change. Everything in ACTION REQUIRED below has to be done by
+    hand.
+
+    Full contract: php artisan rsx:man email
+                   php artisan rsx:man config_rsx   (MAIL AND SMS)
+
+THE CHANGE
+
+    1. AN EMAIL IS A CLASS. A subclass of Rsx_Email_Abstract in rsx/emails/, beside
+       the blade that renders it, carrying its data as typed constructor arguments.
+       Three members are MANDATORY and each missing one is a MANIFEST-BUILD FATAL
+       with a per-class worklist:
+
+           const CATEGORY            TRANSACTIONAL | NOTIFICATION | MARKETING.
+                                     No default: the wrong one either over-delivers
+                                     to people who opted out or silently drops mail
+                                     somebody needed.
+           subject() : string        frozen into the queue row at send() time
+           data() : array            frozen likewise. Plain scalars and arrays only.
+           static sample() : static  a plausible instance for previews, tests and
+                                     `rsx:mail:test --email=`
+
+       The blade's @rsx_id must EQUAL the class basename - that is the third FATAL.
+
+    2. THE ENVELOPE IS FLUENT AND CARRIES MUCH MORE:
+
+           ->to($person_or_address, $name)     one To; a later call replaces it
+           ->cc(...) ->bcc(...)                accumulate
+           ->reply_to(...)                     replaces
+           ->attach($file_attachment_or_path, $name, $mime)
+           ->attach_bytes($bytes, $name, $mime)
+           ->embed('chart', $source)           template: <img src="cid:chart">
+           ->dedupe_key($key)                  unique per site; a used key returns
+                                               the EXISTING row and enqueues nothing
+           ->send_at($iso)                     earliest it may go
+           ->about($related_type, $related_id)
+           ->send()                            : Email_Queue_Model
+
+    3. DELIVERY IS REAL, AND THERE ARE TWO INDEPENDENT SAFETY LAYERS.
+       config('rsx.mail.delivery') is 'live' or 'suppressed'; the .dev.-hostname
+       recipient gate (whitelists -> catchall -> nothing deliverable) is separate
+       and applies even when delivery is live. The gate stands down when the
+       transport is loopback, because that is the development catcher and it
+       delivers to nobody.
+
+    4. STATUS 6 IS NOW "Suppressed", NOT "Held (dev)". It means rendered and
+       recorded, deliberately not delivered. It is terminal and it is NOT a failure.
+
+    5. QUEUE COLUMNS WERE RENAMED, and several are new.
+
+    6. config/mail.php IS DELETED. Everything lives under rsx.mail. MAIL_MAILER,
+       MAIL_QUEUE_*, MAIL_LOG_CHANNEL, EMAIL_DEV_SUPPRESS_EMAIL_DELIVERY and
+       SMS_DEV_SUPPRESS_DELIVERY are read by nothing.
+
+    7. `php artisan rsx:mail:test <address>` is the smoke test for the whole chain,
+       and rsx:health gained three Mail rows.
+
+    8. A new code-quality rule, EMAIL-TEMPLATE-01 (severity high), scans blades
+       under any /emails/ directory.
+
+ACTION REQUIRED
+
+    A. CONVERT EVERY SEND CALL SITE.
+
+       Find them:
+
+           grep -rn "Rsx_Mail::send\|send_to_contact\|send_to_portal_user" rsx/
+           grep -rn "is_delivery_suppressed" rsx/
+
+       For each one, write an email class in rsx/emails/ and pass the data the old
+       call passed. The template app's own invitation is the worked example - read
+       it in full at:
+
+           system/app/RSpade/resource/reference_app/emails/user_invitation_email.php
+           system/app/RSpade/resource/reference_app/emails/user_invitation_email.blade.php
+
+       BEFORE (rsx/app/frontend/settings/user_management/...):
+
+           \App\RSpade\Core\Mail\Rsx_Mail::send(
+               $user->email,
+               'You\'re Invited to ' . config('rsx.name', 'RSpade'),
+               'User_Invitation_Email',
+               [
+                   'app_name' => config('rsx.name', 'RSpade'),
+                   'name' => trim($user->first_name . ' ' . $user->last_name),
+                   'invite_url' => $invite_url,
+                   'expiry_days' => config('rsx.auth.invite_expiration_days', 7),
+               ],
+               \App\RSpade\Core\Mail\Rsx_Mail::TRANSACTIONAL
+           );
+
+       AFTER - the call site:
+
+           use Rsx\Emails\User_Invitation_Email;
+           ...
+           (new User_Invitation_Email($user, $invite_url))->to($user)->send();
+
+       AFTER - the new class, rsx/emails/user_invitation_email.php:
+
+           <?php
+
+           namespace Rsx\Emails;
+
+           use App\RSpade\Core\Mail\Rsx_Email_Abstract;
+           use App\RSpade\Core\Models\User_Model;
+           use App\RSpade\Core\Rsx;
+
+           class User_Invitation_Email extends Rsx_Email_Abstract
+           {
+               const CATEGORY = self::TRANSACTIONAL;
+
+               public function __construct(
+                   public User_Model $user,
+                   public string $invite_url
+               ) {
+               }
+
+               public function subject(): string
+               {
+                   return 'You\'re Invited to ' . config('rsx.name', 'RSpade');
+               }
+
+               public function data(): array
+               {
+                   return [
+                       'app_name' => config('rsx.name', 'RSpade'),
+                       'name' => trim($this->user->first_name . ' ' . $this->user->last_name),
+                       'invite_url' => $this->invite_url,
+                       'expiry_days' => config('rsx.auth.invite_expiration_days', 7),
+                   ];
+               }
+
+               public static function sample(): static
+               {
+                   $user = new User_Model();
+                   $user->first_name = 'Ada';
+                   $user->last_name = 'Lovelace';
+                   $user->email = 'ada@example.com';
+
+                   return new static($user, rsx_absolute_url(Rsx::Route(
+                       'Accept_Invite_Controller::index', ['code' => 'sample-invite-code']
+                   )));
+               }
+           }
+
+       YOUR EXISTING BLADE NEEDS ONE CHANGE AT MOST: the @rsx_id must equal the new
+       class's basename. The layout call shape (Rsx_Mail_Layout::header/footer) and
+       the injected $subject / $unsubscribe_url variables are unchanged.
+
+       send_to_contact() / send_to_portal_user() had no special powers: they read
+       ->email off the record. ->to($contact) does the same thing and takes the
+       display name from get_printed_name() when the model has one.
+
+       is_delivery_suppressed() was never consulted by anything - it was the switch
+       that did nothing. Delete your call; the real switch is MAIL_DELIVERY.
+
+    B. COPY THE SIX TEMPLATE EMAIL CLASSES IF YOUR FORK PREDATES THEM.
+
+       These are new files in the template app. If your app still carries the
+       equivalent blades and string call sites, copy each class beside its blade and
+       convert the call site as in (A):
+
+           rsx/emails/user_invitation_email.php        (+ .blade.php)
+           rsx/emails/welcome_email.php                (+ .blade.php)
+           rsx/emails/portal_invitation_email.php      (+ .blade.php)
+           rsx/emails/portal_password_reset_email.php  (+ .blade.php)
+           rsx/emails/portal_request_reply_email.php   (+ .blade.php)
+           rsx/emails/portal_shared_content_email.php  (+ .blade.php)
+
+       All six are TRANSACTIONAL, matching what every old call site passed.
+
+       Also new: rsx/emails/email.scss - the application email stylesheet. ONE
+       stylesheet wins; when this file is absent the framework default is used, and
+       there is no merge. rsx/emails/layouts/email_layout_default.blade.php was a
+       placeholder and is deleted.
+
+    C. ADD, CHANGE AND REMOVE ENV KEYS. Edit .env AND .env.dist (a key deleted from
+       .env alone is re-appended on the next boot; a key removed from .env.dist stops
+       propagating).
+
+       ADD (these exact lines are the shipped defaults):
+
+           MAIL_DELIVERY=aiosmtpd
+           MAIL_TRANSPORT=smtp
+           MAIL_HOST=127.0.0.1
+           MAIL_PORT=1025
+           MAIL_ENCRYPTION=
+           MAIL_USERNAME=
+           MAIL_PASSWORD=
+           MAIL_FROM_ADDRESS=noreply@example.com
+           MAIL_FROM_NAME=
+           SMS_DELIVERY=suppressed
+
+       MAIL_DELIVERY HAS FOUR VALUES, and 'aiosmtpd' is the shipped default:
+
+           aiosmtpd   the development catcher on 127.0.0.1:1025. THE WHOLE
+                      MAIL_TRANSPORT/MAIL_HOST/MAIL_PORT/MAIL_ENCRYPTION/
+                      MAIL_USERNAME/MAIL_PASSWORD GROUP IS IGNORED in this mode, so
+                      a stale MAIL_HOST from an old deployment cannot mail anybody.
+                      The catcher must advertise itself: its SMTP greeting has to
+                      contain 'aiosmtpd', or every message is refused as a server
+                      error. (The shipped catcher does; see rsx:man email.)
+           live       real delivery through the MAIL_* group above - the ONLY mode
+                      that reads it, and the ONLY mode the .dev.-hostname recipient
+                      whitelist/catchall layer applies to.
+           suppressed built and recorded, handed to nobody.
+           disabled   the queue is FROZEN: rows are queued and stay Pending, the
+                      drain does nothing.
+
+       Anything else THROWS. CHANGE: if your MAIL_HOST names a container-hosted mail
+       viewer (a service name rather than an address), you can simply leave
+       MAIL_DELIVERY=aiosmtpd and stop caring - the value is not read. On a
+       production host, set MAIL_DELIVERY=live and point MAIL_HOST/MAIL_PORT at your
+       real relay; those keys are INERT until you do.
+
+       REMOVE (nothing reads them any more):
+
+           EMAIL_DEV_SUPPRESS_EMAIL_DELIVERY
+           SMS_DEV_SUPPRESS_DELIVERY
+           MAIL_MAILER
+           MAIL_QUEUE_CONNECTION
+           MAIL_QUEUE_NAME
+           MAIL_LOG_CHANNEL
+
+       KEEP: EMAIL_DEV_CATCHALL_ADDRESS, EMAIL_DEV_EMAIL_ADDRESS_WHITELIST,
+       EMAIL_DEV_EMAIL_DOMAIN_WHITELIST, SMS_DEV_CATCHALL_NUMBER,
+       SMS_DEV_NUMBER_WHITELIST - the .dev.-hostname layer is unchanged.
+
+       If your app has its own config/mail.php-style reader, delete it. The
+       framework's system/config/mail.php is gone.
+
+    D. FIX ANY APP CODE OR UI THAT READS email_queue / sms_queue DIRECTLY.
+
+           OLD COLUMN     NEW COLUMN
+           -------------  ---------------------------------------------------
+           template       email_class      (email_queue only - it names an
+                                            Rsx_Email_Abstract subclass)
+           retry_count    attempt_count
+           retry_at       next_attempt_at
+           error          last_error
+           opened_at      DROPPED - nothing ever wrote it
+
+       New columns you may want to surface: reply_to, reply_to_name, cc, bcc,
+       headers, rendered_text, message_id_header, transport, transport_response,
+       last_attempt_at, dedupe_key. New table: email_attachments.
+
+       STATUS 6 IS RELABELLED. It was HELD_BACK / "Held (dev)"; it is now
+       STATUS_SUPPRESSED / "Suppressed", badge bg-dark. Any hardcoded label, badge
+       class or STATUS_HELD_BACK constant reference must be updated:
+
+           grep -rn "HELD_BACK\|Held (dev)" rsx/
+
+       If you forked the template's Email Queue / Email Configuration admin screens,
+       re-copy them - they were rewritten for the new columns and the new config:
+
+           system/app/RSpade/resource/reference_app/app/frontend/system/email_queue/
+           system/app/RSpade/resource/reference_app/app/frontend/system/email_config/
+
+    E. EXPECT EMAIL-TEMPLATE-01 FINDINGS. Run rsx:check. The rule scans blades under
+       any /emails/ directory and flags two things that were previously invisible:
+
+           A raw datetime      {{ $sent_at }}
+                               -> format it server-side, ideally in data():
+                                  {{ Rsx_Time::format_datetime($sent_at) }}
+
+           A relative Route()  {{ Rsx::Route('X_Action') }}
+                               -> {{ rsx_absolute_url(Rsx::Route('X_Action')) }}
+
+       A mail client has no browser and no origin: both defects fail SILENTLY, in
+       somebody else's inbox, with the queue row still saying Sent. A genuine
+       exception carries a rationale on the line or the line above:
+
+           {{-- @EMAIL-TEMPLATE-01-EXCEPTION - <why this is correct here> --}}
+
+       While you are there: replace any url(Rsx::Route(...)) in an email class's
+       data() with rsx_absolute_url(Rsx::Route(...)).
+
+VERIFICATION
+
+    1. The build passes. A missing CATEGORY, sample() or blade @rsx_id is a FATAL
+       naming the class, so a converted app either builds or tells you what is left.
+
+    2. rsx:check is clean, EMAIL-TEMPLATE-01 included.
+
+    3. The smoke test sends a real message and reports what happened to it:
+
+           php artisan rsx:mail:test you@example.com
+
+       On a development box that prints Status: Sent and the catcher file to cat:
+
+           cat "$(ls -t storage/mail-catcher/new/* | head -1)"
+
+       The message should be multipart (text + HTML), with inlined styles, absolute
+       links, and a Message-ID that matches the queue row's message_id_header.
+
+    4. Each of your own email classes renders:
+
+           php artisan rsx:mail:test you@example.com --email=Your_Email_Class
+
+    5. rsx:health shows the three Mail rows (delivery / transport / sender domain).
+       In aiosmtpd mode the transport row additionally confirms the catcher's SMTP
+       greeting; "server did not advertise aiosmtpd" means something else holds
+       127.0.0.1:1025.
+
+    5b. The queue inspection commands work on your data:
+
+           php artisan rsx:mail:queue                       # counts + oldest pending
+           php artisan rsx:mail:queue --status=failed --recipient=@yourdomain.example
+           php artisan rsx:mail:show <id>                   # every column, --json for bodies
+           php artisan rsx:mail:resend <id>                 # back to Pending, drain kicked
+
+       rsx:mail:resend works on Failed, Suppressed and Blocked rows; a BLOCKED row
+       needs --force, because Blocked is a recipient's opt-out and not a delivery
+       failure.
+
+    5c. Note the STALE WINDOW, new alongside the modes: rsx.mail.stale_after_days
+       (default 2) makes the drain REFUSE any queued message that was due more than
+       that long ago, marking it Failed with an error naming rsx:mail:resend. It is
+       queue hygiene, not a timeout - it stops a queue nobody noticed was broken from
+       flooding a month of stale notices the moment somebody repairs it. If your
+       application sends mail that is still worth receiving days late, raise it in
+       rsx/resource/config/rsx.php before you go live.
+
+    6. Exercise one real flow (an invitation, a password reset) and confirm the row
+       reaches Sent - not Pending, not Failed - within seconds, without waiting for
+       the minute sweeper.
+
+    7. BEFORE PRODUCTION, walk ENTRY 9 (OUTBOUND EMAIL) of
+       `php artisan rsx:man prelaunch_checklist`: MAIL_DELIVERY=live EXPLICITLY (the
+       shipped default captures into a local Maildir and looks perfectly healthy
+       doing it), a real relay in MAIL_HOST, a real MAIL_FROM_ADDRESS on a domain you
+       control, SPF/DKIM/DMARC published for it, and a deliberate
+       rsx.mail.stale_after_days.

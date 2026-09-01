@@ -1,6 +1,6 @@
 ---
 name: spa
-description: Building SPA modules in RSX - the #[SPA] bootstrap controller, @route/@layout/@spa/@auth/@title action decorators, Spa_Layout and on_action(), sublayouts, Spa.dispatch/Spa.redirect navigation, route and query parameters, and the module/feature/submodule file organization. Use when adding a screen to an authenticated area, creating a new SPA module or layout, wiring client-side navigation or redirects, reading route params in an action, deciding SPA vs Blade, or debugging a 404 on an SPA route.
+description: "Building SPA modules in RSX - the #[SPA] bootstrap controller, @route/@layout/@spa/@auth/@title action decorators, Spa_Layout and on_action(), sublayouts, Spa.dispatch/Spa.redirect navigation, route and query parameters, and the module/feature/submodule file organization. Use when adding a screen to an authenticated area, creating a new SPA module or layout, wiring client-side navigation or redirects, reading route params in an action, deciding SPA vs Blade, or debugging a 404 on an SPA route."
 ---
 
 # SPA Routing
@@ -160,7 +160,7 @@ async on_load() {
 
 Template order: `<Loading_Spinner>` -> `<Universal_Error_Page_Component>` -> content.
 
-**Skip the three-state pattern for**: DataGrid pages (the grid loads itself), static pages, and redirect-only actions. Full treatment: `php artisan rsx:man view_action_patterns`; CRUD module shape: the `crud-patterns` skill.
+**Skip the three-state pattern for**: DataGrid pages (the grid loads itself), static pages, and redirect-only actions. Full treatment: `php artisan rsx:man view_action_patterns`; CRUD module shape: the app skill `crud-patterns`.
 
 ## Page titles
 

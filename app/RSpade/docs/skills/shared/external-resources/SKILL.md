@@ -1,6 +1,6 @@
 ---
 name: external-resources
-description: Loading an external CDN library, vendor widget or third-party script into an RSX page - declaring it in a *.externals.php file, loading it by identifier with Rsx.load_external(), the readiness contract, sealed-build mirroring, and how the Content-Security-Policy derives from the declaration. Use when adding a CDN library or vendor script, wiring Google Analytics or a tag manager, diagnosing a "Refused to load ... Content Security Policy" or "[RSX CSP]" console warning, hitting "Unknown external resource", being flagged by JS-DOM-01 for document.createElement('script') or $('<script>'), triaging storage/logs/csp_violations.log, or deciding whether to enforce the policy.
+description: "Loading an external CDN library, vendor widget or third-party script into an RSX page - declaring it in a *.externals.php file, loading it by identifier with Rsx.load_external(), the readiness contract, sealed-build mirroring, and how the Content-Security-Policy derives from the declaration. Use when adding a CDN library or vendor script, wiring Google Analytics or a tag manager, diagnosing a \"Refused to load ... Content Security Policy\" or \"[RSX CSP]\" console warning, hitting \"Unknown external resource\", being flagged by JS-DOM-01 for document.createElement('script') or $('<script>'), triaging storage/logs/csp_violations.log, or deciding whether to enforce the policy."
 ---
 
 # External Resources and CSP

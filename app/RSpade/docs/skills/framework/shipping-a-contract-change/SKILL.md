@@ -1,6 +1,6 @@
 ---
 name: shipping-a-contract-change
-description: Finishing a framework change that alters how downstream code is written or invoked - working the six-artifact mandate (always-on knowledge, shared fragment, template app, man page, upstream_changes, prelaunch checklist), deciding which audit artifact a new obligation belongs in, authoring an upstream_changes document against the manual-action gate, writing a prelaunch checklist entry, and the external-requests INDEX/archive workflow. Use whenever a framework change touches a downstream-facing contract, syntax, default, or behavior.
+description: "Finishing a framework change that alters how downstream code is written or invoked - working the six-artifact mandate (always-on knowledge, shared fragment, template app, man page, upstream_changes, prelaunch checklist), deciding which audit artifact a new obligation belongs in, authoring an upstream_changes document against the manual-action gate, writing a prelaunch checklist entry, and the external-requests INDEX/archive workflow. Use whenever a framework change touches a downstream-facing contract, syntax, default, or behavior."
 ---
 
 # Shipping a downstream-facing contract change

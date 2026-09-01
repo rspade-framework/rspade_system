@@ -1,6 +1,6 @@
 ---
 name: detail-tables
-description: Building a class-table-inheritance entity in RSpade - a base model plus 1:1 detail tables selected by a discriminator, declared with $detail_tables and created with Rsx_Detail_Table::create(). Use when a record's fields differ by type instead of cramming every type's columns into one wide nullable table, when writing a detail model (Rsx_Detail_Model_Abstract, $parent_model), when saving a base + detail pair, when a detail accessor throws a wrong-type error, when a list of base records is issuing one query per detail (preload_details), or when responding to a DETAIL-01 finding.
+description: "Building a class-table-inheritance entity in RSpade - a base model plus 1:1 detail tables selected by a discriminator, declared with $detail_tables and created with Rsx_Detail_Table::create(). Use when a record's fields differ by type instead of cramming every type's columns into one wide nullable table, when writing a detail model (Rsx_Detail_Model_Abstract, $parent_model), when saving a base + detail pair, when a detail accessor throws a wrong-type error, when a list of base records is issuing one query per detail (preload_details), or when responding to a DETAIL-01 finding."
 ---
 
 # Detail Tables (Class-Table Inheritance)

@@ -1,65 +1,84 @@
 SMS(7)                     RSpade Framework Manual                     SMS(7)
 
 NAME
-    sms - Queue-based SMS delivery with dev-site safety and opt-out management
+    sms - Queue-based SMS with dev-site safety and opt-out management
 
 SYNOPSIS
     use App\RSpade\Core\Sms\Rsx_Sms;
 
-    // Queue an SMS (transactional always delivers)
     Rsx_Sms::send('+15555550123', 'Your code is 4821', Rsx_Sms::TRANSACTIONAL);
 
-    // Opt-out (STOP) management
     Rsx_Sms::block_all('+15555550123');            // block all non-transactional
     Rsx_Sms::block('+1555...', Rsx_Sms::MARKETING);
     Rsx_Sms::is_blocked('+1555...', Rsx_Sms::MARKETING);
 
 DESCRIPTION
-    The RSpade SMS system mirrors the email system (see man email): a one-call
-    facade that QUEUES every message to the sms_queue table - never sends inline -
-    plus a background task that drains the queue. It is framework-core
-    infrastructure.
+    The SMS system is the deliberate mirror of the email system (see email(7)): a
+    one-call facade that QUEUES every message to sms_queue - never sends inline -
+    plus a background drain with the same claim, the same statuses, the same
+    retention and the same dev-site gating. It is framework core.
 
-    ** REAL OUTBOUND DELIVERY IS NOT WIRED YET. ** Rsx_Sms::send() persists a queue
-    row; the send task (Sms_Queue_Service::send_pending_queue) marks each pending
-    message HELD_BACK - it records the intended SMS (the body is stored verbatim) for
-    developer review or an app-side "SMS Transaction Log", and sends nothing to any
-    provider. Wiring a real provider is on the backlog.
+    NO SMS PROVIDER IS WIRED. config('rsx.sms.delivery') is 'suppressed' and there
+    is nothing to hand a message to, so the drain records every claimed row
+    SUPPRESSED with the reason "no SMS provider configured". That is the current
+    behaviour, not a defect: a message nobody can deliver is not pending, it is not
+    going, and the row says so. The body is stored verbatim, so an app can show an
+    SMS log.
 
-    Unlike email, SMS has no template/subject/rendered HTML - `body` is the content.
+DELIVERY MODES
+    config('rsx.sms.delivery') mirrors the mail switch's VOCABULARY, minus the two
+    values that need a transport. Anything else THROWS (Rsx_Sms::delivery_mode()):
 
-    Models (framework-core, overridable via the class-override pattern):
-        App\RSpade\Core\Models\Sms_Queue_Model      - the queue
-        App\RSpade\Core\Models\Sms_Recipient_Model  - per-number blocklist + stats
+        suppressed   THE DEFAULT. Every claimed row is recorded SUPPRESSED.
+        disabled     THE QUEUE IS FROZEN. send() still queues; the drain logs one
+                     line ("SMS delivery is disabled - N message(s) left pending")
+                     and returns. Rows stay Pending, untouched.
 
-SENDING SMS
+        live         REFUSED, out loud. There is no provider to be live against, and
+        aiosmtpd     accepting the word would mean quietly doing nothing.
+
+    THERE IS NO rsx.sms.stale_after_days, and there must not be. The mail side's
+    stale-message window (email(7), THE STALE-MESSAGE WINDOW) is queue hygiene: it
+    stops a queue that silently broke for a month from flooding a month of stale
+    notices the moment somebody repairs it. An SMS queue cannot accumulate that
+    backlog - there is no provider to break, and every row is recorded SUPPRESSED on
+    its first pass. When a provider is wired, adding the mirror is the moment to
+    revisit this - not before.
+
+    The drain's loop SHAPE is the mail runner's (claim_next -> attempt -> terminal
+    status), so wiring a provider means replacing the body of the try and adding the
+    two catches, not designing a queue.
+
+    Unlike email there is no class, no template, no subject and no rendered HTML -
+    `body` is the content.
+
+    Models (framework core, overridable via the class-override pattern):
+        App\RSpade\Core\Models\Sms_Queue_Model      the queue
+        App\RSpade\Core\Models\Sms_Recipient_Model  per-number blocklist + stats
+
+SENDING
     Rsx_Sms::send($to, $body, $category = NOTIFICATION, $related_type = null,
                   $related_id = null): Sms_Queue_Model
 
-        $to           destination phone number (E.164 recommended, e.g. +15555550123)
+        $to           destination number (E.164 recommended, e.g. +15555550123)
         $body         message text
         $category     TRANSACTIONAL | NOTIFICATION | MARKETING
         $related_*    optional polymorphic reference to what triggered the SMS
 
-    send() resolves the site from the EXPERIENCE of the request - the staff Session
-    site on a staff request or in CLI (site 0 when sessionless), the site the app
-    declared for the portal on a portal request - enforces
-    the blocklist for non-transactional categories, applies dev-site redirection,
-    queues the row, and (on web requests) kicks a prompt background drain via
-    Task::dispatch('Sms_Queue_Service','send_pending_queue').
+    send() resolves the site from the EXPERIENCE being served - the site the app
+    declared for the portal on a portal request, the staff Session site otherwise
+    (site 0 when sessionless in CLI or a task) - enforces the blocklist for
+    non-transactional categories, applies the dev-site redirect, queues the row and
+    kicks a prompt background drain (Task::dispatch, coalesced by #[Exclusive]) in
+    every context except a test run.
 
-    A sessionless send (from a #[Task] or CLI) resolves to site 0 (the Default site);
-    call Session::set_site_id($site_id) first to target a specific tenant's
-    blocklist/queue.
-
-    The site is not cosmetic: it stamps the queue row AND drives the opt-out lookup
-    (Sms_Recipient_Model::is_blocked($site_id, ...)). Asking the staff facade on a
-    portal request would file the message under the wrong tenant and consult the
-    wrong blocklist, so the resolution forks the same way Rsx_Mail's does.
-    See: rsx:man portal (EXPERIENCE FORKS).
+    The site is not cosmetic: it stamps the row AND drives the opt-out lookup, so
+    asking the staff facade on a portal request would file the message under the
+    wrong tenant and consult the wrong blocklist. Call Session::set_site_id() first
+    when a task must target a particular tenant. See: rsx:man portal.
 
 CATEGORIES
-    TRANSACTIONAL (1)  Always delivers. Ignores opt-out preferences (codes, alerts).
+    TRANSACTIONAL (1)  Always delivers. Ignores opt-out (codes, alerts).
     NOTIFICATION  (2)  Respects opt-out. Default.
     MARKETING     (3)  Respects opt-out.
 
@@ -67,79 +86,90 @@ CATEGORIES
     Sms_Queue_Model::CATEGORY_*.
 
 BLOCKLIST / OPT-OUT (STOP)
-    Per-number preferences live in sms_recipients (unique per site_id + number).
-    send() skips non-transactional SMS to opted-out numbers, recording a BLOCKED row
-    for the audit trail.
+    Per-number preferences live in sms_recipients, unique per site_id + number. A
+    non-transactional message to an opted-out number is recorded as a BLOCKED row
+    rather than silently dropped.
 
-        Rsx_Sms::block_all($number)          // STOP: block all non-transactional
-        Rsx_Sms::block($number, $category)   // block one category
+        Rsx_Sms::block_all($number)          // STOP: all non-transactional
+        Rsx_Sms::block($number, $category)
         Rsx_Sms::unblock($number, $category)
         Rsx_Sms::is_blocked($number, $category)
 
-    A carrier "STOP" reply handler (app-side) should call block_all(); "START"
-    should unblock. Transactional SMS is never blocked.
+    An app's carrier "STOP" handler calls block_all(); "START" unblocks.
 
-DEV SITE SMS SAFETY
-    On dev sites (Rsx::is_dev_site()), outbound numbers are gated to prevent
-    accidental delivery to real people, mirroring EMAIL_DEV_*:
+STATUSES
+        Id  Status       Meaning
+        --  -----------  --------------------------------------------------------
+        1   Pending      Queued; sendable when next_attempt_at is null or past.
+        2   Sending      Claimed by a drain right now.
+        3   Sent         A provider accepted it. Unreachable until one exists.
+        4   Failed       Terminal: the provider-error attempt cap, or a build bug.
+        5   Blocked      Never queued: the number had opted out of this category.
+        6   Suppressed   Recorded, deliberately not delivered - no provider, or a
+                         dev host left no deliverable number. Terminal, and NOT a
+                         failure.
 
-        SMS_DEV_SUPPRESS_DELIVERY    render/record but never deliver
-        SMS_DEV_NUMBER_WHITELIST     comma-separated numbers that deliver as-is
-        SMS_DEV_CATCHALL_NUMBER      redirect everything else here (original captured
-                                     in dev_original_to)
-
-    With no catchall, messages stay queued but are not delivered. (Moot today - the
-    send task holds everything back regardless.)
+    Columns mirror the mail queue: attempt_count (a first send IS an attempt),
+    next_attempt_at, last_attempt_at, last_error, transport, transport_response,
+    dedupe_key (unique per site), dev_original_to.
 
 QUEUE PROCESSING
-    Processed by the core Sms_Queue_Service task:
-
         php artisan rsx:task:run Sms_Queue_Service send_pending_queue
 
-    #[Exclusive] (one drain at a time, coalesced) + #[Schedule('*/5 * * * *')] (every
-    5 minutes). Requires cron:
-        * * * * * cd /var/www/html && php artisan rsx:task:process
+    #[Task] #[Exclusive] #[Schedule('every minute')], needing the ordinary task cron:
 
-    Current behavior (until real send is wired):
-    1. Picks up one PENDING record at a time (respects retry_at)
-    2. Marks it STATUS_HELD_BACK ("Held (dev)") - recorded, NOT delivered.
+        * * * * * php artisan rsx:task:process
 
-    Status enum: 1 Pending, 2 Sending, 3 Sent, 4 Failed, 5 Blocked, 6 Held (dev).
+    In 'disabled' the pass logs one line and returns without touching anything -
+    no claim, no reclaim, no aging.
 
-    A second scheduled task prunes old terminal (sent/failed/blocked/held-back) rows:
+    Otherwise each pass RECLAIMS anything left SENDING by a drain that died
+    mid-message (#[Exclusive] proves no other runner exists, so no age threshold
+    is needed; the attempt is not counted), then claims PENDING rows one at a time
+    with a conditional UPDATE and drives each to a terminal status.
 
-        php artisan rsx:task:run Sms_Queue_Service cleanup
+    Retention: Sms_Queue_Service::cleanup, #[Schedule('daily at 3am')], deletes
+    whole rows in a terminal status older than rsx.sms.retention_days (30).
 
-    #[Schedule('0 3 * * *')] (daily 3am). Deletes records older than 90 days (override
-    with --days=N).
+DEV SITE SMS SAFETY
+    On a dev host (Rsx::is_dev_site() - the hostname contains '.dev.') outbound
+    numbers are gated, mirroring the email layer:
 
-    FUTURE real-send + retry policy (documented in the send task; NOT implemented):
-    attempt provider send; success -> mark_sent(); failure -> mark_failed(), where a
-    provider *connect* error does not count toward the strike limit (retry no sooner
-    than 5 min), a provider-returned error does, giving up after config('rsx.sms.
-    retry_max') strikes (default 6). Needs a last_attempt_at column. See the backlog.
+        SMS_DEV_NUMBER_WHITELIST     comma-separated numbers that deliver as-is
+        SMS_DEV_CATCHALL_NUMBER      everything else redirects here, the real
+                                     number recorded in dev_original_to
 
-PROVIDER CONFIGURATION
-    config('rsx.sms.*') - used ONCE real send is wired (not today):
+    Neither one matching means nothing is deliverable from this host, and the row is
+    written SUPPRESSED at enqueue time with the reason "dev site: no whitelist match
+    and no catchall".
 
-        provider      the sending service. Common options:
-                      twilio | aws_sns (Amazon SNS; also Amazon Pinpoint) |
-                      vonage (ex-Nexmo) | messagebird (now Bird) | plivo | sinch |
-                      telnyx | infobip | bandwidth. null/'log' keeps held-back.
-        from_number   sending number / sender id
-        credentials   provider-specific auth (Twilio SID/token, AWS key/secret/
-                      region, Vonage key/secret, generic api_key/secret/token) - keep
-                      secrets in .env
-        retry_max / retry_backoff_minutes   retry policy for the real-send loop
+CONFIGURATION
+    config('rsx.sms.*'):
 
-SMS TRANSACTION LOG (read model)
-    Sms_Queue_Model::fetch($id) (an #[Ajax_Endpoint_Model_Fetch], login-gated) loads
-    one record for a developer-facing SMS log detail view - full fields, no aliasing,
+        delivery            SMS_DELIVERY, default 'suppressed'. suppressed | disabled
+                            only - see DELIVERY MODES above. Leave it alone until a
+                            provider exists.
+        provider            the sending service, once one is wired: twilio |
+                            aws_sns | vonage | messagebird | plivo | sinch | telnyx
+                            | infobip | bandwidth. Inert today.
+        from_number         sending number / sender id.
+        credentials         provider-specific auth (Twilio SID/token, AWS
+                            key/secret/region, Vonage key/secret, generic
+                            api_key/api_secret/auth_token). Secrets in .env.
+        retry               ['attempts' => 3, 'delay_minutes' => 3] - the
+                            provider-error policy, mirroring rsx.mail.retry.
+        retention_days      30
+                            (no stale_after_days - see DELIVERY MODES)
+        dev_site            catchall_number, number_whitelist (above)
+
+SMS LOG (read model)
+    Sms_Queue_Model::fetch($id) is an #[Ajax_Endpoint_Model_Fetch], login-gated,
+    loading one record for a developer-facing SMS log - full fields, no aliasing,
     plus status_id__label/__badge and category_id__label/__badge.
 
 SEE ALSO
-    email(7) - the parallel email delivery system
-    tasks(7) - #[Exclusive]/#[Schedule], the queue processor, Task::dispatch
-    config_rsx(7) - RSX configuration reference
+    email(7)       the parallel email system, in full
+    tasks(7)       #[Exclusive], #[Schedule], Task::dispatch
+    config_rsx(7)  the configuration reference
 
-RSpade 1.0                           July 2026                           SMS(7)
+RSpade 1.0                          August 2026                          SMS(7)

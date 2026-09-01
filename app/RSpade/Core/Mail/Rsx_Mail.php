@@ -2,112 +2,273 @@
 
 namespace App\RSpade\Core\Mail;
 
+use App\RSpade\Core\Files\File_Attachment_Model;
+use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Mail\Rsx_Email_Abstract;
+use App\RSpade\Core\Mail\Rsx_Mail_Transport;
+use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Email_Recipient_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Task\Task;
 
 /**
- * Rsx_Mail - Framework email API
+ * Rsx_Mail - the framework side of outbound email.
  *
- * One-call email sending. All emails are queued — never sent inline.
- * Dev mode redirects all outbound email to a safe address.
- * Blocklist enforcement skips non-transactional emails to opted-out recipients.
+ * Application code never calls this class to SEND. An email is a class:
  *
- * Usage:
- *   Rsx_Mail::send('user@example.com', 'Welcome', 'welcome', ['name' => 'John']);
- *   Rsx_Mail::send($email, 'Reset', 'portal_password_reset', $data, Rsx_Mail::TRANSACTIONAL);
+ *     (new Welcome_Email($user, $login_url))->to($user)->send();
+ *
+ * and send() lands here, in enqueue(). What Rsx_Mail owns is everything that is true
+ * of every email regardless of which one it is: the tenant it belongs to, the
+ * recipient blocklist, the dev-site recipient gating, the unsubscribe signature, and
+ * getting the row onto the queue and the drain kicked.
+ *
+ * ALL EMAIL IS QUEUED - never sent inline. A slow or down mail host can therefore
+ * never slow a user's action.
  */
 class Rsx_Mail
 {
-    // Email categories — match Email_Queue_Model::CATEGORY_* constants
+    // Email categories - match Email_Queue_Model::CATEGORY_* and Rsx_Email_Abstract::*.
     const TRANSACTIONAL = 1;
     const NOTIFICATION = 2;
     const MARKETING = 3;
 
     /**
-     * Queue an email for delivery
+     * Queue an email built by an Rsx_Email_Abstract subclass.
      *
-     * @param string $to Recipient email address
-     * @param string $subject Email subject line
-     * @param string $template Template name (blade file in /rsx/emails/)
-     * @param array $data Template variables
-     * @param int $category One of self::TRANSACTIONAL, NOTIFICATION, MARKETING
-     * @param string|null $to_name Recipient display name
-     * @param int|null $related_type Polymorphic type ref for what triggered this email
-     * @param int|null $related_id Polymorphic ID
-     * @return Email_Queue_Model The queued record
+     * The order of operations is load-bearing:
+     *
+     *   1. Resolve the tenant (the realm being served, not the identity logged in).
+     *   2. Dedupe: an already-used key returns the EXISTING row and enqueues nothing.
+     *   3. Blocklist: a non-transactional email to an opted-out address is RECORDED
+     *      as BLOCKED, never sent - the audit row is the point.
+     *   4. Dev-site redirect (a second, independent safety layer keyed on hostname).
+     *   5. Freeze subject() and data() into the row. From here the email's own class
+     *      is never asked anything again: a template that renders next Tuesday renders
+     *      the values the caller had TODAY.
+     *   6. Persist attachments into the content-addressed blob store.
+     *   7. Kick the drain.
+     *
+     * @param Rsx_Email_Abstract $email
+     * @return Email_Queue_Model The queued (or pre-existing, when deduped) record.
      */
-    public static function send(
-        string $to,
-        string $subject,
-        string $template,
-        array $data = [],
-        int $category = self::NOTIFICATION,
-        ?string $to_name = null,
-        ?int $related_type = null,
-        ?int $related_id = null
-    ): Email_Queue_Model {
+    public static function enqueue(Rsx_Email_Abstract $email): Email_Queue_Model
+    {
         $site_id = static::__current_site_id();
-        $to = strtolower(trim($to));
+        $envelope = $email->_envelope();
+        $category = $email::category();
 
-        // Check blocklist (transactional emails always deliver)
-        if ($category !== self::TRANSACTIONAL) {
-            if (Email_Recipient_Model::is_blocked($site_id, $to, $category)) {
-                return Email_Queue_Model::enqueue_blocked(
-                    $site_id, $to, $subject, $template, $data, $category, $to_name
-                );
+        if ($envelope['to'] === null) {
+            throw new \InvalidArgumentException(
+                get_class($email) . '::send() was called with no recipient - call ->to(...) first.'
+            );
+        }
+
+        $to = $envelope['to']['address'];
+        $to_name = $envelope['to']['name'];
+
+        // A key already used by this tenant means this email has been queued before.
+        // Return that row in whatever state it reached - re-running an import or
+        // replaying a webhook must not mail anybody twice.
+        if ($envelope['dedupe_key'] !== null) {
+            $existing = Email_Queue_Model::find_by_dedupe_key($site_id, $envelope['dedupe_key']);
+
+            if ($existing !== null) {
+                return $existing;
             }
         }
 
-        // Apply dev mode redirect
+        // Transactional email always delivers; the other categories honour the opt-out.
+        if ($category !== self::TRANSACTIONAL && Email_Recipient_Model::is_blocked($site_id, $to, $category)) {
+            return Email_Queue_Model::enqueue_blocked(
+                $site_id,
+                $to,
+                $email->subject(),
+                $email::view_id(),
+                $email->data(),
+                $category,
+                $to_name
+            );
+        }
+
+        // The dev-site layer exists to keep a development box from mailing REAL people,
+        // so it applies to the ONE mode that can reach one: MODE_LIVE. Every other mode
+        // has already made the message unable to leave - aiosmtpd files it in a Maildir
+        // here, suppressed never opens a transport, disabled never drains - and gating
+        // there would mean a fresh install recorded every message SUPPRESSED and a
+        // developer never saw their own mail. Set MAIL_DELIVERY=live and the gating is
+        // exactly what it always was.
         $dev_original_to = null;
-        if (self::is_dev_mode()) {
-            [$actual_to, $dev_original_to] = self::_apply_dev_redirect($to);
-            $to = $actual_to;
+        $dev_undeliverable = false;
+        if (self::is_dev_mode() && Rsx_Mail_Transport::delivery_mode() === Rsx_Mail_Transport::MODE_LIVE) {
+            [$to, $dev_original_to, $dev_undeliverable] = self::_apply_dev_redirect($to);
         }
 
-        $record = Email_Queue_Model::enqueue(
-            $site_id, $to, $subject, $template, $data, $category,
-            $to_name, $dev_original_to, $related_type, $related_id
-        );
+        $descriptor = [
+            'site_id' => $site_id,
+            'to_address' => $to,
+            'to_name' => $to_name,
+            'subject' => $email->subject(),
+            'email_class' => $email::view_id(),
+            'template_data' => $email->data(),
+            'category_id' => $category,
+            'reply_to' => $envelope['reply_to']['address'] ?? null,
+            'reply_to_name' => $envelope['reply_to']['name'] ?? null,
+            'cc' => $envelope['cc'],
+            'bcc' => $envelope['bcc'],
+            'dedupe_key' => $envelope['dedupe_key'],
+            'next_attempt_at' => $envelope['send_at'],
+            'dev_original_to' => $dev_original_to,
+            'related_type' => $envelope['related_type'],
+            'related_id' => $envelope['related_id'],
+        ];
 
-        // Drain the queue promptly via a background worker (coalesced + throttled by
-        // the worker cap). Skipped in console (tests/CLI/cron), where the 5-minute
-        // Mail_Queue_Service cron or a direct run handles processing.
-        if (!app()->runningInConsole()) {
-            \App\RSpade\Core\Task\Task::dispatch('Mail_Queue_Service', 'send_pending_queue');
+        // A dev host with no whitelist match and no catchall has nowhere to send this.
+        // That is known NOW, so the row is written SUPPRESSED now - queueing it and
+        // letting the drain discover it would render a message whose envelope was
+        // already invalid, and the reason would arrive a minute late for no gain.
+        if ($dev_undeliverable) {
+            $record = Email_Queue_Model::enqueue_suppressed(
+                $descriptor,
+                'dev site: no whitelist match and no catchall'
+            );
+
+            static::_persist_attachments($record, $envelope['attachments']);
+
+            return $record;
         }
+
+        $record = Email_Queue_Model::enqueue($descriptor);
+
+        static::_persist_attachments($record, $envelope['attachments']);
+
+        static::_kick_drain();
 
         return $record;
     }
 
     /**
-     * Queue an email to a Contact
+     * Store each declared attachment's bytes in the blob store and record the row.
+     *
+     * The bytes are content-addressed, so the same file mailed to a thousand people is
+     * stored once; the email_attachments row is what pins the blob against disposal.
+     *
+     * @param Email_Queue_Model $record
+     * @param array<int, array> $specs
+     * @return void
      */
-    public static function send_to_contact(
-        $contact,
-        string $subject,
-        string $template,
-        array $data = [],
-        int $category = self::NOTIFICATION
-    ): Email_Queue_Model {
-        $name = trim(($contact->first_name ?? '') . ' ' . ($contact->last_name ?? ''));
-        return self::send($contact->email, $subject, $template, $data, $category, $name ?: null);
+    private static function _persist_attachments(Email_Queue_Model $record, array $specs): void
+    {
+        $sort_order = 0;
+
+        foreach ($specs as $spec) {
+            [$storage, $file_name, $mime_type] = static::_resolve_attachment_blob($spec);
+
+            $attachment = new Email_Attachment_Model();
+            $attachment->email_queue_id = $record->id;
+            $attachment->file_storage_id = $storage->id;
+            $attachment->file_name = $file_name;
+            $attachment->mime_type = $mime_type;
+            $attachment->disposition_id = $spec['disposition'];
+            $attachment->cid = $spec['cid'];
+            $attachment->sort_order = $sort_order++;
+            $attachment->save();
+        }
     }
 
     /**
-     * Queue an email to a Portal User
+     * Get one attachment spec's bytes into the blob store.
+     *
+     * A File_Attachment_Model REUSES its existing blob - nothing is copied and nothing
+     * is re-hashed. A path or raw bytes go through a temp file, because store_blob()
+     * hashes and byte-compares a file on disk (see File_Attachment_Model::create_from_string,
+     * which does the same dance for the same reason).
+     *
+     * @param array $spec
+     * @return array{0: File_Storage_Model, 1: string, 2: string}
      */
-    public static function send_to_portal_user(
-        $portal_user,
-        string $subject,
-        string $template,
-        array $data = [],
-        int $category = self::TRANSACTIONAL
-    ): Email_Queue_Model {
-        return self::send($portal_user->email, $subject, $template, $data, $category);
+    private static function _resolve_attachment_blob(array $spec): array
+    {
+        $source = $spec['source'];
+
+        if ($source instanceof File_Attachment_Model) {
+            if ($source->file_storage_id === null) {
+                throw new \RuntimeException(
+                    "Cannot attach file attachment #{$source->id} to an email: its bytes have been released."
+                );
+            }
+
+            $storage = File_Storage_Model::find($source->file_storage_id);
+
+            if ($storage === null) {
+                throw new \RuntimeException(
+                    "Cannot attach file attachment #{$source->id} to an email: storage row is gone."
+                );
+            }
+
+            return [
+                $storage,
+                $spec['name'] ?? $source->file_name,
+                $spec['mime'] ?? $source->mime_type,
+            ];
+        }
+
+        if (is_string($source)) {
+            if (!is_file($source)) {
+                throw new \RuntimeException("Cannot attach '{$source}' to an email: no such file.");
+            }
+
+            return [
+                File_Storage_Model::store_blob($source),
+                $spec['name'] ?? basename($source),
+                $spec['mime'] ?? (mime_content_type($source) ?: 'application/octet-stream'),
+            ];
+        }
+
+        // Raw bytes the caller generated.
+        $temp_path = sys_get_temp_dir() . '/rspade_email_attachment_' . random_hash() . '.bin';
+
+        if (file_put_contents_safe($temp_path, $spec['bytes']) === false) {
+            throw new \RuntimeException('Failed to write email attachment bytes to a temporary file.');
+        }
+
+        try {
+            $storage = File_Storage_Model::store_blob($temp_path);
+        } finally {
+            if (file_exists($temp_path)) {
+                @unlink($temp_path);
+            }
+        }
+
+        return [$storage, $spec['name'], $spec['mime']];
+    }
+
+    /**
+     * Ask a worker to drain the queue now.
+     *
+     * Every context does this - a web request, a CLI importer, a task. The old guard
+     * skipped the console, which meant a nightly import queued a thousand emails that
+     * nothing sent until the next sweep. #[Exclusive] coalesces the dispatches, so
+     * kicking on every send is cheap.
+     *
+     * THE ONE EXCEPTION IS A TEST RUN: rsx:test swaps the default connection to 'test'
+     * for the whole run (the same signal RsxCache keys its namespace off), and a
+     * detached worker booting against the DEVELOPER's database would drain rows it
+     * cannot see and race the test's own assertions. A test that wants the drain runs
+     * it explicitly.
+     *
+     * @return void
+     */
+    private static function _kick_drain(): void
+    {
+        if (config('database.default') === 'test') {
+            return;
+        }
+
+        Task::dispatch('Mail_Queue_Service', 'send_pending_queue');
     }
 
     /**
@@ -177,21 +338,24 @@ class Rsx_Mail
     // =========================================================================
 
     /**
-     * Generate a signed unsubscribe URL for use in email templates
+     * Generate a signed unsubscribe URL for use in email templates.
+     *
+     * The signature covers the SITE too: the blocklist is per tenant, so a link minted
+     * for one site must not be replayable to unsubscribe the same address from another.
      *
      * @param string $email Recipient email address
      * @param int $category Category to unsubscribe from
+     * @param int $site_id The tenant the blocklist row belongs to
      * @return string Signed URL
      */
-    public static function unsubscribe_url(string $email, int $category): string
+    public static function unsubscribe_url(string $email, int $category, int $site_id): string
     {
-        $secret = config('rsx.mail.unsubscribe_secret') ?: config('app.key');
-        $payload = $email . '|' . $category;
-        $signature = hash_hmac('sha256', $payload, $secret);
+        $signature = static::_unsubscribe_signature($email, $category, $site_id);
 
         return rsx_absolute_url('/_mail/unsubscribe?' . http_build_query([
             'email' => $email,
             'category' => $category,
+            'site' => $site_id,
             'sig' => $signature,
         ]));
     }
@@ -199,13 +363,22 @@ class Rsx_Mail
     /**
      * Verify an unsubscribe signature
      */
-    public static function verify_unsubscribe_signature(string $email, int $category, string $signature): bool
+    public static function verify_unsubscribe_signature(string $email, int $category, int $site_id, string $signature): bool
     {
-        $secret = config('rsx.mail.unsubscribe_secret') ?: config('app.key');
-        $payload = $email . '|' . $category;
-        $expected = hash_hmac('sha256', $payload, $secret);
+        $expected = static::_unsubscribe_signature($email, $category, $site_id);
 
         return hash_equals($expected, $signature);
+    }
+
+    /**
+     * The HMAC over the tuple an unsubscribe link authorizes.
+     */
+    private static function _unsubscribe_signature(string $email, int $category, int $site_id): string
+    {
+        $secret = config('rsx.mail.unsubscribe_secret') ?: config('app.key');
+        $payload = $email . '|' . $category . '|' . $site_id;
+
+        return hash_hmac('sha256', $payload, $secret);
     }
 
     // =========================================================================
@@ -213,18 +386,11 @@ class Rsx_Mail
     // =========================================================================
 
     /**
-     * Check if email delivery is suppressed (dev site with suppress flag)
-     */
-    public static function is_delivery_suppressed(): bool
-    {
-        return (bool) env('EMAIL_DEV_SUPPRESS_EMAIL_DELIVERY', false);
-    }
-
-    /**
      * Check if dev site email gating is active
      *
-     * Uses Rsx::is_dev_site() — hostname-based detection.
-     * On dev sites, emails are caught by catchall/whitelist unless suppressed.
+     * Uses Rsx::is_dev_site() - hostname-based detection. This is a SECOND layer,
+     * independent of config('rsx.mail.delivery'): a dev host redirects or drops
+     * recipients even when delivery is live.
      */
     public static function is_dev_mode(): bool
     {
@@ -235,44 +401,49 @@ class Rsx_Mail
      * Apply dev site email redirect logic
      *
      * On dev sites:
-     * 1. If recipient is in address whitelist → deliver normally
-     * 2. If recipient domain is in domain whitelist → deliver normally
-     * 3. If catchall address is set → redirect to catchall
-     * 4. Otherwise → email stays in queue (won't be delivered)
+     * 1. If recipient is in address whitelist -> deliver normally
+     * 2. If recipient domain is in domain whitelist -> deliver normally
+     * 3. If catchall address is set -> redirect to catchall
+     * 4. Otherwise -> NOTHING IS DELIVERABLE from this host. The third return value
+     *    says so, and enqueue() records the row SUPPRESSED instead of queueing it.
+     *    Note that this is NOT the same as case 1 even though both leave the address
+     *    untouched: one means "send it", the other means "there is nowhere to send it",
+     *    and a caller that cannot tell them apart mails a developer's inbox by accident.
      *
      * @param string $to Original recipient
-     * @return array [actual_to, original_to_or_null]
+     * @return array{0: string, 1: ?string, 2: bool} [actual_to, original_to_or_null, undeliverable]
      */
     private static function _apply_dev_redirect(string $to): array
     {
         $to_lower = strtolower($to);
 
         // Check address whitelist
-        $address_whitelist = env('EMAIL_DEV_EMAIL_ADDRESS_WHITELIST', '');
+        $address_whitelist = config('rsx.mail.dev_site.address_whitelist', '');
         if ($address_whitelist) {
             $addresses = array_map('trim', array_map('strtolower', explode(',', $address_whitelist)));
             if (in_array($to_lower, $addresses)) {
-                return [$to, null];
+                return [$to, null, false];
             }
         }
 
         // Check domain whitelist
-        $domain_whitelist = env('EMAIL_DEV_EMAIL_DOMAIN_WHITELIST', '');
+        $domain_whitelist = config('rsx.mail.dev_site.domain_whitelist', '');
         if ($domain_whitelist) {
             $domains = array_map('trim', array_map('strtolower', explode(',', $domain_whitelist)));
             $to_domain = substr($to_lower, strpos($to_lower, '@') + 1);
             if (in_array($to_domain, $domains)) {
-                return [$to, null];
+                return [$to, null, false];
             }
         }
 
         // Redirect to catchall address
-        $catchall = env('EMAIL_DEV_CATCHALL_ADDRESS');
+        $catchall = config('rsx.mail.dev_site.catchall_address');
         if ($catchall) {
-            return [$catchall, $to];
+            return [$catchall, $to, false];
         }
 
-        // No catchall configured — email stays in queue but won't be delivered
-        return [$to, null];
+        // No catchall configured - the address is not deliverable from this host.
+        // The envelope was not rewritten, so there is no 'original' to record.
+        return [$to, null, true];
     }
 }

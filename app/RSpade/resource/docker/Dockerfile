@@ -266,6 +266,9 @@ RUN apt-get update && apt-get install -y \
         libnss3 libnspr4 libatk-bridge2.0-0 libatspi2.0-0 libdrm2 libgbm1 \
         libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
         libxcursor1 libasound2t64 \
+    # the development mail sink: an SMTP-only catcher, no web UI
+    # (supervisor/conf.d/mail-catcher.conf says why not Mailpit)
+        python3-aiosmtpd \
     # developer quality of life for anyone who shells in
         fzf jq man-db gh \
     && rm -rf /var/lib/apt/lists/*
@@ -314,6 +317,13 @@ RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini
 # MySQL runs under supervisor only in this target.
 COPY supervisor/conf.d/mysql.conf /etc/supervisor/conf.d/mysql.conf
 RUN chmod 644 /etc/supervisor/conf.d/mysql.conf
+
+# The mail catcher runs under supervisor only in this target. Same chmod 644 as
+# every other config copied into the image, for the reason given in base: COPY
+# preserves the world-writable source mode, and a world-writable config file is
+# at best ignored and at worst writable by anything in the container.
+COPY supervisor/conf.d/mail-catcher.conf /etc/supervisor/conf.d/mail-catcher.conf
+RUN chmod 644 /etc/supervisor/conf.d/mail-catcher.conf
 
 # -----------------------------------------------------------------------------
 # prod - application runtime only; the database lives elsewhere

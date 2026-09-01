@@ -1,6 +1,6 @@
 ---
 name: git-operations
-description: Running git in a downstream RSpade app through the php artisan rsx:git proxy - why bare git loses a race it cannot see, what the proxy does per subcommand (pathspec exclusion, commit unstaging, the maintenance cycle, passthrough), how system/ and app-file conflicts are handled, the stash-failed evidence classification and the scratch-worktree escape, the override flags, and troubleshooting a refusal. Use for any git operation on an app checkout, or when git refuses with overwritten-by-merge or stash failed, or when system/ is conflicted.
+description: "Running git in a downstream RSpade app through the php artisan rsx:git proxy - why bare git loses a race it cannot see, what the proxy does per subcommand (pathspec exclusion, commit unstaging, the maintenance cycle, passthrough), how system/ and app-file conflicts are handled, the stash-failed evidence classification and the scratch-worktree escape, the override flags, and troubleshooting a refusal. Use for any git operation on an app checkout, or when git refuses with overwritten-by-merge or stash failed, or when system/ is conflicted."
 ---
 
 # Git operations on an RSpade app

@@ -1,6 +1,6 @@
 ---
 name: rsx-stdlib
-description: The RSpade shared utility library in both languages - JS global functions (type checks, html/safe_html, foreach/clone/coalesce), async helpers (sleep, debounce, rwlock), hash/deep_equal, browser helpers, Rsx_Storage, URL hash state, PHP helpers (response_*, array_*, bytes_to_human, random_hash, rsxrealpath), and the Manifest reflection API. Use before writing any utility by hand - debouncing, deep comparison, HTML escaping, dot-path array access, byte/duration formatting, class-hierarchy lookups - and when you need the exact signature of one of these functions.
+description: "The RSpade shared utility library in both languages - JS global functions (type checks, html/safe_html, foreach/clone/coalesce), async helpers (sleep, debounce, rwlock), hash/deep_equal, browser helpers, Rsx_Storage, URL hash state, PHP helpers (response_*, array_*, bytes_to_human, random_hash, rsxrealpath), and the Manifest reflection API. Use before writing any utility by hand - debouncing, deep comparison, HTML escaping, dot-path array access, byte/duration formatting, class-hierarchy lookups - and when you need the exact signature of one of these functions."
 ---
 
 # RSpade standard library

@@ -1,6 +1,6 @@
 ---
 name: task-commands
-description: Giving a background task its own artisan command in RSpade by annotating it `#[Command('prefix:name', 'Description')]` beside its `#[Task]`, and the stdout-is-the-value / stderr-is-the-narration output contract every console run shares with `rsx:task:run`. Use when asked to "make an artisan command", "add a CLI command", a cron entry or deploy step that runs app work, when piping a task's JSON result into jq or a script, when reaching for `Task_Instance::info` or `update_progress` to narrate a run, or when a manifest build fails with "#[Command] may only annotate a #[Task] method", "needs a 'prefix:name' segment", "The 'rsx:' prefix belongs to the framework", "already a framework command", or "the description and is required".
+description: "Giving a background task its own artisan command in RSpade by annotating it `#[Command('prefix:name', 'Description')]` beside its `#[Task]`, and the stdout-is-the-value / stderr-is-the-narration output contract every console run shares with `rsx:task:run`. Use when asked to \"make an artisan command\", \"add a CLI command\", a cron entry or deploy step that runs app work, when piping a task's JSON result into jq or a script, when reaching for `Task_Instance::info` or `update_progress` to narrate a run, or when a manifest build fails with \"#[Command] may only annotate a #[Task] method\", \"needs a 'prefix:name' segment\", \"The 'rsx:' prefix belongs to the framework\", \"already a framework command\", or \"the description and is required\"."
 ---
 
 # Task Commands

@@ -1,6 +1,6 @@
 ---
 name: date-time
-description: Working with dates and times in RSX using Rsx_Time and Rsx_Date classes. Use when formatting dates/times for display, handling user timezones, working with datetime columns, converting between formats, or displaying relative times like "2 hours ago".
+description: "Working with dates and times in RSX using Rsx_Time and Rsx_Date classes. Use when formatting dates/times for display, handling user timezones, working with datetime columns, converting between formats, or displaying relative times like \"2 hours ago\"."
 ---
 
 # RSX Date & Time Handling
@@ -268,6 +268,7 @@ $date = Rsx_Date::parse($params['date']);  // Returns "YYYY-MM-DD"
 5. **Dates have no timezone** - Use Rsx_Date for calendar dates
 6. **Wrong types throw** - Date functions reject datetimes and vice versa
 7. **Render through a formatter** - never interpolate a raw `*_at` / `*_date` attribute into a template (`JQHTML-DATETIME-01`)
+8. **An email has no browser** - a datetime in an email template is formatted SERVER-SIDE, in the recipient's zone (`EMAIL-TEMPLATE-01`); best of all, format it in the email class's `data()` so the frozen queue row already carries the string
 
 ## More Information
 

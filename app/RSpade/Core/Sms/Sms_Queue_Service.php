@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Sms;
 
 use App\RSpade\Core\Models\Sms_Queue_Model;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
+use App\RSpade\Core\Sms\Rsx_Sms;
 use App\RSpade\Core\Task\Task_Instance;
 
 /**
@@ -19,62 +20,68 @@ class Sms_Queue_Service extends Rsx_Service_Abstract
     /**
      * Send the pending outgoing SMS queue.
      *
-     * IMPORTANT: REAL OUTBOUND SMS DELIVERY IS NOT YET IMPLEMENTED. This task
-     * currently marks each pending message HELD_BACK - it records the attempt to the
-     * sms_queue table (the body is stored verbatim) for developer review or an
-     * app-side "SMS Transaction Log". It sends nothing to any SMS provider.
+     * THERE IS NO SMS PROVIDER. Every claimed row is recorded SUPPRESSED saying so -
+     * that is the whole runner, and it is honest: a message nobody can deliver is not
+     * "pending", it is not going. The loop SHAPE is the mail runner's (claim_next() ->
+     * attempt -> terminal status), so wiring a provider means replacing the body of the
+     * try and adding the two catches, not designing a queue.
      *
-     * FUTURE real-send design (see backlog "wire real SMTP/SMS send") - NOT built:
-     * replace the held-back marking with a delivery loop:
-     *   attempt provider send (Twilio/etc.)
-     *     - success: $sms->mark_sent()
-     *     - failure: $sms->mark_failed($error), with this policy -
-     *         * a provider *connect* error (unreachable) does NOT count toward the
-     *           strike limit - do not retry until >= 5 minutes since the last attempt;
-     *         * an error returned by the provider (rejected number, etc.) DOES count;
-     *         * give up (STATUS_FAILED) after config('rsx.sms.retry_max') attempts (default 6).
-     *   That needs a `last_attempt_at` column (not added yet). The 5-minute cron then
-     *   reprocesses retry-eligible failures. THERE IS NO RETRY LOOP HERE YET.
-     *
-     * #[Exclusive]: at most one drain runs at a time cluster-wide (coalesced). The
-     * 5-minute cron reprocesses; app sends call Task::dispatch(
-     * 'Sms_Queue_Service','send_pending_queue') via Rsx_Sms::send to drain promptly.
+     * DELIVERY MODE DECIDES WHETHER ANY OF THIS RUNS, exactly as it does for mail:
+     * 'disabled' returns immediately with the queue FROZEN - nothing claimed, nothing
+     * reclaimed, every row keeping the state it had. There is no stale-message sweep
+     * here and there must not be: that sweep exists so a repaired mail queue does not
+     * flood a month of stale notices, and an SMS queue cannot accumulate that backlog -
+     * there is no provider to break, and every row is recorded SUPPRESSED on its first
+     * pass.
      */
     #[Task('Send pending outgoing SMS queue')]
     #[Exclusive]
-    #[Schedule('*/5 * * * *')]
+    #[Schedule('every minute')]
     public static function send_pending_queue(Task_Instance $task, array $params = []): array
     {
-        $held_back = 0;
+        $counts = ['sent' => 0, 'server_errors' => 0, 'failed' => 0, 'suppressed' => 0, 'reclaimed' => 0];
 
-        // Drain one at a time until the queue is empty. mark_held_back() moves each
-        // row out of PENDING, so get_pending() terminates the loop.
+        if (Rsx_Sms::delivery_mode() === Rsx_Sms::MODE_DISABLED) {
+            $pending = Sms_Queue_Model::pending_count();
+            $task->info("SMS delivery is disabled - {$pending} message(s) left pending");
+
+            return $counts;
+        }
+
+        // #[Exclusive] means no other runner exists right now, so anything still in
+        // SENDING was claimed by a runner that died mid-message - and claim_next() can
+        // never see it again. The mail drain does exactly this, for the same reason.
+        $counts['reclaimed'] = Sms_Queue_Model::reclaim_stranded();
+
+        if ($counts['reclaimed'] > 0) {
+            $task->info(
+                "Reclaimed {$counts['reclaimed']} stranded message(s) left SENDING by a drain that ended mid-send"
+            );
+        }
+
         while (true) {
-            $queued = Sms_Queue_Model::get_pending(1)->first();
+            $queued = Sms_Queue_Model::claim_next();
             if (!$queued) {
                 break;
             }
 
-            // TODO (backlog): attempt real provider delivery here; on success
-            // mark_sent(), on failure mark_failed() per the policy above. For now we
-            // only record the attempt as held-back (nothing is sent).
-            $queued->mark_held_back('Delivery not implemented - recorded for developer review (held back in dev).');
-            $task->info("Held back SMS #{$queued->id} to {$queued->to_number}");
+            $queued->mark_suppressed('no SMS provider configured');
+            $task->info("Suppressed SMS #{$queued->id} to {$queued->to_number}: no SMS provider configured");
 
-            $held_back++;
+            $counts['suppressed']++;
         }
 
-        return ['held_back' => $held_back];
+        return $counts;
     }
 
     /**
-     * Delete old terminal (sent/failed/blocked/held-back) SMS records.
+     * Delete whole SMS queue rows past the retention window.
      */
     #[Task('Clean up old SMS queue records')]
-    #[Schedule('0 3 * * *')]
+    #[Schedule('daily at 3am')]
     public static function cleanup(Task_Instance $task, array $params = []): array
     {
-        $days = $params['days'] ?? 90;
+        $days = $params['days'] ?? config('rsx.sms.retention_days', 30);
         $deleted = Sms_Queue_Model::cleanup_old($days);
         $task->info("Deleted {$deleted} SMS records older than {$days} days");
 

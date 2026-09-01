@@ -1,6 +1,6 @@
 ---
 name: application-modes-deployment
-description: Building, sealing and deploying an RSpade app - the three application modes, the rsx:prod:enable/refresh/disable/verify lifecycle, what the seal file pins, strict production vs the --debug variant, the determinism contract that makes a build cluster-shareable, diagnosing verify drift and sealed-build guard refusals, rsx:prod:export packaging, and the prelaunch checklist workflow. Use when taking an app to production, reproducing a prod-only bug locally, deploying new code onto a sealed host, or debugging "not built for production mode" errors.
+description: "Building, sealing and deploying an RSpade app - the three application modes, the rsx:prod:enable/refresh/disable/verify lifecycle, what the seal file pins, strict production vs the --debug variant, the determinism contract that makes a build cluster-shareable, diagnosing verify drift and sealed-build guard refusals, rsx:prod:export packaging, and the prelaunch checklist workflow. Use when taking an app to production, reproducing a prod-only bug locally, deploying new code onto a sealed host, or debugging \"not built for production mode\" errors."
 ---
 
 # Application modes and deployment

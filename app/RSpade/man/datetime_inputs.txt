@@ -5,6 +5,20 @@ NAME
     Text_Input
 
 DESCRIPTION
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
+
+            rsx/theme/components/inputs/CLAUDE.md
+            app skill: form-components
+
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
+
     RSX has no dedicated date-picker component. Date and time fields are
     ordinary Text_Input components rendered with a native HTML input type
     (type="date", type="time", type="datetime-local"). The browser supplies

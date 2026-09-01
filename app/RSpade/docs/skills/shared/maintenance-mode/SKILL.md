@@ -1,6 +1,6 @@
 ---
 name: maintenance-mode
-description: Taking an RSpade app down and bringing it back - rsx:maintenance:enable/disable, what the CLI gate blocks and what still runs (migrate does), the service stop/start order and why it is load-bearing, how locks/cache/realtime degrade for code you run inside the window, recovering a stuck flag, and how the framework pull and rsx:git raise the same window. Use when planning downtime, doing database or filesystem surgery on a live app, or debugging odd behavior that turns out to be maintenance mode.
+description: "Taking an RSpade app down and bringing it back - rsx:maintenance:enable/disable, what the CLI gate blocks and what still runs (migrate does), the service stop/start order and why it is load-bearing, how locks/cache/realtime degrade for code you run inside the window, recovering a stuck flag, and how the framework pull and rsx:git raise the same window. Use when planning downtime, doing database or filesystem surgery on a live app, or debugging odd behavior that turns out to be maintenance mode."
 ---
 
 # Maintenance mode

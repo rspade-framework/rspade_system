@@ -310,6 +310,26 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
     }
     
     /**
+     * Compile ONE SCSS file to CSS - the same node-sass step the bundle build uses.
+     *
+     * The bundler's own path assembles a master file of @imports and then calls this;
+     * a caller with a single stylesheet that never reaches a browser (the email
+     * stylesheet, Rsx_Mail_Builder) calls it directly. There is exactly one sass
+     * invocation in the framework and this is it.
+     *
+     * NOTE the working file: the node script is written NEXT TO $input_file, so pass
+     * an input that lives in a directory you own (a temp dir), not a source tree.
+     *
+     * @param array $options 'minify' (default false) and 'source_maps' (default: the
+     *                       opposite of minify - an embedded base64 map, which a
+     *                       non-browser consumer will want to turn off).
+     */
+    public static function compile_file(string $input_file, string $output_file, array $options = []): void
+    {
+        static::__compile_scss($input_file, $output_file, $options);
+    }
+
+    /**
      * Compile SCSS to CSS using Node.js sass
      */
     protected static function __compile_scss(string $input_file, string $output_file, array $options): void

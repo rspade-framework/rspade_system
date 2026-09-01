@@ -33,6 +33,25 @@ SYNOPSIS
     }
 
 DESCRIPTION
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
+
+            rsx/theme/components/forms/CLAUDE.md
+            rsx/theme/components/inputs/CLAUDE.md
+            app skill: form-components
+
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
+
+        This page is MIXED. The framework half - Rsx_Form, Form_Errors and
+        Form_Utils (skill rspade:form-engine) - is not subject to this notice.
+        The template half - Form_Field, Rsx_Tabs and the input roster - is.
+
     Rsx_Form is the ONE form engine in RSpade, and it lives in framework core
     (Core/Forms/). An application never carries a copy of it, of
     Form_Input_Abstract, or of Form_Errors; they reach every bundle through

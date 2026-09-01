@@ -1,6 +1,6 @@
 ---
 name: publishing-a-release
-description: Publishing an RSpade framework release from the monorepo with system/bin/publish - the pre-flight gates, changelog and release-subject assembly, the two published repositories (rspade_system, rspade_project) and the reference app vendored into rspade_system, what gets stripped or transformed on the way out, the .dist to .sh renames, byte fidelity, the tracked-but-ignored class assertion, and what to check when a publish fails. Use when running bin/publish, changing what a release ships, or diagnosing a refused publish.
+description: "Publishing an RSpade framework release from the monorepo with system/bin/publish - the pre-flight gates, changelog and release-subject assembly, the two published repositories (rspade_system, rspade_project) and the reference app vendored into rspade_system, what gets stripped or transformed on the way out, the .dist to .sh renames, byte fidelity, the tracked-but-ignored class assertion, and what to check when a publish fails. Use when running bin/publish, changing what a release ships, or diagnosing a refused publish."
 ---
 
 # Publishing a release

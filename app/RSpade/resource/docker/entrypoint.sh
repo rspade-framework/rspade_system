@@ -255,7 +255,8 @@ fi
 # -----------------------------------------------------------------------------
 # 5. Writable storage
 # -----------------------------------------------------------------------------
-mkdir -p storage/rsx-build storage/rsx-tmp storage/flock storage/rsx-framework storage/logs 2>/dev/null || true
+mkdir -p storage/rsx-build storage/rsx-tmp storage/flock storage/rsx-framework storage/logs \
+         storage/mail-catcher 2>/dev/null || true
 
 # -----------------------------------------------------------------------------
 # 5b. PUID / PGID - run the application as YOUR user

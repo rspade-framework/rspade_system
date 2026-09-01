@@ -10,10 +10,12 @@ Skill `rspade:event-hooks` (return contracts, priority, the manifest-lifecycle f
 
 ## EMAIL & SMS
 
-**Queue-based delivery — every message is queued, never sent inline**, so a slow or down mail host can never slow a user's action. `Rsx_Mail::send($to, $subject, $template, $data, $category)` (plus `send_to_contact()` / `send_to_portal_user()`) and its deliberate mirror `Rsx_Sms::send($to, $body, $category)`.
+**One email is one CLASS**: `X_Email extends Rsx_Email_Abstract` in `/rsx/emails/` beside its blade (`@rsx_id` == class basename), declaring `const CATEGORY` + `subject()` + `data()` + `static sample()` (each missing one is a manifest-build FATAL). Send it fluently — `(new Welcome_Email($user))->to($user)->cc(...)->attach(...)->embed('cid', ...)->dedupe_key(...)->send()` returns the queue row. **Never touch a transport or Laravel's Mail facade yourself.**
 
-**Categories**: `TRANSACTIONAL` (always delivers, ignores opt-out), `NOTIFICATION` (default; respects unsubscribe), `MARKETING`. Blocklist verbs: `is_blocked()`, `block()`, `unblock()`, `block_all()`. Templates are Blade files in `/rsx/emails/` using the `Rsx_Mail_Layout::header()/footer()` wrapper.
+**Categories**: `TRANSACTIONAL` (always delivers, ignores opt-out), `NOTIFICATION`, `MARKETING`; blocklist verbs `Rsx_Mail::is_blocked/block/unblock/block_all`. Statuses: Pending, Sending, Sent, Failed, **Blocked** (opted out), **Suppressed** (recorded, deliberately not delivered).
 
-**REAL OUTBOUND DELIVERY IS NOT WIRED YET** (backlogged; verified 2026-08-17). The send task renders each queued message and marks it **`STATUS_HELD_BACK`** — recorded with `rendered_html` but NOT delivered. **Dev-site safety is automatic** when the hostname contains `.dev.` (`EMAIL_DEV_*` / `SMS_DEV_*` catchall, suppression and whitelists).
+**Queued and drained within seconds, never inline** — a transport outage leaves rows PENDING, attempts unspent, for the minute sweeper; an SMTP error retries on its own clock and FAILS at the cap; a row due over `rsx.mail.stale_after_days` ago is refused and FAILED naming `rsx:mail:resend` (a repaired queue must not flood a month of stale notices). `config('rsx.mail.delivery')` = **`aiosmtpd|live|suppressed|disabled`**, anything else throws: `aiosmtpd` (default) IGNORES `rsx.mail.transport.*` and captures into the dev catcher at `storage/mail-catcher/`, whose greeting must say `aiosmtpd`; `disabled` FREEZES the queue; the `.dev.`-hostname recipient layer applies **in `live` only**. **Every emailed link is `rsx_absolute_url(...)` and every datetime is formatted server-side — `EMAIL-TEMPLATE-01`.** Inspect with `rsx:mail:test|:queue|:show|:resend`.
+
+**`Rsx_Sms::send($to, $body, $category)` is the deliberate mirror** — same queue, same statuses, `delivery` = `suppressed|disabled` only; no provider is wired, so every SMS is recorded Suppressed.
 
 Skill `rspade:email-and-sms`. Details: `rsx:man email`, `rsx:man sms`.

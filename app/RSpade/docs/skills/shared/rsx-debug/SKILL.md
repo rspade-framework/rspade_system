@@ -1,6 +1,6 @@
 ---
 name: rsx-debug
-description: Rendering and inspecting RSX routes headlessly with php artisan rsx:debug - Playwright-backed page capture, authenticated and portal sessions, screenshots at device widths, layout dimension dumps, and in-page JavaScript evaluation. Use when verifying a page change actually renders, capturing a screenshot, debugging a layout or component that "looks wrong", reading console_debug output from a real page load, testing a portal screen, or when a route returns 404 and you are tempted to blame "SPA can't be tested server-side".
+description: "Rendering and inspecting RSX routes headlessly with php artisan rsx:debug - Playwright-backed page capture, authenticated and portal sessions, screenshots at device widths, layout dimension dumps, and in-page JavaScript evaluation. Use when verifying a page change actually renders, capturing a screenshot, debugging a layout or component that \"looks wrong\", reading console_debug output from a real page load, testing a portal screen, or when a route returns 404 and you are tempted to blame \"SPA can't be tested server-side\"."
 ---
 
 # rsx:debug - headless route rendering

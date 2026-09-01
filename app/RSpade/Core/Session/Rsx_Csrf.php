@@ -64,7 +64,20 @@ class Rsx_Csrf
         // with no page, no form and no token to attach - so a token check could only ever
         // reject it. It is exempt because there is nothing to forge: it reads nothing and
         // writes nothing but its own diagnostic log. See Csp_Report_Controller.
-        if ('/' . ltrim($request->getPathInfo(), '/') === \App\RSpade\Core\Csp\Rsx_Csp::REPORT_PATH) {
+        $path = '/' . ltrim($request->getPathInfo(), '/');
+
+        if ($path === \App\RSpade\Core\Csp\Rsx_Csp::REPORT_PATH) {
+            return;
+        }
+
+        // The unsubscribe endpoint carries its OWN authorization: an HMAC over
+        // email|category|site_id, minted into the link the recipient was mailed. It is
+        // exempt because the callers cannot possibly hold a token - a mail provider
+        // honouring RFC 8058 POSTs `List-Unsubscribe=One-Click` server-to-server with no
+        // browser and no session, and a recipient clicking the footer link is usually not
+        // a user of this application at all. A token check could only ever reject a
+        // legitimate opt-out. See Mail_Unsubscribe_Controller.
+        if ($path === \App\RSpade\Core\Mail\Mail_Unsubscribe_Controller::PATH) {
             return;
         }
 

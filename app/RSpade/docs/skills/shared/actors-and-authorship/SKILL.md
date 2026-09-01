@@ -1,6 +1,6 @@
 ---
 name: actors-and-authorship
-description: Displaying who wrote a record and adding your own actor model in RSpade - the stamp matrix deciding WHICH identity a save() records, get_created_by_author(), the <Record_Author> component, and extending Rsx_Actor_Model_Abstract / Rsx_Site_Actor_Model_Abstract with get_printed_name() and get_view_profile_url(). Use when a screen must show "created by X", when a model can sign in or be named in a created_by_type / updated_by_type / deleted_by_type pair, when class-overriding User_Model / Portal_User_Model / Login_User_Model, or when responding to an ACTOR-01 or SEALED-01 manifest-build failure.
+description: "Displaying who wrote a record and adding your own actor model in RSpade - the stamp matrix deciding WHICH identity a save() records, get_created_by_author(), the <Record_Author> component, and extending Rsx_Actor_Model_Abstract / Rsx_Site_Actor_Model_Abstract with get_printed_name() and get_view_profile_url(). Use when a screen must show \"created by X\", when a model can sign in or be named in a created_by_type / updated_by_type / deleted_by_type pair, when class-overriding User_Model / Portal_User_Model / Login_User_Model, or when responding to an ACTOR-01 or SEALED-01 manifest-build failure."
 ---
 
 # Actors and Authorship

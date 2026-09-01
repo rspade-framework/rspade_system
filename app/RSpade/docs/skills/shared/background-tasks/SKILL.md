@@ -1,6 +1,6 @@
 ---
 name: background-tasks
-description: Writing and running RSpade background tasks - #[Task] service methods, the Task_Instance API, Task::dispatch and Task::status, #[Schedule] recurrence, #[Exclusive]/#[Debounce] single-identity guards, the worker pool, and what a task must do about concurrency. Use when adding a scheduled job, a queued background job, a cleanup/import/report task, or a controller that kicks off long work and polls it.
+description: "Writing and running RSpade background tasks - #[Task] service methods, the Task_Instance API, Task::dispatch and Task::status, #[Schedule] recurrence, #[Exclusive]/#[Debounce] single-identity guards, the worker pool, and what a task must do about concurrency. Use when adding a scheduled job, a queued background job, a cleanup/import/report task, or a controller that kicks off long work and polls it."
 ---
 
 # Background Tasks

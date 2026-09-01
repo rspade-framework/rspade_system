@@ -25,6 +25,21 @@ SYNOPSIS
         rsx/models/{feature}_model.php      # With fetch() method
 
 DESCRIPTION
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
+
+            rsx/app/frontend/CLAUDE.md
+            rsx/theme/components/datagrid/CLAUDE.md
+            app skill: crud-patterns
+
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
+
     This document describes the standard pattern for implementing CRUD
     functionality in RSpade SPA applications. The pattern provides:
 

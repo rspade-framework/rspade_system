@@ -63,6 +63,20 @@ SYNOPSIS
     lives there. Every look belongs to a component.
 
 DESCRIPTION
+    TEMPLATE FEATURE - CHECK THE LIVING DOCUMENTATION FIRST
+        What follows describes a feature that ships in the TEMPLATE APPLICATION your
+        project was forked from (rsx/, your code), not in the framework (system/).
+        Your copy may have changed contract, behaviour or shape since - or been
+        removed. The current truth is the living file beside the code:
+
+            rsx/theme/components/CLAUDE.md
+            app skill: semantic-components
+
+        Read it before relying on anything below; where it records a DIVERGENCE,
+        it wins. This page remains the reference for how the feature was designed
+        to work and the conventions it was built to - the shape RSpade expects
+        application code to keep.
+
     This manual page teaches how to design an RSX page as a composition of
     semantic components - the discipline the RSpade template application is
     built with, and the pattern every new RSpade app inherits by starting

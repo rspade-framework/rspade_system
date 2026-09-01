@@ -1,6 +1,6 @@
 ---
 name: environment-config
-description: Configuring an RSpade environment - the two-tier config merge and how to add or override a key, deciding config file vs .env, setting APP_URL on a new host (the $HOSTNAME token, the https requirement and the development http allowance) and diagnosing the dev-mode hostname-guard fatal, repairing .env symlink drift with rsx:env:heal, and which helper resolves which path. Use when standing up a new box, adding a config key, or debugging "wrong hostname"/"config edit did nothing" symptoms.
+description: "Configuring an RSpade environment - the two-tier config merge and how to add or override a key, deciding config file vs .env, setting APP_URL on a new host (the $HOSTNAME token, the https requirement and the development http allowance) and diagnosing the dev-mode hostname-guard fatal, repairing .env symlink drift with rsx:env:heal, and which helper resolves which path. Use when standing up a new box, adding a config key, or debugging \"wrong hostname\"/\"config edit did nothing\" symptoms."
 ---
 
 # Environment and configuration

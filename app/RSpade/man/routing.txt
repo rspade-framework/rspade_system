@@ -345,6 +345,22 @@ HARDCODED URLS ARE A LINT FAILURE (URL-HARDCODE-01)
     fires: comment bodies are blanked before matching, so an illustrative href in
     a component doc block is not code.
 
+IN AN EMAIL, Route() IS NOT ENOUGH (EMAIL-TEMPLATE-01)
+    Route() produces a PATH, and a mail client has no origin to resolve one
+    against: a root-relative link in a message points at nothing the recipient can
+    reach, and it fails silently in somebody else's inbox. Inside an email template
+    every Route() call is wrapped:
+
+        {{ rsx_absolute_url(Rsx::Route('Clients_View_Action', ['id' => $id])) }}
+
+    EMAIL-TEMPLATE-01 (severity HIGH) enforces it over blades under any /emails/
+    directory and the framework's own /Core/Mail/, alongside its other half - a raw
+    *_at / *_date value printed with no Rsx_Time / Rsx_Date formatter. Scope is
+    email templates ONLY: both rules would be actively WRONG on an ordinary page,
+    where links must stay relative and datetimes are localized in the browser. The
+    exception marker is @EMAIL-TEMPLATE-01-EXCEPTION plus a rationale, on the line
+    or the line above. See: php artisan rsx:man email
+
 TROUBLESHOOTING
     Route Not Found:
         - Verify controller exists and has #[Route] attribute

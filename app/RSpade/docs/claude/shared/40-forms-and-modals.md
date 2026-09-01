@@ -18,4 +18,4 @@
 
 **Async-loaded edit forms**: `form.populate(promise)` shows the loading overlay, applies the values and clears in a `finally`; `set_loading()` is the primitive, and **clearing is always explicit** — never automatic. While loading, `submit()` refuses (blank is a value, so a submit racing the fetch would validly clear unfetched fields). **SPA re-renders park the user's dirty values** under a key frozen at `on_create()` and re-apply them to the successor instance: data fills fields the user has not touched, keystrokes always win.
 
-Skills: `rspade:forms`, `rspade:form-input`, `rspade:modals`, `rspade:ajax-error-handling`. Details: `rsx:man form_conventions`, `rsx:man form_input`, `rsx:man modals`.
+Skills: `rspade:form-engine`, `rspade:form-input-contract`, `rspade:ajax-error-handling`, and the app skills `form-components` and `modals`. Details: `rsx:man form_conventions`, `rsx:man form_input`, `rsx:man modals`.

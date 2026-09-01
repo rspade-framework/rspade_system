@@ -323,6 +323,29 @@ class Rsx
     }
 
     /**
+     * The SCHEME a URL built for this browser must spell: 'http' or 'https'.
+     *
+     * The companion to get_http_host(). Together they are the whole authority an
+     * absolute URL needs, and they resolve the same way: the BROWSER's scheme in web
+     * mode (X-Forwarded-Proto first, because an upstream SSL terminator speaks plain
+     * http to us while the browser is on https), the APP_URL scheme in CLI.
+     *
+     * Anything but a literal http APP_URL resolves to https - outside development
+     * APP_URL is https-enforced at boot, so http is only ever a development container
+     * with no TLS in front of it.
+     */
+    public static function get_scheme(): string
+    {
+        if (php_sapi_name() !== 'cli' && isset($_SERVER['HTTP_HOST']) && $_SERVER['HTTP_HOST'] !== '') {
+            return self::__request_scheme();
+        }
+
+        $app_url = trim((string) env('APP_URL'));
+
+        return strtolower((string) parse_url($app_url, PHP_URL_SCHEME)) === 'http' ? 'http' : 'https';
+    }
+
+    /**
      * Pure composition core: given the resolved host, the raw authority it came from
      * (which may carry a port) and the scheme the BROWSER used, produce the authority
      * a URL must spell. A port that is the default for the scheme is never spelled.

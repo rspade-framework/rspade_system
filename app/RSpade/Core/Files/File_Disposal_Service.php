@@ -8,6 +8,7 @@ use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
@@ -30,6 +31,12 @@ use App\RSpade\Core\Time\Rsx_Time;
  * refcount check therefore uses withTrashed() + whereNull('destroyed_at') - the naive
  * "count remaining attachments" of the old inline hook would under-count and free a blob a
  * recoverable attachment still needs.
+ *
+ * _file_attachments is NOT the only thing that pins a blob. email_attachments does too:
+ * a queued email's PDF lives in the same content-addressed store, and releasing those
+ * bytes would turn a pending send into a message that arrives with an empty attachment -
+ * silently, hours later, in a background task. Every reference check below asks both
+ * tables, and any future table that points at _file_storage.id must be added here.
  *
  * All blob-touching work serializes on the shared FILE_BLOB_DISPOSAL named write lock so
  * the daily and monthly passes (and force_destroy) can never interleave a refcount check
@@ -58,6 +65,12 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 ->whereNull('destroyed_at')
                 ->exists();
             if ($pinned) {
+                return false;
+            }
+
+            // A queued email's attachment pins the blob just as hard. There is no
+            // retention window here - the row exists until the email row is deleted.
+            if (Email_Attachment_Model::where('file_storage_id', $storage_id)->exists()) {
                 return false;
             }
 
@@ -237,6 +250,11 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                         ->from('_file_attachments as a')
                         ->whereColumn('a.file_storage_id', 's.id')
                         ->whereNull('a.destroyed_at');
+                })
+                ->whereNotExists(function ($q) {
+                    $q->select(DB::raw(1))
+                        ->from('email_attachments as e')
+                        ->whereColumn('e.file_storage_id', 's.id');
                 })
                 ->orderBy('s.id')
                 ->limit($chunk)

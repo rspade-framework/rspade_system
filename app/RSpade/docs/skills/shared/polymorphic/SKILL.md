@@ -1,6 +1,6 @@
 ---
 name: polymorphic
-description: RSpade polymorphic relationships built on type references - a BIGINT {relation}_type + {relation}_id pair declared in $type_ref_columns, transparent to stock Eloquent morph relations. Use when implementing morphTo/morphOne/morphMany, adding a polymorphic column to a migration, handling polymorphic form fields, deciding what to do about morphToMany, or responding to a POLY-01 manifest-build failure or a stale _type_refs / half-set-pair error.
+description: "RSpade polymorphic relationships built on type references - a BIGINT {relation}_type + {relation}_id pair declared in $type_ref_columns, transparent to stock Eloquent morph relations. Use when implementing morphTo/morphOne/morphMany, adding a polymorphic column to a migration, handling polymorphic form fields, deciding what to do about morphToMany, or responding to a POLY-01 manifest-build failure or a stale _type_refs / half-set-pair error."
 ---
 
 # RSpade Polymorphic Relationships

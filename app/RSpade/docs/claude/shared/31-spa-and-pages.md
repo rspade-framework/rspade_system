@@ -25,4 +25,4 @@ A **layout** extends `Spa_Layout` and its template MUST contain a `$sid="content
 
 **Modules and bundles**: scaffold with `rsx:app:module:create` / `:module:feature:create` (SPA by default, `--blade` for the server-rendered ladder) / `:submodule:create` / `rsx:app:component:create`. **One bundle per module**, compiled JIT on web request — never a manual build step.
 
-Skills: `rspade:spa`, `rspade:crud-patterns`, `rspade:blade-views`, `rspade:bundles`. Details: `rsx:man spa`, `rsx:man crud`, `rsx:man routing`.
+Skills: `rspade:spa`, `rspade:blade-views`, `rspade:bundles`, and the app skill `crud-patterns`. Details: `rsx:man spa`, `rsx:man crud`, `rsx:man routing`.

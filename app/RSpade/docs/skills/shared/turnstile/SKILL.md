@@ -1,6 +1,6 @@
 ---
 name: turnstile
-description: Wiring Cloudflare Turnstile human verification into a form and its endpoint - the TURNSTILE_* .env keys, <Turnstile_Input /> placement, Rsx_Turnstile::validate() as the first statement of the POST branch, the __turnstile field contract and 'inactive' sentinel, the rsx.post_dispatch completeness guard, and the dummy-key dev recipe. Use when adding bot protection to a login, registration, password-reset or public contact form, when a submit fails with "Turnstile implementation incomplete", or when a token is rejected as already spent.
+description: "Wiring Cloudflare Turnstile human verification into a form and its endpoint - the TURNSTILE_* .env keys, <Turnstile_Input /> placement, Rsx_Turnstile::validate() as the first statement of the POST branch, the __turnstile field contract and 'inactive' sentinel, the rsx.post_dispatch completeness guard, and the dummy-key dev recipe. Use when adding bot protection to a login, registration, password-reset or public contact form, when a submit fails with \"Turnstile implementation incomplete\", or when a token is rejected as already spent."
 ---
 
 # Turnstile
@@ -127,4 +127,4 @@ finally { Rsx_Turnstile::$force_verify_result_for_tests = null; }
 - **A POST arriving without the field** - that is a form missing its widget, and it is rejected. Add `<Turnstile_Input />`; do NOT make `validate()` tolerant of an absent field, or "absent" and "opted out of verification" become the same thing.
 - **Enabling with one key** - throws, on purpose. Set both, or set enabled false.
 
-Details: `php artisan rsx:man turnstile`. Related: `rspade:forms`, `rspade:session-auth`, `rspade:event-hooks`.
+Details: `php artisan rsx:man turnstile`. Related: `rspade:form-engine`, `rspade:session-auth`, `rspade:event-hooks`.

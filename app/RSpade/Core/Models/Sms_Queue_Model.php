@@ -19,17 +19,19 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
  * @property string $body
  * @property integer $category_id
  * @property integer $status_id
- * @property string $error
- * @property integer $retry_count
- * @property string $retry_at
+ * @property string $last_error
+ * @property integer $attempt_count
+ * @property string $next_attempt_at
+ * @property string $last_attempt_at
+ * @property string $transport
+ * @property string $transport_response
+ * @property string $dedupe_key
  * @property string $dev_original_to
  * @property string $sent_at
  * @property integer $related_type
  * @property integer $related_id
  * @property string $created_at
  * @property string $updated_at
- * @property integer $created_by
- * @property integer $updated_by
  * @mixin \Eloquent
  */
 
@@ -44,9 +46,9 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
  * @property string $body
  * @property int $category_id
  * @property int $status_id
- * @property string $error
- * @property int $retry_count
- * @property string $retry_at
+ * @property string $last_error
+ * @property int $attempt_count
+ * @property string $next_attempt_at
  * @property string $dev_original_to
  * @property string $sent_at
  * @property int $related_type
@@ -57,6 +59,10 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
  * @property int $created_by_type
  * @property int $updated_by_id
  * @property int $updated_by_type
+ * @property string $transport
+ * @property string $transport_response
+ * @property string $last_attempt_at
+ * @property string $dedupe_key
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
@@ -84,10 +90,15 @@ class Sms_Queue_Model extends Rsx_Site_Model_Abstract
     const STATUS_SENT = 3;
     const STATUS_FAILED = 4;
     const STATUS_BLOCKED = 5;
-    const STATUS_HELD_BACK = 6;
+    const STATUS_SUPPRESSED = 6;
     const CATEGORY_TRANSACTIONAL = 1;
     const CATEGORY_NOTIFICATION = 2;
     const CATEGORY_MARKETING = 3;
+
+    /**
+     * What last_error says on a row reclaim_stranded() rescued. The mail twin.
+     */
+    const STRANDED_RECLAIM_NOTE = 'reclaimed: previous drain ended mid-send';
 
     // Infrastructure queue: writes here (queueing, drain status updates) are not
     // user-facing data any UI subscribes to, so they must not kick the emitter engine.
@@ -122,9 +133,10 @@ class Sms_Queue_Model extends Rsx_Site_Model_Abstract
             3 => ['constant' => 'STATUS_SENT', 'label' => 'Sent', 'badge' => 'bg-success'],
             4 => ['constant' => 'STATUS_FAILED', 'label' => 'Failed', 'badge' => 'bg-danger'],
             5 => ['constant' => 'STATUS_BLOCKED', 'label' => 'Blocked', 'badge' => 'bg-secondary'],
-            // Recorded but intentionally NOT delivered (dev / delivery suppressed /
-            // real send not yet wired) - distinct from Sent and from Failed.
-            6 => ['constant' => 'STATUS_HELD_BACK', 'label' => 'Held (dev)', 'badge' => 'bg-dark'],
+            // Recorded, deliberately NOT handed to a provider: delivery is configured
+            // 'suppressed' (the only possible state today - no SMS provider is wired),
+            // or a dev host left no deliverable number. Not a failure.
+            6 => ['constant' => 'STATUS_SUPPRESSED', 'label' => 'Suppressed', 'badge' => 'bg-dark'],
         ],
         'category_id' => [
             1 => ['constant' => 'CATEGORY_TRANSACTIONAL', 'label' => 'Transactional', 'badge' => 'bg-primary'],
@@ -161,7 +173,8 @@ class Sms_Queue_Model extends Rsx_Site_Model_Abstract
         int $category_id = 2,
         ?string $dev_original_to = null,
         ?int $related_type = null,
-        ?int $related_id = null
+        ?int $related_id = null,
+        ?string $dedupe_key = null
     ): self {
         $record = new static();
         $record->site_id = $site_id;
@@ -172,7 +185,41 @@ class Sms_Queue_Model extends Rsx_Site_Model_Abstract
         $record->dev_original_to = $dev_original_to;
         $record->related_type = $related_type;
         $record->related_id = $related_id;
-        $record->retry_count = 0;
+        $record->dedupe_key = $dedupe_key;
+        $record->attempt_count = 0;
+        $record->save();
+
+        return $record;
+    }
+
+    /**
+     * Record an SMS that will never be handed to a provider, without queueing it.
+     *
+     * Mirror of Email_Queue_Model::enqueue_suppressed(): a `.dev.` host with no
+     * whitelist match and no catchall has nowhere to send this, it is known now, and
+     * the row is written SUPPRESSED in ONE save so a drain can never claim a message
+     * whose destination was already invalid.
+     */
+    public static function enqueue_suppressed(
+        int $site_id,
+        string $to_number,
+        string $body,
+        string $reason,
+        int $category_id = 2,
+        ?int $related_type = null,
+        ?int $related_id = null
+    ): self {
+        $record = new static();
+        $record->site_id = $site_id;
+        $record->to_number = trim($to_number);
+        $record->body = $body;
+        $record->category_id = $category_id;
+        $record->status_id = self::STATUS_SUPPRESSED;
+        $record->sent_at = now();
+        $record->last_error = $reason;
+        $record->related_type = $related_type;
+        $record->related_id = $related_id;
+        $record->attempt_count = 0;
         $record->save();
 
         return $record;
@@ -193,79 +240,168 @@ class Sms_Queue_Model extends Rsx_Site_Model_Abstract
         $record->body = $body;
         $record->category_id = $category_id;
         $record->status_id = self::STATUS_BLOCKED;
-        $record->error = 'Recipient has opted out of this SMS category';
-        $record->retry_count = 0;
+        $record->last_error = 'Recipient has opted out of this SMS category';
+        $record->attempt_count = 0;
         $record->save();
 
         return $record;
     }
 
     /**
-     * Get pending SMS ready for processing (respects retry_at backoff).
+     * The row already queued under this tenant's dedupe key, or null.
      */
-    public static function get_pending(int $limit = 50): \Illuminate\Database\Eloquent\Collection
+    public static function find_by_dedupe_key(int $site_id, string $dedupe_key): ?self
     {
-        return static::where('status_id', self::STATUS_PENDING)
-            ->where(function ($query) {
-                $query->whereNull('retry_at')
-                    ->orWhere('retry_at', '<=', now());
-            })
-            ->orderBy('created_at', 'asc')
-            ->limit($limit)
-            ->get();
+        return static::where('site_id', $site_id)
+            ->where('dedupe_key', $dedupe_key)
+            ->first();
     }
 
     /**
-     * Mark as sent.
+     * Take ownership of the next sendable row, atomically. The Email_Queue_Model
+     * twin, for the same reason: the conditional UPDATE is the claim, so two drains
+     * racing on one row means one UPDATE matches and the other does not.
+     *
+     * @return static|null
      */
-    public function mark_sent(): void
+    public static function claim_next(): ?self
+    {
+        $candidate = static::where('status_id', self::STATUS_PENDING)
+            ->where(function ($query) {
+                $query->whereNull('next_attempt_at')
+                    ->orWhere('next_attempt_at', '<=', now());
+            })
+            ->orderBy('created_at', 'asc')
+            ->first();
+
+        if ($candidate === null) {
+            return null;
+        }
+
+        $claimed = static::where('id', $candidate->id)
+            ->where('status_id', self::STATUS_PENDING)
+            ->update([
+                'status_id' => self::STATUS_SENDING,
+                'last_attempt_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+        if ($claimed === 0) {
+            return null;
+        }
+
+        return static::find($candidate->id);
+    }
+
+    /**
+     * The provider accepted the message.
+     */
+    public function mark_sent(?string $transport_response = null): void
     {
         $this->status_id = self::STATUS_SENT;
         $this->sent_at = now();
-        $this->error = null;
+        $this->attempt_count = $this->attempt_count + 1;
+        $this->transport_response = $transport_response;
+        $this->transport = config('rsx.sms.provider');
+        $this->last_error = null;
         $this->save();
     }
 
     /**
-     * Mark as held back: recorded but intentionally not delivered (dev / delivery
-     * suppressed / real send not wired). Distinct from Sent and Failed.
+     * Recorded, deliberately not delivered. Terminal and NOT a failure.
      */
-    public function mark_held_back(?string $note = null): void
+    public function mark_suppressed(?string $reason = null): void
     {
-        $this->status_id = self::STATUS_HELD_BACK;
+        $this->status_id = self::STATUS_SUPPRESSED;
         $this->sent_at = now();
-        $this->error = $note;
+        $this->last_error = $reason;
         $this->save();
     }
 
     /**
-     * Mark as failed with error message and retry scheduling.
+     * The provider answered with an error for THIS message: retry on its own clock
+     * until the attempt cap, then FAILED with the provider's reply recorded.
      */
-    public function mark_failed(string $error): void
+    public function mark_server_error(string $reply): void
     {
-        $this->retry_count = $this->retry_count + 1;
-        $max_retries = config('rsx.sms.retry_max', 6);
-        $backoff = config('rsx.sms.retry_backoff_minutes', [2, 4, 8, 15, 30, 60]);
+        $this->attempt_count = $this->attempt_count + 1;
+        $this->last_error = $reply;
+        $this->transport_response = $reply;
+        $this->transport = config('rsx.sms.provider');
 
-        if ($this->retry_count >= $max_retries) {
+        $max_attempts = (int) config('rsx.sms.retry.attempts', 3);
+        $delay_minutes = (int) config('rsx.sms.retry.delay_minutes', 3);
+
+        if ($this->attempt_count >= $max_attempts) {
             $this->status_id = self::STATUS_FAILED;
-            $this->error = $error;
+            $this->next_attempt_at = null;
         } else {
             $this->status_id = self::STATUS_PENDING;
-            $this->error = $error;
-            $delay_index = min($this->retry_count - 1, count($backoff) - 1);
-            $this->retry_at = now()->addMinutes($backoff[$delay_index]);
+            $this->next_attempt_at = now()->addMinutes($delay_minutes);
         }
 
         $this->save();
     }
 
     /**
-     * Delete old terminal (sent/failed/blocked/held-back) SMS records.
+     * Hand a claimed row back: the provider could not be reached at all. The attempt
+     * is NOT counted - an outage is not this message's fault.
      */
-    public static function cleanup_old(int $days = 90): int
+    public function release_to_pending(?string $note = null): void
     {
-        return static::whereIn('status_id', [self::STATUS_SENT, self::STATUS_FAILED, self::STATUS_BLOCKED, self::STATUS_HELD_BACK])
+        $this->status_id = self::STATUS_PENDING;
+        $this->last_error = $note;
+        $this->save();
+    }
+
+    /**
+     * Put every row still marked SENDING back to PENDING, and say how many there were.
+     *
+     * The Email_Queue_Model twin, and the reasoning is identical: the drain is
+     * #[Exclusive], so when it starts no other runner exists and a row in SENDING was
+     * left by one that died mid-message. No age threshold and no timeout - exclusivity
+     * is the proof. The attempt is not counted; the site scope is claim_next()'s.
+     *
+     * @return int How many stranded rows were reclaimed.
+     */
+    public static function reclaim_stranded(): int
+    {
+        return static::where('status_id', self::STATUS_SENDING)
+            ->update([
+                'status_id' => self::STATUS_PENDING,
+                'last_error' => self::STRANDED_RECLAIM_NOTE,
+                'updated_at' => now(),
+            ]);
+    }
+
+    /**
+     * How many rows are waiting to be sent.
+     *
+     * Read by the disabled-mode drain, which says so instead of doing anything.
+     */
+    public static function pending_count(): int
+    {
+        return static::where('status_id', self::STATUS_PENDING)->count();
+    }
+
+    /**
+     * Terminal failure that no retry can fix (a code bug).
+     */
+    public function mark_failed(string $error): void
+    {
+        $this->status_id = self::STATUS_FAILED;
+        $this->attempt_count = $this->attempt_count + 1;
+        $this->last_error = $error;
+        $this->next_attempt_at = null;
+        $this->save();
+    }
+
+    /**
+     * Delete whole queue rows past the retention window.
+     */
+    public static function cleanup_old(int $days = 30): int
+    {
+        return static::whereIn('status_id', [self::STATUS_SENT, self::STATUS_FAILED, self::STATUS_BLOCKED, self::STATUS_SUPPRESSED])
             ->where('created_at', '<', now()->subDays($days))
             ->delete();
     }
