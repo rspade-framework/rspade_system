@@ -1,0 +1,76 @@
+<%--
+Passkey_Register
+
+The passkey enrollment ceremony as one drop-in control:
+
+    <Passkey_Register />
+
+An optional name for the key, a button that raises the browser's passkey prompt, and - when
+this identity had no recovery codes yet - the one-time reveal of the sheet the server minted
+alongside it. Listen for 'registered'.
+
+LAYOUT-NEUTRAL BY CONTRACT, exactly like <Totp_Enrollment>: no card, no heading, no width.
+
+WEBAUTHN MAY SIMPLY NOT BE THERE. An old browser, an insecure origin, a locked-down device.
+The component says so plainly instead of offering a button that cannot work, and the host
+page is expected to still offer the authenticator-app factor.
+
+STATES, in the order the template tests them:
+  !state.supported       navigator.credentials is unavailable    -> the unsupported notice
+  state.recovery_codes   the key registered AND minted a sheet   -> the reveal
+  otherwise              the label field and the register button
+
+Args: none. The component always enrolls the signed-in identity.
+
+Events:
+  registered - the passkey is live. Fired immediately when no recovery codes came back,
+               or when the user acknowledges the sheet that did.
+
+See: php artisan rsx:man two_factor
+--%>
+<Define:Passkey_Register tag="div">
+    <% if (!this.state.supported) { %>
+        <div class="Passkey_Register__notice">
+            <%-- Inline SVG, not an icon-font glyph: this is framework core and the auth screens
+                 it is wired into do not load the application theme's icon stylesheet. --%>
+            <svg class="Passkey_Register__notice-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                 stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="8" cy="8" r="6.4"></circle>
+                <path d="M8 4.8v4"></path>
+                <path d="M8 11.1h.01"></path>
+            </svg>
+            <span>This browser cannot use passkeys. Use an authenticator app instead.</span>
+        </div>
+    <% } else if (this.state.recovery_codes) { %>
+        <div class="Passkey_Register__reveal">
+            <div class="Passkey_Register__reveal-title">Save your recovery codes</div>
+            <div class="Passkey_Register__reveal-body">
+                Each code signs you in once if you lose your passkey. This is the only time they
+                are shown.
+            </div>
+
+            <ul class="Passkey_Register__codes">
+                <% for (const code of this.state.recovery_codes) { %>
+                    <li class="Passkey_Register__code"><%= code %></li>
+                <% } %>
+            </ul>
+
+            <div class="Passkey_Register__actions">
+                <button type="button" class="btn btn-outline-secondary" $sid="copy">
+                    <%= this.state.copied ? 'Copied' : 'Copy codes' %>
+                </button>
+                <button type="button" class="btn btn-primary" $sid="acknowledge">I have saved these</button>
+            </div>
+        </div>
+    <% } else { %>
+        <div class="Passkey_Register__form">
+            <input type="text" class="form-control Passkey_Register__label-input" $sid="label"
+                   maxlength="120" placeholder="Name this key (optional)" aria-label="Passkey name" />
+            <button type="button" class="btn btn-primary" $sid="register">Register passkey</button>
+        </div>
+
+        <% if (this.state.error) { %>
+            <div class="Passkey_Register__error"><%= this.state.error %></div>
+        <% } %>
+    <% } %>
+</Define:Passkey_Register>

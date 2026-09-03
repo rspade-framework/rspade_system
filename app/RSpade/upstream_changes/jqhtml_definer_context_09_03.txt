@@ -1,0 +1,83 @@
+JQHTML HANDLER CONTEXT: CONTENT HANDED TO A CHILD NOW BINDS TO ITS DEFINER
+============================================================================
+
+Date: 2026-09-03
+Category: 2 (framework contract/behavior change - audit your own code)
+
+IF YOU DO NOTHING: any handler expression written inside content handed to
+another component (a <Slot:x> body, or markup between <Child>...</Child> tags)
+now runs with `this` = the DEFINING component instead of the receiving one.
+A handler that was written leaning on the old receiving-component binding -
+calling the CHILD's methods or reading the CHILD's args from caller-written
+markup - silently changes what it does the first time it fires after this
+update. Nothing throws; the behavior just moves.
+
+WHAT CHANGED
+------------
+
+The framework now ships @jqhtml/{core,parser,ssr} 2.3.61 (the pull updates
+system/node_modules for you; nothing to install). Through 2.3.59, a template
+block handed to a child was split-brained: <%= %> expressions, template locals
+and $sid ids resolved against the template that WROTE the block, while handler
+attributes (@click= and friends), data-bind-* evaluation and instantiator()
+were processed against the component the block was RENDERED INSIDE. As of
+2.3.61 the whole block obeys one rule:
+
+    `this` in anything written in a template is the component whose <Define>
+    template contains that markup - never the component the element ends up
+    rendered inside.
+
+So @click=this.method in a <Slot:sidebar> body now runs the DEFINER's method
+with the definer's `this`, matching what the expressions beside it always did.
+
+ACTION REQUIRED
+---------------
+
+1. Find every handler expression inside content handed to a child:
+
+       grep -rn '@[a-z_]*=this\.' rsx/ --include='*.jqhtml'
+
+   and for each hit inside a <Slot:...> body or between component tags, ask:
+   whose method did the author MEAN? If it names a method of the defining
+   template (the overwhelmingly common intent), it now simply works - through
+   2.3.59 it was silently running against the wrong component. If it
+   deliberately leaned on the old binding to reach the RECEIVING component,
+   move that handler into the receiving component's own template or JS class,
+   where it belongs.
+
+2. Workarounds for the old binding can be simplified. The tell-tale shape is a
+   definer binding a slot-body element by hand:
+
+       // before: @click in the slot body bound to the wrong component,
+       // so the definer bound it itself
+       on_ready() {
+           this.$sid('row_action').off('click.x').on('click.x', () => this._open());
+       }
+
+   With 2.3.61 the direct form is correct and preferred:
+
+       <button $sid="row_action" @click=this._open>
+
+   The on_ready() form still works (it always bound explicitly); converting is
+   cleanup, not a requirement. The reference app's own instance is converted:
+   system/app/RSpade/resource/reference_app/app/frontend/contacts/view/
+   Contacts_View_Action.jqhtml (the View as Client button).
+
+3. Remove any Spa.action() detours inside slot bodies. Reaching
+   Spa.action().sid('x').$sid('y') from a slot body to find the component that
+   wrote it was only ever a workaround for the split-brained scoping; a slot
+   body sees its definer's `this`, locals and $sid targets directly.
+
+NOT AFFECTED
+------------
+
+- The child -> body data channel is unchanged: <Slot:row> bodies still receive
+  the value the child passes via content('row', record) as the slot-named
+  parameter (every datagrid row template keeps working as-is).
+- Markup in a component's OWN template: identical behavior before and after.
+- Handlers bound in JS (on_ready() .off/.on) - they always named their target
+  explicitly.
+
+See: php artisan rsx:man jqhtml (DELEGATED HANDLERS), the rspade:jqhtml skill's
+lifecycle-and-state reference, and pitfall P1 in its semantic-composition
+reference.

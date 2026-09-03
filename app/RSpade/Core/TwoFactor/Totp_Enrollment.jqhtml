@@ -1,0 +1,83 @@
+<%--
+Totp_Enrollment
+
+The authenticator-app enrollment ceremony, start to finish, in one component:
+
+    <Totp_Enrollment />
+
+Drop it wherever the enrollment belongs and listen for 'enrolled'. It fetches its own
+seed on load, shows the QR code and the manual-entry secret, takes the 6-digit proof, and
+then reveals the recovery codes ONCE - which is the only time those codes exist anywhere.
+
+LAYOUT-NEUTRAL BY CONTRACT. It draws no card, no border and no page heading: the host page
+owns the box around it. That is what lets the same component sit in a settings panel, in a
+modal and on a forced-enrollment interstitial without three variants of itself.
+
+THREE STATES, in the order the template tests them:
+  data.setup === null    the seed has not landed yet          -> a loading notice
+  state.recovery_codes   the factor is CONFIRMED and the codes
+                         are on screen for the only time      -> the reveal
+  otherwise              the QR code, the secret, the proof   -> the enrollment form
+
+Args: none. The component always enrolls the signed-in identity - the server offers no
+other spelling, deliberately (Rsx_Two_Factor::_enrolling_identity).
+
+Events:
+  enrolled  - fired when the user acknowledges the recovery codes. The factor is already
+              live at that point; this says the user is finished looking at the sheet.
+
+See: php artisan rsx:man two_factor
+--%>
+<Define:Totp_Enrollment tag="div">
+    <% if (!this.data.setup) { %>
+        <div class="Totp_Enrollment__notice">Preparing your authenticator setup...</div>
+    <% } else if (this.state.recovery_codes) { %>
+        <div class="Totp_Enrollment__reveal">
+            <div class="Totp_Enrollment__reveal-title">Save your recovery codes</div>
+            <div class="Totp_Enrollment__reveal-body">
+                Each code signs you in once if you lose your authenticator app. This is the only
+                time they are shown.
+            </div>
+
+            <ul class="Totp_Enrollment__codes">
+                <% for (const code of this.state.recovery_codes) { %>
+                    <li class="Totp_Enrollment__code"><%= code %></li>
+                <% } %>
+            </ul>
+
+            <div class="Totp_Enrollment__actions">
+                <button type="button" class="btn btn-outline-secondary" $sid="copy">
+                    <%= this.state.copied ? 'Copied' : 'Copy codes' %>
+                </button>
+                <button type="button" class="btn btn-primary" $sid="acknowledge">I have saved these</button>
+            </div>
+        </div>
+    <% } else { %>
+        <div class="Totp_Enrollment__setup">
+            <div class="Totp_Enrollment__step">
+                Scan this code with your authenticator app, then enter the 6-digit code it shows.
+            </div>
+
+            <%-- The server renders the QR as an inline SVG document, so it is interpolated raw
+                 rather than served as an <img src>: no second request, nothing cacheable, and
+                 the seed never appears in a URL. --%>
+            <div class="Totp_Enrollment__qr"><%!= this.data.setup.qr_svg %></div>
+
+            <div class="Totp_Enrollment__manual">
+                <span class="Totp_Enrollment__manual-label">Or enter this key manually</span>
+                <code class="Totp_Enrollment__secret"><%= this.data.setup.secret %></code>
+            </div>
+
+            <div class="Totp_Enrollment__proof">
+                <input type="text" class="form-control Totp_Enrollment__code-input" $sid="code"
+                       inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+                       placeholder="000000" aria-label="Authenticator code" />
+                <button type="button" class="btn btn-primary" $sid="confirm">Confirm</button>
+            </div>
+
+            <% if (this.state.error) { %>
+                <div class="Totp_Enrollment__error"><%= this.state.error %></div>
+            <% } %>
+        </div>
+    <% } %>
+</Define:Totp_Enrollment>

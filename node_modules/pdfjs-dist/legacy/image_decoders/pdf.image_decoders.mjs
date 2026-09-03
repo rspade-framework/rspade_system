@@ -21,8 +21,8 @@
  */
 
 /**
- * pdfjsVersion = 6.2.108
- * pdfjsBuild = 0365cbde0
+ * pdfjsVersion = 6.3.289
+ * pdfjsBuild = 1c8020a7d
  */
 /******/ var __webpack_modules__ = ({
 
@@ -1193,43 +1193,43 @@ module.exports = function (obj) {
 
 /***/ },
 
-/***/ 851
-(module, __unused_webpack_exports, __webpack_require__) {
-
-
-var classof = __webpack_require__(6955);
-var getMethod = __webpack_require__(5966);
-var isNullOrUndefined = __webpack_require__(4117);
-var Iterators = __webpack_require__(6269);
-var wellKnownSymbol = __webpack_require__(8227);
-
-var ITERATOR = wellKnownSymbol('iterator');
-
-module.exports = function (it) {
-  if (!isNullOrUndefined(it)) return getMethod(it, ITERATOR)
-    || getMethod(it, '@@iterator')
-    || Iterators[classof(it)];
-};
-
-
-/***/ },
-
-/***/ 81
+/***/ 8563
 (module, __unused_webpack_exports, __webpack_require__) {
 
 
 var call = __webpack_require__(9565);
-var aCallable = __webpack_require__(9306);
+var isCallable = __webpack_require__(4901);
 var anObject = __webpack_require__(8551);
 var tryToString = __webpack_require__(6823);
-var getIteratorMethod = __webpack_require__(851);
+var getIteratorMethod = __webpack_require__(3085);
 
 var $TypeError = TypeError;
 
 module.exports = function (argument, usingIterator) {
   var iteratorMethod = arguments.length < 2 ? getIteratorMethod(argument) : usingIterator;
-  if (aCallable(iteratorMethod)) return anObject(call(iteratorMethod, argument));
+  if (isCallable(iteratorMethod)) return anObject(call(iteratorMethod, argument));
   throw new $TypeError(tryToString(argument) + ' is not iterable');
+};
+
+
+/***/ },
+
+/***/ 3085
+(module, __unused_webpack_exports, __webpack_require__) {
+
+
+var classof = __webpack_require__(2195);
+var isNullOrUndefined = __webpack_require__(4117);
+var getMethod = __webpack_require__(5966);
+var wellKnownSymbol = __webpack_require__(8227);
+
+var ITERATOR = wellKnownSymbol('iterator');
+var ArrayPrototype = Array.prototype;
+
+module.exports = function (it) {
+  if (!isNullOrUndefined(it)) return getMethod(it, ITERATOR)
+    || getMethod(it, '@@iterator')
+    || (classof(it) === 'Arguments' ? ArrayPrototype[ITERATOR] : undefined);
 };
 
 
@@ -1699,8 +1699,8 @@ var tryToString = __webpack_require__(6823);
 var isArrayIteratorMethod = __webpack_require__(4209);
 var lengthOfArrayLike = __webpack_require__(6198);
 var isPrototypeOf = __webpack_require__(1625);
-var getIterator = __webpack_require__(81);
-var getIteratorMethod = __webpack_require__(851);
+var getIterator = __webpack_require__(8563);
+var getIteratorMethod = __webpack_require__(3085);
 var iteratorClose = __webpack_require__(9539);
 
 var $TypeError = TypeError;
@@ -1764,6 +1764,19 @@ module.exports = function (iterable, unboundFunction, options) {
     }
     if (typeof result == 'object' && result && isPrototypeOf(ResultPrototype, result)) return result;
   } return new Result(false);
+};
+
+
+/***/ },
+
+/***/ 6859
+(module) {
+
+
+// release references held by exhausted / closed iterator helpers to allow GC of the source chain
+module.exports = function (state) {
+  state.iterator = state.next = state.nextHandler = state.mapper = state.predicate = state.inner =
+    state.iterables = state.iters = state.openIters = state.padding = state.finishResults = state.buffer = null;
 };
 
 
@@ -1838,6 +1851,7 @@ var IteratorPrototype = (__webpack_require__(7657).IteratorPrototype);
 var createIterResultObject = __webpack_require__(2529);
 var iteratorClose = __webpack_require__(9539);
 var iteratorCloseAll = __webpack_require__(1385);
+var cleanupState = __webpack_require__(6859);
 
 var TO_STRING_TAG = wellKnownSymbol('toStringTag');
 var ITERATOR_HELPER = 'IteratorHelper';
@@ -1859,29 +1873,34 @@ var createIteratorProxyPrototype = function (IS_ITERATOR) {
       if (state.done) return createIterResultObject(undefined, true);
       try {
         var result = state.nextHandler();
+        if (state.done) cleanupState(state);
         return state.returnHandlerResult ? result : createIterResultObject(result, state.done);
       } catch (error) {
         state.done = true;
+        cleanupState(state);
         throw error;
       }
     },
     'return': function () {
       var state = getInternalState(this);
       var iterator = state.iterator;
+      var inner = state.inner;
+      var openIters = state.openIters;
       var done = state.done;
       state.done = true;
       if (IS_ITERATOR) {
         var returnMethod = getMethod(iterator, 'return');
         return returnMethod ? call(returnMethod, iterator) : createIterResultObject(undefined, true);
       }
+      cleanupState(state);
       if (done) return createIterResultObject(undefined, true);
-      if (state.inner) try {
-        iteratorClose(state.inner.iterator, NORMAL);
+      if (inner) try {
+        iteratorClose(inner.iterator, NORMAL);
       } catch (error) {
         return iteratorClose(iterator, THROW, error);
       }
-      if (state.openIters) try {
-        iteratorCloseAll(state.openIters, NORMAL);
+      if (openIters) try {
+        iteratorCloseAll(openIters, NORMAL);
       } catch (error) {
         if (iterator) return iteratorClose(iterator, THROW, error);
         throw error;
@@ -2028,7 +2047,7 @@ module.exports = {
 (module) {
 
 
-module.exports = {};
+module.exports = Object.create ? Object.create(null) : {};
 
 
 /***/ },
@@ -2145,34 +2164,6 @@ var floor = Math.floor;
 module.exports = Math.trunc || function trunc(x) {
   var n = +x;
   return (n > 0 ? floor : ceil)(n);
-};
-
-
-/***/ },
-
-/***/ 6043
-(module, __unused_webpack_exports, __webpack_require__) {
-
-
-var aCallable = __webpack_require__(9306);
-
-var $TypeError = TypeError;
-
-var PromiseCapability = function (C) {
-  var resolve, reject;
-  this.promise = new C(function ($$resolve, $$reject) {
-    if (resolve !== undefined || reject !== undefined) throw new $TypeError('Bad Promise constructor');
-    resolve = $$resolve;
-    reject = $$reject;
-  });
-  this.resolve = aCallable(resolve);
-  this.reject = aCallable(reject);
-};
-
-// `NewPromiseCapability` abstract operation
-// https://tc39.es/ecma262/#sec-newpromisecapability
-module.exports.f = function (C) {
-  return new PromiseCapability(C);
 };
 
 
@@ -3024,10 +3015,10 @@ var SHARED = '__core-js_shared__';
 var store = module.exports = globalThis[SHARED] || defineGlobalProperty(SHARED, {});
 
 (store.versions || (store.versions = [])).push({
-  version: '3.49.0',
+  version: '3.50.0',
   mode: IS_PURE ? 'pure' : 'global',
   copyright: '© 2013–2025 Denis Pushkarev (zloirock.ru), 2025–2026 CoreJS Company (core-js.io). All rights reserved.',
-  license: 'https://github.com/zloirock/core-js/blob/v3.49.0/LICENSE',
+  license: 'https://github.com/zloirock/core-js/blob/v3.50.0/LICENSE',
   source: 'https://github.com/zloirock/core-js'
 });
 
@@ -3039,9 +3030,11 @@ var store = module.exports = globalThis[SHARED] || defineGlobalProperty(SHARED, 
 
 
 var store = __webpack_require__(7629);
+// eslint-disable-next-line es/no-object-create -- safe
+var create = Object.create || Object;
 
 module.exports = function (key, value) {
-  return store[key] || (store[key] = value || {});
+  return store[key] || (store[key] = value || create(null));
 };
 
 
@@ -3314,7 +3307,9 @@ var base64UrlAlphabet = base64Map.c2iUrl;
 
 var SyntaxError = globalThis.SyntaxError;
 var TypeError = globalThis.TypeError;
+var $Array = globalThis.Array;
 var at = uncurryThis(''.charAt);
+var floor = Math.floor;
 
 var skipAsciiWhitespace = function (string, index) {
   var length = string.length;
@@ -3383,7 +3378,7 @@ module.exports = function (string, options, into, maxLength) {
   if (into) notDetached(into.buffer);
 
   var stringLength = string.length;
-  var bytes = into || [];
+  var bytes = into || $Array(floor(stringLength * 3 / 4));
   var written = 0;
   var read = 0;
   var chunk = '';
@@ -3453,7 +3448,7 @@ module.exports = function (string, options, into, maxLength) {
       }
     }
   }
-
+  if (!into) bytes.length = written;
   return { bytes: bytes, read: read, written: written };
 };
 
@@ -3477,7 +3472,7 @@ module.exports = function (string, into) {
   if (stringLength % 2 !== 0) throw new SyntaxError('String should be an even number of characters');
   var maxLength = into ? min(into.length, stringLength / 2) : stringLength / 2;
   var bytes = into || new Uint8Array(maxLength);
-  var segments = stringMatch(string, /.{2}/g);
+  var segments = stringMatch(string, /[\S\s]{2}/g);
   var written = 0;
   for (; written < maxLength; written++) {
     var result = +('0x' + segments[written] + '0');
@@ -3990,29 +3985,6 @@ $({ target: 'Map', proto: true, real: true, forced: IS_PURE }, {
 
 /***/ },
 
-/***/ 4628
-(__unused_webpack_module, __unused_webpack_exports, __webpack_require__) {
-
-
-var $ = __webpack_require__(6518);
-var newPromiseCapabilityModule = __webpack_require__(6043);
-
-// `Promise.withResolvers` method
-// https://tc39.es/ecma262/#sec-promise.withResolvers
-$({ target: 'Promise', stat: true }, {
-  withResolvers: function withResolvers() {
-    var promiseCapability = newPromiseCapabilityModule.f(this);
-    return {
-      promise: promiseCapability.promise,
-      resolve: promiseCapability.resolve,
-      reject: promiseCapability.reject
-    };
-  }
-});
-
-
-/***/ },
-
 /***/ 7642
 (__unused_webpack_module, __unused_webpack_exports, __webpack_require__) {
 
@@ -4327,6 +4299,7 @@ if (globalThis.Uint8Array) $({ target: 'Uint8Array', proto: true, forced: throws
 (__unused_webpack_module, __unused_webpack_exports, __webpack_require__) {
 
 
+/* eslint-disable no-useless-assignment -- false positive for [index++] syntax */
 var $ = __webpack_require__(6518);
 var globalThis = __webpack_require__(4576);
 var uncurryThis = __webpack_require__(9504);
@@ -4338,10 +4311,14 @@ var getAlphabetOption = __webpack_require__(944);
 
 var base64Alphabet = base64Map.i2c;
 var base64UrlAlphabet = base64Map.i2cUrl;
+var $floor = Math.floor;
+var $ceil = Math.ceil;
 
 var charAt = uncurryThis(''.charAt);
 
 var Uint8Array = globalThis.Uint8Array;
+var $Array = globalThis.Array;
+var join = uncurryThis([].join);
 
 var INCORRECT_BEHAVIOR_OR_DOESNT_EXISTS = !Uint8Array || !Uint8Array.prototype.toBase64 || !function () {
   try {
@@ -4362,9 +4339,10 @@ if (Uint8Array) $({ target: 'Uint8Array', proto: true, forced: INCORRECT_BEHAVIO
     var omitPadding = !!options && !!options.omitPadding;
     notDetached(this.buffer);
 
-    var result = '';
     var i = 0;
     var length = array.length;
+    var result = $Array(omitPadding ? $floor(length / 3) * 4 + (length % 3 ? length % 3 + 1 : 0) : $ceil(length / 3) * 4);
+    var written = 0;
     var triplet;
 
     var at = function (shift) {
@@ -4373,17 +4351,28 @@ if (Uint8Array) $({ target: 'Uint8Array', proto: true, forced: INCORRECT_BEHAVIO
 
     for (; i + 2 < length; i += 3) {
       triplet = (array[i] << 16) + (array[i + 1] << 8) + array[i + 2];
-      result += at(3) + at(2) + at(1) + at(0);
+      result[written++] = at(3);
+      result[written++] = at(2);
+      result[written++] = at(1);
+      result[written++] = at(0);
     }
     if (i + 2 === length) {
       triplet = (array[i] << 16) + (array[i + 1] << 8);
-      result += at(3) + at(2) + at(1) + (omitPadding ? '' : '=');
+      result[written++] = at(3);
+      result[written++] = at(2);
+      result[written++] = at(1);
+      if (!omitPadding) result[written++] = '=';
     } else if (i + 1 === length) {
       triplet = array[i] << 16;
-      result += at(3) + at(2) + (omitPadding ? '' : '==');
+      result[written++] = at(3);
+      result[written++] = at(2);
+      if (!omitPadding) {
+        result[written++] = '=';
+        result[written++] = '=';
+      }
     }
 
-    return result;
+    return join(result, '');
   }
 });
 
@@ -5094,7 +5083,9 @@ class FeatureTest {
 }
 class Util {
   static get hexNums() {
-    return shadow(this, "hexNums", Array.from(Array(256).keys(), n => n.toString(16).padStart(2, "0")));
+    return shadow(this, "hexNums", Array.from({
+      length: 256
+    }, (_, n) => n.toString(16).padStart(2, "0")));
   }
   static makeHexColor(r, g, b) {
     return `#${this.hexNums[r]}${this.hexNums[g]}${this.hexNums[b]}`;
@@ -5671,8 +5662,6 @@ async function JBig2(moduleArg = {}) {
   return moduleRtn;
 }
 /* harmony default export */ const jbig2 = (JBig2);
-// EXTERNAL MODULE: ./node_modules/core-js/modules/es.promise.with-resolvers.js
-var es_promise_with_resolvers = __webpack_require__(4628);
 // EXTERNAL MODULE: ./node_modules/core-js/modules/es.iterator.every.js
 var es_iterator_every = __webpack_require__(1148);
 // EXTERNAL MODULE: ./node_modules/core-js/modules/es.iterator.map.js
@@ -5715,9 +5704,7 @@ class Cmd {
     return CmdCache[cmd] ||= new Cmd(cmd);
   }
 }
-const nonSerializable = function nonSerializableClosure() {
-  return nonSerializable;
-};
+const nonSerializable = () => nonSerializable;
 class Dict {
   __nonSerializable__ = nonSerializable;
   #map = new Map();
@@ -5733,27 +5720,24 @@ class Dict {
   get size() {
     return this.#map.size;
   }
-  #getValue(isAsync, key1, key2, key3) {
+  #getValue(isAsync, key1, key2) {
     let value = this.#map.get(key1);
     if (value === undefined && key2 !== undefined) {
       value = this.#map.get(key2);
-      if (value === undefined && key3 !== undefined) {
-        value = this.#map.get(key3);
-      }
     }
     if (value instanceof Ref && this.xref) {
       return isAsync ? this.xref.fetchAsync(value, this.suppressEncryption) : this.xref.fetch(value, this.suppressEncryption);
     }
     return value;
   }
-  get(key1, key2, key3) {
-    return this.#getValue(false, key1, key2, key3);
+  get(key1, key2) {
+    return this.#getValue(false, key1, key2);
   }
-  async getAsync(key1, key2, key3) {
-    return this.#getValue(true, key1, key2, key3);
+  async getAsync(key1, key2) {
+    return this.#getValue(true, key1, key2);
   }
-  getArray(key1, key2, key3) {
-    let value = this.#getValue(false, key1, key2, key3);
+  getArray(key1, key2) {
+    let value = this.#getValue(false, key1, key2);
     if (Array.isArray(value)) {
       value = value.slice();
       for (let i = 0, ii = value.length; i < ii; i++) {
@@ -5903,44 +5887,49 @@ class Ref {
   }
 }
 class RefSet {
+  #set = new Set();
   constructor(parent = null) {
-    this._set = new Set(parent?._set);
+    if (parent) {
+      for (const refStr of parent) {
+        this.#set.add(refStr);
+      }
+    }
   }
   has(ref) {
-    return this._set.has(ref.toString());
+    return this.#set.has(ref.toString());
   }
   put(ref) {
-    this._set.add(ref.toString());
+    this.#set.add(ref.toString());
   }
   remove(ref) {
-    this._set.delete(ref.toString());
+    this.#set.delete(ref.toString());
   }
   [Symbol.iterator]() {
-    return this._set.values();
+    return this.#set.keys();
   }
   clear() {
-    this._set.clear();
+    this.#set.clear();
   }
 }
-class RefSetCache {
-  _map = new Map();
+class RefMap {
+  #map = new Map();
   get size() {
-    return this._map.size;
+    return this.#map.size;
   }
   get(ref) {
-    return this._map.get(ref.toString());
+    return this.#map.get(ref.toString());
   }
   has(ref) {
-    return this._map.has(ref.toString());
+    return this.#map.has(ref.toString());
   }
   put(ref, obj) {
-    this._map.set(ref.toString(), obj);
+    this.#map.set(ref.toString(), obj);
   }
   putAlias(ref, aliasRef) {
-    this._map.set(ref.toString(), this.get(aliasRef));
+    this.#map.set(ref.toString(), this.get(aliasRef));
   }
   getOrPutComputed(ref, callback) {
-    const map = this._map,
+    const map = this.#map,
       refStr = ref.toString();
     if (!map.has(refStr)) {
       map.set(refStr, callback(ref));
@@ -5948,21 +5937,21 @@ class RefSetCache {
     return map.get(refStr);
   }
   [Symbol.iterator]() {
-    return this._map.values();
+    return this.#map.values();
   }
   clear() {
-    this._map.clear();
+    this.#map.clear();
   }
   *values() {
-    yield* this._map.values();
+    yield* this.#map.values();
   }
   *items() {
-    for (const [ref, value] of this._map) {
+    for (const [ref, value] of this.#map) {
       yield [Ref.fromString(ref), value];
     }
   }
   *keys() {
-    for (const ref of this._map.keys()) {
+    for (const ref of this.#map.keys()) {
       yield Ref.fromString(ref);
     }
   }
@@ -6016,7 +6005,7 @@ class BaseStream {
   get canAsyncDecodeImageFromBuffer() {
     return false;
   }
-  async getTransferableImage() {
+  async getTransferableImage(width, height) {
     return null;
   }
   peekByte() {
@@ -6086,10 +6075,7 @@ function isAscii(str) {
   return typeof str === "string" && (!str || /^[\x00-\x7F]*$/.test(str));
 }
 function stringToAsciiOrUTF16BE(str) {
-  if (str === null || str === undefined) {
-    return str;
-  }
-  return isAscii(str) ? str : stringToUTF16String(str, true);
+  return str === null || str === undefined || isAscii(str) ? str : stringToUTF16String(str, true);
 }
 function stringToUTF16HexString(str) {
   const buf = [];
@@ -6111,6 +6097,7 @@ function stringToUTF16String(str, bigEndian = false) {
   return buf.join("");
 }
 const PDFStringTranslateTable = (/* unused pure expression or super */ null && ([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2d8, 0x2c7, 0x2c6, 0x2d9, 0x2dd, 0x2db, 0x2da, 0x2dc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2022, 0x2020, 0x2021, 0x2026, 0x2014, 0x2013, 0x192, 0x2044, 0x2039, 0x203a, 0x2212, 0x2030, 0x201e, 0x201c, 0x201d, 0x2018, 0x2019, 0x201a, 0x2122, 0xfb01, 0xfb02, 0x141, 0x152, 0x160, 0x178, 0x17d, 0x131, 0x142, 0x153, 0x161, 0x17e, 0, 0x20ac]));
+const PDFStringTextDecoders = Object.create(null);
 function stringToPDFString(str, keepEscapeSequence = false) {
   if (str[0] >= "\xEF") {
     let encoding;
@@ -6129,7 +6116,7 @@ function stringToPDFString(str, keepEscapeSequence = false) {
     }
     if (encoding) {
       try {
-        const decoder = new TextDecoder(encoding, {
+        const decoder = PDFStringTextDecoders[encoding] ??= new TextDecoder(encoding, {
           fatal: true
         });
         const buffer = string_utils_stringToBytes(str);
@@ -6169,7 +6156,9 @@ function stringToPDFString(str, keepEscapeSequence = false) {
 /* unused harmony import specifier */ var core_utils_Name;
 /* unused harmony import specifier */ var core_utils_isName;
 /* unused harmony import specifier */ var core_utils_BaseStream;
+/* unused harmony import specifier */ var CONTROL_CHAR_REGEXP;
 /* unused harmony import specifier */ var core_utils_stringToPDFString;
+
 
 
 
@@ -6197,11 +6186,11 @@ const MAX_INT_32 = (/* unused pure expression or super */ null && (2 ** 31 - 1))
 const IDENTITY_MATRIX = (/* unused pure expression or super */ null && ([1, 0, 0, 1, 0, 0]));
 const RESOURCES_KEYS_OPERATOR_LIST = (/* unused pure expression or super */ null && (["ColorSpace", "ExtGState", "Font", "Pattern", "Properties", "Shading", "XObject"]));
 const RESOURCES_KEYS_TEXT_CONTENT = (/* unused pure expression or super */ null && (["ExtGState", "Font", "Properties", "XObject"]));
-function getLookupTableFactory(initializer) {
+function getLookupTableFactory(initializer, useArray = false) {
   let lookup;
   return function () {
     if (initializer) {
-      lookup = Object.create(null);
+      lookup = useArray ? [] : Object.create(null);
       initializer(lookup);
       initializer = null;
     }
@@ -6368,7 +6357,7 @@ function lookupNormalRect(arr, fallback) {
   return isNumberArray(arr, 4) ? core_utils_Util.normalizeRect(arr) : fallback;
 }
 function parseXFAPath(path) {
-  const positionPattern = /(.+)\[(\d+)\]$/;
+  const positionPattern = /^(.+)\[(\d+)\]$/;
   return path.split(".").map(component => {
     const m = component.match(positionPattern);
     if (m) {
@@ -6452,7 +6441,7 @@ function _collectJS(entry, xref, list, parents) {
   }
 }
 function collectActions(xref, dict, eventType) {
-  const actions = Object.create(null);
+  const actions = new Map();
   const additionalActionsDicts = getInheritableProperty({
     dict,
     key: "AA",
@@ -6473,7 +6462,7 @@ function collectActions(xref, dict, eventType) {
         const list = [];
         _collectJS(rawActionDict, xref, list, parents);
         if (list.length > 0) {
-          actions[action] = list;
+          actions.set(action, list);
         }
       }
     }
@@ -6484,10 +6473,10 @@ function collectActions(xref, dict, eventType) {
     const list = [];
     _collectJS(actionDict, xref, list, parents);
     if (list.length > 0) {
-      actions.Action = list;
+      actions.set("Action", list);
     }
   }
-  return Object.keys(actions).length ? actions : null;
+  return actions.size ? actions : null;
 }
 const XMLEntities = (/* unused pure expression or super */ null && ({
   0x3c: "&lt;",
@@ -6548,6 +6537,12 @@ function validateFontName(fontFamily, mustWarn = false) {
       }
       return false;
     }
+    if (CONTROL_CHAR_REGEXP.test(fontFamily)) {
+      if (mustWarn) {
+        core_utils_warn(`FontFamily contains control characters: ${fontFamily}.`);
+      }
+      return false;
+    }
   } else {
     for (const ident of fontFamily.split(/[ \t]+/)) {
       if (/^(?:\d|-[\d-])/.test(ident) || !/^[\w\\-]+$/.test(ident)) {
@@ -6559,6 +6554,9 @@ function validateFontName(fontFamily, mustWarn = false) {
     }
   }
   return true;
+}
+function normalizeCSSFontFamily(fontFamily) {
+  return fontFamily.replaceAll(/( +)(\d)?/g, (_, spaces, digit) => digit ?? " ");
 }
 function validateCSSFont(cssFontInfo) {
   const DEFAULT_CSS_FONT_OBLIQUE = "14";
@@ -6640,7 +6638,6 @@ function getSizeInBytes(x) {
 }
 
 ;// ./src/core/wasm_image.js
-
 
 
 
@@ -6931,9 +6928,6 @@ class ColorSpace {
       destOffset += 3 + alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    unreachable("Should not call ColorSpace.getOutputLength");
-  }
   isPassthrough(bits) {
     return false;
   }
@@ -7067,9 +7061,6 @@ class AlternateCS extends ColorSpace {
       base.getRgbBuffer(baseBuf, 0, count, dest, destOffset, 8, alpha01);
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return this.base.getOutputLength(inputLength * this.base.numComps / this.numComps, alpha01);
-  }
 }
 class PatternCS extends ColorSpace {
   constructor(baseCS) {
@@ -7120,9 +7111,6 @@ class IndexedCS extends ColorSpace {
       destOffset += alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01);
-  }
   isDefaultDecode(decode, bpc) {
     if (isDefaultDecodeHelper(decode, 2)) {
       return true;
@@ -7154,9 +7142,6 @@ class DeviceGrayCS extends ColorSpace {
       q += alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01);
-  }
 }
 class DeviceRgbCS extends ColorSpace {
   constructor() {
@@ -7182,9 +7167,6 @@ class DeviceRgbCS extends ColorSpace {
       q += alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01) / 3 | 0;
-  }
   isPassthrough(bits) {
     return bits === 8;
   }
@@ -7192,9 +7174,6 @@ class DeviceRgbCS extends ColorSpace {
 class DeviceRgbaCS extends ColorSpace {
   constructor() {
     super("DeviceRGBA", 4);
-  }
-  getOutputLength(inputLength, _alpha01) {
-    return inputLength * 4;
   }
   isPassthrough(bits) {
     return bits === 8;
@@ -7230,9 +7209,6 @@ class DeviceCmykCS extends ColorSpace {
       srcOffset += 4;
       destOffset += 3 + alpha01;
     }
-  }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength / 4 * (3 + alpha01) | 0;
   }
 }
 class CalGrayCS extends ColorSpace {
@@ -7278,9 +7254,6 @@ class CalGrayCS extends ColorSpace {
       srcOffset += 1;
       destOffset += 3 + alpha01;
     }
-  }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01);
   }
 }
 class CalRGBCS extends ColorSpace {
@@ -7430,9 +7403,6 @@ class CalRGBCS extends ColorSpace {
       destOffset += 3 + alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01) / 3 | 0;
-  }
 }
 class LabCS extends ColorSpace {
   constructor(whitePoint, blackPoint, range) {
@@ -7513,9 +7483,6 @@ class LabCS extends ColorSpace {
       srcOffset += 3;
       destOffset += 3 + alpha01;
     }
-  }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01) / 3 | 0;
   }
   isDefaultDecode(decode, bpc) {
     return true;
@@ -7870,9 +7837,6 @@ class IccColorSpace extends ColorSpace {
     QCMS._keepAlpha = alpha01 === 1 && dest.buffer !== src.buffer;
     qcms_convert_array(this.#transformer, src, alpha01 === 1);
     QCMS._destBuffer = null;
-  }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength / this.numComps * (3 + alpha01) | 0;
   }
   static setOptions({
     useWasm,
@@ -8913,16 +8877,19 @@ function skipData(data, view, offset) {
   return endOffset;
 }
 class JpegImage {
-  constructor({
-    decodeTransform = null,
-    colorTransform = -1
-  } = {}) {
-    this._decodeTransform = decodeTransform;
-    this._colorTransform = colorTransform;
+  constructor(options) {
+    this._colorTransform = options?.colorTransform ?? -1;
+    this._decodeTransform = options?.decodeTransform || null;
+    this._isSourcePDF = false;
   }
   static canUseImageDecoder(data, colorTransform = -1) {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    let exifOffsets = null;
+    const info = {
+      width: 0,
+      height: 0,
+      exifStart: 0,
+      exifEnd: 0
+    };
     let offset = 0;
     let numComponents = null;
     let fileMarker = view.getUint16(offset);
@@ -8942,13 +8909,11 @@ class JpegImage {
           } = readDataBlock(data, view, offset);
           offset = newOffset;
           if (appData[0] === 0x45 && appData[1] === 0x78 && appData[2] === 0x69 && appData[3] === 0x66 && appData[4] === 0 && appData[5] === 0) {
-            if (exifOffsets) {
+            if (info.exifStart) {
               throw new JpegError("Duplicate EXIF-blocks found.");
             }
-            exifOffsets = {
-              exifStart: oldOffset + 6,
-              exifEnd: newOffset
-            };
+            info.exifStart = oldOffset + 6;
+            info.exifEnd = newOffset;
           }
           fileMarker = view.getUint16(offset);
           offset += 2;
@@ -8956,6 +8921,8 @@ class JpegImage {
         case 0xffc0:
         case 0xffc1:
         case 0xffc2:
+          info.height = view.getUint16(offset + (2 + 1));
+          info.width = view.getUint16(offset + (2 + 1 + 2));
           numComponents = data[offset + (2 + 1 + 2 + 2)];
           break markerLoop;
         case 0xffff:
@@ -8974,7 +8941,7 @@ class JpegImage {
     if (numComponents === 3 && colorTransform === 0) {
       return null;
     }
-    return exifOffsets || {};
+    return info;
   }
   parse(data, {
     dnlScanLines = null
@@ -9228,7 +9195,7 @@ class JpegImage {
     this.numComponents = this.components.length;
     return undefined;
   }
-  #getLinearizedBlockData(width, height, isSourcePDF) {
+  #getLinearizedBlockData(width, height) {
     const scaleX = this.width / width,
       scaleY = this.height / height;
     let component, componentScaleX, componentScaleY, blocksPerScanline;
@@ -9266,7 +9233,7 @@ class JpegImage {
       }
     }
     let transform = this._decodeTransform;
-    if (!isSourcePDF && numComponents === 4) {
+    if (!this._isSourcePDF && numComponents === 4) {
       transform ||= new Int32Array([-256, 255, -256, 255, -256, 255, -256, 255]);
     }
     if (transform) {
@@ -9357,13 +9324,13 @@ class JpegImage {
     width,
     height,
     forceRGBA = false,
-    forceRGB = false,
-    isSourcePDF = false
+    forceRGB = false
   }) {
     if (this.numComponents > 4) {
       throw new JpegError("Unsupported color mode");
     }
-    const data = this.#getLinearizedBlockData(width, height, isSourcePDF);
+    this._isSourcePDF = arguments[0]?.isSourcePDF === true;
+    const data = this.#getLinearizedBlockData(width, height);
     if (this.numComponents === 1 && (forceRGBA || forceRGB)) {
       const len = data.length * (forceRGBA ? 4 : 3);
       const rgbaData = new Uint8ClampedArray(len);
@@ -9984,10 +9951,7 @@ class Stream extends BaseStream {
     return this.length === 0;
   }
   getByte() {
-    if (this.pos >= this.end) {
-      return -1;
-    }
-    return this.bytes[this.pos++];
+    return this.pos >= this.end ? -1 : this.bytes[this.pos++];
   }
   getBytes(length) {
     const pos = this.pos;

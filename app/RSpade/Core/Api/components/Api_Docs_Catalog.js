@@ -2,7 +2,7 @@
  * Api_Docs_Catalog - synchronous reader over the endpoint catalog baked into the page.
  *
  * The catalog is shipped in window.rsxapp.page_data.api_catalog by the app's docs bundle
- * (see Apidocs_Bundle::load_rsxapp_data), so every lookup here is SYNCHRONOUS. That is the
+ * (see Api_Docs_Bundle::load_rsxapp_data), so every lookup here is SYNCHRONOUS. That is the
  * point: the docs tool navigates between endpoints constantly, and an async catalog meant a
  * round trip plus a loading flash on every sidebar click for data that never changes within
  * a page load.

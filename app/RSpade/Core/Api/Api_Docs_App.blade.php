@@ -6,9 +6,11 @@
     view carries no chrome of its own: the console is a single component that owns the whole
     page, including its own in-page navigation.
 
-    The bundle is passed IN rather than named here, the same way Spa_App.blade.php takes one.
-    It has to be the application's: a bundle must cover the directory of the controller that
-    rendered it, and a framework bundle can never cover an application's controller.
+    THE BUNDLE IS NAMED HERE, and it is the framework's own. Nothing on this page is the
+    application's but the route: an app-side bundle could only have listed framework
+    directories back to the framework. The render-time controller-coverage check that would
+    otherwise object - a framework bundle can never cover an app controller's directory - is
+    waived for a framework view, which this is (Rsx_Bundle_Abstract::__validate_path_coverage).
 --}}
 <!DOCTYPE html>
 <html lang="en">
@@ -18,7 +20,7 @@
     <meta content="width=device-width, initial-scale=1.0" name="viewport">
     <title>API Reference</title>
 
-    {!! $bundle::render() !!}
+    {!! \App\RSpade\Core\Api\Api_Docs_Bundle::render() !!}
 </head>
 
 <body class="{{ rsx_body_class() }}">

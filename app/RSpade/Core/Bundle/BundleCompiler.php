@@ -1478,6 +1478,20 @@ class BundleCompiler
             }
         }
 
+        // Same situation again, and for the sharpest reason of the three: the second-factor
+        // components live in Core_Bundle (so they reach every bundle), and the CHALLENGE one
+        // renders on the LOGIN page - a bundle that contains no application controller at
+        // all. Rsx_Two_Factor_Controller's PHP source is framework core, so no bundle's file
+        // set carries it and the loop above would miss its stub, leaving
+        // "Rsx_Two_Factor_Controller is not defined" on the login screen.
+        $two_factor_controller_source = 'app/RSpade/Core/TwoFactor/Rsx_Two_Factor_Controller.php';
+        if (isset($manifest_files[$two_factor_controller_source]['js_stub'])) {
+            $two_factor_stub = rsx_project_file_path($manifest_files[$two_factor_controller_source]['js_stub']);
+            if (file_exists($two_factor_stub)) {
+                $stubs[] = $two_factor_stub;
+            }
+        }
+
         console_debug('BUNDLE', 'Found ' . count($stubs) . ' JS stubs total');
 
         return array_unique($stubs);

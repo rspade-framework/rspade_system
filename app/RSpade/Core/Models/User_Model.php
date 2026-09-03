@@ -59,6 +59,7 @@ use App\RSpade\Core\Session\Session;
  * @property string $invite_accepted_at
  * @property string $invite_expires_at
  * @property int $is_api_access_enabled
+ * @property int $is_2fa_required
  *
  * @property-read string $role_id__label
  * @property-read string $role_id__constant

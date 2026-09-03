@@ -862,8 +862,18 @@ abstract class Rsx_Bundle_Abstract
         $current_controller = \App\RSpade\Core\Rsx::get_current_controller();
         $current_action = \App\RSpade\Core\Rsx::get_current_action();
 
+        // A FRAMEWORK VIEW WAIVES THE CONTROLLER CHECK, symmetrically with the view check
+        // above. The check exists so a page's own controller code - its Ajax stubs, its
+        // Rsx.Route() targets - is actually in the bundle serving it. When the markup is the
+        // framework's (app/RSpade/**), the application controller contributed nothing to the
+        // page but the route it is mounted on, and the bundle is framework-owned end to end,
+        // so there is no app-side JS for it to be missing. This is what lets a framework
+        // feature be MOUNTED on an application route and still ship its own bundle - the API
+        // reference console (Api_Docs_App.blade.php + Api_Docs_Bundle) is the shipped case.
+        $view_is_framework_owned = str_starts_with($view_path, 'app/RSpade/');
+
         // Only validate if we're in a route dispatch context (controller and action are set)
-        if ($current_controller && $current_action) {
+        if ($current_controller && $current_action && !$view_is_framework_owned) {
             // Look up the controller file in the manifest
             try {
                 $controller_metadata = Manifest::php_get_metadata_by_class($current_controller);

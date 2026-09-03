@@ -8,8 +8,8 @@
 namespace App\RSpade\Commands\Rsx;
 
 /**
- * An operator-facing failure in an rsx:api:* command: a user that does not resolve, an
- * expiry that cannot be parsed, an ambiguous email.
+ * An operator-facing failure in a framework CLI command (rsx:api:*, rsx:users:2fa:*): a user
+ * that does not resolve, an expiry that cannot be parsed, an ambiguous email.
  *
  * It exists because every one of these commands has to report the SAME failure two ways -
  * a human line, or a JSON envelope a script can parse - and the check that detects the

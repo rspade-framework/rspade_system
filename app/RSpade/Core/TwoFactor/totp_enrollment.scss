@@ -1,0 +1,100 @@
+// Totp_Enrollment - the authenticator-app enrollment ceremony.
+//
+// LAYOUT-NEUTRAL: no card, no border, no width. The host page owns the box; this styles
+// only what the component itself draws. No typography is set either, so the QR caption, the
+// codes and the notices inherit the surrounding page.
+.Totp_Enrollment {
+    display: block;
+
+    &__notice {
+        padding: 24px 0;
+        text-align: center;
+        color: var(--bs-secondary-color);
+    }
+
+    &__setup,
+    &__reveal {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+    }
+
+    &__step,
+    &__reveal-body {
+        text-align: center;
+        color: var(--bs-secondary-color);
+    }
+
+    // The server's SVG carries no dimensions of its own worth trusting on a phone, so the
+    // box is sized here and the document is told to fill it.
+    &__qr {
+        width: 200px;
+        height: 200px;
+
+        svg {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+    }
+
+    &__manual {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+    }
+
+    &__manual-label {
+        color: var(--bs-secondary-color);
+    }
+
+    // Wide letter spacing on the seed: it is read off the screen and typed by hand, and the
+    // base32 alphabet is full of characters that look alike when they are packed together.
+    &__secret {
+        letter-spacing: 2px;
+        word-break: break-all;
+        text-align: center;
+    }
+
+    &__proof {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    &__code-input {
+        width: 140px;
+        text-align: center;
+        letter-spacing: 4px;
+    }
+
+    &__error {
+        color: var(--bs-danger);
+        text-align: center;
+    }
+
+    &__reveal-title {
+        font-weight: 600;
+    }
+
+    &__codes {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px 24px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+    }
+
+    &__code {
+        letter-spacing: 1px;
+        text-align: center;
+    }
+
+    &__actions {
+        display: flex;
+        gap: 8px;
+    }
+}

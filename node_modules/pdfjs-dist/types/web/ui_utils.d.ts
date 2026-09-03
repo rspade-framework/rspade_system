@@ -261,5 +261,4 @@ export function watchScroll(viewAreaElement: any, callback: any, abortSignal?: u
     down: boolean;
     lastX: any;
     lastY: any;
-    _eventHandler: (evt: any) => void;
 };

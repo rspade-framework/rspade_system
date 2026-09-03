@@ -330,6 +330,19 @@ BUTTON BUSY-STATE (Button_Utils)
 
             if (!Button_Utils.is_submitting($btn)) { ... }
 
+    Where it lives
+        app/RSpade/Core/Ui - inside Core_Bundle, which config('rsx.
+        required_bundles') pulls into EVERY module bundle, JS and SCSS alike.
+        It has to be: .click_async() and Rsx_Form both call it, and a core API
+        whose engine sat in an optional tier is a "Button_Utils is not defined"
+        waiting to happen on any bundle that did not pull that tier in.
+
+        THEME IT, DO NOT OVERRIDE IT. A class override moves the class into
+        rsx/, where only the bundles that include that directory can see it -
+        and pages served by a framework-owned bundle (the API reference console)
+        include no rsx/ path at all, so they lose it. An app that overrides it
+        anyway must place the override in a bundle listed in required_bundles.
+
     Loader theming (downstream apps)
         The loader is styled in the framework's Button_Utils.scss and restyled
         entirely via CSS custom properties - an app never edits or overrides

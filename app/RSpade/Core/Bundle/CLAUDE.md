@@ -16,6 +16,14 @@
 - Never built standalone - metadata consumed by Module Bundles
 - Can use `watch` directories for cache invalidation (e.g., Bootstrap SCSS)
 
+**Render-Time Path Coverage** (`Rsx_Bundle_Abstract::__validate_path_coverage`)
+- A rendering bundle must cover the VIEW's directory and the dispatching CONTROLLER's directory
+- Waiver 1: a view under `app/RSpade/` never has to be covered
+- Waiver 2: when the view is a framework view, the CONTROLLER check is waived too - the app
+  controller then contributes only the route, and the bundle is framework-owned end to end
+- Waiver 2 is what lets a framework feature on an app route ship its own bundle
+  (`Rsx_Api_Docs::page()` -> `Api_Docs_App.blade.php` -> `Api_Docs_Bundle`)
+
 **Auto-Discovery Rules:**
 - Asset Bundles discovered via directory scan cannot have directory paths in `include`
 - If Asset Bundle needs directory scanning, include it explicitly by class name

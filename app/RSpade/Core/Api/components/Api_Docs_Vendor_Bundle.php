@@ -7,8 +7,8 @@ use App\RSpade\Core\Bundle\Rsx_Asset_Bundle_Abstract;
 /**
  * Api_Docs_Vendor_Bundle - CDN assets for the API documentation / tester page.
  *
- * Auto-discovered when a Module Bundle scans the Core/Api directory (the app-side
- * Apidocs_Bundle does). Kept OUT of every other module bundle's include paths so these
+ * Auto-discovered when a Module Bundle scans the Core/Api directory (Api_Docs_Bundle
+ * does). Kept OUT of every other module bundle's include paths so these
  * assets never load on the main app.
  *
  * Assets:

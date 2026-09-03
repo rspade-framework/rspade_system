@@ -1,0 +1,76 @@
+// Passkey_Register - the passkey enrollment control.
+//
+// LAYOUT-NEUTRAL: the host page owns the box. No typography is set here.
+.Passkey_Register {
+    display: block;
+
+    &__notice {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        padding: 12px 16px;
+        border: 1px solid var(--bs-border-color);
+        border-radius: 6px;
+        background-color: var(--bs-tertiary-bg);
+        color: var(--bs-secondary-color);
+    }
+
+    &__notice-icon {
+        flex: 0 0 auto;
+        width: 18px;
+        height: 18px;
+        opacity: 0.65;
+    }
+
+    &__form {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    &__label-input {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    &__error {
+        margin-top: 8px;
+        color: var(--bs-danger);
+    }
+
+    &__reveal {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+    }
+
+    &__reveal-title {
+        font-weight: 600;
+    }
+
+    &__reveal-body {
+        text-align: center;
+        color: var(--bs-secondary-color);
+    }
+
+    &__codes {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 4px 24px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+    }
+
+    &__code {
+        letter-spacing: 1px;
+        text-align: center;
+    }
+
+    &__actions {
+        display: flex;
+        gap: 8px;
+    }
+}

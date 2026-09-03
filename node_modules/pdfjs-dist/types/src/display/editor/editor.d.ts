@@ -463,7 +463,10 @@ export class AnnotationEditor {
      * Add the resizers to this editor.
      */
     makeResizable(): void;
-    get toolbarPosition(): null;
+    /**
+     * @returns {Array<number>|null}
+     */
+    get toolbarPosition(): Array<number> | null;
     /**
      * Get the position of the comment button.
      * @returns {Array<number>|null}

@@ -1426,15 +1426,19 @@ LOGIN HISTORY
         Login_History::STATUS_SUCCESS          - produced by attempt()
         Login_History::STATUS_FAILED_PASSWORD  - produced by attempt()
         Login_History::STATUS_FAILED_NOT_FOUND - produced by attempt()
-        Login_History::STATUS_FAILED_2FA       - no framework producer
+        Login_History::STATUS_FAILED_2FA       - produced by
+                                                 Rsx_Two_Factor::verify_challenge()
         Login_History::STATUS_FAILED_LOCKED    - no framework producer
         Login_History::STATUS_FAILED_DISABLED  - no framework producer
 
-        The last three exist because account state and second factors are
-        APPLICATION concerns (ACCOUNT STATE above): the app records those
-        outcomes itself through record_failure(). They are kept here so every app
-        spells the same outcome the same way. Since failures are not rows, a
-        status describes the LOG line, not a column.
+        FAILED_2FA is written by the framework's own second-factor challenge
+        (rsx:man two_factor) - an app that runs the challenge through
+        Rsx_Two_Factor does NOT record it itself. The last two have no producer
+        because account state is APPLICATION vocabulary (ACCOUNT STATE above):
+        the app records those outcomes itself through record_failure(). All
+        three are kept here so every app spells the same outcome the same way.
+        Since failures are not rows, a status describes the LOG line, not a
+        column.
 
     READING IT BACK:
         $history = Login_History::get_history_for_user($login_user_id, $limit = 10);
@@ -1461,10 +1465,13 @@ LOGIN HISTORY
         deliberately not a parameter.
 
     APP RECIPE - TWO-FACTOR:
-        A second step is built on top of attempt(), not inside it. Suppress BOTH
-        the recording and the last_login stamp at the password stage, so a
-        recorded SUCCESS always means FULL authentication and last_login is
-        stamped only when the user is actually all the way in:
+        The second step is the FRAMEWORK'S (Rsx_Two_Factor - TOTP, passkeys and
+        recovery codes; full treatment in rsx:man two_factor). What an app owns
+        is the login function around it, and the shape below is the whole of it.
+
+        Suppress BOTH the recording and the last_login stamp at the password
+        stage, so a recorded SUCCESS always means FULL authentication and
+        last_login is stamped only when the user is actually all the way in:
 
             if (!RsxAuth::attempt($credentials, record: false, touch_last_login: false)) {
                 Login_History::record_failure($email, Login_History::STATUS_FAILED_PASSWORD);
@@ -1472,15 +1479,36 @@ LOGIN HISTORY
             }
 
             $login_user = Session::get_login_user();
-            // ... issue the challenge, log the session back out if you prefer ...
 
-            // on successful challenge completion:
+            if (Rsx_Two_Factor::is_enabled($login_user)) {
+                // Parks the pending identity and LOGS THE SESSION BACK OUT: a
+                // half-authenticated browser is represented as not authenticated.
+                Rsx_Two_Factor::begin_challenge($login_user);
+
+                return redirect(Rsx::Route('Login_Controller::verify'));
+            }
+
+            // No second factor: this IS the login.
             RsxAuth::login($login_user);                          // stamps last_login
             Login_History::record_success($login_user->id, $email);
 
-            // on a failed challenge:
-            Login_History::record_failure($email, Login_History::STATUS_FAILED_2FA,
-                                          null, $login_user->id);
+        The challenge is answered by YOUR endpoint, because where a signed-in
+        user lands is application logic. verify_challenge() signs them in,
+        stamps last_login, writes the success row, and records the FAILED_2FA
+        row on a wrong answer - so the endpoint records nothing itself:
+
+            try {
+                $login_user = Rsx_Two_Factor::verify_challenge($params);   // {code}|{assertion}
+            } catch (Auth_Throttled_Exception $e) {
+                return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+            } catch (Two_Factor_Failed_Exception $e) {
+                return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+            }
+
+            return ['redirect' => $destination];
+
+        Worked example:
+        system/app/RSpade/resource/reference_app/app/login/login_controller.php
 
     CLI NEVER STAMPS last_login:
         Session::set_login_user_id()'s CLI branch declares the identity override
@@ -1577,12 +1605,24 @@ LOGIN THROTTLE (BRUTE FORCE)
 
     APP RECIPE - A SECOND FACTOR:
         A 6-digit code is a million guesses inside a 30-second window, so the
-        challenge step needs the same protection the password step gets. Refuse
-        first, and let the recorded failure do the counting:
+        challenge step needs the same protection the password step gets. THE
+        FRAMEWORK'S OWN CHALLENGE ALREADY DOES THIS - Rsx_Two_Factor::
+        verify_challenge() opens with require_not_throttled() and records its
+        failure as STATUS_FAILED_2FA - so an app running that challenge writes
+        none of it, and only catches the throw:
+
+            try {
+                $login_user = Rsx_Two_Factor::verify_challenge($params);
+            } catch (Auth_Throttled_Exception $e) {
+                return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+            }
+
+        The shape it implements, for any OTHER factor an app verifies itself -
+        refuse first, then let the recorded failure do the counting:
 
             Login_Throttle::require_not_throttled();     // may throw - catch it
 
-            if (!Totp_Service::verify($login_user, $code)) {
+            if (!$factor_verified) {
                 Login_History::record_failure($email, Login_History::STATUS_FAILED_2FA,
                                               null, $login_user->id);
                 return response_form_error('That code is not valid');
@@ -1681,6 +1721,8 @@ LOCATION GEOLOCATION (FUTURE)
 SEE ALSO
     rsx:man auth              - identity model (login_users + users), the RsxAuth
                                 facade, invitations
+    rsx:man two_factor        - second factors: TOTP, passkeys, recovery codes,
+                                the challenge state machine, rsx:users:2fa:*
     rsx:man auth_gates        - #[Auth] gates on every surface, #[Auth_Check]
                                 vocabulary, can_access, the error screens
     rsx:man event_hooks       - #[OnEvent] handlers, incl. session.terminated

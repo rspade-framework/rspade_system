@@ -167,6 +167,43 @@ SCSS MIXINS
     so a rule written there is absent on desktop. If you meant "from tablet
     upward", the mixin is `tablet-up`.
 
+    A COMPONENT AT A VARIABLE CONTAINER WIDTH PREFERS NO BREAKPOINT AT ALL.
+    Every mixin above asks the VIEWPORT. That is the right question for a page
+    or a layout, whose width IS the viewport's. It is the wrong question for a
+    grid of cards placed in a container the page decides the width of - a main
+    column beside a sidebar, a sidebar, a modal, one cell of an outer grid. The
+    viewport says "desktop" while the container is 320px wide, so the component
+    keeps four columns in a space that fits one.
+
+    Ask the CONTAINER instead, with one declaration and no media queries:
+
+        grid-template-columns: repeat(auto-fit, minmax(<floor>, 1fr));
+
+    `auto-fit` fits as many tracks as the floor allows and stretches them to
+    fill; when the container narrows past two floors, it drops to one track by
+    itself. The floor is what makes the count right, and it is written as a
+    max() of two numbers:
+
+        <floor> = max(<readable px>, <even 1/N share>)
+
+    The readable px is the narrowest width at which one card is still worth
+    reading; the share is the container fraction N cards may occupy. Written
+    that way the SHARE wins while N columns still fit (so the grid holds at
+    exactly N and does not creep to N+1 in a wide container), and the PX FLOOR
+    wins as the container shrinks, stepping N -> N-1 -> ... -> 1 on its own.
+    A four-up card grid whose cards stop being readable under 240px:
+
+        .Example_Card_Grid {   // illustrative - no such component ships
+            display: grid;
+            gap: var(--block-gap);
+            grid-template-columns: repeat(auto-fit, minmax(max(240px, 22%), 1fr));
+        }
+
+    Use the viewport mixins for layout - what the page's own columns do, what
+    the navigation does, page padding. Use the container-relative grid for a
+    reusable component, which does not know where it will be placed and must
+    not guess.
+
 UTILITY CLASSES
 
     Because $grid-breakpoints is overridden before Bootstrap compiles, every

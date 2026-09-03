@@ -223,6 +223,124 @@ The skill's `on_render` cache-stub warnings presuppose this model:
 - `cache_id()` can be overridden to control the persisted cache key. It does **not** affect
   deduplication, which always keys off raw `this.args`.
 
+## Parallel loads
+
+**Independent server calls in one `on_load()` go under a single `Promise.all`.** A chain of
+sequential `await`s is what an author writes when nothing says otherwise, and it costs real
+wall-clock time: four serial round-trips take four times one round-trip with the loading state
+on screen the whole while.
+
+Every **non-fatal** branch carries its own `.catch` so one failure cannot reject the batch. The
+record the page IS about stays fatal - no `.catch` on it.
+
+```javascript
+async on_load() {
+    const [record, notes, tags] = await Promise.all([
+        Record_Controller.get({id: this.args.id}),                        // fatal: the page IS this record
+        Note_Controller.list({record_id: this.args.id}).catch(() => []),  // non-fatal: degrade to empty
+        Tag_Controller.list({record_id: this.args.id}).catch(() => []),
+    ]);
+    this.data.record = record;
+    this.data.notes = notes;
+    this.data.tags = tags;
+}
+```
+
+**Why the per-branch `.catch` is not optional** (verified 2026-09-02 against jqhtml core 2.3.59):
+an `on_load()` that rejects aborts the whole load. `this.data` stays at its `on_create()` defaults
+- including the branches that SUCCEEDED - the component never reaches `on_loaded()`/`on_ready()`,
+and the rejection surfaces through the unhandled-exception handler. A sidebar list that 500s must
+not blank the record the page exists to show.
+
+**The one genuine exception - sequence only when the second call's ARGUMENTS come from the first
+call's RESULT:**
+
+```javascript
+async on_load() {
+    const project = await Project_Controller.get({id: this.args.id});
+    const client = await Client_Controller.get({id: project.client_id});   // needs project.client_id
+    this.data.project = project;
+    this.data.client = client;
+}
+```
+
+**The false dependency: "parallel loads, then a join."** Results that are merged, counted or
+cross-referenced *after* they all arrive are not dependent - combining them after the fact is
+exactly what `Promise.all` produces. The test is the ARGUMENTS, never the result.
+
+**The loop shape is the same mistake, better hidden.** An `await` inside a `for` over independent
+items is N serial round-trips:
+
+```javascript
+// [NO] one round-trip per item, in series
+for (const id of this.args.ids) {
+    this.data.rows.push(await Row_Controller.get({id: id}));
+}
+
+// [OK] map to promises, await the batch
+this.data.rows = await Promise.all(this.args.ids.map((id) => Row_Controller.get({id: id})));
+```
+
+A per-item loop is also the hint that a BATCH endpoint belongs on the server: one call taking a
+list of ids beats N parallel calls.
+
+## What survives a re-render
+
+Verified 2026-09-02 by live probe against jqhtml core 2.3.59. "Own `render()`" covers `render()`,
+`redraw()` and the automatic post-`on_load()` re-render.
+
+| | own `render()` | `reload()` | parent re-render |
+|---|---|---|---|
+| component instance | same | same | **destroyed, new one** |
+| `this.$` element identity | same | same | **new element** |
+| plain instance property | kept | kept | gone with the instance |
+| `this.state` | kept | kept | gone with the instance |
+| `this.data` | kept | **rebuilt** [1] | rebuilt on the new instance |
+| handler bound on `this.$` | **kept** | **kept** | gone with the element |
+| handler bound on a child element | lost | lost | lost |
+| `$sid` child elements | recreated | recreated | recreated |
+
+A render clears the root element's `innerHTML` and re-executes the template: the root element
+object is the SAME object, every descendant is a new one. That single fact explains the last three
+rows - a handler on `this.$` survives, a handler on `this.$sid('x')` does not.
+
+A parent's `render()` calls `_stop()` on every descendant component and then clears its own DOM, so
+the child is a NEW INSTANCE afterwards, running `on_create()` -> `on_load()` again (subject to the
+component cache). `this.state` and any plain instance property die with the old instance.
+
+`stop()` is the outlier: it leaves the DOM and the instance in place - it halts the lifecycle and
+fires `on_stop()`. State and handlers are still there; the component just stops responding to
+lifecycle calls.
+
+[1] `reload()` restores `this.data` to the `on_create()` snapshot and then lets `on_load()` write
+it. A component that overrides NO `on_load()` skips the fetch entirely and `reload()` degenerates
+into a plain re-render, leaving `this.data` untouched.
+
+## Delegated handlers
+
+Bind delegated handlers **namespaced and idempotent**, on the component root:
+
+```javascript
+on_render() {
+    this.$.off('click.mycmp').on('click.mycmp', '.My_Cmp__row', (event) => this._open($(event.currentTarget)));
+}
+```
+
+**Never guard a bind with a one-shot instance flag** - `if (!this._wired) { this._wired = true; ... }`.
+The flag lives on the INSTANCE; the handler lives on the ELEMENT, and the survival table above shows
+those lifetimes are not the same one. A parent repaint hands the successor a fresh flag, so a handler
+bound on anything that OUTLIVED the instance - `document`, the SPA layout, any surviving ancestor -
+gets bound a second time and now fires twice; meanwhile on the component's own `render()` the flag
+suppresses a rebind the surviving root element genuinely needed. The `.off('.ns').on('.ns')` pair
+needs no flag at all: it is idempotent by construction and correct in both worlds.
+
+**Content you hand to another component is still yours.** Everything written in a `<Slot:x>`
+body - or in any content passed to a child - resolves against the DEFINING component: `<%= %>`
+expressions, template locals, `$sid` ids (the definer's cid is baked in at compile time) and
+handler expressions alike. `@click=this.method` in a slot body runs your method with `this` =
+your component, never the component the markup is rendered inside. Write `this.method` and
+`this.$sid('x')` directly; a `Spa.action()` detour from inside a slot body is never needed.
+
 ## Re-render methods
 
 - **`reload()`** - reset `this.data` to `on_create()` defaults -> `on_load()` -> `render()` -> `on_ready()`. Use when `this.args` changed or data must be refetched. Debounced: rapid repeated calls coalesce into ONE execution.

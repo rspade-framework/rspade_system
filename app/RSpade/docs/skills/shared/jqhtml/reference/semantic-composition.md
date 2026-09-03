@@ -69,7 +69,7 @@ The unit of work is ONE page, end-to-end. Never convert half a page.
 
 ## Pitfalls
 
-- **P1 - Slot-only inheritance breaks parent `$sid` resolution.** A child defined by slot-only inheritance re-scopes the content passed into it, so the PARENT's `this.sid('x')` on elements inside that content returns null. Use body-preserving `extends=` on the `<Define:>` tag.
+- **P1 - Detouring around content you handed to a child.** Everything written in a `<Slot:x>` body - or any content passed to a child - resolves against YOUR template: `<%= %>` expressions, locals, `$sid` ids, and handler expressions (`@click=this.method` runs with `this` = the definer, whose cid is also what the `$sid` id bakes in, so the definer's `this.$sid('x')` finds the element and the child's does not). Reaching `Spa.action().sid(...)` from inside a slot body to find your own component is never needed - write `this.method` and `this.$sid('x')` directly.
 - **P2 - `$flush` vs. widgets with their own header.** A section's padding-strip arg combined with a self-headed widget produces a misaligned orphan header at the card edge. Wrap self-headed widgets in a PLAIN section.
 - **P3 - `$sid` discipline.** `$sid` targets are defined in the template and rendered unconditionally (toggle visibility, do not gate the element behind an `if`). Never create `data-sid` nodes from JS, and never SELECT by `data-sid`/`data-name`/`data-cid` - those are debug attributes, stripped in production.
 - **P4 - `on_render` re-fires.** Namespace every DOM bind; guard every DOM injection against duplicate appends.

@@ -242,6 +242,27 @@ BUNDLE PLACEMENT
         /rsx/app/login/signup/...
         ... and all files in subdirectories
 
+    COVERAGE IS VALIDATED AT RENDER TIME, twice: the bundle must cover the
+    directory of the VIEW being rendered, and the directory of the CONTROLLER
+    that dispatched the request. Both throw a YoureDoingItWrongException naming
+    the bundle, the path and the include list. The point is that a page's own
+    code - its Ajax stubs, its Rsx.Route() targets, its components - is actually
+    in the bundle serving it.
+
+    TWO WAIVERS, BOTH FOR FRAMEWORK-OWNED MARKUP:
+        - A view under app/RSpade/ never has to be covered. Framework views are
+          rendered from application routes by design.
+        - When the VIEW is a framework view, the CONTROLLER check is waived too.
+          The app controller then contributes nothing to the page but the route
+          it is mounted on, and the bundle is framework-owned end to end, so
+          there is no app-side JS for it to be missing.
+
+    The second waiver is what lets a framework feature mounted on an application
+    route ship its own bundle. The shipped case is the API reference console:
+    Rsx_Api_Docs::page() renders Api_Docs_App.blade.php, which names the
+    framework's Api_Docs_Bundle, from whatever route the application declared.
+    An application never writes a bundle for it. See external_api(3).
+
 ADDING CUSTOM NPM MODULES
     Application developers can include third-party npm packages in their bundles
     by creating Asset Bundles co-located with their components:

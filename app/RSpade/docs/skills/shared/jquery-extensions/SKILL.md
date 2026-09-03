@@ -79,7 +79,7 @@ Contract:
 
 **RECOMMENDED PATTERN — buttons that trigger server-side actions**: bind with `.click_async()` whenever a click fires an Ajax action and the screen the button lives on stays visible (send, sync, toggle, kick a task) — the user gets immediate visual feedback instead of a dead button during the round-trip. Not needed where chrome already provides it (`Rsx_Form` submits, `Modal.form()` buttons) or when the action immediately navigates away.
 
-The loader is themeable via CSS custom properties (`rsx:man jquery`). `Button_Utils.set/clear/is_submitting($el)` is the underlying core API for the rare case you need to drive the state manually.
+The loader is themeable via CSS custom properties (`rsx:man jquery`). `Button_Utils.set/clear/is_submitting($el)` is the underlying core API for the rare case you need to drive the state manually. It lives in `app/RSpade/Core/Ui` and reaches every bundle through `Core_Bundle` - theme it with the custom properties rather than class-overriding it, since an override moves the class into `rsx/` where a framework-owned bundle (the `/apidocs` console) cannot see it.
 
 ---
 

@@ -442,7 +442,6 @@ WHAT IS ALREADY ON YOUR DISK
                                       and pre-boot command interception
       Commands/Restricted/CLAUDE.md   the guardrails blocking destructive
                                       Laravel commands
-      BuildUI/CLAUDE.md               the live rebuild terminal
       Lib/Flash/CLAUDE.md             flash alerts across redirects and Ajax
       man/CLAUDE.md                   how a man page is written
       upstream_changes/CLAUDE.md      the AUTHOR's side of the mandates you

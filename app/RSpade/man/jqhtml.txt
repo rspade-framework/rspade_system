@@ -1180,6 +1180,65 @@ ON_VIEWPORT_RESIZE (jqhtml 2.3.52+)
     recomputing a canvas size, virtualized row math, or repositioning an
     imperatively-managed overlay.
 
+PARALLEL LOADS IN ON_LOAD()
+    A chain of sequential awaits is what an author writes when nothing says
+    otherwise, and it costs real wall-clock time: four serial round-trips take
+    four times one round-trip with the loading state on screen the whole while.
+
+    THE DEFAULT - independent server calls in one on_load() run together under
+    a single Promise.all(). Every NON-FATAL branch carries its own .catch(), so
+    one failure cannot reject the batch; the record the page IS about stays
+    fatal and gets no .catch().
+
+        async on_load() {
+            const [record, notes, tags] = await Promise.all([
+                Record_Controller.get({id: this.args.id}),
+                Note_Controller.list({record_id: this.args.id}).catch(() => []),
+                Tag_Controller.list({record_id: this.args.id}).catch(() => []),
+            ]);
+            this.data.record = record;   // fatal: the page IS this record
+            this.data.notes = notes;     // non-fatal: degrade to empty
+            this.data.tags = tags;
+        }
+
+    Why the per-branch .catch() is not optional (verified 2026-09-02 against
+    jqhtml core 2.3.59): an on_load() that REJECTS aborts the whole load.
+    this.data stays at its on_create() defaults - including the branches that
+    SUCCEEDED - the component never reaches on_loaded()/on_ready(), and the
+    rejection surfaces through the unhandled-exception handler. A sidebar list
+    that 500s must not blank the record the page exists to show.
+
+    THE ONE GENUINE EXCEPTION - sequence only when the second call's ARGUMENTS
+    come from the first call's RESULT:
+
+        async on_load() {
+            const project = await Project_Controller.get({id: this.args.id});
+            const client = await Client_Controller.get({id: project.client_id});
+            this.data.project = project;
+            this.data.client = client;
+        }
+
+    THE FALSE DEPENDENCY - "parallel loads, then a join". Results that are
+    merged, counted or cross-referenced AFTER they all arrive are not
+    dependent; combining them after the fact is exactly what Promise.all()
+    produces. The test is the ARGUMENTS, never the result.
+
+    THE LOOP SHAPE is the same mistake, better hidden. An await inside a for
+    over independent items is N serial round-trips:
+
+        // [NO] one round-trip per item, in series
+        for (const id of this.args.ids) {
+            this.data.rows.push(await Row_Controller.get({id: id}));
+        }
+
+        // [OK] map to promises, await the batch
+        this.data.rows = await Promise.all(
+            this.args.ids.map((id) => Row_Controller.get({id: id}))
+        );
+
+    A per-item loop is also the hint that a BATCH endpoint belongs on the
+    server: one call taking a list of ids beats N parallel calls.
+
 HOOK DECISION MATRIX
     I want to...                                        Hook            Why
     ------------------------------------------------    ------------    ------------------------------------------------
@@ -1773,7 +1832,9 @@ EVENT HANDLER PLACEMENT
     Where to register event handlers depends on what you're attaching to:
 
     Component Events (this.on()/this.once()) - Register in on_create():
-        Component events attach to this.$ which persists across re-renders.
+        Component events attach to this.$, which persists across this
+        component's OWN re-renders (a PARENT re-render replaces the element -
+        see WHAT SURVIVES A RE-RENDER).
         Register once in on_create() to avoid infinite loops.
 
             on_create() {
@@ -1818,6 +1879,70 @@ EVENT HANDLER PLACEMENT
         this.sid('child').on/once('event') -> on_ready() (child component events)
         this.$sid('elem').on('click')      -> on_render() (child DOM events,
                                               dedup-guarded)
+
+WHAT SURVIVES A RE-RENDER
+    Verified 2026-09-02 by live probe against jqhtml core 2.3.59. "own
+    render()" covers render(), redraw() and the automatic post-on_load()
+    re-render.
+
+                                    own render()  reload()   parent re-render
+        component instance          same          same       DESTROYED, new one
+        this.$ element identity     same          same       NEW element
+        plain instance property     kept          kept       gone with instance
+        this.state                  kept          kept       gone with instance
+        this.data                   kept          REBUILT[1] rebuilt on new one
+        handler bound on this.$     KEPT          KEPT       gone with element
+        handler on a child element  lost          lost       lost
+        $sid child elements         recreated     recreated  recreated
+
+    A render clears the root element's innerHTML and re-executes the template:
+    the root element object is the SAME object, every descendant is a new one.
+    That single fact explains the last three rows - a handler on this.$
+    survives, a handler on this.$sid('x') does not.
+
+    A parent's render() calls _stop() on every descendant component and then
+    clears its own DOM, so the child is a NEW INSTANCE afterwards, running
+    on_create() -> on_load() again (subject to the component cache).
+    this.state and any plain instance property die with the old instance.
+
+    stop() is the outlier: it leaves the DOM and the instance in place - it
+    halts the lifecycle and fires on_stop(). State and handlers are still
+    there; the component simply stops responding to lifecycle calls.
+
+    [1] reload() restores this.data to the on_create() snapshot and then lets
+        on_load() write it. A component that overrides NO on_load() skips the
+        fetch entirely and reload() degenerates into a plain re-render,
+        leaving this.data untouched.
+
+DELEGATED HANDLERS
+    Bind delegated handlers NAMESPACED AND IDEMPOTENT, on the component root:
+
+        on_render() {
+            this.$.off('click.mycmp').on('click.mycmp', '.My_Cmp__row',
+                (event) => this._open($(event.currentTarget)));
+        }
+
+    NEVER guard a bind with a one-shot instance flag:
+
+        if (!this._wired) { this._wired = true; this.$.on(...); }   // [NO]
+
+    The flag lives on the INSTANCE; the handler lives on the ELEMENT, and the
+    table above shows those lifetimes are not the same one. A parent repaint
+    hands the successor a fresh flag, so a handler bound on anything that
+    OUTLIVED the instance - document, the SPA layout, any surviving ancestor -
+    is bound a second time and now fires twice; meanwhile on the component's
+    own render() the flag suppresses a rebind that the surviving root element
+    genuinely needed. The .off('.ns').on('.ns') pair needs no flag at all: it
+    is idempotent by construction and correct in both worlds.
+
+    CONTENT YOU HAND TO ANOTHER COMPONENT IS STILL YOURS. Everything written
+    in a <Slot:x> body - or in any content passed to a child - resolves
+    against the DEFINING component: <%= %> expressions, template locals, $sid
+    ids (which bake the definer's cid in at compile time) and handler
+    expressions alike. @click=this.method in a slot body runs your method with
+    this = your component, never the component the markup is rendered inside.
+    So write this.method and this.$sid('x') directly; a Spa.action() detour to
+    find your own component from inside a slot body is never needed.
 
 $REDRAWABLE ATTRIBUTE - LIGHTWEIGHT COMPONENTS
     Convert any HTML element into a re-renderable component using the
@@ -2730,5 +2855,9 @@ PERFORMANCE
 SEE ALSO
     anchors(1), bundle_api(3), controller(3), manifest_api(3),
     semantic_composition(3), scss(3)
+
+    skill rspade:view-decomposition - breaking an over-long view template
+    into region components (the ~325-line trigger, the seam test, the
+    eager-vs-lazy data rule)
 
 RSX Framework                    2025-10-07                         JQHTML(3)

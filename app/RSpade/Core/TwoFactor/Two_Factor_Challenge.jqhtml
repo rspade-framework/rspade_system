@@ -1,0 +1,77 @@
+<%--
+Two_Factor_Challenge
+
+The login challenge screen: the half-authenticated state between a correct password and a
+correct second factor.
+
+    <Two_Factor_Challenge $controller="Login_Controller" $method="verify_two_factor" />
+
+WHY IT TAKES AN ENDPOINT. The framework will not verify the challenge for you - where a
+signed-in user lands is application logic (a captured redirect, staff versus portal, an
+interstitial the app requires), so the APPLICATION owns the verification endpoint and this
+component posts to it. It is the <Rsx_Form> naming convention ($controller + $method) applied
+to a control that is not a form over model fields.
+
+THE ENDPOINT'S CONTRACT, both directions:
+  it receives  {code: '123456'}  from the typed answer, or
+               {assertion: {id, clientDataJSON, authenticatorData, signature}} from a passkey
+  it calls     Rsx_Two_Factor::verify_challenge($params)
+  it returns   {redirect: '/somewhere'} - followed with window.location
+  it rejects   with a user-safe message, rendered inline here
+
+ONE INPUT FOR TWO KINDS OF ANSWER. A 6-digit authenticator code and a recovery code both go
+in the same box, because the server tries both and the user should not have to know which
+kind of string they are holding.
+
+THE THROTTLE MESSAGE MUST SURVIVE. Auth_Throttled_Exception surfaces as an ordinary Ajax
+rejection, so it lands in the same inline error as a wrong code. That is deliberate: "you are
+doing that too fast" is the most important thing this screen ever says, and a component that
+only rendered messages it recognised would swallow it.
+
+STATES, in the order the template tests them:
+  data.challenge === null pending   the first load has not answered -> a loading notice
+  data.challenge === null           nothing is pending              -> a notice; 'no_challenge' fires
+  otherwise                         the masked address and the answer controls
+
+Args:
+  $controller (required) - the application controller holding the verification endpoint.
+  $method     (required) - the endpoint's method name.
+
+Events:
+  no_challenge - nothing is pending: an expired window, or a direct visit. The host page
+                 sends the visitor back to the login screen.
+
+See: php artisan rsx:man two_factor
+--%>
+<Define:Two_Factor_Challenge tag="div">
+    <% if (!this.args.controller || !this.args.method) { throw new Error('Two_Factor_Challenge requires $controller and $method'); } %>
+
+    <% if (!this.data.loaded) { %>
+        <div class="Two_Factor_Challenge__notice">Checking your sign-in...</div>
+    <% } else if (!this.data.challenge) { %>
+        <div class="Two_Factor_Challenge__notice">This sign-in is no longer waiting for a second step.</div>
+    <% } else { %>
+        <div class="Two_Factor_Challenge__body">
+            <div class="Two_Factor_Challenge__identity">
+                Signing in as <span class="Two_Factor_Challenge__email"><%= this.data.challenge.email_masked %></span>
+            </div>
+
+            <div class="Two_Factor_Challenge__answer">
+                <input type="text" class="form-control Two_Factor_Challenge__code-input" $sid="code"
+                       inputmode="text" autocomplete="one-time-code" autofocus
+                       placeholder="Authenticator or recovery code" aria-label="Verification code" />
+                <button type="button" class="btn btn-primary" $sid="verify">Verify</button>
+            </div>
+
+            <% if (this.data.challenge.has_passkey && this.state.passkeys_supported) { %>
+                <button type="button" class="btn btn-outline-secondary Two_Factor_Challenge__passkey" $sid="passkey">
+                    Use passkey
+                </button>
+            <% } %>
+
+            <% if (this.state.error) { %>
+                <div class="Two_Factor_Challenge__error"><%= this.state.error %></div>
+            <% } %>
+        </div>
+    <% } %>
+</Define:Two_Factor_Challenge>

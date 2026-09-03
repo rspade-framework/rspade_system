@@ -56,6 +56,8 @@ export class AnnotationEditorLayerBuilder {
      * @returns {Promise<void>}
      */
     render({ viewport, intent }: AnnotationEditorLayerBuilderRenderOptions): Promise<void>;
+    /** @param {PageViewport} viewport */
+    update(viewport: PageViewport): void;
     cancel(): void;
     hide(): void;
     show(): void;

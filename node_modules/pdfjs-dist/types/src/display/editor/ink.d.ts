@@ -17,7 +17,12 @@ export class InkEditor extends DrawingEditor {
     /** @inheritdoc */
     static get typesMap(): any;
     /** @inheritdoc */
-    static createDrawerInstance(x: any, y: any, parentWidth: any, parentHeight: any, rotation: any): InkDrawOutliner;
+    static createDrawerInstance({ x, y, box: [, , width, height], rotation }: {
+        x: any;
+        y: any;
+        box: [any, any, any, any];
+        rotation: any;
+    }): InkDrawOutliner;
     /** @inheritdoc */
     static deserializeDraw(pageX: any, pageY: any, pageWidth: any, pageHeight: any, innerMargin: any, data: any): any;
     defaultL10nId: string;

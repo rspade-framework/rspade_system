@@ -14,8 +14,10 @@ use App\RSpade\Core\Manifest\Manifest;
  * reaching into the application that happens to be hosting it.
  *
  * WHY IT MATTERS, from the incident that produced this rule. The API docs console is
- * framework code mounted on an application route, and its bundle had borrowed four things
- * from the template app: the theme variables, the responsive mixins, the app's Bootstrap
+ * framework code mounted on an application route - since the console became wholly
+ * framework-owned (Api_Docs_Bundle in Core/Api) this rule guards its bundle directly, but
+ * the incident predates that, when the bundle still lived in the app. That bundle had
+ * borrowed four things from the template app: the theme variables, the responsive mixins, the app's Bootstrap
  * build and the app's Modal library. Every one of those is the APPLICATION'S to change -
  * restyling a theme, swapping a Bootstrap build or replacing Modal outright are all
  * perfectly legal things for a downstream app to do, and any of them silently broke the
@@ -25,6 +27,8 @@ use App\RSpade\Core\Manifest\Manifest;
  * The fix is never to include the app path. It is to own the dependency on the framework
  * side - Api_Confirm_Dialog and api_docs_page_reset.scss are what those four includes
  * became - so the console renders identically no matter what the host app does to itself.
+ * The same reasoning later moved Button_Utils out of the optional Lib tier and into
+ * Core/Ui: a dependency of a CORE api belongs where every bundle already looks.
  *
  * Two shapes are caught, because both are the same edge:
  *   - a PATH under rsx/ ('rsx/theme/variables.scss', or an absolute path resolving there);
@@ -178,11 +182,26 @@ class FrameworkBundleAppInclude_CodeQualityRule extends CodeQualityRule_Abstract
             return $this->__app_relative_path($absolute);
         }
 
-        // Otherwise it names a class (or an alias resolving to one). php_find_class()
-        // returns the manifest-relative path, which is exactly what needs judging.
-        $class_file = Manifest::php_find_class($entry);
-        if (!$class_file) {
-            return null;
+        // Otherwise it names a bundle ALIAS or a class. An alias is resolved through
+        // config('rsx.bundle_aliases') first - exactly what BundleCompiler does - because an
+        // alias can name an application bundle ('portal'), and spelling the dependency as an
+        // alias must not evade the rule. Aliases the compiler itself resolves to nothing
+        // ('jquery' and friends are aliases too) leave $entry unchanged and fall through.
+        $aliases = config('rsx.bundle_aliases', []);
+        $candidate = $aliases[$entry] ?? $entry;
+
+        // php_find_class() THROWS on an unknown name, and an include list legitimately
+        // carries names that are not manifest classes (npm-backed aliases such as 'jquery').
+        // Nothing outside the manifest can be an app path, so an unknown name is not an
+        // offender.
+        try {
+            $class_file = Manifest::find_php_fqcn($candidate);
+        } catch (\Throwable $e) {
+            try {
+                $class_file = Manifest::php_find_class(class_basename($candidate));
+            } catch (\Throwable $e2) {
+                return null;
+            }
         }
 
         return $this->__app_relative_path(base_path($class_file));
@@ -261,7 +280,7 @@ class FrameworkBundleAppInclude_CodeQualityRule extends CodeQualityRule_Abstract
                 . "the worked example - it dropped rsx/theme/variables.scss, rsx/theme/responsive.scss, Bootstrap5_Src_Bundle "
                 . "and rsx/lib/modal in favour of framework-owned equivalents beside the components that need them "
                 . "(Api_Confirm_Dialog, api_docs_page_reset.scss), so it renders identically whatever the host app does. "
-                . "See rsx/app/apidocs/apidocs_bundle.php for the resulting include list.\n"
+                . "See app/RSpade/Core/Api/Api_Docs_Bundle.php for the resulting include list.\n"
                 . "\n"
                 . "Naming a bundle CLASS instead of a path does not make the dependency framework-owned - what matters is "
                 . "where the included file lives.\n"

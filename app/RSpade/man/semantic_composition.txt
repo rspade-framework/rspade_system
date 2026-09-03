@@ -614,3 +614,8 @@ SEE ALSO
     view_action_patterns  - the loading/error/content skeleton a view page's
                             success state composes within
     crud                  - standard Create/Read/Update/Delete module structure
+
+    skill rspade:view-decomposition
+                          - when a composed view page is still too long:
+                            the ~325-line trigger, the region seam test,
+                            and the eager-vs-lazy data rule

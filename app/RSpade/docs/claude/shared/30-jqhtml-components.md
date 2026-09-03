@@ -18,8 +18,8 @@ RSX's component system. A component is up to three co-located files sharing one 
 
 **Access**: `this.$` (element), `this.$sid('x')` (child element tagged `$sid=` in the template — template-only, never set from JS), `this.sid('x')` (child component instance), `$(sel).component()`. Events: `this.trigger(name, data)` / `child.on(name, cb)`.
 
-**Re-render**: `reload()` restores `this.data` to its `on_create()` snapshot then re-runs `on_load()` -> render (`on_create()` is NOT called again; use when `this.args` changed); `render()`/`redraw()` re-executes the template only; `stop()` destroys. Ajax belongs in `on_load()` — never refetch from a handler.
+**Re-render**: `reload()` restores `this.data` to its `on_create()` snapshot then re-runs `on_load()` -> render (`on_create()` is NOT called again; use when `this.args` changed); `render()`/`redraw()` re-executes the template only; `stop()` destroys. **A PARENT's re-render destroys and rebuilds its children** — a child instance, its `this.state` and its handlers go with it, so bind handlers namespaced-and-idempotent (`.off('click.ns').on('click.ns', ...)`), never behind a one-shot `this._wired` flag. Ajax belongs in `on_load()` — never refetch from a handler, and **independent server calls in one `on_load()` run in parallel under a single `Promise.all` (each non-fatal branch carrying its own `.catch`)**; sequence ONLY when a later call's ARGUMENTS come from an earlier call's RESULT.
 
-**Compose pages from named components** — an Action template reads as component invocations, not `<div class>` soup; each component owns its whole look in its own SCSS.
+**Compose pages from named components** — an Action template reads as component invocations, not `<div class>` soup; each component owns its whole look in its own SCSS. **A view template past ~325 lines is decomposed into page-private REGION components** — skill `rspade:view-decomposition`.
 
 Skill `rspade:jqhtml` (references `template-syntax`, `lifecycle-and-state`, `component-api-events`, `semantic-composition`): syntax gotchas, hook decision matrix, editor pattern, reserved names, complexity tiers. `rsx:man jqhtml`.

@@ -25,7 +25,8 @@ SYNOPSIS
         return Rsx_Api::validation_error(['email' => 'Invalid']); // 422
 
     Docs / tester - the APPLICATION routes to it and gates it:
-        Rsx_Api_Docs::page($request, My_Bundle::class[, $restrict_to_key])
+        Rsx_Api_Docs::page([$restrict_to_key])    renders the whole page, bundle
+                                                  and all - the app adds nothing
         Rsx_Api_Docs::openapi_document(): array   (the app builds the response)
 
     Provisioning a key from a script (see COMMAND LINE, under API KEYS):
@@ -1070,7 +1071,7 @@ DOCS AND TESTER PAGE
             #[Route('/dev/api-reference')]
             public static function api_docs(Request $request, array $params = [])
             {
-                return Rsx_Api_Docs::page($request, Developer_Tools_Bundle::class);
+                return Rsx_Api_Docs::page();
             }
 
             #[Route('/dev/api-reference/openapi.json')]
@@ -1102,20 +1103,24 @@ DOCS AND TESTER PAGE
     the login route and shows an identified one a themed 403. See
     reference_app/app/apidocs/apidocs_controller.php.
 
-    THE BUNDLE IS THE APPLICATION'S TOO, and must include its own directory plus
-    app/RSpade/Core/Api. A bundle has to cover the directory of the controller
-    that rendered it, so a framework bundle could never serve an app's route. It
-    forwards one hook:
+    THE CONSOLE IS FRAMEWORK PROPERTY, BUNDLE INCLUDED. Everything behind the
+    route - the view, the components, the styles and Api_Docs_Bundle - ships with
+    the framework, so the integration is one call with the simplicity of
+    phpinfo(). An application declares no bundle, forwards no hook, styles
+    nothing and keeps no copy of anything; there is no supported way to customize
+    the console, and nothing to re-adopt when the framework changes it.
 
-        public static function load_rsxapp_data(): array
-        {
-            return Rsx_Api_Docs::rsxapp_data();
-        }
+    (Render-time bundle validation normally requires a bundle to cover the
+    directory of the CONTROLLER that dispatched the page. That check is waived
+    when the VIEW is a framework view under app/RSpade/ - symmetrically with the
+    view-coverage check beside it - because the app controller then contributes
+    nothing to the page but its route. That waiver is what makes a framework-side
+    bundle legal on an application route. See bundle_api(3).)
 
-    Worked example, twelve lines including the docblock:
+    Worked example, controller only:
     system/app/RSpade/resource/reference_app/app/apidocs/
 
-    RESTRICTED LISTING. page()'s third argument (default TRUE) lists only the
+    RESTRICTED LISTING. page()'s argument (default TRUE) lists only the
     endpoints whose #[Auth] gates pass for the API key the viewer supplied,
     scoped to the KEY'S user rather than the viewer's - the console is answering
     "what can this integration do". With no key the sidebar lists NOTHING and

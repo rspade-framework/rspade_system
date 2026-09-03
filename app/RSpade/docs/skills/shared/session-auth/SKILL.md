@@ -75,6 +75,8 @@ public static function index(Request $request, array $params = [])
 
 `$touch_last_login = false` skips the `last_login` stamp - pass it whenever the login is not a real login (impersonation, a harness, an unfinished second factor). **In CLI the stamp never happens at all.**
 
+The second factor itself is `Rsx_Two_Factor` (TOTP, passkeys, recovery codes): `attempt(record: false, touch_last_login: false)` is the password stage, `begin_challenge()` parks the identity and logs the session out, and `verify_challenge()` is what logs in and records - it is throttle-first and writes `STATUS_FAILED_2FA` itself. Skill `rspade:two-factor`; `rsx:man two_factor`.
+
 ### Login history APIs, and their window
 
 ```php

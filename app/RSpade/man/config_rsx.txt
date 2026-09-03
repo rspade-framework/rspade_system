@@ -221,6 +221,32 @@ TURNSTILE
     CLOSED (rejected, user retries), never to an accepted-without-
     verification pass. See: php artisan rsx:man turnstile
 
+TWO-FACTOR AUTHENTICATION
+    'two_factor' => [
+        'issuer' => null,
+        'challenge_window_minutes' => 10,
+    ]
+
+    Second factors (TOTP, passkeys, recovery codes). THERE IS NO ENABLE
+    SWITCH, deliberately: 2FA is per identity - an identity either holds
+    a confirmed credential or it does not - and a framework-wide flag
+    would have to decide what happens to every account that has not
+    enrolled yet, which is a policy only an application can hold.
+
+    issuer is the label an authenticator app files the account under.
+    null DERIVES it from Rsx::get_hostname(), which is what the user
+    typed to get here and is recognisable in a list of twenty accounts
+    in a way a product name may not be. A colon is stripped (the
+    otpauth:// Key URI Format uses one to separate issuer from account).
+
+    challenge_window_minutes is a SECURITY WINDOW, not an operation
+    timeout: how long a passed-password-awaiting-second-factor state
+    stays redeemable, and how long an in-flight WebAuthn ceremony or a
+    parked enrollment seed stays satisfiable. It bounds no work, and
+    expiry degrades to a working outcome ("sign in again"). Must be at
+    least 1 - anything lower calls shouldnt_happen() rather than minting
+    a window that is already closed. See: php artisan rsx:man two_factor
+
 CONTENT SECURITY POLICY
     'csp' => [
         'enabled'            => true,

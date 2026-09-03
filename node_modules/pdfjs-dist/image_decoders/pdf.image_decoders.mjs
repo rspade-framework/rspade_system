@@ -21,8 +21,8 @@
  */
 
 /**
- * pdfjsVersion = 6.2.108
- * pdfjsBuild = 0365cbde0
+ * pdfjsVersion = 6.3.289
+ * pdfjsBuild = 1c8020a7d
  */
 
 ;// ./src/shared/util.js
@@ -538,7 +538,9 @@ class FeatureTest {
 }
 class Util {
   static get hexNums() {
-    return shadow(this, "hexNums", Array.from(Array(256).keys(), n => n.toString(16).padStart(2, "0")));
+    return shadow(this, "hexNums", Array.from({
+      length: 256
+    }, (_, n) => n.toString(16).padStart(2, "0")));
   }
   static makeHexColor(r, g, b) {
     return `#${this.hexNums[r]}${this.hexNums[g]}${this.hexNums[b]}`;
@@ -1127,9 +1129,7 @@ class Cmd {
     return CmdCache[cmd] ||= new Cmd(cmd);
   }
 }
-const nonSerializable = function nonSerializableClosure() {
-  return nonSerializable;
-};
+const nonSerializable = () => nonSerializable;
 class Dict {
   __nonSerializable__ = nonSerializable;
   #map = new Map();
@@ -1145,27 +1145,24 @@ class Dict {
   get size() {
     return this.#map.size;
   }
-  #getValue(isAsync, key1, key2, key3) {
+  #getValue(isAsync, key1, key2) {
     let value = this.#map.get(key1);
     if (value === undefined && key2 !== undefined) {
       value = this.#map.get(key2);
-      if (value === undefined && key3 !== undefined) {
-        value = this.#map.get(key3);
-      }
     }
     if (value instanceof Ref && this.xref) {
       return isAsync ? this.xref.fetchAsync(value, this.suppressEncryption) : this.xref.fetch(value, this.suppressEncryption);
     }
     return value;
   }
-  get(key1, key2, key3) {
-    return this.#getValue(false, key1, key2, key3);
+  get(key1, key2) {
+    return this.#getValue(false, key1, key2);
   }
-  async getAsync(key1, key2, key3) {
-    return this.#getValue(true, key1, key2, key3);
+  async getAsync(key1, key2) {
+    return this.#getValue(true, key1, key2);
   }
-  getArray(key1, key2, key3) {
-    let value = this.#getValue(false, key1, key2, key3);
+  getArray(key1, key2) {
+    let value = this.#getValue(false, key1, key2);
     if (Array.isArray(value)) {
       value = value.slice();
       for (let i = 0, ii = value.length; i < ii; i++) {
@@ -1315,44 +1312,49 @@ class Ref {
   }
 }
 class RefSet {
+  #set = new Set();
   constructor(parent = null) {
-    this._set = new Set(parent?._set);
+    if (parent) {
+      for (const refStr of parent) {
+        this.#set.add(refStr);
+      }
+    }
   }
   has(ref) {
-    return this._set.has(ref.toString());
+    return this.#set.has(ref.toString());
   }
   put(ref) {
-    this._set.add(ref.toString());
+    this.#set.add(ref.toString());
   }
   remove(ref) {
-    this._set.delete(ref.toString());
+    this.#set.delete(ref.toString());
   }
   [Symbol.iterator]() {
-    return this._set.values();
+    return this.#set.keys();
   }
   clear() {
-    this._set.clear();
+    this.#set.clear();
   }
 }
-class RefSetCache {
-  _map = new Map();
+class RefMap {
+  #map = new Map();
   get size() {
-    return this._map.size;
+    return this.#map.size;
   }
   get(ref) {
-    return this._map.get(ref.toString());
+    return this.#map.get(ref.toString());
   }
   has(ref) {
-    return this._map.has(ref.toString());
+    return this.#map.has(ref.toString());
   }
   put(ref, obj) {
-    this._map.set(ref.toString(), obj);
+    this.#map.set(ref.toString(), obj);
   }
   putAlias(ref, aliasRef) {
-    this._map.set(ref.toString(), this.get(aliasRef));
+    this.#map.set(ref.toString(), this.get(aliasRef));
   }
   getOrPutComputed(ref, callback) {
-    const map = this._map,
+    const map = this.#map,
       refStr = ref.toString();
     if (!map.has(refStr)) {
       map.set(refStr, callback(ref));
@@ -1360,21 +1362,21 @@ class RefSetCache {
     return map.get(refStr);
   }
   [Symbol.iterator]() {
-    return this._map.values();
+    return this.#map.values();
   }
   clear() {
-    this._map.clear();
+    this.#map.clear();
   }
   *values() {
-    yield* this._map.values();
+    yield* this.#map.values();
   }
   *items() {
-    for (const [ref, value] of this._map) {
+    for (const [ref, value] of this.#map) {
       yield [Ref.fromString(ref), value];
     }
   }
   *keys() {
-    for (const ref of this._map.keys()) {
+    for (const ref of this.#map.keys()) {
       yield Ref.fromString(ref);
     }
   }
@@ -1428,7 +1430,7 @@ class BaseStream {
   get canAsyncDecodeImageFromBuffer() {
     return false;
   }
-  async getTransferableImage() {
+  async getTransferableImage(width, height) {
     return null;
   }
   peekByte() {
@@ -1496,10 +1498,7 @@ function isAscii(str) {
   return typeof str === "string" && (!str || /^[\x00-\x7F]*$/.test(str));
 }
 function stringToAsciiOrUTF16BE(str) {
-  if (str === null || str === undefined) {
-    return str;
-  }
-  return isAscii(str) ? str : stringToUTF16String(str, true);
+  return str === null || str === undefined || isAscii(str) ? str : stringToUTF16String(str, true);
 }
 function stringToUTF16HexString(str) {
   const buf = [];
@@ -1521,6 +1520,7 @@ function stringToUTF16String(str, bigEndian = false) {
   return buf.join("");
 }
 const PDFStringTranslateTable = (/* unused pure expression or super */ null && ([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2d8, 0x2c7, 0x2c6, 0x2d9, 0x2dd, 0x2db, 0x2da, 0x2dc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2022, 0x2020, 0x2021, 0x2026, 0x2014, 0x2013, 0x192, 0x2044, 0x2039, 0x203a, 0x2212, 0x2030, 0x201e, 0x201c, 0x201d, 0x2018, 0x2019, 0x201a, 0x2122, 0xfb01, 0xfb02, 0x141, 0x152, 0x160, 0x178, 0x17d, 0x131, 0x142, 0x153, 0x161, 0x17e, 0, 0x20ac]));
+const PDFStringTextDecoders = Object.create(null);
 function stringToPDFString(str, keepEscapeSequence = false) {
   if (str[0] >= "\xEF") {
     let encoding;
@@ -1539,7 +1539,7 @@ function stringToPDFString(str, keepEscapeSequence = false) {
     }
     if (encoding) {
       try {
-        const decoder = new TextDecoder(encoding, {
+        const decoder = PDFStringTextDecoders[encoding] ??= new TextDecoder(encoding, {
           fatal: true
         });
         const buffer = string_utils_stringToBytes(str);
@@ -1579,7 +1579,9 @@ function stringToPDFString(str, keepEscapeSequence = false) {
 /* unused harmony import specifier */ var core_utils_Name;
 /* unused harmony import specifier */ var core_utils_isName;
 /* unused harmony import specifier */ var core_utils_BaseStream;
+/* unused harmony import specifier */ var CONTROL_CHAR_REGEXP;
 /* unused harmony import specifier */ var core_utils_stringToPDFString;
+
 
 
 
@@ -1589,11 +1591,11 @@ const MAX_INT_32 = (/* unused pure expression or super */ null && (2 ** 31 - 1))
 const IDENTITY_MATRIX = (/* unused pure expression or super */ null && ([1, 0, 0, 1, 0, 0]));
 const RESOURCES_KEYS_OPERATOR_LIST = (/* unused pure expression or super */ null && (["ColorSpace", "ExtGState", "Font", "Pattern", "Properties", "Shading", "XObject"]));
 const RESOURCES_KEYS_TEXT_CONTENT = (/* unused pure expression or super */ null && (["ExtGState", "Font", "Properties", "XObject"]));
-function getLookupTableFactory(initializer) {
+function getLookupTableFactory(initializer, useArray = false) {
   let lookup;
   return function () {
     if (initializer) {
-      lookup = Object.create(null);
+      lookup = useArray ? [] : Object.create(null);
       initializer(lookup);
       initializer = null;
     }
@@ -1760,7 +1762,7 @@ function lookupNormalRect(arr, fallback) {
   return isNumberArray(arr, 4) ? core_utils_Util.normalizeRect(arr) : fallback;
 }
 function parseXFAPath(path) {
-  const positionPattern = /(.+)\[(\d+)\]$/;
+  const positionPattern = /^(.+)\[(\d+)\]$/;
   return path.split(".").map(component => {
     const m = component.match(positionPattern);
     if (m) {
@@ -1844,7 +1846,7 @@ function _collectJS(entry, xref, list, parents) {
   }
 }
 function collectActions(xref, dict, eventType) {
-  const actions = Object.create(null);
+  const actions = new Map();
   const additionalActionsDicts = getInheritableProperty({
     dict,
     key: "AA",
@@ -1865,7 +1867,7 @@ function collectActions(xref, dict, eventType) {
         const list = [];
         _collectJS(rawActionDict, xref, list, parents);
         if (list.length > 0) {
-          actions[action] = list;
+          actions.set(action, list);
         }
       }
     }
@@ -1876,10 +1878,10 @@ function collectActions(xref, dict, eventType) {
     const list = [];
     _collectJS(actionDict, xref, list, parents);
     if (list.length > 0) {
-      actions.Action = list;
+      actions.set("Action", list);
     }
   }
-  return Object.keys(actions).length ? actions : null;
+  return actions.size ? actions : null;
 }
 const XMLEntities = (/* unused pure expression or super */ null && ({
   0x3c: "&lt;",
@@ -1940,6 +1942,12 @@ function validateFontName(fontFamily, mustWarn = false) {
       }
       return false;
     }
+    if (CONTROL_CHAR_REGEXP.test(fontFamily)) {
+      if (mustWarn) {
+        core_utils_warn(`FontFamily contains control characters: ${fontFamily}.`);
+      }
+      return false;
+    }
   } else {
     for (const ident of fontFamily.split(/[ \t]+/)) {
       if (/^(?:\d|-[\d-])/.test(ident) || !/^[\w\\-]+$/.test(ident)) {
@@ -1951,6 +1959,9 @@ function validateFontName(fontFamily, mustWarn = false) {
     }
   }
   return true;
+}
+function normalizeCSSFontFamily(fontFamily) {
+  return fontFamily.replaceAll(/( +)(\d)?/g, (_, spaces, digit) => digit ?? " ");
 }
 function validateCSSFont(cssFontInfo) {
   const DEFAULT_CSS_FONT_OBLIQUE = "14";
@@ -2309,9 +2320,6 @@ class ColorSpace {
       destOffset += 3 + alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    unreachable("Should not call ColorSpace.getOutputLength");
-  }
   isPassthrough(bits) {
     return false;
   }
@@ -2445,9 +2453,6 @@ class AlternateCS extends ColorSpace {
       base.getRgbBuffer(baseBuf, 0, count, dest, destOffset, 8, alpha01);
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return this.base.getOutputLength(inputLength * this.base.numComps / this.numComps, alpha01);
-  }
 }
 class PatternCS extends ColorSpace {
   constructor(baseCS) {
@@ -2498,9 +2503,6 @@ class IndexedCS extends ColorSpace {
       destOffset += alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01);
-  }
   isDefaultDecode(decode, bpc) {
     if (isDefaultDecodeHelper(decode, 2)) {
       return true;
@@ -2532,9 +2534,6 @@ class DeviceGrayCS extends ColorSpace {
       q += alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01);
-  }
 }
 class DeviceRgbCS extends ColorSpace {
   constructor() {
@@ -2560,9 +2559,6 @@ class DeviceRgbCS extends ColorSpace {
       q += alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01) / 3 | 0;
-  }
   isPassthrough(bits) {
     return bits === 8;
   }
@@ -2570,9 +2566,6 @@ class DeviceRgbCS extends ColorSpace {
 class DeviceRgbaCS extends ColorSpace {
   constructor() {
     super("DeviceRGBA", 4);
-  }
-  getOutputLength(inputLength, _alpha01) {
-    return inputLength * 4;
   }
   isPassthrough(bits) {
     return bits === 8;
@@ -2608,9 +2601,6 @@ class DeviceCmykCS extends ColorSpace {
       srcOffset += 4;
       destOffset += 3 + alpha01;
     }
-  }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength / 4 * (3 + alpha01) | 0;
   }
 }
 class CalGrayCS extends ColorSpace {
@@ -2656,9 +2646,6 @@ class CalGrayCS extends ColorSpace {
       srcOffset += 1;
       destOffset += 3 + alpha01;
     }
-  }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01);
   }
 }
 class CalRGBCS extends ColorSpace {
@@ -2808,9 +2795,6 @@ class CalRGBCS extends ColorSpace {
       destOffset += 3 + alpha01;
     }
   }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01) / 3 | 0;
-  }
 }
 class LabCS extends ColorSpace {
   constructor(whitePoint, blackPoint, range) {
@@ -2891,9 +2875,6 @@ class LabCS extends ColorSpace {
       srcOffset += 3;
       destOffset += 3 + alpha01;
     }
-  }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength * (3 + alpha01) / 3 | 0;
   }
   isDefaultDecode(decode, bpc) {
     return true;
@@ -3233,9 +3214,6 @@ class IccColorSpace extends ColorSpace {
     QCMS._keepAlpha = alpha01 === 1 && dest.buffer !== src.buffer;
     qcms_convert_array(this.#transformer, src, alpha01 === 1);
     QCMS._destBuffer = null;
-  }
-  getOutputLength(inputLength, alpha01) {
-    return inputLength / this.numComps * (3 + alpha01) | 0;
   }
   static setOptions({
     useWasm,
@@ -4269,16 +4247,19 @@ function skipData(data, view, offset) {
   return endOffset;
 }
 class JpegImage {
-  constructor({
-    decodeTransform = null,
-    colorTransform = -1
-  } = {}) {
-    this._decodeTransform = decodeTransform;
-    this._colorTransform = colorTransform;
+  constructor(options) {
+    this._colorTransform = options?.colorTransform ?? -1;
+    this._decodeTransform = options?.decodeTransform || null;
+    this._isSourcePDF = false;
   }
   static canUseImageDecoder(data, colorTransform = -1) {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    let exifOffsets = null;
+    const info = {
+      width: 0,
+      height: 0,
+      exifStart: 0,
+      exifEnd: 0
+    };
     let offset = 0;
     let numComponents = null;
     let fileMarker = view.getUint16(offset);
@@ -4298,13 +4279,11 @@ class JpegImage {
           } = readDataBlock(data, view, offset);
           offset = newOffset;
           if (appData[0] === 0x45 && appData[1] === 0x78 && appData[2] === 0x69 && appData[3] === 0x66 && appData[4] === 0 && appData[5] === 0) {
-            if (exifOffsets) {
+            if (info.exifStart) {
               throw new JpegError("Duplicate EXIF-blocks found.");
             }
-            exifOffsets = {
-              exifStart: oldOffset + 6,
-              exifEnd: newOffset
-            };
+            info.exifStart = oldOffset + 6;
+            info.exifEnd = newOffset;
           }
           fileMarker = view.getUint16(offset);
           offset += 2;
@@ -4312,6 +4291,8 @@ class JpegImage {
         case 0xffc0:
         case 0xffc1:
         case 0xffc2:
+          info.height = view.getUint16(offset + (2 + 1));
+          info.width = view.getUint16(offset + (2 + 1 + 2));
           numComponents = data[offset + (2 + 1 + 2 + 2)];
           break markerLoop;
         case 0xffff:
@@ -4330,7 +4311,7 @@ class JpegImage {
     if (numComponents === 3 && colorTransform === 0) {
       return null;
     }
-    return exifOffsets || {};
+    return info;
   }
   parse(data, {
     dnlScanLines = null
@@ -4584,7 +4565,7 @@ class JpegImage {
     this.numComponents = this.components.length;
     return undefined;
   }
-  #getLinearizedBlockData(width, height, isSourcePDF) {
+  #getLinearizedBlockData(width, height) {
     const scaleX = this.width / width,
       scaleY = this.height / height;
     let component, componentScaleX, componentScaleY, blocksPerScanline;
@@ -4622,7 +4603,7 @@ class JpegImage {
       }
     }
     let transform = this._decodeTransform;
-    if (!isSourcePDF && numComponents === 4) {
+    if (!this._isSourcePDF && numComponents === 4) {
       transform ||= new Int32Array([-256, 255, -256, 255, -256, 255, -256, 255]);
     }
     if (transform) {
@@ -4713,13 +4694,13 @@ class JpegImage {
     width,
     height,
     forceRGBA = false,
-    forceRGB = false,
-    isSourcePDF = false
+    forceRGB = false
   }) {
     if (this.numComponents > 4) {
       throw new JpegError("Unsupported color mode");
     }
-    const data = this.#getLinearizedBlockData(width, height, isSourcePDF);
+    this._isSourcePDF = arguments[0]?.isSourcePDF === true;
+    const data = this.#getLinearizedBlockData(width, height);
     if (this.numComponents === 1 && (forceRGBA || forceRGB)) {
       const len = data.length * (forceRGBA ? 4 : 3);
       const rgbaData = new Uint8ClampedArray(len);
@@ -5329,10 +5310,7 @@ class Stream extends BaseStream {
     return this.length === 0;
   }
   getByte() {
-    if (this.pos >= this.end) {
-      return -1;
-    }
-    return this.bytes[this.pos++];
+    return this.pos >= this.end ? -1 : this.bytes[this.pos++];
   }
   getBytes(length) {
     const pos = this.pos;

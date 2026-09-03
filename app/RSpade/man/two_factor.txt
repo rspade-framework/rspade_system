@@ -1,0 +1,714 @@
+TWO_FACTOR(1)                    RSpade Manual                    TWO_FACTOR(1)
+
+NAME
+    two_factor - second-factor authentication: TOTP, passkeys, recovery codes
+
+SYNOPSIS
+    use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
+
+    # The login function, password stage - nothing is recorded, nothing stamped
+    if (!RsxAuth::attempt($credentials, record: false, touch_last_login: false)) {
+        Login_History::record_failure($email, Login_History::STATUS_FAILED_PASSWORD);
+    }
+
+    $login_user = Session::get_login_user();
+
+    if (Rsx_Two_Factor::is_enabled($login_user)) {
+        Rsx_Two_Factor::begin_challenge($login_user);   // parks + LOGS OUT
+        return redirect(Rsx::Route('Login_Controller::verify'));
+    }
+
+    RsxAuth::login($login_user);                        // no factor: this IS the login
+    Login_History::record_success((int) $login_user->id, $email);
+
+    # The application's verification endpoint - the framework does not own it
+    $login_user = Rsx_Two_Factor::verify_challenge($params);   // {code} or {assertion}
+    return ['redirect' => $destination];
+
+    <%-- The challenge screen, pointed at that endpoint --%>
+    <Two_Factor_Challenge $controller="Login_Controller" $method="verify_2fa" />
+
+    <%-- Enrollment, anywhere a signed-in user can reach --%>
+    <Totp_Enrollment />
+    <Passkey_Register />
+
+    # The operator escape hatch
+    php artisan rsx:users:2fa:setup  --user=alice@example.com
+    php artisan rsx:users:2fa:dump   --user=1
+    php artisan rsx:users:2fa:remove --user=1 [--id=7] [--force]
+
+DESCRIPTION
+    A second factor proves that the person holding the browser also holds
+    something else - a phone running an authenticator app, or an authenticator
+    device holding a private key. RSpade owns the whole mechanism: the storage,
+    the algorithms, the enrollment ceremonies, the login challenge and its
+    brute-force protection. An application supplies one endpoint and one
+    screen, because only it knows where a signed-in user should land.
+
+    THREE FACTOR KINDS, one table, one facade:
+
+        TOTP           RFC 6238 six-digit codes from an authenticator app.
+        PASSKEY        WebAuthn - a signature from an authenticator, bound to
+                       this origin, that no proxy can relay.
+        RECOVERY_CODE  Ten single-use codes, minted automatically alongside
+                       the first real factor. Never enrolled on its own.
+
+    Rsx_Two_Factor is the ONLY class application code touches. Totp, Passkeys,
+    Recovery_Codes and Two_Factor_Credential_Model are implementation behind
+    it, and that boundary is what lets the storage shape, the WebAuthn library
+    and the encryption of a seed move without a call site moving.
+
+    CREDENTIALS BELONG TO A LOGIN IDENTITY, NOT A SITE USER. They hang off
+    login_users, exactly like the password does - a second factor proves who
+    is holding the browser, and a users row is an authorization scope inside
+    one tenant. Enrolling a phone once per tenant would be wrong. The client
+    portal (Portal_User_Model) is a different identity model and is NOT
+    covered by this subsystem.
+
+    THERE IS NO GLOBAL ENABLE SWITCH, deliberately. 2FA is per identity: an
+    identity either holds a confirmed factor or it does not, and
+    is_enabled($login_user) is the whole question. A framework-wide "2FA on"
+    flag would have to decide what happens to every account that has not
+    enrolled yet, which is a policy only an application can hold. The template
+    application's answer is a users.is_2fa_required column and an interstitial
+    (see IMPLEMENTING 2FA IN AN APPLICATION); yours may differ.
+
+    Laravel differences: there is no package to install, no service provider,
+    no middleware and no fortify-style scaffolding. The tables ship in the
+    framework migrations, the endpoints ship force-included in every bundle,
+    and the enrollment ceremonies ship as jqhtml components you drop into a
+    page.
+
+PICKING METHODS - PREFER PASSKEYS, AND CONSIDER REMOVING TOTP
+    The template application ships BOTH modes as a worked example, so that a
+    new project can see either one wired end to end. That is a teaching
+    decision, not a recommendation.
+
+    IT IS HIGHLY ENCOURAGED TO REMOVE THE TOTP METHOD AND OFFER PASSKEYS ONLY.
+    A passkey is phishing-resistant: the authenticator signs a challenge and
+    binds the signature to the ORIGIN it was asked from, so a proxy site
+    serving a lookalike domain cannot obtain anything it can replay. A TOTP
+    code has no such binding - it is a six-digit string the user reads off a
+    screen and types wherever they were asked to, which means a phishing page
+    can collect it and spend it inside its own validity window. Every other
+    property (the encrypted seed, the replay refusal, the throttle) narrows
+    that window; none of them closes it.
+
+    KEEP TOTP ONLY WHEN YOUR USER BASE CANNOT USE PLATFORM AUTHENTICATORS -
+    shared or locked-down desktops, browsers without WebAuthn, a device
+    policy that forbids platform credentials. If that is not your population,
+    drop the authenticator-app option from your enrollment screen and offer
+    <Passkey_Register /> alone. Nothing in the framework requires both.
+
+HOW IT WORKS
+    STORAGE - _two_factor_credentials
+        One row per credential, one table for all three kinds, discriminated
+        by type_id. Owned by login_user_id, ON DELETE CASCADE. Three columns
+        mean three things:
+
+            secret          TOTP: the RFC 6238 seed, ENCRYPTED at rest
+                            (Crypt::encryptString).
+                            RECOVERY_CODE: the bcrypt hash of one code.
+                            PASSKEY: stored public key material - not secret.
+            counter         TOTP: the last ACCEPTED timestep (anti-replay).
+                            PASSKEY: the authenticator's signature counter
+                            (anti-clone).
+            credential_key  PASSKEY only: the raw credential id, base64url,
+                            globally UNIQUE. Named _key and not _id because
+                            SCHEMA-TYPE-01 reserves an _id suffix for
+                            integers.
+
+        confirmed_at IS NULL until the enrollment was PROVEN - a live code
+        typed, an attestation verified. An unconfirmed row can never satisfy
+        a challenge; every read that gates a login filters on it.
+
+        There is no fetch() on the model and there never should be. The
+        browser is given metadata only, assembled by list_credentials().
+
+    WHY A SEED IS ENCRYPTED AND A CODE IS HASHED
+        A password is verified by hashing the guess, so it never has to be
+        recoverable. A TOTP seed is recoverable BY DESIGN - the server has to
+        regenerate the same codes the phone does - so there is no one-way
+        form of it that still works, and encryption is the strongest
+        available posture: a leaked database dump alone does not yield live
+        codes. A recovery code IS a password: bcrypt, and the plaintext
+        exists exactly once, in the response that shows it.
+
+    TOTP: FIXED PARAMETERS, DRIFT, REPLAY
+        SHA1, 6 digits, a 30-second step - the interoperable set, and NOT
+        configurable. Authenticator apps read those three from the otpauth://
+        URI and several popular ones quietly ignore anything else, so a
+        "stronger" choice produces a user whose codes never match. (SHA1
+        inside an HMAC is not the broken SHA1; HMAC does not rest on
+        collision resistance.)
+
+        DRIFT: one timestep either side of the present one is accepted
+        (Totp::DRIFT_STEPS), the value RFC 6238 section 5.2 recommends.
+        Widening it multiplies the number of codes live at any instant, which
+        is exactly the number an online guesser is up against.
+
+        REPLAY: Totp::verify() returns the accepted TIMESTEP (or false), and
+        the caller persists it in counter. A timestep at or below the last
+        accepted one is refused outright, so a code that was seen once - over
+        a user's shoulder, in a phishing proxy - cannot be spent again inside
+        its own window. The confirmation code the user types during
+        enrollment is persisted the same way, so it cannot immediately be
+        replayed against the login challenge.
+
+    PASSKEYS: RP ID, ATTESTATION, THE COUNTER
+        Wrapped around lbuchs/webauthn. The relying party id is the BARE
+        HOSTNAME from Rsx::get_hostname() - no scheme, no port, per spec - so
+        a passkey enrolled on one host does not work on another. That is
+        correct, and worth knowing before somebody reports it as a bug after
+        moving environments.
+
+        Attestation is 'none', deliberately: this is a public application,
+        not an enterprise issuing hardware, so demanding attestation would
+        buy nothing while showing a browser privacy warning and excluding the
+        platform authenticators (Windows Hello, iCloud Keychain) most people
+        actually have.
+
+        The ceremony CHALLENGE lives in a session value, never in the payload
+        - a challenge the client hands back is whatever the client chose. The
+        same session key serves both ceremonies; a browser is either
+        enrolling a key or signing in with one, never both.
+
+        ANTI-CLONE: an authenticator increments a signature counter on every
+        assertion, and one that does not advance means two copies of a key
+        that was supposed to be unclonable - refused. Authenticators that
+        never implement a counter report zero forever, which the library
+        treats as "no counter" rather than as a clone.
+
+        Binary crosses the wire base64url in both directions; Rsx_Two_Factor
+        .js converts to and from ArrayBuffers. The fields that are binary:
+        create - publicKey.challenge, publicKey.user.id,
+        publicKey.excludeCredentials[].id; get - publicKey.challenge,
+        publicKey.allowCredentials[].id.
+
+    RECOVERY CODES
+        Ten codes per set (Recovery_Codes::COUNT), minted automatically the
+        first time an identity confirms a real factor, and again by
+        regenerate_recovery_codes(). Two hyphenated groups of four from a
+        32-symbol alphabet that OMITS 0/O/1/I - these are typed by somebody
+        who has just lost their phone.
+
+        CONSUME-ONCE BY DELETION: a spent code's ROW is deleted rather than
+        marked, so nothing can match it again and remaining() is a plain
+        COUNT. Removing the LAST real factor deletes the recovery codes with
+        it - with no factor left they are not a recovery path, they are ten
+        bearer tokens that log somebody in with no second step at all.
+
+    THE CHALLENGE STATE MACHINE
+        begin_challenge($login_user)
+            Writes {login_user_id, email} to the session value
+            Rsx_Two_Factor::CHALLENGE_KEY with an expiry, and then LOGS THE
+            SESSION OUT. The order is load-bearing: put_value() is a writer,
+            so it establishes the session row the value hangs off; the logout
+            clears the row's IDENTITY but not the row, and _session_values
+            hang off it by FK, so the parked value survives.
+
+        WHY IT LOGS OUT. Between a correct password and a correct second
+        factor the browser holds a HALF-authenticated state, and the only
+        safe representation of half-authenticated is NOT authenticated. A
+        session that stayed logged in carrying a "needs 2FA" flag would make
+        every route, endpoint and background refresh a place that flag can be
+        forgotten - and forgetting it means the second factor was optional.
+        Logging out leaves nothing to forget: the pending state is inert data
+        only verify_challenge() knows how to redeem.
+
+        challenge_pending()
+            {email_masked, has_totp, has_passkey}, or null. An EXPIRED
+            challenge reads as null - get_value() filters on the expiry, so
+            "expired" and "never existed" are the same answer, which is the
+            only answer a challenge screen needs. The address is MASKED: the
+            page is reachable by anyone holding the session cookie.
+
+        verify_challenge($input)
+            The order of this method is its contract - see THE FACADE.
+
+        abandon_challenge()
+            Forget the pending value. Cancel, or done.
+
+        A SESSION IS NEVER AUTHENTICATED UNTIL THE SECOND FACTOR PASSES.
+        That is the invariant the whole design exists to hold.
+
+    THE SECURITY WINDOW (NOT A TIMEOUT)
+        rsx.two_factor.challenge_window_minutes (10) bounds how long a
+        passed-password state stays redeemable, and the same window bounds an
+        in-flight WebAuthn ceremony and a parked TOTP enrollment seed. It
+        bounds no work, cancels nothing, and expiry degrades to a working
+        outcome the user can act on ("Your verification window has expired.
+        Please sign in again."). What is parked during it is a password that
+        has already been proven correct, waiting on a screen that may be
+        unattended: long enough to fetch the phone from another room, not
+        long enough to leave a proven password redeemable all afternoon.
+
+    THROTTLE INTEGRATION, AND THE ONE-RECORDER RULE
+        An unthrottled second factor is a guessing oracle - a million
+        six-digit codes with three live at any moment. So:
+
+            1. Login_Throttle::require_not_throttled() is the FIRST statement
+               of verify_challenge(). It THROWS Auth_Throttled_Exception
+               rather than returning false, and the throw is let through
+               untouched: "we did not check" is a different answer from "that
+               was wrong", and a login function must be able to say so.
+            2. A failed answer is recorded as
+               Login_History::record_failure($email, STATUS_FAILED_2FA, null,
+               $login_user_id) - and record_failure() ALREADY feeds the
+               throttle.
+            3. Login_Throttle::record_failure() is therefore NEVER called
+               here. Calling both counts one failure twice and halves the
+               real budget, and the halving is only ever discovered by a user
+               locked out early.
+
+        A RECORDED SUCCESS MEANS FULL AUTHENTICATION. That is why the login
+        function suppresses recording and the last_login stamp at the
+        password stage (attempt(record: false, touch_last_login: false)) and
+        why verify_challenge() - not the password stage - calls
+        RsxAuth::login() and Login_History::record_success(). Nothing in
+        _login_history is ever a half-authenticated event.
+
+    ENROLLMENT REFUSES WHILE IMPERSONATING
+        Every enrollment path throws when Session::is_impersonating(), and
+        the removal endpoint refuses the same way. An administrator viewing
+        an account must not be able to attach - or strip - a second factor on
+        it: that is an authentication backdoor wearing a support tool's
+        clothes, and the account's owner would have no way to see it happen.
+        The CLI is the sanctioned exception (see CLI COMMANDS).
+
+THE FACADE
+    App\RSpade\Core\TwoFactor\Rsx_Two_Factor
+
+    Every $login_user parameter takes an int id or a Login_User_Model.
+
+    READING
+        is_enabled($login_user): bool
+            True when at least one CONFIRMED TOTP or passkey credential
+            exists. Recovery codes are EXCLUDED: they are the way back in
+            when a factor is lost, and an identity holding only recovery
+            codes has no factor to be challenged for.
+
+        list_credentials($login_user): array
+            One row per factor, newest confirmation last:
+            {id, type_id, type_id__label, label, confirmed_at, last_used_at}.
+            METADATA ONLY, by contract - never a secret, a hash or a public
+            key. Its output reaches a browser, and no column on that table
+            has any business there.
+
+        recovery_codes_remaining($login_user): int
+        has_confirmed_totp($login_user): bool
+        issuer(): string
+            config('rsx.two_factor.issuer'), or the hostname when null. A
+            colon is stripped - the Key URI Format uses one to separate
+            issuer from account.
+        challenge_expires_at(): string
+            The ISO instant the security window closes. Useful when an app
+            parks its own value alongside the challenge (the template parks
+            an invite code this way) so it cannot outlive the sign-in.
+
+    ENROLLMENT (the SIGNED-IN identity only; throws while impersonating)
+        begin_totp_enrollment(): array
+            {secret, otpauth_uri, qr_svg}. The seed is parked in a session
+            value, not written to a row - an abandoned enrollment leaves
+            nothing behind.
+        confirm_totp_enrollment(string $code): array
+            Proves a live code, writes the confirmed row, returns the
+            plaintext recovery codes (the only time they exist). A wrong code
+            throws Two_Factor_Failed_Exception and the parked seed SURVIVES,
+            so the retry is the same enrollment.
+        begin_passkey_registration(): array
+            The navigator.credentials.create() arguments.
+        confirm_passkey_registration(array $attestation, ?string $label): ?array
+            Freshly minted recovery codes, or NULL when the identity already
+            had a sheet - a user adding a second passkey must not have the
+            codes they wrote down silently invalidated.
+        regenerate_recovery_codes(): array
+            Replaces the set. The previous sheet stops working immediately.
+
+    REMOVAL
+        remove_credential($login_user, int $credential_id): void
+            Removes one factor, and the recovery codes with it if it was the
+            last. Naming a row that is not this identity's is a NO-OP, not an
+            error: a stale settings screen is a race, not an attack.
+        remove_all($login_user): void
+            The administrative unlock, and what an account deletion runs.
+
+    THE CHALLENGE
+        begin_challenge(Login_User_Model $login_user): void
+        challenge_pending(): ?array
+        challenge_passkey_options(): array
+        verify_challenge(array $input): Login_User_Model
+            $input is {code: '123456'} or {assertion: {...}}. On success the
+            caller is LOGGED IN, last_login is stamped and the success row is
+            written; the method returns the identity. Order:
+
+                1. require_not_throttled()   - throws Auth_Throttled_Exception
+                2. the pending identity, or the window has closed
+                3. a passkey assertion when one was offered; otherwise the
+                   typed string against every confirmed TOTP credential, and
+                   THEN against the recovery codes - recovery LAST, so a
+                   string that is a live TOTP code never burns a recovery
+                   code
+                4. on failure: record_failure(STATUS_FAILED_2FA) and throw
+                   Two_Factor_Failed_Exception('That code is not valid.')
+                5. on success: forget the pending value, RsxAuth::login(),
+                   Login_History::record_success()
+
+            A passkey assertion is additionally checked to BELONG to the
+            pending identity. Proving the signature came from a credential
+            this server issued is not proving whose credential it is;
+            without that comparison anyone holding any valid passkey could
+            complete anybody else's challenge.
+        abandon_challenge(): void
+
+    THE OPERATOR PATH (a shell, not a request - never call from a request)
+        cli_setup_totp(Login_User_Model $login_user, ?string $label): array
+            {secret, otpauth_uri, recovery_codes}. Writes the row CONFIRMED
+            immediately: there is no browser to type a live code into, and
+            the operator is already a higher privilege than any identity in
+            the application. Refuses when a confirmed TOTP credential exists.
+            The recovery set REPLACES whatever the identity held.
+        cli_dump_credentials($login_user): array
+            Every factor WITH the TOTP seeds decrypted, unconfirmed rows
+            included. The deliberate opposite of list_credentials(): this
+            output reaches a terminal that already holds shell access and the
+            encryption key.
+
+    EXCEPTIONS
+        Two_Factor_Failed_Exception carries a USER-SAFE message by contract -
+        render it as-is. Auth_Throttled_Exception comes from the throttle and
+        its message matters most of all. A RuntimeException from the facade
+        (nobody signed in, impersonating) is a WIRING MISTAKE and must
+        surface loudly.
+
+FRAMEWORK ENDPOINTS AND COMPONENTS
+    Rsx_Two_Factor_Controller is the browser's whole view of the subsystem,
+    and every method is a thin wrapper over the facade. Its JS stub is
+    FORCE-INCLUDED IN EVERY BUNDLE (like Realtime_Controller), because the
+    three screens that drive it live in three different bundles: the
+    challenge is on the login page, enrollment is in a settings SPA, and a
+    passkey prompt may be raised from anywhere.
+
+        #[Auth('is_logged_in')]     - the enrollment population
+            totp_begin, totp_confirm {code}
+            passkey_register_begin, passkey_register_confirm
+                                     {attestation, label}
+            credentials_list        -> {credentials, recovery_codes_remaining,
+                                        is_enabled} - ONE call, so a settings
+                                        screen never paints three states that
+                                        disagree while they land
+            credential_remove {id}  -> the refreshed state; refuses while
+                                        impersonating
+            recovery_regenerate     -> {recovery_codes}
+
+        #[Auth('public')]           - the half-authenticated population
+            challenge_state         -> {email_masked, has_totp, has_passkey}
+                                        or NULL, which is not an error
+            challenge_passkey_options
+
+        The public pair is public in the GATE sense only: between the
+        password and the second factor the session is deliberately not logged
+        in, so a gate demanding a login could never be satisfied by the very
+        screen that exists to produce one. Each answers exclusively from the
+        challenge parked on the CALLER'S OWN session, and a caller with
+        nothing pending learns nothing.
+
+    WHY VERIFICATION IS NOT HERE. verify_challenge() signs the user in, and
+    where they land afterwards is application logic - a captured redirect,
+    a staff versus portal destination, an interstitial the app requires. A
+    framework endpoint would have to guess the answer to a question only the
+    app can answer. So the APPLICATION owns the verification endpoint and
+    <Two_Factor_Challenge> is pointed at it.
+
+    <Totp_Enrollment />
+        The whole authenticator ceremony: QR code, manual-entry secret, the
+        6-digit proof, and the ONE-TIME recovery-code reveal.
+        Args:   none - it always enrolls the signed-in identity.
+        Events: enrolled - the user acknowledged the code sheet (the factor
+                is already live at that point).
+
+    <Passkey_Register />
+        An optional key name, the button that raises the browser prompt, and
+        the code-sheet reveal when this registration minted one.
+        Args:   none.
+        Events: registered - fired immediately when no codes came back, or
+                when the user acknowledges the sheet that did.
+        A browser without WebAuthn gets a plain notice instead of a button
+        that cannot work; the host page is expected to still offer TOTP.
+
+    <Two_Factor_Challenge $controller $method />
+        The login challenge screen.
+        Args:   $controller, $method (both REQUIRED) - the application's
+                verification endpoint, named the way <Rsx_Form> names one.
+        Posts:  {code: '...'} from the typed answer, or {assertion: {...}}
+                from a passkey.
+        Expects: {redirect: '/somewhere'}, followed with window.location.
+                 A response with no redirect throws.
+        Events: no_challenge - nothing is pending (expired window, direct
+                visit). The host page sends the visitor back to /login.
+
+        ONE INPUT FOR TWO KINDS OF ANSWER: an authenticator code and a
+        recovery code go in the same box, because the server tries both and
+        the user should not have to know which kind of string they hold.
+
+        Every rejection - a wrong code, an expired window, and the THROTTLE
+        REFUSAL - is rendered inline as the server's own message. A component
+        that only rendered messages it recognised would swallow the most
+        important one.
+
+        All three components are LAYOUT-NEUTRAL by contract: no card, no
+        border, no heading, no width. The host page owns the box.
+
+    Rsx_Two_Factor (JavaScript)
+        is_supported(): boolean          - navigator.credentials is present
+        register_passkey(label)          - the create ceremony
+        authenticate_passkey()           - the get ceremony; RETURNS the
+                                           assertion rather than posting it
+        A dismissed browser prompt raises NotAllowedError, which is caught
+        and answered as NULL. A person changing their mind is not an error
+        and must not be reported as one.
+
+IMPLEMENTING 2FA IN AN APPLICATION
+    Worked example, complete and release-current:
+    system/app/RSpade/resource/reference_app/app/login/login_controller.php
+    (the challenge screen is login_verify.blade.php, the interstitial is
+    login_two_factor_setup.blade.php, and the settings enrollment screen is
+    app/frontend/settings/password_security/).
+
+    1. REWORK THE LOGIN FUNCTION INTO TWO STAGES
+        Verify the password with BOTH halves of "this was a login"
+        suppressed, then branch on is_enabled():
+
+            Rsx_Turnstile::validate($request);   // if you use it - first
+
+            try {
+                $authenticated = RsxAuth::attempt(
+                    $credentials, record: false, touch_last_login: false
+                );
+
+                if (!$authenticated) {
+                    Login_History::record_failure(
+                        $email, Login_History::STATUS_FAILED_PASSWORD
+                    );
+                }
+            } catch (Auth_Throttled_Exception $e) {
+                $error = $e->getMessage();   // never "wrong password"
+            }
+
+            if ($authenticated) {
+                $login_user = Session::get_login_user();
+
+                if (Rsx_Two_Factor::is_enabled($login_user)) {
+                    Rsx_Two_Factor::begin_challenge($login_user);
+                    return redirect(Rsx::Route('Login_Controller::verify'));
+                }
+
+                RsxAuth::login($login_user);
+                Login_History::record_success((int) $login_user->id, $email);
+                return redirect($this->post_login_destination(...));
+            }
+
+        With record: false, attempt() writes NOTHING - so the password
+        failure above is recorded by YOU, and it is what feeds the throttle.
+
+        ANYTHING THE CHALLENGE HAS TO CARRY ACROSS RIDES THE SESSION.
+        <Two_Factor_Challenge> posts exactly {code} or {assertion}: there is
+        no query string and no place to thread a form field. Park it with
+        Session::put_value(..., Rsx_Two_Factor::challenge_expires_at()) BEFORE
+        begin_challenge() (put_value() establishes the session row; the
+        logout that follows clears the identity, not the row) and consume it
+        once in the verification endpoint. The template does this with the
+        invite code the login form carried.
+
+    2. THE CHALLENGE SCREEN AND ITS ENDPOINT
+        A public route that redirects away when nothing is pending:
+
+            #[Route('/login/verify', methods: ['GET'])]
+            public static function verify(Request $request, array $params = [])
+            {
+                if (Rsx_Two_Factor::challenge_pending() === null) {
+                    return redirect(Rsx::Route('Login_Controller::index'));
+                }
+
+                return rsx_view('Login_Verify');
+            }
+
+        Its blade hosts the component:
+
+            <Two_Factor_Challenge $controller="Login_Controller"
+                                  $method="verify_2fa" />
+
+        And the endpoint it posts to - #[Auth('public')], because the session
+        is deliberately not signed in yet:
+
+            #[Ajax_Endpoint]
+            public static function verify_2fa(Request $request, array $params = [])
+            {
+                try {
+                    $login_user = Rsx_Two_Factor::verify_challenge($params);
+                } catch (Auth_Throttled_Exception $e) {
+                    return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+                } catch (Two_Factor_Failed_Exception $e) {
+                    return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+                }
+
+                return ['redirect' => static::__post_login_destination(...)];
+            }
+
+        Hand $params straight through - it is already {code} or {assertion}.
+        Both catches carry a user-safe message; nothing else is caught.
+
+        ONE DESTINATION FUNCTION, TWO CALLERS. The password-only path
+        redirects to it and the challenge endpoint returns it as a string; a
+        destination computed twice drifts.
+
+        NO TURNSTILE ON THE VERIFICATION ENDPOINT. The component renders no
+        widget, so there is no __turnstile field, and the completeness guard
+        fires only when a token WAS submitted. The surface is not unguarded:
+        it answers only from the caller's own pending challenge and spends
+        the brute-force budget as its first statement.
+
+    3. AN ENROLLMENT SCREEN
+        Anywhere a signed-in user can reach - the template puts it on
+        Settings > Password & Security. Load the state, host the components,
+        repaint from the server:
+
+            this.data.two_factor = await Rsx_Two_Factor_Controller
+                .credentials_list();
+
+        then open <Totp_Enrollment /> or <Passkey_Register /> in a modal, and
+        reload() the screen on its enrolled / registered event. Removal is
+        credential_remove({id}), regeneration is recovery_regenerate() - both
+        answer the fresh state.
+
+    4. FORCING A SECOND FACTOR (OPTIONAL, AND YOURS TO OWN)
+        The framework decides only whether an identity HAS a factor. A
+        REQUIREMENT is application policy, and the whole point of one is that
+        the app is unusable until it is met - so it belongs in
+        Main::pre_dispatch(), ahead of every screen, not on a page the user
+        can decline to visit. The template carries a users.is_2fa_required
+        column, set from the edit-user modal:
+
+            if (str_starts_with($handler, 'Rsx\App\Frontend')) {
+                // ...
+                if (
+                    $user->is_2fa_required
+                    && !Rsx_Two_Factor::is_enabled((int) $login_user_id)
+                    && !Session::is_impersonating()
+                    && Session::get_session()->type_id !== Session::TYPE_PLAYWRIGHT
+                ) {
+                    return redirect(Rsx::Route('Login_Controller::two_factor_setup'));
+                }
+            }
+
+        THE HANDLER PREFIX MATTERS: the interstitial itself must be OUTSIDE
+        the intercepted set or the redirect loops.
+
+        TWO EXEMPTIONS, both deliberate:
+            IMPERSONATION      - the impersonator has already authenticated
+                                 as themselves, and the framework refuses
+                                 every enrollment path while impersonating,
+                                 so a bounce would be a dead end.
+            TYPE_PLAYWRIGHT    - rsx:debug's dev-auth declares an identity
+                                 with no password and no challenge, so a
+                                 harness run would bounce into the
+                                 interstitial and every page would become
+                                 untestable for a flagged user. A real
+                                 browser session is never this type.
+
+        The interstitial is an ordinary route that hosts the enrollment
+        components, carries a method-level #[Auth('is_logged_in')] (gates are
+        additive, so it narrows a public class), and redirects away when the
+        identity already has a factor.
+
+        pre_dispatch() runs on DOCUMENT requests, and an SPA does not make
+        them - so a policy flag flipped while a user is on screen needs a
+        realtime user refresh to take effect before their next full load. The
+        template pushes one on a confirmed change of the flag.
+
+CLI COMMANDS
+    THE BOOTSTRAP AND RECOVERY PATH, and deliberately not a general
+    enrollment channel. The web flow can only ever act on the signed-in
+    identity, which leaves two situations with no path at all: the first
+    account on a fresh box, and a user who has lost both their phone and
+    their code sheet. These run as whoever holds shell access, which is
+    already a higher privilege than any identity in the application - so the
+    impersonation reasoning that governs the web paths does not reach here.
+
+    --user=<id|email> is REQUIRED on all three and resolves against
+    login_users. --json wraps the result in the standard
+    {"ok": true, "command": ..., "data": {...}} envelope (and a non-zero exit
+    with {"ok": false, "error": ...} on failure).
+
+    rsx:users:2fa:setup --user=<id|email> [--json]
+        Mints a TOTP seed, writes the credential CONFIRMED, replaces the
+        recovery codes, and prints the seed, the otpauth:// URI and the ten
+        codes ONCE. A second seed is REFUSED - remove the existing one first,
+        or add a second factor from the settings screen.
+
+    rsx:users:2fa:dump --user=<id|email> [--json]
+        Every factor, with TOTP seeds DECRYPTED and their provisioning URIs
+        rebuilt, unconfirmed rows included. Recovery codes are a COUNT and
+        never a list: they are bcrypt hashed and there is nothing to print.
+
+    rsx:users:2fa:remove --user=<id|email> [--id=<credential>] [--force] [--json]
+        Removes every factor, or the one named by --id (resolved against
+        THIS identity's credentials - a miss is an error, because an operator
+        who believes an account is unlocked when it is not is the dangerous
+        outcome). Prompts before destroying anything; --force is how a script
+        says the intent. --json cannot prompt, so it REQUIRES --force.
+
+CONFIGURATION
+    config('rsx.two_factor') - two keys, and there is no third:
+
+        'issuer' => null
+            The label an authenticator app files the account under. null
+            DERIVES it from Rsx::get_hostname(), which is what the user typed
+            to get here and is recognisable in a list of twenty accounts in a
+            way a product name may not be. A colon is stripped.
+
+        'challenge_window_minutes' => 10
+            The SECURITY WINDOW above. Must be at least 1;
+            challenge_expires_at() calls shouldnt_happen() on anything lower
+            rather than minting a window that is already closed.
+
+    There is NO enable switch - see DESCRIPTION.
+
+    Dependencies (framework-internal, already installed): lbuchs/webauthn and
+    bacon/bacon-qr-code. They are NOT in dependencies.exposed_composer:
+    application code talks to Rsx_Two_Factor, not to either library.
+
+NOTES AND GOTCHAS
+    - A passkey is bound to the HOSTNAME it was enrolled on. Moving
+      environments invalidates it; that is the spec, not a bug.
+
+    - Do not call Login_Throttle::record_failure() alongside a
+      STATUS_FAILED_2FA record_failure(). One failure, one recorder.
+
+    - Park anything the challenge must carry BEFORE begin_challenge(), never
+      after: the logout clears the identity, and a value written afterwards
+      lands on a session the caller has already abandoned.
+
+    - A checkbox that is absent from a POST means OFF. An application policy
+      flag written from a form uses the checkbox-absent-means-off idiom, or
+      it can never be turned back off.
+
+    - credential_key, not credential_id: it is an opaque string handle minted
+      by an authenticator, and SCHEMA-TYPE-01 reserves _id for integers.
+
+    - The recovery-code plaintext exists exactly once. A user who lost the
+      sheet regenerates it; an operator's only path is a remove plus
+      rsx:users:2fa:setup.
+
+    - The client portal is NOT covered. Portal_User_Model is a separate
+      identity model with its own login; this subsystem is login_users only.
+
+SEE ALSO
+    session     - the two-stage login recipe in context, Login_History's
+                  status vocabulary, Login_Throttle, impersonation
+    auth        - identity model (login_users + users), RsxAuth
+    turnstile   - human verification on the login form itself
+    auth_gates  - #[Auth] on every surface, and why the challenge pair is
+                  'public'
+
+TWO_FACTOR(1)                    RSpade Manual                    TWO_FACTOR(1)

@@ -1,0 +1,52 @@
+// Two_Factor_Challenge - the login challenge screen's controls.
+//
+// LAYOUT-NEUTRAL: the login page owns the card around this. No typography is set here, so
+// the masked address and the notices inherit the auth page's own type.
+.Two_Factor_Challenge {
+    display: block;
+
+    &__notice {
+        padding: 24px 0;
+        text-align: center;
+        color: var(--bs-secondary-color);
+    }
+
+    &__body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 16px;
+    }
+
+    &__identity {
+        text-align: center;
+        color: var(--bs-secondary-color);
+    }
+
+    &__email {
+        font-weight: 600;
+    }
+
+    &__answer {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+    }
+
+    &__code-input {
+        flex: 1 1 auto;
+        min-width: 0;
+        text-align: center;
+        letter-spacing: 2px;
+    }
+
+    &__passkey {
+        width: 100%;
+    }
+
+    &__error {
+        color: var(--bs-danger);
+        text-align: center;
+    }
+}

@@ -1543,6 +1543,69 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Two-Factor Authentication
+    |--------------------------------------------------------------------------
+    |
+    | The second factor an identity may add to its password: an authenticator app
+    | (TOTP, RFC 6238), a passkey (WebAuthn), and the recovery codes that back
+    | both up. Rsx_Two_Factor is the only class application code touches.
+    |
+    | THERE IS NO 'enabled' SWITCH HERE, deliberately. Whether an identity has a
+    | second factor is a property of that identity, answered by
+    | Rsx_Two_Factor::is_enabled($login_user) - not a property of the install.
+    | A global off switch would be a way to disable everybody's second factor at
+    | once by editing one line, which is not a control anybody should have.
+    | An application that does not offer 2FA simply never calls the enrollment
+    | methods, and no identity ever has a factor to be challenged for.
+    |
+    | See: php artisan rsx:man two_factor
+    |
+    */
+    'two_factor' => [
+        // The issuer label an authenticator app files the account under, shown
+        // beside the account name in the user's code list.
+        //
+        // null DERIVES it from the application hostname (Rsx::get_hostname()),
+        // which is the right default because it is what the user typed to get
+        // here - recognisable in a list of twenty accounts in a way a product
+        // name may not be. Set it to a literal when the product name is the more
+        // recognisable of the two.
+        //
+        // A colon is stripped on the way out: the otpauth:// Key URI Format uses
+        // one to separate issuer from account, so an issuer containing one
+        // produces a label the app parses wrongly.
+        'issuer' => null,
+
+        // A SECURITY WINDOW, NOT AN OPERATION TIMEOUT (see the timeout mandate in
+        // CLAUDE.md): how long a passed-password-awaiting-second-factor state
+        // stays redeemable.
+        //
+        // It bounds no work and imposes no deadline on anything - nothing is
+        // cancelled when it expires, and expiry degrades to a working outcome the
+        // user can act on ("Your verification window has expired. Please sign in
+        // again."), never to a failure handed to code that did not expect one.
+        //
+        // WHY 599 SECONDS IS ACCEPTABLE HERE AND 601 IS NOT is a question about
+        // an attacker, not about how long an operation takes. What is parked
+        // during this window is a HALF-AUTHENTICATED identity: a password that
+        // has already been proven correct, waiting on a screen that may be
+        // unattended. The window is how long someone who walks up to that browser
+        // can finish the sign-in by supplying only the second factor. Ten minutes
+        // is long enough to fetch the phone that IS the second factor from another
+        // room; it is not long enough to leave a proven password redeemable for
+        // the rest of the afternoon.
+        //
+        // The same window bounds an in-flight WebAuthn ceremony's challenge, for
+        // the same reason: a challenge nobody answered must stop being satisfiable.
+        //
+        // Must be at least 1. Rsx_Two_Factor::challenge_expires_at() calls
+        // shouldnt_happen() on anything lower rather than minting a window that is
+        // already closed.
+        'challenge_window_minutes' => 10,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Full Page Cache (FPC) Configuration
     |--------------------------------------------------------------------------
     |

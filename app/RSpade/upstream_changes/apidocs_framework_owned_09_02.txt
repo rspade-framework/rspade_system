@@ -1,0 +1,168 @@
+API REFERENCE CONSOLE IS NOW FRAMEWORK-OWNED - ONE CALL, NO APP BUNDLE
+Date: 2026-09-02
+
+IF YOU DO NOTHING: /apidocs returns a 500 on the first request after the pull -
+    "Named parameter $restrict_to_key overwrites previous argument", or an
+    ArgumentCountError/TypeError depending on how your controller spelled the
+    call - because Rsx_Api_Docs::page() no longer takes a Request or a bundle.
+
+SUMMARY
+    The API docs / tester console has moved wholly into the framework. It used to
+    be a framework feature that needed an application BUNDLE to carry it, because
+    render-time validation demanded that a bundle cover the directory of the
+    controller that dispatched the page. That validation now waives the
+    controller check when the VIEW is a framework view, so the console ships its
+    own bundle (Api_Docs_Bundle, in system/app/RSpade/Core/Api/).
+
+    What is left for an application is the ROUTE and the GATE. The integration is
+    one call, with the simplicity of phpinfo():
+
+        return Rsx_Api_Docs::page();
+
+    Your fork has a bundle file and a two-argument call that no longer exist on
+    the framework side. Both are deleted or replaced by ACTION REQUIRED below.
+
+    Full contract: php artisan rsx:man external_api   (DOCS AND TESTER PAGE)
+                   php artisan rsx:man bundle_api     (MODULE BUNDLE COVERAGE)
+
+THE CHANGE
+    Old signature:
+        Rsx_Api_Docs::page(Request $request, string $bundle,
+                           bool $restrict_to_key = true)
+
+    New signature:
+        Rsx_Api_Docs::page(bool $restrict_to_key = true)
+
+    The request is read from the container; the bundle is the framework's and is
+    named by the framework's own view. Rsx_Api_Docs::openapi_document() is
+    UNCHANGED - the document is still data, and the response is still yours.
+
+    An application no longer declares a bundle for the console, forwards
+    load_rsxapp_data(), or styles anything on the page. There is no supported way
+    to customize the console; there is nothing to re-adopt when it changes.
+
+ACTION REQUIRED
+
+    1. DELETE your apidocs bundle.
+
+           rm rsx/app/apidocs/apidocs_bundle.php
+
+       (Whatever you named it - the file whose define() listed
+       'app/RSpade/Core/Api' and whose load_rsxapp_data() returned
+       Rsx_Api_Docs::rsxapp_data().) Nothing else in your app may reference it;
+       grep the class name to be sure.
+
+    2. REPLACE the console route's body with the one call. The whole controller
+       is now two gated methods - this is the reference app's, verbatim, and is
+       safe to copy over yours (keep YOUR gate if it differs):
+
+           <?php
+
+           namespace Rsx\App\Apidocs;
+
+           use Illuminate\Http\Request;
+           use App\RSpade\Core\Api\Rsx_Api_Docs;
+           use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
+           use App\RSpade\Core\Errors\Error_Screens;
+           use App\RSpade\Core\Session\Session;
+
+           #[Auth('public')]
+           class Apidocs_Controller extends Rsx_Controller_Abstract
+           {
+               #[Route('/apidocs', methods: ['GET'])]
+               public static function index(Request $request, array $params = [])
+               {
+                   if (!Session::has_api_access()) {
+                       return Error_Screens::unauthorized($request);
+                   }
+
+                   return Rsx_Api_Docs::page(restrict_to_key: false);
+               }
+
+               #[Route('/apidocs/openapi.json', methods: ['GET'])]
+               public static function openapi(Request $request, array $params = [])
+               {
+                   if (!Session::has_api_access()) {
+                       return Error_Screens::unauthorized($request);
+                   }
+
+                   return response()->json(Rsx_Api_Docs::openapi_document(), 200, [
+                       'Content-Type' => 'application/json; charset=utf-8',
+                       'Content-Disposition' => 'attachment; filename="openapi.json"',
+                   ], JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
+               }
+           }
+
+       Drop the `restrict_to_key: false` argument if you want the default
+       behaviour (list only what the pasted key may call).
+
+       Keep the directory: if another module links to the console with
+       Rsx.Route('Apidocs_Controller'), that module's bundle still has to include
+       rsx/app/apidocs so the route stub is generated. The reference app's
+       frontend_bundle.php does exactly that, and did not change.
+
+    3. IF - AND ONLY IF - YOUR APP CLASS-OVERRIDES Button_Utils, read the next
+       section. This is the one item that fails silently.
+
+BUTTON_UTILS: THE TESTER BUTTONS, AND THE ONE SILENT CASE
+
+    The console's buttons ("Use Key", "Temporary Key") use $.fn.click_async(),
+    which drives Button_Utils. Button_Utils has moved from
+    app/RSpade/Lib/Buttons/ to app/RSpade/Core/Ui/ - both are inside Core_Bundle,
+    which config('rsx.required_bundles') pulls into EVERY module bundle, so on a
+    stock install this is a filing change and nothing more. It arrives with the
+    pull; there is nothing to do.
+
+    THE SILENT CASE: an application that class-overrides Button_Utils. The
+    override lives under rsx/, so only bundles that include that directory can
+    see it - and the console's bundle is framework-owned and includes NO rsx/
+    path at all, by design (CONV-BUNDLE-04: a framework feature does not get to
+    depend on the app hosting it). On such an install the console's buttons throw
+
+        ReferenceError: Button_Utils is not defined
+
+    when clicked - no visible error on the page, just a button that does nothing.
+    Moving the framework file does not change this, because your override
+    replaced it either way.
+
+    Two remedies, in preference order:
+
+      a. DELETE THE OVERRIDE and theme the loader with the CSS custom properties
+         it exists for (--btn-submitting-loader-color / -size / -thickness /
+         -speed). That is what they are for; see php artisan rsx:man jquery,
+         BUTTON BUSY-STATE. An override of this class was never necessary to
+         restyle it.
+
+      b. KEEP THE OVERRIDE, but put it in a bundle that every page loads, by
+         adding that bundle to 'required_bundles' in rsx/resource/config/rsx.php:
+
+             'required_bundles' => [
+                 'jquery',
+                 'lodash',
+                 'core',
+                 'jqhtml',
+                 'my-global-bundle',   // <- yours, containing the override
+             ],
+
+         (with the alias declared in 'bundle_aliases' beside it). A class the
+         framework core calls must be reachable from every bundle; if you take
+         ownership of one, you take ownership of that requirement.
+
+VERIFICATION
+    php artisan rsx:debug /apidocs --user=<a user with API access>
+
+    Expect 200 and "JavaScript Console Errors: None". Then, in a browser, press
+    "Temporary Key" and confirm the dialog: the button should show the animated
+    loader while the request runs and the key bar should switch to "Key active".
+    Headlessly, this asserts the same thing:
+
+        php artisan rsx:debug /apidocs --user=1 --no-body --eval "
+          \$('.Api_Key_Bar__btn--warn').trigger('click');
+          await new Promise(r => setTimeout(r, 500));
+          return JSON.stringify({
+            submitting: \$('.Api_Key_Bar__btn--warn').hasClass('btn--submitting'),
+            spinner: \$('.Button_Utils__spinner').length
+          });"
+
+    Expect {"submitting":true,"spinner":1}. A ReferenceError here is case (b)
+    above.

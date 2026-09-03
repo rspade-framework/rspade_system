@@ -158,8 +158,18 @@ AUTHENTICATION
         IP, and it is on by default: attempt() refuses a locked-out address
         before the lookup by throwing Auth_Throttled_Exception ("You're doing
         that too fast"), so a login function CATCHES it and renders the message.
-        Full treatment (including the 2FA, portal and custom-status recipes):
+        Full treatment (including the portal and custom-status recipes):
         rsx:man session, LOGIN HISTORY + LOGIN THROTTLE.
+
+    Second factors:
+        TOTP, passkeys and recovery codes are the framework's, on the LOGIN
+        identity (login_users), opt-in per identity with no global switch:
+        Rsx_Two_Factor::is_enabled() / begin_challenge() / verify_challenge(),
+        the <Two_Factor_Challenge> and enrollment components, and the
+        rsx:users:2fa:* operator commands. A login function that verifies a
+        password becomes two-stage; the verification endpoint stays the app's,
+        because where a signed-in user lands is application logic. Full
+        treatment: rsx:man two_factor.
 
     Account state (status_id / is_activated / is_verified):
         APPLICATION vocabulary, enforced by the application - attempt() checks a
@@ -451,6 +461,8 @@ SEE ALSO
                   can_access link visibility, the error screens
     session     - full Session API: accessors, CSRF, impersonation, session
                   management, garbage collection, login history
+    two_factor  - second factors: TOTP, passkeys, recovery codes, the login
+                  challenge, rsx:users:2fa:*
     acls        - roles, permissions, the Permission facade, GRANT/DENY
     portal      - client portal: separate session, dispatch, and invitations
     permission  - app-side Permission subclass conventions

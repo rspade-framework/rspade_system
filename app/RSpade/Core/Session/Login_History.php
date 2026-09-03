@@ -47,12 +47,14 @@ class Login_History
     /**
      * Status vocabulary.
      *
-     * Framework producers (RsxAuth::attempt()): SUCCESS, FAILED_PASSWORD, FAILED_NOT_FOUND.
+     * Framework producers: RsxAuth::attempt() writes SUCCESS, FAILED_PASSWORD and
+     * FAILED_NOT_FOUND; Rsx_Two_Factor::verify_challenge() writes FAILED_2FA on a wrong
+     * second-factor answer (and the SUCCESS row when the challenge passes).
      *
-     * FAILED_2FA / FAILED_LOCKED / FAILED_DISABLED have NO framework producer - account state
-     * (status_id, is_activated, is_verified) and second factors are APPLICATION vocabulary, so
-     * the app records those outcomes itself through record_failure(). They are kept here so
-     * every app spells the same outcome the same way.
+     * FAILED_LOCKED / FAILED_DISABLED have NO framework producer - account state (status_id,
+     * is_activated, is_verified) is APPLICATION vocabulary, so the app records those outcomes
+     * itself through record_failure(). They are kept here so every app spells the same outcome
+     * the same way.
      */
     public const STATUS_SUCCESS = 'success';
     public const STATUS_FAILED_PASSWORD = 'failed_password';
