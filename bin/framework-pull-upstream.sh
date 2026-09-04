@@ -29,10 +29,10 @@
 #   4. git reset --hard the submodule - local changes there are not consulted
 #   5. fetch and check out the upstream tip
 #   6. commit the new submodule pointer in the parent repo, carrying the
-#      concatenated upstream changelog as the commit body
+#      concatenated breaking changelog as the commit body
 #   7. rebuild
 #   8. lower the maintenance window
-#   9. report pending migrations and pending upstream_changes documents
+#   9. report pending migrations and pending breaking_changes documents
 #
 # The live bin/framework-pull-upstream.sh is GENERATED from this .dist by the
 # artisan interception in system/artisan. EDIT THE .dist ONLY.
@@ -878,7 +878,7 @@ git_retry() {
 # commit_pointer - record the new submodule revision in the parent repository.
 #
 # THIS IS THE WHOLE OF WHAT AN UPDATE WRITES to the application's repository: one
-# commit changing one gitlink. The body carries the concatenated upstream changelog
+# commit changing one gitlink. The body carries the concatenated breaking changelog
 # so `git log` in the application explains what arrived and why, without anybody
 # having to go and read another repository's history.
 # =============================================================================
@@ -1065,7 +1065,7 @@ do_rebuild() {
     run_artisan_lock_retry "rsx:bundle:compile" rsx:bundle:compile \
         || die "rsx:bundle:compile failed"
 
-    # post_update carries the dependency, env and UPSTREAM_CHANGES checks - the
+    # post_update carries the dependency, env and BREAKING_CHANGES checks - the
     # pending-documents report is emitted from in there.
     run_artisan_lock_retry "rsx:framework:post_update" rsx:framework:post_update
     [ $? -eq 0 ] || warn "Post-update check failed (non-fatal) - run manually: php artisan rsx:framework:post_update"
@@ -1287,7 +1287,7 @@ main() {
 # report_pending - what the update could not finish for you.
 #
 # Migrations: advisory, silent when the schema is current, never fails the pull.
-# upstream_changes: emitted by rsx:framework:post_update above; repeated here as a
+# breaking_changes: emitted by rsx:framework:post_update above; repeated here as a
 # one-line pointer because the post_update output scrolls away and this is the last
 # thing an operator reads.
 # =============================================================================
@@ -1297,14 +1297,14 @@ report_pending() {
     php "$SYSTEM_DIR/artisan" migrate:status_notice "${maint[@]}" 2>/dev/null || true
 
     local pending
-    pending="$(php "$SYSTEM_DIR/artisan" rsx:framework:upstream_changes "${maint[@]}" 2>/dev/null | grep -cE '^\s+-' || true)"
+    pending="$(php "$SYSTEM_DIR/artisan" rsx:framework:breaking_changes "${maint[@]}" 2>/dev/null | grep -cE '^\s+-' || true)"
     if [ "${pending:-0}" -gt 0 ]; then
         say ""
-        warn "$pending upstream change document(s) need your attention - these are"
+        warn "$pending breaking change document(s) need your attention - these are"
         warn "         manual steps this update could not perform for you."
-        say "  List them:   php artisan rsx:framework:upstream_changes"
-        say "  Read one:    php artisan rsx:framework:upstream_changes:show <name>"
-        say "  Mark it done: php artisan rsx:framework:upstream_changes:mark <name> --fulfilled"
+        say "  List them:   php artisan rsx:framework:breaking_changes"
+        say "  Read one:    php artisan rsx:framework:breaking_changes:show <name>"
+        say "  Mark it done: php artisan rsx:framework:breaking_changes:mark <name> --fulfilled"
         say ""
     fi
 }

@@ -2,7 +2,8 @@
 /**
  * JavaScript and CSS Minifier
  *
- * Uses a persistent RPC server for efficient minification of multiple files.
+ * Runs over the `minify` subsystem of the node service (Rsx_Node_Service), so terser and
+ * cssnano stay loaded between files.
  * Terser for JavaScript, cssnano for CSS.
  * Only used in production mode - debug mode retains readable code.
  */
@@ -10,31 +11,10 @@
 namespace App\RSpade\Core\Bundle;
 
 use RuntimeException;
-use App\RSpade\Core\JsParsers\Rpc_Client_Abstract;
-use App\RSpade\Core\JsParsers\Rpc_Startup_Diagnostics;
+use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 
-class Minifier extends Rpc_Client_Abstract
+class Minifier
 {
-    /**
-     * RPC server script path
-     */
-    protected const RPC_SERVER_SCRIPT = 'app/RSpade/Core/Bundle/resource/minify-server.js';
-
-    /**
-     * RPC server socket path
-     */
-    protected const RPC_SOCKET = 'storage/rsx-tmp/minify-server.sock';
-
-    /**
-     * Human name for startup diagnostics
-     */
-    protected const RPC_LABEL = 'Minify';
-
-    /**
-     * RPC request ID counter
-     */
-    protected static int $request_id = 0;
-
     /**
      * Minify JavaScript content
      *
@@ -67,27 +47,11 @@ class Minifier extends Rpc_Client_Abstract
      */
     protected static function _minify_via_rpc(string $content, string $type, string $filename, bool $strip_console_debug = false): string
     {
-        static::ensure_rpc_server();
-
-        $socket_path = static::_rpc_socket_path();
-
-        // NO TIMEOUT. This carried a 30s connect budget whose own comment gave the reason
+        // NO TIMEOUT anywhere on this path - Rsx_Node_Service::request() connects with none.
+        // This call site once carried a 30s connect budget whose own comment gave the reason
         // to remove it: "a minify request can queue behind a large one already in flight."
-        // Queueing behind real work is exactly the slowness that is normal, and its six
-        // sibling RPC clients connect at 0.5s precisely because they are NOT waiting on a
-        // queue - the 30 was copy-paste drift dressed as a decision. Passing null waits for
-        // the local socket, and every read after it has always been unbounded.
-        $socket = @stream_socket_client('unix://' . $socket_path, $errno, $errstr, null);
-        if (!$socket) {
-            throw new RuntimeException("Failed to connect to minify RPC server: {$errstr}");
-        }
-
-        stream_set_blocking($socket, true);
-
-        static::$request_id++;
-        $request = json_encode([
-            'id' => static::$request_id,
-            'method' => 'minify',
+        // Queueing behind real work is exactly the slowness that is normal.
+        $result = Rsx_Node_Service::request('minify.minify', [
             'files' => [
                 [
                     'type' => $type,
@@ -96,21 +60,10 @@ class Minifier extends Rpc_Client_Abstract
                     'strip_console_debug' => $strip_console_debug
                 ]
             ]
-        ]) . "\n";
-
-        fwrite($socket, $request);
-
-        $response = fgets($socket);
-        fclose($socket);
-
-        if (!$response) {
-            throw new RuntimeException("No response from minify RPC server");
-        }
-
-        $result = json_decode($response, true);
+        ]);
 
         if (!isset($result['results'][$filename])) {
-            throw new RuntimeException("Invalid response from minify RPC server");
+            throw new RuntimeException("Invalid response from the minify RPC: " . json_encode($result));
         }
 
         $file_result = $result['results'][$filename];
@@ -126,16 +79,16 @@ class Minifier extends Rpc_Client_Abstract
     }
 
     /**
-     * Force a fresh minify daemon.
+     * Force a fresh node service.
      *
      * Kept as its own name because the production build calls it explicitly
-     * (Prod_Build_Command). The freshness check in ensure_rpc_server() makes this
-     * unnecessary for a CHANGED server script; it remains the way to demand a brand new
-     * daemon regardless.
+     * (Prod_Build_Command). Since consolidation there is ONE service per process, so this
+     * restarts the whole thing, not a minify-only daemon. A daemon is always spawned from
+     * current disk by its own parent, so this is never needed for CHANGED code; it remains
+     * the way to demand a brand new process regardless.
      */
     public static function force_restart(): void
     {
-        static::stop_rpc_server(force: true);
-        static::ensure_rpc_server();
+        Rsx_Node_Service::force_restart();
     }
 }

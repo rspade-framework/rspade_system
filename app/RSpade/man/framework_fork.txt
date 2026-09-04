@@ -78,7 +78,7 @@ one that a class override cannot express, you need a fork.
 
 **Fork if:**
 - You need to modify RSpade core functionality permanently
-- You are willing to merge upstream changes by hand from then on
+- You are willing to merge breaking changes by hand from then on
 - You have someone maintaining the framework modifications
 
 **Critical decision point:**
@@ -179,9 +179,9 @@ distribution repository:
     php artisan migrate --framework-only
     php artisan rsx:test --framework
 
-Also review new mandates under `system/app/RSpade/upstream_changes/` when
+Also review new mandates under `system/app/RSpade/breaking_changes/` when
 porting - they describe required downstream actions that ship with
-framework changes (see rsx:man upstream_changes).
+framework changes (see rsx:ma breaking_changes).
 
 ## REVERTING TO MANAGED MODE
 
@@ -247,5 +247,5 @@ changes; `git -C system log` separates the two by commit.
 ## SEE ALSO
 
 rsx_upstream(7) - Managed updates: what the submodule model does and refuses
-upstream_changes(7) - Mandatory downstream change notices
+breaking_changes(7) - Mandatory downstream change notices
 class_override(7) - Overriding framework classes WITHOUT forking

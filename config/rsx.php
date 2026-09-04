@@ -624,12 +624,6 @@ return [
         'suffix_exempt_classes' => [
             'Component',            // JQHTML components can have flexible naming
             'Rsx_System_Model_Abstract',   // System models (e.g., Session) have special naming
-            // The RPC lifecycle base: its children's identities are their JOBS
-            // (Js_Parser, Minifier, FileSanitizer, ...) - being an RPC client is
-            // an implementation detail, not what the class IS. Renaming six
-            // widely-referenced core classes to *_Client would trade real churn
-            // for a suffix.
-            'Rpc_Client_Abstract',
         ],
     ],
 
@@ -686,11 +680,11 @@ return [
         // the no-timeout mandate sanctions. It is NOT a cap on the helper's work: once
         // it answers, every RPC call runs to completion with no deadline at all.
         //
-        // 10s is generous for a cold node start and was the hardcoded value in all six
-        // helpers. It is a key rather than a literal because a loaded box legitimately
-        // takes longer - a downstream update failed here mid-backup (2026-08-11) - and
-        // the honest fix for a slow machine is a bigger number, not a retry storm.
-        'rpc_server_ready_wait_ms' => 10000,
+        // 20s is generous for a cold node start. It is a key rather than a literal because
+        // a loaded box legitimately takes longer - a downstream update failed here
+        // mid-backup (2026-08-11) - and the honest fix for a slow machine is a bigger
+        // number, not a retry storm.
+        'rpc_server_ready_wait_ms' => 20000,
     ],
 
     /*
@@ -1992,7 +1986,7 @@ return [
     | are formally exposed to application code: requiring one via rsx:composer/
     | rsx:npm records it as provided-by-framework instead of installing a
     | duplicate. Exposure is a standing commitment - breaking changes to an
-    | exposed package ship with an upstream_changes document (Category 2).
+    | exposed package ship with a breaking_changes document (Category 2).
     |
     | See: php artisan rsx:man dependencies
     |
@@ -2002,7 +1996,7 @@ return [
         // Framework packages formally exposed to application code. Requiring one
         // via rsx:composer/rsx:npm records it as provided-by-framework instead of
         // installing a duplicate. Exposure is a commitment: breaking changes to
-        // these ship with an upstream_changes document (Category 2).
+        // these ship with a breaking_changes document (Category 2).
         'exposed_composer' => [
             'laravel/framework',
             'guzzlehttp/guzzle',

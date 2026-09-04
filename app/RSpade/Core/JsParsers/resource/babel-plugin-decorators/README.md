@@ -29,7 +29,7 @@ This is a long-standing upstream defect, verified NOT fixed through Babel 8.0.1
 
 ### The workaround this fork retires
 
-Before this fork, `js-transformer-server.js` carried an output-shape matcher: it looked for
+Before this fork, the transform carried an output-shape matcher: it looked for
 the `[_ClassName, _initClass] = _applyDecs(...).c` destructuring shape in the transformed
 output and appended `var ClassName = _hash_ClassName;` to re-create the binding.
 

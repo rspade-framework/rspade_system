@@ -205,7 +205,7 @@ instead and every existing reference keeps resolving.
 After a pull, check for anything the update needs from you by hand:
 
 ```bash
-php artisan rsx:framework:upstream_changes
+php artisan rsx:framework:breaking_changes
 ```
 
 ### Git

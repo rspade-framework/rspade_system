@@ -301,7 +301,7 @@ MANIFEST INTEGRATION
 
 TRANSFORM PIPELINE
     App JS is transpiled to browser-compatible code by the Babel transform server
-    (app/RSpade/Core/JsParsers/resource/js-transformer-server.js), then concatenated
+    (app/RSpade/Core/JsParsers/resource/babel-service.js), then concatenated
     into a shared, non-module bundle scope. Because the bundle scope is shared, a
     decorated class MUST keep its module-scope bare-name binding: other files, jqhtml
     templates, and the SPA registry reference it by bare name, and a missing binding is

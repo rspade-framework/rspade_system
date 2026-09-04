@@ -1,29 +1,18 @@
-#!/usr/bin/env node
+/**
+ * PARSER subsystem of the node service (prefix `parser`).
+ *
+ * JavaScript structure/metadata extraction over @babel/parser, feeding the manifest.
+ *
+ * Methods: parser.parse
+ *
+ * @FILENAME-CONVENTION-EXCEPTION - node service module
+ */
 
 const fs = require('fs');
 const parser = require('@babel/parser');
 const traverse = require('@babel/traverse').default;
 const t = require('@babel/types');
 const generate = require('@babel/generator').default;
-const net = require('net');
-
-// Parse command line arguments
-let mode = 'cli'; // 'cli' or 'server'
-let socketPath = null;
-let filePath = null;
-let jsonOutput = false;
-
-for (let i = 2; i < process.argv.length; i++) {
-    const arg = process.argv[i];
-    if (arg.startsWith('--socket=')) {
-        mode = 'server';
-        socketPath = arg.substring('--socket='.length);
-    } else if (arg === '--json') {
-        jsonOutput = true;
-    } else if (!filePath) {
-        filePath = arg;
-    }
-}
 
 // =============================================================================
 // SHARED PARSING LOGIC
@@ -824,177 +813,31 @@ function parseFileContent(content, filePath, jsonOutput) {
 }
 
 // =============================================================================
-// MODE HANDLING: CLI or RPC Server
+// HANDLERS
 // =============================================================================
 
-if (mode === 'server') {
-    // RPC Server Mode
-    if (!socketPath) {
-        console.error('Server mode requires --socket=/path/to/socket');
-        process.exit(1);
-    }
+module.exports = {
+    /**
+     * {files: [<absolute path>, ...]} -> {results: {<path>: <parse result>}}
+     */
+    parse(request) {
+        const results = {};
 
-    // Remove socket if exists
-    if (fs.existsSync(socketPath)) {
-        fs.unlinkSync(socketPath);
-    }
-
-    function handleRequest(data) {
-        try {
-            const request = JSON.parse(data);
-
-            switch (request.method) {
-                case 'ping':
-                    return JSON.stringify({
-                        id: request.id,
-                        result: 'pong'
-                    }) + '\n';
-
-                case 'parse':
-                    const results = {};
-                    for (const file of request.files) {
-                        try {
-                            const content = fs.readFileSync(file, 'utf8');
-                            const parseResult = parseFileContent(content, file, true);
-                            results[file] = parseResult;
-                        } catch (error) {
-                            results[file] = {
-                                status: 'error',
-                                error: {
-                                    type: 'FileReadError',
-                                    message: error.message
-                                }
-                            };
-                        }
+        for (const file of request.files) {
+            try {
+                const content = fs.readFileSync(file, 'utf8');
+                results[file] = parseFileContent(content, file, true);
+            } catch (error) {
+                results[file] = {
+                    status: 'error',
+                    error: {
+                        type: 'FileReadError',
+                        message: error.message
                     }
-                    return JSON.stringify({
-                        id: request.id,
-                        results: results
-                    }) + '\n';
-
-                case 'shutdown':
-                    return JSON.stringify({
-                        id: request.id,
-                        result: 'shutting down'
-                    }) + '\n';
-
-                default:
-                    return JSON.stringify({
-                        id: request.id,
-                        error: 'Unknown method: ' + request.method
-                    }) + '\n';
+                };
             }
-        } catch (error) {
-            return JSON.stringify({
-                error: 'Invalid JSON request: ' + error.message
-            }) + '\n';
         }
+
+        return { results };
     }
-
-    const server = net.createServer((socket) => {
-        let buffer = '';
-
-        socket.on('data', (data) => {
-            buffer += data.toString();
-
-            let newlineIndex;
-            while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-                const line = buffer.substring(0, newlineIndex);
-                buffer = buffer.substring(newlineIndex + 1);
-
-                if (line.trim()) {
-                    const response = handleRequest(line);
-                    socket.write(response);
-
-                    try {
-                        const request = JSON.parse(line);
-                        if (request.method === 'shutdown') {
-                            socket.end();
-                            server.close(() => {
-                                if (fs.existsSync(socketPath)) {
-                                    fs.unlinkSync(socketPath);
-                                }
-                                process.exit(0);
-                            });
-                        }
-                    } catch (e) {
-                        // Ignore
-                    }
-                }
-            }
-        });
-
-        socket.on('error', (err) => {
-            console.error('Socket error:', err);
-        });
-    });
-
-    server.listen(socketPath, () => {
-        console.log('JS Parser RPC server listening on ' + socketPath);
-    });
-
-    server.on('error', (err) => {
-        console.error('Server error:', err);
-        process.exit(1);
-    });
-
-    process.on('SIGTERM', () => {
-        server.close(() => {
-            if (fs.existsSync(socketPath)) {
-                fs.unlinkSync(socketPath);
-            }
-            process.exit(0);
-        });
-    });
-
-    process.on('SIGINT', () => {
-        server.close(() => {
-            if (fs.existsSync(socketPath)) {
-                fs.unlinkSync(socketPath);
-            }
-            process.exit(0);
-        });
-    });
-} else {
-    // CLI Mode
-    if (!filePath) {
-        console.error('Usage: node js-parser-server.js [--json] <file>');
-        console.error('   or: node js-parser-server.js --socket=/path/to/socket');
-        process.exit(1);
-    }
-
-    // Read file
-    let content;
-    try {
-        content = fs.readFileSync(filePath, 'utf8');
-    } catch (error) {
-        if (jsonOutput) {
-            console.log(JSON.stringify({
-                status: 'error',
-                error: {
-                    type: 'FileReadError',
-                    message: `Error reading file: ${error.message}`,
-                    file: filePath
-                }
-            }));
-        } else {
-            console.error(`Error reading file: ${error.message}`);
-        }
-        process.exit(1);
-    }
-
-    // Parse file
-    const result = parseFileContent(content, filePath, jsonOutput);
-
-    // Output result
-    if (jsonOutput) {
-        console.log(JSON.stringify(result));
-    } else {
-        if (result.status === 'error') {
-            console.error('Parse error:', result.error || result.message);
-            process.exit(1);
-        } else {
-            console.log(JSON.stringify(result.result, null, 2));
-        }
-    }
-}
+};

@@ -510,6 +510,28 @@ COMPILATION PROCESS
     7. Compile vendor and app separately
     8. In production: concatenate into single files
 
+NODE WORK RUNS IN ONE DAEMON, NOT ON COMMAND LINES
+    Every node step of a compile runs over ONE persistent RPC service on ONE
+    unix socket - babel, jqhtml, minification, SCSS compilation and
+    concatenation alike, each a subsystem of it, each loaded on first use. The
+    service is spawned on demand, reused, and reaped by rsx:clean and by
+    maintenance mode; there is nothing to start and nothing to install. See
+    Core/JsParsers/README.md for the architecture and the full roster.
+
+    THE RULE THAT PRODUCED IT: a request that grows with the size of the
+    application must never travel as command-line arguments. Linux caps a
+    SINGLE argument at MAX_ARG_STRLEN (32 pages = 131072 bytes) - not the
+    getconf ARG_MAX total, not raised by ulimit - and the cap behaves as a
+    cliff: one byte under builds, one byte over fails every build from then on.
+    Concatenation used to name every bundled file on one command line and hit
+    that ceiling in a large application at ~1,300 JavaScript files, taking every
+    route to a 500 and blaming the file whose addition tipped it over. The file
+    list now travels in a socket payload, which has no such ceiling.
+
+    exec_safe() refuses an over-limit command with a legible message naming the
+    byte count and the limit. That is a diagnosis aid for whatever is left, not
+    permission to build long argument lists.
+
 JAVASCRIPT STUBS
     Controllers with Ajax_Endpoint methods get stubs:
         // Automatically included in bundles

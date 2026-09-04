@@ -2,26 +2,26 @@
 
 namespace App\RSpade\Commands\Framework;
 
-use App\RSpade\Core\Framework\Upstream_Changes;
+use App\RSpade\Core\Framework\Breaking_Changes;
 use Illuminate\Console\Command;
 
-class Framework_Upstream_Changes_Show_Command extends Command
+class Framework_Breaking_Changes_Show_Command extends Command
 {
-    protected $signature = 'rsx:framework:upstream_changes:show {name}';
+    protected $signature = 'rsx:framework:breaking_changes:show {name}';
 
-    protected $description = 'View the full content and status of one upstream change';
+    protected $description = 'View the full content and status of one breaking change';
 
     public function handle()
     {
         try {
-            $filename = Upstream_Changes::resolve_filename($this->argument('name'));
+            $filename = Breaking_Changes::resolve_filename($this->argument('name'));
         } catch (\InvalidArgumentException $e) {
             $this->error($e->getMessage());
 
             return 1;
         }
 
-        $manifest = Upstream_Changes::get_manifest();
+        $manifest = Breaking_Changes::get_manifest();
         $record = $manifest[$filename] ?? null;
 
         if ($record !== null && ($record['status'] ?? null) === 'fulfilled') {
@@ -38,7 +38,7 @@ class Framework_Upstream_Changes_Show_Command extends Command
         $this->line('<fg=cyan>' . $filename . '</>');
         $this->line('Status: ' . $status_line);
         $this->line($rule);
-        $this->line(Upstream_Changes::get_content($filename));
+        $this->line(Breaking_Changes::get_content($filename));
         $this->line($rule);
         $this->line('');
 

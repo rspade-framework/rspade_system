@@ -219,14 +219,14 @@ Real options:
 
 1. **Rename** to non-colliding names (`array_first_where()` / `array_last_where()`,
    or drop them in favour of `Arr::first()` / `Arr::last()`, which take the same
-   callback). Correct, and a downstream contract change: needs an `upstream_changes`
+   callback). Correct, and a downstream contract change: needs an `breaking_changes`
    document and a `shared/12-stdlib-and-time.md` edit.
 2. **Keep the names and guarantee our file loads first.** Fragile - it depends on
    composer's autoload ordering staying as it is.
 3. **Drop them entirely** and point everyone at `Arr::first()`/`Arr::last()`.
 
 Recommendation: option 1 or 3, decided before the 12->13 hop. Both are one
-`upstream_changes` document.
+`breaking_changes` document.
 
 ---
 
@@ -281,9 +281,9 @@ both already clear Laravel 13.
 
 ### Downstream
 
-`upstream_changes/laravel_13_upgrade_08_24.txt` (PHP 8.3 floor, plus the four
+`breaking_changes/laravel_13_upgrade_08_24.txt` (PHP 8.3 floor, plus the four
 things that broke in OUR code and could plausibly break in an app's) and
-`upstream_changes/array_first_last_removed_08_24.txt`.
+`breaking_changes/array_first_last_removed_08_24.txt`.
 
 ---
 
@@ -291,6 +291,6 @@ things that broke in OUR code and could plausibly break in an app's) and
 
 This is scaffolding. Once the upgrade is signed off, delete
 `app/RSpade/resource/laravel_upgrade/` entirely - the durable knowledge has
-already been moved into the two `upstream_changes` documents. The baseline
+already been moved into the two `breaking_changes` documents. The baseline
 patches in `baseline_l10/` are only of historical interest and are recoverable
 from git history at commit `14f35e20f`.

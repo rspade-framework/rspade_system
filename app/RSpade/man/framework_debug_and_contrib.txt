@@ -30,7 +30,7 @@ SYNOPSIS
 
     # 6. when the release lands - the patch is discarded by the pull itself
     php artisan rsx:framework:pull
-    php artisan rsx:framework:upstream_changes
+    php artisan rsx:framework:breaking_changes
     php artisan rsx:framework:status
 
 DESCRIPTION
@@ -203,12 +203,12 @@ THE PROCEDURE
     is correct, and it is why step 5 exists.
 
         php artisan rsx:framework:pull
-        php artisan rsx:framework:upstream_changes
-        php artisan rsx:framework:upstream_changes:show <name>
-        php artisan rsx:framework:upstream_changes:mark <name> --fulfilled
+        php artisan rsx:framework:breaking_changes
+        php artisan rsx:framework:breaking_changes:show <name>
+        php artisan rsx:framework:breaking_changes:mark <name> --fulfilled
         php artisan rsx:framework:status
 
-    Apply any upstream_changes documents the pull reports - those are the
+    Apply any breaking_changes documents the pull reports - those are the
     manual migrations that do not self-apply - then re-run your reproducer
     against the shipped fix. It is not unusual for the maintainer to have
     solved the problem differently or more broadly: VERIFY THE BEHAVIOUR, NOT
@@ -228,7 +228,7 @@ THE PROCEDURE
 
     Then: review against the framework's house rules, write the FRAMEWORK
     TEST that pins the behaviour, update every documentation tier the change
-    moved, author an upstream_changes document if downstream code must now be
+    moved, author a breaking_changes document if downstream code must now be
     written or invoked differently, and publish a release.
 
     Two things follow for you. The maintainer needs to know which man page
@@ -444,7 +444,7 @@ WHAT IS ALREADY ON YOUR DISK
                                       Laravel commands
       Lib/Flash/CLAUDE.md             flash alerts across redirects and Ajax
       man/CLAUDE.md                   how a man page is written
-      upstream_changes/CLAUDE.md      the AUTHOR's side of the mandates you
+      breaking_changes/CLAUDE.md      the AUTHOR's side of the mandates you
                                       consume - the gate deciding whether one
                                       is written, and the two structures
       resource/vscode_extension/CLAUDE.md
@@ -1534,37 +1534,46 @@ SUBSYSTEM PRIMERS
     portal-route and externals modules; transform and concatenate; minify
     when the mode says so. The decorator runtime is forced to first position.
 
-    THE NODE RPC SERVERS. Parsing and transformation would otherwise spawn a
-    Node process per file - over a thousand per build. Instead there are
-    long-running Node servers, one per family, speaking LINE-DELIMITED JSON
-    over UNIX DOMAIN SOCKETS in storage/rsx-tmp/. Six families: the JS
-    metadata parser, the JS transformer, the minifier, the jqhtml template
-    compiler, and two for the code-quality checker. Every server implements
-    ping, its own verb, and shutdown.
+    THE NODE SERVICE. Parsing and transformation would otherwise spawn a
+    Node process per file - over a thousand per build. Instead there is ONE
+    long-running Node service speaking LINE-DELIMITED JSON over a UNIX DOMAIN
+    SOCKET in storage/rsx-tmp/, serving eight subsystems: the JS metadata
+    parser, babel, the minifier, the concatenator, sass, the jqhtml template
+    compiler, and two for the code-quality checker. A method is named
+    '<prefix>.<method>'; the service itself also implements ping, introspect
+    and shutdown.
 
-    ONE BASE CLASS OWNS THE ENTIRE LIFECYCLE; a client declares three
-    constants and nothing else:
+    It was EIGHT daemons until 2026-09-04. Compiles are strictly sequential,
+    so eight processes bought no parallelism - and on the CLI they were pure
+    waste, because Symfony's Process destructor kills a daemon at exit, so
+    one artisan run started and then immediately killed up to eight of them.
 
-        class Js_Parser extends Rpc_Client_Abstract {
-            protected const RPC_SERVER_SCRIPT = '...server.js';
-            protected const RPC_SOCKET        = 'storage/rsx-tmp/...sock';
-            protected const RPC_LABEL         = 'JS Parser';
-        }
+    A SUBSYSTEM MODULE IS LOADED ON FIRST USE, never at boot: babel, sass,
+    terser, postcss and the jqhtml parser each cost real time and memory, and
+    a ping must load none of them. The introspect method reports what is
+    actually loaded.
 
-    then calls ensure_rpc_server() before its first request and does its own
-    marshalling and caching. Failure is FATAL - there is no single-file
-    fallback anywhere.
+    ONE CLASS OWNS THE ENTIRE LIFECYCLE - Rsx_Node_Service - and a client
+    owns none of it. A client builds a payload, calls
 
-    Four lifecycle details matter when debugging one. The spawn closes
+        Rsx_Node_Service::request('parser.parse', ['files' => [$file]]);
+
+    and interprets the response with its own error vocabulary. Failure is
+    FATAL - there is no single-file fallback anywhere.
+
+    Four lifecycle details matter when debugging it. The spawn closes
     inherited lock file descriptors, because an inherited flock would be held
-    for the daemon's whole idle life. The process is given NO TIMEOUT - a
-    daemon runs as long as it is useful. A sidecar file records the SHA of
-    the server script at spawn, so a daemon is reused only when the socket
-    exists, the recorded SHA matches the script on disk, and a ping answers -
-    which is what invalidates a stale daemon after an edit or a framework
-    pull. And the process handle is published only AFTER the first successful
-    ping, because publishing earlier left a non-null handle after a failed
-    start and every later caller died on a missing socket.
+    for the daemon's whole idle life. The process is given NO TIMEOUT - the
+    service runs as long as it is useful. A sidecar .meta file records a
+    PROVENANCE HASH at spawn - over the entry script, every registered
+    subsystem module, AND package-lock.json - so the service is reused only
+    when the socket exists, that hash still matches disk, and a ping answers.
+    The lock file is in there because an npm bump changes no source file at
+    all, and a source-only hash would leave a daemon serving the old library
+    from memory with a healthy ping. And the process handle is published only
+    AFTER the first successful ping, because publishing earlier left a
+    non-null handle after a failed start and every later caller died on a
+    missing socket.
 
     THE ONE SANCTIONED TIMEOUT HERE is the readiness wait,
     rsx.javascript.rpc_server_ready_wait_ms. It bounds a wait on an external
@@ -1572,9 +1581,11 @@ SUBSYSTEM PRIMERS
     WAIT AND NEVER THE WORK; its config entry states all of that beside the
     value, and it is the house example of a justified timeout. On expiry the
     diagnosis is built BEFORE anything is killed, so a slow start is not
-    reported as a crash. Lifetime differs by SAPI: on the CLI the daemon dies
-    with the artisan process; UNDER PHP-FPM IT SURVIVES THE REQUEST and is
-    reused. A reaper exists, called by the clean command and by maintenance.
+    reported as a crash. Lifetime differs by SAPI: on the CLI the service
+    dies with the artisan process; UNDER PHP-FPM IT SURVIVES THE REQUEST and
+    is reused. A reaper exists, called by the clean command and by
+    maintenance; it matches on the socket DIRECTORY in argv, so it collects
+    the SSR server too and needs no list to maintain.
 
     THE VENDORED BABEL DECORATOR PLUGIN. Upstream's decorator transform DROPS
     THE MODULE-SCOPE NAME BINDING of a decorated class declaration that has
@@ -1593,9 +1604,11 @@ SUBSYSTEM PRIMERS
     class and file, if the binding is absent from program scope. The same
     pass renames generated helpers with a per-file hash so concatenated files
     cannot collide. The transform cache key includes a TOOLCHAIN FINGERPRINT
-    - the fork's hash, the Babel version, the server and CLI script hashes -
-    so swapping any part of the toolchain orphans every cache entry, which is
-    separate from the daemon's provenance check.
+    - the fork's hash, the Babel version, and the hashes of both transform
+    implementations (the service's babel module and the one-shot CLI script)
+    - so swapping any part of the toolchain orphans every cache entry. That
+    keys the cache on disk; the node service itself needs no equivalent check,
+    since each PHP process spawns its own daemon from current disk.
 
     THE /** @decorator */ MARKER: only a function marked as a decorator may
     be used as one, and the manifest fails the build on an unauthorised
@@ -1667,9 +1680,10 @@ SUBSYSTEM PRIMERS
       Core/JsParsers/README.md, Integrations/Jqhtml/CLAUDE.md.
       Source: Core/Bundle/ (Rsx_Bundle_Abstract, Rsx_Module_Bundle_Abstract,
       Rsx_Asset_Bundle_Abstract, BundleCompiler, Minifier, Cdn_Cache,
-      resource/concat-js.js, resource/concat-css.js),
-      Core/JsParsers/ (Rpc_Client_Abstract, Js_Parser, Js_Transformer,
-      resource/js-parser-server.js, resource/js-transformer-server.js,
+      resource/concat-service.js, resource/minify-service.js),
+      Core/JsParsers/ (Rsx_Node_Service, Js_Parser, Js_Transformer,
+      resource/node-service.js, resource/node-service-modules.json,
+      resource/parser-service.js, resource/babel-service.js,
       resource/babel-plugin-decorators/),
       Integrations/Jqhtml/, Integrations/Scss/Scss_BundleProcessor.php,
       Core/Dispatch/AssetHandler.php, Commands/Rsx/Prod_Build_Command.php,
@@ -2491,7 +2505,7 @@ SEE ALSO
     rsx:man framework_pull_mechanics    how a release is built and delivered
     rsx:man class_override              the supported way to change framework
                                         behaviour without a patch
-    rsx:man upstream_changes            the mandatory manual migrations
+    rsx:ma breaking_changes            the mandatory manual migrations
     rsx:man framework_fork              taking ownership of the framework
     rsx:man rsx_git                     the git proxy that keeps system/ in
                                         step

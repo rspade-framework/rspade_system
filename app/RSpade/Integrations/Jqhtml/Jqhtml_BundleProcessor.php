@@ -77,7 +77,13 @@ class Jqhtml_BundleProcessor extends BundleProcessor_Abstract
             // temp filename participates in the bundle's file ordering, so a checkout-
             // or mtime-dependent name would make the compiled-template concatenation
             // order differ between two byte-identical checkouts.
-            $cache_key = md5(_rsx_relative_build_path($path) . ':' . md5_file($path));
+            // The parser's version is part of the key for the same reason it is part of
+            // compile_file()'s: a cached compile is the PARSER'S output, and neither the
+            // template's path nor its content moves when @jqhtml/parser is upgraded.
+            $cache_key = md5(
+                _rsx_relative_build_path($path) . ':' . md5_file($path)
+                . ':' . JqhtmlWebpackCompiler::_parser_version()
+            );
             $temp_file = storage_path('rsx-tmp/jqhtml_' . substr($cache_key, 0, 16) . '.js');
 
             // Check if we need to compile

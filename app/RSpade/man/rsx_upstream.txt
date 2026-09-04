@@ -65,7 +65,7 @@ THE UPDATE, IN FULL
         THE RECORDED GITLINK .. THE FETCHED TIP - see THE RANGE below.
 
     6.  Commit the new submodule pointer - one commit changing one gitlink,
-        with the concatenated upstream changelog as its body and two
+        with the concatenated breaking changelog as its body and two
         machine-readable trailers. The full changelog is also appended to
         rsx/resource/framework_update_history.dat, which is committed with it.
 
@@ -75,7 +75,7 @@ THE UPDATE, IN FULL
 
     8.  Lower the maintenance window.
 
-    9.  Report pending migrations and pending upstream_changes documents.
+    9.  Report pending migrations and pending breaking_changes documents.
 
     THE POINTER IS COMMITTED BEFORE THE REBUILD. A rebuild that fails
     therefore costs only the build: fix what it reports and rebuild. NEVER
@@ -302,7 +302,7 @@ SEE ALSO
     rsx:man framework_pull_mechanics    how a release is built and delivered
     rsx:man rsx_git                     the git proxy that keeps system/ in step
     rsx:man class_override              the supported way to change framework code
-    rsx:man upstream_changes            mandatory manual migrations
+    rsx:ma breaking_changes            mandatory manual migrations
     rsx:man framework_fork              taking ownership of the framework
     rsx:man framework_debug_and_contrib
                                         debugging framework core and sending

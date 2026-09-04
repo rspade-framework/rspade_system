@@ -14,41 +14,24 @@ namespace App\RSpade\Core\JsParsers;
 
 use Illuminate\Support\Facades\File;
 use RuntimeException;
-use App\RSpade\Core\JsParsers\Rpc_Client_Abstract;
-use App\RSpade\Core\JsParsers\Rpc_Startup_Diagnostics;
-use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 
-class Js_Transformer extends Rpc_Client_Abstract
+/**
+ * Babel transformation over the `babel` subsystem of the node service (Rsx_Node_Service).
+ * This class owns the disk cache, its toolchain fingerprint and the error vocabulary; the
+ * daemon's lifecycle belongs entirely to the service.
+ */
+class Js_Transformer
 {
     /**
-     * Node.js transformer script path (RPC server)
+     * Node service module carrying the transform (participates in the cache fingerprint)
      */
-    protected const RPC_SERVER_SCRIPT = 'app/RSpade/Core/JsParsers/resource/js-transformer-server.js';
-
-    /**
-     * Transformer script path for availability checking (RPC server used for actual transformations)
-     */
-    protected const TRANSFORMER_SCRIPT = 'app/RSpade/Core/JsParsers/resource/js-transformer.js';
+    protected const BABEL_SERVICE_MODULE = 'app/RSpade/Core/JsParsers/resource/babel-service.js';
 
     /**
      * Cache directory for transformed JavaScript files
      */
     protected const CACHE_DIR = 'storage/rsx-tmp/babel_cache';
-
-    /**
-     * RPC server socket path
-     */
-    protected const RPC_SOCKET = 'storage/rsx-tmp/js-transformer-server.sock';
-
-    /**
-     * Human name for startup diagnostics
-     */
-    protected const RPC_LABEL = 'JS Transformer';
-
-    /**
-     * RPC request ID counter
-     */
-    protected static $request_id = 0;
 
     /**
      * Vendored decorator fork bundle (participates in the cache fingerprint)
@@ -159,13 +142,17 @@ class Js_Transformer extends Rpc_Client_Abstract
      * every cached transform:
      *   - the vendored decorator fork bundle (its content hash)
      *   - the @babel/core version string (from its package.json)
-     *   - the transformer server script itself (its content hash)
+     *   - the node service's babel module (its content hash)
      *   - the one-shot transformer script (its content hash)
      *
-     * BOTH transformer scripts are folded in, and they must stay that way: they
+     * BOTH transform implementations are folded in, and they must stay that way: they
      * carry the SAME babel options, so an edit to either changes what a transform
      * produces. Hashing only one of them means editing the other silently serves
      * every file from a cache built by the old options.
+     *
+     * This is the CACHE's fingerprint: it invalidates cached BYTES ON DISK. The service
+     * itself needs no such check - each PHP process spawns its own daemon from current disk
+     * and nobody ever inherits one.
      *
      * Computed once per process (static cache). Files are small / read once, so this is
      * cheap. Missing pieces contribute a marker rather than throwing here -- the transform
@@ -180,13 +167,11 @@ class Js_Transformer extends Rpc_Client_Abstract
         }
 
         $fork_bundle = base_path(self::DECORATOR_FORK_BUNDLE);
-        $server_script = base_path(self::RPC_SERVER_SCRIPT);
-        $cli_script = base_path(self::TRANSFORMER_SCRIPT);
+        $server_script = base_path(self::BABEL_SERVICE_MODULE);
         $babel_core_pkg = base_path('node_modules/@babel/core/package.json');
 
         $fork_hash = is_file($fork_bundle) ? md5_file($fork_bundle) : 'no-fork';
         $server_hash = is_file($server_script) ? md5_file($server_script) : 'no-server';
-        $cli_hash = is_file($cli_script) ? md5_file($cli_script) : 'no-cli';
 
         $babel_core_version = 'no-babel-core';
         if (is_file($babel_core_pkg)) {
@@ -195,7 +180,7 @@ class Js_Transformer extends Rpc_Client_Abstract
         }
 
         static::$toolchain_fingerprint = substr(
-            md5($fork_hash . '.' . $babel_core_version . '.' . $server_hash . '.' . $cli_hash),
+            md5($fork_hash . '.' . $babel_core_version . '.' . $server_hash),
             0,
             12
         );
@@ -218,40 +203,6 @@ class Js_Transformer extends Rpc_Client_Abstract
         }
     }
 
-    /**
-     * Check if Babel is properly installed
-     *
-     * @return bool
-     */
-    public static function is_available(): bool
-    {
-        $transformer_path = base_path(self::TRANSFORMER_SCRIPT);
-
-        if (!File::exists($transformer_path)) {
-            return false;
-        }
-
-        // Check if node_modules exists
-        $node_modules = dirname($transformer_path) . '/node_modules';
-        if (!is_dir($node_modules)) {
-            return false;
-        }
-
-        // Check for required packages
-        $required_packages = [
-            '@babel/core',
-            '@babel/preset-env',
-            '@babel/plugin-proposal-decorators'
-        ];
-
-        foreach ($required_packages as $package) {
-            if (!is_dir($node_modules . '/' . $package)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
 
     /**
      * Get list of required npm packages
@@ -268,7 +219,10 @@ class Js_Transformer extends Rpc_Client_Abstract
     }
 
     /**
-     * Transform file via RPC server
+     * Transform file via the node service.
+     *
+     * Lazy by construction: only a genuine cache MISS reaches request(), and request() is
+     * what starts the service - a fully cached bundle compile never spawns node at all.
      *
      * @param string $file_path Path to file to transform
      * @param string $target Target environment
@@ -277,20 +231,6 @@ class Js_Transformer extends Rpc_Client_Abstract
      */
     protected static function _transform_via_rpc(string $file_path, string $target, ?string $original_path = null): string
     {
-        // Lazy: only a genuine cache MISS needs a daemon at all.
-        static::ensure_rpc_server();
-
-        $socket_path = static::_rpc_socket_path();
-
-        // Connect to RPC server
-        $socket = @stream_socket_client('unix://' . $socket_path, $errno, $errstr, 5);
-        if (!$socket) {
-            throw new RuntimeException("Failed to connect to JS Transformer RPC server: {$errstr}");
-        }
-
-        // Set blocking mode for reliable reads/writes
-        stream_set_blocking($socket, true);
-
         // Use original path for hash generation if provided (for temp files).
         // Reduce it to a checkout-RELATIVE path: the transformer derives a private-
         // function scoping prefix from md5(hash_path). An absolute path would embed
@@ -300,11 +240,7 @@ class Js_Transformer extends Rpc_Client_Abstract
         // checkouts.
         $hash_path = _rsx_relative_build_path($original_path ?: $file_path);
 
-        // Send transform request
-        static::$request_id++;
-        $request = json_encode([
-            'id' => static::$request_id,
-            'method' => 'transform',
+        $result = Rsx_Node_Service::request('babel.transform', [
             'files' => [
                 [
                     'path' => $file_path,
@@ -312,30 +248,18 @@ class Js_Transformer extends Rpc_Client_Abstract
                     'hash_path' => $hash_path
                 ]
             ]
-        ]) . "\n";
+        ]);
 
-        fwrite($socket, $request);
-
-        // Read response
-        $response = fgets($socket);
-        fclose($socket);
-
-        if (!$response) {
-            throw new RuntimeException("JS Transformer RPC server returned empty response for {$file_path}");
-        }
-
-        $result = json_decode($response, true);
-
-        if (!$result || !isset($result['results'])) {
+        if (!isset($result['results'])) {
             throw new RuntimeException(
-                "JS Transformer RPC server returned invalid response for {$file_path}:\n" . $response
+                "JS Transformer RPC returned invalid response for {$file_path}:\n" . json_encode($result)
             );
         }
 
         $file_result = $result['results'][$file_path] ?? null;
 
         if (!$file_result) {
-            throw new RuntimeException("JS Transformer RPC server did not return result for {$file_path}");
+            throw new RuntimeException("JS Transformer RPC did not return a result for {$file_path}");
         }
 
         // Handle error response
@@ -376,7 +300,7 @@ class Js_Transformer extends Rpc_Client_Abstract
 
         // Unknown response format
         throw new RuntimeException(
-            "JS Transformer RPC server returned unexpected response for {$file_path}:\n" .
+            "JS Transformer RPC returned an unexpected response for {$file_path}:\n" .
             json_encode($file_result, JSON_PRETTY_PRINT)
         );
     }

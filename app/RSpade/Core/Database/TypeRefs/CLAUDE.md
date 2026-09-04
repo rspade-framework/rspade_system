@@ -334,7 +334,7 @@ is caught at the model that relates over it. Escape hatch: `@POLY-01-EXCEPTION -
 ## Reference
 
 - `php artisan rsx:man polymorphic` - Full documentation
-- `/system/app/RSpade/upstream_changes/type_refs_12_27.txt` - Original type-ref migration
-- `/system/app/RSpade/upstream_changes/polymorphic_morph_transparency_08_09.txt` - the
+- `/system/app/RSpade/breaking_changes/type_refs_12_27.txt` - Original type-ref migration
+- `/system/app/RSpade/breaking_changes/polymorphic_morph_transparency_08_09.txt` - the
   string-morph conversion downstream apps must perform
 - `/system/app/RSpade/tests/polymorphic/` - behavior tests + catalog

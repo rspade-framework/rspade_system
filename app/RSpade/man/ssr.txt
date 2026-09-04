@@ -151,10 +151,11 @@ SERVER LIFECYCLE
 
         pgrep -f -- '--socket=<storage>/rsx-tmp/'
 
-    rsx:clean runs it (Rpc_Client_Abstract::quiesce_all()) immediately BEFORE
+    rsx:clean runs it (Rsx_Node_Service::quiesce_all()) immediately BEFORE
     wiping rsx-tmp, and bin/maintenance-mode.sh enable runs the bash twin. The
     SSR socket lives in that directory, so ssr-server is collected for free even
-    though it is not one of the Rpc_Client_Abstract families. Nothing restarts it:
+    though it is not the node service and has its own hand-rolled lifecycle.
+    Nothing restarts it:
     the next render_component() starts a fresh one, which is the point.
 
 NGINX AND PHP-FPM DEADLOCK PREVENTION

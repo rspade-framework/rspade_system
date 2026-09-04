@@ -5,40 +5,79 @@ namespace App\RSpade\Core\Framework;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
- * Upstream Changes tracking service.
+ * Breaking Changes tracking service.
  *
  * Downstream RSpade applications fork the /rsx/ starter template. When the
- * framework publishes an upstream-change mandate (a dated *.txt file in
- * app/RSpade/upstream_changes/) each application must track which mandates it
+ * framework publishes a breaking-change mandate (a dated *.txt file in
+ * app/RSpade/breaking_changes/) each application must track which mandates it
  * has already reviewed/replicated ("fulfilled") versus which are still pending.
  *
  * This static class is the single source of truth for that per-application
- * tracking state. All five rsx:framework:upstream_changes* commands call into
+ * tracking state. All five rsx:framework:breaking_changes* commands call into
  * it - no manifest logic is duplicated per-command.
  *
  * The tracking state lives in a per-application dotfile committed alongside the
- * app's forked /rsx/ code: rsx/resource/.upstream_changes_manifest.json
+ * app's forked /rsx/ code: rsx/resource/.breaking_changes_manifest.json
  */
-class Upstream_Changes
+class Breaking_Changes
 {
     /**
-     * Directory holding the upstream-change mandate *.txt files.
+     * Directory holding the breaking-change mandate *.txt files.
      */
     public static function directory(): string
     {
-        return base_path('app/RSpade/upstream_changes');
+        return base_path('app/RSpade/breaking_changes');
     }
 
     /**
      * Path to the per-application manifest dotfile.
+     *
+     * Calling this ADOPTS an existing manifest written under the directory's former name
+     * (see __adopt_former_manifest_name()), so the caller never has to think about it.
      */
     public static function manifest_path(): string
     {
-        return base_path('rsx/resource/.upstream_changes_manifest.json');
+        $path = base_path('rsx/resource/.breaking_changes_manifest.json');
+
+        static::__adopt_former_manifest_name($path);
+
+        return $path;
     }
 
     /**
-     * All upstream-change mandate filenames (basenames), sorted.
+     * Carry an app's fulfillment record across the directory's rename.
+     *
+     * This system was called `upstream_changes` until 2026-09-04, and each application
+     * records which mandates it has already dealt with in a dotfile named after it. Reading
+     * the new name on an app that has the old file would silently discard that record and
+     * re-raise every historical mandate as unfulfilled - a burst of noise, which is the
+     * exact thing the rename was made to reduce.
+     *
+     * One rename, once, when the old file exists and the new one does not. Its EAGER twin
+     * is system/bin/environment_updates/100_breaking_changes_manifest_rename.sh - the same
+     * idempotent rename at framework-update time; this lazy side must stay because the
+     * pull's own rsx:framework:post_update reads the manifest BEFORE the environment
+     * updates run, and a fresh-baselined manifest would silently mark real pending
+     * documents fulfilled. Whichever side runs first wins; delete both together once no
+     * live application predates the rename.
+     */
+    private static function __adopt_former_manifest_name(string $current_path): void
+    {
+        if (file_exists($current_path)) {
+            return;
+        }
+
+        $former_path = base_path('rsx/resource/.upstream_changes_manifest.json');
+
+        if (!file_exists($former_path)) {
+            return;
+        }
+
+        rename($former_path, $current_path);
+    }
+
+    /**
+     * All breaking-change mandate filenames (basenames), sorted.
      *
      * Only *.txt files count as mandates. This naturally excludes CLAUDE.md and
      * the *_reference.js companion files that sit alongside some mandates.
@@ -92,7 +131,7 @@ class Upstream_Changes
 
         if (!is_array($manifest)) {
             throw new \RuntimeException(
-                'Corrupt upstream changes manifest (not valid JSON): ' . $path
+                'Corrupt breaking changes manifest (not valid JSON): ' . $path
             );
         }
 
@@ -118,7 +157,7 @@ class Upstream_Changes
     /**
      * Whether a mandate has been marked fulfilled.
      *
-     * A mandate absent from the manifest (e.g. a new upstream change added after
+     * A mandate absent from the manifest (e.g. a new breaking change added after
      * the baseline auto-populate) is unfulfilled by default.
      */
     public static function is_fulfilled(string $filename): bool
@@ -156,7 +195,7 @@ class Upstream_Changes
     {
         if (!in_array($filename, static::list_all_files(), true)) {
             throw new \InvalidArgumentException(
-                "Not an upstream change file: '{$filename}'."
+                "Not a breaking change file: '{$filename}'."
             );
         }
 
@@ -179,7 +218,7 @@ class Upstream_Changes
     {
         if (!in_array($filename, static::list_all_files(), true)) {
             throw new \InvalidArgumentException(
-                "Not an upstream change file: '{$filename}'."
+                "Not a breaking change file: '{$filename}'."
             );
         }
 
@@ -222,7 +261,7 @@ class Upstream_Changes
 
         if (count($matches) === 0) {
             throw new \InvalidArgumentException(
-                "No upstream change file matches '{$needle}'."
+                "No breaking change file matches '{$needle}'."
             );
         }
 

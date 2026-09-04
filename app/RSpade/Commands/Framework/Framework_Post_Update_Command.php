@@ -22,7 +22,7 @@ class Framework_Post_Update_Command extends Command
         // into a real file, so restore the .env symlink invariant before any later
         // step (or the app) reads configuration.
         $this->call('rsx:framework:post_update_env_check');
-        $this->call('rsx:framework:post_update_upstream_changes_check');
+        $this->call('rsx:framework:post_update_breaking_changes_check');
         $this->call('rsx:framework:post_update_dependency_check');
 
         return 0;

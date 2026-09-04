@@ -1,35 +1,57 @@
 NAME
-    upstream_changes - review and track mandatory framework-driven changes to
+    breaking_changes - review and track mandatory framework-driven changes to
     your downstream application code
 
 SYNOPSIS
-    php artisan rsx:framework:upstream_changes
-    php artisan rsx:framework:upstream_changes:show <name>
-    php artisan rsx:framework:upstream_changes:mark <name> --fulfilled
-    php artisan rsx:framework:upstream_changes:mark <name> --unfulfilled
+    php artisan rsx:framework:breaking_changes
+    php artisan rsx:framework:breaking_changes:show <name>
+    php artisan rsx:framework:breaking_changes:mark <name> --fulfilled
+    php artisan rsx:framework:breaking_changes:mark <name> --unfulfilled
 
 DESCRIPTION
     Your application is a fork of the RSpade `/rsx/` starter template running on
     top of the framework core in `/system/`. When you run
     `php artisan rsx:framework:pull`, the framework core (`/system/`) is updated
-    in place automatically - but two kinds of change cannot apply themselves to
-    your code and require you to ACT:
+    in place automatically.
 
-        1. `/rsx/` template diffs - improvements the maintainer made to the
-           starter template. Your `/rsx/` is your own fork, so these do not
-           arrive automatically; you must replicate them by hand.
+    ALMOST EVERYTHING ARRIVES THAT WAY AND NEEDS NOTHING FROM YOU. The framework
+    is deliberately a black box: how bundles compile, how the manifest is built,
+    how a request dispatches, which helper processes exist - none of that is
+    your concern, and it can be rewritten wholesale without you hearing about
+    it. This directory is NOT a changelog of framework work, and it is not a
+    release-notes feed. If you want to know what changed, read the update commit
+    or `git log -- system/`.
 
-        2. `/system/` core behavior / API-contract changes - a core function
-           whose contract changed (for example, a buggy return value that has
-           now been fixed). The fix ships automatically, but YOUR code might
-           rely on the old behavior, contain a workaround for the old bug, or
-           simply need re-verifying against the corrected contract.
+    A breaking-changes document is published ONLY when YOU must change code YOU
+    WROTE. Three kinds qualify:
 
-    Both kinds are published as dated mandate files in the framework's
-    `app/RSpade/upstream_changes/` directory. Each is a plain-text document
-    telling you exactly what to check, audit, or copy into your own code. They
-    are MANDATORY: skipping one can leave your application quietly broken after
-    a framework update.
+        1. `/rsx/` template diffs - but only where your fork BREAKS or loses a
+           documented capability without the change. Your `/rsx/` diverging from
+           the template is the normal, intended state of every RSpade
+           application; a template improvement you may adopt at leisure is NOT
+           published here. It ships in the reference app at
+           `system/app/RSpade/resource/reference_app/`, which is where you look
+           for the current way to do something.
+
+        2. A PUBLIC API contract change - the call shape or semantics of
+           something your application is designed to CALL: a changed signature,
+           a changed default, a corrected return value your code may have grown
+           a workaround for. The same standard a library like jQuery uses: an
+           internal engine rewrite gets no note, `$.fn.foo(a, b)` becoming
+           `$.fn.foo({a, b})` does.
+
+        3. A new feature whose implementation includes a template-app INTERFACE.
+           The framework side arrives automatically; the screen that administers
+           it does not, because that screen lives in the template's `/rsx/` and
+           yours is your own. Such a document names the reference implementation
+           and asks you to port it onto your application's own navigation,
+           permissions and design system. It is a map and an offer, not a diff
+           to paste blindly.
+
+    Each is a dated plain-text document in the framework's
+    `app/RSpade/breaking_changes/` directory, telling you exactly what to check,
+    audit, port or copy. They are MANDATORY: skipping one can leave your
+    application quietly broken, or leave a feature you now own unreachable.
 
     This subsystem lets your application track which of those mandate documents
     it has reviewed ("fulfilled") versus which are still pending, and surfaces
@@ -42,7 +64,7 @@ DESCRIPTION
 LOCAL TRACKING FILE
     Your fulfilled/unfulfilled state lives in a per-application dotfile:
 
-        rsx/resource/.upstream_changes_manifest.json
+        rsx/resource/.breaking_changes_manifest.json
 
     It is JSON (one entry per mandate: status + timestamp), pretty-printed and
     alphabetically sorted so it produces clean git diffs. Commit it alongside
@@ -50,14 +72,14 @@ LOCAL TRACKING FILE
 
     Auto-creation on first use:
         The manifest does not exist until the first time you run any
-        `rsx:framework:upstream_changes` command (or a framework pull triggers
+        `rsx:framework:breaking_changes` command (or a framework pull triggers
         the automatic check). On that first read it is auto-populated, marking
         EVERY mandate that currently exists as already "fulfilled".
 
     IMPORTANT baseline caveat:
         That first-use auto-populate is a baseline snapshot: it assumes an
         existing app is already in sync at the moment tracking begins. Any
-        mandate that already existed in `app/RSpade/upstream_changes/` BEFORE
+        mandate that already existed in `app/RSpade/breaking_changes/` BEFORE
         your app's first use of this system will therefore NOT show up as
         pending - it is silently baselined as fulfilled.
 
@@ -68,21 +90,21 @@ LOCAL TRACKING FILE
         to pull them back into your pending list.
 
 COMMANDS
-    php artisan rsx:framework:upstream_changes
+    php artisan rsx:framework:breaking_changes
         List every pending (unfulfilled) mandate, plus a fulfilled/pending
         tally. This is the command to run any time you want to know what is
         outstanding. Prints a clean "nothing pending" message when you are fully
         caught up.
 
-    php artisan rsx:framework:upstream_changes:show <name>
+    php artisan rsx:framework:breaking_changes:show <name>
         Print the full text of one mandate along with its current status. The
         <name> is fuzzy-matched: an exact filename wins (the `.txt` extension is
         optional), otherwise a single case-insensitive substring match is used.
         Zero matches or an ambiguous (multiple) match is reported as an error so
         you can be more specific.
 
-    php artisan rsx:framework:upstream_changes:mark <name> --fulfilled
-    php artisan rsx:framework:upstream_changes:mark <name> --unfulfilled
+    php artisan rsx:framework:breaking_changes:mark <name> --fulfilled
+    php artisan rsx:framework:breaking_changes:mark <name> --unfulfilled
         Record your progress. Mark a mandate `--fulfilled` once you have applied
         or verified it; mark it `--unfulfilled` to pull it back onto your
         pending list (for example, to re-audit it, or after the baseline caveat
@@ -97,41 +119,41 @@ AUTOMATIC POST-UPDATE CHECK
     instead prints the follow-up commands to run by hand (including
     `rsx:framework:post_update`). If any mandates are pending, the check prints
     a short notice telling you how many there are and to run
-    `rsx:framework:upstream_changes`. If nothing is pending it stays silent
+    `rsx:framework:breaking_changes`. If nothing is pending it stays silent
     (no news is good news).
 
-    You can still run `php artisan rsx:framework:upstream_changes` at any time,
+    You can still run `php artisan rsx:framework:breaking_changes` at any time,
     independent of a pull.
 
     For transparency: the post-update nudge is driven by two hidden internal
     commands, `rsx:framework:post_update` (the orchestrator the pull script
-    invokes) and `rsx:framework:post_update_upstream_changes_check` (the pending
+    invokes) and `rsx:framework:post_update_breaking_changes_check` (the pending
     check itself). You never need to invoke these yourself - they run
     automatically as part of the pull.
 
 EXAMPLES
     List what is outstanding after an update:
 
-        $ php artisan rsx:framework:upstream_changes
+        $ php artisan rsx:framework:breaking_changes
 
-        Pending upstream changes:
+        Pending breaking changes:
 
           - rsx_time_diff_seconds_sign_07_10.txt
           - modal_events_01_28.txt
 
         2 pending, 7 fulfilled
-        Run `php artisan rsx:framework:upstream_changes:show <name>` to review one.
+        Run `php artisan rsx:framework:breaking_changes:show <name>` to review one.
 
     Nothing outstanding:
 
-        $ php artisan rsx:framework:upstream_changes
+        $ php artisan rsx:framework:breaking_changes
 
-        No pending upstream changes.
-        All 9 upstream changes reviewed.
+        No pending breaking changes.
+        All 9 breaking changes reviewed.
 
     Read one mandate in full (fuzzy match on "modal"):
 
-        $ php artisan rsx:framework:upstream_changes:show modal
+        $ php artisan rsx:framework:breaking_changes:show modal
 
         modal_events_01_28.txt
         Status: unfulfilled (never reviewed)
@@ -145,12 +167,12 @@ EXAMPLES
 
     Mark it done once you have applied it:
 
-        $ php artisan rsx:framework:upstream_changes:mark modal --fulfilled
+        $ php artisan rsx:framework:breaking_changes:mark modal --fulfilled
         Marked 'modal_events_01_28.txt' as fulfilled.
 
     Re-open a mandate to audit it again:
 
-        $ php artisan rsx:framework:upstream_changes:mark modal --unfulfilled
+        $ php artisan rsx:framework:breaking_changes:mark modal --unfulfilled
         Marked 'modal_events_01_28.txt' as unfulfilled.
 
 AUTHORING (FRAMEWORK MAINTAINER)
@@ -159,7 +181,7 @@ AUTHORING (FRAMEWORK MAINTAINER)
     change (a maintainer directing that a change requires downstream code
     fixes), the format and charter for writing these mandate documents lives in:
 
-        /system/app/RSpade/upstream_changes/CLAUDE.md
+        /system/app/RSpade/breaking_changes/CLAUDE.md
 
     That file defines the two document categories (`/rsx/` template diff versus
     `/system/` core behavior/API-contract change), when each warrants a
@@ -168,9 +190,9 @@ AUTHORING (FRAMEWORK MAINTAINER)
     duplicate it.
 
 TROUBLESHOOTING
-    "No upstream change file matches '<name>'"
-        Your <name> matched nothing. Run `rsx:framework:upstream_changes` (or
-        list `app/RSpade/upstream_changes/*.txt`) to see the exact names, then
+    "No breaking change file matches '<name>'"
+        Your <name> matched nothing. Run `rsx:framework:breaking_changes` (or
+        list `app/RSpade/breaking_changes/*.txt`) to see the exact names, then
         retry with a longer/more exact fragment.
 
     "Ambiguous match for '<name>'"
@@ -190,4 +212,4 @@ TROUBLESHOOTING
 SEE ALSO
     rsx_upstream    - php artisan rsx:framework:pull (pulling framework updates)
     framework_fork  - framework fork / distribution model
-    /system/app/RSpade/upstream_changes/CLAUDE.md - authoring charter for mandates
+    /system/app/RSpade/breaking_changes/CLAUDE.md - authoring charter for mandates

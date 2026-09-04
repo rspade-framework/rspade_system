@@ -8,36 +8,19 @@
 namespace App\RSpade\Core\JsParsers;
 
 use App\RSpade\Core\JsParsers\Js_Exception;
-use App\RSpade\Core\JsParsers\Rpc_Client_Abstract;
-use App\RSpade\Core\JsParsers\Rpc_Startup_Diagnostics;
-use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 
-class Js_Parser extends Rpc_Client_Abstract
+/**
+ * JavaScript structure and metadata extraction, over the `parser` subsystem of the node
+ * service (Rsx_Node_Service). This class owns the disk cache, the request marshaling and
+ * the exception vocabulary; the daemon's lifecycle belongs entirely to the service.
+ */
+class Js_Parser
 {
-    /**
-     * Node.js RPC server script path
-     */
-    protected const RPC_SERVER_SCRIPT = 'app/RSpade/Core/JsParsers/resource/js-parser-server.js';
-
-    /**
-     * Unix socket path for RPC server
-     */
-    protected const RPC_SOCKET = 'storage/rsx-tmp/js-parser-server.sock';
-
-    /**
-     * Human name for startup diagnostics
-     */
-    protected const RPC_LABEL = 'JS Parser';
-
     /**
      * Cache directory for parsed JavaScript files
      */
     protected const CACHE_DIR = 'storage/rsx-tmp/persistent/js_parser';
-
-    /**
-     * Request ID counter
-     */
-    protected static $request_id = 0;
 
     /**
      * Parse a JavaScript file using Node.js AST parser with caching
@@ -78,46 +61,17 @@ class Js_Parser extends Rpc_Client_Abstract
     }
 
     /**
-     * Parse via RPC server
+     * Parse via the node service.
+     *
+     * Lazy by construction: only a genuine cache MISS reaches request(), and request() is
+     * what starts the service - a fully cached manifest build never spawns node at all.
      */
     protected static function _parse_via_rpc($file_path)
     {
-        // Lazy: only a genuine cache MISS needs a daemon at all.
-        static::ensure_rpc_server();
-
-        $socket_path = static::_rpc_socket_path();
-
         try {
-            $sock = @stream_socket_client("unix://{$socket_path}", $errno, $errstr, 0.5);
-            if (!$sock) {
-                throw new \RuntimeException("Failed to connect to RPC server: {$errstr}");
-            }
-
-            // Set blocking mode for reliable reads
-            stream_set_blocking($sock, true);
-
-            // Send parse request
-            $request = [
-                'id' => ++static::$request_id,
-                'method' => 'parse',
-                'files' => [$file_path]
-            ];
-
-            fwrite($sock, json_encode($request) . "\n");
-
-            // Read response
-            $response = fgets($sock);
-            fclose($sock);
-
-            if (!$response) {
-                throw new \RuntimeException("No response from RPC server");
-            }
-
-            $data = json_decode($response, true);
-
-            if (!$data || !is_array($data)) {
-                throw new \RuntimeException("Invalid JSON response from RPC server");
-            }
+            $data = Rsx_Node_Service::request('parser.parse', [
+                'files' => [$file_path],
+            ]);
 
             if (isset($data['error'])) {
                 throw new \RuntimeException("RPC error: " . $data['error']);

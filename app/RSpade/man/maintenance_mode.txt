@@ -35,11 +35,12 @@ WHAT ENABLE DOES (in order - the order is load-bearing)
        connect.
     2. rsx:tasks:kill-all - force-kill running background tasks (SIGTERM, 5s grace, SIGKILL).
        Best-effort: a pre-database or broken tree must not fail the transition.
-    3. Quiesce the node RPC helper daemons - every node process whose command line names a
-       socket under storage/rsx-tmp/ (the six build helpers plus ssr-server): SIGTERM, one
-       settle pass, SIGKILL, with one line reporting the count. Pure bash, so it works on a
-       broken tree. This is the twin of Rpc_Client_Abstract::quiesce_all(), which rsx:clean
-       calls; see WHY THE RPC DAEMONS ARE A SPECIAL CASE below.
+    3. Quiesce the node daemons - every node process whose command line names a socket
+       under storage/rsx-tmp/ (the node service and ssr-server, plus anything added later,
+       since the match is on the socket DIRECTORY rather than a name): SIGTERM, one settle
+       pass, SIGKILL, with one line reporting the count. Pure bash, so it works on a broken
+       tree. This is the twin of Rsx_Node_Service::quiesce_all(), which rsx:clean calls; see
+       WHY THE RPC DAEMONS ARE A SPECIAL CASE below.
     4. supervisorctl stop, in this order: realtime, fpc-proxy, php-fpm, rsx-lockd, and redis
        LAST. The lock daemon stops AFTER its PHP consumers, so no live request loses a lock
        out from under itself.
@@ -91,9 +92,9 @@ WHY THE RPC DAEMONS ARE A SPECIAL CASE
 
     DISABLE DOES NOT RESTART THEM, deliberately. They hold no state and the next process that
     needs one spawns it on demand; that is the contract, and it is what guarantees the
-    post-window daemon is running post-window code. Belt and braces: the client also records
-    the sha1 of the server script it spawned in <socket>.meta and refuses to reuse a daemon
-    whose provenance no longer matches (rsx:man storage_directories).
+    post-window daemon is running post-window code. Belt and braces: each PHP process spawns
+    its OWN daemon on a private socket and never inherits one, so post-window code is what a
+    post-window daemon can possibly be running (rsx:man storage_directories).
 
 THE SCHEMA-CACHE GUARD ON DISABLE
     Disable refuses while a live backup from `php artisan rsx:db:rebuild_provision_cache_snapshot` is still on

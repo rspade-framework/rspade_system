@@ -129,29 +129,30 @@ RSX-TMP DIRECTORY
                              with the developer database (rsx.files.storage_root,
                              read by Rsx_File_Paths; backlog B-38)
 
-        THE HELPER DAEMON SOCKETS. Seven node RPC helpers live directly in this
-        directory, each on a unix socket plus a .meta provenance sidecar:
+        THE DAEMON SOCKETS. The node daemons live directly in this directory:
 
-            js-parser-server.sock          + .meta
-            js-transformer-server.sock     + .meta
-            minify-server.sock             + .meta
-            jqhtml-compile-server.sock     + .meta
-            js-sanitizer-server.sock       + .meta
-            js-code-quality-server.sock    + .meta
+            node-service-<random>.sock     (one per live PHP process)
             ssr-server.sock                + ssr-server.pid, ssr-server.build_key
 
-        <socket>.meta holds the sha1 of the server script the daemon was spawned
-        from. A client reuses a daemon only when the socket exists, that hash
-        still matches the script on disk, and a ping is answered - so an edited
-        or freshly-pulled server script invalidates its daemon at source. See
-        Core/JsParsers/CLAUDE.md (Rpc_Client_Abstract).
+        node-service-<random>.sock is THE node service - one process serving
+        every build subsystem (parser, babel, minify, concat, jqhtml, sanitize,
+        quality, scss). It replaced eight per-concern daemons on 2026-09-04.
+
+        The random component makes the socket PRIVATE to the PHP process that
+        spawned it: nobody else can learn the name, so nobody else can kill,
+        rebind or reuse that daemon. Freshness needs no check - a daemon is
+        always spawned from current disk by its own parent, and its lifetime is
+        a subset of that parent's. A daemon left behind by a SIGKILLed parent
+        exits on its own after 120 idle seconds, unlinking its socket. Several
+        of these files at once is NORMAL: it means several PHP processes are
+        live. See Core/JsParsers/CLAUDE.md (Rsx_Node_Service).
 
         (transient .tmp_<digits> staging dirs from atomic writes)
 
     Cleared by rsx:clean; recreated automatically. Safe to exclude from deploys.
 
     THE DAEMONS ARE QUIESCED FIRST. rsx:clean calls
-    Rpc_Client_Abstract::quiesce_all() immediately BEFORE wiping this directory,
+    Rsx_Node_Service::quiesce_all() immediately BEFORE wiping this directory,
     and reports the count. Wiping it under a running daemon would strand that
     daemon permanently: it keeps a listener on an unlinked inode that no socket
     message can ever reach again, and its argv still names the deleted path. So a

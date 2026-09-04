@@ -71,7 +71,7 @@ php artisan rsx:npm uninstall dompurify             # drops the recording
 
 (Applied to a real app-layer package, both delegate to the real tool.)
 
-**The forever-commitment posture**: exposing a package is a standing commitment by the framework - an exposed package is expected to remain available indefinitely at a compatible major version. If a breaking change or retirement ever does happen it is never silent: it ships with a Category 2 `upstream_changes` document (`rsx:man upstream_changes`) and the reconciler surfaces it against your recordings.
+**The forever-commitment posture**: exposing a package is a standing commitment by the framework - an exposed package is expected to remain available indefinitely at a compatible major version. If a breaking change or retirement ever does happen it is never silent: it ships with a Category 2 `breaking_changes` document (`rsx:ma breaking_changes`) and the reconciler surfaces it against your recordings.
 
 ---
 
@@ -95,7 +95,7 @@ Every successful `rsx:framework:pull` runs the reconciler at the end. It is **pu
    *major_change* - a recorded package crossed a major version boundary:
    ```
    Framework-provided 'guzzlehttp/guzzle' moved 7.15.2 -> 8.0.0 (major version change).
-   Review your usage; see pending upstream_changes documents.
+   Review your usage; see pending breaking_changes documents.
    Re-record with: php artisan rsx:composer require guzzlehttp/guzzle
    ```
    Review your call sites first, then re-record so the declaration names the new version.
@@ -146,4 +146,4 @@ The root `composer.json` carries a large auto-generated `"replace"` block: every
 
 ---
 
-Details: `php artisan rsx:man dependencies`, `rsx:man npm`, `rsx:man upstream_changes`. Related: `rspade:bundles`, `rspade:framework-updates`.
+Details: `php artisan rsx:man dependencies`, `rsx:man npm`, `rsx:ma breaking_changes`. Related: `rspade:bundles`, `rspade:framework-updates`.

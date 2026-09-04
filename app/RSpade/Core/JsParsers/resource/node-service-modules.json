@@ -1,0 +1,21 @@
+{
+    "_comment": [
+        "The node service's subsystem registry - the ONE list both sides read.",
+        "node-service.js dispatches '<prefix>.<method>' by loading the module named here,",
+        "and Rsx_Node_Service reads the same map so the two lists can never drift.",
+        "Paths are relative to base_path() (the framework's system/ tree),",
+        "which is also the service's working directory.",
+        "Adding a subsystem is: a module file, a row here, and a thin PHP client method."
+    ],
+    "entry": "app/RSpade/Core/JsParsers/resource/node-service.js",
+    "modules": {
+        "parser": "app/RSpade/Core/JsParsers/resource/parser-service.js",
+        "babel": "app/RSpade/Core/JsParsers/resource/babel-service.js",
+        "minify": "app/RSpade/Core/Bundle/resource/minify-service.js",
+        "concat": "app/RSpade/Core/Bundle/resource/concat-service.js",
+        "jqhtml": "app/RSpade/Integrations/Jqhtml/resource/jqhtml-service.js",
+        "sanitize": "app/RSpade/CodeQuality/Support/resource/sanitize-service.js",
+        "quality": "app/RSpade/CodeQuality/Support/resource/quality-service.js",
+        "scss": "app/RSpade/Integrations/Scss/resource/scss-service.js"
+    }
+}

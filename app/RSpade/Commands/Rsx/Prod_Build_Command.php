@@ -5,6 +5,7 @@ namespace App\RSpade\Commands\Rsx;
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Bundle\Cdn_Cache;
 use App\RSpade\Core\Bundle\Minifier;
+use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 use App\RSpade\Core\Rsx;
@@ -96,7 +97,7 @@ class Prod_Build_Command extends Command
         // Step 3: Compile all bundles
         $this->line('[3/5] Compiling bundles...');
 
-        // Force restart minify server to pick up any code changes
+        // Force restart the node service to pick up any code changes
         if (Rsx::is_production()) {
             Minifier::force_restart();
         }
@@ -166,10 +167,10 @@ class Prod_Build_Command extends Command
             $this->line("      {$compiled_count} bundles compiled");
         }
 
-        // Release the minify RPC server now that all bundles are compiled. Leaving
-        // a stale unix socket around would confuse the next build's force_restart.
+        // Release the node service now that all bundles are compiled. Leaving a stale
+        // unix socket around would confuse the next build's force_restart.
         if (Rsx::is_production()) {
-            Minifier::stop_rpc_server(true);
+            Rsx_Node_Service::stop(force: true);
         }
 
         // Step 4: Optimize the composer autoloader. This MUST run BEFORE the Laravel

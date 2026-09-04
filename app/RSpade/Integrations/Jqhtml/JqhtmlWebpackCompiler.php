@@ -2,17 +2,17 @@
 
 namespace App\RSpade\Integrations\Jqhtml;
 
-use App\RSpade\Core\JsParsers\Rpc_Client_Abstract;
-use App\RSpade\Core\JsParsers\Rpc_Startup_Diagnostics;
+use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 use App\RSpade\Integrations\Jqhtml\Jqhtml_Exception_ViewException;
 
 /**
  * JqhtmlWebpackCompiler - Compiles JQHTML templates to JavaScript during bundle build
  *
  * This service handles the compilation of .jqhtml template files into JavaScript
- * during the bundle build process. It uses the @jqhtml/parser NPM package to 
- * perform the compilation and caches the results based on file modification times.
- * 
+ * during the bundle build process. It uses the @jqhtml/parser NPM package - through the
+ * `jqhtml` subsystem of the node service (Rsx_Node_Service) - to perform the compilation,
+ * and caches the results based on file modification times.
+ *
  * Features:
  * - Uses @jqhtml/parser for template compilation
  * - Caches compiled templates based on file mtime
@@ -20,28 +20,8 @@ use App\RSpade\Integrations\Jqhtml\Jqhtml_Exception_ViewException;
  * - Integrates with the bundle compilation pipeline
  */
 #[Instantiatable]
-class JqhtmlWebpackCompiler extends Rpc_Client_Abstract
+class JqhtmlWebpackCompiler
 {
-    /**
-     * RPC server script path
-     */
-    protected const RPC_SERVER_SCRIPT = 'app/RSpade/Integrations/Jqhtml/resource/jqhtml-compile-server.js';
-
-    /**
-     * RPC server socket path
-     */
-    protected const RPC_SOCKET = 'storage/rsx-tmp/jqhtml-compile-server.sock';
-
-    /**
-     * Human name for startup diagnostics
-     */
-    protected const RPC_LABEL = 'JQHTML Compile';
-
-    /**
-     * RPC request ID counter
-     */
-    protected static $request_id = 0;
-
     /**
      * Path to jqhtml-compile binary for package validation (RPC server used for actual compilation)
      */
@@ -76,6 +56,39 @@ class JqhtmlWebpackCompiler extends Rpc_Client_Abstract
     }
     
     /**
+     * The installed @jqhtml/parser version, read once per process.
+     *
+     * FATAL when unresolvable: no parser package means no working compiler, and a guessed
+     * version is worse than a loud stop (the service module resolves the same package the
+     * same way and refuses the same way).
+     */
+    public static function _parser_version(): string
+    {
+        static $version = null;
+
+        if ($version !== null) {
+            return $version;
+        }
+
+        $package = base_path('node_modules/@jqhtml/parser/package.json');
+
+        if (!is_file($package)) {
+            throw new \RuntimeException(
+                '@jqhtml/parser is not installed at ' . $package
+                . ' - the jqhtml compiler cannot run without it.'
+            );
+        }
+
+        $version = json_decode(file_get_contents($package), true)['version'] ?? null;
+
+        if (!is_string($version) || $version === '') {
+            throw new \RuntimeException('@jqhtml/parser package.json carries no version.');
+        }
+
+        return $version;
+    }
+
+    /**
      * Compile a single JQHTML template file
      *
      * @param string $file_path Path to .jqhtml file
@@ -88,9 +101,15 @@ class JqhtmlWebpackCompiler extends Rpc_Client_Abstract
             throw new \RuntimeException("JQHTML template not found: {$file_path}");
         }
 
-        // Get file modification time for cache key
+        // Cache key = the template's identity + mtime + the PARSER'S OWN VERSION. The
+        // version is in the key because a compiled template is the parser's output: upgrade
+        // @jqhtml/parser and every cached compile is the OLD parser's work, still keyed
+        // valid by a path and an mtime that never moved. That is precisely how a wrong
+        // version (or a whole parser upgrade) kept being served for months - the daemon was
+        // recycled, the cache was not. Same discipline as Js_Transformer's toolchain
+        // fingerprint and the node service's .meta.
         $mtime = filemtime($file_path);
-        $cache_key = md5($file_path) . '_' . $mtime;
+        $cache_key = md5($file_path) . '_' . $mtime . '_' . static::_parser_version();
         $cache_file = $this->cache_dir . '/' . $cache_key . '.js';
 
         // Check if cached version exists
@@ -246,32 +265,17 @@ class JqhtmlWebpackCompiler extends Rpc_Client_Abstract
     }
 
     /**
-     * Compile file via RPC server
+     * Compile file via the node service.
+     *
+     * Lazy by construction: only a genuine cache MISS reaches request(), and request() is
+     * what starts the service - a fully cached bundle compile never spawns node at all.
      *
      * @param string $file_path Path to file to compile
      * @return string Compiled code
      */
     protected static function _compile_via_rpc(string $file_path): string
     {
-        // Lazy: only a genuine cache MISS needs a daemon at all.
-        static::ensure_rpc_server();
-
-        $socket_path = static::_rpc_socket_path();
-
-        // Connect to RPC server
-        $socket = @stream_socket_client('unix://' . $socket_path, $errno, $errstr, 5);
-        if (!$socket) {
-            throw new \RuntimeException("Failed to connect to JQHTML Compile RPC server: {$errstr}");
-        }
-
-        // Set blocking mode for reliable reads/writes
-        stream_set_blocking($socket, true);
-
-        // Send compile request
-        static::$request_id++;
-        $request = json_encode([
-            'id' => static::$request_id,
-            'method' => 'compile',
+        $result = Rsx_Node_Service::request('jqhtml.compile', [
             'files' => [
                 [
                     'path' => $file_path,
@@ -279,30 +283,18 @@ class JqhtmlWebpackCompiler extends Rpc_Client_Abstract
                     'sourcemap' => true
                 ]
             ]
-        ]) . "\n";
+        ]);
 
-        fwrite($socket, $request);
-
-        // Read response
-        $response = fgets($socket);
-        fclose($socket);
-
-        if (!$response) {
-            throw new \RuntimeException("JQHTML Compile RPC server returned empty response for {$file_path}");
-        }
-
-        $result = json_decode($response, true);
-
-        if (!$result || !isset($result['results'])) {
+        if (!isset($result['results'])) {
             throw new \RuntimeException(
-                "JQHTML Compile RPC server returned invalid response for {$file_path}:\n" . $response
+                "JQHTML compile RPC returned an invalid response for {$file_path}:\n" . json_encode($result)
             );
         }
 
         $file_result = $result['results'][$file_path] ?? null;
 
         if (!$file_result) {
-            throw new \RuntimeException("JQHTML Compile RPC server did not return result for {$file_path}");
+            throw new \RuntimeException("JQHTML compile RPC did not return a result for {$file_path}");
         }
 
         // Handle error response
@@ -334,7 +326,7 @@ class JqhtmlWebpackCompiler extends Rpc_Client_Abstract
 
         // Unknown response format
         throw new \RuntimeException(
-            "JQHTML Compile RPC server returned unexpected response for {$file_path}:\n" .
+            "JQHTML compile RPC returned an unexpected response for {$file_path}:\n" .
             json_encode($file_result, JSON_PRETTY_PRINT)
         );
     }

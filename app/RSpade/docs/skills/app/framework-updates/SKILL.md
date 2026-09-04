@@ -1,6 +1,6 @@
 ---
 name: framework-updates
-description: "Updating the RSpade framework in a downstream application - what rsx:framework:pull actually does end to end, why all of system/ is framework property that every update overwrites, the flags that exist and the ones that no longer do, the one-time conversion from the vendored tree to a git submodule and why it only happens inside the container, cloning a project so system/ is populated, the environment updates that self-apply after a pull, consuming upstream_changes documents, and rsx:framework:status. Use when running or recovering a pull, reading its output, cloning a project with an empty system/, or reacting to an upstream-change notice."
+description: "Updating the RSpade framework in a downstream application - what rsx:framework:pull actually does end to end, why all of system/ is framework property that every update overwrites, the flags that exist and the ones that no longer do, the one-time conversion from the vendored tree to a git submodule and why it only happens inside the container, cloning a project so system/ is populated, the environment updates that self-apply after a pull, consuming breaking_changes documents, and rsx:framework:status. Use when running or recovering a pull, reading its output, cloning a project with an empty system/, or reacting to a breaking-change notice."
 ---
 
 # Framework updates
@@ -31,10 +31,10 @@ No owned zones, no protected sub-paths, no merge, nothing preserved. The update 
 3. **Establish that `system/` is a submodule.** If it is not, see *Conversion* below.
 4. **`git reset --hard` + `git clean -fdx`** inside the submodule. Unconditional.
 5. **Fetch and check out the upstream tip.**
-6. **Commit the new submodule pointer** in your repository - one commit changing one gitlink, with the concatenated upstream changelog as its body. The full changelog is also appended to `rsx/resource/framework_update_history.dat`.
+6. **Commit the new submodule pointer** in your repository - one commit changing one gitlink, with the concatenated breaking changelog as its body. The full changelog is also appended to `rsx/resource/framework_update_history.dat`.
 7. **Rebuild**: `rsx:env:heal`, `rsx:clean`, `rsx:manifest:build --force`, `migrate --framework-only`, `rsx:bundle:compile`, `rsx:framework:post_update`.
 8. **Lower the maintenance window.**
-9. **Report what needs a human**: pending migrations, pending `upstream_changes` documents.
+9. **Report what needs a human**: pending migrations, pending `breaking_changes` documents.
 
 The pointer is committed **before** the rebuild. A rebuild that fails therefore costs only the build - fix what it reports and rebuild. **Never re-pull to fix a failed rebuild.**
 
@@ -94,12 +94,12 @@ php artisan rsx:git pull
 php artisan migrate
 ```
 
-**Pending upstream changes are surfaced automatically** - these are the manual steps an update cannot perform for you:
+**Pending breaking changes are surfaced automatically** - these are the manual steps an update cannot perform for you:
 
 ```bash
-php artisan rsx:framework:upstream_changes                    # list
-php artisan rsx:framework:upstream_changes:show <name>        # read one
-php artisan rsx:framework:upstream_changes:mark <name> --fulfilled
+php artisan rsx:framework:breaking_changes                    # list
+php artisan rsx:framework:breaking_changes:show <name>        # read one
+php artisan rsx:framework:breaking_changes:mark <name> --fulfilled
 ```
 
 ---
@@ -111,4 +111,4 @@ php artisan rsx:framework:upstream_changes:mark <name> --fulfilled
 - **Do not add `system/` to `.gitignore`.** The gitlink must be tracked or the framework version is not recorded.
 - **Do not re-pull to fix a failed rebuild.** The release is already committed; rebuild instead.
 
-Details: `php artisan rsx:man rsx_upstream`, `rsx:man upstream_changes`, `rsx:man class_override`.
+Details: `php artisan rsx:man rsx_upstream`, `rsx:ma breaking_changes`, `rsx:man class_override`.

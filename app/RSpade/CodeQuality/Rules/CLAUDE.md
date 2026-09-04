@@ -41,7 +41,7 @@ Implement `get_id()`, `get_name()`, `get_description()`, `get_file_patterns()`,
 - Every rule must be suppressible by a rationale'd `@<ID>-EXCEPTION` comment
   unless it is fatal by design; honor it in `check()`.
 - Adding a rule that enforces a NEW downstream-facing contract is a contract
-  change: it needs its documentation and, usually, an `upstream_changes` doc.
+  change: it needs its documentation and, usually, an `breaking_changes` doc.
 
 ## Pointers
 

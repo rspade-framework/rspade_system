@@ -200,8 +200,8 @@ THE TWO RULES THAT MAKE THIS A LIBRARY
         solver aware of the framework's pins. See rsx:man dependencies.
 
         If a package on this list is ever retired or moved across a major version
-        boundary, it ships with an upstream_changes document naming the remedy -
-        never silently. See rsx:man upstream_changes.
+        boundary, it ships with a breaking_changes document naming the remedy -
+        never silently. See rsx:ma breaking_changes.
 
 RSX VS LARAVEL
     Laravel: every dependency is the application's own composer.json line. There
@@ -240,7 +240,7 @@ TROUBLESHOOTING
 SEE ALSO
     dependencies         The two dependency layers, rsx:composer / rsx:npm
     health               rsx:health, and the extension tiers it reports
-    upstream_changes     How a change to an exposed package reaches an app
+    breaking_changes     How a change to an exposed package reaches an app
     safe_html            The framework's own HTML sanitising path
     npm                  JavaScript packages and Asset Bundles
     crud                 DataGrid_Abstract::build_csv and the export pattern

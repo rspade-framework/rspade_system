@@ -107,21 +107,26 @@ class Clean_Command extends Command
 
         // 2. Clear rsx-tmp directory recursively - EVERYTHING
         //
-        //    REAP BEFORE THE WIPE. Every node RPC helper lives on a unix socket in this
-        //    directory, and each one took that path as an argv argument at spawn time and
-        //    never reconsiders it. Unlinking the sockets under a running daemon strands it
-        //    permanently: it keeps serving an inode nobody can reach again, and no socket
-        //    message - not even a "force stop" - can ever reach it. That is what produced
-        //    the ten-deep orphan pile this command was quietly creating, and it violated
-        //    the framework's own rule in bin/CLAUDE.md (any operation that changes a socket
-        //    or state directory must reap the helpers bound to the previous one).
+        //    REAP BEFORE THE WIPE. Every node daemon - the node service, the SSR server,
+        //    and any stray left over from an older framework release - lives on a unix
+        //    socket in this directory, and each one took that path as an argv argument at
+        //    spawn time and never reconsiders it. Unlinking the sockets under a running
+        //    daemon strands it permanently: it keeps serving an inode nobody can reach
+        //    again, and no socket message - not even a "force stop" - can ever reach it.
+        //    That is what produced the ten-deep orphan pile this command was quietly
+        //    creating, and it violated the framework's own rule in bin/CLAUDE.md (any
+        //    operation that changes a socket or state directory must reap the daemons bound
+        //    to the previous one).
+        //
+        //    The sweep is deliberately indiscriminate - it matches on the socket DIRECTORY
+        //    in argv, not on which daemon it is - so it needs no list to maintain.
         //
         //    Killing them costs nothing: they hold no state and the next process that needs
         //    one spawns it on demand. Doing it BEFORE the unlink also lets each daemon's own
         //    SIGTERM handler remove its socket file on the way out.
-        $quiesced = \App\RSpade\Core\JsParsers\Rpc_Client_Abstract::quiesce_all();
+        $quiesced = \App\RSpade\Core\JsParsers\Rsx_Node_Service::quiesce_all();
         if ($quiesced > 0) {
-            $cleaned_items[] = '[OK] RPC helper daemons quiesced (' . $quiesced . ')';
+            $cleaned_items[] = '[OK] Node daemons quiesced (' . $quiesced . ')';
         }
 
         $tmp_path = storage_path('rsx-tmp');

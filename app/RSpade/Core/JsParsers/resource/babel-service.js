@@ -1,52 +1,24 @@
-#!/usr/bin/env node
-
 /**
- * JavaScript Transformer RPC Server (Babel)
+ * BABEL subsystem of the node service (prefix `babel`).
  *
- * This script transforms modern JavaScript (decorators, class properties) to browser-compatible code.
+ * Transforms modern JavaScript (decorators, class properties) into the browser-compatible
+ * code RSpade concatenates into a shared-scope, non-module bundle. The transformation
+ * logic below - the generated-name prefixing, the fail-closed decorator class-binding
+ * assertion, the target presets - is the whole of the framework's transform pipeline.
  *
- * Usage:
- *   CLI mode:    node js-transformer-server.js [--json] <file-path> [target] [hash-path]
- *   Server mode: node js-transformer-server.js --socket=/path/to/socket
+ * Methods: babel.transform
+ *
+ * The framework's js_transform tests require this file directly for its exported
+ * internals (transformFileContent, createPrefixPlugin, targetPresets,
+ * preprocessDecorators), which is why they are exported alongside the handler.
+ *
+ * @FILENAME-CONVENTION-EXCEPTION - node service module
  */
 
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const babel = require('@babel/core');
-const net = require('net');
-
-// Parse command line arguments
-let mode = 'cli'; // 'cli' or 'server'
-let socketPath = null;
-let filePath = null;
-let target = 'modern';
-let hashPath = null;
-let jsonOutput = false;
-
-// Process arguments. Positionals are assigned by INDEX (file path, target,
-// hash path) - a value-sentinel test cannot tell an explicit "modern" third
-// argument apart from the default.
-let positionalIndex = 0;
-for (let i = 2; i < process.argv.length; i++) {
-    const arg = process.argv[i];
-
-    if (arg.startsWith('--socket=')) {
-        mode = 'server';
-        socketPath = arg.substring('--socket='.length);
-    } else if (arg === '--json') {
-        jsonOutput = true;
-    } else if (positionalIndex === 0) {
-        filePath = arg;
-        positionalIndex++;
-    } else if (positionalIndex === 1) {
-        target = arg;
-        positionalIndex++;
-    } else if (positionalIndex === 2) {
-        hashPath = arg;
-        positionalIndex++;
-    }
-}
 
 // =============================================================================
 // SHARED TRANSFORMATION LOGIC
@@ -347,7 +319,7 @@ function transformFileContent(content, filePath, target, hashPath, jsonOutput) {
             return outputError(error, filePath, jsonOutput);
         }
 
-        // Output result (no banner - concat-js.js handles that)
+        // Output result (no banner - the concat service handles that)
         return {
             status: 'success',
             result: result.code,
@@ -385,201 +357,40 @@ function transformFileContent(content, filePath, target, hashPath, jsonOutput) {
 }
 
 // =============================================================================
-// MODE HANDLING: module import, CLI, or RPC Server
+// HANDLERS
 // =============================================================================
 
-if (require.main !== module) {
-    // Imported as a module (framework tests) - expose internals, execute nothing.
-    module.exports = {
-        transformFileContent,
-        createPrefixPlugin,
-        targetPresets,
-        preprocessDecorators
-    };
-} else if (mode === 'server') {
-    // RPC Server Mode
-    if (!socketPath) {
-        console.error('Server mode requires --socket=/path/to/socket');
-        process.exit(1);
-    }
+module.exports = {
+    /**
+     * {files: [{path, target, hash_path}, ...]} -> {results: {<path>: <transform result>}}
+     */
+    transform(request) {
+        const results = {};
 
-    // Remove socket if exists
-    if (fs.existsSync(socketPath)) {
-        fs.unlinkSync(socketPath);
-    }
+        for (const file of request.files) {
+            const fileTarget = file.target || 'modern';
+            const fileHashPath = file.hash_path || file.path;
 
-    function handleRequest(data) {
-        try {
-            const request = JSON.parse(data);
-
-            switch (request.method) {
-                case 'ping':
-                    return JSON.stringify({
-                        id: request.id,
-                        result: 'pong'
-                    }) + '\n';
-
-                case 'transform':
-                    const results = {};
-                    for (const file of request.files) {
-                        const fileTarget = file.target || 'modern';
-                        const fileHashPath = file.hash_path || file.path;
-
-                        try {
-                            const content = fs.readFileSync(file.path, 'utf8');
-                            const transformResult = transformFileContent(content, file.path, fileTarget, fileHashPath, true);
-                            results[file.path] = transformResult;
-                        } catch (error) {
-                            results[file.path] = {
-                                status: 'error',
-                                error: {
-                                    type: 'FileReadError',
-                                    message: error.message
-                                }
-                            };
-                        }
+            try {
+                const content = fs.readFileSync(file.path, 'utf8');
+                results[file.path] = transformFileContent(content, file.path, fileTarget, fileHashPath, true);
+            } catch (error) {
+                results[file.path] = {
+                    status: 'error',
+                    error: {
+                        type: 'FileReadError',
+                        message: error.message
                     }
-                    return JSON.stringify({
-                        id: request.id,
-                        results: results
-                    }) + '\n';
-
-                case 'shutdown':
-                    return JSON.stringify({
-                        id: request.id,
-                        result: 'shutting down'
-                    }) + '\n';
-
-                default:
-                    return JSON.stringify({
-                        id: request.id,
-                        error: 'Unknown method: ' + request.method
-                    }) + '\n';
+                };
             }
-        } catch (error) {
-            return JSON.stringify({
-                error: 'Invalid JSON request: ' + error.message
-            }) + '\n';
         }
-    }
 
-    const server = net.createServer((socket) => {
-        let buffer = '';
+        return { results };
+    },
 
-        socket.on('data', (data) => {
-            buffer += data.toString();
-
-            let newlineIndex;
-            while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-                const line = buffer.substring(0, newlineIndex);
-                buffer = buffer.substring(newlineIndex + 1);
-
-                if (line.trim()) {
-                    const response = handleRequest(line);
-                    socket.write(response);
-
-                    try {
-                        const request = JSON.parse(line);
-                        if (request.method === 'shutdown') {
-                            socket.end();
-                            server.close(() => {
-                                if (fs.existsSync(socketPath)) {
-                                    fs.unlinkSync(socketPath);
-                                }
-                                process.exit(0);
-                            });
-                        }
-                    } catch (e) {
-                        // Ignore
-                    }
-                }
-            }
-        });
-
-        socket.on('error', (err) => {
-            console.error('Socket error:', err);
-        });
-    });
-
-    server.listen(socketPath, () => {
-        console.log('JS Transformer RPC server listening on ' + socketPath);
-    });
-
-    server.on('error', (err) => {
-        console.error('Server error:', err);
-        process.exit(1);
-    });
-
-    process.on('SIGTERM', () => {
-        server.close(() => {
-            if (fs.existsSync(socketPath)) {
-                fs.unlinkSync(socketPath);
-            }
-            process.exit(0);
-        });
-    });
-
-    process.on('SIGINT', () => {
-        server.close(() => {
-            if (fs.existsSync(socketPath)) {
-                fs.unlinkSync(socketPath);
-            }
-            process.exit(0);
-        });
-    });
-} else {
-    // CLI Mode
-    // Default hashPath to filePath if not provided
-    if (!hashPath) {
-        hashPath = filePath;
-    }
-
-    if (!filePath) {
-        const error = new Error('No input file specified');
-        if (jsonOutput) {
-            console.log(JSON.stringify({
-                status: 'error',
-                error: {
-                    type: 'ArgumentError',
-                    message: error.message,
-                    suggestion: 'Usage: node js-transformer-server.js [--json] <file-path> [target] [hash-path]'
-                }
-            }));
-        } else {
-            console.error('Usage: node js-transformer-server.js [--json] <file-path> [target] [hash-path]');
-            console.error('   or: node js-transformer-server.js --socket=/path/to/socket');
-            console.error('Targets: modern, es6, es5');
-        }
-        process.exit(1);
-    }
-
-    // Read file
-    let content;
-    try {
-        content = fs.readFileSync(filePath, 'utf8');
-    } catch (error) {
-        error.message = `Error reading file: ${error.message}`;
-        const errorOutput = outputError(error, filePath, jsonOutput);
-        if (jsonOutput) {
-            console.log(JSON.stringify(errorOutput));
-        } else {
-            console.error(errorOutput.message);
-        }
-        process.exit(1);
-    }
-
-    // Transform file
-    const result = transformFileContent(content, filePath, target, hashPath, jsonOutput);
-
-    // Output result
-    if (jsonOutput) {
-        console.log(JSON.stringify(result));
-    } else {
-        if (result.status === 'error') {
-            console.error(result.message || result.error.message);
-            process.exit(1);
-        } else {
-            console.log(result.result);
-        }
-    }
-}
+    // Exported for the framework's js_transform tests - not part of the RPC surface.
+    transformFileContent,
+    createPrefixPlugin,
+    targetPresets,
+    preprocessDecorators
+};

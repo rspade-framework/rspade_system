@@ -3,6 +3,7 @@
 namespace App\RSpade\Integrations\Scss;
 
 use App\RSpade\Core\Bundle\BundleProcessor_Abstract;
+use App\RSpade\Integrations\Scss\Scss_Compiler;
 
 /**
  * ScssProcessor - Compiles SCSS files to CSS using Node.js sass compiler
@@ -330,198 +331,25 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
     }
 
     /**
-     * Compile SCSS to CSS using Node.js sass
+     * Compile SCSS to CSS over the SCSS compiler daemon.
+     *
+     * This used to generate a `compile.js` next to the input file, shell out to
+     * `bash -c 'cd <base> && node <script>'`, recover the exit code by parsing it off the
+     * last line of captured output, and delete the script again - the framework's last
+     * pre-RPC call shape. The daemon keeps sass loaded and returns a value instead.
      */
     protected static function __compile_scss(string $input_file, string $output_file, array $options): void
     {
         $is_production = $options['minify'] ?? false;
         $source_maps = $options['source_maps'] ?? !$is_production;
-        
-        // Create Node.js script for SCSS compilation
-        $script = static::__create_compile_script($input_file, $output_file, $is_production, $source_maps);
-        $script_file = dirname($input_file) . '/compile.js';
-        file_put_contents_safe($script_file, $script);
-        
-        // Run the compilation (set working directory to project root for node_modules access)
-        // Explicit bash (never the implicit /bin/sh), with the exit code as the last line.
-        $command = 'cd ' . escapeshellarg(base_path()) . ' && node ' . escapeshellarg($script_file);
-        $raw = shell_exec('bash -c ' . escapeshellarg("({$command} 2>&1); echo \$?"));
 
-        $lines = explode("\n", trim((string) $raw));
-        $exit_code = (int) array_pop($lines);
-        $output = trim(implode("\n", $lines));
+        $result = Scss_Compiler::compile($input_file, $output_file, $is_production, $source_maps);
 
-        // A non-zero exit is a failure even when an output file exists: the script writes
-        // the stylesheet BEFORE it optimizes it, so a postcss failure leaves un-optimized
-        // bytes on disk. Presence of the file proves nothing; the exit code does.
-        if ($exit_code !== 0) {
-            @unlink($output_file);
-            @unlink($script_file);
-
-            throw new \RuntimeException("SCSS compilation failed ({$input_file}):\n" . $output);
+        foreach ($result['notes'] as $note) {
+            console_debug('BUNDLE', 'scss: ' . $note);
         }
-
-        if (!file_exists($output_file)) {
-            @unlink($script_file);
-
-            throw new \RuntimeException("SCSS compilation produced no output ({$input_file}):\n" . $output);
-        }
-
-        // Clean up script file
-        @unlink($script_file);
     }
-    
-    /**
-     * Create Node.js compilation script
-     */
-    protected static function __create_compile_script(
-        string $input_file,
-        string $output_file,
-        bool $is_production,
-        bool $source_maps
-    ): string {
-        // NOTE: 'sass' is required by ABSOLUTE path. This script is written into
-        // storage/rsx-tmp, which lives at the PROJECT ROOT (storage was relocated out of
-        // system/), so node's upward node_modules walk from the script no longer reaches
-        // system/node_modules where the framework's dependencies live.
-        $script = <<<'JS'
-const sass = require('%BASEPATH%/node_modules/sass');
-const fs = require('fs');
-const path = require('path');
 
-const inputFile = process.argv[2] || '%INPUT%';
-const outputFile = process.argv[3] || '%OUTPUT%';
-const isProduction = %PRODUCTION%;
-const enableSourceMaps = %SOURCEMAPS%;
-const basePath = '%BASEPATH%';
-
-async function compile() {
-    try {
-        // Compile SCSS
-        const result = sass.compile(inputFile, {
-            style: isProduction ? 'compressed' : 'expanded',
-            sourceMap: enableSourceMaps,
-            sourceMapIncludeSources: true,
-            verbose: !isProduction,  // Show all deprecation warnings in dev mode
-            silenceDeprecations: ['import', 'if-function', 'global-builtin', 'color-functions'],  // Suppress deprecation warnings until Sass 3.0 migration
-            loadPaths: [
-                path.dirname(inputFile),
-                basePath + '/rsx',
-                basePath + '/rsx/styles',
-                basePath + '/resources/sass',
-                basePath + '/node_modules'
-            ]
-        });
-
-        let cssContent = result.css;
-
-        // Add inline source map if enabled
-        // Using embedded source maps for better debugging experience
-        if (enableSourceMaps && result.sourceMap) {
-            // Add file boundaries in expanded mode for easier debugging
-            if (!isProduction) {
-                cssContent = cssContent.replace(/\/\* ============ START: (.+?) ============ \*\//g,
-                    '\n/* ======= FILE: $1 ======= */\n');
-                cssContent = cssContent.replace(/\/\* ============ END: .+? ============ \*\//g, '');
-            }
-
-            // Fix sourcemap paths to be relative to project root and remove file:// protocol
-            const sourceMap = result.sourceMap;
-            sourceMap.sourceRoot = '';  // Use relative paths
-
-            // Clean up source paths (but don't filter - keep all sources to preserve mapping indices)
-            sourceMap.sources = result.sourceMap.sources.map(source => {
-                let cleanedSource = source;
-
-                // Remove file:// protocol if present
-                // file:///path means file (protocol) + :// (separator) + /path (absolute path)
-                // So file:///var/www/html should become /var/www/html
-                if (cleanedSource.startsWith('file:///')) {
-                    cleanedSource = '/' + cleanedSource.substring(8);  // Remove 'file:///' and add back the leading /
-                } else if (cleanedSource.startsWith('file://')) {
-                    cleanedSource = cleanedSource.substring(7);  // Remove 'file://' (non-standard)
-                }
-
-                // Make paths relative to project root
-                if (cleanedSource.startsWith(basePath + '/')) {
-                    cleanedSource = cleanedSource.substring(basePath.length + 1);
-                } else if (cleanedSource.startsWith(basePath)) {
-                    cleanedSource = cleanedSource.substring(basePath.length);
-                    if (cleanedSource.startsWith('/')) {
-                        cleanedSource = cleanedSource.substring(1);
-                    }
-                }
-
-                return cleanedSource;
-            });
-
-            const sourceMapBase64 = Buffer.from(JSON.stringify(sourceMap)).toString('base64');
-            cssContent += '\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,' + sourceMapBase64 + ' */';
-        }
-        
-        // Write output
-        fs.writeFileSync(outputFile, cssContent);
-        
-        console.log('SCSS compilation successful');
-        
-        // If production, also run postcss for additional optimization
-        if (isProduction) {
-            await optimizeWithPostCSS(outputFile);
-        }
-    } catch (error) {
-        console.error('SCSS compilation error:', error.message);
-        process.exit(1);
-    }
-}
-
-async function optimizeWithPostCSS(file) {
-    try {
-        const postcss = require('postcss');
-        const autoprefixer = require('autoprefixer');
-        const cssnano = require('cssnano');
-        
-        const css = fs.readFileSync(file, 'utf8');
-        
-        const result = await postcss([
-            autoprefixer(),
-            cssnano({
-                preset: ['default', {
-                    discardComments: {
-                        removeAll: true,
-                    },
-                }]
-            })
-        ]).process(css, { 
-            from: file,
-            to: file,
-            map: enableSourceMaps ? { inline: true, sourcesContent: true } : false
-        });
-        
-        fs.writeFileSync(file, result.css);
-        console.log('PostCSS optimization complete');
-    } catch (error) {
-        // FAIL LOUD. This used to log and continue, which shipped un-optimized,
-        // un-prefixed CSS from a production build with nothing but a line in a captured
-        // stdout to say so. A stylesheet that did not survive its own build step is not a
-        // stylesheet we ship.
-        console.error('PostCSS optimization failed:', error.stack || error.message);
-        process.exit(1);
-    }
-}
-
-compile();
-JS;
-        
-        // Replace placeholders
-        $script = str_replace('%INPUT%', $input_file, $script);
-        $script = str_replace('%OUTPUT%', $output_file, $script);
-        $script = str_replace('%PRODUCTION%', $is_production ? 'true' : 'false', $script);
-        $script = str_replace('%SOURCEMAPS%', $source_maps ? 'true' : 'false', $script);
-        $script = str_replace('%BASEPATH%', base_path(), $script);
-        
-        return $script;
-    }
-    
     /**
      * Get processor priority (run early to process SCSS before CSS concatenation)
      */

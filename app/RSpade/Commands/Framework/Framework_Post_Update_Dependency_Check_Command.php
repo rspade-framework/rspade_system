@@ -77,6 +77,6 @@ class Framework_Post_Update_Dependency_Check_Command extends Command
         }
 
         // major_change
-        $this->line("Framework-provided '{$package}' moved {$problem['recorded']} -> {$problem['installed']} (major version change). Review your usage; see pending upstream_changes documents. Re-record with: php artisan {$adopt} {$package}");
+        $this->line("Framework-provided '{$package}' moved {$problem['recorded']} -> {$problem['installed']} (major version change). Review your usage; see pending breaking_changes documents. Re-record with: php artisan {$adopt} {$package}");
     }
 }

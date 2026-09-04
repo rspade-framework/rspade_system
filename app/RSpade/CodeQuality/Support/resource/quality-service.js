@@ -1,47 +1,21 @@
-#!/usr/bin/env node
-
 /**
- * JavaScript Code Quality RPC Server
+ * QUALITY subsystem of the node service (prefix `quality`).
  *
- * Combines JavaScript linting (Babel parser) and this-usage analysis (Acorn)
- * into a single persistent server to avoid spawning thousands of Node processes.
+ * JavaScript linting (Babel parser) and this-usage analysis (Acorn) for rsx:check.
  *
- * Usage:
- *   Server mode: node js-code-quality-server.js --socket=/path/to/socket
+ * Methods: quality.lint, quality.analyze_this
  *
- * RPC Methods:
- *   - ping: Health check
- *   - lint: Check JavaScript syntax using Babel parser
- *   - analyze_this: Analyze 'this' usage patterns using Acorn
- *   - shutdown: Graceful server termination
- *
- * @FILENAME-CONVENTION-EXCEPTION - Node.js RPC server script
+ * @FILENAME-CONVENTION-EXCEPTION - node service module
  */
 
 const fs = require('fs');
 const path = require('path');
-const net = require('net');
 
 // Resolve to system/node_modules since that's where packages are installed
 const systemDir = path.resolve(__dirname, '../../../../..');
 const babelParser = require(path.join(systemDir, 'node_modules', '@babel', 'parser'));
 const acorn = require(path.join(systemDir, 'node_modules', 'acorn'));
 const walk = require(path.join(systemDir, 'node_modules', 'acorn-walk'));
-
-// Parse command line arguments
-let socketPath = null;
-
-for (let i = 2; i < process.argv.length; i++) {
-    const arg = process.argv[i];
-    if (arg.startsWith('--socket=')) {
-        socketPath = arg.substring('--socket='.length);
-    }
-}
-
-if (!socketPath) {
-    console.error('Usage: node js-code-quality-server.js --socket=/path/to/socket');
-    process.exit(1);
-}
 
 // =============================================================================
 // LINTING LOGIC (Babel Parser)
@@ -415,156 +389,64 @@ function analyzeThisUsage(content, filePath) {
 }
 
 // =============================================================================
-// RPC SERVER
+// HANDLERS
 // =============================================================================
 
-// Remove socket if exists
-if (fs.existsSync(socketPath)) {
-    fs.unlinkSync(socketPath);
-}
+module.exports = {
+    /**
+     * {files: [<absolute path>, ...]} -> {results: {<path>: {status, error}}}
+     */
+    lint(request) {
+        const results = {};
 
-function handleRequest(data) {
-    try {
-        const request = JSON.parse(data);
-
-        switch (request.method) {
-            case 'ping':
-                return JSON.stringify({
-                    id: request.id,
-                    result: 'pong'
-                }) + '\n';
-
-            case 'lint':
-                const lintResults = {};
-                for (const file of request.files) {
-                    try {
-                        const content = fs.readFileSync(file, 'utf8');
-                        const error = lintFile(content, file);
-                        lintResults[file] = {
-                            status: 'success',
-                            error: error
-                        };
-                    } catch (error) {
-                        lintResults[file] = {
-                            status: 'error',
-                            error: {
-                                type: 'FileReadError',
-                                message: error.message
-                            }
-                        };
+        for (const file of request.files) {
+            try {
+                const content = fs.readFileSync(file, 'utf8');
+                const error = lintFile(content, file);
+                results[file] = {
+                    status: 'success',
+                    error: error
+                };
+            } catch (error) {
+                results[file] = {
+                    status: 'error',
+                    error: {
+                        type: 'FileReadError',
+                        message: error.message
                     }
-                }
-                return JSON.stringify({
-                    id: request.id,
-                    results: lintResults
-                }) + '\n';
-
-            case 'analyze_this':
-                const thisResults = {};
-                for (const file of request.files) {
-                    try {
-                        const content = fs.readFileSync(file, 'utf8');
-                        const result = analyzeThisUsage(content, file);
-                        thisResults[file] = {
-                            status: 'success',
-                            violations: result.violations,
-                            error: result.error || null
-                        };
-                    } catch (error) {
-                        thisResults[file] = {
-                            status: 'error',
-                            error: {
-                                type: 'FileReadError',
-                                message: error.message
-                            }
-                        };
-                    }
-                }
-                return JSON.stringify({
-                    id: request.id,
-                    results: thisResults
-                }) + '\n';
-
-            case 'shutdown':
-                return JSON.stringify({
-                    id: request.id,
-                    result: 'shutting down'
-                }) + '\n';
-
-            default:
-                return JSON.stringify({
-                    id: request.id,
-                    error: 'Unknown method: ' + request.method
-                }) + '\n';
-        }
-    } catch (error) {
-        return JSON.stringify({
-            error: 'Invalid JSON request: ' + error.message
-        }) + '\n';
-    }
-}
-
-const server = net.createServer((socket) => {
-    let buffer = '';
-
-    socket.on('data', (data) => {
-        buffer += data.toString();
-
-        let newlineIndex;
-        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-            const line = buffer.substring(0, newlineIndex);
-            buffer = buffer.substring(newlineIndex + 1);
-
-            if (line.trim()) {
-                const response = handleRequest(line);
-                socket.write(response);
-
-                try {
-                    const request = JSON.parse(line);
-                    if (request.method === 'shutdown') {
-                        socket.end();
-                        server.close(() => {
-                            if (fs.existsSync(socketPath)) {
-                                fs.unlinkSync(socketPath);
-                            }
-                            process.exit(0);
-                        });
-                    }
-                } catch (e) {
-                    // Ignore
-                }
+                };
             }
         }
-    });
 
-    socket.on('error', (err) => {
-        console.error('Socket error:', err);
-    });
-});
+        return { results };
+    },
 
-server.listen(socketPath, () => {
-    console.log('JS Code Quality RPC server listening on ' + socketPath);
-});
+    /**
+     * {files: [<absolute path>, ...]} -> {results: {<path>: {status, violations, error}}}
+     */
+    analyze_this(request) {
+        const results = {};
 
-server.on('error', (err) => {
-    console.error('Server error:', err);
-    process.exit(1);
-});
-
-process.on('SIGTERM', () => {
-    server.close(() => {
-        if (fs.existsSync(socketPath)) {
-            fs.unlinkSync(socketPath);
+        for (const file of request.files) {
+            try {
+                const content = fs.readFileSync(file, 'utf8');
+                const result = analyzeThisUsage(content, file);
+                results[file] = {
+                    status: 'success',
+                    violations: result.violations,
+                    error: result.error || null
+                };
+            } catch (error) {
+                results[file] = {
+                    status: 'error',
+                    error: {
+                        type: 'FileReadError',
+                        message: error.message
+                    }
+                };
+            }
         }
-        process.exit(0);
-    });
-});
 
-process.on('SIGINT', () => {
-    server.close(() => {
-        if (fs.existsSync(socketPath)) {
-            fs.unlinkSync(socketPath);
-        }
-        process.exit(0);
-    });
-});
+        return { results };
+    }
+};

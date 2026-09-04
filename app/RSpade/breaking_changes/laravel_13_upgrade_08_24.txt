@@ -69,7 +69,7 @@ fail when the line runs, or at boot.
 
   C. array_first() / array_last()
 
-     Removed. See upstream_changes/array_first_last_removed_08_24.txt - PHP 8.5
+     Removed. See breaking_changes/array_first_last_removed_08_24.txt - PHP 8.5
      and Laravel 13 claim those names. Use Arr::first() / Arr::last().
 
   D. REFERENCES TO VerifyCsrfToken
@@ -120,4 +120,4 @@ SEE ALSO
 --------------------------------------------------------------------------------
 
     laravel.com/docs/13.x/upgrade      - the full guide (and 11.x / 12.x)
-    upstream_changes/array_first_last_removed_08_24.txt
+    breaking_changes/array_first_last_removed_08_24.txt

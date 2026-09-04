@@ -259,8 +259,8 @@ FRAMEWORK-PROVIDED PACKAGES
         Exposing a package is a standing commitment. An exposed package is
         expected to remain available indefinitely at a compatible major version -
         default tooling exists forever. If a breaking change or a retirement ever
-        does happen, it is not silent: it ships with an upstream_changes document
-        (Category 2 - see `rsx:man upstream_changes`), and the post-update
+        does happen, it is not silent: it ships with a breaking_changes document
+        (Category 2 - see `rsx:ma breaking_changes`), and the post-update
         reconciler surfaces it against your recorded dependencies. You inherit
         the framework's upgrade cadence for these packages, but you are never
         surprised by it.
@@ -302,7 +302,7 @@ POST-UPDATE RECONCILIATION
        version boundary (the only drift a forever-commitment posture treats as
        potentially breaking):
 
-           Framework-provided 'guzzlehttp/guzzle' moved 7.15.2 -> 8.0.0 (major version change). Review your usage; see pending upstream_changes documents. Re-record with: php artisan rsx:composer require guzzlehttp/guzzle
+           Framework-provided 'guzzlehttp/guzzle' moved 7.15.2 -> 8.0.0 (major version change). Review your usage; see pending breaking_changes documents. Re-record with: php artisan rsx:composer require guzzlehttp/guzzle
 
     npm recordings are checked the same way; the remedy command in an npm notice
     is `rsx:npm install <package>`. When everything is clean and the map did not
@@ -381,11 +381,11 @@ TROUBLESHOOTING
         YOUR layer: run the `rsx:composer require X` (or `rsx:npm install X`)
         command it prints, which installs a real app-layer copy now that the
         framework no longer supplies one. Check for an accompanying
-        upstream_changes document describing the change.
+        breaking_changes document describing the change.
 
     "Framework-provided 'X' moved A -> B (major version change)" after a pull
         The framework bumped a recorded package across a major version. Review
-        your usage of it, read the pending upstream_changes document that
+        your usage of it, read the pending breaking_changes document that
         accompanies the change, and re-record against the new version with the
         printed `rsx:composer require X` / `rsx:npm install X` command once you
         have verified your code against the new major.
@@ -399,7 +399,7 @@ SEE ALSO
     standard_library - the guaranteed toolkit: extensions and exposed packages
     npm              - including npm packages in RSX bundles (Asset Bundle 'npm')
     bundle_api       - Module and Asset Bundle system
-    upstream_changes - reviewing framework-driven mandatory changes (Category 2)
+    breaking_changes - reviewing framework-driven mandatory changes (Category 2)
     framework_fork   - framework fork / distribution model
     rsx_upstream     - php artisan rsx:framework:pull (pulling framework updates)
     config_rsx       - framework configuration (rsx.php)

@@ -1,45 +1,17 @@
-#!/usr/bin/env node
-
 /**
- * Minification RPC Server
+ * MINIFY subsystem of the node service (prefix `minify`).
  *
- * Handles JavaScript (Terser) and CSS (cssnano) minification for production builds.
- * Runs as a persistent server to avoid Node.js startup overhead for multiple files.
+ * JavaScript (Terser) and CSS (cssnano) minification for production builds.
  *
- * Usage:
- *   Server mode: node minify-server.js --socket=/path/to/socket
+ * Methods: minify.minify
  *
- * RPC Methods:
- *   - ping: Health check
- *   - minify: Minify JS or CSS content
- *   - shutdown: Graceful server termination
+ * @FILENAME-CONVENTION-EXCEPTION - node service module
  */
 
-const fs = require('fs');
-const net = require('net');
 const { minify: terserMinify } = require('terser');
 const postcss = require('postcss');
 const cssnano = require('cssnano');
 
-// Parse command line arguments
-let socketPath = null;
-
-for (let i = 2; i < process.argv.length; i++) {
-    const arg = process.argv[i];
-    if (arg.startsWith('--socket=')) {
-        socketPath = arg.substring('--socket='.length);
-    }
-}
-
-if (!socketPath) {
-    console.error('Usage: node minify-server.js --socket=/path/to/socket');
-    process.exit(1);
-}
-
-// Remove socket if exists
-if (fs.existsSync(socketPath)) {
-    fs.unlinkSync(socketPath);
-}
 
 /**
  * Minify JavaScript content using Terser
@@ -183,131 +155,39 @@ async function minifyCss(content, filename) {
     }
 }
 
-/**
- * Handle incoming RPC requests
- */
-async function handleRequest(data) {
-    try {
-        const request = JSON.parse(data);
+// =============================================================================
+// HANDLERS
+// =============================================================================
 
-        switch (request.method) {
-            case 'ping':
-                return JSON.stringify({
-                    id: request.id,
-                    result: 'pong'
-                }) + '\n';
+module.exports = {
+    /**
+     * {files: [{type:'js'|'css', content, filename, strip_console_debug}, ...]}
+     *   -> {results: {<filename>: <minify result>}}
+     */
+    async minify(request) {
+        const results = {};
 
-            case 'minify':
-                const results = {};
+        for (const file of request.files) {
+            const type = file.type;  // 'js' or 'css'
+            const content = file.content;
+            const filename = file.filename || 'unknown';
+            const stripConsoleDebug = file.strip_console_debug === true;
 
-                for (const file of request.files) {
-                    const type = file.type;  // 'js' or 'css'
-                    const content = file.content;
-                    const filename = file.filename || 'unknown';
-                    const stripConsoleDebug = file.strip_console_debug === true;
-
-                    if (type === 'js') {
-                        results[filename] = await minifyJs(content, filename, stripConsoleDebug);
-                    } else if (type === 'css') {
-                        results[filename] = await minifyCss(content, filename);
-                    } else {
-                        results[filename] = {
-                            status: 'error',
-                            error: {
-                                type: 'InvalidType',
-                                message: `Unknown file type: ${type}`
-                            }
-                        };
+            if (type === 'js') {
+                results[filename] = await minifyJs(content, filename, stripConsoleDebug);
+            } else if (type === 'css') {
+                results[filename] = await minifyCss(content, filename);
+            } else {
+                results[filename] = {
+                    status: 'error',
+                    error: {
+                        type: 'InvalidType',
+                        message: `Unknown file type: ${type}`
                     }
-                }
-
-                return JSON.stringify({
-                    id: request.id,
-                    results: results
-                }) + '\n';
-
-            case 'shutdown':
-                return JSON.stringify({
-                    id: request.id,
-                    result: 'shutting down'
-                }) + '\n';
-
-            default:
-                return JSON.stringify({
-                    id: request.id,
-                    error: 'Unknown method: ' + request.method
-                }) + '\n';
-        }
-    } catch (error) {
-        return JSON.stringify({
-            error: 'Invalid JSON request: ' + error.message
-        }) + '\n';
-    }
-}
-
-// Create the server
-const server = net.createServer((socket) => {
-    let buffer = '';
-
-    socket.on('data', async (data) => {
-        buffer += data.toString();
-
-        let newlineIndex;
-        while ((newlineIndex = buffer.indexOf('\n')) !== -1) {
-            const line = buffer.substring(0, newlineIndex);
-            buffer = buffer.substring(newlineIndex + 1);
-
-            if (line.trim()) {
-                const response = await handleRequest(line);
-                socket.write(response);
-
-                try {
-                    const request = JSON.parse(line);
-                    if (request.method === 'shutdown') {
-                        socket.end();
-                        server.close(() => {
-                            if (fs.existsSync(socketPath)) {
-                                fs.unlinkSync(socketPath);
-                            }
-                            process.exit(0);
-                        });
-                    }
-                } catch (e) {
-                    // Ignore parse errors for shutdown check
-                }
+                };
             }
         }
-    });
 
-    socket.on('error', (err) => {
-        console.error('Socket error:', err);
-    });
-});
-
-server.listen(socketPath, () => {
-    console.log('Minify RPC server listening on ' + socketPath);
-});
-
-server.on('error', (err) => {
-    console.error('Server error:', err);
-    process.exit(1);
-});
-
-// Graceful shutdown handlers
-process.on('SIGTERM', () => {
-    server.close(() => {
-        if (fs.existsSync(socketPath)) {
-            fs.unlinkSync(socketPath);
-        }
-        process.exit(0);
-    });
-});
-
-process.on('SIGINT', () => {
-    server.close(() => {
-        if (fs.existsSync(socketPath)) {
-            fs.unlinkSync(socketPath);
-        }
-        process.exit(0);
-    });
-});
+        return { results };
+    }
+};

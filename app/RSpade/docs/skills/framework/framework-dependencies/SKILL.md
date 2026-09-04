@@ -1,6 +1,6 @@
 ---
 name: framework-dependencies
-description: "Adding or changing a dependency in the RSpade monorepo - installing inside system/, committing vendor and node_modules, when and how to add a package to the exposed_composer/exposed_npm lists, the standing commitment that exposure creates and the Category 2 upstream_changes obligation when one breaks or retires, and how the replace map is regenerated downstream. Use when the framework or the template app needs a new third-party package, or when retiring/major-bumping an exposed one."
+description: "Adding or changing a dependency in the RSpade monorepo - installing inside system/, committing vendor and node_modules, when and how to add a package to the exposed_composer/exposed_npm lists, the standing commitment that exposure creates and the Category 2 breaking_changes obligation when one breaks or retires, and how the replace map is regenerated downstream. Use when the framework or the template app needs a new third-party package, or when retiring/major-bumping an exposed one."
 ---
 
 # Framework dependencies (monorepo)
@@ -62,7 +62,7 @@ Adding a name is cheap; removing one is a downstream migration.
 
 ## When an exposed package breaks or retires
 
-**It is never silent.** Retiring an exposed package, or moving it across a major version boundary, ships with a **Category 2 `upstream_changes` document** (`/system/` core behavior / API-contract change) - authored per the charter in `system/app/RSpade/upstream_changes/CLAUDE.md`, which defines the two document categories, the naming convention and the required structure.
+**It is never silent.** Retiring an exposed package, or moving it across a major version boundary, ships with a **Category 2 `breaking_changes` document** (`/system/` core behavior / API-contract change) - authored per the charter in `system/app/RSpade/breaking_changes/CLAUDE.md`, which defines the two document categories, the naming convention and the required structure.
 
 The downstream side then works like this automatically, and you should know it when writing the document:
 
@@ -88,11 +88,11 @@ It is **machine-generated and never hand-edited**, and it is regenerated for the
 1. `cd system && composer require` / `npm install` the package.
 2. Commit `system/composer.json`, `system/composer.lock`, `system/vendor/` (and the npm equivalents) as part of the working-directory snapshot.
 3. If applications should be able to depend on it directly, add it to `exposed_composer` / `exposed_npm` - and accept the standing commitment.
-4. If you are REMOVING or major-bumping an already-exposed package, author the Category 2 `upstream_changes` document in the same change.
+4. If you are REMOVING or major-bumping an already-exposed package, author the Category 2 `breaking_changes` document in the same change.
 5. If it is a JS package the browser must load, remember bundles pull it in through an Asset Bundle's `'npm'` key - identical for framework and app layers (`rsx:man npm`).
 
 ---
 
 The exposed lists, plus the declared PHP extensions, ARE the RSpade standard library - `rsx:man standard_library` is its roster and its "reach for X when" guidance. **A new exposure is not finished until that page names it**; the page is what makes the promise legible to a downstream developer.
 
-Details: `php artisan rsx:man dependencies`, `rsx:man npm`, `rsx:man upstream_changes`, `rsx:man standard_library`. Authoring charter: `system/app/RSpade/upstream_changes/CLAUDE.md`.
+Details: `php artisan rsx:man dependencies`, `rsx:man npm`, `rsx:ma breaking_changes`, `rsx:man standard_library`. Authoring charter: `system/app/RSpade/breaking_changes/CLAUDE.md`.

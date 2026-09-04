@@ -261,23 +261,31 @@ do_enable() {
         --_framework-update-override >/dev/null 2>&1 || true
 
     # -------------------------------------------------------------------------
-    # QUIESCE THE NODE RPC HELPER DAEMONS.
+    # QUIESCE THE NODE DAEMONS.
     #
-    # The build helpers (js-parser, js-transformer, minify, jqhtml-compile,
-    # js-sanitizer, js-code-quality, ssr-server) each hold a unix socket under
-    # <storage>/rsx-tmp/ and each took that absolute path as an argv argument at
-    # spawn time. They are PID-1 ORPHANS - spawned with Symfony Process::start()
-    # and then abandoned - so NO supervisorctl stop reaches them: stopping php-fpm
-    # takes down the workers, never the daemons those workers left behind. The only
-    # handle that works is the socket path in their command line, which is why this
-    # is a pgrep and not a unit name.
+    # Two kinds today - the node service (node-service-<random>.sock, one per live
+    # PHP process, serving every build subsystem: parser, babel, minify, concat,
+    # jqhtml, sanitize, quality, scss) and the SSR server (ssr-server.sock) - plus
+    # any stray left behind by an older framework release. There is deliberately no
+    # well-known node-service socket name to match on: each daemon's is private to
+    # the process that spawned it, which is exactly why the match below is on the
+    # socket DIRECTORY. Each holds a unix socket under <storage>/rsx-tmp/ and
+    # each took that absolute path as an argv argument at spawn time. They are PID-1
+    # ORPHANS - spawned with Symfony Process::start() and then abandoned - so NO
+    # supervisorctl stop reaches them: stopping php-fpm takes down the workers, never
+    # the daemons those workers left behind. The only handle that works is the socket
+    # path in their command line, which is why this is a pgrep and not a unit name.
     #
-    # This is the bash twin of Rpc_Client_Abstract::quiesce_all() (the PHP side,
+    # The match is on the socket DIRECTORY, not on a name, so this list is
+    # descriptive and never load-bearing: a daemon added or renamed later is caught
+    # without editing anything here.
+    #
+    # This is the bash twin of Rsx_Node_Service::quiesce_all() (the PHP side,
     # called by rsx:clean before it wipes rsx-tmp). Both exist to satisfy the rule
     # in bin/CLAUDE.md: any framework operation that changes a socket or state
-    # directory must reap the helpers bound to the previous one. A maintenance
-    # window is exactly that operation - a framework update rewrites the server
-    # scripts underneath a running daemon, and rsx:git's tree-rewriting ops enter
+    # directory must reap the daemons bound to the previous one. A maintenance
+    # window is exactly that operation - a framework update rewrites the service
+    # source underneath a running daemon, and rsx:git's tree-rewriting ops enter
     # through this same script.
     #
     # Killing them is free and disable deliberately does NOT restart them: they
@@ -295,7 +303,7 @@ do_enable() {
             rpc_count="$(printf '%s\n' "$rpc_orphans" | grep -c .)"
             printf '%s\n' "$rpc_orphans" | xargs -r kill 2>/dev/null || true
             printf '%s\n' "$rpc_orphans" | xargs -r -I{} bash -c 'kill -0 {} 2>/dev/null && kill -9 {} 2>/dev/null' || true
-            say "  Quiesced $rpc_count node RPC helper daemon(s) (respawned on demand)."
+            say "  Quiesced $rpc_count node daemon(s) (respawned on demand)."
         fi
     fi
 

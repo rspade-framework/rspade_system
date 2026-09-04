@@ -13,7 +13,7 @@ in app/70 and must NEVER appear in shared/. -->
 
 ### Framework dependencies
 
-Two physical layers, one logical environment; **the framework wins all overlaps**. Framework deps install with plain `composer require` / `npm install` **inside `system/`**, and `system/vendor` + `system/node_modules` are committed and ship via `rsx:framework:pull` — **this is the ONLY place you add packages this template needs**. The app layer (project-root manifests, `rsx:composer`/`rsx:npm`) exists for downstream apps; **this repo's template keeps ZERO app-layer deps**. Adding a package to `dependencies.exposed_composer`/`exposed_npm` is a **standing commitment**: a breaking change or retirement ships with a Category 2 `upstream_changes` doc. The `"replace"` block in the root `composer.json` is machine-generated — **NEVER hand-edit it**.
+Two physical layers, one logical environment; **the framework wins all overlaps**. Framework deps install with plain `composer require` / `npm install` **inside `system/`**, and `system/vendor` + `system/node_modules` are committed and ship via `rsx:framework:pull` — **this is the ONLY place you add packages this template needs**. The app layer (project-root manifests, `rsx:composer`/`rsx:npm`) exists for downstream apps; **this repo's template keeps ZERO app-layer deps**. Adding a package to `dependencies.exposed_composer`/`exposed_npm` is a **standing commitment**: a breaking change or retirement ships with a Category 2 `breaking_changes` doc. The `"replace"` block in the root `composer.json` is machine-generated — **NEVER hand-edit it**.
 
 Skill `rspade:framework-dependencies`. Details: `rsx:man dependencies`.
 

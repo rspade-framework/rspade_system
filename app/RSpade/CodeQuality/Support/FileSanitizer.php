@@ -2,37 +2,20 @@
 
 namespace App\RSpade\CodeQuality\Support;
 
-use Symfony\Component\Process\Process;
-use App\RSpade\Core\JsParsers\Rpc_Client_Abstract;
-use App\RSpade\Core\JsParsers\Rpc_Startup_Diagnostics;
-use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 
-class FileSanitizer extends Rpc_Client_Abstract
+/**
+ * Comment and string blanking for the code-quality rules. JavaScript goes through the
+ * `sanitize` subsystem of the node service (Rsx_Node_Service); PHP and template blanking
+ * are done here in PHP.
+ */
+class FileSanitizer
 {
-    /**
-     * Node.js RPC server script path
-     */
-    protected const RPC_SERVER_SCRIPT = 'app/RSpade/CodeQuality/Support/resource/js-sanitizer-server.js';
-
-    /**
-     * Unix socket path for RPC server
-     */
-    protected const RPC_SOCKET = 'storage/rsx-tmp/js-sanitizer-server.sock';
-
-    /**
-     * Human name for startup diagnostics
-     */
-    protected const RPC_LABEL = 'JS Sanitizer';
-
     /**
      * Cache directory for sanitized JavaScript files
      */
     protected const CACHE_DIR = 'storage/rsx-tmp/cache/js-sanitized';
 
-    /**
-     * Request ID counter
-     */
-    protected static $request_id = 0;
     /**
      * Get PHP content with comments removed
      * This ensures we don't match patterns inside comments
@@ -144,43 +127,17 @@ class FileSanitizer extends Rpc_Client_Abstract
     }
 
     /**
-     * Sanitize via RPC server
+     * Sanitize via the node service.
+     *
+     * Lazy by construction: a fully cached check never reaches request(), and request() is
+     * what starts the service - so it never spawns node at all.
      */
     protected static function _sanitize_via_rpc($file_path): string
     {
-        // Lazy: a fully cached check never spawns the daemon at all.
-        static::ensure_rpc_server();
-
-        $socket_path = static::_rpc_socket_path();
-
         try {
-            $sock = @stream_socket_client("unix://{$socket_path}", $errno, $errstr, 0.5);
-            if (!$sock) {
-                throw new \RuntimeException("Failed to connect to RPC server: {$errstr}");
-            }
-
-            // Send sanitize request
-            $request = [
-                'id' => ++static::$request_id,
-                'method' => 'sanitize',
-                'files' => [$file_path]
-            ];
-
-            fwrite($sock, json_encode($request) . "\n");
-
-            // Read response
-            $response = fgets($sock);
-            fclose($sock);
-
-            if (!$response) {
-                throw new \RuntimeException("No response from RPC server");
-            }
-
-            $data = json_decode($response, true);
-
-            if (!$data || !is_array($data)) {
-                throw new \RuntimeException("Invalid JSON response from RPC server");
-            }
+            $data = Rsx_Node_Service::request('sanitize.sanitize', [
+                'files' => [$file_path],
+            ]);
 
             if (isset($data['error'])) {
                 throw new \RuntimeException("RPC error: " . $data['error']);

@@ -2187,7 +2187,7 @@ class Php_Fixer
      * Downstream apps already carry this damage - the duplicate-insertion bug above ran on
      * every build, so an affected method accumulated copies geometrically (1 -> 3 -> 7).
      * Fixing the cause stops it growing; this heals what is already there, on the next
-     * build, with no manual cleanup and no upstream_changes action item.
+     * build, with no manual cleanup and no breaking_changes action item.
      *
      * Line-based on purpose: the fixer INSERTS these attributes as whole lines of its own
      * (see __apply_relationship_modifications), so a duplicate is always a standalone line,

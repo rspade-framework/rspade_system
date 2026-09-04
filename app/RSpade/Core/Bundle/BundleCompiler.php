@@ -9,6 +9,7 @@ use RecursiveIteratorIterator;
 use RuntimeException;
 use App\RSpade\Core\Auth\Auth_BundleIntegration;
 use App\RSpade\Core\Bundle\Cdn_Cache;
+use App\RSpade\Core\Bundle\Concatenator;
 use App\RSpade\Core\Bundle\Minifier;
 use App\RSpade\Core\Bundle\Rsx_Asset_Bundle_Abstract;
 use App\RSpade\Core\Bundle\Rsx_Module_Bundle_Abstract;
@@ -2680,46 +2681,35 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         // Add all the JS files
         $files_to_concat = array_merge($files_to_concat, $files);
 
-        // Use Node.js script to concatenate with source map support
+        // Concatenate over the concat RPC daemon, which merges the sourcemaps.
+        //
+        // THE FILE LIST TRAVELS IN A SOCKET PAYLOAD, NOT ON ARGV. This used to build
+        // `node concat-js.js <output> <file> <file> ...` as one shell string, and one Linux
+        // argument is capped at 131072 bytes - so a large enough bundle could not be
+        // spelled on a command line at all, and every build failed from that point on. See
+        // the Concatenator docblock for the incident.
         $output_file = storage_path('rsx-tmp/bundle_output_' . $this->bundle_name . '.js');
-        $concat_script = base_path('app/RSpade/Core/Bundle/resource/concat-js.js');
 
-        // Build the command
-        $cmd_parts = [
-            'node',
-            escapeshellarg($concat_script),
-            escapeshellarg($output_file),
-        ];
+        $concat_files = [];
         foreach ($files_to_concat as $file) {
-            // Use babel-transformed version if it exists, otherwise use original
-            $file_to_use = $this->babel_file_mapping[$file] ?? $file;
-
-            // If this is a babel-transformed file, pass metadata to concat-js
-            // Format: babel_file_path::original_file_path
-            if (isset($this->babel_file_mapping[$file])) {
-                $cmd_parts[] = escapeshellarg($file_to_use . '::' . $file);
-            } else {
-                $cmd_parts[] = escapeshellarg($file_to_use);
-            }
-        }
-        $cmd = implode(' ', $cmd_parts);
-
-        // Execute the concatenation
-        $output = [];
-        $return_var = 0;
-        \exec_safe($cmd . ' 2>&1', $output, $return_var);
-
-        if ($return_var !== 0) {
-            $error_msg = implode("\n", $output);
-
-            throw new RuntimeException('Failed to concatenate JavaScript files: ' . $error_msg);
+            // Read the babel-transformed version where there is one, but attribute the
+            // content to the developer's own file in the banner and the sourcemap.
+            $concat_files[] = [
+                'path' => $this->babel_file_mapping[$file] ?? $file,
+                'source' => isset($this->babel_file_mapping[$file]) ? $file : null,
+            ];
         }
 
-        // Log the concatenation output
-        if (!empty($output)) {
-            foreach ($output as $line) {
-                console_debug('BUNDLE', "concat-js: {$line}");
-            }
+        $concat_result = Concatenator::concat_js($concat_files, $output_file);
+
+        console_debug('BUNDLE', 'concat-js: ' . $concat_result['files'] . ' files -> '
+            . $output_file . ' (' . round($concat_result['bytes'] / 1024, 2) . ' KB, '
+            . 'inline sourcemap ' . round($concat_result['sourcemap_bytes'] / 1024, 2) . ' KB)');
+
+        // A daemon's stdout reaches nobody, so its warnings come back in the response and
+        // are re-emitted here - the developer still hears about an unusable sourcemap.
+        foreach ($concat_result['warnings'] as $warning) {
+            console_debug('BUNDLE', "concat-js: Warning: {$warning}");
         }
 
         // Read the concatenated result
@@ -2743,37 +2733,23 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
     */
     protected function _compile_css_files(array $files): string
     {
-        // Use Node.js script to concatenate with source map support
+        // Concatenate over the concat RPC daemon (see _compile_js_files() for why the file
+        // list travels in a socket payload rather than on argv).
         $output_file = storage_path('rsx-tmp/css_bundle_' . $this->bundle_name . '.css');
-        $concat_script = base_path('app/RSpade/Core/Bundle/resource/concat-css.js');
 
-        // Build the command
-        $cmd_parts = [
-            'node',
-            escapeshellarg($concat_script),
-            escapeshellarg($output_file),
-        ];
+        $concat_files = [];
         foreach ($files as $file) {
-            $cmd_parts[] = escapeshellarg($file);
-        }
-        $cmd = implode(' ', $cmd_parts);
-
-        // Execute the concatenation
-        $output = [];
-        $return_var = 0;
-        \exec_safe($cmd . ' 2>&1', $output, $return_var);
-
-        if ($return_var !== 0) {
-            $error_msg = implode("\n", $output);
-
-            throw new RuntimeException('Failed to concatenate CSS files: ' . $error_msg);
+            $concat_files[] = ['path' => $file, 'source' => null];
         }
 
-        // Log the concatenation output
-        if (!empty($output)) {
-            foreach ($output as $line) {
-                console_debug('BUNDLE', "concat-css: {$line}");
-            }
+        $concat_result = Concatenator::concat_css($concat_files, $output_file);
+
+        console_debug('BUNDLE', 'concat-css: ' . $concat_result['files'] . ' files -> '
+            . $output_file . ' (' . round($concat_result['bytes'] / 1024, 2) . ' KB, '
+            . 'inline sourcemap ' . round($concat_result['sourcemap_bytes'] / 1024, 2) . ' KB)');
+
+        foreach ($concat_result['warnings'] as $warning) {
+            console_debug('BUNDLE', "concat-css: Warning: {$warning}");
         }
 
         // Read the concatenated result

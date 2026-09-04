@@ -209,3 +209,13 @@ signal over inferring from side effects.
   (`rspade-framework/rspade`, or the internal `rspade_project`) is a no-op, since a checkout
   of the starter is not a project yet. The write is atomic (temp + `mv`) and verified.
   `README.md` is TRACKED, so the informational line asks for the commit.
+
+- `100_breaking_changes_manifest_rename.sh` — carries the app's breaking-changes
+  fulfillment record across the 2026-09-04 rename
+  (`rsx/resource/.upstream_changes_manifest.json` -> `.breaking_changes_manifest.json`).
+  The EAGER tier of a two-tier migration: `Breaking_Changes::manifest_path()` performs the
+  same idempotent rename lazily at every read, because the pull's own
+  `rsx:framework:post_update` reads the manifest BEFORE post-update.sh runs these scripts,
+  and a fresh-baselined manifest would mark real pending documents fulfilled. Whichever
+  side runs first wins; delete both together once no live application predates the
+  rename. Both-names-present is reported and left alone (rule 7).

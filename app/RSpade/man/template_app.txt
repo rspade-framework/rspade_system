@@ -84,7 +84,7 @@ DISTRIBUTION
     copy in a release is always exactly the app that release's framework was developed
     against. In THIS monorepo that path is a SYMLINK to /rsx/ - the template app IS the
     reference app here - which is what makes one literal path correct in both worlds: a
-    man page, skill or upstream_changes document can cite
+    man page, skill or breaking_changes document can cite
     `system/app/RSpade/resource/reference_app/...` and be right everywhere. publish
     excludes the symlink from its main system/ rsync and materializes real files in its
     place (Step 3a).

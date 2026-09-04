@@ -10,12 +10,13 @@ namespace App\RSpade\Core\JsParsers;
 use Symfony\Component\Process\Process;
 
 /**
- * The one place a node RPC helper explains why it did not come up.
+ * The one place the node service explains why it did not come up.
  *
  * SIX helpers (js-parser, js-transformer, minify, jqhtml-compile, js-sanitizer,
  * js-code-quality) each hand-rolled the same spawn-then-ping loop and each ended with
- * its own hardcoded guess at the cause. The guesses were wrong, and being wrong in six
- * copies is why they stayed wrong:
+ * its own hardcoded guess at the cause - and they have since been consolidated into ONE
+ * service with ONE lifecycle (Rsx_Node_Service). The guesses were wrong, and being wrong
+ * in six copies is why they stayed wrong:
  *
  *   "Check that Node.js and Babel dependencies are installed.
  *    Fix: cd system/app/RSpade/Core/JavaScript/resource && npm install"
@@ -40,9 +41,9 @@ use Symfony\Component\Process\Process;
 class Rpc_Startup_Diagnostics
 {
     /**
-     * Build the failure message for a helper that did not answer within its budget.
+     * Build the failure message for a service that did not answer within its budget.
      *
-     * @param string        $label         Human name, e.g. "JS Transformer"
+     * @param string        $label         Human name, e.g. "Node Service"
      * @param string        $socket_path   Absolute unix socket path we polled
      * @param string        $server_script Absolute path to the node entry script
      * @param int           $waited_ms     How long we actually waited
@@ -172,7 +173,7 @@ class Rpc_Startup_Diagnostics
             'succeeds. Raise the budget if this box is consistently slow:',
             '    rsx.javascript.rpc_server_ready_wait_ms  (config/rsx.php)',
             'Check for daemons stranded on a path that no longer exists:',
-            '    pgrep -af "node .*server\\.js"',
+            '    pgrep -af -- "--socket="',
         ];
     }
 }

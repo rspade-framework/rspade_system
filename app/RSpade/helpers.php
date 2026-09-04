@@ -1143,6 +1143,33 @@ function command_exists($command)
  */
 function exec_safe(string $command, array &$output = [], int &$return_var = 0, array $env = []): string|false
 {
+    // A COMMAND TOO LONG TO SPELL FAILS LEGIBLY, NOT AS A posix_spawn() RIDDLE.
+    //
+    // The whole command below is handed to proc_open() as ONE argv element, and Linux caps
+    // a single argument at MAX_ARG_STRLEN - 32 pages, 131072 bytes on every ordinary
+    // configuration. This is NOT the getconf ARG_MAX total and is NOT raised by ulimit, so
+    // neither of the usual answers applies; it is also a cliff rather than a gradient, so a
+    // caller whose argument list grows with the size of the application works perfectly
+    // until the day it fails on every single invocation.
+    //
+    // Without this guard that day surfaces as a bare "posix_spawn() failed: Argument list
+    // too long" naming this file, with no byte count, no mention of the caller, and no clue
+    // that a per-argument ceiling exists. A downstream app lost an hour to it, and lost
+    // every route in the application to a 500 while looking, after ONE new JavaScript file
+    // pushed the bundle concat command over the line (see Core/Bundle/Concatenator).
+    //
+    // This refuses nothing that could have worked: over the limit, the spawn always fails.
+    if (strlen($command) > ARG_MAX_SINGLE_BYTES) {
+        throw new \RuntimeException(
+            'Command is ' . number_format(strlen($command)) . ' bytes, over the '
+            . number_format(ARG_MAX_SINGLE_BYTES) . '-byte limit on a SINGLE argument '
+            . '(Linux MAX_ARG_STRLEN). This is not the ARG_MAX total and ulimit does not '
+            . 'raise it, so the payload has to leave argv: use an RPC socket service (see '
+            . 'Core/JsParsers/Rsx_Node_Service), stdin, or a list file. Command begins: '
+            . substr($command, 0, 200)
+        );
+    }
+
     // Subshell group + merged stderr. The group preserves the exact grouping the
     // callers were written against; the merge gives us a single pipe to drain.
     //
@@ -1903,6 +1930,17 @@ function htmlbr(?string $str): string
 /**
  * Common TLDs for domain detection in linkify functions
  */
+/**
+ * The largest a SINGLE argv element may be, in bytes.
+ *
+ * Linux MAX_ARG_STRLEN, fixed at 32 pages (32 * 4096) by the kernel and not configurable:
+ * not the `getconf ARG_MAX` total for the whole argument vector, and not raised by `ulimit`.
+ * exec_safe() checks its assembled command against this so that a caller whose argument
+ * list grows with the application fails with a legible message instead of a bare
+ * posix_spawn() error. A payload that can outgrow it belongs off argv entirely.
+ */
+define('ARG_MAX_SINGLE_BYTES', 32 * 4096);
+
 define('LINKIFY_TLDS', 'com|org|net|edu|gov|io|co|me|info|biz|us|uk|ca|au|de|fr|es|it|nl|ru|jp|cn|in|br|mx|app|dev|xyz|online|site|tech|store|blog|shop');
 
 /**

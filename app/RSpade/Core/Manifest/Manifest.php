@@ -1038,7 +1038,7 @@ class Manifest
      *
      * There is no independent sourcemap toggle: the compiler never adds maps, it
      * only removes the inline sourceMappingURL comments carried by the source, and
-     * that removal happens inside minification (minify-server strips them). Maps
+     * that removal happens inside minification (the minify subsystem strips them). Maps
      * therefore survive exactly when minification does NOT run - i.e. in
      * development and debug, and never in strict production. This helper documents
      * that truth as the logical inverse of _should_minify(); it does not gate a
