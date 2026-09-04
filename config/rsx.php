@@ -1600,6 +1600,157 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | SSO / Social Login (Rsx_Sso)
+    |--------------------------------------------------------------------------
+    |
+    | "Continue with Google/Microsoft/Facebook/Apple/X" on a login page. The
+    | framework owns the OAuth ceremony and hands the application a NORMALIZED
+    | IDENTITY; the application owns account policy (auto-provision, verified-email
+    | match, invite-only, finish-registration) through the sso.identity.unlinked
+    | resolve hook. Rsx_Sso is the only class application code touches.
+    |
+    | ACTIVITY IS CONFIGURED, NOT DERIVED - exactly like Turnstile. A provider is
+    | live because its 'enabled' is true and for no other reason; development mode,
+    | hostname and APP_URL have no bearing on it. A provider enabled with a missing
+    | credential is a HALF-CONFIGURED INSTALL and THROWS, naming the literal .env
+    | keys, rather than rendering a button that leads to a provider error page.
+    |
+    | Client ids are effectively public (they ride in the authorize URL). Client
+    | secrets and the Apple private key are server-only and are never exported to
+    | the browser - only {key, label, begin_url, icon_svg} reaches window.rsxapp.sso.
+    |
+    | The redirect URI to register in each provider's console is
+    | <APP_URL>/_sso/<key>/callback. See: php artisan rsx:man sso
+    |
+    */
+    'sso' => [
+        // The five built-in providers. Adding one to a console is configuration;
+        // adding a SIXTH is 'custom' below, not a change to this list.
+        'providers' => [
+            // Google. Console: APIs & Services > Credentials > OAuth client ID
+            // (Web application). Asserts a verified email on every sign-in.
+            'google' => [
+                'enabled' => env('SSO_GOOGLE_ENABLED', false),
+                'client_id' => env('SSO_GOOGLE_CLIENT_ID'),
+                'client_secret' => env('SSO_GOOGLE_CLIENT_SECRET'),
+            ],
+
+            // Microsoft (Entra ID). Console: App registrations.
+            //
+            // 'tenant' decides WHO may sign in: 'common' (any Microsoft account,
+            // work or personal), 'organizations' (work/school only), 'consumers'
+            // (personal only), or a tenant GUID to admit exactly one directory.
+            // It is a single-tenant application's only real access control here,
+            // so leaving it at 'common' on an internal tool is a decision, not a
+            // default to ignore.
+            'microsoft' => [
+                'enabled' => env('SSO_MICROSOFT_ENABLED', false),
+                'client_id' => env('SSO_MICROSOFT_CLIENT_ID'),
+                'client_secret' => env('SSO_MICROSOFT_CLIENT_SECRET'),
+                'tenant' => env('SSO_MICROSOFT_TENANT', 'common'),
+            ],
+
+            // Facebook. Console: Meta for Developers > Facebook Login.
+            // The email scope may be withheld by the user, so an unlinked identity
+            // from Facebook can arrive with a null email.
+            'facebook' => [
+                'enabled' => env('SSO_FACEBOOK_ENABLED', false),
+                'client_id' => env('SSO_FACEBOOK_CLIENT_ID'),
+                'client_secret' => env('SSO_FACEBOOK_CLIENT_SECRET'),
+            ],
+
+            // Apple. FOUR credentials, not two, because Apple has no static client
+            // secret: the secret is a short-lived ES256 JWT the server MINTS on
+            // every token exchange, signed with the .p8 key, issued by the team and
+            // identified by the key id. All three of team_id/key_id/private_key are
+            // therefore required, and client_id is the SERVICES ID (com.example.web
+            // shape), never the app's bundle id.
+            //
+            // private_key accepts either an absolute PATH to the .p8 file or the PEM
+            // text itself, so a container with no writable secrets volume can carry
+            // it in the environment. Nothing is minted offline-unsafe: the JWT is
+            // signed locally and no key ever leaves the box.
+            'apple' => [
+                'enabled' => env('SSO_APPLE_ENABLED', false),
+                'client_id' => env('SSO_APPLE_CLIENT_ID'),
+                'team_id' => env('SSO_APPLE_TEAM_ID'),
+                'key_id' => env('SSO_APPLE_KEY_ID'),
+                'private_key' => env('SSO_APPLE_PRIVATE_KEY'),
+            ],
+
+            // X (formerly Twitter), OAuth 2.0 with PKCE.
+            //
+            // X DOES NOT RETURN AN EMAIL to most applications - the users.email
+            // scope requires additional approval - so an identity from X routinely
+            // arrives with a null email, and any policy that matches on a verified
+            // address will decline it. That is a property of X, not a bug here.
+            'x' => [
+                'enabled' => env('SSO_X_ENABLED', false),
+                'client_id' => env('SSO_X_CLIENT_ID'),
+                'client_secret' => env('SSO_X_CLIENT_SECRET'),
+            ],
+        ],
+
+        // Providers this application adds, beyond the five above. THE EXTENSION
+        // SEAM: install an adapter (rsx:composer require socialiteproviders/okta)
+        // and name its provider class here - no listener, no service provider, no
+        // framework change. Generic OIDC is deliberately not a built-in; a provider
+        // package for the identity server in question is this seam's answer.
+        //
+        //   'okta' => [
+        //       'provider' => \SocialiteProviders\Okta\Provider::class,
+        //       'label' => 'Okta',
+        //       'icon_file' => '/path/to/okta.svg',   // or 'icon_svg' => '<svg .../>'
+        //       'enabled' => true,
+        //       'client_id' => env('SSO_OKTA_CLIENT_ID'),
+        //       'client_secret' => env('SSO_OKTA_CLIENT_SECRET'),
+        //       'base_url' => env('SSO_OKTA_BASE_URL'),   // any extra key the
+        //   ],                                            // adapter declares
+        'custom' => [],
+
+        // Whether an identity that signed in through a provider still faces this
+        // application's own second factor.
+        //
+        // FALSE (the default) means it does, and that is the safe posture: the
+        // provider proved who owns the Google account, which is not the same
+        // statement as "the person at this keyboard is allowed into this account",
+        // and a user who deliberately enrolled a second factor here did not consent
+        // to it being skippable by signing in another way.
+        //
+        // Set it true only where the identity provider IS the organization's
+        // authentication authority and already enforces its own MFA - a corporate
+        // Entra tenant with conditional access, say - so that a second challenge is
+        // duplicated ceremony rather than a second factor.
+        'skip_two_factor' => false,
+
+        // A SECURITY WINDOW, NOT AN OPERATION TIMEOUT (see the timeout mandate in
+        // CLAUDE.md), and the exact analogue of rsx.two_factor.
+        // challenge_window_minutes.
+        //
+        // It bounds no work: no HTTP call, no redirect and no token exchange is
+        // cancelled when it expires, and expiry degrades to a working outcome the
+        // user can act on ("That sign-in took too long. Please try again."), never
+        // to a failure handed to code that did not expect one.
+        //
+        // WHY 599 SECONDS IS ACCEPTABLE AND 601 IS NOT is a question about an
+        // attacker, not about how long anything takes. Two half-authenticated
+        // states live in this window. The first is an in-flight ceremony - a state
+        // value parked before the browser left for the provider, which must stop
+        // being redeemable once the user has plainly abandoned the trip. The second
+        // is a PENDING IDENTITY: a provider account whose ownership has been proven
+        // but which is connected to no local account yet, sitting on a
+        // finish-registration screen that may be unattended. Ten minutes is long
+        // enough to read a consent screen, approve a push, and type a name; it is
+        // not long enough to leave a proven third-party identity redeemable for the
+        // rest of the afternoon.
+        //
+        // Must be at least 1. Rsx_Sso::pending_expires_at() calls shouldnt_happen()
+        // on anything lower rather than minting a window that is already closed.
+        'pending_window_minutes' => 10,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Full Page Cache (FPC) Configuration
     |--------------------------------------------------------------------------
     |
@@ -2007,6 +2158,13 @@ return [
             'phpoffice/phpspreadsheet',
             'league/csv',
             'brick/money',
+            // The SSO engine. Rsx_Sso wraps both entirely, so an application never
+            // calls Socialite - they are exposed for the EXTENSION SEAM: a downstream
+            // provider package (socialiteproviders/okta and friends) depends on
+            // socialiteproviders/manager and would otherwise install a second copy of
+            // it and of laravel/socialite alongside the framework's.
+            'laravel/socialite',
+            'socialiteproviders/manager',
         ],
         'exposed_npm' => [
             'dompurify',

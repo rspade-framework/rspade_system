@@ -81,6 +81,29 @@ class Rsx_Csrf
             return;
         }
 
+        // Sign in with Apple is the one identity provider that returns its authorization
+        // by POSTing the browser back here (response_mode=form_post, which Apple requires
+        // whenever the 'name' or 'email' scope is asked for). That POST is CROSS-SITE by
+        // construction: it carries Origin: https://appleid.apple.com, which the origin
+        // check below rejects, and it arrives WITHOUT the SameSite=Lax `rsx` cookie, so
+        // there is no session to hold a token in the first place. Every legitimate Apple
+        // sign-in would fail, and no amount of token plumbing could change that.
+        //
+        // It is exempt because it CARRIES ITS OWN AUTHORIZATION, exactly like the two
+        // above: the OAuth `state` value Apple echoes back was minted by Rsx_Sso::begin()
+        // and parked in this browser's _session_values, and Rsx_Sso verifies it with
+        // hash_equals before a single byte is exchanged with Apple. A forged POST supplies
+        // no state anyone parked, and dies there.
+        //
+        // The exemption buys nothing an attacker wants, because THIS LEG DOES NO WORK. The
+        // POST handler immediately 303-redirects to the same path as a GET with the code
+        // and state on the query string; the state check and the token exchange happen on
+        // that top-level GET navigation, which does carry the Lax cookie. Path-exact, one
+        // provider, one path.
+        if ($path === \App\RSpade\Core\Sso\Rsx_Sso::APPLE_CALLBACK_PATH) {
+            return;
+        }
+
         // Origin/Referer check - applies to ALL state-changing POSTs (session or
         // not). A cross-site browser POST always carries an Origin header the
         // attacker cannot forge, so this closes login-CSRF on the anonymous auth

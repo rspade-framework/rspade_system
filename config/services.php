@@ -47,32 +47,4 @@ return [
         'from' => env('TWILIO_FROM', ''),
     ],
     
-    /*
-    |--------------------------------------------------------------------------
-    | Social Media Authentication Services
-    |--------------------------------------------------------------------------
-    |
-    | These settings are used for SSO authentication with various providers.
-    | They are separate from the SSO settings in authentication.php which
-    | control which providers are enabled in the UI.
-    |
-    */
-    'google' => [
-        'client_id' => env('SSO_GOOGLE_CLIENT_ID'),
-        'client_secret' => env('SSO_GOOGLE_CLIENT_SECRET'),
-        'redirect' => env('APP_URL') . '/auth/google/callback',
-    ],
-    
-    'microsoft' => [
-        'client_id' => env('SSO_MICROSOFT_CLIENT_ID'),
-        'client_secret' => env('SSO_MICROSOFT_CLIENT_SECRET'),
-        'tenant' => env('SSO_MICROSOFT_TENANT', 'common'),
-        'redirect' => env('APP_URL') . '/auth/microsoft/callback',
-    ],
-    
-    'facebook' => [
-        'client_id' => env('SSO_FACEBOOK_CLIENT_ID'),
-        'client_secret' => env('SSO_FACEBOOK_CLIENT_SECRET'),
-        'redirect' => env('APP_URL') . '/auth/facebook/callback',
-    ],
 ];

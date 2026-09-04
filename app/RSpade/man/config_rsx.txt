@@ -247,6 +247,52 @@ TWO-FACTOR AUTHENTICATION
     least 1 - anything lower calls shouldnt_happen() rather than minting
     a window that is already closed. See: php artisan rsx:man two_factor
 
+FEDERATED SIGN-IN (SSO)
+    'sso' => [
+        'providers' => [
+            'google'    => ['enabled' => env('SSO_GOOGLE_ENABLED', false),
+                            'client_id' => ..., 'client_secret' => ...],
+            'microsoft' => [... , 'tenant' => env('SSO_MICROSOFT_TENANT', 'common')],
+            'facebook'  => [...],
+            'apple'     => [... , 'team_id', 'key_id', 'private_key'],
+            'x'         => [...],
+        ],
+        'custom' => [],
+        'skip_two_factor' => false,
+        'pending_window_minutes' => 10,
+    ]
+
+    "Continue with Google/Microsoft/Facebook/Apple/X". ACTIVITY IS
+    CONFIGURED, NOT DERIVED: a provider is live because its own enabled
+    flag is true and for no other reason - mode, hostname and APP_URL
+    have no bearing. There is no global enable switch. A provider
+    enabled with a missing credential THROWS, naming the literal .env
+    keys, rather than rendering a button that leads to somebody else's
+    error page (the turnstile posture).
+
+    Apple takes FOUR credentials because it has no static client secret:
+    the secret is an ES256 JWT minted offline per token exchange from
+    team_id/key_id/private_key (a path to the .p8, or the PEM itself).
+    microsoft.tenant decides WHO may sign in ('common' / 'organizations'
+    / 'consumers' / a tenant GUID) and is that provider's only real
+    access control.
+
+    custom is the extension seam: install a socialiteproviders adapter
+    at the app layer and name its provider class here - no listener, no
+    service provider. Every key in the entry that is not framework
+    vocabulary is passed through to the adapter.
+
+    skip_two_factor false means a provider sign-in STILL FACES this
+    application's own second factor, which is the safe posture; true is
+    for an IdP that is already the organization's MFA authority.
+
+    pending_window_minutes is a SECURITY WINDOW, not an operation
+    timeout, and the exact analogue of two_factor.challenge_window_
+    minutes: how long an in-flight ceremony and a proven-but-unconnected
+    provider identity stay redeemable. It bounds no work and expiry
+    degrades to a working outcome ("That sign-in took too long"). Must
+    be at least 1. See: php artisan rsx:man sso
+
 CONTENT SECURITY POLICY
     'csp' => [
         'enabled'            => true,
@@ -737,6 +783,6 @@ TROUBLESHOOTING
 SEE ALSO
     app_mode, console_debug, dispatch, external_api, login_redirect, portal,
     document_search, tasks, realtime, fpc, email, time, dependencies, locks,
-    turnstile, csp, external_resources, logrotate
+    turnstile, sso, csp, external_resources, logrotate
 
 CONFIG_RSX(1)                  RSpade Manual                  CONFIG_RSX(1)

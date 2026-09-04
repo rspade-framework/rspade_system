@@ -1,0 +1,48 @@
+// Sso_Buttons - the "Continue with ..." provider buttons.
+//
+// LAYOUT-NEUTRAL: the host owns the box around this. No card, no heading, no outer margin,
+// and no typography beyond the button label's own weight - a login card and a settings
+// section get the same component and neither has to fight it.
+.Sso_Buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+
+    // Full width by design: a column of equal-width buttons is what every provider's own
+    // reference implementation looks like, and it is what keeps a five-provider install from
+    // wrapping into ragged rows.
+    &__button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        width: 100%;
+        min-height: 40px;
+        padding: 8px 16px;
+        font-weight: 500;
+        text-decoration: none;
+    }
+
+    // The mark keeps its own size regardless of the button's type scale. The providers'
+    // guidelines size the mark against the button height, not against the text, and a mark
+    // that grew with a heading font would break every one of them.
+    &__icon {
+        display: inline-flex;
+        flex: 0 0 auto;
+        align-items: center;
+        justify-content: center;
+        width: 18px;
+        height: 18px;
+
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+    }
+
+    &__label {
+        // The label may wrap on a narrow phone; the mark must not be pushed off centre when
+        // it does.
+        text-align: center;
+    }
+}

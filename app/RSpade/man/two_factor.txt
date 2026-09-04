@@ -708,6 +708,10 @@ SEE ALSO
                   status vocabulary, Login_Throttle, impersonation
     auth        - identity model (login_users + users), RsxAuth
     turnstile   - human verification on the login form itself
+    sso         - federated sign-in. A provider sign-in STILL FACES this
+                  challenge by default (rsx.sso.skip_two_factor is the
+                  opt-out), and resolves sso.two_factor.verify_url to find
+                  the page it is answered on
     auth_gates  - #[Auth] on every surface, and why the challenge pair is
                   'public'
 

@@ -19,6 +19,7 @@ The script itself (`system/bin/publish`, ~770 lines, heavily commented) is the a
 
 1. **`php artisan rsx:check`** must pass. A code-quality violation stops the publish.
 2. **The monorepo working directory must be CLEAN** (`git status --porcelain` empty). Everything ships from committed state, so the release commit and its changelog describe the source honestly.
+3. **The CONFIDENTIALITY GATE** - every staged tree (all three repositories) and the release changelog are scanned for a blocked confidential term before anything is committed or pushed; one hit aborts the whole publish, naming the offending files. The term and its narrow whitelist (third-party `node_modules/`/`vendor/` and `*.pdf`, where the word is legitimate typography vocabulary) are encoded beside the gate in `bin/publish`, which does not ship. The remedy is always to scrub the mention at its SOURCE - the monorepo file or commit message - never to widen the whitelist.
 
 **Not enforced by the script, but belongs to a release:** the source spelling sweep - `docs.dev/audits/framework_internal_audit_checklist.md`, entry "Source spelling sweep (pre-release)". `/rsx/` ships as the reference app downstream reads as canonical, so a misspelled identifier in it gets copied into real applications. Run it before a release and after any epic that added vocabulary.
 

@@ -49,7 +49,10 @@ class Login_History
      *
      * Framework producers: RsxAuth::attempt() writes SUCCESS, FAILED_PASSWORD and
      * FAILED_NOT_FOUND; Rsx_Two_Factor::verify_challenge() writes FAILED_2FA on a wrong
-     * second-factor answer (and the SUCCESS row when the challenge passes).
+     * second-factor answer (and the SUCCESS row when the challenge passes);
+     * Rsx_Sso::handle_callback() writes FAILED_SSO when a federated sign-in does not
+     * verify - a state that does not match, a token exchange the provider refused, a
+     * provider account connected to no local identity.
      *
      * FAILED_LOCKED / FAILED_DISABLED have NO framework producer - account state (status_id,
      * is_activated, is_verified) is APPLICATION vocabulary, so the app records those outcomes
@@ -62,6 +65,7 @@ class Login_History
     public const STATUS_FAILED_LOCKED = 'failed_locked';
     public const STATUS_FAILED_DISABLED = 'failed_disabled';
     public const STATUS_FAILED_NOT_FOUND = 'failed_not_found';
+    public const STATUS_FAILED_SSO = 'failed_sso';
 
     /**
      * Record a successful login
@@ -318,6 +322,7 @@ class Login_History
             self::STATUS_FAILED_LOCKED => 'Failed - Account Locked',
             self::STATUS_FAILED_DISABLED => 'Failed - Account Disabled',
             self::STATUS_FAILED_NOT_FOUND => 'Failed - User Not Found',
+            self::STATUS_FAILED_SSO => 'Failed - SSO Sign-In',
             default => ucfirst(str_replace('_', ' ', $status)),
         };
     }

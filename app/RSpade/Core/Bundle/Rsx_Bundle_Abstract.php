@@ -460,6 +460,30 @@ abstract class Rsx_Bundle_Abstract
             $rsxapp_data['turnstile'] = \App\RSpade\Core\Turnstile\Rsx_Turnstile::site_key();
         }
 
+        // Federated sign-in providers - CONDITIONAL, exactly like the turnstile key above:
+        // absent means no provider is switched on, and <Sso_Buttons> renders nothing rather
+        // than an empty row of chrome. An always-present key holding an empty array would
+        // make "off" and "configured but empty" indistinguishable to the client.
+        //
+        // What ships is what enabled_providers() returns and nothing else - key, label,
+        // begin_url and the inline brand mark - which is public by contract: no client id, no
+        // secret, nothing that is not already visible in the authorize URL the button leads
+        // to. Same name as the config block it comes from (rsx.sso), because a client-side
+        // alias would just break grep.
+        //
+        // enabled_providers() THROWS when a provider is enabled with a credential missing.
+        // That is deliberate here too: an operator who set SSO_GOOGLE_ENABLED=true and nothing
+        // else hears about it on the first page load, not from a user who pressed a button
+        // that led to somebody else's error page.
+        // Asked ONCE and tested for emptiness, rather than is_enabled() followed by
+        // enabled_providers(): is_enabled() IS enabled_providers() underneath, and every
+        // resolution reads each live provider's brand mark off disk. One call, same answer.
+        $sso_providers = \App\RSpade\Core\Sso\Rsx_Sso::enabled_providers();
+
+        if ($sso_providers !== []) {
+            $rsxapp_data['sso'] = ['providers' => $sso_providers];
+        }
+
         // CSP nonce - the SAME value the response header carries (Rsx_Csp memoizes it per
         // request). Every inline <script> the framework emits is stamped with it, and the
         // client loader (Rsx_External_Resources) reads it from here to stamp the <script>

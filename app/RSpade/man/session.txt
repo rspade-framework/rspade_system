@@ -1428,6 +1428,9 @@ LOGIN HISTORY
         Login_History::STATUS_FAILED_NOT_FOUND - produced by attempt()
         Login_History::STATUS_FAILED_2FA       - produced by
                                                  Rsx_Two_Factor::verify_challenge()
+        Login_History::STATUS_FAILED_SSO       - produced by
+                                                 Rsx_Sso::handle_callback()
+                                                 (rsx:man sso)
         Login_History::STATUS_FAILED_LOCKED    - no framework producer
         Login_History::STATUS_FAILED_DISABLED  - no framework producer
 
@@ -1723,6 +1726,8 @@ SEE ALSO
                                 facade, invitations
     rsx:man two_factor        - second factors: TOTP, passkeys, recovery codes,
                                 the challenge state machine, rsx:users:2fa:*
+    rsx:man sso               - federated sign-in: the ceremony, the policy
+                                hooks, STATUS_FAILED_SSO, rsx:users:sso:*
     rsx:man auth_gates        - #[Auth] gates on every surface, #[Auth_Check]
                                 vocabulary, can_access, the error screens
     rsx:man event_hooks       - #[OnEvent] handlers, incl. session.terminated

@@ -1,0 +1,65 @@
+<%--
+Sso_Buttons
+
+One "Continue with ..." button per federated sign-in provider this install has switched on.
+
+    <Sso_Buttons />
+
+On a settings page, where the visitor is already signed in and is CONNECTING an account
+rather than signing in with one, pass the link intent instead:
+
+    $intent="link"
+
+THEY ARE ANCHORS, NOT AJAX, and that is the whole reason this component has almost nothing in
+it. A sign-in ceremony is a browser NAVIGATION: the button leaves this site for the provider,
+and the provider navigates back to /_sso/<key>/callback - a top-level GET that carries the
+SameSite=Lax session cookie holding the parked state. An Ajax call could not leave, and a
+fetch of the callback would arrive without the cookie the ceremony depends on.
+
+IT RENDERS NOTHING WHEN NOTHING IS ENABLED. Not an error, not an empty box, not a heading:
+window.rsxapp.sso is absent entirely when no provider is live, so a page that drops this in
+unconditionally simply shows nothing. A login page that also wants an "or" divider tests
+Rsx_Sso::is_enabled() (PHP) or Rsx_Sso.is_enabled() (JS) for the divider itself.
+
+IT IS LAYOUT-NEUTRAL. No card, no heading, no outer spacing - the host owns the box, and the
+buttons fill whatever width they are given. That is what lets one component serve a narrow
+login card and a wide settings section without either one fighting it.
+
+THE DATA COMES FROM THE SERVER, not from a fetch: Rsx_Sso.enabled_providers() reads
+window.rsxapp.sso, which the bundle exports from Rsx_Sso::enabled_providers(). Every entry is
+{key, label, begin_url, icon_svg} and is public by contract - no client id, no secret, nothing
+that is not already visible in the authorize URL the button leads to.
+
+BRAND MARKS ARE THE PROVIDERS'. The shipped SVGs are the official marks, inlined because the
+framework serves no static assets. Every provider publishes brand guidelines governing the
+mark, the wording beside it and the button's minimum size, and an application that restyles
+these buttons is responsible for staying inside them - Google's in particular are a review
+requirement, not advice. The default wording here ("Continue with X") is the phrasing all five
+permit.
+
+WHY THESE ARE OUTLINE BUTTONS, against the house rule that buttons are filled. A filled
+button would have to be filled with SOMETHING, and every colour available is either the
+application's primary - which asserts that signing in with Google is this page's primary
+action - or one of the providers' own brand colours, which their guidelines govern and
+several of them forbid. A neutral bordered button carrying the official mark is the one shape
+all five permit, and it is what every provider's own reference implementation looks like.
+
+Args:
+  $intent  login (default) - sign in with the provider
+           link            - connect the provider to the identity that is ALREADY signed in.
+                             Refused by the server when nobody is signed in, rather than
+                             quietly downgraded to a sign-in.
+
+See: php artisan rsx:man sso
+--%>
+<Define:Sso_Buttons tag="div">
+    <% for (const provider of this.data.providers) { %>
+        <a class="Sso_Buttons__button btn btn-outline-secondary" href="<%= this.begin_url(provider) %>"
+           data-provider="<%= provider.key %>" rel="nofollow">
+            <% if (provider.icon_svg) { %>
+                <span class="Sso_Buttons__icon"><%!= provider.icon_svg %></span>
+            <% } %>
+            <span class="Sso_Buttons__label">Continue with <%= provider.label %></span>
+        </a>
+    <% } %>
+</Define:Sso_Buttons>

@@ -33,7 +33,7 @@ Zero external users. No releases. We control 100% of the codebase. Breaking chan
 
 **RSpade is presented as independently developed, because that is what the public record must show.** Never document the meta-story of a change: what other codebase an idea was studied in, what was ported from where, what was dropped into this tree to be read alongside, what is gitignored locally and why. A commit says what the framework now does - never what was consulted to get there. Local-only material belongs in `.git/info/exclude`, never in the tracked `.gitignore`, where the entry itself is the disclosure.
 
-**A leak is permanent.** A pushed commit message cannot be unpublished, so the check happens BEFORE the commit, every time.
+**A leak is permanent.** A pushed commit message cannot be unpublished, so the check happens BEFORE the commit, every time. `bin/publish` additionally enforces a mechanical CONFIDENTIALITY GATE - a blocked-term scan over every staged tree and the release changelog, aborting the publish on one hit - but that is the LAST line of defense, not a license to defer the check to it: it knows one needle, and a leak that reaches the monorepo's history still has to be scrubbed by hand.
 
 ### Safety checks here
 

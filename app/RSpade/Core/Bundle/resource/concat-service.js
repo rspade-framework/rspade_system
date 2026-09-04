@@ -345,14 +345,21 @@ async function concatenateCss(files, outputFile, warnings) {
     // Track source contents for embedding
     const sourceContents = {};
 
-    // Output content parts
-    const outputParts = [];
+    // The bundle text so far. LINE POSITIONS ARE COUNTED FROM THIS STRING, never
+    // hand-tracked beside it: the old parallel `currentLine` counter started one line out
+    // of step with its own header (the header emits three newlines, the counter said two)
+    // and every mapping in every bundle inherited the skew. Counting '\n' in what was
+    // actually emitted cannot disagree with what was actually emitted.
+    let output = `/* Concatenated CSS bundle: ${path.basename(outputFile)} */\n`
+        + `/* Generated: ${new Date().toISOString()} */\n\n`;
 
-    // Add header comment
-    outputParts.push(`/* Concatenated CSS bundle: ${path.basename(outputFile)} */\n`);
-    outputParts.push(`/* Generated: ${new Date().toISOString()} */\n\n`);
-
-    let currentLine = 3; // Start after header comments
+    const line_count = (text) => {
+        let n = 0;
+        for (let i = text.indexOf('\n'); i !== -1; i = text.indexOf('\n', i + 1)) {
+            n++;
+        }
+        return n;
+    };
 
     // Process each input file
     for (const entry of files) {
@@ -369,21 +376,23 @@ async function concatenateCss(files, outputFile, warnings) {
         const relativePath = path.relative(process.cwd(), displayPath || readPath);
 
         // Add file separator comment
-        const separatorComment = `/* === ${relativePath} === */\n`;
-        outputParts.push(separatorComment);
-        currentLine++;
+        output += `/* === ${relativePath} === */\n`;
 
         // Extract sourcemap if present
         const { content: cleanContent, map } = extractCssSourceMap(content, relativePath, warnings);
 
-        // Store source content for embedding
-        sourceContents[relativePath] = cleanContent;
+        // The chunk's line 1 lands on generated line (offset + 1): output always ends in
+        // a newline here, so the newline count IS the number of completed lines above.
+        const offset = line_count(output);
 
         if (map) {
-            // File has a sourcemap - merge it
-            const consumer = await new SourceMapConsumer(map);
-
-            // Store source contents from the existing sourcemap
+            // The chunk carries its own map (the sass compile): copy EVERY mapping,
+            // columns included, shifted by the chunk's position in the bundle. The old
+            // code instead probed originalPositionFor() at column 0 of each line, which
+            // dropped any line whose first mapping sat past column 0 (most closing
+            // braces, every compressed line) and flattened real columns to 0 - the
+            // devtools then resolved those rules against whatever mapping came before,
+            // frequently a different source file.
             if (map.sourcesContent && map.sources) {
                 map.sources.forEach((source, idx) => {
                     if (map.sourcesContent[idx]) {
@@ -392,62 +401,40 @@ async function concatenateCss(files, outputFile, warnings) {
                 });
             }
 
-            // Map each line through the existing sourcemap
-            const lines = cleanContent.split('\n');
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
+            const consumer = await new SourceMapConsumer(map);
 
-                // For each line, try to map it back to original source
-                const originalPos = consumer.originalPositionFor({
-                    line: i + 1,
-                    column: 0
-                });
-
-                if (originalPos.source) {
-                    // We found an original mapping
-                    generator.addMapping({
-                        generated: {
-                            line: currentLine,
-                            column: 0
-                        },
-                        original: {
-                            line: originalPos.line,
-                            column: originalPos.column || 0
-                        },
-                        source: originalPos.source
-                    });
+            consumer.eachMapping((m) => {
+                if (m.source === null || m.originalLine === null) {
+                    return;
                 }
 
-                outputParts.push(line + (i < lines.length - 1 ? '\n' : ''));
-                currentLine++;
-            }
+                generator.addMapping({
+                    generated: { line: m.generatedLine + offset, column: m.generatedColumn },
+                    original: { line: m.originalLine, column: m.originalColumn },
+                    source: m.source,
+                    name: m.name || undefined
+                });
+            });
 
             consumer.destroy();
         } else {
-            // No sourcemap - generate identity mappings
+            // No sourcemap - the chunk itself is the source. Identity mappings, and its
+            // content is what sourcesContent should carry for it.
+            sourceContents[relativePath] = cleanContent;
+
             const lines = cleanContent.split('\n');
             for (let i = 0; i < lines.length; i++) {
-                // Map each line to itself in the original file
                 generator.addMapping({
-                    generated: {
-                        line: currentLine,
-                        column: 0
-                    },
-                    original: {
-                        line: i + 1,
-                        column: 0
-                    },
+                    generated: { line: offset + i + 1, column: 0 },
+                    original: { line: i + 1, column: 0 },
                     source: relativePath
                 });
-
-                outputParts.push(lines[i] + (i < lines.length - 1 ? '\n' : ''));
-                currentLine++;
             }
         }
 
-        // Add extra newline between files
-        outputParts.push('\n');
-        currentLine++;
+        // Emit the chunk, normalized to end in exactly one newline, plus a blank
+        // separator line - normalization keeps the next chunk's offset well-defined.
+        output += cleanContent.replace(/\n*$/, '\n') + '\n';
     }
 
     // Generate the final sourcemap
@@ -477,7 +464,7 @@ async function concatenateCss(files, outputFile, warnings) {
 
     // Convert sourcemap to Base64 and append as inline comment
     const base64Map = Buffer.from(JSON.stringify(mapJSON)).toString('base64');
-    const finalContent = outputParts.join('') +
+    const finalContent = output +
         `\n/*# sourceMappingURL=data:application/json;charset=utf-8;base64,${base64Map} */\n`;
 
     writeOutput(outputFile, finalContent);

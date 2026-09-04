@@ -42,7 +42,7 @@ if ($authenticated) {
 
     RsxAuth::login($login_user);                        // no factor: this IS the login
     Login_History::record_success((int) $login_user->id, $email);
-    return redirect(static::__post_login_destination(...));
+    return redirect(static::post_login_destination(...));
 }
 ```
 
@@ -78,7 +78,7 @@ public static function verify_2fa(Request $request, array $params = [])
         return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
     }
 
-    return ['redirect' => static::__post_login_destination((int) $login_user->id)];
+    return ['redirect' => static::post_login_destination((int) $login_user->id)];
 }
 ```
 

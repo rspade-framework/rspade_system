@@ -516,6 +516,11 @@
             "created_at": "2026-09-02T12:30:23+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe create_two_factor_credentials_table"
+        },
+        "2026_09_04_110416_create_sso_identities_table.php": {
+            "created_at": "2026-09-04T11:04:16+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe create_sso_identities_table"
         }
     }
 }

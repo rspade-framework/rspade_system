@@ -463,6 +463,8 @@ SEE ALSO
                   management, garbage collection, login history
     two_factor  - second factors: TOTP, passkeys, recovery codes, the login
                   challenge, rsx:users:2fa:*
+    sso         - federated sign-in (Google/Microsoft/Facebook/Apple/X): the
+                  ceremony, the policy hooks, connected accounts
     acls        - roles, permissions, the Permission facade, GRANT/DENY
     portal      - client portal: separate session, dispatch, and invitations
     permission  - app-side Permission subclass conventions

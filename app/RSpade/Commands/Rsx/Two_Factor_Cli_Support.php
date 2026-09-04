@@ -25,6 +25,8 @@ use App\RSpade\Core\Models\Login_User_Model;
  * phone enrolled once per tenant would be wrong - so --user resolves to a Login_User_Model
  * and there is no --site to disambiguate with. login_users.email is UNIQUE, so an email
  * names exactly one identity or none; there is no ambiguity case to answer.
+ *
+ * That resolution now lives in Login_User_Cli_Support, which rsx:users:sso:* shares.
  */
 class Two_Factor_Cli_Support
 {
@@ -59,50 +61,16 @@ class Two_Factor_Cli_Support
     /**
      * Resolve the login identity named by --user.
      *
-     * WHY --user IS AN OPTION AND STILL REQUIRED, restated because it is the trap: every
-     * framework command spells this --user=, so a positional user here would be a
-     * cross-command inconsistency; and an option is optional by nature, so the requirement
-     * is enforced HERE, loudly, naming the flag. Never by defaulting to identity 1, which
-     * would arm - or strip - the wrong account and say nothing about it.
-     *
-     * A numeric value is a login_users.id; anything else is an email address. Soft-deleted
-     * identities are excluded by the model's own scope, which is the answer that should be
-     * given: a deleted identity is not one an operator may arm a second factor for.
+     * DELEGATED, for the same reason the envelope above is: "which login identity does --user
+     * name?" has exactly one answer, and rsx:users:sso:* asks it too. Login_User_Cli_Support
+     * owns it - the error codes, the id-or-email rule and the refusal to default to identity 1
+     * are all stated there.
      *
      * @throws Api_Cli_Error when --user is missing or does not resolve
      */
     public static function resolve_login_user($user_option): Login_User_Model
     {
-        $needle = trim((string) ($user_option ?? ''));
-
-        if ($needle === '') {
-            throw new Api_Cli_Error(
-                'user_required',
-                '--user is required: pass a login_users.id or an email address '
-                . '(e.g. --user=1 or --user=ops@example.com).'
-            );
-        }
-
-        if (ctype_digit($needle)) {
-            $login_user = Login_User_Model::find((int) $needle);
-
-            if (!$login_user) {
-                throw new Api_Cli_Error('user_not_found', "No login identity with id {$needle}.");
-            }
-
-            return $login_user;
-        }
-
-        $login_user = Login_User_Model::where('email', $needle)->first();
-
-        if (!$login_user) {
-            throw new Api_Cli_Error(
-                'user_not_found',
-                "No login identity matches '{$needle}' (try a login_users.id or an email address)."
-            );
-        }
-
-        return $login_user;
+        return Login_User_Cli_Support::resolve_login_user($user_option);
     }
 
     /**
@@ -111,10 +79,7 @@ class Two_Factor_Cli_Support
      */
     public static function login_user_data(Login_User_Model $login_user): array
     {
-        return [
-            'id' => (int) $login_user->id,
-            'email' => $login_user->email,
-        ];
+        return Login_User_Cli_Support::login_user_data($login_user);
     }
 
     /**
@@ -122,6 +87,6 @@ class Two_Factor_Cli_Support
      */
     public static function print_identity(Command $command, Login_User_Model $login_user): void
     {
-        $command->line('  User:    ' . $login_user->id . ' (' . $login_user->email . ')');
+        Login_User_Cli_Support::print_identity($command, $login_user);
     }
 }

@@ -1,0 +1,967 @@
+SSO(1)                           RSpade Manual                           SSO(1)
+
+NAME
+    sso - federated sign-in: Google, Microsoft, Facebook, Apple, X, and any
+    Socialite provider you install
+
+SYNOPSIS
+    use App\RSpade\Core\Sso\Rsx_Sso;
+
+    # .env - switching a provider on is the whole installation step
+    SSO_GOOGLE_ENABLED=true
+    SSO_GOOGLE_CLIENT_ID=...
+    SSO_GOOGLE_CLIENT_SECRET=...
+
+    {{-- The login page: the buttons render themselves from the roster --}}
+    @if (Rsx_Sso::is_enabled())
+        <div class="login-divider"><span>or</span></div>
+        <Sso_Buttons />
+    @endif
+
+    // A settings screen connects a provider to the identity already signed in
+    <Sso_Buttons $intent="link" />
+
+    # The ONE question an application must answer: a provider proved somebody
+    # owns an account, and nothing here is connected to it. Now what?
+    #[OnEvent('sso.identity.unlinked')]
+    public static function unlinked($data)      // {provider_key, provider_user_key,
+    {                                           //  email, email_verified, name, avatar_url}
+        if (!empty($data['email_verified'])) {
+            $login_user = Login_User_Model::where('email', $data['email'])->first();
+
+            if ($login_user !== null) {
+                return Rsx_Sso::consume_pending_and_login($login_user);
+            }
+        }
+
+        return null;        // decline -> "No account is connected to this sign-in."
+    }
+
+    # The operator path
+    php artisan rsx:users:sso:dump   --user=alice@example.com
+    php artisan rsx:users:sso:unlink --user=1 --id=7
+    php artisan rsx:users:sso:unlink --user=1 --all
+
+OVERVIEW
+    FEDERATED SIGN-IN IS CONFIGURATION, NOT CODE. Five providers ship built
+    in - Google, Microsoft (Entra ID), Facebook, Apple and X. Switching one on
+    is an .env flag and a credential pair; the buttons appear on the login
+    page, the ceremony runs, and a provider account that is connected to a
+    local identity signs that identity in. Nothing else has to be written for
+    that to work. A sixth provider is one composer package and one config
+    block (CUSTOM PROVIDERS below), and neither the framework nor the
+    application changes shape to admit it.
+
+    THE FRAMEWORK OWNS THE CEREMONY AND THE APPLICATION OWNS THE POLICY, and
+    that division is the whole design. The framework holds the state value,
+    PKCE, the token exchange, the throttle budget, the failure record and the
+    shape of the identity that comes out. The application holds the questions
+    a framework has no business guessing: may an unknown Google account create
+    an account here, which addresses may be matched against existing ones,
+    where does a signed-in identity land. Those are answered through event
+    hooks (THE POLICY HOOKS), and every one of them FAILS CLOSED - an
+    application that has said nothing gets no behaviour invented for it.
+
+    Rsx_Sso is the only class application code touches. Socialite_Bridge,
+    Sso_Identity_Model and Rsx_Sso_Controller are implementation behind it,
+    and no application ever sees a Socialite object. That boundary is what
+    lets a provider's quirks be absorbed - Apple's minted client secret, X's
+    PKCE, a downstream adapter's extra config keys - without a call site
+    moving.
+
+SETUP
+    THESE WALKTHROUGHS ARE WRITTEN FROM THE PROVIDERS' OWN DOCUMENTATION and
+    are subject to console drift: every one of the five reorganises its
+    developer console periodically, and the menu path that was right last
+    quarter may be one level deeper this quarter. The VALUES are stable - a
+    client id, a secret, a redirect URI - so when a screen does not match,
+    look for the same values under a different heading rather than assuming
+    the provider changed.
+
+    THE REDIRECT URI IS THE SAME SHAPE FOR ALL OF THEM, and it is what you
+    register in the console:
+
+        https://<your host>/_sso/<provider key>/callback
+
+    for example https://app.example.com/_sso/google/callback. The host is
+    APP_URL's, which is the framework's single hostname source - if APP_URL is
+    wrong, so is every redirect URI. Providers match it EXACTLY: a trailing
+    slash, http instead of https, or www. against a bare domain is a different
+    URI and is refused.
+
+    A PROVIDER IS LIVE BECAUSE ITS enabled FLAG IS TRUE AND FOR NO OTHER
+    REASON. Mode, hostname and APP_URL have no bearing. A provider enabled
+    with a missing credential THROWS, naming the literal .env keys, rather
+    than rendering a button that leads to somebody else's error page.
+
+    Google
+        Console: Google Cloud Console > APIs & Services > Credentials >
+        Create credentials > OAuth client ID > Web application.
+
+        Add the redirect URI under "Authorized redirect URIs". Configure the
+        OAuth consent screen (name, support email, scopes) - an unconfigured
+        consent screen refuses every sign-in with a message the user cannot
+        act on. The default scopes are enough; RSpade asks for profile and
+        email and nothing else.
+
+            SSO_GOOGLE_ENABLED=true
+            SSO_GOOGLE_CLIENT_ID=<client id>.apps.googleusercontent.com
+            SSO_GOOGLE_CLIENT_SECRET=<client secret>
+
+        Google asserts email_verified on every sign-in, so it is the provider
+        the verified-email-match policy works best with.
+
+    Microsoft (Entra ID)
+        Console: Microsoft Entra admin center > App registrations > New
+        registration. Redirect URI platform is "Web".
+
+        The secret is under Certificates & secrets > New client secret, and
+        you can read its VALUE exactly once - the "Secret ID" is not it.
+        Microsoft secrets EXPIRE (24 months maximum); a sign-in that stopped
+        working on a date nobody deployed on is usually this.
+
+            SSO_MICROSOFT_ENABLED=true
+            SSO_MICROSOFT_CLIENT_ID=<application (client) id>
+            SSO_MICROSOFT_CLIENT_SECRET=<secret value>
+            SSO_MICROSOFT_TENANT=common
+
+        SSO_MICROSOFT_TENANT DECIDES WHO MAY SIGN IN and is the only real
+        access control on this provider:
+
+            common          any Microsoft account, work or personal (default)
+            organizations   work/school accounts only
+            consumers       personal accounts only
+            <tenant GUID>   exactly one directory
+
+        Leaving it at common on an internal tool is a decision, not a default
+        to ignore: it admits every personal Outlook account in the world as
+        far as the ceremony is concerned, and your sso.identity.unlinked
+        policy becomes the only thing standing between them and an account.
+
+    Facebook
+        Console: Meta for Developers > your app > Facebook Login > Settings.
+        The redirect URI goes in "Valid OAuth Redirect URIs", and the app must
+        be taken out of Development mode before anybody outside your test
+        users can sign in.
+
+            SSO_FACEBOOK_ENABLED=true
+            SSO_FACEBOOK_CLIENT_ID=<app id>
+            SSO_FACEBOOK_CLIENT_SECRET=<app secret>
+
+        THE EMAIL SCOPE MAY BE DECLINED BY THE USER at the consent screen, so
+        an identity from Facebook can arrive with a null email. Facebook does
+        not assert email_verified, so a verified-email-match policy declines
+        it regardless.
+
+    Apple (Sign in with Apple)
+        FOUR CREDENTIALS, NOT TWO, because Apple has no static client secret:
+        the secret is a short-lived ES256 JWT the server MINTS on every token
+        exchange, signed with a private key, issued by your team and
+        identified by the key id. The minting is entirely offline - no network
+        call, and no key ever leaves the box.
+
+        The ceremony in the Apple Developer console:
+
+          1. Certificates, Identifiers & Profiles > Identifiers > a SERVICES
+             ID (reverse-DNS shape, com.example.web). This is client_id. It is
+             NOT the App ID / bundle id, and confusing the two is the single
+             most common Apple misconfiguration.
+          2. Configure that Services ID for "Sign in with Apple": set the
+             domain, and the Return URL to the callback URI above. Apple
+             refuses http and refuses a bare IP - a local box needs a
+             tunnelled https hostname to test at all.
+          3. Keys > new key with "Sign in with Apple" enabled, associated with
+             the Primary App ID. Download the .p8 ONCE - it cannot be
+             downloaded again - and note the KEY ID.
+          4. The TEAM ID is in the console's membership details.
+
+            SSO_APPLE_ENABLED=true
+            SSO_APPLE_CLIENT_ID=com.example.web        # the SERVICES ID
+            SSO_APPLE_TEAM_ID=<10-character team id>
+            SSO_APPLE_KEY_ID=<10-character key id>
+            SSO_APPLE_PRIVATE_KEY=/secure/path/AuthKey_XXXXXXXXXX.p8
+
+        SSO_APPLE_PRIVATE_KEY accepts either an absolute PATH to the .p8 file
+        or the PEM TEXT ITSELF, so a container with no writable secrets volume
+        can carry it in the environment.
+
+        APPLE RETURNS A NAME ONLY ON THE VERY FIRST AUTHORIZATION and never
+        again. If your policy needs the name, capture it from the pending
+        identity at sign-up; re-reading it later is not possible.
+
+        Apple's callback is a cross-site form POST, which the framework
+        handles - see THE APPLE CALLBACK under THE CEREMONY.
+
+    X (formerly Twitter)
+        Console: X Developer Portal > Projects & Apps. The app must belong to
+        a PROJECT (a standalone app cannot do OAuth 2.0), User authentication
+        settings must be turned on with type "Web App", and the callback URI
+        is the one above. OAuth 2.0 with PKCE, which RSpade handles.
+
+            SSO_X_ENABLED=true
+            SSO_X_CLIENT_ID=<OAuth 2.0 client id>
+            SSO_X_CLIENT_SECRET=<OAuth 2.0 client secret>
+
+        X DOES NOT RETURN AN EMAIL to most applications. The users.email scope
+        requires additional approval, so an identity from X routinely arrives
+        with email null and email_verified false. THAT IS A PROPERTY OF X, NOT
+        A BUG HERE, and every policy you write must survive it - a
+        verified-email-match policy will decline every X sign-in, which makes
+        X a linking provider (a settings-screen Connect) rather than a sign-up
+        one unless your policy has another way to identify the person.
+
+    .env keys, all of them
+        SSO_GOOGLE_ENABLED / _CLIENT_ID / _CLIENT_SECRET
+        SSO_MICROSOFT_ENABLED / _CLIENT_ID / _CLIENT_SECRET / _TENANT
+        SSO_FACEBOOK_ENABLED / _CLIENT_ID / _CLIENT_SECRET
+        SSO_APPLE_ENABLED / _CLIENT_ID / _TEAM_ID / _KEY_ID / _PRIVATE_KEY
+        SSO_X_ENABLED / _CLIENT_ID / _CLIENT_SECRET
+
+        Every *_ENABLED defaults to false and every credential defaults to
+        empty, so a fresh install has no federated sign-in and no button.
+
+THE CEREMONY
+    Two browser NAVIGATIONS and nothing else. There is no client-side
+    ceremony, no Ajax and no SDK: a button is an anchor to /_sso/<key>/begin,
+    and the provider navigates the browser back to /_sso/<key>/callback.
+
+        1. BEGIN     Rsx_Sso::begin() mints a random state, parks it in a
+                     session value with an expiry, and redirects to the
+                     provider. Nothing is authenticated; nothing exists but a
+                     parked string. Session::put_value() is a writer, so an
+                     anonymous visitor gets a session row here - which is the
+                     only way a value can be parked for them at all.
+        2. RETURN    The provider sends the browser back with code and state.
+        3. VERIFY    Rsx_Sso::handle_callback() spends the throttle budget
+                     FIRST, then reads the parked ceremony and FORGETS IT
+                     IMMEDIATELY - before anything is verified, so a state is
+                     single-use by construction - then compares state under
+                     hash_equals, and the provider key with it. A response
+                     from Google cannot redeem a ceremony started for
+                     Microsoft.
+        4. EXCHANGE  Only then is the code exchanged. What comes back is
+                     normalized into the identity array.
+        5. BRANCH    A LINKED row signs in. intent=link connects the account
+                     to the signed-in identity. An UNLINKED identity is parked
+                     as sso.pending and handed to the application.
+        6. FINISH    A sign-in still faces this application's own second
+                     factor unless the install opted out.
+
+    WHAT IS STORED, AND WHERE
+        RSpade HAS NO LARAVEL SESSION - StartSession is not in the HTTP
+        kernel - so Socialite runs stateless and the ceremony's state is OURS,
+        in _session_values, with our own expiry:
+
+            sso.state     {state, provider, intent, code_verifier}, parked at
+                          begin(), forgotten at the first callback.
+            sso.pending   the normalized identity of a provider account that
+                          is connected to nothing here, parked for the
+                          application's hook and its screens.
+
+        Both expire after rsx.sso.pending_window_minutes. Session values
+        survive Session::logout() - the logout clears the session's IDENTITY,
+        not the row - which is what lets a pending 2FA challenge be handed
+        across the same seam.
+
+        A PKCE PROVIDER (X, and any custom adapter that uses PKCE) runs behind
+        an IN-MEMORY session store that is never persisted and never a cookie:
+        Socialite's PKCE helpers reach for a session unconditionally, so the
+        driver mints its state and verifier into that store, RSpade lifts both
+        out and parks them in sso.state exactly as it parks its own, and the
+        callback seeds a fresh store from the parked values. The contract
+        above does not move; only where the state was minted changes.
+
+    THE PENDING IDENTITY IS HALF-AUTHENTICATED
+        A provider proving who owns a Google account is not yet a statement
+        about who may use this application. So a pending identity is inert
+        data with its own expiry - exactly as Rsx_Two_Factor parks a passed
+        password - and NOTHING IS SIGNED IN while one exists.
+        Rsx_Sso::link_pending() is the redemption, and it is the application
+        that decides it may happen.
+
+    THE NORMALIZED IDENTITY - what every hook and screen receives:
+
+            provider_key       'google', 'x', or your custom key
+            provider_user_key  the provider's own subject identifier, stored
+                               exactly as asserted, never parsed
+            email              string or NULL
+            email_verified     bool - a CLAIM, never an inference
+            name               string or NULL
+            avatar_url         string or NULL
+
+        EVERY FIELD BUT THE FIRST TWO MAY BE NULL and every policy must be
+        written for that. email_verified is true only where the provider
+        EXPLICITLY asserts it in the raw payload: Google and Apple do;
+        Microsoft, Facebook and X assert nothing of the kind and therefore
+        report false.
+
+        provider_user_key, not provider_user_id: it is an opaque string handle
+        minted by somebody else, and SCHEMA-TYPE-01 reserves an _id suffix for
+        integers. The name is identical at every layer - column, model,
+        identity array, JSON - because RSpade does not alias field names.
+
+    FAILURE, AND THE THROTTLE
+        Every path out of the callback is a REDIRECT. This is a navigation,
+        not an endpoint, and there is nowhere to render an error: a failed
+        sign-in lands back on /login with a flash.
+
+        A failure is recorded once, through
+        Login_History::record_failure(..., Login_History::STATUS_FAILED_SSO),
+        WHICH ALREADY FEEDS Login_Throttle. Login_Throttle::record_failure()
+        is never called beside it - that would count one failure twice and
+        halve the real budget, and the halving would only ever be discovered
+        by a user locked out early. The same rule as STATUS_FAILED_2FA.
+
+        THE USER-FACING SENTENCES, and they are deliberately few:
+
+            "That sign-in took too long. Please try again."
+                the state did not match, or the window closed.
+            "We could not complete that sign-in. Please try again."
+                the provider refused the code, the network did not cooperate,
+                or what came back was not usable.
+            "No account is connected to this sign-in."
+                the fail-closed default: no sso.identity.unlinked handler, or
+                every one declined.
+            "That account is already connected to a different sign-in."
+                the takeover refusal (LINKING below).
+
+        SAYING MORE WOULD BE AN ENUMERATION ORACLE. "No account is connected
+        to that Google address" tells a stranger which addresses hold accounts
+        here. Which check failed matters to the log, never to the screen -
+        Sso_Failed_Exception carries a user-safe message BY CONTRACT.
+
+        A half-configured provider is a different kind of failure entirely: a
+        RuntimeException naming the literal .env keys, because nobody at a
+        keyboard can act on it and the person who can needs the detail.
+
+    UNKNOWN AND DISABLED ARE THE SAME 404
+        /_sso/<key>/begin and /_sso/<key>/callback answer 404 for a key that
+        is not live, whether it is unknown or merely switched off: "microsoft
+        is configured here but switched off" is a fact about the install that
+        a stranger walking /_sso/ URLs has no reason to collect. A
+        HALF-CONFIGURED provider still throws - a 404 that swallowed an
+        operator's misconfiguration would be the one failure nobody ever
+        finds.
+
+    THE APPLE CALLBACK
+        Sign in with Apple returns its authorization by POSTing the browser
+        back (response_mode=form_post, which Apple requires whenever name or
+        email is scoped). That POST is cross-site: it carries Origin:
+        appleid.apple.com and arrives WITHOUT the SameSite=Lax session cookie,
+        so there is no session, no token and nothing a CSRF check could pass.
+
+        Rsx_Csrf::enforce() therefore exempts EXACTLY ONE PATH, spelled
+        literally: /_sso/apple/callback (Rsx_Sso::APPLE_CALLBACK_PATH). The
+        exemption is safe because THAT LEG DOES NO WORK. It reads no session,
+        checks no state, resolves no provider and touches no database: it
+        303-redirects to the same path as a GET, carrying code, state and
+        Apple's one-shot user blob on the query string. The top-level GET
+        navigation that follows DOES carry the Lax cookie, and every decision
+        happens there. The three parameters are a WHITELIST, not a
+        pass-through.
+
+        The exemption is path-exact: /_sso/google/callback and
+        /_sso/apple/callbackx are enforced normally, and the test suite pins
+        that pair.
+
+THE POLICY HOOKS
+    Five hooks, all resolved through the ordinary event system with handlers
+    in /rsx/handlers/. The first is the policy; the rest are wiring. Every one
+    fails closed or fails loud when absent - deleting a handler switches a
+    behaviour off, it never opens one up.
+
+    sso.identity.unlinked           (resolve)
+        A provider proved somebody owns an account and nothing here is
+        connected to it. Receives the normalized identity. RETURN A
+        DESTINATION URL to take responsibility for it, or NULL to decline.
+
+        All handlers declining - or no handler at all - is FAIL-CLOSED: the
+        pending identity is discarded and the user is returned to the login
+        page with "No account is connected to this sign-in." The framework
+        will not invent an answer, because the invention would be "create an
+        account", and that is the one decision a framework must never make on
+        an application's behalf.
+
+    sso.login.authorize             (gate)
+        May THIS account sign in? Receives {login_user, identity}. TRUE
+        permits; anything else denies, and a returned STRING is shown to the
+        user as the reason. Open by default (no handlers = permitted), which
+        is correct: the framework has no account states of its own to enforce.
+
+        IT MUST MIRROR YOUR PASSWORD DOOR. A federated sign-in enforcing LESS
+        than the password login is a way around the checks, and a check that
+        exists on one door only is worse than no check because the weaker door
+        is the one nobody remembers. When the application grows a
+        suspended/pending-approval state, it is enforced here and in the login
+        function, in the same change.
+
+    sso.two_factor.verify_url       (resolve)
+        Where this application asks for a second factor. Receives
+        {login_user}, returns the URL. REQUIRED whenever any identity can hold
+        a factor and skip_two_factor is false: a null answer is a
+        shouldnt_happen(), raised BEFORE the challenge begins, because
+        beginning one logs the session out and a browser left logged out with
+        nowhere to answer is not a state to hand a user.
+
+    sso.login.destination           (resolve)
+        Where a completed federated sign-in lands. Receives {login_user};
+        default '/'. Return the SAME function your password login returns - a
+        destination computed twice drifts, and the drift shows up as "signing
+        in with Google skips the site picker", which nobody reports as a bug.
+
+    sso.link.destination            (resolve)
+        Where a completed CONNECT lands. Receives {login_user, identity};
+        default '/'. The template returns its Password & Security screen, so
+        the user sees the row they just created.
+
+THE FOUR POLICY MODES
+    All four are a rewrite of ONE method - the sso.identity.unlinked handler.
+    Pick the one that matches your product; nothing else in the subsystem
+    changes.
+
+    1. VERIFIED-EMAIL MATCH (what the template ships, invite-aware)
+        Connect a provider identity to an account it can PROVE belongs to the
+        same person, and to nothing else.
+
+            #[OnEvent('sso.identity.unlinked', priority: 10)]
+            public static function unlinked($data)
+            {
+                $email = isset($data['email']) ? trim((string) $data['email']) : '';
+
+                if ($email === '') {
+                    return null;                 // X and Facebook can send none
+                }
+
+                if (!empty($data['email_verified'])) {
+                    $login_user = Login_User_Model::where('email', $email)->first();
+
+                    if ($login_user !== null) {
+                        try {
+                            return Rsx_Sso::consume_pending_and_login($login_user);
+                        } catch (Sso_Failed_Exception $e) {
+                            Flash_Alert::error($e->getMessage());
+
+                            return Rsx::Route('Login_Controller::index');
+                        }
+                    }
+                }
+
+                $invitation = self::_open_invitation_for($email);
+
+                if ($invitation !== null) {
+                    return Rsx::Route('Accept_Invite_Controller::index',
+                                      ['code' => $invitation->invite_code]);
+                }
+
+                return null;
+            }
+
+        THE SECOND BRANCH IS WHAT MAKES "Continue with Google" WORK AS A
+        SIGN-UP BUTTON FOR AN INVITEE WITHOUT MAKING IT ONE FOR A STRANGER.
+        The invitee has no account to match, so they are sent into the
+        ordinary accept-invite flow with the identity STILL PENDING, and the
+        accept flow connects it when the account is created. No verification
+        is needed on that branch and none is implied: it grants nothing, and
+        the link is written only when the address the invitation names is the
+        address the provider asserted.
+
+        *** THE ACCOUNT-TAKEOVER WARNING. NEVER MATCH AN UNVERIFIED EMAIL. ***
+
+        A provider that lets a user type any address into a profile and hands
+        it over unverified is handing over a CLAIM, not a fact. Matching a
+        claim against login_users means anybody who can name your email
+        address at such a provider signs in as you - no password, no
+        notification, no trace but a login row. email_verified is the
+        provider's own assertion and it is the ONLY thing that makes the
+        match safe. Never widen the condition to "we have an email", and
+        never accept an address a user typed into a form as equivalent.
+
+    2. AUTO-PROVISION
+        Any provider identity gets an account. Open signup, expressed through
+        SSO.
+
+            #[OnEvent('sso.identity.unlinked', priority: 10)]
+            public static function unlinked($data)
+            {
+                $email = isset($data['email']) ? trim((string) $data['email']) : '';
+
+                if ($email === '' || empty($data['email_verified'])) {
+                    return null;      // an unverified address is not an identity
+                }
+
+                $login_user = Login_User_Model::where('email', $email)->first();
+
+                if ($login_user === null) {
+                    $login_user = new Login_User_Model();
+                    $login_user->email = $email;
+                    // No password anybody knows: an unusable hash, not null -
+                    // every password path runs Hash::check() against this column.
+                    $login_user->password = Hash::make(random_hash(64));
+                    $login_user->is_activated = 1;
+                    $login_user->save();
+
+                    // ... and this application's own site profile row.
+                }
+
+                return Rsx_Sso::consume_pending_and_login($login_user);
+            }
+
+        THE VERIFIED CHECK IS NOT OPTIONAL HERE EITHER. Auto-provisioning on
+        an unverified address lets a stranger pre-register the address of
+        somebody who has not signed up yet, and own the account they later
+        try to create.
+
+    3. INVITE-ONLY, STRICT
+        Drop branch 1 of mode 1 and keep branch 2. Nobody signs in until an
+        administrator has invited their address, and a provider identity is
+        only ever connected during an invite acceptance. The strictest mode
+        the framework supports without custom screens, and the right default
+        for an internal tool.
+
+    4. FINISH REGISTRATION
+        The product needs more than an email address before an account can
+        exist - a company name, a plan, an accepted agreement. Decline
+        nothing: send the browser to a page of your own.
+
+            #[OnEvent('sso.identity.unlinked', priority: 10)]
+            public static function unlinked($data)
+            {
+                return Rsx::Route('Signup_Controller::finish');
+            }
+
+        That page reads Rsx_Sso::pending() - safe to render: an asserted
+        email, a name and an avatar, carrying no token and conferring nothing
+        - prefills what it can, and on submit creates the account and calls
+        Rsx_Sso::link_pending($login_user) INSIDE the same transaction. The
+        worked example is the template's accept-invite flow, where a matching
+        pending identity makes the password field optional server-side and
+        the connection is written in the transaction that creates the account
+        (rolling back if the link is refused, so an unreachable account is
+        never left behind).
+
+        The window is rsx.sso.pending_window_minutes; a page that expires
+        mid-form gets a user-safe refusal from link_pending(), not a broken
+        account.
+
+LINKING (CONNECTED ACCOUNTS)
+    A signed-in user connecting a provider to the account they already have.
+    Same ceremony, intent=link:
+
+        <Sso_Buttons $intent="link" />
+
+    or from a settings screen driving the Ajax surface:
+
+        Rsx_Sso_Controller.link_begin({provider: 'google'})   -> {url}
+        window.location = url;                                // a NAVIGATION
+
+    link_begin hands back a URL rather than redirecting, because a redirect
+    answered to XMLHttpRequest is followed by the transport, not by the page -
+    and it is the top-level navigation that carries the SameSite=Lax cookie
+    the ceremony depends on.
+
+    intent=link IS REFUSED WHEN NOBODY IS SIGNED IN, never downgraded to a
+    sign-in. Quietly turning it into a login would be the worst outcome of an
+    expired session: a user pressing "Connect" would be signed in as whoever
+    owns the provider account instead, having asked for nothing of the sort.
+
+    ONE PROVIDER ACCOUNT, ONE LOCAL IDENTITY. Connecting an account that is
+    already connected somewhere else is refused with "That account is already
+    connected to a different sign-in." The unique index on (provider_key,
+    provider_user_key) enforces the same rule one layer down, so the refusal
+    holds under a race. Re-linking to the SAME identity is not an error: it
+    refreshes the snapshot and returns the existing row.
+
+    IMPERSONATION IS REFUSED by every method that changes what an identity is
+    connected to - begin(intent: link), link_pending() and unlink(). An
+    administrator viewing an account must never be able to attach a Google
+    account to it: that is an authentication backdoor wearing a support tool's
+    clothes, and the user whose account it is would have no way to see it
+    happen. Same rule, same reason, as 2FA enrollment. unlink_all() is the
+    exception and the asymmetry is deliberate - its caller is a shell.
+
+    A DORMANT CONNECTION IS STILL A CONNECTION. Switching a provider off
+    deletes nothing, so a row naming a provider this install no longer
+    configures is normal: identities_list() still returns it (the key stands
+    in for the label), a settings screen must still offer to remove it, and it
+    starts working again the moment the credentials come back. Hiding it would
+    leave the user unable to remove something that is really there.
+
+    UNLINK DOES NOT CHECK THAT A PASSWORD EXISTS. Whether an account may be
+    left with no way to sign in is application vocabulary - some products
+    require a password, some are SSO-only, some accept being locked out as the
+    user's choice. An application that cares checks before calling it.
+
+TWO-FACTOR INTERPLAY
+    A FEDERATED SIGN-IN STILL FACES THIS APPLICATION'S OWN SECOND FACTOR, by
+    default and on purpose. The provider proved who owns the Google account,
+    which is not the same statement as "the person at this keyboard is allowed
+    into this account", and a user who deliberately enrolled a factor here did
+    not consent to it being skippable by signing in another way.
+
+    So when Rsx_Two_Factor::is_enabled($login_user) and
+    rsx.sso.skip_two_factor is false, _complete_login() resolves
+    sso.two_factor.verify_url, begins the challenge - which LOGS THE SESSION
+    OUT - and redirects there. Nothing is signed in until the factor passes,
+    exactly as in the password flow, and the same verification endpoint and
+    <Two_Factor_Challenge> screen serve both doors with no change.
+
+    THE VERIFY URL IS RESOLVED BEFORE THE CHALLENGE BEGINS. Resolving
+    afterwards and failing would leave a browser logged out, holding a pending
+    challenge, with nowhere to answer it.
+
+    rsx.sso.skip_two_factor => true is for ONE situation: the identity
+    provider IS the organization's authentication authority and already
+    enforces its own MFA - a corporate Entra tenant with conditional access,
+    say - so that a second challenge is duplicated ceremony rather than a
+    second factor. It is not a convenience flag.
+
+CUSTOM PROVIDERS
+    Two steps, and the framework does not change.
+
+    1. INSTALL AN ADAPTER at the application layer:
+
+           php artisan rsx:composer require socialiteproviders/okta
+
+       laravel/socialite and socialiteproviders/manager are on the framework's
+       exposed dependency list precisely so a provider package finds them
+       rather than installing a second copy of each alongside the framework's.
+
+    2. DECLARE IT in rsx/resource/config/rsx.php:
+
+           'sso' => [
+               'custom' => [
+                   'okta' => [
+                       'provider' => \SocialiteProviders\Okta\Provider::class,
+                       'label' => 'Okta',
+                       'icon_file' => '/path/to/okta.svg',  // or 'icon_svg' => '<svg .../>'
+                       'enabled' => true,
+                       'client_id' => env('SSO_OKTA_CLIENT_ID'),
+                       'client_secret' => env('SSO_OKTA_CLIENT_SECRET'),
+                       'base_url' => env('SSO_OKTA_BASE_URL'),   // any extra key
+                   ],                                            // the adapter declares
+               ],
+           ],
+
+    THERE IS NO SocialiteWasCalled LISTENER AND NO SERVICE PROVIDER TO
+    REGISTER. RSpade never calls Socialite::driver() by name - the bridge
+    constructs the class you named through buildProvider() and hands the extra
+    keys to setConfig() when the adapter has it, which is the mechanism the
+    built-in Microsoft and Apple adapters use too. EVERY KEY IN THE ENTRY THAT
+    IS NOT FRAMEWORK VOCABULARY (enabled, provider, label, icon_svg,
+    icon_file, client_id, client_secret) IS PASSED THROUGH to the adapter,
+    which is how an Okta base URL or a Keycloak realm reaches a driver the
+    framework has never heard of.
+
+    A custom key behaves identically everywhere else: it renders a button, it
+    routes at /_sso/okta/*, it stores under its own provider_key, and a PKCE
+    adapter gets the same in-memory shim without RSpade having heard of it.
+
+    GENERIC OIDC IS DELIBERATELY NOT A BUILT-IN. A provider package for the
+    identity server in question is this seam's answer.
+
+    An entry naming no installed class throws, quoting the config path.
+    A missing brand mark is an empty string, not an error: a button with a
+    label and no mark is a working button.
+
+THE COMPONENT
+    <Sso_Buttons />
+        One "Continue with ..." anchor per live provider, in roster order.
+
+        Args:
+            $intent   'login' (default), or 'link' to connect the provider to
+                      the identity that is ALREADY signed in.
+
+        IT RENDERS NOTHING WHEN NOTHING IS ENABLED - not an error, not an
+        empty box, not a heading. window.rsxapp.sso is ABSENT entirely when no
+        provider is live (the turnstile pattern), so a page that drops this in
+        unconditionally simply shows nothing.
+
+        THE "or" DIVIDER IS THE PAGE'S JOB, not the component's, for exactly
+        that reason: a page that wants a rule above the buttons asks the same
+        question the component asks - Rsx_Sso::is_enabled() in PHP,
+        Rsx_Sso.is_enabled() in JS - and puts both halves inside one
+        conditional.
+
+        IT IS LAYOUT-NEUTRAL: no card, no heading, no outer spacing. The host
+        owns the box, which is what lets one component serve a narrow login
+        card and a wide settings section.
+
+        THE BUTTONS ARE ANCHORS, NOT AJAX. A sign-in ceremony is a browser
+        navigation: an Ajax call could not leave, and a fetch of the callback
+        would arrive without the cookie the ceremony depends on.
+
+        BRAND MARKS ARE THE PROVIDERS'. The shipped SVGs are the official
+        marks, inlined because the framework serves no static assets. Every
+        provider publishes brand guidelines governing the mark, the wording
+        beside it and the button's minimum size, and an application that
+        restyles these buttons is responsible for staying inside them -
+        Google's in particular are a review requirement, not advice. "Continue
+        with X" is the phrasing all five permit.
+
+        They are OUTLINE buttons, against the house rule that buttons are
+        filled: every fill colour available is either the application's
+        primary - asserting that signing in with Google is the page's primary
+        action - or a provider's own brand colour, which several of their
+        guidelines forbid.
+
+    Rsx_Sso.js (browser)
+        Rsx_Sso.enabled_providers()   [{key, label, begin_url, icon_svg}]
+        Rsx_Sso.is_enabled()          bool
+
+        A reader over window.rsxapp.sso and nothing else. The entries are
+        PUBLIC BY CONTRACT: no client id, no secret, nothing that is not
+        already visible in the authorize URL the button leads to.
+
+THE FACADE
+    Roster
+        Rsx_Sso::enabled_providers(): array
+            [{key, label, begin_url, icon_svg}] for every live provider.
+            THROWS on a half-configured one rather than skipping it.
+        Rsx_Sso::is_enabled(): bool
+        Rsx_Sso::provider(string $key): array
+            One live provider, fully resolved, or a throw.
+        Rsx_Sso::begin_path($key) / ::callback_path($key): string
+
+    The ceremony (called by Rsx_Sso_Controller, not by applications)
+        Rsx_Sso::begin(string $key, string $intent = 'login'): RedirectResponse
+        Rsx_Sso::handle_callback(string $key, Request $request): RedirectResponse
+
+    The pending identity
+        Rsx_Sso::pending(): ?array
+            The parked identity, or null when it is absent OR expired - the
+            same answer, which is the only one a finish-registration screen
+            needs. Safe to render.
+        Rsx_Sso::link_pending(Login_User_Model|int $lu): Sso_Identity_Model
+            Connect it and consume it. Throws Sso_Failed_Exception when
+            nothing is pending or it belongs to somebody else.
+        Rsx_Sso::consume_pending_and_login(Login_User_Model $lu): string
+            link_pending() plus the sign-in; returns the destination URL. What
+            an sso.identity.unlinked handler calls once it has said yes.
+        Rsx_Sso::abandon_pending(): void
+
+    Connections
+        Rsx_Sso::identities_list(int|Login_User_Model $lu): array
+            METADATA ONLY, oldest first: {id, provider_key, provider_label,
+            email, name, last_login_at, created_at}.
+        Rsx_Sso::unlink(int|Login_User_Model $lu, int $identity_id): void
+            Scoped to that identity; a row that is not theirs is a no-op.
+            Refuses while impersonating.
+        Rsx_Sso::unlink_all(int|Login_User_Model $lu): void
+            The operator/account-deletion path. Does NOT consult
+            impersonation.
+
+    Constants
+        Rsx_Sso::GOOGLE / MICROSOFT / FACEBOOK / APPLE / X name the BUILT-INS,
+        never the permitted set. STATE_KEY / PENDING_KEY are the session-value
+        keys; INTENT_LOGIN / INTENT_LINK the two intents; BASE_PATH the
+        '/_sso' prefix; APPLE_CALLBACK_PATH the one CSRF-exempt path.
+
+FRAMEWORK ENDPOINTS
+    Rsx_Sso_Controller, class-gated #[Auth('public')] - the ceremony URLs are
+    requested by somebody who is not signed in, which is the point of them.
+    What guards them is the parked state, not a gate.
+
+        GET  /_sso/:provider/begin      [?intent=link]
+        GET  /_sso/:provider/callback
+        POST /_sso/:provider/callback   Apple only; 303s to the GET leg
+
+    Ajax, #[Auth('is_logged_in')], for a Connected Accounts screen:
+
+        Rsx_Sso_Controller.identities_list()
+            The signed-in identity's connections. Reads no argument.
+        Rsx_Sso_Controller.identity_unlink({id})
+            Disconnects one and answers with the REFRESHED LIST, so a screen
+            cannot paint two states that disagree. Refuses while impersonating.
+        Rsx_Sso_Controller.link_begin({provider})
+            {url} to navigate to. Refuses a provider that is not live, and
+            refuses while impersonating.
+
+    The controller is FORCE-INCLUDED in every bundle, like
+    Rsx_Two_Factor_Controller: the buttons render on the LOGIN page (its own
+    bundle, outside the SPA) and the connections list in a settings SPA, while
+    its PHP source is framework core and therefore in no bundle's file set.
+
+CLI COMMANDS
+    --user=<id|email> is REQUIRED on both and resolves against login_users.
+    --json wraps the result in the standard {"ok": true, "command": ...,
+    "data": {...}} envelope (and a non-zero exit with {"ok": false, "error":
+    ...} on failure). Datetimes are raw ISO strings.
+
+    rsx:users:sso:dump --user=<id|email> [--json]
+        Every provider account this identity can sign in with. THE QUESTION IT
+        ANSWERS IS "why can this person get in?", asked at the moment nobody
+        can look it up in a browser - the settings screen shows the same list,
+        but only to the person holding the account.
+
+        It prints NO SECRET, and that is not a decision but the table:
+        _sso_identities holds no token and no refresh token by design.
+
+        ZERO CONNECTIONS EXITS 0. This is a state dump, not an assertion.
+
+        A connection whose provider is no longer configured reports
+        provider_label null in JSON and "(no longer configured)" for a human -
+        it is still there and still removable.
+
+    rsx:users:sso:unlink --user=<id|email> [--id=<connection>] [--all] [--json]
+        EXACTLY ONE OF --id AND --all IS REQUIRED. Neither is refused rather
+        than defaulted to either meaning: guessing --all would disconnect
+        every provider where the operator meant one; guessing nothing would
+        print a success over an account nothing happened to. Both together is
+        refused too.
+
+        --id IS CHECKED FOR OWNERSHIP HERE, before the facade: "disconnected"
+        printed over an id belonging to somebody else is an operator who
+        believes an account is secured when it is not.
+
+        IT DOES NOT PROMPT, and that is the deliberate difference from
+        rsx:users:2fa:remove. Removing a second factor destroys a seed nobody
+        can recover; disconnecting a provider destroys a row the user
+        re-creates by pressing "Continue with ..." once.
+
+        It does not check whether the account keeps any way to sign in - see
+        LINKING.
+
+THE TABLE - _sso_identities
+    One row per (login identity, provider account) connection.
+
+        id                 BIGINT
+        login_user_id      BIGINT, FK -> login_users ON DELETE CASCADE
+        provider_key       VARCHAR(50), a REGISTRY STRING and not an enum
+        provider_user_key  VARCHAR(255), the provider's subject, as asserted
+        email              VARCHAR(255) NULL, asserted AT LINK TIME
+        name               VARCHAR(255) NULL
+        avatar_url         TEXT NULL
+        last_login_at      TIMESTAMP(3) NULL - when THIS CONNECTION last
+                           completed a sign-in (login_users.last_login is the
+                           other question)
+        UNIQUE (provider_key, provider_user_key)
+
+    THE OWNER IS A LOGIN IDENTITY, NOT A SITE USER, for exactly the reason a
+    second factor is: a Google account proves who is holding the browser,
+    which is what login_users is. A users row is an authorization scope inside
+    one tenant, and connecting the same Google account once per tenant would
+    be wrong. The client portal (Portal_User_Model) is a separate identity
+    model and is NOT covered by this subsystem.
+
+    NO TOKEN IS STORED, deliberately. RSpade uses a provider to ANSWER A
+    QUESTION - "is this the person who owns that account?" - and never to act
+    on the user's behalf afterwards, so an access token has nothing to do here
+    except sit in a table waiting to leak. An application that needs one
+    stores it in its own table with its own lifecycle.
+
+    THE UNIQUE INDEX IS THE SECURITY MODEL. Without it a second row could
+    point the same Google account at a second account, and "sign in with
+    Google" would resolve to whichever was read first.
+
+    email/name/avatar_url are a SNAPSHOT for a settings screen, never a source
+    of truth - the account's real address lives on login_users.
+
+    There is no fetch() and there should not be: the browser is handed
+    metadata assembled by identities_list(), never a row.
+
+CONFIGURATION
+    config('rsx.sso') - four keys.
+
+        'providers'
+            The five built-ins, each {enabled, client_id, client_secret},
+            plus 'tenant' on microsoft and team_id/key_id/private_key on
+            apple. See SETUP.
+
+        'custom' => []
+            The extension seam. See CUSTOM PROVIDERS.
+
+        'skip_two_factor' => false
+            Whether a provider sign-in skips this application's own second
+            factor. See TWO-FACTOR INTERPLAY.
+
+        'pending_window_minutes' => 10
+            A SECURITY WINDOW, NOT AN OPERATION TIMEOUT, and the exact
+            analogue of rsx.two_factor.challenge_window_minutes. It bounds no
+            work: no HTTP call, no redirect and no token exchange is cancelled
+            when it expires, and expiry degrades to a working outcome the user
+            can act on. Two half-authenticated states live in it - an
+            in-flight ceremony, and a pending identity possibly sitting on an
+            unattended finish-registration screen. Ten minutes is long enough
+            to read a consent screen, approve a push and type a name; it is
+            not long enough to leave a proven third-party identity redeemable
+            for the rest of the afternoon. Must be at least 1.
+
+    There is NO global enable switch: a provider is live because its own
+    enabled flag is true.
+
+    Dependencies: laravel/socialite and the socialiteproviders adapters ship
+    installed in the framework. laravel/socialite and
+    socialiteproviders/manager are on dependencies.exposed_composer so that a
+    downstream provider package resolves against them - see rsx:man
+    dependencies. Application code talks to Rsx_Sso, never to Socialite.
+
+TESTING NOTES
+    THE TEST SEAM IS THE CUSTOM-PROVIDER SEAM. The framework suite drives the
+    whole ceremony through a fake provider registered in rsx.sso.custom, so
+    every ceremony test is also a test of the extension seam, and no test
+    needs a network or a credential. An application testing its own policy
+    does the same: register a provider class of your own under
+    rsx.sso.custom, and drive begin()/handle_callback() against it.
+
+    A REAL TOKEN EXCHANGE IS NOT UNIT-TESTABLE and is not attempted: it needs
+    real developer-console applications and live credentials, and it is an
+    operator-run verification. The framework suite pins the shapes instead -
+    the authorize URL, the parked state, the single-use rule, the branch
+    table, the CSRF exemption's exactness.
+
+    DO NOT COMMIT AN ENABLED PROVIDER to make a rendering test pass: enabled
+    config is a live misconfiguration on every install that pulls it. Verify
+    rendering with a temporary config edit and rsx:debug.
+
+    Session values are the ceremony's whole state, so a test that needs a
+    parked ceremony parks one with Session::put_value() rather than driving a
+    browser.
+
+NOTES AND GOTCHAS
+    - provider_user_key, never provider_user_id. SCHEMA-TYPE-01 reserves an
+      _id suffix for integers, and this is somebody else's opaque handle.
+
+    - Every policy must survive a NULL EMAIL. X routinely sends none and
+      Facebook can withhold one.
+
+    - email_verified is FALSE for Microsoft, Facebook and X - they assert
+      nothing of the kind. A verified-email-match policy therefore declines
+      every sign-in from those three, by design.
+
+    - window.rsxapp.sso is ABSENT, not empty, when no provider is live. Test
+      with Rsx_Sso.is_enabled(), never by indexing the key.
+
+    - Do not call Login_Throttle::record_failure() beside a STATUS_FAILED_SSO
+      record_failure(). One failure, one recorder.
+
+    - Apple returns a name ONCE, on the first authorization. Capture it then
+      or never.
+
+    - Microsoft client secrets expire (24 months maximum). A sign-in that
+      stopped working on a date nobody deployed on is usually that.
+
+    - Switching a provider off deletes nothing. Existing connections stay,
+      stay listed, and start working again when it comes back.
+
+    - Impersonation refuses every change to what an identity is connected to.
+      unlink_all() is the shell's path and is the one exception.
+
+    - A pending identity confers NOTHING. It is safe to render and it is not a
+      login.
+
+SEE ALSO
+    session      - Login_History's status vocabulary, Login_Throttle,
+                   impersonation, the session-value store
+    auth         - the identity model (login_users + users), RsxAuth
+    two_factor   - the second factor a federated sign-in still faces
+    event_hooks  - the trigger kinds the five policy hooks use
+    csrf         - the exemption list the Apple callback path sits on
+    turnstile    - human verification on the password form beside the buttons
+    config_rsx   - the full framework configuration reference
+    dependencies - laravel/socialite on the exposed list, and why
+
+VERSION
+    RSpade Framework 1.0
+    Last Updated: 2026-09-04
+
+SSO(1)                           RSpade Manual                           SSO(1)

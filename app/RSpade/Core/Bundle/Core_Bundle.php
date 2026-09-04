@@ -37,6 +37,7 @@ class Core_Bundle extends Rsx_Bundle_Abstract
                 'app/RSpade/Core/Authorship',  // Authorship display components (Record_Author)
                 'app/RSpade/Core/Turnstile',  // Cloudflare Turnstile widget (Turnstile_Input)
                 'app/RSpade/Core/TwoFactor',  // Second-factor components (Totp_Enrollment, Passkey_Register, Two_Factor_Challenge) + Rsx_Two_Factor.js
+                'app/RSpade/Core/Sso',  // Federated sign-in buttons (Sso_Buttons) + Rsx_Sso.js - the login page is its own bundle
                 'app/RSpade/Breadcrumbs',  // Progressive breadcrumb resolution
                 'app/RSpade/Lib',
             ],

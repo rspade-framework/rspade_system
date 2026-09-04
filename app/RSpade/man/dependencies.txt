@@ -236,12 +236,21 @@ FRAMEWORK-PROVIDED PACKAGES
                 'phpoffice/phpspreadsheet',
                 'league/csv',
                 'brick/money',
+                'laravel/socialite',
+                'socialiteproviders/manager',
             ],
             'exposed_npm' => [
                 'dompurify',
                 'google-libphonenumber',
             ],
         ],
+
+    laravel/socialite and socialiteproviders/manager are exposed for an EXTENSION
+    SEAM rather than for direct use: Rsx_Sso wraps both entirely and application
+    code never calls Socialite. They are on the list because a downstream provider
+    package (`rsx:composer require socialiteproviders/okta` and friends) depends on
+    them, and without the exposure it would install a second copy of each alongside
+    the framework's. See `rsx:man sso` (CUSTOM PROVIDERS).
 
     Recording semantics
         Requiring an exposed package writes a declaration - the package name and
@@ -403,3 +412,4 @@ SEE ALSO
     framework_fork   - framework fork / distribution model
     rsx_upstream     - php artisan rsx:framework:pull (pulling framework updates)
     config_rsx       - framework configuration (rsx.php)
+    sso              - federated sign-in; why laravel/socialite is exposed

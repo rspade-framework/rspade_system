@@ -1493,6 +1493,20 @@ class BundleCompiler
             }
         }
 
+        // And once more, for the same structural reason as the second-factor controller: the
+        // SSO components live in Core_Bundle (so they reach every bundle), and <Sso_Buttons>
+        // renders on the LOGIN page - a bundle that contains no application controller at
+        // all. Rsx_Sso_Controller's PHP source is framework core, so no bundle's file set
+        // carries it and the loop above would miss its stub, leaving "Rsx_Sso_Controller is
+        // not defined" the moment a settings screen lists connected accounts.
+        $sso_controller_source = 'app/RSpade/Core/Sso/Rsx_Sso_Controller.php';
+        if (isset($manifest_files[$sso_controller_source]['js_stub'])) {
+            $sso_stub = rsx_project_file_path($manifest_files[$sso_controller_source]['js_stub']);
+            if (file_exists($sso_stub)) {
+                $stubs[] = $sso_stub;
+            }
+        }
+
         console_debug('BUNDLE', 'Found ' . count($stubs) . ' JS stubs total');
 
         return array_unique($stubs);

@@ -52,12 +52,14 @@ async function compileScss(inputFile, outputFile, isProduction, enableSourceMaps
     // Add inline source map if enabled
     // Using embedded source maps for better debugging experience
     if (enableSourceMaps && result.sourceMap) {
-        // Add file boundaries in expanded mode for easier debugging
-        if (!isProduction) {
-            cssContent = cssContent.replace(/\/\* ============ START: (.+?) ============ \*\//g,
-                '\n/* ======= FILE: $1 ======= */\n');
-            cssContent = cssContent.replace(/\/\* ============ END: .+? ============ \*\//g, '');
-        }
+        // THE CSS TEXT IS FROZEN THE MOMENT SASS RETURNS. The sourcemap describes the
+        // exact bytes in result.css, so any rewrite here - even a cosmetic one - shifts
+        // every mapping after the first edit. A prettifying pass that turned each
+        // "============ START:" marker line into three lines used to live right here, and
+        // it skewed the whole bundle's mappings by +2 lines per file boundary: a rule
+        // twenty components deep resolved ~40 lines early, into a DIFFERENT component's
+        // source file. The master file's START/END marker comments are loud comments and
+        // survive into the output as-is; that is boundary visibility enough.
 
         // Fix sourcemap paths to be relative to project root and remove file:// protocol
         const sourceMap = result.sourceMap;

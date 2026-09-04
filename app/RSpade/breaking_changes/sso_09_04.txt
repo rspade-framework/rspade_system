@@ -1,0 +1,227 @@
+FEDERATED SIGN-IN (SSO) - THE ENGINE SHIPS, THE SCREENS DO NOT
+Date: 2026-09-04
+
+IF YOU DO NOTHING: nothing breaks and nothing changes - your users see no
+    "Continue with Google" button, cannot connect or disconnect a provider
+    account anywhere in your application, and the whole subsystem stays
+    dormant until you switch a provider on in .env, write one
+    sso.identity.unlinked handler, and port the screens described below.
+
+SUMMARY
+    RSpade now ships federated sign-in: "Continue with Google / Microsoft /
+    Facebook / Apple / X" on a login page, and a connected-accounts list
+    behind a settings screen. A sixth provider is one composer package and one
+    config block.
+
+    The framework owns the CEREMONY - the state value, PKCE, the token
+    exchange, the throttle budget, the failure record, and the normalized
+    identity that comes out. Your APPLICATION owns the POLICY - whether an
+    unknown Google account may become an account here, which addresses it may
+    match, where a signed-in identity lands - and it says so through event
+    hooks that all FAIL CLOSED. A framework that guessed at any of those would
+    be inventing "create an account", which it must never do for you.
+
+    All of that arrived with the pull. What did NOT arrive is the interface:
+    the buttons on your login page, the handler file that answers the policy
+    question, and the Connected Accounts section of your settings screen. Those
+    live in /rsx/, which is yours.
+
+    Full contract: php artisan rsx:man sso
+    Recipes and gotchas: the `rspade:sso` skill
+
+WHAT YOU ALREADY HAVE
+    Nothing to do in this section - it is all in system/ and it is all live.
+
+    Rsx_Sso                    The facade, and the only class your code
+                               touches: enabled_providers(), is_enabled(),
+                               pending(), link_pending(),
+                               consume_pending_and_login(), identities_list(),
+                               unlink(), unlink_all().
+    Rsx_Sso_Controller         GET /_sso/:provider/begin and
+                               /_sso/:provider/callback (plus the Apple
+                               form_post POST leg), and the Ajax surface a
+                               settings screen drives: identities_list(),
+                               identity_unlink({id}), link_begin({provider}).
+                               Force-included in every bundle.
+    <Sso_Buttons />            The "Continue with ..." buttons, with the
+                               official brand marks inlined. $intent="link"
+                               is the settings spelling. Renders NOTHING when
+                               no provider is enabled.
+    Rsx_Sso (JS)               window.rsxapp.sso reader: enabled_providers(),
+                               is_enabled(). The key is ABSENT, not empty,
+                               when nothing is live.
+    _sso_identities            The table, applied by migrate. One row per
+                               (login identity, provider account), UNIQUE on
+                               (provider_key, provider_user_key), no tokens
+                               stored.
+    config('rsx.sso')          providers / custom / skip_two_factor /
+                               pending_window_minutes.
+    SSO_* env keys             SSO_{GOOGLE,MICROSOFT,FACEBOOK,APPLE,X}_ENABLED
+                               plus each provider's credentials,
+                               SSO_MICROSOFT_TENANT (default 'common'), and
+                               Apple's SSO_APPLE_{TEAM_ID,KEY_ID,PRIVATE_KEY}.
+                               Every one defaults to off/empty, so nothing
+                               changes until you set them.
+    rsx:users:sso:dump         --user=<id|email> [--json] - every provider
+                               account an identity can sign in with.
+    rsx:users:sso:unlink       --user=<id|email> (--id=<n> | --all) [--json] -
+                               the operator escape hatch. No prompt.
+    Login_History::STATUS_FAILED_SSO
+                               The failure status, which already feeds
+                               Login_Throttle.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    THREE THINGS, and the first one is not optional if you enable a provider
+    at all.
+
+    1. THE POLICY HANDLER. Without an #[OnEvent('sso.identity.unlinked')]
+       handler, every provider account that is not already connected to a
+       local identity is refused with "No account is connected to this
+       sign-in." That is the deliberate fail-closed default - it is safe, and
+       it means a brand-new provider account can never sign in or sign up.
+       Existing users cannot connect one either, because there is nowhere to
+       press Connect (item 3).
+
+    2. THE LOGIN BUTTONS. Nobody can start a ceremony from your login page
+       until <Sso_Buttons /> is on it. The endpoints exist and answer, but the
+       only way to reach them would be to type a /_sso/ URL by hand.
+
+    3. THE CONNECTED ACCOUNTS SECTION. A signed-in user cannot connect a
+       provider to the account they already have, cannot see which providers
+       are connected, and cannot disconnect one. The operator can do it with
+       rsx:users:sso:unlink; the user cannot do any of it.
+
+    Who is blocked: every user of your application, for signing in and for
+    self-service; and you, for the one policy decision only your product can
+    make.
+
+THE REFERENCE IMPLEMENTATION
+    Release-current and readable on your own disk, under
+    system/app/RSpade/resource/reference_app/ :
+
+    handlers/Sso_Handlers.php
+        THE POLICY, and the file to read first. All five hooks in one class:
+        sso.identity.unlinked (the invite-aware verified-email-match mode,
+        with the account-takeover reasoning written out in full and the other
+        three modes named in a comment block), sso.login.authorize (permits,
+        and explains why it must mirror the password door),
+        sso.two_factor.verify_url, sso.login.destination and
+        sso.link.destination.
+
+    app/login/login_index.blade.php
+        The buttons on a login page, and the "or" divider. Both halves sit
+        inside one @if (Rsx_Sso::is_enabled()) - the component renders nothing
+        on its own when no provider is live, so a page that wants a rule above
+        it has to ask the same question.
+
+    app/login/login_controller.php
+        post_login_destination() made public, so ONE function computes the
+        landing page for the password path and the SSO hook alike. A
+        destination computed twice drifts.
+
+    app/login/accept_invite/accept_invite_controller.php
+        The finish-registration pattern, worked: __matching_pending_identity()
+        detects a parked identity whose asserted address matches the
+        invitation, the password becomes optional server-side in that branch,
+        and Rsx_Sso::link_pending() is called INSIDE the transaction that
+        creates the account - so a refused link rolls the account back rather
+        than leaving one nobody can sign in to.
+
+    app/login/accept_invite/create_account.blade.php
+        The invitee-facing half: the "You're signing up with {provider}"
+        notice and the password field marked optional.
+
+    app/frontend/settings/password_security/settings_password_security_action.jqhtml
+    app/frontend/settings/password_security/settings_password_security_action.js
+    app/frontend/settings/password_security/settings_password_security_action.scss
+        The Connected Accounts section: one row per LIVE provider with a
+        Connect or Disconnect button, PLUS a disconnect-only row for a
+        connection whose provider has since been switched off. The whole
+        section is absent - not empty - when Rsx_Sso.is_enabled() is false.
+        The SCSS rule sizes the inline brand marks.
+
+PORTING IT
+    THE HANDLER IS THE PART THAT IS ACTUALLY A DECISION. The screens are
+    ordinary UI work; the policy is product design, and copying the template's
+    without reading it is the one mistake that has a security consequence.
+
+    1. PICK YOUR POLICY MODE. The man page (php artisan rsx:man sso, THE FOUR
+       POLICY MODES) carries all four with code:
+
+         VERIFIED-EMAIL MATCH   connect a provider identity to an account it
+                                can PROVE belongs to the same person. What the
+                                template ships, invite-aware.
+         AUTO-PROVISION         any verified provider identity gets an
+                                account. Open signup through SSO.
+         INVITE-ONLY, STRICT    nobody signs in until an administrator invited
+                                the address.
+         FINISH REGISTRATION    send the browser to a page of your own that
+                                reads Rsx_Sso::pending(), collects what your
+                                product needs, and calls link_pending() on
+                                submit.
+
+       *** NEVER MATCH AN UNVERIFIED EMAIL. *** A provider that lets a user
+       type any address into a profile hands over a CLAIM, not a fact.
+       Matching a claim against your login_users means anybody who can name
+       your user's address at such a provider signs in as them - no password,
+       no notification. email_verified is the provider's own assertion and it
+       is the only thing that makes a match safe. Google and Apple assert it;
+       Microsoft, Facebook and X do not, so those three will never satisfy a
+       verified-match policy. Write the null-email case too: X routinely sends
+       none, and Facebook's may be declined by the user.
+
+    2. WRITE rsx/handlers/Sso_Handlers.php (any class name; the attributes are
+       what matter). At minimum sso.identity.unlinked. Add
+       sso.two_factor.verify_url if any identity in your install can hold a
+       second factor - it is a shouldnt_happen() without one, because the
+       framework refuses to begin a challenge it cannot tell the user how to
+       answer. Add sso.login.destination pointing at whatever function your
+       password login already returns, and sso.login.authorize enforcing
+       exactly what your password login enforces - no more, and above all no
+       less.
+
+    3. PUT THE BUTTONS ON YOUR LOGIN PAGE, wherever your design puts a
+       secondary sign-in path, guarded by Rsx_Sso::is_enabled() together with
+       whatever divider or heading you want above them.
+
+    4. ADD A CONNECTED ACCOUNTS SECTION wherever your application keeps
+       security settings. It needs no new endpoint: identities_list(),
+       link_begin() and identity_unlink() are framework endpoints already
+       gated #[Auth('is_logged_in')]. Two details are not optional - hide the
+       section entirely when nothing is enabled (window.rsxapp.sso is absent,
+       so a heading would announce a feature that does not exist), and render
+       a disconnect row for a connection whose provider has since been
+       switched off, or the user cannot remove something that is really there.
+
+    5. IF YOUR SIGN-UP OR INVITE FLOW SHOULD ACCEPT A PROVIDER IDENTITY, teach
+       it the pending identity: read Rsx_Sso::pending(), match the address if
+       your flow has one to match, make the password optional in that branch,
+       and call Rsx_Sso::link_pending() inside the same transaction that
+       creates the account.
+
+    YOUR NAVIGATION, YOUR PERMISSION MODEL AND YOUR DESIGN SYSTEM DECIDE THE
+    FINAL PLACEMENT. This is a map, not a diff to paste blindly - the
+    reference app's settings layout and login page are its own, and the
+    framework surfaces they drive are the only part that is fixed.
+
+VERIFICATION
+    1. Configure one provider in .env (Google is the least ceremonial), with
+       https://<your host>/_sso/google/callback registered as the redirect URI
+       in the provider's console.
+    2. Load your login page: the buttons and your divider appear. Set
+       SSO_GOOGLE_ENABLED=false and reload: both are gone, with no empty
+       chrome left behind.
+    3. Press Continue with Google as a user whose account matches your policy:
+       you land where sso.login.destination says, and
+       `php artisan rsx:users:sso:dump --user=<that identity>` shows the
+       connection.
+    4. Press it as an identity your policy declines: you land back on the
+       login page with your policy's message, or the framework's "No account
+       is connected to this sign-in.", and nothing is signed in.
+    5. With a second factor enrolled on the identity, sign in through the
+       provider: you land on your 2FA verify page, NOT signed in, and the
+       challenge completes the login.
+    6. On your settings screen: Connect adds a row, Disconnect removes it, and
+       the list repaints from the endpoint's own answer.
+    7. Sign in twice through the same provider account: the second time is a
+       straight sign-in with no application involvement at all.
