@@ -8,16 +8,17 @@
 namespace App\RSpade\Core\Auth;
 
 use App\RSpade\Core\Auth\Auth_Throttled_Exception;
-use App\RSpade\Core\Cache\RsxCache;
+use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Session\Session;
 
 /**
  * Brute-force throttle for the authentication surface.
  *
- * WHAT IT COUNTS: FAILURES, not requests, keyed by CLIENT IP. Two redis keys per address -
- * a failure counter that expires with the window, and a lockout marker written when the
- * counter reaches the budget. A request that authenticates costs nothing, so a real user
- * signing in fifty times a day never approaches the budget; only wrong answers accumulate.
+ * WHAT IT COUNTS: FAILURES, not requests, keyed by CLIENT IP. Two Rsx_Counter keys per
+ * address (redis database 3, the transient-counter store) - a failure counter that expires
+ * with the window, and a lockout marker written when the counter reaches the budget. A
+ * request that authenticates costs nothing, so a real user signing in fifty times a day
+ * never approaches the budget; only wrong answers accumulate.
  *
  * WHY PER IP AND NOT PER EMAIL: the attacker chooses the email. Spraying one password across
  * a thousand addresses would never trip a per-email budget, while the address it is sprayed
@@ -38,8 +39,8 @@ use App\RSpade\Core\Session\Session;
  *
  * FAIL CLOSED. Nothing here catches a cache error: a redis failure propagates and the login
  * fails loud rather than proceeding unthrottled. The ONE tolerated degradation is maintenance
- * mode, where redis is deliberately stopped and RsxCache answers 0 / false without touching
- * it - the throttle is then inert, which costs nothing because the web tier is answering 503.
+ * mode, where redis is deliberately stopped and Rsx_Counter answers 0 without touching it -
+ * the throttle is then inert, which costs nothing because the web tier is answering 503.
  *
  * Config: rsx.sessions.login_throttle (enabled, attempts, window_minutes, lockout_minutes).
  * See rsx:man session, LOGIN THROTTLE.
@@ -47,14 +48,14 @@ use App\RSpade\Core\Session\Session;
 class Login_Throttle
 {
     /**
-     * Per-IP failure counter (persistent namespace - see RsxCache::increment_with_ttl).
+     * Per-IP failure counter (transient-counter store - see Rsx_Counter::increment).
      */
     private const FAILURE_KEY_PREFIX = 'login_throttle:failures:ip:';
 
     /**
-     * Per-IP lockout marker. Holds the UNIX TIME the lockout expires, so retry_after_seconds()
-     * is one read rather than a TTL introspection, and the key carries the same expiry as a
-     * redis TTL so it cleans itself up.
+     * Per-IP lockout marker (transient-counter store). Holds the UNIX TIME the lockout
+     * expires, so retry_after_seconds() is one read rather than a TTL introspection, and the
+     * key carries the same expiry as a redis TTL so it cleans itself up.
      */
     private const LOCKOUT_KEY_PREFIX = 'login_throttle:lockout:ip:';
 
@@ -103,7 +104,7 @@ class Login_Throttle
             return;
         }
 
-        $failures = RsxCache::increment_with_ttl(
+        $failures = Rsx_Counter::increment(
             self::FAILURE_KEY_PREFIX . $ip,
             $config['window_minutes'] * 60
         );
@@ -116,10 +117,10 @@ class Login_Throttle
 
         $lockout_seconds = $config['lockout_minutes'] * 60;
 
-        RsxCache::set_persistent(
+        Rsx_Counter::set_flag(
             self::LOCKOUT_KEY_PREFIX . $ip,
-            time() + $lockout_seconds,
-            $lockout_seconds
+            $lockout_seconds,
+            time() + $lockout_seconds
         );
     }
 
@@ -143,7 +144,7 @@ class Login_Throttle
             return 0;
         }
 
-        $expires_at = (int) RsxCache::get_persistent(self::LOCKOUT_KEY_PREFIX . $ip, 0);
+        $expires_at = Rsx_Counter::flag_value(self::LOCKOUT_KEY_PREFIX . $ip);
 
         if ($expires_at <= 0) {
             return 0;
@@ -169,8 +170,8 @@ class Login_Throttle
             return;
         }
 
-        RsxCache::delete_persistent(self::FAILURE_KEY_PREFIX . $ip);
-        RsxCache::delete_persistent(self::LOCKOUT_KEY_PREFIX . $ip);
+        Rsx_Counter::reset(self::FAILURE_KEY_PREFIX . $ip);
+        Rsx_Counter::reset(self::LOCKOUT_KEY_PREFIX . $ip);
     }
 
     /**

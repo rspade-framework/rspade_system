@@ -8,6 +8,7 @@ namespace App\RSpade\Core\Env;
 
 use RuntimeException;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * APP_URL boot-time resolver: the single source of the application hostname.
@@ -170,9 +171,21 @@ class Rsx_App_Url
      * a readable message on both the web and CLI channels (a throw during the
      * earlier substitution phase renders unreadably - config is not loaded yet to
      * even log it).
+     *
+     * THE TEST-RUN ALLOWANCE. The https requirement is an operator guardrail - it stops an
+     * end user launching a production SITE over plain http - and whether a box has TLS in
+     * front of it is not something a test can arrange. A test that runs migrate in debug
+     * mode on an http development box is exercising that mode's code, not launching a site,
+     * so a process that is the test suite or a descendant of one (Rsx_Test_Abstract::
+     * suite_is_running(), an argv flag rsx:test declares and Rsx_Artisan forwards) is
+     * granted http in every mode. A served request never carries argv, so the web boot
+     * is never under this allowance.
      */
     public static function enforce_scheme_from_env(): void
     {
-        self::enforce_scheme((string) env('APP_URL'), Rsx::is_development());
+        self::enforce_scheme(
+            (string) env('APP_URL'),
+            Rsx::is_development() || Rsx_Test_Abstract::suite_is_running()
+        );
     }
 }

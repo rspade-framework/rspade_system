@@ -51,6 +51,11 @@ const BACKEND_HOST = '127.0.0.1';
 const REDIS_HOST = process.env.REDIS_HOST || '127.0.0.1';
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379', 10);
 const REDIS_PASSWORD = process.env.REDIS_PASSWORD === 'null' ? undefined : process.env.REDIS_PASSWORD;
+// Redis database holding FPC entries - the reduced-volatility cache. Must match
+// Rsx_FPC::REDIS_DB in system/app/RSpade/Core/FPC/Rsx_FPC.php; the authority on the
+// database map is the RsxCache class header (database 0 is flushed on every database
+// transaction rollback, so a page cache must not live there).
+const FPC_REDIS_DB = 2;
 // Entry TTL in minutes. 0 (or 'null'/unset) = never expire. Prevents orphaned
 // keys from accumulating forever (Redis defaults to noeviction).
 const FPC_TTL_MINS = (process.env.FPC_TTL_MINS === 'null' || process.env.FPC_TTL_MINS === undefined) ? 0 : parseInt(process.env.FPC_TTL_MINS, 10) || 0;
@@ -313,11 +318,12 @@ const server = http.createServer(async (req, res) => {
 async function start() {
     const { createClient } = require('redis');
 
-    // Connect to Redis (DB 0 — shared cache database; FPC entries carry a TTL
+    // Connect to Redis (DB 2 — the reduced-volatility cache; FPC entries carry a TTL
     // only when FPC_TTL_MINS > 0)
     redis_client = createClient({
         socket: { host: REDIS_HOST, port: REDIS_PORT },
         password: REDIS_PASSWORD,
+        database: FPC_REDIS_DB,
     });
 
     redis_client.on('error', (err) => {
@@ -329,7 +335,7 @@ async function start() {
 
     redis_client.on('ready', () => {
         redis_available = true;
-        console.log(`[fpc] Connected to Redis at ${REDIS_HOST}:${REDIS_PORT}`);
+        console.log(`[fpc] Connected to Redis at ${REDIS_HOST}:${REDIS_PORT} (DB ${FPC_REDIS_DB})`);
     });
 
     try {

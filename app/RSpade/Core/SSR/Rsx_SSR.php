@@ -76,7 +76,8 @@ class Rsx_SSR
         // sanctioned timeout documented in bin/ssr-server.js) - the two are one design:
         // an unbounded wait on a queue that is guaranteed to drain. Remove the bound and
         // this wait becomes a permanent hang for every later caller.
-        $lock_token = RsxLocks::system_lock(RsxLocks::LOCK_SSR_RENDER);
+        // Box-physical resource (the single SSR server), unscoped across databases.
+        $lock_token = RsxLocks::system_lock(RsxLocks::LOCK_SSR_RENDER, null, false);
 
         try {
             // Ensure server is running with current build key

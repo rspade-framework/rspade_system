@@ -220,7 +220,8 @@ class BundleCompiler
             // Get a bundle build lock to prevent parallel RPC server interference
             // SYSTEM lock: compiled bundles are artifacts on THIS box's local disk. Waits
             // forever - a full compile runs for minutes and is held for its whole duration.
-            $this->bundle_build_lock = RsxLocks::system_lock(RsxLocks::LOCK_BUNDLE_BUILD);
+            // Box-physical resource (the bundle build dir), unscoped across databases.
+            $this->bundle_build_lock = RsxLocks::system_lock(RsxLocks::LOCK_BUNDLE_BUILD, null, false);
 
             console_debug('BUNDLE', 'Bundle build lock acquired, double-checking cache');
 

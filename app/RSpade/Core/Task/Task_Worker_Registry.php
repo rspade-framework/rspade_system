@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Task;
 
 use RuntimeException;
+use App\RSpade\Core\Database\Rsx_Connection_Scope;
 
 /**
  * Task_Worker_Registry - Redis-backed registry of live task workers.
@@ -28,10 +29,15 @@ use RuntimeException;
  */
 class Task_Worker_Registry
 {
-    /** Redis ZSET holding one member per live worker (score = last heartbeat epoch). */
-    private const ZSET_KEY = 'rsx:tasks:workers';
+    /** Base of the Redis ZSET holding one member per live worker (score = last heartbeat
+     *  epoch). The live key is per-(database,host)-scoped - see _zset_key(). */
+    private const ZSET_KEY_BASE = 'rsx:tasks:workers';
 
-    /** Lock database (no eviction) - shared numbering with RsxLocks; keys are namespaced. */
+    /**
+     * Lock database - shared numbering with RsxLocks; keys are namespaced. The eviction
+     * policy is per redis INSTANCE, not per database (allkeys-lru in the shipped conf), so
+     * this database is as evictable as any other; see the RsxCache class header and B-105.
+     */
     private static int $redis_db = 1;
 
     private static ?\Redis $redis = null;
@@ -70,7 +76,7 @@ LUA;
 
         $admitted = (int) $redis->eval(
             $lua,
-            [self::ZSET_KEY, $now, $now - $ttl, self::_max_workers(), $worker_id, $ttl * 4],
+            [self::_zset_key(), $now, $now - $ttl, self::_max_workers(), $worker_id, $ttl * 4],
             1
         );
 
@@ -118,7 +124,7 @@ LUA;
 
             return (int) $redis->eval(
                 $lua,
-                [self::ZSET_KEY, $now, $now - $ttl, self::$worker_id, $ttl * 4],
+                [self::_zset_key(), $now, $now - $ttl, self::$worker_id, $ttl * 4],
                 1
             );
         } catch (\Throwable $e) {
@@ -142,7 +148,7 @@ LUA;
             return redis.call('ZCARD', KEYS[1])
 LUA;
 
-        return (int) $redis->eval($lua, [self::ZSET_KEY, time() - self::_ttl()], 1);
+        return (int) $redis->eval($lua, [self::_zset_key(), time() - self::_ttl()], 1);
     }
 
     /**
@@ -160,7 +166,7 @@ LUA;
         self::$worker_id = null;
 
         try {
-            self::_redis()->zRem(self::ZSET_KEY, $worker_id);
+            self::_redis()->zRem(self::_zset_key(), $worker_id);
         } catch (\Throwable $e) {
             // Slot will expire via TTL; nothing else to do.
         }
@@ -201,6 +207,24 @@ LUA;
     // =========================================================================
     // internals
     // =========================================================================
+
+    /**
+     * The live ZSET key, namespaced per (database, host).
+     *
+     * The worker pool counts workers that operate on ONE database; two environments sharing
+     * this box's Redis (the parallel test runner's per-worker databases the motivating case)
+     * must not admit into each other's pool or the exact-count admission gate collides. The
+     * scope is the SAME token RsxLocks uses (Rsx_Connection_Scope), so a worker and the test
+     * process that spawns it - both on the same database connection - compute the same key.
+     * In production every cluster node shares one database, so the token is a constant and
+     * the pool coordinates exactly as before.
+     *
+     * @return string
+     */
+    private static function _zset_key(): string
+    {
+        return self::ZSET_KEY_BASE . ':' . Rsx_Connection_Scope::token();
+    }
 
     private static function _max_workers(): int
     {

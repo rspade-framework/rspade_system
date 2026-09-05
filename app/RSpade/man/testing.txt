@@ -10,6 +10,7 @@ SYNOPSIS
     php artisan rsx:test --group=portal         # one concern directory
     php artisan rsx:test --framework            # the framework suite
     php artisan rsx:test --fresh                # rebuild the test database first
+    php artisan rsx:test --framework --sequential   # one process, never docker
 
     A test class:
 
@@ -338,6 +339,23 @@ RUNNING AND NARROWING A RUN
     Exit code: 1 if any test failed, otherwise 0. A run that selected NOTHING
     prints "No tests were run." and exits 0 - so check the summary line, not
     just the exit code, when a selector is involved.
+
+    THE FULL FRAMEWORK SUITE RUNS IN PARALLEL DOCKER CONTAINERS, automatically,
+    on a docker-capable development box. rsx:test --framework with no
+    narrowing selector builds a test image and runs the suite across several
+    sibling containers, each a complete isolated environment with its own
+    database; the output and the exit code are identical to a single-process
+    run, because both print through the same printer. --sequential forces the
+    single-process runner anywhere. One test run per box at a time: a second
+    rsx:test waits for the first to finish, whichever path either takes.
+
+    ANY SUBSET ALWAYS RUNS IN THIS PROCESS - a named class, a --filter, a
+    --group, the application suite, or any box that is not a docker-capable
+    RSpade development container. The one behavioural difference worth knowing:
+    class run order is deterministic (by class name) only in the single-process
+    runner; the parallel one hands classes to whichever container is free. The
+    mechanics of the parallel path - the images, the work queue, worker logs and
+    how to debug one - live beside the code in system/bin/rsx-testd/CLAUDE.md.
 
 PER-TEST STATE RESET
 

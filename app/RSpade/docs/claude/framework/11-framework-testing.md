@@ -8,6 +8,8 @@
 
 **Bash tests** in `/system/app/RSpade/tests/` run against `rspade_test` like the PHP ones: deterministic, zero manual intervention.
 
+**The FULL framework suite runs in parallel docker containers automatically** on this dev box (any subset, or `--sequential`, runs in one process) - mechanics: `/system/bin/rsx-testd/CLAUDE.md`.
+
 Full structure, conventions, and per-kind harness details: `/system/app/RSpade/tests/CLAUDE.md`.
 
 **`--framework` is monorepo-only knowledge**: `bin/publish` excludes `app/RSpade/tests`, so a downstream release ships no framework tests and `rsx:test --framework` has nothing to run there. Never document it downstream as a usable command.

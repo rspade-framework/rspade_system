@@ -2,7 +2,6 @@
 
 namespace App\RSpade\Core\Cache;
 
-use InvalidArgumentException;
 use Redis;
 use RuntimeException;
 use App\RSpade\Core\Framework\Framework_Maintenance;
@@ -16,9 +15,40 @@ require_once __DIR__ . '/../../helpers.php';
 /**
  * Redis-based caching system with LRU eviction
  *
- * Uses Redis database 0 with LRU eviction policy for general caching.
- * Automatically prefixes all keys with the current manifest build key
- * to ensure cache invalidation when code changes.
+ * Uses Redis database 0 for general caching. Every key is prefixed with the current manifest
+ * build key, so a code change invalidates the cache without anything being cleared.
+ *
+ * THE REDIS DATABASE MAP (one instance, four databases). This class is the authority; every
+ * other subsystem that opens a redis connection points its comment here.
+ *
+ *   DB 0  VOLATILE CACHE. This class (including its persistent namespace) and the realtime
+ *         emitter hashes (rsx_rt:em:*). FLUSHED WHOLESALE on every database transaction
+ *         rollback (see below) and by clear().
+ *   DB 1  LOCKS and the task worker registry (RsxLocks, Task_Worker_Registry).
+ *   DB 2  REDUCED VOLATILITY CACHE ("RVC"). Reserved. The full page cache writes here
+ *         directly (Rsx_FPC and system/bin/fpc-proxy.js), and this class routes any key
+ *         beginning with _RVC_ here. NEVER flushed by clear().
+ *   DB 3  TRANSIENT COUNTERS (Rsx_Counter) - login throttling and friends.
+ *
+ * EVICTION IS PER INSTANCE, NOT PER DATABASE. The shipped conf
+ * (system/app/RSpade/resource/docker/redis/redis.conf) sets allkeys-lru over the whole
+ * instance, so a lock, a counter and a cache entry are equally evictable. See backlog B-105.
+ *
+ * clear() RUNS ON EVERY TRANSACTION ROLLBACK. A rollback can undo a database write that this
+ * cache already memoized - the defect that motivated the map above was Type_Ref_Registry
+ * caching a _type_refs row that a rolled-back transaction then removed, after which
+ * id_to_class() answered a confidently WRONG class. Owner ruling: if the cache cannot be
+ * reset at any moment, the cache is improperly implemented. So the flush is unconditional
+ * (Transaction_Rollback_Cache_Reset), and anything that must NOT be flushed is not cache and
+ * does not live in database 0.
+ *
+ * THE _RVC_ KEY CONVENTION is INTERNAL ONLY - it is a cache-key convention, not a second API.
+ * A key beginning with _RVC_ is stored in database 2 under the ordinary build-key and
+ * test-run prefix, so a code update still misses it cleanly and it is LRU-evicted like
+ * everything else; it simply survives the otherwise frequent cache resets that transaction
+ * rollback causes. As of the time of writing nothing in PHP uses this feature. It is kept
+ * here for reference and future implementation, and to reserve database 2, which is written
+ * to directly by FPC.
  */
 class RsxCache
 {
@@ -26,6 +56,17 @@ class RsxCache
     private static ?Redis $_redis = null;
 
     private static int $cache_db = 0;  // Database 0 for cache (with LRU eviction)
+
+    // Second connection, selected to the reduced-volatility database (see the class header).
+    private static ?Redis $_redis_rvc = null;
+
+    private static int $rvc_db = 2;  // Database 2 - reduced volatility cache, never flushed
+
+    /**
+     * Key prefix routing a value to the reduced-volatility database. INTERNAL convention -
+     * see the class header.
+     */
+    public const RVC_PREFIX = '_RVC_';
 
     private static bool $initialized = false;
 
@@ -106,6 +147,64 @@ class RsxCache
     }
 
     /**
+     * Connect (once per process) to the reduced-volatility database.
+     *
+     * Deliberately a SECOND connection rather than a select() per operation: a shared
+     * connection would have to be re-selected on every call, and one missed select would
+     * write a cache key into the wrong database silently.
+     */
+    private static function _init_rvc(): ?Redis
+    {
+        if (self::$_redis_rvc) {
+            return self::$_redis_rvc;
+        }
+
+        // The ordinary connection carries every bypass and straggler rule; when it declines,
+        // so does this one.
+        if (self::_init() === null) {
+            return null;
+        }
+
+        self::$_redis_rvc = new Redis();
+
+        $host = env('REDIS_HOST', '127.0.0.1');
+        $port = env('REDIS_PORT', 6379);
+        $socket = env('REDIS_SOCKET', null);
+
+        if ($socket && file_exists($socket)) {
+            $connected = self::$_redis_rvc->connect($socket);
+        } else {
+            $connected = self::$_redis_rvc->connect($host, $port, 2.0);
+        }
+
+        if (!$connected) {
+            self::$_redis_rvc = null;
+            shouldnt_happen('Failed to connect to Redis for the reduced-volatility cache');
+        }
+
+        self::$_redis_rvc->select(self::$rvc_db);
+
+        return self::$_redis_rvc;
+    }
+
+    /**
+     * Does this caller-supplied key route to the reduced-volatility database?
+     */
+    private static function _is_rvc(string $key): bool
+    {
+        return str_starts_with($key, self::RVC_PREFIX);
+    }
+
+    /**
+     * The connection a caller-supplied key belongs on. Every entry point resolves it here,
+     * so the routing rule exists in exactly one place.
+     */
+    private static function _connection_for(string $key): ?Redis
+    {
+        return self::_is_rvc($key) ? self::_init_rvc() : self::_init();
+    }
+
+    /**
      * Check if we can skip redis due to special circumstance
      */
     private static function _redis_bypass()
@@ -157,7 +256,18 @@ class RsxCache
      */
     public static function get(string $key, $default = null)
     {
-        return self::get_persistent(self::_transform_key_build($key), $default);
+        $redis = self::_connection_for($key);
+
+        if (self::_redis_bypass()) {
+            return null;
+        }
+
+        // Maintenance mode: silent cache miss (reads are never logged).
+        if (self::_maintenance_bypass()) {
+            return $default;
+        }
+
+        return self::_read($redis, self::_make_key_persistent(self::_transform_key_build($key)), $key, $default);
     }
 
     /**
@@ -167,6 +277,10 @@ class RsxCache
      * the build key to determine if the build has been updated is not available
      * until the manifest rescan is complete.  Calling get() during manifest rescan
      * will throw an exception.
+     *
+     * DATABASE 0 ONLY: the persistent namespace is not routed, so an _RVC_ prefix means
+     * nothing here (see the class header - the convention applies to the build-scoped
+     * entry points).
      *
      * @param string $key Cache key
      * @param mixed $default Default value if key not found
@@ -185,28 +299,33 @@ class RsxCache
             return $default;
         }
 
-        $full_key = self::_make_key_persistent($key);
+        return self::_read(self::$_redis, self::_make_key_persistent($key), $key, $default);
+    }
 
-        $value = self::$_redis->get($full_key);
+    /**
+     * Read and decode one already-namespaced key from a chosen connection.
+     *
+     * @param Redis $redis The connection the key lives on
+     * @param string $full_key The namespaced redis key
+     * @param string $key The caller's key, for the error message only
+     * @param mixed $default
+     * @return mixed
+     */
+    private static function _read(Redis $redis, string $full_key, string $key, $default)
+    {
+        $value = $redis->get($full_key);
 
         if ($value === false) {
             return $default;
         }
 
-        // Counter keys hold a bare numeric string written by redis itself (INCR/DECR), never a
-        // serialize() payload - see increment(). A serialize() payload always begins with a type
-        // letter or 'N', so the two encodings can never be confused.
-        if (self::_is_counter_payload($value)) {
-            return (int) $value;
-        }
-
-        // Anything that is neither encoding was not written by this class. Reject it BEFORE
-        // unserialize() so the caller gets a message naming the key, rather than a bare
+        // Anything that is not a serialize() payload was not written by this class. Reject it
+        // BEFORE unserialize() so the caller gets a message naming the key, rather than a bare
         // "unserialize(): Error at offset 0" - and never a bogus false that reads as a value.
         if (!self::_is_serialized_payload($value)) {
             throw new RuntimeException(
-                "RsxCache: corrupt cache payload for key '{$key}' - the stored value is neither a "
-                . 'serialize() payload nor a counter value'
+                "RsxCache: corrupt cache payload for key '{$key}' - the stored value is not a "
+                . 'serialize() payload'
             );
         }
 
@@ -230,19 +349,6 @@ class RsxCache
     }
 
     /**
-     * Does this raw redis string hold a counter value rather than a serialize() payload?
-     *
-     * A serialize() payload always starts with a type letter followed by ':' (or 'N;'), so a
-     * string of digits with an optional leading '-' can only have come from INCR/DECR.
-     */
-    private static function _is_counter_payload(string $value): bool
-    {
-        $digits = (isset($value[0]) && $value[0] === '-') ? substr($value, 1) : $value;
-
-        return $digits !== '' && ctype_digit($digits);
-    }
-
-    /**
      * Set a value in cache
      *
      * @param string $key Cache key
@@ -252,12 +358,33 @@ class RsxCache
      */
     public static function set(string $key, $value, int $expiration = self::NO_EXPIRATION): bool
     {
-        return self::set_persistent(self::_transform_key_build($key), $value, $expiration);
+        $redis = self::_connection_for($key);
+
+        if (self::_redis_bypass()) {
+            return false;
+        }
+
+        if (self::_maintenance_bypass()) {
+            self::_note_maintenance_write_skipped();
+
+            return false;
+        }
+
+        $full_key = self::_make_key_persistent(self::_transform_key_build($key));
+        $payload = serialize($value);
+
+        if ($expiration > 0) {
+            return $redis->setex($full_key, $expiration, $payload);
+        }
+
+        return $redis->set($full_key, $payload);
     }
 
     /**
      * Set a ::set but survives a manifest rescan
      * See ::get_persistent
+     *
+     * DATABASE 0 ONLY - the persistent namespace is not _RVC_-routed.
      *
      * @param string $key Cache key
      * @param mixed $value Value to cache
@@ -297,7 +424,7 @@ class RsxCache
      */
     public static function delete(string $key): bool
     {
-        self::_init();
+        $redis = self::_connection_for($key);
 
         if (self::_redis_bypass()) {
             return false;
@@ -311,16 +438,15 @@ class RsxCache
 
         $full_key = self::_make_key_persistent(self::_transform_key_build($key));
 
-        return self::$_redis->del($full_key) > 0;
+        return $redis->del($full_key) > 0;
     }
 
     /**
      * Delete a key from the PERSISTENT namespace
      *
-     * The counterpart of get_persistent()/set_persistent()/increment_with_ttl(): delete() looks
-     * under the build-prefixed key and can never find one of those, so a persistent key needs
-     * its own delete. Used to clear a windowed counter or marker before its TTL runs out - a
-     * test cleaning up after itself, an operator releasing a throttled address.
+     * The counterpart of get_persistent()/set_persistent(): delete() looks under the
+     * build-prefixed key and can never find one of those, so a persistent key needs its own
+     * delete.
      *
      * @param string $key Cache key (persistent namespace)
      * @return bool True when a key was removed
@@ -350,7 +476,7 @@ class RsxCache
      */
     public static function exists(string $key): bool
     {
-        self::_init();
+        $redis = self::_connection_for($key);
 
         if (self::_redis_bypass()) {
             return false;
@@ -363,12 +489,22 @@ class RsxCache
 
         $full_key = self::_make_key_persistent(self::_transform_key_build($key));
 
-        return self::$_redis->exists($full_key) > 0;
+        return $redis->exists($full_key) > 0;
     }
 
     /**
-     * Clear the entire cache
-     * Only clears keys with the current build key prefix
+     * Clear the entire volatile cache - database 0, and ONLY database 0.
+     *
+     * Called on every database transaction rollback (see the class header), so it must never
+     * reach the reduced-volatility database, the locks database or the counter database.
+     *
+     * SCAN + DEL, NOT FLUSHDB. The shipped redis.conf disables FLUSHDB and FLUSHALL outright
+     * (rename-command ... ""), so the flushDb() this method used to call answered false and
+     * cleared NOTHING, silently, on every install carrying that conf - found 2026-09-05 when
+     * the rollback flush made the behavior observable. SCAN needs no privileged command,
+     * touches only the database the connection is selected on, and is the same pattern
+     * Rsx_FPC::clear() already uses. A failed delete FAILS LOUD: a flush that silently does
+     * not happen is precisely the defect this method now exists to prevent.
      */
     public static function clear(): void
     {
@@ -384,201 +520,62 @@ class RsxCache
             return;
         }
 
-        self::$_redis->flushDb();
+        // Database 0 only: the connection this class selects it on. The RVC connection
+        // (database 2) is deliberately untouched, as are databases 1 and 3.
+        self::_delete_every_key(self::$_redis, 'clear');
     }
 
     /**
-     * Increment a numeric value
+     * Clear the reduced-volatility cache - database 2, and ONLY database 2.
      *
-     * COUNTER KEYS ARE THEIR OWN CONTRACT: a key touched by increment()/decrement() holds a raw
-     * numeric string maintained by redis, NOT a serialize() payload. Never mix set() and
-     * increment() on the same key - set() stores 'i:100;', which redis cannot INCR. That mistake
-     * throws here instead of coming back as an indistinguishable 0.
-     *
-     * get() reads a counter key back as an int; delete()/exists() work normally.
-     *
-     * @param string $key Cache key
-     * @param int $amount Amount to increment by
-     * @return int New value
+     * The rollback flush never calls this; that is the whole point of the RVC database. Its
+     * ONE caller is rsx:clean: discarding build state rotates the build key, which orphans
+     * every _RVC_ key and every FPC entry (fpc:{build_key}:*) at once, and "clean" means the
+     * orphans go now rather than whenever LRU gets round to them. Databases 0, 1 and 3 are
+     * untouched - rsx:clean clears database 0 through clear() beside this call.
      */
-    public static function increment(string $key, int $amount = 1): int
+    public static function clear_reduced_volatility(): void
     {
-        self::_init();
+        $redis = self::_init_rvc();
 
-        if (self::_redis_bypass()) {
-            return 0;
+        if ($redis === null || self::_redis_bypass()) {
+            return;
         }
 
         if (self::_maintenance_bypass()) {
             self::_note_maintenance_write_skipped();
 
-            return 0;
+            return;
         }
 
-        $full_key = self::_make_key_persistent(self::_transform_key_build($key));
-
-        $result = ($amount === 1)
-            ? self::$_redis->incr($full_key)
-            : self::$_redis->incrBy($full_key, $amount);
-
-        return self::_counter_result($result, 'increment', $key);
+        self::_delete_every_key($redis, 'clear_reduced_volatility');
     }
 
     /**
-     * Increment a counter that expires a fixed time after it was FIRST created
-     *
-     * The windowed-failure-counter primitive: "how many times has this happened in the last N
-     * seconds", answered by one redis key instead of a growing table of rows. The framework's
-     * login-failure throttling counters are built on it.
-     *
-     * FIXED WINDOW, NOT A SLIDING ONE: the TTL is applied only on the increment that CREATES the
-     * key (the reply equals $amount), and no later increment touches it. The window therefore
-     * runs from the first event to first-event + $ttl_seconds, then the counter disappears
-     * entirely and the next event opens a new window. A sliding window would let a slow attacker
-     * hold a counter alive forever.
-     *
-     * NAMESPACE: persistent (see get_persistent()), NOT build-scoped. A counter measuring real
-     * time must survive a manifest rebuild - a build-scoped counter would silently reset to zero
-     * on every file change. Consequence: read it with get_counter(), never with get(), which
-     * looks under the build-prefixed key.
-     *
-     * Same counter-key contract as increment(): the key holds a raw numeric string maintained by
-     * redis. NEVER mix set()/set_persistent() with this method on one key - a serialize() payload
-     * cannot be INCR'd, and the attempt throws here rather than returning an indistinguishable 0.
-     *
-     * MAINTENANCE MODE returns 0 without touching redis (redis is stopped). Callers that throttle
-     * on the result therefore fail OPEN for the window - deliberate: a stopped cache must not
-     * lock users out.
-     *
-     * @param string $key Counter key (persistent namespace)
-     * @param int $ttl_seconds Window length, applied when the key is created (must be > 0)
-     * @param int $amount Amount to increment by
-     * @return int New value, or 0 when the cache is unavailable
+     * SCAN + DEL every key on the database the given connection is selected on. Fails loud
+     * on a delete redis refused - see clear() for why this is not FLUSHDB.
      */
-    public static function increment_with_ttl(string $key, int $ttl_seconds, int $amount = 1): int
+    private static function _delete_every_key(Redis $redis, string $caller): void
     {
-        if ($ttl_seconds <= 0) {
-            throw new InvalidArgumentException(
-                "RsxCache::increment_with_ttl() requires a positive ttl_seconds for key '{$key}',"
-                . " got {$ttl_seconds} - an unexpiring counter is what increment() is for"
-            );
-        }
+        $iterator = null;
 
-        self::_init();
+        do {
+            $keys = $redis->scan($iterator, '*', 500);
 
-        if (self::_redis_bypass()) {
-            return 0;
-        }
+            if ($keys === false || count($keys) === 0) {
+                continue;
+            }
 
-        if (self::_maintenance_bypass()) {
-            self::_note_maintenance_write_skipped();
+            if ($redis->del($keys) === false) {
+                $redis_error = $redis->getLastError();
+                $redis->clearLastError();
 
-            return 0;
-        }
-
-        $full_key = self::_make_key_persistent($key);
-
-        $result = ($amount === 1)
-            ? self::$_redis->incr($full_key)
-            : self::$_redis->incrBy($full_key, $amount);
-
-        $value = self::_counter_result($result, 'increment_with_ttl', $key);
-
-        // The key was created by THIS call, so this is where the window opens. Any other reply
-        // means the key already existed and already carries the window it was created with.
-        if ($value === $amount) {
-            self::$_redis->expire($full_key, $ttl_seconds);
-        }
-
-        return $value;
-    }
-
-    /**
-     * Read a counter written by increment_with_ttl()
-     *
-     * Persistent namespace, so this is the ONLY read path for those counters (get() looks under
-     * the build-prefixed key and would answer null forever).
-     *
-     * A missing key - never incremented, or expired with its window - is 0. So is an unavailable
-     * cache (maintenance mode), which is what makes a throttle built on this fail OPEN.
-     *
-     * @param string $key Counter key (persistent namespace)
-     * @return int Current count, 0 when absent or unreadable
-     */
-    public static function get_counter(string $key): int
-    {
-        $value = self::get_persistent($key, 0);
-
-        // Degraded cache (no redis extension in IDE context) answers null, not the default.
-        if ($value === null) {
-            return 0;
-        }
-
-        if (!is_int($value)) {
-            throw new RuntimeException(
-                "RsxCache::get_counter() found a non-counter value at key '{$key}'"
-                . ' - counter keys hold a raw numeric value and must never be written with'
-                . ' RsxCache::set_persistent(), which stores a serialized payload'
-            );
-        }
-
-        return $value;
-    }
-
-    /**
-     * Decrement a numeric value
-     *
-     * Same counter-key contract as increment().
-     *
-     * @param string $key Cache key
-     * @param int $amount Amount to decrement by
-     * @return int New value
-     */
-    public static function decrement(string $key, int $amount = 1): int
-    {
-        self::_init();
-
-        if (self::_redis_bypass()) {
-            return 0;
-        }
-
-        if (self::_maintenance_bypass()) {
-            self::_note_maintenance_write_skipped();
-
-            return 0;
-        }
-
-        $full_key = self::_make_key_persistent(self::_transform_key_build($key));
-
-        $result = ($amount === 1)
-            ? self::$_redis->decr($full_key)
-            : self::$_redis->decrBy($full_key, $amount);
-
-        return self::_counter_result($result, 'decrement', $key);
-    }
-
-    /**
-     * Convert a redis INCR/DECR reply into an int, or fail loud.
-     *
-     * phpredis answers false when the key does not hold an integer - overwhelmingly because the
-     * key was seeded through set() (which serializes). Coercing that false through the ': int'
-     * return type would produce a 0 that is indistinguishable from a genuine count.
-     */
-    private static function _counter_result($result, string $operation, string $key): int
-    {
-        if ($result === false) {
-            $redis_error = self::$_redis->getLastError();
-            self::$_redis->clearLastError();
-
-            throw new RuntimeException(
-                "RsxCache::{$operation}() failed for key '{$key}'"
-                . ($redis_error ? " (redis: {$redis_error})" : '')
-                . ' - counter keys hold a raw numeric value and must never be seeded or overwritten'
-                . ' with RsxCache::set(), which stores a serialized payload'
-            );
-        }
-
-        return (int) $result;
+                throw new RuntimeException(
+                    "RsxCache::{$caller}() could not delete cache keys"
+                    . ($redis_error ? " (redis: {$redis_error})" : '')
+                );
+            }
+        } while ($iterator > 0);
     }
 
     // Build-scoped key: manifest build key + test-run namespace + user key.

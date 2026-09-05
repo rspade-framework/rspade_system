@@ -1,0 +1,182 @@
+# =============================================================================
+# RSpade PARALLEL TEST image
+#
+# One container = one complete, isolated RSpade environment (its own mysqld,
+# redis, rsx-lockd, filesystem and flag files), so N of them run the framework
+# suite in parallel with no shared state to fight over. Isolation is by
+# CONSTRUCTION here: nothing in a container can reach another container's
+# database, cache, locks or storage.
+#
+# It is `FROM` the development image because that image already IS the runtime
+# the framework is written for - supervisor, mysql-server, redis, rsx-lockd,
+# php-fpm, nginx. What this file adds is the part that makes a test container
+# cheap to start: a MIGRATED database baked into the image.
+#
+# THE DATADIR-TEMPLATE HOOK. The dev image ships a tarball of a pristine MySQL
+# data directory and its entrypoint unpacks it into /var/lib/mysql whenever the
+# `mysql` system schema is absent. This build runs the whole provisioning
+# sequence once, then REPLACES that tarball with the resulting - fully migrated,
+# baseline-seeded - data directory. A test container is then run with
+# `--tmpfs /var/lib/mysql`, so the entrypoint fills a RAM datadir from the baked
+# template in about a second and every in-container database reset is a restore
+# from RAM rather than a re-migration.
+#
+# THE BUILD CONTEXT IS THE PROJECT ROOT, filtered by a .dockerignore the test
+# runner generates for the run (.git, storage/, and every local-only path the
+# checkout excludes). The code is COPIED IN, never mounted: storage/, the flock
+# directory and the build output must be per-container and writable.
+#
+#   docker build -f system/app/RSpade/resource/docker/Dockerfile.test \
+#                -t rspade-test:latest .
+#
+# =============================================================================
+
+FROM rspade/rspade-server-dev:latest
+
+COPY . /var/www/html
+
+# -----------------------------------------------------------------------------
+# One RUN layer, on purpose.
+#
+# The layer that ends by archiving /var/lib/mysql must also be the layer that
+# shut mysqld down - a data directory captured while the server is running (or
+# between two layers, with the shutdown in the earlier one) is a data directory
+# that forces InnoDB crash recovery in EVERY container started from it. So the
+# whole sequence - configure, provision, migrate, stop, archive - is one step
+# whose final state is a cleanly closed database.
+# -----------------------------------------------------------------------------
+RUN bash -c 'set -e; \
+    cd /var/www/html; \
+    \
+    # This is a test container, not a development one. /.rspade_container_dev \
+    # gates the development-mode migrate DATADIR SNAPSHOT, which stops mysqld \
+    # through supervisorctl and copies /var/lib/mysql - meaningless during an \
+    # image build and actively harmful inside a throwaway container. \
+    rm -f /.rspade_container_dev; \
+    \
+    # No background task processor. rsx:task:process running once a minute \
+    # would race the tests, which drive the task system explicitly. \
+    rm -f /etc/supervisor/conf.d/tasks.conf; \
+    \
+    # NOTHING FROM THE HOST .env EVER REACHES THIS IMAGE. The build context \
+    # excludes it, and this removes it as well - a build run with a stale or \
+    # hand-written .dockerignore must still produce a container configured from \
+    # .env.dist alone, never from whichever database, mail transport or secret \
+    # the developer box happens to be pointed at. \
+    rm -f .env; \
+    \
+    # .env is then made by the framework own env heal - the single implementation \
+    # of "create .env from .env.dist and mint an APP_KEY". It runs pre-boot, with \
+    # no autoloader, no config and no database, so it works here before any \
+    # service exists. \
+    php system/bootstrap/rsx_env_heal.php; \
+    \
+    # Replace-or-append, in bash. sed would need a delimiter that cannot appear \
+    # in any value, and an APP_URL contains slashes. \
+    env_set() { \
+        local key="$1" value="$2" tmp line found=0; \
+        tmp="$(mktemp)"; \
+        while IFS= read -r line || [ -n "$line" ]; do \
+            case "$line" in \
+                "$key="*) printf "%s=%s\\n" "$key" "$value" >> "$tmp"; found=1 ;; \
+                *)        printf "%s\\n" "$line" >> "$tmp" ;; \
+            esac; \
+        done < .env; \
+        [ "$found" -eq 1 ] || printf "%s=%s\\n" "$key" "$value" >> "$tmp"; \
+        cat "$tmp" > .env; \
+        rm -f "$tmp"; \
+    }; \
+    \
+    # The LITERAL, UNQUOTED $HOSTNAME token: the framework resolves it with \
+    # gethostname() at boot, so one baked image serves every worker container \
+    # under its own name, and the container is run with --add-host \
+    # <name>:127.0.0.1 so that name loops back to its own nginx. http, because a \
+    # test container terminates no TLS - which development mode accepts. \
+    env_set APP_URL "http://\$HOSTNAME"; \
+    env_set RSX_MODE development; \
+    env_set DB_HOST 127.0.0.1; \
+    env_set DB_PORT 3306; \
+    env_set DB_DATABASE rspade; \
+    env_set DB_USERNAME rspade; \
+    env_set DB_PASSWORD rspadepass; \
+    env_set DB_TEST_DATABASE rspade_test; \
+    env_set REDIS_HOST 127.0.0.1; \
+    env_set IS_FRAMEWORK_DEVELOPER true; \
+    # MAIL_DELIVERY is deliberately NOT set: the .env.dist default is aiosmtpd, \
+    # the development catcher this image already runs under supervisor, and that \
+    # is what the host is configured with too. Overriding it to `disabled` here \
+    # froze the mail queue inside a container while the mail tests - which are \
+    # written against the catcher, and assert its aiosmtpd greeting - expected \
+    # delivery. A test container must mirror the developer box, not a third \
+    # configuration that exists nowhere else. \
+    env_set REALTIME_ENABLED false; \
+    # Blank on purpose: the test baseline creates the initial identity itself \
+    # and needs users id 1 to be its own. \
+    env_set RSPADE_DEFAULT_EMAIL ""; \
+    env_set RSPADE_DEFAULT_PASSWORD ""; \
+    # Nothing here checks a real password against a real attacker. 4 rounds \
+    # keeps every fixture that hashes one from dominating the run. \
+    env_set BCRYPT_ROUNDS 4; \
+    \
+    # The entrypoint IS the provisioning helper: unpack the stock template, \
+    # start supervisor, wait for redis and mysql, run mysql/provision.sql when \
+    # `USE rspade` fails, migrate the development database, then run this CMD \
+    # and stop supervisor again. The CMD provisions rspade_test - migrated, \
+    # baseline user, and the cache dump an in-container reset restores from - \
+    # and then warms the manifest, so no container has to rebuild it. \
+    # \
+    # THE MANIFEST BUILD IS LAST, AND IT IS --clean, FOR ONE REASON. The model \
+    # index (and with it every auto-detected datetime/date/boolean CAST) is \
+    # built by introspecting the DEFAULT connection's tables. Provisioning \
+    # drops and re-migrates rspade_test in a subprocess whose default database \
+    # IS rspade_test, so a manifest built during or before that step indexes an \
+    # empty database and bakes a model index with NO columns - which silently \
+    # removes every cast in every container (measured: 133 failures across the \
+    # framework suite, all of them an ISO datetime string reaching MySQL raw). \
+    # Building last puts the default connection back on the fully migrated \
+    # rspade, and --clean is what makes it actually rebuild: the manifest is \
+    # "fresh" by then, so an incremental build would keep the empty index. \
+    bash /usr/local/bin/rspade-entrypoint bash -c "set -e; \
+        php system/artisan rsx:test --framework --_provision-only; \
+        php system/artisan rsx:manifest:build --clean; \
+        php system/artisan rsx:bundle:compile"; \
+    \
+    # AND THE BUNDLES, because a container never serves a web request. Bundles compile \
+    # just-in-time on the first request for a page, so on a developer box the compiled \
+    # output is simply always there - and a container that only ever runs artisan has \
+    # none of it. Four asset tests read the compiled bundle JS and SKIP themselves when it \
+    # is absent, which is honest but is three fewer assertions than the sequential run \
+    # makes. Compiling here is the same JIT compile the first page view would have done, \
+    # taken once at build time instead of never. \
+    \
+    # WAIT FOR mysqld TO BE GONE before archiving. The entrypoint has already \
+    # asked supervisor to stop and waited for it; this is the direct proof, and \
+    # it is what stands between this image and crash recovery in every \
+    # container started from it. No deadline: mysqld exits when it has finished \
+    # flushing, and how long that takes is the databases business. \
+    while pgrep -x mysqld > /dev/null 2>&1; do sleep 1; done; \
+    \
+    # The migrated datadir REPLACES the stock template. Same path, same reader: \
+    # the entrypoint unpacks it into the tmpfs on every container start. \
+    tar -C /var/lib/mysql -czf /opt/rspade/mysql-datadir-template.tgz .; \
+    chmod 644 /opt/rspade/mysql-datadir-template.tgz; \
+    rm -rf /var/lib/mysql/*'
+
+# -----------------------------------------------------------------------------
+# The worker CMD.
+#
+# It waits for the container's WHOLE supervisor roster - and for rsx-lockd to
+# answer a ping - before it runs a single test. The entrypoint waits only for
+# redis and mysql, because those are the two IT needs; rsx-lockd and mail-catcher
+# both declare startsecs=5 and are still coming up when the CMD starts. See the
+# script's own header for what that cost before it existed.
+#
+# LAST, and after the provisioning layer, on purpose: editing the wrapper is then
+# a one-second rebuild of one tiny layer instead of a re-run of the whole
+# provision-migrate-archive sequence.
+#
+# The name carries the rsx- prefix because system/.gitignore ignores `test-*`,
+# and a file the framework ships must not be one git quietly leaves behind.
+# -----------------------------------------------------------------------------
+COPY system/app/RSpade/resource/docker/rsx-test-worker-run.sh /usr/local/bin/rsx-test-worker-run
+RUN chmod 755 /usr/local/bin/rsx-test-worker-run

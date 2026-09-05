@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Commands\Rsx;
 
-use Exception;
 use Illuminate\Console\Command;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
+use App\RSpade\Core\Cache\RsxCache;
 
 class Clean_Command extends Command
 {
@@ -146,14 +146,15 @@ class Clean_Command extends Command
             $cleaned_items[] = "[OK] Removed {$orphan_count} orphaned temp director" . ($orphan_count === 1 ? 'y' : 'ies');
         }
 
-        // 4. Clear Redis cache directly without loading framework
-        try {
-            $redis = \Illuminate\Support\Facades\Redis::connection();
-            $redis->flushdb();
-            $cleaned_items[] = '[OK] Redis cache cleared';
-        } catch (Exception $e) {
-            $cleaned_items[] = '[WARNING] Redis cache skipped (not configured or unreachable)';
-        }
+        // 4. Clear the redis caches: the volatile cache (database 0) AND the reduced-volatility
+        // cache (database 2, where FPC entries also live). Discarding build state rotates the
+        // build key, which orphans every key in both, so both go. Locks (1) and counters (3)
+        // are not caches and are not touched. No try/catch: redis is a hard dependency, and a
+        // clear that silently does not happen is the defect the SCAN-based clear() exists to
+        // prevent - an unreachable redis fails this command loudly like everything else.
+        RsxCache::clear();
+        RsxCache::clear_reduced_volatility();
+        $cleaned_items[] = '[OK] Redis caches cleared (volatile + reduced-volatility)';
 
         // Note: We never clear rsx-locks directory as it contains active lock files
 

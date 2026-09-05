@@ -177,7 +177,8 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
             // narrowly around the acquire and nowhere else.
             $lock_token = null;
             try {
-                $lock_token = RsxLocks::system_lock('ENVIRONMENT_UPDATES', 5);
+                // Box-physical (the environment-update scripts), unscoped across databases.
+                $lock_token = RsxLocks::system_lock('ENVIRONMENT_UPDATES', 5, false);
             } catch (\Throwable $e) {
                 $lock_token = null;
             }

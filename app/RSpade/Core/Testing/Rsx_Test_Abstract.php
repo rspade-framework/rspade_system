@@ -62,6 +62,29 @@ abstract class Rsx_Test_Abstract
     protected static $requires_db_reset = false;
 
     /**
+     * The internal flag that marks a process as PART OF A TEST RUN: rsx:test declares it
+     * on itself and Rsx_Artisan forwards it to every child it spawns, so a migrate or a
+     * command a test runs in another mode is still recognisably under the suite. Read it
+     * through suite_is_running().
+     */
+    public const TEST_RUN_FLAG = '--_test-run';
+
+    /**
+     * Is this process the test suite, or a descendant of it?
+     *
+     * The ONE thing this exists to relax is an operator guardrail that would otherwise stop a
+     * test from running in the mode it is testing: APP_URL must be https outside development
+     * because an end user must not launch a production SITE over http - but a test-spawned
+     * debug-mode migrate on an http box is not a site launch. Nothing security-relevant
+     * consults this, and the web entrypoint never carries argv, so a served request is never
+     * "under test".
+     */
+    public static function suite_is_running(): bool
+    {
+        return \App\RSpade\Core\Console\Rsx_Internal_Flags::has(self::TEST_RUN_FLAG);
+    }
+
+    /**
      * The staff site id the test process booted with (see run()); restored at every
      * class boundary so one class's __reset_session() cannot re-scope the classes that follow.
      *

@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Console;
 
 use App\RSpade\Core\Locks\Lockd_Client;
+use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * THE sanctioned way for PHP code to invoke `php artisan` as a SUBPROCESS.
@@ -164,6 +165,14 @@ class Rsx_Artisan
 
         if ($propagate_locks) {
             $parts[] = escapeshellarg(Lockd_Client::LOCK_GROUP_FLAG . '=' . Lockd_Client::current_group_id());
+        }
+
+        // A child of the test suite is part of the test suite - synchronous or detached, a
+        // process a test started is under the test. rsx:test declares the flag on itself;
+        // this carries it down so a test-spawned command booting in another mode is not
+        // stopped by the https guardrail meant for real deployments (Rsx_App_Url).
+        if (Rsx_Test_Abstract::suite_is_running()) {
+            $parts[] = escapeshellarg(Rsx_Test_Abstract::TEST_RUN_FLAG);
         }
 
         return implode(' ', $parts);

@@ -75,9 +75,17 @@ CACHE BEHAVIOR
     are reclaimed one of three ways:
     - FPC_TTL_MINS > 0: each entry carries that TTL and ages out on its own.
     - FPC_TTL_MINS = 0 (default): entries persist until an explicit clear
-      (Rsx_FPC::clear()/clear_url()) or until rsx:clean flushes the DB.
-    - Redis is NOT configured with LRU eviction by default (noeviction), so
-      do not rely on eviction to reclaim orphans - set FPC_TTL_MINS instead.
+      (Rsx_FPC::clear()/clear_url()).
+    - The shipped redis.conf evicts allkeys-lru across the whole instance, but
+      an install may run a different policy - do not rely on eviction to
+      reclaim orphans, set FPC_TTL_MINS instead.
+
+    REDIS DATABASE: 2, the reduced-volatility cache. Both writers name the
+    number in a constant of their own (Rsx_FPC::REDIS_DB and FPC_REDIS_DB in
+    system/bin/fpc-proxy.js); the RsxCache class header is the authority on
+    the database map, and `rsx:man caching` reproduces it. Database 0 is
+    emptied on every database transaction rollback, which would throw away a
+    page cache for reasons that have nothing to do with the page.
 
     Cache Entry (stored as JSON in Redis):
         url           - Request path
@@ -130,9 +138,9 @@ PHP CACHE MANAGEMENT
         Same fail-loud-on-unreachable-Redis behavior as clear() when enabled.
 
     rsx:clean
-        Flushes the Redis DB the FPC shares (FLUSHDB on DB 0), removing every
-        FPC entry as a side effect - a coarse, whole-DB invalidation path
-        distinct from the build-key-scoped Rsx_FPC::clear().
+        Does NOT remove FPC entries. It attempts a flush of the DEFAULT redis
+        database (0), which is neither the FPC database (2) nor a command the
+        shipped redis.conf permits. Rsx_FPC::clear() is the purge.
 
     Examples:
 

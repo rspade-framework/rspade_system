@@ -83,9 +83,10 @@ class ClassExists_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        // Skip RsxCache.php - it checks whether the Redis extension exists in IDE context.
-        // (RsxLocks.php used to need the same exemption; it no longer touches Redis at all.)
-        if (str_contains($file_path, 'RsxCache.php')) {
+        // Skip RsxCache.php and Rsx_Counter.php - both check whether the Redis extension
+        // exists in IDE context. (RsxLocks.php used to need the same exemption; it no longer
+        // touches Redis at all.)
+        if (str_contains($file_path, 'RsxCache.php') || str_contains($file_path, 'Rsx_Counter.php')) {
             return;
         }
 

@@ -65,6 +65,33 @@ class Assignment_Comparison_CodeQualityRule extends CodeQualityRule_Abstract
         return false;
     }
 
+    /**
+     * Replace every quoted string literal on a line with an empty "" so an = inside a
+     * string (a regex pattern, a URL query string, an HTML attribute) can never read as
+     * an assignment operator. Escape-aware: \" \' and \\ inside a literal are consumed
+     * as pairs, and JS template literals (backticks) are covered too.
+     *
+     * WHY THE STRIPPING HAPPENS ON THE WHOLE LINE, BEFORE the if/for/elseif condition is
+     * captured - both halves of a live false positive (2026-09-04, a test asserting on
+     * "charset=utf-8" inside a preg_match pattern):
+     *   1. The old stripper used [^\\1], which is NOT a backreference inside a character
+     *      class - it means "anything except a backslash or the digit 1" - so any string
+     *      containing a backslash was left unstripped, = signs and all.
+     *   2. The old order captured the condition with [^)]+ FIRST, so a ')' sitting INSIDE
+     *      a string cut the condition in half, leaving an unbalanced quote that no
+     *      stripper could ever pair up.
+     * Stripping first removes both failure modes: parens and slashes inside strings are
+     * gone before any structural pattern looks at the line.
+     */
+    private function strip_string_literals(string $line): string
+    {
+        return preg_replace(
+            '/\'(?:\\\\.|[^\'\\\\])*\'|"(?:\\\\.|[^"\\\\])*"|`(?:\\\\.|[^`\\\\])*`/',
+            '""',
+            $line
+        );
+    }
+
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         // Use the same directory filtering logic as rsx:check command
@@ -111,18 +138,21 @@ class Assignment_Comparison_CodeQualityRule extends CodeQualityRule_Abstract
                 continue;
             }
 
+            // String literals are dead to this rule from here on - see the stripper's
+            // docblock for the two failure modes this ordering closes.
+            $stripped = $this->strip_string_literals($line);
+
             // Check for single = in if statement condition (must have complete condition on same line)
-            if (preg_match('/\bif\s*\(([^)]+)\)/', $line, $match)) {
+            if (preg_match('/\bif\s*\(([^)]+)\)/', $stripped, $match)) {
                 $condition = $match[1];
 
                 // Skip if there's a // comment before the if statement
-                if (preg_match('/\/\/.*\bif\s*\(/', $line)) {
+                if (preg_match('/\/\/.*\bif\s*\(/', $stripped)) {
                     continue;
                 }
 
-                // Remove quoted strings to avoid false positives from regex patterns
-                // This prevents flagging preg_match('/pattern=value/', $var)
-                $condition_no_quotes = preg_replace('/([\'"])[^\\1]*?\\1/', '""', $condition);
+                // $condition came from the pre-stripped line - string-free already.
+                $condition_no_quotes = $condition;
 
                 // Check for single = that's not part of ==, ===, !=, !==, <=, >=
                 // Must have non-equals char before and after the single =
@@ -148,16 +178,16 @@ class Assignment_Comparison_CodeQualityRule extends CodeQualityRule_Abstract
             // Skip while statements - assignment in while is acceptable
             // The pattern while ($var = function()) is allowed for iteration
             // Check for single = in for loop condition (middle part)
-            if (preg_match('/\bfor\s*\(([^;]*);([^;]*);([^)]*)\)/', $line, $match)) {
+            if (preg_match('/\bfor\s*\(([^;]*);([^;]*);([^)]*)\)/', $stripped, $match)) {
                 $condition = $match[2]; // The middle part is the condition
 
                 // Skip if there's a // comment before the for statement
-                if (preg_match('/\/\/.*\bfor\s*\(/', $line)) {
+                if (preg_match('/\/\/.*\bfor\s*\(/', $stripped)) {
                     continue;
                 }
 
-                // Remove quoted strings to avoid false positives
-                $condition_no_quotes = preg_replace('/([\'"])[^\\1]*?\\1/', '""', $condition);
+                // $condition came from the pre-stripped line - string-free already.
+                $condition_no_quotes = $condition;
 
                 if (trim($condition_no_quotes) && preg_match('/[^=!<>]\s*=\s*[^=]/', $condition_no_quotes)) {
                     if (!preg_match('/(?:==|===|!=|!==|<=|>=)/', $condition_no_quotes)) {
@@ -178,16 +208,16 @@ class Assignment_Comparison_CodeQualityRule extends CodeQualityRule_Abstract
             // Skip do...while statements - assignment in while is acceptable
             // The pattern } while ($var = function()) is allowed for iteration
             // PHP-specific: Check for single = in elseif statement
-            if ($is_php && preg_match('/\belseif\s*\(([^)]+)\)/', $line, $match)) {
+            if ($is_php && preg_match('/\belseif\s*\(([^)]+)\)/', $stripped, $match)) {
                 $condition = $match[1];
 
                 // Skip if there's a // comment before the elseif
-                if (preg_match('/\/\/.*\belseif\s*\(/', $line)) {
+                if (preg_match('/\/\/.*\belseif\s*\(/', $stripped)) {
                     continue;
                 }
 
-                // Remove quoted strings to avoid false positives
-                $condition_no_quotes = preg_replace('/([\'"])[^\\1]*?\\1/', '""', $condition);
+                // $condition came from the pre-stripped line - string-free already.
+                $condition_no_quotes = $condition;
 
                 if (preg_match('/[^=!<>]\s*=\s*[^=]/', $condition_no_quotes)) {
                     if (!preg_match('/(?:==|===|!=|!==|<=|>=)/', $condition_no_quotes)) {

@@ -1554,6 +1554,20 @@ LOGIN THROTTLE (BRUTE FORCE)
         $ip defaults to Session::get_client_ip() - the one place the proxy header
         chain is interpreted.
 
+    WHERE THE COUNTERS LIVE:
+        Rsx_Counter (App\RSpade\Core\Cache\Rsx_Counter), redis database 3 -
+        the transient-counter store, NOT the cache. Two keys per address: a
+        failure counter opened by the first failure, and a lockout marker
+        holding the UNIX time the lockout expires. Login_History's per-email
+        and per-IP failure counts are the same store.
+
+        Counters are deliberately not in the cache database: RsxCache::clear()
+        runs on every database transaction rollback, so a counter kept there
+        would have a rolled-back request silently zero a throttle budget. They
+        are also not build-scoped - a counter measures real time and must
+        survive a manifest rebuild, or an attacker could clear their budget by
+        waiting for a deploy. See `rsx:man caching`.
+
     WHAT IS COUNTED - FAILURES, NOT REQUESTS, PER IP:
         A request that authenticates costs nothing, so a real user signing in
         fifty times a day never approaches the budget; only wrong answers

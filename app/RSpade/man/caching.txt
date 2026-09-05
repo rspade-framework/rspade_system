@@ -205,10 +205,119 @@ BUILD-SCOPED CACHE:
 - Build key prefix ensures old cache invisible after deployment
 - Manual clear: RsxCache::delete($key)
 - Clear all: RsxCache::clear()
+- CLEARED ON EVERY DATABASE TRANSACTION ROLLBACK (see below)
+- rsx:clean clears database 0 AND the reduced-volatility database 2 (FPC
+  entries included); it never touches locks (1) or counters (3)
 
 REQUEST-SCOPED CACHE:
 - Automatically cleared at end of request
 - No manual clearing needed/possible
+
+
+THE REDIS DATABASE MAP
+======================
+
+One redis instance, four databases. The RsxCache class header
+(system/app/RSpade/Core/Cache/RsxCache.php) is the authority; every subsystem
+that opens a connection points its comment there.
+
+    DB 0  VOLATILE CACHE. RsxCache (including its persistent namespace) and
+          the realtime emitter hashes (rsx_rt:em:*). Emptied by clear(), and
+          therefore on every database transaction rollback.
+    DB 1  LOCKS and the task worker registry.
+    DB 2  REDUCED VOLATILITY CACHE ("RVC"). The full page cache writes here
+          directly; RsxCache routes any key beginning with _RVC_ here.
+          NEVER emptied by clear(). Emptied ONLY by
+          RsxCache::clear_reduced_volatility(), whose one caller is rsx:clean
+          (discarding build state orphans every key here at once).
+    DB 3  TRANSIENT COUNTERS (Rsx_Counter) - login throttling and friends.
+
+EVICTION IS PER INSTANCE, NOT PER DATABASE. The shipped redis.conf sets
+allkeys-lru over the whole server, so a lock, a counter and a cache entry are
+equally evictable. Backlog B-105 tracks whether an RSpade install should
+mandate two redis instances instead.
+
+
+clear() RUNS ON EVERY TRANSACTION ROLLBACK
+==========================================
+
+A rollback can undo a database write that the cache has ALREADY memoized, and
+nothing in the cache knows it happened. The worked example is
+Type_Ref_Registry: class_to_id() lazily INSERTs a _type_refs row and memoizes
+the class-to-id map in a process static AND in redis, so a rollback leaves the
+row gone and both memos intact - and a later id_to_class() answers a
+confidently WRONG class, which is worse than a null.
+
+Owner ruling: if the cache cannot be reset at any moment, the cache is
+improperly implemented.
+
+    App\RSpade\Core\Database\Lifecycle\Transaction_Rollback_Cache_Reset
+
+is registered from Rsx_Framework_Provider::boot() and calls RsxCache::clear()
+plus Type_Ref_Registry::_reset_cached_state() on EVERY TransactionRolledBack
+event, at every nesting level (a savepoint rollback undoes writes exactly like
+an outermost one). Rsx_Test_Command::reset_test_db() performs the same two
+calls, because dropping and restoring a database fires no rollback event.
+
+WHAT THIS MEANS FOR YOU: never keep anything in the cache that cannot be
+recomputed from the database. If it must survive, it is not cache - put it
+behind Rsx_Counter, or, for a genuinely cache-shaped value that must outlive
+the resets, use the _RVC_ convention below.
+
+clear() is implemented as SCAN + DEL rather than FLUSHDB: the shipped
+redis.conf disables FLUSHDB and FLUSHALL outright, so a flushDb() call clears
+nothing and answers false. A failed delete fails loud.
+
+
+THE _RVC_ KEY CONVENTION (RESERVED)
+===================================
+
+An INTERNAL cache-key convention, not a second API. A key beginning with
+_RVC_ is stored on database 2 under the ordinary build-key and test-run
+prefix, so a code update still misses it cleanly and it is LRU-evicted like
+everything else; it simply survives the otherwise frequent cache resets that
+transaction rollback causes.
+
+    RsxCache::set(RsxCache::RVC_PREFIX . 'my_key', $value);
+
+As of the time of writing nothing in PHP uses this feature. It is kept for
+reference and future implementation, and to reserve database 2, which is
+written to directly by FPC.
+
+
+TRANSIENT COUNTERS (Rsx_Counter, DATABASE 3)
+============================================
+
+RsxCache has no increment()/decrement(). A counter is not a cached answer -
+there is nowhere to recompute it from - and living in database 0 would mean a
+rolled-back request silently zeroed a login-failure budget.
+
+    App\RSpade\Core\Cache\Rsx_Counter
+
+    increment(string $key, int $window_seconds, int $amount = 1): int
+        Count one event. FIXED window: the expiry is applied only by the
+        increment that CREATES the key, so the window runs from the first
+        event and never slides forward with traffic (a sliding window would
+        let a slow attacker hold a counter alive forever).
+
+    get(string $key): int
+        The current count. 0 when absent, expired, or unreadable.
+
+    set_flag(string $key, int $ttl_seconds, int $value): void
+    flag_value(string $key): int
+        A self-expiring numeric marker beside the counter - the lockout half
+        of a throttle. flag_value() is 0 when absent.
+
+    reset(string $key): void
+        Drop a counter or flag before its window runs out.
+
+NOT BUILD-SCOPED, deliberately: a counter measures real time and must survive
+a manifest rebuild. It DOES carry the same test-run namespace suffix the cache
+uses, so a test run never spends the developer's counters.
+
+MAINTENANCE MODE returns 0 without touching redis (redis is stopped), so a
+caller that throttles on the result fails OPEN for that window - a stopped
+cache must never lock users out.
 
 
 WHEN TO USE WHICH

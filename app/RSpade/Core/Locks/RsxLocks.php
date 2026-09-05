@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Locks;
 use Exception;
 use RuntimeException;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\Lockd_Client;
 
@@ -210,7 +211,8 @@ class RsxLocks
         string $domain,
         string $name,
         string $type,
-        ?int $timeout = null
+        ?int $timeout = null,
+        bool $db_scoped = true
     ): string {
         if (!in_array($domain, [self::CLUSTER_LOCK, self::SYSTEM_LOCK], true)) {
             shouldnt_happen("Invalid lock domain: {$domain}");
@@ -265,7 +267,7 @@ class RsxLocks
         }
 
         if ($use_flock) {
-            return self::__get_flock_lock($domain, $name, $type, $timeout, $count_key);
+            return self::__get_flock_lock($domain, $name, $type, $timeout, $count_key, $db_scoped);
         }
 
         if ($maintenance_noop) {
@@ -274,7 +276,7 @@ class RsxLocks
 
         $response = self::__lockd([
             'op' => 'acquire',
-            'name' => self::__wire_name($domain, $name),
+            'name' => self::__wire_name($domain, $name, $db_scoped),
             'mode' => $type === self::READ_LOCK ? 'read' : 'write',
             'timeout' => $timeout,
         ]);
@@ -473,9 +475,9 @@ class RsxLocks
      * @return string Lock token - pass to release_lock() to release.
      * @throws RuntimeException If a given $timeout elapses before the lock is granted.
      */
-    public static function system_lock(string $name, ?int $timeout = null): string
+    public static function system_lock(string $name, ?int $timeout = null, bool $db_scoped = true): string
     {
-        return self::get_lock(self::SYSTEM_LOCK, $name, self::WRITE_LOCK, $timeout);
+        return self::get_lock(self::SYSTEM_LOCK, $name, self::WRITE_LOCK, $timeout, $db_scoped);
     }
 
     /**
@@ -733,8 +735,10 @@ class RsxLocks
      * @param string $domain Lock domain
      * @param string $name Lock name
      */
-    public static function force_clear_lock(string $domain, string $name): void
+    public static function force_clear_lock(string $domain, string $name, bool $db_scoped = true): void
     {
+        // $db_scoped must match how the lock was ACQUIRED, or this clears a differently-named
+        // file/wire entry and the real lock is left behind. Default true = the common case.
         // Under maintenance a CLUSTER lock is a no-op grant with no state anywhere, so there is
         // nothing to clear and no file to unlink.
         if ($domain !== self::SYSTEM_LOCK && self::__maintenance_degraded()) {
@@ -744,17 +748,17 @@ class RsxLocks
         // Flock equivalent: drop the lock file. Advisory locking means an flock held by a live
         // process survives the unlink (it holds the inode) - this only clears stale state.
         if ($domain === self::SYSTEM_LOCK) {
-            @unlink(self::__flock_path($domain, $name));
+            @unlink(self::__flock_path($domain, $name, $db_scoped));
 
             return;
         }
 
-        $response = self::__lockd(['op' => 'force_clear', 'name' => self::__wire_name($domain, $name)]);
+        $response = self::__lockd(['op' => 'force_clear', 'name' => self::__wire_name($domain, $name, $db_scoped)]);
 
         // Maintenance came up mid-flight: re-enter, which now short-circuits (a no-op grant
         // leaves no state anywhere to clear).
         if ($response === null) {
-            self::force_clear_lock($domain, $name);
+            self::force_clear_lock($domain, $name, $db_scoped);
         }
     }
 
@@ -766,7 +770,7 @@ class RsxLocks
      * @return array ['readers_active', 'writer_active', 'writer_conn', 'readers_waiting',
      *                'writers_waiting', 'queue_length']
      */
-    public static function get_lock_stats(string $domain, string $name): array
+    public static function get_lock_stats(string $domain, string $name, bool $db_scoped = true): array
     {
         // Neither backend here keeps queue/holder bookkeeping - there is nothing to report but
         // "held by this process or not". For flock, a lock held elsewhere is invisible without
@@ -793,7 +797,7 @@ class RsxLocks
             ];
         }
 
-        $response = self::__lockd(['op' => 'stats', 'name' => self::__wire_name($domain, $name)]);
+        $response = self::__lockd(['op' => 'stats', 'name' => self::__wire_name($domain, $name, $db_scoped)]);
 
         if ($response === null) {
             return self::get_lock_stats($domain, $name);
@@ -848,7 +852,7 @@ class RsxLocks
 
         $response = self::__lockd([
             'op' => 'sem_acquire',
-            'name' => $name,
+            'name' => self::__lock_scope_prefix() . $name,
             'max_slots' => $max_slots,
             'timeout' => $timeout,
         ]);
@@ -930,7 +934,7 @@ class RsxLocks
             return 0;
         }
 
-        $response = self::__lockd(['op' => 'stats', 'name' => $name]);
+        $response = self::__lockd(['op' => 'stats', 'name' => self::__lock_scope_prefix() . $name]);
 
         if ($response === null) {
             return 0;
@@ -973,9 +977,46 @@ class RsxLocks
      * The name a lock is known by ON THE WIRE. Domain-qualified, which keeps `lockd dump`
      * readable and makes the daemon's own timeout message identical to __timeout_message().
      */
-    private static function __wire_name(string $domain, string $name): string
+    private static function __wire_name(string $domain, string $name, bool $db_scoped = true): string
     {
-        return "{$domain}:{$name}";
+        // $db_scoped = false is the opt-out for a lock that protects a BOX-PHYSICAL resource
+        // shared across every database on this machine (the manifest/bundle build dirs, the
+        // one SSR server, the environment-update scripts). Such a lock must exclude a holder
+        // regardless of which database each process is connected to, so it skips the
+        // per-database scope. Data/tenant locks keep the default scope. See
+        // __lock_scope_prefix.
+        return "{$domain}:" . ($db_scoped ? self::__lock_scope_prefix() : '') . $name;
+    }
+
+    /**
+     * The per-environment scope every BACKEND lock name is namespaced under.
+     *
+     * Two RSpade environments that share one rsx-lockd daemon or one storage/flock directory
+     * must never collide on a lock NAME that is not theirs - the parallel test runner's
+     * per-worker databases on a single box are the motivating case, but the same is true of a
+     * dev database and a test database side by side. A lock protects DATA, and the data it
+     * protects lives in a specific database on a specific host, so that (database, host) pair
+     * is the natural isolation boundary: same pair -> same lock namespace (a real web cluster,
+     * every node on the same database and host, still coordinates exactly as before); a
+     * different pair -> a disjoint namespace, so the two never contend on a shared name.
+     *
+     * The database NAME is read LIVE from the default connection, so it tracks a runtime
+     * switch: RSpade only ever changes databases through Laravel's own config-plus-reconnect
+     * path (never a raw USE), so getDatabaseName() is authoritative. It falls back to the
+     * configured default when no connection object has resolved a name yet - a lock taken
+     * before the first query, or before the DB layer is even bound, still gets a stable,
+     * correct scope rather than crashing. The HOST comes straight from config.
+     *
+     * The pair is md5-hashed, so the scope is a fixed 32-character token that is wire- and
+     * filesystem-safe whatever the database name or host actually contains. The hashing costs
+     * a few microseconds, which is nothing against a lockd round-trip or an flock syscall, and
+     * locks are an infrequent operation - correctness and length-safety win over shaving it.
+     */
+    private static function __lock_scope_prefix(): string
+    {
+        // ONE definition of the (database, host) token, shared with Task_Worker_Registry so
+        // the spelling can never drift. The trailing '__' is this backend's own delimiter.
+        return Rsx_Connection_Scope::token() . '__';
     }
 
     /**
@@ -1120,14 +1161,14 @@ class RsxLocks
         return array_merge(['bash', '-c', $closes . 'exec "$@"', 'bash'], $command);
     }
 
-    private static function __flock_path(string $domain, string $name): string
+    private static function __flock_path(string $domain, string $name, bool $db_scoped = true): string
     {
         $dir = storage_path('flock');
         if (!is_dir($dir)) {
             @mkdir($dir, 0755, true);
         }
 
-        $base = preg_replace('/[^A-Za-z0-9._-]/', '_', "{$domain}__{$name}");
+        $base = preg_replace('/[^A-Za-z0-9._-]/', '_', "{$domain}__" . ($db_scoped ? self::__lock_scope_prefix() : '') . $name);
 
         return $dir . '/' . $base . '.lock';
     }
@@ -1142,9 +1183,10 @@ class RsxLocks
         string $name,
         string $type,
         ?int $timeout,
-        string $count_key
+        string $count_key,
+        bool $db_scoped = true
     ): string {
-        $granted = self::__acquire_flock($domain, $name, $timeout);
+        $granted = self::__acquire_flock($domain, $name, $timeout, $db_scoped);
 
         if ($granted === null) {
             throw new RuntimeException(self::__timeout_message($domain, $name, $type, (int) $timeout));
@@ -1171,9 +1213,9 @@ class RsxLocks
      *
      * @return array|null The held_locks fields (token + open handle), or NULL on wait timeout.
      */
-    private static function __acquire_flock(string $domain, string $name, ?int $timeout): ?array
+    private static function __acquire_flock(string $domain, string $name, ?int $timeout, bool $db_scoped = true): ?array
     {
-        $path = self::__flock_path($domain, $name);
+        $path = self::__flock_path($domain, $name, $db_scoped);
         $handle = fopen($path, 'c');
         if ($handle === false) {
             shouldnt_happen("Failed to open lock file for {$domain}:{$name} ({$path})");

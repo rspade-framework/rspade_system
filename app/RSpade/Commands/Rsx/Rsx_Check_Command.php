@@ -44,7 +44,9 @@ class Rsx_Check_Command extends Command
         // Acquire the manifest build SYSTEM lock to prevent concurrent manifest rebuilds.
         // Reentrant: if the manifest rebuild inside this command takes the same lock, the
         // nested acquire is counted here and never reaches the backend.
-        $lock_token = RsxLocks::system_lock(RsxLocks::LOCK_MANIFEST_BUILD);
+        // Box-physical resource (the build dir), shared across every database on this box:
+        // unscoped so it excludes a holder regardless of connected database.
+        $lock_token = RsxLocks::system_lock(RsxLocks::LOCK_MANIFEST_BUILD, null, false);
 
         try {
             // Clean up any existing code quality remediation report

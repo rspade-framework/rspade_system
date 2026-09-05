@@ -5,7 +5,7 @@ namespace App\RSpade\Core\Session;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\RSpade\Core\Auth\Login_Throttle;
-use App\RSpade\Core\Cache\RsxCache;
+use App\RSpade\Core\Cache\Rsx_Counter;
 use App\RSpade\Core\Session\User_Agent;
 
 /**
@@ -17,8 +17,9 @@ use App\RSpade\Core\Session\User_Agent;
  *   They grow with real logins, are readable per user, and are pruned on a retention window by
  *   Session_Cleanup_Service (rsx.sessions.login_history_retention_days).
  *
- * - FAILURES are EPHEMERAL. record_failure() writes no row at all: it increments two redis
- *   counters (per email, per IP) that expire on rsx.sessions.login_throttle.window_minutes, and
+ * - FAILURES are EPHEMERAL. record_failure() writes no row at all: it increments two
+ *   Rsx_Counter counters (per email, per IP) that expire on
+ *   rsx.sessions.login_throttle.window_minutes, and
  *   emits one Log::warning() line. That log line is the forensic record; the counters exist only
  *   to answer the throttling question "how many failures in the window".
  *
@@ -114,8 +115,8 @@ class Login_History
         $ip_address = self::_get_client_ip();
         $window_seconds = self::_failure_window_seconds();
 
-        RsxCache::increment_with_ttl(self::_email_counter_key($email), $window_seconds);
-        RsxCache::increment_with_ttl(self::_ip_counter_key($ip_address), $window_seconds);
+        Rsx_Counter::increment(self::_email_counter_key($email), $window_seconds);
+        Rsx_Counter::increment(self::_ip_counter_key($ip_address), $window_seconds);
 
         // Every recorded failure feeds the framework throttle - password misses, unknown
         // addresses, and whatever outcomes the application records here itself (a second
@@ -234,7 +235,7 @@ class Login_History
      */
     public static function get_failed_attempts_count(string $email, int $minutes = 15): int
     {
-        return RsxCache::get_counter(self::_email_counter_key($email));
+        return Rsx_Counter::get(self::_email_counter_key($email));
     }
 
     /**
@@ -249,7 +250,7 @@ class Login_History
      */
     public static function get_failed_attempts_count_by_ip(string $ip_address, int $minutes = 15): int
     {
-        return RsxCache::get_counter(self::_ip_counter_key($ip_address));
+        return Rsx_Counter::get(self::_ip_counter_key($ip_address));
     }
 
     /**

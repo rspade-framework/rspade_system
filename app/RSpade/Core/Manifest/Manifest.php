@@ -830,7 +830,8 @@ class Manifest
         // SYSTEM lock: the manifest cache is an artifact on THIS box's local disk, so a
         // concurrent build on another server is not a conflict. Waits forever - a build can
         // legitimately take minutes and the process behind it has nothing to do but wait.
-        self::$_manifest_compile_lock = RsxLocks::system_lock(RsxLocks::LOCK_MANIFEST_BUILD);
+        // Box-physical resource (the build dir), unscoped across databases.
+        self::$_manifest_compile_lock = RsxLocks::system_lock(RsxLocks::LOCK_MANIFEST_BUILD, null, false);
 
         console_debug('MANIFEST', 'Manifest build lock acquired, checking to see if manifest cache was updated');
 

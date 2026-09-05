@@ -8,6 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
+use App\RSpade\Commands\Migrate\Maint_Migrate;
 use App\Console\Commands\FrameworkDeveloperCommand;
 use App\RSpade\Core\Database\MigrationPaths;
 use App\RSpade\Core\Manifest\Manifest;
@@ -17,7 +18,37 @@ use App\RSpade\Core\Env\Rsx_Initial_User;
 use App\RSpade\Core\Models\User_Model;
 use ReflectionClass;
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Console\Rsx_Internal_Flags;
+use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Rsx;
+use Symfony\Component\Process\Process;
 
+/**
+ * The RSX test runner.
+ *
+ * ONE process runs the suite by default: every selected class in this PHP process, in name
+ * order, against the test database. That is the path every subset takes - a --group, a
+ * --filter, a named class - and it is the path every environment takes that is not a
+ * docker-capable RSpade development container.
+ *
+ * THE FULL FRAMEWORK SUITE ON A DEV BOX RUNS IN PARALLEL DOCKER CONTAINERS. When this is a
+ * development container, the docker daemon answers, --framework was asked for with no
+ * narrowing selector, and --sequential was not passed, the run is handed to the node
+ * orchestrator (system/bin/rsx-testd/orchestrator.js): it builds the test image, serves a
+ * unix-socket work queue, and starts N sibling containers that each run THIS SAME COMMAND in
+ * worker mode. A container is a complete isolated environment - its own mysqld on a RAM
+ * datadir, its own redis, its own rsx-lockd, its own filesystem and flag files - so the
+ * isolation hazards of an in-process parallel runner (shared database, shared locks, the
+ * box-global maintenance flag) do not exist by construction.
+ *
+ * PHP owns discovery, the singleton flock, running tests and the printed output; node owns
+ * the docker lifecycle and the queue. Nothing is implemented twice: the worker sends the
+ * same per-class record the sequential loop would have printed, and merge_and_report()
+ * prints it through the SAME helpers the sequential loop prints through.
+ *
+ * --sequential forces the single-process path anywhere. --workers overrides the container
+ * count. Mechanics of the docker side: system/bin/rsx-testd/CLAUDE.md.
+ */
 class Rsx_Test_Command extends FrameworkDeveloperCommand
 {
     /**
@@ -27,6 +58,52 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * migration files themselves are unchanged. Bumping invalidates all caches.
      */
     const CACHE_VERSION = 3;
+
+    /**
+     * Ceiling on the container count regardless of how big the box is. A container is a
+     * whole environment (mysqld + redis + rsx-lockd + php), so the useful ceiling is set by
+     * what the docker daemon and the host page cache tolerate, not by core count alone.
+     */
+    const WORKER_MAX = 8;
+
+    /**
+     * Megabytes of RAM budgeted per container. Each one runs its datadir on tmpfs plus a
+     * mysqld, a redis and a PHP process, so the worker count is floored by memory as well
+     * as by cores: min(WORKER_MAX, cores, floor(MemTotal_MB / WORKER_MEMORY_MB)).
+     */
+    const WORKER_MEMORY_MB = 1000;
+
+    /**
+     * The image the workers run, built by the orchestrator from Dockerfile.test.
+     */
+    const TEST_IMAGE = 'rspade-test:latest';
+
+    /**
+     * The shipped development image the test image is FROM. The orchestrator refuses (naming
+     * build.sh) when it is absent; it never builds it itself.
+     */
+    const DEV_IMAGE = 'rspade/rspade-server-dev:latest';
+
+    /**
+     * Node entry point of the docker orchestrator, relative to base_path().
+     */
+    const ORCHESTRATOR_SCRIPT = 'bin/rsx-testd/orchestrator.js';
+
+    /**
+     * How many of the orchestrator's last output lines are repeated under the failure
+     * message when it exits non-zero. Its output was already streamed live; this only saves
+     * the operator scrolling back past a long build to find what actually broke.
+     */
+    const ORCHESTRATOR_TAIL_LINES = 20;
+
+    /**
+     * A worker with no timing history for a $requires_db_reset class scores this many
+     * seconds when ordering the work queue longest-first. It is an ORDERING PROXY, never
+     * a deadline - a reset class re-provisions its database (~25s measured) before its own
+     * tests run, so it belongs at the head of the queue. Real durations replace it after
+     * the first run (see write_timings()).
+     */
+    const RESET_CLASS_ORDER_PROXY_SECONDS = 25.0;
 
     /**
      * The single user the migrated TEST baseline carries.
@@ -59,6 +136,17 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     const BASELINE_USER_PASSWORD = 'rspade-test-user-password';
 
     /**
+     * The open file handle of the runner singleton flock, held for the life of the process
+     * and released by the shutdown function acquire_runner_singleton() registers.
+     */
+    protected static $singleton_lock_fp = null;
+
+    /**
+     * Request id counter for the worker's queue RPC (see queue_request()).
+     */
+    protected int $queue_request_id = 0;
+
+    /**
      * The name and signature of the console command.
      *
      * @var string
@@ -68,7 +156,9 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
                             {--filter=* : Run only tests whose class or method name matches - repeat for a set}
                             {--group=* : Run only the named test group(s) (the concern directory under tests/, e.g. locks)}
                             {--framework : Run framework tests (under app/RSpade) instead of application tests}
-                            {--fresh : Drop and recreate the test database, then run all migrations}';
+                            {--fresh : Drop and recreate the test database, then run all migrations}
+                            {--sequential : Force the single-process runner even when the docker gate would pass}
+                            {--workers= : Override the container count for a docker run (default: min(8, cores, RAM_GB))}';
 
     /**
      * The console command description.
@@ -84,6 +174,16 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      */
     public function handle()
     {
+        // This process IS the test suite, and so is everything it spawns: Rsx_Artisan forwards
+        // the flag to every child, which is how a test-run migrate in another mode gets the
+        // http-APP_URL allowance a real deployment in that mode does not.
+        Rsx_Internal_Flags::set(\App\RSpade\Core\Testing\Rsx_Test_Abstract::TEST_RUN_FLAG);
+
+        // ONE test run per box at a time, whichever path it takes. Two concurrent runs share
+        // the test database, the dump cache and (in docker mode) the container names, so the
+        // second one waits here - for as long as it takes, no deadline.
+        $this->acquire_runner_singleton();
+
         // All three selectors accept a SET. Within one selector the members are
         // OR'd (run this class OR that one); across selectors they are AND'd
         // (this group AND matching this filter), so each one narrows further.
@@ -106,109 +206,74 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         }
         $this->newLine();
 
+        // WORKER SUB-MODE. Inside a test container the orchestrator's CMD passes
+        // --_worker-socket (and --_worker-id): this process pulls whole classes from the
+        // orchestrator's queue and sends each class's outcome back over the same socket. The
+        // container is the isolation - the worker uses the container's own plain test
+        // database and needs no per-worker naming of anything.
+        if (Rsx_Internal_Flags::get('--_worker-socket') !== null) {
+            return $this->worker_run();
+        }
+
+        // IMAGE-BUILD SUB-MODE. The docker test image bakes a fully provisioned test
+        // database into its MySQL data directory: this brings the test schema to the
+        // migrated baseline (schema + the baseline user) and guarantees the cache dump
+        // for the current migration hash exists, so a container that resets its database
+        // between classes restores from that dump instead of re-migrating. It runs no
+        // tests - the image build has none to run.
+        if (Rsx_Internal_Flags::has('--_provision-only')) {
+            if (!$this->prepare_test_database(false)) {
+                return 1;
+            }
+
+            if (!$this->ensure_baseline_cache()) {
+                return 1;
+            }
+
+            $this->info('[OK] test database provisioned');
+
+            return 0;
+        }
+
+        // DOCKER MODE. The full framework suite on a docker-capable development box runs as
+        // N sibling containers instead of one process. It is decided BEFORE the test database
+        // is touched: every test runs inside a container against that container's own
+        // database, so provisioning this box's test database would be pure cost.
+        if ($this->docker_mode_gate_passes($specific_tests, $filters, $groups, $framework_only)) {
+            $selected = $this->discover_selected_classes($specific_tests, $filters, $groups, $framework_only);
+            if ($selected === null) {
+                return 0;
+            }
+
+            return $this->run_docker($selected, $filters);
+        }
+
         // Swap to the test database for the whole run (airtight - dev DB never
         // touched) and make sure its schema is up to date.
         if (!$this->prepare_test_database((bool)$this->option('fresh'))) {
             return 1;
         }
 
-        // Rebuild manifest to ensure we have latest test classes
-        $this->line('Building manifest...');
-        Manifest::init();
-
-        // Get all test classes extending Rsx_Test_Abstract
-        $test_classes = Manifest::php_get_extending('Rsx_Test_Abstract');
-
-        if (empty($test_classes)) {
-            $this->warn('No test classes found.');
-            $this->line('Test classes should extend App\\RSpade\\Core\\Testing\\Rsx_Test_Abstract');
-
+        // The set of classes this invocation will actually run - every class-level
+        // selector (framework partition, --group, specific-class args, --filter,
+        // abstract skip) already applied, in stable name order. The docker path and the
+        // sequential loop iterate THIS SAME set, so which classes run is decided in
+        // exactly one place.
+        $selected = $this->discover_selected_classes($specific_tests, $filters, $groups, $framework_only);
+        if ($selected === null) {
             return 0;
         }
 
-        // Deterministic, reproducible run order (by class name).
-        ksort($test_classes);
-
-        $total_tests = 0;
-        $total_passed = 0;
-        $total_failed = 0;
-        $total_skipped = 0;
+        $totals = self::__empty_totals();
 
         // Tracks whether a prior $requires_db_reset class may have committed
         // data, so we can restore the clean baseline before the next class.
         $db_dirty = false;
 
-        foreach ($test_classes as $test_class_info) {
-            if (!isset($test_class_info['fqcn'])) {
-                continue;
-            }
-
-            $class_name = $test_class_info['fqcn'];
-
-            // Partition framework vs application tests by file location. Framework
-            // tests live under app/RSpade/; everything else (rsx/) is application.
-            // --framework runs only the former, the default runs only the latter.
-            $is_framework_test = str_starts_with($test_class_info['file'] ?? '', 'app/RSpade/');
-            if ($is_framework_test !== $framework_only) {
-                continue;
-            }
-
-            // Group = the concern directory a test lives in: tests/<group>/php/...
-            // (framework) or the first directory under rsx/tests/ (application).
-            // A class outside every named group is skipped before anything else
-            // looks at it.
-            if ($groups && !self::__file_in_groups($test_class_info['file'] ?? '', $groups)) {
-                continue;
-            }
-
-            // Skip unless this class is one of the requested ones (any match).
-            if ($specific_tests) {
-                $named = false;
-                foreach ($specific_tests as $wanted) {
-                    if (str_contains($class_name, $wanted)) {
-                        $named = true;
-                        break;
-                    }
-                }
-                if (!$named) {
-                    continue;
-                }
-            }
-
-            // Skip abstract classes
-            $reflection = new ReflectionClass($class_name);
-            // @PHP-REFLECT-01-EXCEPTION - Test runner needs ReflectionClass for filtering
-            if ($reflection->isAbstract()) {
-                continue;
-            }
-
-            $short_name = basename(str_replace('\\', '/', $class_name));
-
-            // Pre-filter: decide whether --filter selects this class BEFORE we
-            // print "Running:" or run it. A filter matches a class either by its
-            // (short) class name or by any of its test method names (case-
-            // insensitive). When it matches the class NAME, every method reports;
-            // when it matches only method names, just the matching methods report.
-            // A class the filter selects nothing in is skipped entirely - no
-            // "Running:" line, no ::run(), no participation in $db_dirty tracking.
-            $class_matches = $filters && self::__matches_any($short_name, $filters);
-            if ($filters && !$class_matches) {
-                $any_method_matches = false;
-                // Mirror Rsx_Test_Abstract::run()'s discovery: public methods
-                // whose name starts with 'test_'.
-                foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
-                    if (strpos($method->getName(), 'test_') !== 0) {
-                        continue;
-                    }
-                    if (self::__matches_any($method->getName(), $filters)) {
-                        $any_method_matches = true;
-                        break;
-                    }
-                }
-                if (!$any_method_matches) {
-                    continue;
-                }
-            }
+        foreach ($selected as $selected_class) {
+            $class_name = $selected_class['fqcn'];
+            $short_name = $selected_class['short'];
+            $class_matches = $selected_class['class_matches'];
 
             // Per-class blank-slate reset. The database is only ever left dirty
             // by a prior $requires_db_reset class that may have committed; a
@@ -220,7 +285,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
                 $this->line("Resetting test database for {$short_name}...");
                 if (!$this->reset_test_db()) {
                     $this->error('  Error: failed to reset test database before ' . $short_name);
-                    $total_failed++;
+                    $totals['failed']++;
 
                     continue;
                 }
@@ -239,42 +304,10 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
                     $db_dirty = true;
                 }
 
-                // Process results
-                foreach ($results as $test_name => $result) {
-                    // Select this method when there's no filter, the class name
-                    // matched the filter (report every method), or this specific
-                    // method name matches (case-insensitive on both sides).
-                    if (!(!$filters || $class_matches || self::__matches_any($test_name, $filters))) {
-                        continue;
-                    }
-
-                    $total_tests++;
-
-                    switch ($result['status']) {
-                        case 'passed':
-                            $total_passed++;
-                            $this->line("  [OK] {$test_name}");
-                            break;
-
-                        case 'failed':
-                            $total_failed++;
-                            $this->error("  [FAIL] {$test_name}");
-                            $this->line("    {$result['message']}", 'fg=red');
-                            if (isset($result['file']) && isset($result['line'])) {
-                                $this->line("    at {$result['file']}:{$result['line']}", 'fg=gray');
-                            }
-                            break;
-
-                        case 'skipped':
-                            $total_skipped++;
-                            $this->line("  - {$test_name} (skipped)", 'fg=yellow');
-                            $this->line("    {$result['message']}", 'fg=gray');
-                            break;
-                    }
-                }
+                $this->print_class_results($results, $class_matches, $filters, $totals);
             } catch (Exception $e) {
                 $this->error('  Error running test class: ' . $e->getMessage());
-                $total_failed++;
+                $totals['failed']++;
             }
 
             $this->newLine();
@@ -284,29 +317,135 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // starts from the database, not from a previous run's answers.
         \App\RSpade\Core\Cache\RsxCache::clear();
 
-        // Summary
+        return $this->print_summary($totals);
+    }
+
+    /**
+     * Build the class set this invocation runs: manifest rebuild, discovery, name order,
+     * then every class-level selector. Null means the manifest holds no test classes at all
+     * (already reported) and the caller should exit 0.
+     *
+     * @param array $specific_tests
+     * @param array $filters
+     * @param array $groups
+     * @param bool $framework_only
+     * @return array|null select_test_classes() output
+     */
+    protected function discover_selected_classes(
+        array $specific_tests,
+        array $filters,
+        array $groups,
+        bool $framework_only
+    ): ?array {
+        // Rebuild manifest to ensure we have latest test classes
+        $this->line('Building manifest...');
+        Manifest::init();
+
+        // Get all test classes extending Rsx_Test_Abstract
+        $test_classes = Manifest::php_get_extending('Rsx_Test_Abstract');
+
+        if (empty($test_classes)) {
+            $this->warn('No test classes found.');
+            $this->line('Test classes should extend App\\RSpade\\Core\\Testing\\Rsx_Test_Abstract');
+
+            return null;
+        }
+
+        // Deterministic, reproducible run order (by class name).
+        ksort($test_classes);
+
+        return $this->select_test_classes($test_classes, $specific_tests, $filters, $groups, $framework_only);
+    }
+
+    /**
+     * The running tally both printers keep.
+     *
+     * @return array{tests:int,passed:int,failed:int,skipped:int}
+     */
+    private static function __empty_totals(): array
+    {
+        return ['tests' => 0, 'passed' => 0, 'failed' => 0, 'skipped' => 0];
+    }
+
+    /**
+     * Print ONE class's per-method lines and fold them into the totals. THE one
+     * implementation - the sequential loop calls it with what $class::run() just returned,
+     * merge_and_report() calls it with what a container sent back, so the two paths cannot
+     * drift a single character apart.
+     *
+     * @param array $results Rsx_Test_Abstract::run() output (test_name => result)
+     * @param bool $class_matches Whether --filter matched the class name (report every method)
+     * @param array $filters
+     * @param array $totals
+     * @return void
+     */
+    protected function print_class_results(array $results, bool $class_matches, array $filters, array &$totals): void
+    {
+        foreach ($results as $test_name => $result) {
+            // Select this method when there's no filter, the class name
+            // matched the filter (report every method), or this specific
+            // method name matches (case-insensitive on both sides).
+            if (!(!$filters || $class_matches || self::__matches_any($test_name, $filters))) {
+                continue;
+            }
+
+            $totals['tests']++;
+
+            switch ($result['status']) {
+                case 'passed':
+                    $totals['passed']++;
+                    $this->line("  [OK] {$test_name}");
+                    break;
+
+                case 'failed':
+                    $totals['failed']++;
+                    $this->error("  [FAIL] {$test_name}");
+                    $this->line("    {$result['message']}", 'fg=red');
+                    if (isset($result['file']) && isset($result['line'])) {
+                        $this->line("    at {$result['file']}:{$result['line']}", 'fg=gray');
+                    }
+                    break;
+
+                case 'skipped':
+                    $totals['skipped']++;
+                    $this->line("  - {$test_name} (skipped)", 'fg=yellow');
+                    $this->line("    {$result['message']}", 'fg=gray');
+                    break;
+            }
+        }
+    }
+
+    /**
+     * Print the run summary and return the process exit code. THE one implementation, shared
+     * by the sequential path and the docker merge.
+     *
+     * @param array $totals
+     * @return int
+     */
+    protected function print_summary(array $totals): int
+    {
         $this->info('Test Summary');
         $this->info('============');
-        $this->line("Total:   {$total_tests}");
+        $this->line("Total:   {$totals['tests']}");
 
-        if ($total_passed > 0) {
-            $this->line("Passed:  {$total_passed}", 'fg=green');
+        if ($totals['passed'] > 0) {
+            $this->line("Passed:  {$totals['passed']}", 'fg=green');
         }
-        if ($total_failed > 0) {
-            $this->line("Failed:  {$total_failed}", 'fg=red');
+        if ($totals['failed'] > 0) {
+            $this->line("Failed:  {$totals['failed']}", 'fg=red');
         }
-        if ($total_skipped > 0) {
-            $this->line("Skipped: {$total_skipped}", 'fg=yellow');
+        if ($totals['skipped'] > 0) {
+            $this->line("Skipped: {$totals['skipped']}", 'fg=yellow');
         }
 
         $this->newLine();
 
-        if ($total_failed > 0) {
+        if ($totals['failed'] > 0) {
             $this->error('Tests failed!');
 
             return 1;
         }
-        if ($total_tests === 0) {
+        if ($totals['tests'] === 0) {
             $this->warn('No tests were run.');
 
             return 0;
@@ -314,6 +453,58 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $this->info('All tests passed!');
 
         return 0;
+    }
+
+    /**
+     * Take the test runner's singleton lock, blocking until it is ours.
+     *
+     * A RAW flock, deliberately not RsxLocks: this must hold across a maintenance window
+     * (where cluster locks are granted as no-ops) and it must be taken before any service
+     * this process depends on is consulted. Mirrors Rsx_Preboot_Service::__acquire_file_lock().
+     *
+     * NO TIMEOUT. A second rsx:test waits for the first one to finish, however long that is -
+     * a test run's length is a function of the suite, and giving up on the wait would run two
+     * runs over one test database.
+     *
+     * @return void
+     */
+    protected function acquire_runner_singleton(): void
+    {
+        $lock_file = storage_path('flock/rsx_test_runner.lock');
+
+        $dir = dirname($lock_file);
+        if (!is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        // 'c' opens-or-creates WITHOUT truncating: the pid inside belongs to the holder
+        // until we actually own the lock.
+        $fp = fopen($lock_file, 'c');
+        if (!$fp) {
+            throw new \RuntimeException('Could not open the test runner lock file: ' . $lock_file);
+        }
+
+        // Announce the wait only when there is one - a free lock stays silent.
+        if (!flock($fp, LOCK_EX | LOCK_NB)) {
+            $this->line('Waiting for another test run to finish...');
+            if (!flock($fp, LOCK_EX)) {
+                throw new \RuntimeException('Could not acquire the test runner lock: ' . $lock_file);
+            }
+        }
+
+        ftruncate($fp, 0);
+        fwrite($fp, getmypid() . "\n");
+        fflush($fp);
+
+        self::$singleton_lock_fp = $fp;
+
+        register_shutdown_function(static function () {
+            if (self::$singleton_lock_fp) {
+                flock(self::$singleton_lock_fp, LOCK_UN);
+                fclose(self::$singleton_lock_fp);
+                self::$singleton_lock_fp = null;
+            }
+        });
     }
 
     /**
@@ -455,8 +646,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // development connection during boot. A cached answer is cheap to lose and
         // expensive to trust across a connection swap, so both are dropped here and the
         // run rebuilds them from the test database on first use.
-        \App\RSpade\Core\Cache\RsxCache::clear();
-        \App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry::_reset_cached_state();
+        \App\RSpade\Core\Database\Lifecycle\Transaction_Rollback_Cache_Reset::reset();
 
         $this->newLine();
 
@@ -482,6 +672,11 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // so the next query reconnects to the freshly created one.
         DB::purge('test');
         DB::setDefaultConnection('test');
+
+        // The database was dropped and restored, so every cached view of it is stale - and
+        // no rollback event fired to say so. Same two calls, for the same reason, as
+        // prepare_test_database() (see the comment there).
+        \App\RSpade\Core\Database\Lifecycle\Transaction_Rollback_Cache_Reset::reset();
 
         return true;
     }
@@ -509,10 +704,9 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      *
      * Provisioning is forward-only: the database is dropped and recreated, then
      * either restored from a cached mysqldump (when the migration set is
-     * unchanged) or fully migrated and re-cached. Migrations run in a subprocess
-     * in debug mode (RSX_MODE=debug) so they use the non-snapshot migration path
-     * against the test database - the development-mode snapshot path operates on
-     * the whole MySQL instance and must never run for a test schema sync.
+     * unchanged) or fully migrated and re-cached. Migrations run in a subprocess that
+     * passes --_no-snapshot, so the development-mode datadir snapshot - which operates on
+     * the whole MySQL instance - never runs for a test schema sync.
      *
      * @param string $test_db
      * @return bool
@@ -586,11 +780,19 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * Run `migrate --force` in a fresh subprocess against the test database. Shared by
      * the full provisioning path and the incremental pending-migration apply.
      *
-     * Debug mode is forced (no snapshot machinery - the development-mode snapshot path
-     * operates on the whole MySQL instance and must never run for a test schema sync).
-     * DB_DATABASE / RSX_MODE are exported as real environment variables (environment
-     * facts: which database, which mode); Laravel's immutable dotenv will not override
-     * them, so the subprocess targets the test database.
+     * THE SNAPSHOT IS SUPPRESSED BY A FLAG, NOT BY A MODE. The development-mode datadir
+     * snapshot stops the whole MySQL instance and copies /var/lib/mysql, which must never
+     * happen for a test schema sync - the database being migrated was just dropped and
+     * recreated empty, so there is nothing to protect and everything to pay for. That
+     * statement is exactly what Maint_Migrate's --_no-snapshot means, so this passes it.
+     * (It used to export RSX_MODE=debug instead, which suppressed the snapshot as a side
+     * effect of changing the child's whole application mode - per-invocation intent riding
+     * as an environment variable, against the owner ruling in Core/CLAUDE.md, and it made
+     * the runner unusable on any dev box with an http:// APP_URL, which debug mode refuses.)
+     *
+     * DB_DATABASE stays an environment variable because it IS an environment fact - which
+     * database this process talks to. Laravel's immutable dotenv will not override it, so
+     * the subprocess targets the test database.
      *
      * Spawned through Rsx_Artisan so the child JOINS THIS PROCESS'S LOCK GROUP. Without
      * that it deadlocks against its own parent: the runner takes cluster:SITE_n on its
@@ -618,7 +820,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // than relying on those keys being blank: whether the developer running the suite
         // happens to have configured credentials is not something the baseline may depend
         // on. (The `--_` convention: no InputOption, stripped pre-boot from argv.)
-        $args = ['--force', '--_no-initial-user'];
+        $args = ['--force', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG];
         if (!empty($storage_root)) {
             $args[] = '--rsx-storage-root=' . (string) $storage_root;
         }
@@ -626,7 +828,6 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $output = [];
         $exit_code = Rsx_Artisan::run('migrate', $args, $output, [
             'DB_DATABASE' => $test_db,
-            'RSX_MODE' => 'debug',
         ]);
 
         if ($exit_code !== 0) {
@@ -894,5 +1095,721 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         foreach (glob($this->test_cache_dir() . '/*.sql*') as $file) {
             @unlink($file);
         }
+    }
+
+    // =========================================================================
+    // DOCKER PARALLEL RUNNER
+    //
+    // The full framework suite is spread across N sibling containers, each a complete
+    // isolated environment running THIS command in worker mode and pulling WHOLE classes
+    // from the orchestrator's socket queue (longest-first). The atomic unit of parallel
+    // work is one class: a class's tests share state and must run in order, but the suite
+    // has no cross-class ordering dependency (the sequential runner alpha-sorts and
+    // nothing relies on that order).
+    // =========================================================================
+
+    /**
+     * The class-level selection - which classes this invocation runs - applied in exactly
+     * one place so the sequential loop and the parallel orchestrator can never disagree.
+     * Every decision the historical loop made inline is made here: framework/app partition,
+     * --group, specific-class args, abstract skip, and the --filter "selects nothing in this
+     * class" skip. Order is the caller's (name-sorted) order.
+     *
+     * @param array $test_classes Manifest entries (fqcn + file), already name-sorted
+     * @param array $specific_tests
+     * @param array $filters
+     * @param array $groups
+     * @param bool $framework_only
+     * @return array<int, array{fqcn:string,file:string,short:string,class_matches:bool}>
+     */
+    protected function select_test_classes(
+        array $test_classes,
+        array $specific_tests,
+        array $filters,
+        array $groups,
+        bool $framework_only
+    ): array {
+        $selected = [];
+
+        foreach ($test_classes as $test_class_info) {
+            if (!isset($test_class_info['fqcn'])) {
+                continue;
+            }
+
+            $class_name = $test_class_info['fqcn'];
+            $file = $test_class_info['file'] ?? '';
+
+            // Partition framework vs application tests by file location.
+            $is_framework_test = str_starts_with($file, 'app/RSpade/');
+            if ($is_framework_test !== $framework_only) {
+                continue;
+            }
+
+            // Group = the concern directory a test lives in.
+            if ($groups && !self::__file_in_groups($file, $groups)) {
+                continue;
+            }
+
+            // Specific-class args: keep only classes whose FQCN contains a requested token.
+            if ($specific_tests) {
+                $named = false;
+                foreach ($specific_tests as $wanted) {
+                    if (str_contains($class_name, $wanted)) {
+                        $named = true;
+                        break;
+                    }
+                }
+                if (!$named) {
+                    continue;
+                }
+            }
+
+            $reflection = new ReflectionClass($class_name);
+            // @PHP-REFLECT-01-EXCEPTION - Test runner needs ReflectionClass for filtering
+            if ($reflection->isAbstract()) {
+                continue;
+            }
+
+            $short_name = basename(str_replace('\\', '/', $class_name));
+
+            // --filter: a class is selected when the filter matches its (short) class name
+            // (class_matches -> every method reports) OR any of its test_* method names (only
+            // the matching methods report). A class the filter selects nothing in is skipped.
+            $class_matches = $filters && self::__matches_any($short_name, $filters);
+            if ($filters && !$class_matches) {
+                $any_method_matches = false;
+                foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+                    if (strpos($method->getName(), 'test_') !== 0) {
+                        continue;
+                    }
+                    if (self::__matches_any($method->getName(), $filters)) {
+                        $any_method_matches = true;
+                        break;
+                    }
+                }
+                if (!$any_method_matches) {
+                    continue;
+                }
+            }
+
+            $selected[] = [
+                'fqcn' => $class_name,
+                'file' => $file,
+                'short' => $short_name,
+                'class_matches' => (bool) $class_matches,
+            ];
+        }
+
+        return $selected;
+    }
+
+    /**
+     * The gate for the docker parallel runner. TRUE only when every condition holds; any
+     * "no" falls the whole invocation back to the single-process path, unchanged.
+     *
+     *   - --framework with NO narrowing selector (the WHOLE framework suite - a subset is
+     *     never worth an image build and N container boots, and the containers only carry
+     *     the framework's own environment),
+     *   - not --sequential,
+     *   - an RSpade DEVELOPMENT container (/.rspade_container_dev) - the only place the
+     *     nested docker daemon and the shipped dev image exist,
+     *   - a docker daemon that answers.
+     *
+     * @param array $specific_tests
+     * @param array $filters
+     * @param array $groups
+     * @param bool $framework_only
+     * @return bool
+     */
+    protected function docker_mode_gate_passes(
+        array $specific_tests,
+        array $filters,
+        array $groups,
+        bool $framework_only
+    ): bool {
+        if (!$framework_only) {
+            return false;
+        }
+
+        if ($this->option('sequential')) {
+            return false;
+        }
+
+        if ($specific_tests || $filters || $groups) {
+            return false;
+        }
+
+        if (!Rsx::is_rspade_dev_container()) {
+            return false;
+        }
+
+        return $this->docker_is_usable();
+    }
+
+    /**
+     * Does the docker daemon answer? `docker info` is the whole probe - it fails when the
+     * binary is absent, when the daemon is down and when this process cannot reach the
+     * socket, which are the three ways docker mode can be unavailable. Quiet: its output is
+     * a diagnostic for a run we are choosing not to make.
+     *
+     * @return bool
+     */
+    protected function docker_is_usable(): bool
+    {
+        $output = [];
+        $exit_code = 0;
+        exec_safe('docker info > /dev/null 2>&1', $output, $exit_code);
+
+        return $exit_code === 0;
+    }
+
+    /**
+     * How many containers to run: min(WORKER_MAX, cores, floor(RAM_MB / WORKER_MEMORY_MB)),
+     * floor 1, never more containers than classes. --workers=N overrides the formula (an
+     * experiment knob; the floors of 1 and the class count still apply).
+     *
+     * @param int $class_count
+     * @return int
+     */
+    protected function worker_count(int $class_count): int
+    {
+        $override = $this->option('workers');
+        if ($override !== null && $override !== '' && (int) $override > 0) {
+            return max(1, min((int) $override, max(1, $class_count)));
+        }
+
+        $by_memory = (int) floor($this->__memory_mb() / self::WORKER_MEMORY_MB);
+        $n = min(self::WORKER_MAX, $this->__cpu_cores(), $by_memory);
+
+        return max(1, min($n, max(1, $class_count)));
+    }
+
+    /**
+     * CPU cores visible to this box, counted from /proc/cpuinfo (no shell).
+     *
+     * @return int
+     */
+    private function __cpu_cores(): int
+    {
+        $cpuinfo = @file_get_contents('/proc/cpuinfo');
+        $count = ($cpuinfo === false) ? 0 : (int) preg_match_all('/^processor\s*:/mi', $cpuinfo);
+
+        return max(1, $count);
+    }
+
+    /**
+     * Total system memory in megabytes, from /proc/meminfo's MemTotal (kB).
+     *
+     * @return int
+     */
+    private function __memory_mb(): int
+    {
+        $meminfo = @file_get_contents('/proc/meminfo');
+        if ($meminfo === false || !preg_match('/^MemTotal:\s*(\d+)\s*kB/mi', $meminfo, $m)) {
+            return 0;
+        }
+
+        return (int) ((int) $m[1] / 1024);
+    }
+
+    /**
+     * Run the selected classes across N docker containers driven by the node orchestrator.
+     *
+     * PHP's half of the contract is three things: the run directory (classes.json + an ipc/
+     * directory the containers bind-mount), the spawn, and the merge of the results.jsonl
+     * node leaves behind. Everything about docker itself - the image build, the zombie
+     * sweep, the queue server, the container lifecycle, the pruning - belongs to node.
+     *
+     * @param array $selected select_test_classes() output
+     * @param array $filters --filter set (applied per-method when merging, exactly as the
+     *                        sequential loop does at print time)
+     * @return int Exit code (0 all passed, 1 any failure or an infrastructure failure)
+     */
+    protected function run_docker(array $selected, array $filters): int
+    {
+        $run_id = date('Ymd_His') . '_' . bin2hex(random_bytes(4));
+        $run_dir = storage_path('rsx-tmp/test-run-' . $run_id);
+        ensure_directory($run_dir);
+
+        // The containers bind-mount this directory at /rsx-test-ipc and reach the queue
+        // through the socket node binds inside it.
+        ensure_directory($run_dir . '/ipc');
+
+        $worker_count = $this->worker_count(count($selected));
+
+        // Longest-first, so the slowest classes are handed out before the fast ones and no
+        // container is left holding a straggler at the end. requires_db_reset rides along:
+        // the worker acts on it, and the queue never has to load a PHP class to answer.
+        $ordered = $this->order_classes_longest_first($selected);
+        $rows = [];
+        foreach ($ordered as $sel) {
+            $fqcn = $sel['fqcn'];
+            $rows[] = [
+                'fqcn' => $fqcn,
+                'short' => $sel['short'],
+                'requires_db_reset' => (bool) $fqcn::requires_db_reset(),
+                'class_matches' => (bool) $sel['class_matches'],
+            ];
+        }
+        file_put_contents($run_dir . '/classes.json', json_encode($rows));
+
+        $this->line('Parallel run: ' . $worker_count . ' containers (docker) - ' . $run_dir);
+        $this->newLine();
+
+        // command_without_inherited_locks: node outlives nothing of ours, but it spawns
+        // long-lived docker clients, and an inherited flock descriptor lives on the open
+        // file description - it would keep this box's locks held for the whole run.
+        $command = RsxLocks::command_without_inherited_locks([
+            'node',
+            base_path(self::ORCHESTRATOR_SCRIPT),
+            '--run-dir=' . $run_dir,
+            '--workers=' . $worker_count,
+            '--image=' . self::TEST_IMAGE,
+            '--dev-image=' . self::DEV_IMAGE,
+            // The docker BUILD CONTEXT is the project root, one level above base_path().
+            '--project-root=' . dirname(base_path()),
+        ]);
+
+        $process = new Process($command);
+        // NO TIMEOUT (framework mandate): the run takes as long as the suite takes.
+        $process->setTimeout(null);
+        $process->setWorkingDirectory(base_path());
+
+        // Streamed, not captured: the operator watches the build and the containers live.
+        // The tail is kept only to repeat the last lines if node fails.
+        $tail = [];
+        $process->run(function ($type, $buffer) use (&$tail) {
+            $this->output->write($buffer);
+
+            foreach (explode("\n", rtrim($buffer, "\n")) as $line) {
+                $tail[] = $line;
+            }
+            if (count($tail) > self::ORCHESTRATOR_TAIL_LINES) {
+                $tail = array_slice($tail, -self::ORCHESTRATOR_TAIL_LINES);
+            }
+        });
+
+        if ($process->getExitCode() !== 0) {
+            // Node's non-zero exit means the INFRASTRUCTURE failed (image build, zombie
+            // sweep, a dead container) - test failures are decided by the merge below, which
+            // is why an infrastructure failure never reaches it.
+            $this->newLine();
+            $this->error('[ERROR] parallel test infrastructure failed (see ' . $run_dir . '/worker-*.log)');
+            foreach ($tail as $line) {
+                $this->line($line, 'fg=red');
+            }
+
+            return 1;
+        }
+
+        return $this->merge_and_report($run_dir . '/results.jsonl', $selected, $filters);
+    }
+
+    /**
+     * Guarantee the cached baseline dump exists for the current migration hash. When it does
+     * not, provision the test database once - sync_test_schema() migrates, seeds the baseline
+     * user, and dumps the cache.
+     *
+     * Called by --_provision-only during the test IMAGE BUILD: the image bakes both the
+     * migrated database and this dump, so a container resetting its database between classes
+     * restores from the dump instead of re-migrating.
+     *
+     * @return bool
+     */
+    protected function ensure_baseline_cache(): bool
+    {
+        $test_db = (string) config('database.connections.test.database');
+        $hash = $this->compute_migration_hash();
+        $cache_file = $this->test_cache_dir() . "/{$hash}.sql";
+
+        if (is_file($cache_file)) {
+            return true;
+        }
+
+        $this->line('Building the baseline cache dump...');
+
+        return $this->sync_test_schema($test_db);
+    }
+
+    /**
+     * Order the selected classes longest-first for the work queue, so the slowest classes are
+     * dispatched before the fast ones and no worker is left holding a straggler at the end.
+     *
+     * Ordering hint precedence: a persisted per-class measured duration (test-timings.json,
+     * self-improving after each parallel run); else the $requires_db_reset proxy (those carry
+     * the ~25s re-provision cost); else a small proxy from source-file size. This is a cache,
+     * never a deadline - a wrong guess only costs a slightly worse pack, never a failure.
+     *
+     * @param array $selected
+     * @return array
+     */
+    protected function order_classes_longest_first(array $selected): array
+    {
+        $timings = $this->read_timings();
+
+        $scored = [];
+        foreach ($selected as $i => $sel) {
+            $fqcn = $sel['fqcn'];
+
+            if (isset($timings[$fqcn])) {
+                $score = (float) $timings[$fqcn];
+            } elseif ($fqcn::requires_db_reset()) {
+                $score = self::RESET_CLASS_ORDER_PROXY_SECONDS;
+            } else {
+                $abs = ($sel['file'] !== '') ? rsx_project_file_path($sel['file']) : '';
+                $bytes = ($abs !== '' && is_file($abs)) ? (int) filesize($abs) : 0;
+                // Source size / 100k keeps a large non-reset class ahead of a tiny one while
+                // staying well below the reset proxy.
+                $score = $bytes / 100000.0;
+            }
+
+            $scored[] = ['sel' => $sel, 'score' => $score, 'i' => $i];
+        }
+
+        usort($scored, static function ($a, $b) {
+            if ($a['score'] === $b['score']) {
+                return $a['i'] <=> $b['i'];
+            }
+
+            return $b['score'] <=> $a['score'];
+        });
+
+        return array_map(static fn ($x) => $x['sel'], $scored);
+    }
+
+    /**
+     * Merge the orchestrator's results.jsonl into the unified totals and per-class output,
+     * in the EXACT format the sequential path prints (both go through print_class_results()
+     * and print_summary(), so there is one printer), then persist the measured durations as
+     * next run's ordering hint.
+     *
+     * A SELECTED CLASS WITH NO RECORD IS A FAILURE, never a silent drop: it means the
+     * container holding it died before it finished. A record carrying an 'error' is a throw
+     * from $class::run() itself, reported exactly as the sequential loop's catch reports it.
+     *
+     * @param string $results_path <run_dir>/results.jsonl, one JSON record per class
+     * @param array $selected select_test_classes() output - the classes that were dispatched
+     * @param array $filters
+     * @return int
+     */
+    protected function merge_and_report(string $results_path, array $selected, array $filters): int
+    {
+        // fqcn => {short, results, duration, error?}
+        $by_class = [];
+        if (is_file($results_path)) {
+            foreach (file($results_path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+                $rec = json_decode($line, true);
+                if (!is_array($rec) || !isset($rec['class'])) {
+                    continue;
+                }
+                $by_class[$rec['class']] = $rec;
+            }
+        }
+
+        $totals = self::__empty_totals();
+        $timings = [];
+
+        foreach ($selected as $sel) {
+            $fqcn = $sel['fqcn'];
+            $short_name = $sel['short'];
+            $class_matches = $sel['class_matches'];
+
+            $this->info("Running: {$short_name}");
+
+            if (!isset($by_class[$fqcn])) {
+                $totals['failed']++;
+                $this->error("  [FAIL] {$short_name}");
+                $this->line('    class produced no result (worker terminated before it finished)', 'fg=red');
+                $this->newLine();
+                continue;
+            }
+
+            $rec = $by_class[$fqcn];
+            if (isset($rec['duration'])) {
+                $timings[$fqcn] = (float) $rec['duration'];
+            }
+
+            if (!empty($rec['error'])) {
+                $totals['failed']++;
+                $this->error('  Error running test class: ' . $rec['error']);
+                $this->newLine();
+                continue;
+            }
+
+            $this->print_class_results((array) ($rec['results'] ?? []), (bool) $class_matches, $filters, $totals);
+
+            $this->newLine();
+        }
+
+        // Self-improving queue ordering: record what each class actually took this run.
+        $this->write_timings($timings);
+
+        // Drop what the run cached under the test suffix (mirrors the sequential tail).
+        \App\RSpade\Core\Cache\RsxCache::clear();
+
+        return $this->print_summary($totals);
+    }
+
+    /**
+     * Path of the persisted per-class timing hints ({fqcn: seconds}). Under rsx-tmp - a cache,
+     * never a correctness input.
+     *
+     * @return string
+     */
+    protected function timings_path(): string
+    {
+        $dir = storage_path('rsx-tmp');
+        ensure_directory($dir);
+
+        return $dir . '/test-timings.json';
+    }
+
+    /**
+     * Read the persisted timing hints, or an empty map when absent/unreadable.
+     *
+     * @return array<string, float>
+     */
+    protected function read_timings(): array
+    {
+        $path = $this->timings_path();
+        if (!is_file($path)) {
+            return [];
+        }
+
+        $data = json_decode((string) @file_get_contents($path), true);
+
+        return is_array($data) ? $data : [];
+    }
+
+    /**
+     * Merge freshly measured durations over the persisted hints so ordering self-improves.
+     * Best-effort - a failed write only costs a slightly worse pack next time.
+     *
+     * @param array<string, float> $new
+     * @return void
+     */
+    protected function write_timings(array $new): void
+    {
+        if (empty($new)) {
+            return;
+        }
+
+        $merged = array_merge($this->read_timings(), $new);
+        @file_put_contents($this->timings_path(), json_encode($merged));
+    }
+
+    // =========================================================================
+    // WORKER SUB-MODE
+    // Same command, detected by --_worker-socket, running inside a test container.
+    // The container IS the isolation - its own mysqld, redis, rsx-lockd, filesystem
+    // and flag files - so a worker provisions nothing special: it prepares the
+    // container's own plain test database and then pulls whole classes from the
+    // orchestrator's queue until it is drained.
+    // =========================================================================
+
+    /**
+     * Worker entry point. Prepares this container's test database (the image already carries
+     * the migrated schema, so this takes the no-subprocess path), then consumes the queue
+     * until the orchestrator says it is drained.
+     *
+     * @return int
+     */
+    protected function worker_run(): int
+    {
+        $worker_id = (int) Rsx_Internal_Flags::get('--_worker-id');
+        $socket_path = (string) Rsx_Internal_Flags::get('--_worker-socket');
+
+        if ($socket_path === '') {
+            shouldnt_happen('Test worker spawned without --_worker-socket; the queue socket is how a worker gets work.');
+        }
+
+        if (!$this->prepare_test_database(false)) {
+            return 1;
+        }
+
+        // Rebuild manifest to ensure we have latest test classes (mirrors the sequential path).
+        $this->line('Building manifest...');
+        Manifest::init();
+
+        $this->worker_consume_queue($worker_id, $socket_path);
+
+        return 0;
+    }
+
+    /**
+     * Pull whole classes from the orchestrator's queue and run each, until it answers that
+     * the queue is drained. The $requires_db_reset / db_dirty semantics are IDENTICAL to the
+     * sequential loop, applied to this container's own database.
+     *
+     * @param int $worker_id
+     * @param string $socket_path
+     * @return void
+     */
+    protected function worker_consume_queue(int $worker_id, string $socket_path): void
+    {
+        $db_dirty = false;
+
+        while (true) {
+            $next = $this->queue_request($socket_path, 'queue.next', ['worker_id' => $worker_id]);
+
+            $class_name = $next['class'] ?? null;
+            if (!is_string($class_name) || $class_name === '') {
+                return; // queue drained
+            }
+
+            $short_name = (string) ($next['short'] ?? basename(str_replace('\\', '/', $class_name)));
+            $needs_reset = (bool) ($next['requires_db_reset'] ?? $class_name::requires_db_reset());
+
+            // Blank-slate reset whenever the database is dirty - the same rule the sequential
+            // loop applies, and for the same two reasons: it gives a reset class its blank
+            // slate, and it protects the next transaction class from a prior one's leftovers.
+            if ($db_dirty) {
+                if (!$this->reset_test_db()) {
+                    $this->send_class_result(
+                        $socket_path,
+                        $worker_id,
+                        $class_name,
+                        $short_name,
+                        [],
+                        0.0,
+                        'failed to reset test database before ' . $short_name
+                    );
+
+                    // The class is accounted for; the reset failure is reported as its error.
+                    continue;
+                }
+                $db_dirty = false;
+            }
+
+            $started = microtime(true);
+
+            try {
+                $results = $class_name::run();
+                if ($needs_reset) {
+                    $db_dirty = true;
+                }
+                $this->send_class_result(
+                    $socket_path,
+                    $worker_id,
+                    $class_name,
+                    $short_name,
+                    $results,
+                    microtime(true) - $started,
+                    null
+                );
+            } catch (\Throwable $e) {
+                // Mirrors the sequential loop's catch: a throw from ::run() is one class error.
+                if ($needs_reset) {
+                    $db_dirty = true;
+                }
+                $this->send_class_result(
+                    $socket_path,
+                    $worker_id,
+                    $class_name,
+                    $short_name,
+                    [],
+                    microtime(true) - $started,
+                    $e->getMessage()
+                );
+            }
+        }
+    }
+
+    /**
+     * Send one class's outcome back to the orchestrator. The record is exactly what the
+     * orchestrator writes into results.jsonl and what merge_and_report() reads.
+     *
+     * @param string $socket_path
+     * @param int $worker_id
+     * @param string $class_name
+     * @param string $short_name
+     * @param array $results Rsx_Test_Abstract::run() output (test_name => result)
+     * @param float $duration Seconds the class took (ordering hint for next time)
+     * @param string|null $error Set when $class::run() itself threw, or the reset failed
+     * @return void
+     */
+    protected function send_class_result(
+        string $socket_path,
+        int $worker_id,
+        string $class_name,
+        string $short_name,
+        array $results,
+        float $duration,
+        ?string $error
+    ): void {
+        $payload = [
+            'worker_id' => $worker_id,
+            'class' => $class_name,
+            'short' => $short_name,
+            'results' => $results,
+            'duration' => $duration,
+        ];
+        if ($error !== null) {
+            $payload['error'] = $error;
+        }
+
+        $this->queue_request($socket_path, 'queue.result', $payload);
+    }
+
+    /**
+     * ONE request to the orchestrator's queue over its unix socket: connect, write one line
+     * of JSON, read ONE line back, close. The house RPC shape, copied from
+     * Rsx_Node_Service::request() - one request per connection, no read timeout.
+     *
+     * EVERY FAILURE HERE IS FATAL. A worker that cannot reach the queue, gets no answer, or
+     * gets something it cannot parse has no way to report what it did and no way to know what
+     * to do next; it throws, the container exits non-zero, and the orchestrator reports every
+     * class that worker was holding as terminated. Silently retrying would hide a broken
+     * orchestrator behind a run that looks slow.
+     *
+     * @param string $socket_path
+     * @param string $method
+     * @param array $payload
+     * @return array Decoded response
+     */
+    protected function queue_request(string $socket_path, string $method, array $payload = []): array
+    {
+        $socket = @stream_socket_client('unix://' . $socket_path, $errno, $errstr, null);
+        if (!$socket) {
+            throw new \RuntimeException(
+                'Test worker could not connect to the queue socket ' . $socket_path . ': ' . $errstr
+            );
+        }
+
+        stream_set_blocking($socket, true);
+
+        $this->queue_request_id++;
+        $request = json_encode(array_merge($payload, [
+            'id' => $this->queue_request_id,
+            'method' => $method,
+        ])) . "\n";
+
+        fwrite($socket, $request);
+
+        $response = fgets($socket);
+        fclose($socket);
+
+        if ($response === false || $response === '') {
+            throw new \RuntimeException(
+                'Test worker got no response to ' . $method . ' on ' . $socket_path
+            );
+        }
+
+        $decoded = json_decode($response, true);
+
+        if (!is_array($decoded)) {
+            throw new \RuntimeException(
+                'Test worker got an invalid response to ' . $method . ' on ' . $socket_path
+                . ': ' . substr((string) $response, 0, 500)
+            );
+        }
+
+        if (isset($decoded['error'])) {
+            throw new \RuntimeException(
+                'Test queue refused ' . $method . ': ' . (string) $decoded['error']
+            );
+        }
+
+        return $decoded;
     }
 }

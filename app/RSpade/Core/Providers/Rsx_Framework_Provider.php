@@ -263,6 +263,11 @@ class Rsx_Framework_Provider extends ServiceProvider
         // alias order is load-bearing (see Type_Ref_Registry::register_morph_map).
         \App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry::register_morph_map();
 
+        // Flush the volatile cache on EVERY database transaction rollback. A rollback can
+        // undo a write the cache already memoized, and a stale memo hands application code
+        // a confidently wrong answer. See Transaction_Rollback_Cache_Reset.
+        \App\RSpade\Core\Database\Lifecycle\Transaction_Rollback_Cache_Reset::install();
+
         // Register RSX autoloader
         \App\RSpade\Core\Autoloader::register();
 

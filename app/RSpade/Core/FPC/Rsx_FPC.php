@@ -12,12 +12,22 @@ use App\RSpade\Core\Manifest\Manifest;
  * marked with #[FPC] attribute in Redis.
  *
  * Cache key format: fpc:{build_key}:{sha1(url)}
- * Redis DB: 0 (shared cache database). Entries carry a TTL only when
- * FPC_TTL_MINS > 0; otherwise they persist until the build key rotates,
- * an explicit clear, or rsx:clean flushes the DB.
+ * Redis DB: 2, the reduced-volatility cache. The authority on the database map is the
+ * RsxCache class header; the Node proxy (system/bin/fpc-proxy.js) names the same number
+ * in its own constant. Database 0 is flushed on every database transaction rollback, which
+ * would throw away a page cache for reasons that have nothing to do with the page.
+ * Entries carry a TTL only when FPC_TTL_MINS > 0; otherwise they persist until the build
+ * key rotates or an explicit clear removes them.
  */
 class Rsx_FPC
 {
+    /**
+     * Redis database holding FPC entries - the reduced-volatility cache. Must match
+     * FPC_REDIS_DB in system/bin/fpc-proxy.js; the RsxCache class header is the authority
+     * on the database map.
+     */
+    private const REDIS_DB = 2;
+
     /**
      * Whether the FPC subsystem is active for this deployment.
      *
@@ -155,7 +165,7 @@ class Rsx_FPC
     }
 
     /**
-     * Get Redis connection for FPC operations (DB 0).
+     * Get Redis connection for FPC operations (DB 2 - see REDIS_DB).
      *
      * Fails loud on any connect/auth/select failure - a developer-invoked purge
      * that cannot reach Redis MUST surface, never silently report "nothing to
@@ -188,7 +198,7 @@ class Rsx_FPC
                 $connection->auth($password);
             }
 
-            $connection->select(0);
+            $connection->select(self::REDIS_DB);
         } catch (\Throwable $e) {
             shouldnt_happen("FPC: cannot reach Redis for cache purge at {$host}:{$port} ({$e->getMessage()})");
         }
