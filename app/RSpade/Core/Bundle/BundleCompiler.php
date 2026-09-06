@@ -1454,6 +1454,22 @@ class BundleCompiler
             }
         }
 
+        // A JS model class carries its generated Base_ stub with it, wherever the PHP
+        // model file lives. The loop above emits a stub only at its PHP model file's
+        // include position, but a JS model class reaches a bundle by CLASS REFERENCE
+        // from anything that names it (a framework core component naming
+        // File_Attachment_Model is the field case) - so the class arrives and the base
+        // it extends does not, and the bundle dies at evaluation time with
+        // "Base_X_Model is not defined". Bundles that include a models directory got
+        // the stub by side effect of that unrelated include; bundles that do not (a
+        // login bundle, a framework-owned bundle that by CONV-BUNDLE-04 may include no
+        // rsx/ path at all) had no supported means to fix it. Resolving the stub from
+        // the class that EXTENDS it makes the dependency structural instead of
+        // incidental, and covers an overridden model whose PHP file moved to rsx/models.
+        foreach (static::_get_model_stubs_for_js_classes($all_files, $manifest_files) as $stub_path) {
+            $stubs[] = $stub_path;
+        }
+
         // Rsx_Realtime is core JS present in EVERY bundle and structurally depends on the
         // Realtime_Controller Ajax endpoints (connection + subscribe token minting). That
         // controller lives in framework core (/system), so its PHP source is never in an
@@ -1511,6 +1527,70 @@ class BundleCompiler
         console_debug('BUNDLE', 'Found ' . count($stubs) . ' JS stubs total');
 
         return array_unique($stubs);
+    }
+
+    /**
+     * Resolve the generated model stubs required by the JS model classes in a file set.
+     *
+     * A generated stub is registered in the manifest as its own file entry carrying
+     * `is_model_stub` plus the stub CLASS name (Base_<Model>) and `source_model` (the
+     * PHP model file that owns it). A hand-written JS model class declares
+     * `extends Base_<Model>` in its own manifest metadata - validated as exactly that
+     * shape by _generate_concrete_model_classes() - so the extends clause is an exact
+     * key into the stub registry. Every JS file in the bundle whose extends names a
+     * known stub therefore pulls that stub in, no matter where the PHP model lives or
+     * whether that PHP file is in this bundle at all.
+     *
+     * A missing stub OUTPUT stays the loud condition it already is (_assert_stub_output_present);
+     * an extends clause that names no known stub is simply not a model class and is left alone.
+     *
+     * Public+`_` (framework-internal, technically public for cross-class/test access).
+     *
+     * @param array $all_files      absolute paths of every file in the bundle
+     * @param array $manifest_files the manifest file index
+     * @return array absolute stub paths
+     */
+    public static function _get_model_stubs_for_js_classes(array $all_files, array $manifest_files): array
+    {
+        // Registry of generated model stubs, keyed by the class they declare.
+        $stub_by_class = [];
+        foreach ($manifest_files as $stub_relative => $meta) {
+            if (empty($meta['is_model_stub']) || empty($meta['class'])) {
+                continue;
+            }
+            $stub_by_class[$meta['class']] = $stub_relative;
+        }
+
+        if (empty($stub_by_class)) {
+            return [];
+        }
+
+        $resolved = [];
+        foreach ($all_files as $file) {
+            if (!str_ends_with($file, '.js')) {
+                continue;
+            }
+
+            $relative = str_replace(base_path() . '/', '', $file);
+            $meta = $manifest_files[$relative] ?? null;
+
+            // The stub files themselves extend the JS model base, not another stub.
+            if (!$meta || !empty($meta['is_model_stub']) || empty($meta['extends'])) {
+                continue;
+            }
+
+            $stub_relative = $stub_by_class[$meta['extends']] ?? null;
+            if ($stub_relative === null) {
+                continue;
+            }
+
+            static::_assert_stub_output_present($stub_relative, $relative);
+            $stub_path = rsx_project_file_path($stub_relative);
+            console_debug('BUNDLE', "Adding model stub {$stub_relative} for JS class {$meta['class']} ({$relative})");
+            $resolved[$stub_path] = $stub_path;
+        }
+
+        return array_values($resolved);
     }
 
     /**

@@ -41,6 +41,11 @@ During manifest build, when duplicate class names are detected:
 
 The .upstream file preserves the original for reference and framework updates.
 
+Overriding a MODEL does not change which bundles its generated Base_ stub
+reaches: the stub follows the JS model class that extends it, so moving the PHP
+file into rsx/models leaves every bundle that names the class complete (see
+rsx:man bundle_api, JAVASCRIPT STUBS).
+
 ## WHAT THE BUILD PRINTS WHEN IT ARCHIVES
 
 Archiving un-registers a class, so the build never does it silently. Every

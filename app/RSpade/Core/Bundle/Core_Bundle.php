@@ -30,7 +30,7 @@ class Core_Bundle extends Rsx_Bundle_Abstract
                 'app/RSpade/Core/Models',  // Framework models (User_Model, Site_Model, etc.)
                 'app/RSpade/Core/Forms',  // The form contract: Rsx_Form + Form_Input_Abstract (one engine, every bundle)
                 'app/RSpade/Core/Ui',  // Framework UI primitives (Spinner + the default spinner, Button_Utils - the busy-state engine behind click_async() and Rsx_Form)
-                'app/RSpade/Core/Files',  // File_Attachment_Model + its JS class (thumbnail_url) - <Attachment_Thumbnail> is a Core component, so its model must reach every bundle
+                'app/RSpade/Core/Files',  // File upload/preview controllers + File_Attachment_Model and its JS class (thumbnail_url), used by the Core <Attachment_Thumbnail> component. The generated Base_ stub does NOT depend on this include: a JS model class carries its stub into every bundle it reaches (BundleCompiler::_get_model_stubs_for_js_classes), including when the model is class-overridden into rsx/models.
                 'app/RSpade/Core/SPA',
                 'app/RSpade/Core/Debug',  // Debug components (JS_Tree_Debug_*)
                 'app/RSpade/Core/Preview',  // Document preview components (Document_Preview + viewers)

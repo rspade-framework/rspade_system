@@ -32,6 +32,8 @@ class Frontend_Bundle extends Rsx_Bundle_Abstract
 
 `rsx/models` is what puts JS model stubs (enum constants, `field_length()`, `fetch()`) in the browser. A model missing from the bundle is why `Model.fetch()` is undefined in a page's JS.
 
+A model whose JS class arrives by CLASS REFERENCE rather than by include needs no entry: the generated `Base_<Model>` stub follows the JS class that extends it into every bundle that class reaches, wherever the PHP model file lives (a class-overridden model in `rsx/models` included). So a Core component naming a framework model works in a bundle that includes no models directory at all.
+
 ## Rendering it
 
 ```blade

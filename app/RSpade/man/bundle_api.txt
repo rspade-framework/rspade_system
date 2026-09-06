@@ -550,6 +550,22 @@ JAVASCRIPT STUBS
             }
         }
 
+    A MODEL STUB FOLLOWS THE CLASS THAT EXTENDS IT. A generated model stub is
+    emitted at the include position of the PHP model file, AND behind every JS
+    model class in the bundle that extends it - a hand-written X_Model.js
+    declares `extends Base_X_Model`, and that clause is what pulls Base_X_Model
+    in. This matters because a JS model class reaches a bundle by CLASS
+    REFERENCE from anything that names it (a framework core component naming
+    File_Attachment_Model reaches every bundle), which the bundle's include list
+    never mentions. So a model's client-side layer is complete wherever its
+    class is used - in a login bundle that includes no models directory, and in
+    a framework-owned bundle that by convention includes no rsx/ path at all -
+    and it does not matter WHERE the PHP model file lives, an overridden model
+    sitting in rsx/models included. Without this the bundle evaluates
+    `class X_Model extends Base_X_Model` against an undefined base and throws an
+    uncaught ReferenceError during bundle evaluation, which aborts the script:
+    no client component in that bundle boots.
+
 CONFIGURATION
     Bundle config added to window.rsxapp:
         'config' => [
