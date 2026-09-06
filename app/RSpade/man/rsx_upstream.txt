@@ -242,7 +242,10 @@ WHEN THE TWO REVISIONS DISAGREE
       * bootstrap/rsx_submodule_sync.php REFUSES TO BOOT on a mismatch,
         whatever caused it - an IDE's git, /usr/bin/git directly, a script
         that never heard of the proxy.
-      * git submodule update --init --recursive fixes it by hand.
+      * git submodule update --init fixes it by hand - or, when the recorded
+        revision is no longer on the remote (a framework history rewrite),
+        php artisan rsx:framework:pull, which moves system/ onto the current
+        line and records where it landed.
 
     The guard is the correctness and the proxy is the convenience, which is
     why the proxy is allowed to be small.
@@ -277,7 +280,8 @@ TROUBLESHOOTING
         it. The message names the holder-finding commands and the recovery.
 
     "This project records framework release X, but system/ is checked out at Y"
-        The pre-boot guard. Run git submodule update --init --recursive.
+        The pre-boot guard. Run git submodule update --init; if the remote no
+        longer has the recorded revision, php artisan rsx:framework:pull.
 
     A failed rebuild
         The release is already in history. Fix what the rebuild reported and

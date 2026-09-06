@@ -14,6 +14,7 @@ use Throwable;
 use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
+use App\RSpade\Core\Rsx;
 
 /**
  * Playwright_ExceptionHandler - Handle exceptions during Playwright test execution
@@ -28,7 +29,11 @@ use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
  * - Console debug messages (if enabled)
  * - Special 404 handling (tries RSX dispatch first)
  *
- * This handler only runs in non-production environments for security.
+ * SECURITY: this handler answers ONLY the local harness - development mode AND a
+ * loopback caller AND the X-Playwright-Test marker. The marker is unsigned, so it is
+ * never a gate on its own: without the loopback requirement anyone on the network
+ * could ask a public development box for a plain-text stack trace by sending one
+ * header.
  */
 class Playwright_Exception_Handler extends Rsx_Exception_Handler_Abstract
 {
@@ -51,8 +56,16 @@ class Playwright_Exception_Handler extends Rsx_Exception_Handler_Abstract
      */
     public function handle(Throwable $e, Request $request)
     {
-        // Only process Playwright test requests in non-production environments
-        if (app()->environment('production') || !$request->header('X-Playwright-Test')) {
+        // THIS HANDLER DISCLOSES A PLAIN-TEXT STACK TRACE, so it answers only the local
+        // harness. Three conditions, all required:
+        //   - development mode (Rsx::is_development(), not "not production" - RSX_MODE is
+        //     the one mode switch, and app()->environment() reports 'local' for a sealed
+        //     debug box too);
+        //   - a LOOPBACK caller with no forwarded headers (is_loopback_ip()), which is
+        //     what the rsx:debug browser always is;
+        //   - the X-Playwright-Test header, which is an unsigned marker and therefore
+        //     never a gate on its own - anybody can send it.
+        if (!Rsx::is_development() || !is_loopback_ip() || !$request->header('X-Playwright-Test')) {
             return null;
         }
 
@@ -121,7 +134,7 @@ class Playwright_Exception_Handler extends Rsx_Exception_Handler_Abstract
         $show_console = env('SHOW_CONSOLE_DEBUG_HTTP', true) ||
                        (isset($_SERVER['HTTP_X_PLAYWRIGHT_CONSOLE_DEBUG']) && $_SERVER['HTTP_X_PLAYWRIGHT_CONSOLE_DEBUG'] === '1');
 
-        if (!app()->environment('production') && $show_console) {
+        if (Rsx::is_development() && $show_console) {
             $console_messages = Debugger::_get_console_messages();
             if (!empty($console_messages)) {
                 $error_output .= "\nConsole Debug Messages:\n";

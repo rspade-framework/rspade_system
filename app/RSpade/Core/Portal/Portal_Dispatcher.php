@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Portal;
 use Illuminate\Http\Request;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Csp\Rsx_Csp;
+use App\RSpade\Core\Debug\Dev_Auth_Token;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Errors\Error_Screens;
@@ -12,6 +13,7 @@ use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Rsx;
 
 /**
  * Portal_Dispatcher - Handles dispatch for client portal requests
@@ -502,10 +504,21 @@ class Portal_Dispatcher
     }
 
     /**
-     * Handle dev auth headers for rsx:debug testing
+     * Handle dev auth headers for rsx:debug testing (the PORTAL realm).
      *
-     * This allows rsx:debug to authenticate as any portal user in development.
-     * The token is validated using APP_KEY to ensure only authorized requests.
+     * The portal twin of Dispatcher::__handle_dev_auth. rsx:debug sends
+     * X-Dev-Auth-Portal-User-Id + X-Dev-Auth-Exp + X-Dev-Auth-Token, the last being an
+     * HMAC over the request URI, user id, realm and expiry keyed on the local
+     * development GRANT SECRET (never APP_KEY). The wire format and the threat model are
+     * documented byte for byte on Dev_Auth_Token, which is the single verifier both
+     * realms call - the two sides cannot drift.
+     *
+     * The URL is normalized (the /_portal prefix stripped) BEFORE verification, because
+     * that is the URL the minting side signed.
+     *
+     * DEVELOPMENT ONLY, asked as Rsx::is_development(). The old spelling asked Laravel
+     * for "not production", which left these headers live on a sealed debug box.
+     * RSX_MODE is the one mode switch.
      *
      * @param Request $request
      * @param string $url
@@ -513,8 +526,7 @@ class Portal_Dispatcher
      */
     protected static function __handle_dev_auth(Request $request, string $url): void
     {
-        // Only in non-production environments
-        if (app()->environment('production')) {
+        if (!Rsx::is_development()) {
             return;
         }
 
@@ -526,31 +538,23 @@ class Portal_Dispatcher
 
         $token = $request->header('X-Dev-Auth-Token');
         if (!$token) {
-            console_debug('PORTAL', 'Dev auth: Missing token header');
-            return;
-        }
-
-        // Validate the token
-        $app_key = config('app.key');
-        if (!$app_key) {
-            console_debug('PORTAL', 'Dev auth: APP_KEY not configured');
+            console_debug('PORTAL', 'Dev auth REJECTED: no X-Dev-Auth-Token header');
             return;
         }
 
         // Normalize URL for token validation (strip /_portal prefix)
         $normalized_url = static::normalize_portal_url($url);
 
-        // Recreate the expected token payload
-        $expected_payload = json_encode([
-            'url' => $normalized_url,
-            'user_id' => (int) $portal_user_id,
-            'portal' => true,
-        ]);
+        $rejection = Dev_Auth_Token::verify(
+            $normalized_url,
+            (int) $portal_user_id,
+            true,
+            $request->header('X-Dev-Auth-Exp'),
+            $token
+        );
 
-        $expected_token = hash_hmac('sha256', $expected_payload, $app_key);
-
-        if (!hash_equals($expected_token, $token)) {
-            console_debug('PORTAL', 'Dev auth: Token validation failed');
+        if ($rejection !== null) {
+            console_debug('PORTAL', 'Dev auth REJECTED: ' . $rejection);
             return;
         }
 

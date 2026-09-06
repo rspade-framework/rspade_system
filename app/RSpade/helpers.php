@@ -1380,15 +1380,31 @@ function response_fatal_error(?string $message = null, array $details = [])
 }
 
 /**
- * Check if the current request is from a loopback IP address
+ * Is the caller on this machine?
  *
- * Returns true only if:
- * - Request is from localhost, 127.0.0.1, or ::1 (IPv6 loopback)
- * - No proxy headers (X-Real-IP, X-Forwarded-For) are present
+ * Used by the Playwright-harness surfaces (the plain-text exception handler, the
+ * console-debug header override, the bundle's test hooks) as one REQUIRED condition
+ * beside development mode. Those surfaces disclose internals, and the unsigned
+ * X-Playwright-* headers prove nothing on their own, so this answers the question that
+ * actually matters: did this request originate on the box, or off it?
  *
- * Used to ensure Playwright test headers can only be used from local connections.
+ * TRUE requires BOTH:
+ *   1. the TCP peer (REMOTE_ADDR) is a loopback address - never $request->ip(), which
+ *      a trusted-proxy configuration resolves from headers;
+ *   2. every hop a proxy declared (X-Forwarded-For, X-Real-IP) is ALSO loopback.
  *
- * @return bool True if request is from loopback without proxy headers
+ * A reverse proxy in front of the web server is the normal deployment, and it makes
+ * REMOTE_ADDR its own address: the forwarded chain is then the ONLY statement about
+ * where the request came from, so a chain naming a remote client is decisive and a
+ * chain of loopback entries is the local harness reaching the site through the proxy.
+ * A request carrying X-Forwarded-Host or X-Forwarded-Proto but NO address header has
+ * been forwarded by something that declined to say by whom, and is refused.
+ *
+ * MISCONFIGURATION HAZARD, and it is the operator's to avoid: a proxy that STRIPS the
+ * forwarded headers and connects from 127.0.0.1 makes every request in the world look
+ * local here. Any proxy in front of this application must set X-Forwarded-For.
+ *
+ * @return bool
  */
 function is_loopback_ip(): bool
 {
@@ -1397,28 +1413,50 @@ function is_loopback_ip(): bool
         return false;
     }
 
-    // Check for proxy headers - if present, not a direct loopback connection
-    if ($request->hasHeader('X-Real-IP') ||
-        $request->hasHeader('X-Forwarded-For') ||
-        $request->hasHeader('X-Forwarded-Host') ||
-        $request->hasHeader('X-Forwarded-Proto')) {
+    $is_loopback_address = static function (?string $address): bool {
+        $address = trim((string) $address);
+        // A forwarded entry may carry a port ("127.0.0.1:51000") or IPv6 brackets.
+        if (str_starts_with($address, '[')) {
+            $address = substr($address, 1, (strpos($address, ']') ?: strlen($address)) - 1);
+        } elseif (substr_count($address, ':') === 1) {
+            $address = strstr($address, ':', true);
+        }
+
+        return in_array($address, ['127.0.0.1', '::1', 'localhost'], true);
+    };
+
+    // 1. The peer that opened the connection.
+    if (!$is_loopback_address($request->server('REMOTE_ADDR'))) {
         return false;
     }
 
-    // Get the client IP
-    $ip = $request->ip();
+    // 2. Every address the forwarding chain declares.
+    $declared = [];
+    $forwarded_for = (string) $request->header('X-Forwarded-For', '');
+    if ($forwarded_for !== '') {
+        $declared = array_merge($declared, explode(',', $forwarded_for));
+    }
+    $real_ip = (string) $request->header('X-Real-IP', '');
+    if ($real_ip !== '') {
+        $declared[] = $real_ip;
+    }
 
-    // Check for loopback addresses
-    // IPv4 loopback: 127.0.0.1
-    // IPv6 loopback: ::1
-    // Hostname: localhost
-    $loopback_addresses = [
-        '127.0.0.1',
-        '::1',
-        'localhost',
-    ];
+    if (empty($declared)) {
+        // Forwarded by something that would not say by whom.
+        if ($request->hasHeader('X-Forwarded-Host') || $request->hasHeader('X-Forwarded-Proto') || $request->hasHeader('Forwarded')) {
+            return false;
+        }
 
-    return in_array($ip, $loopback_addresses, true);
+        return true;
+    }
+
+    foreach ($declared as $address) {
+        if (!$is_loopback_address($address)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /**

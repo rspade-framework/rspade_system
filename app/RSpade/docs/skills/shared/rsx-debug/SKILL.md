@@ -28,6 +28,8 @@ rsx:debug /dashboard --user=admin@example.com   # staff user by email
 
 `--user` bypasses the login screen and browses as that identity. The sessions this creates are `TYPE_PLAYWRIGHT` and are purged at the end of the run (run-scoped, not request-scoped - the page's own XHRs ride the same session cookie, so per-request cleanup would break them).
 
+**How that identity is proven, and why the command is development-only.** The browser sends `X-Dev-Auth-User-Id` (or `X-Dev-Auth-Portal-User-Id`) plus `X-Dev-Auth-Exp` and `X-Dev-Auth-Token` on the first document request; the token is an HMAC over the request URI, user id, realm and expiry, **keyed on the local development grant** (`storage/rsx-ide-bridge/ide-grant-*.token`, shared with the IDE bridge) and **never on APP_KEY** - a key that also encrypts every cookie and sits in backups. The assertion **expires after 60 seconds** (a credential lifetime, not a timeout: the command mints and launches the browser immediately), rides in the child process's environment rather than its argv, and is verified by one class, `Dev_Auth_Token`, for both realms. `rsx:debug` refuses to run outside development mode, where no grant store exists. The same rule covers the unsigned `X-Playwright-Test` / `X-Playwright-Console-Debug` headers: the plain-text stack trace and the console-debug override additionally require a **loopback** caller, so a reverse proxy in front of the app must set `X-Forwarded-For`. Details: `rsx:man rsx_debug`.
+
 ## Portal routes
 
 ```bash

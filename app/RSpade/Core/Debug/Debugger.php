@@ -534,6 +534,28 @@ class Debugger
     }
 
     /**
+     * May the X-Playwright-Console-Debug header force console_debug output into a web
+     * response the configuration has switched off?
+     *
+     * Only for the local harness: DEVELOPMENT mode (Rsx::is_development() - RSX_MODE is
+     * the one mode switch, and "not production" would leave this open on a sealed debug
+     * box) and a LOOPBACK caller carrying no forwarded headers. The header itself is
+     * unsigned and proves nothing, so it can never be the gate: without these two
+     * conditions a single header would make a public development box dump its internal
+     * debug channel to anyone who asked.
+     *
+     * @return bool
+     */
+    private static function __playwright_console_debug_header_allowed(): bool
+    {
+        if (!isset($_SERVER['HTTP_X_PLAYWRIGHT_CONSOLE_DEBUG']) || $_SERVER['HTTP_X_PLAYWRIGHT_CONSOLE_DEBUG'] !== '1') {
+            return false;
+        }
+
+        return Rsx::is_development() && is_loopback_ip();
+    }
+
+    /**
      * Configure console debug based on HTTP headers from rsx:debug
      *
      * This allows the Playwright test runner to pass console debug settings
@@ -868,8 +890,12 @@ class Debugger
             }
 
             if (!$is_ajax && !$config['outputs']['web']) {
-                // Check for Playwright header override
-                if (!(isset($_SERVER['HTTP_X_PLAYWRIGHT_CONSOLE_DEBUG']) && $_SERVER['HTTP_X_PLAYWRIGHT_CONSOLE_DEBUG'] === '1')) {
+                // X-Playwright-Console-Debug FORCES console_debug output into a web
+                // response that configuration has switched off - a disclosure channel
+                // opened by one unsigned header. It answers the local harness only:
+                // development mode AND a loopback caller with no forwarded headers.
+                // The header alone is never enough; anybody can send it.
+                if (!static::__playwright_console_debug_header_allowed()) {
                     return;
                 }
             }

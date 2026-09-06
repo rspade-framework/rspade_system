@@ -51,6 +51,28 @@ WHAT IT DOES WHEN THE REVISIONS DISAGREE
     output; the sync continues either way, because a stale cache is a rebuild
     away and an unsynced framework is not.
 
+IT NEVER RECURSES INTO system/
+    The proxied command runs with recursion scoped off:
+
+        git -c fetch.recurseSubmodules=no -c submodule.recurse=false ...
+
+    The reconciliation above IS the design: it wants exactly ONE object, the
+    revision recorded at the new HEAD, and fetches it on demand. Git's default
+    (fetch.recurseSubmodules=on-demand) pre-empts that by fetching the
+    submodule once per INTERMEDIATE gitlink across the pulled range - strictly
+    more data, for trees the checkout that follows immediately discards. And
+    once the framework's history has been rewritten upstream, those
+    intermediate gitlinks name revisions the remote no longer has: upload-pack
+    answers `not our ref`, git aborts the whole operation, and the code that
+    would have handled it correctly never runs. A container several commits
+    behind then cannot pull at all, on any retry.
+
+    -c, not repo config: nothing persistent is written to your clone.
+
+    THE ESCAPE HATCH. `git pull --recurse-submodules` still recurses - a flag
+    on the command line overrides -c. `clone` is not wrapped at all, so
+    first-time population of the submodule is untouched.
+
 WHICH SUBCOMMANDS TRIGGER IT
         pull merge rebase cherry-pick revert checkout switch restore reset stash
 

@@ -34,6 +34,25 @@ use App\RSpade\Core\Rsx;
  * the directory and clears the retired auth-*.json / domain.txt artifacts. An
  * ESTABLISHED SECRET IS NEVER ROTATED by it - only app_url is refreshed, so a grant
  * survives an APP_URL change without the IDE having to notice.
+ *
+ * THE GRANT IS THE SHARED DEVELOPMENT CREDENTIAL, NOT THE IDE BRIDGE'S PRIVATE ONE.
+ * Two consumers key off it:
+ *
+ *   1. The IDE bridge (/_ide/service/*), which takes the secret as the X-Ide-Token
+ *      bearer. That consumer is additionally gated on rsx.ide_integration.enabled and
+ *      on RSX_IDE_SERVICES_ENABLED at auth.php - switches that belong to the BRIDGE.
+ *   2. rsx:debug's dev-auth headers, which sign the harness's identity assertion with
+ *      the secret instead of APP_KEY (Core/Debug/Dev_Auth_Token). APP_KEY is the wrong
+ *      key for this: it also encrypts every cookie and sits in backups, so signing a
+ *      "log in as any user" assertion with it made an APP_KEY disclosure an
+ *      authentication bypass. The grant is a narrow, rotating, development-only
+ *      credential that exists on disk and nowhere else.
+ *
+ * So the STORE is ensured independently of the bridge's own switch:
+ * ensure_grant_store() mints/refreshes the grant whenever the box is in development,
+ * and ensure() layers the bridge's passive guards and cleanup on top of it. A tree
+ * with rsx.ide_integration.enabled = false therefore still has a working rsx:debug,
+ * and still refuses the bridge.
  */
 class Ide_Bridge_Token
 {
@@ -65,9 +84,12 @@ class Ide_Bridge_Token
     }
 
     /**
-     * Ensure a grant token + passive guards exist (development mode only). Idempotent:
-     * creates the token only when none is present, and writes the guard files only when
-     * absent. Safe to call on every web-request boot.
+     * Ensure the IDE BRIDGE's own state: the grant store, plus the bridge's passive
+     * static-serve guards and the retired-artifact cleanup. Idempotent and safe to call
+     * on every web-request boot.
+     *
+     * Gated on rsx.ide_integration.enabled because everything it adds ON TOP of the
+     * store belongs to the bridge. The store itself is not: see ensure_grant_store().
      *
      * @return void
      */
@@ -82,13 +104,36 @@ class Ide_Bridge_Token
             return;
         }
 
+        self::__clear_retired_artifacts(self::bridge_dir());
+        self::ensure_grant_store();
+    }
+
+    /**
+     * Ensure the GRANT STORE exists: the directory, its passive guards, and one
+     * established grant. Development only, and deliberately NOT gated on
+     * rsx.ide_integration.enabled - the grant is the shared development credential
+     * (see the class docblock), and rsx:debug must work on a tree that has the IDE
+     * bridge switched off, or that has never served a web request at all.
+     *
+     * Idempotent: an established secret is never re-rolled, only its app_url is
+     * refreshed. The guards are written here rather than in ensure() because a file
+     * holding a secret must never be web-servable regardless of which consumer created
+     * it.
+     *
+     * @return void
+     */
+    public static function ensure_grant_store(): void
+    {
+        if (!Rsx::is_development()) {
+            return;
+        }
+
         $dir = self::bridge_dir();
         if (!is_dir($dir)) {
             @mkdir($dir, 0700, true);
         }
 
         self::__write_guards($dir);
-        self::__clear_retired_artifacts($dir);
 
         // The token persists across requests: an established grant keeps its SECRET
         // for the life of the file. Only the resolved URL is refreshed, because
@@ -223,6 +268,34 @@ class Ide_Bridge_Token
     private static function __resolved_app_url(): string
     {
         return rtrim((string) config('app.url', ''), '/');
+    }
+
+    /**
+     * The secrets that may authenticate right now, NEWEST FIRST - at most
+     * ACTIVE_GRANTS of them. Empty outside development, and empty when no grant has
+     * been established.
+     *
+     * A verifier tries EVERY entry, because rotation and use are not synchronized: a
+     * credential minted from the newest secret can legitimately arrive after a rotation
+     * has moved on, and that must not read as a forgery.
+     *
+     * @return string[]
+     */
+    public static function active_secrets(): array
+    {
+        if (!Rsx::is_development()) {
+            return [];
+        }
+
+        $secrets = [];
+        foreach (self::active_grant_files() as $file) {
+            $secret = self::__read_grant($file)['secret'];
+            if ($secret !== null) {
+                $secrets[] = $secret;
+            }
+        }
+
+        return $secrets;
     }
 
     /**

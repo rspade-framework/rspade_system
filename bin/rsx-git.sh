@@ -284,7 +284,12 @@ sync_submodule() {
         url="$(upstream_url)"
         if [ -n "$url" ]; then
             note "fetching ${recorded:0:12} from $url"
-            GIT_TERMINAL_PROMPT=0 "${SUB_GIT[@]}" fetch --quiet "$url" 2>/dev/null || true
+            # Ask for the ONE object by name first - exact, and a fraction of the
+            # transfer. A server configured to refuse an unadvertised sha answers
+            # nothing, and the whole-branch fetch behind it covers that case.
+            GIT_TERMINAL_PROMPT=0 "${SUB_GIT[@]}" fetch --quiet --depth=1 "$url" "$recorded" 2>/dev/null \
+                || GIT_TERMINAL_PROMPT=0 "${SUB_GIT[@]}" fetch --quiet "$url" 2>/dev/null \
+                || true
         fi
     fi
 
@@ -297,7 +302,11 @@ sync_submodule() {
         err "        system/ has been left at ${actual:0:12}. The application will refuse to"
         err "        start until they agree - fix it with:"
         err ""
-        err "            git submodule update --init --recursive"
+        # NOT `git submodule update --init --recursive`: it recurses by definition,
+        # so on a rewritten framework history it fails exactly the way this did and
+        # sends the reader in a circle. rsx:framework:pull fetches the current line
+        # and moves system/ onto it, recording the revision it landed on.
+        err "            php artisan rsx:framework:pull"
         err ""
         return 1
     fi
@@ -305,7 +314,7 @@ sync_submodule() {
     if ! "${SUB_GIT[@]}" checkout --quiet --force "$recorded" 2>/dev/null; then
         maint_disable
         err "[ERROR] Failed to check out framework revision ${recorded:0:12} in system/."
-        err "        Fix it with: git submodule update --init --recursive"
+        err "        Fix it with: php artisan rsx:framework:pull"
         return 1
     fi
 
@@ -379,7 +388,20 @@ run_post_update() {
 BEFORE="$(recorded_revision)"
 HEAD_BEFORE="$("${ROOT_GIT_RO[@]}" rev-parse HEAD 2>/dev/null || true)"
 
-git "${ARGS[@]}"
+# NEVER RECURSE INTO system/. The reconciliation below IS the design: it wants
+# exactly ONE object - the revision recorded at the new HEAD - and fetches it on
+# demand. Git's default (fetch.recurseSubmodules=on-demand) pre-empts that by
+# fetching the submodule once per INTERMEDIATE gitlink across the pulled range,
+# which is strictly MORE data for something immediately discarded by the checkout
+# that follows - and after a framework history rewrite those intermediate gitlinks
+# name revisions the remote no longer has, so git aborts the whole operation
+# ("upload-pack: not our ref") and sync_submodule never runs at all.
+#
+# -c, not repo config: nothing persistent is written to the developer's clone, and
+# an explicit --recurse-submodules typed on the command line still overrides it.
+# `clone` is not wrapped (it execs plain git above), so first-time population of
+# the submodule is untouched.
+git -c fetch.recurseSubmodules=no -c submodule.recurse=false "${ARGS[@]}"
 GIT_RC=$?
 
 AFTER="$(recorded_revision)"

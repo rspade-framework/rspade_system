@@ -103,7 +103,12 @@ function parse_args() {
         screenshot_width: null,
         screenshot_path: null,
         dump_dimensions: null,
-        dev_auth_token: null,
+        // The dev-auth credential arrives in the ENVIRONMENT, never in argv: argv is
+        // world-readable via ps(1) and /proc/<pid>/cmdline, and a signed "log in as
+        // this user" assertion must not be readable by every local account. There is
+        // deliberately no --dev-auth-token flag.
+        dev_auth_token: process.env.RSX_DEV_AUTH_TOKEN || null,
+        dev_auth_exp: process.env.RSX_DEV_AUTH_EXP || null,
         portal: false,
         portal_user_id: null
     };
@@ -111,8 +116,6 @@ function parse_args() {
     for (const arg of args) {
         if (arg.startsWith('--user=')) {
             options.user_id = arg.split('=')[1];
-        } else if (arg.startsWith('--dev-auth-token=')) {
-            options.dev_auth_token = arg.split('=')[1];
         } else if (arg === '--log') {
             options.show_log = true;
         } else if (arg === '--no-body') {
@@ -427,6 +430,7 @@ function parse_args() {
     }
     if (options.dev_auth_token) {
         extraHeaders['X-Dev-Auth-Token'] = options.dev_auth_token;
+        extraHeaders['X-Dev-Auth-Exp'] = options.dev_auth_exp;
     }
     // Add Playwright test header to get text errors
     extraHeaders['X-Playwright-Test'] = '1';

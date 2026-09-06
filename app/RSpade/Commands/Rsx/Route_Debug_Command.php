@@ -10,8 +10,11 @@ namespace App\RSpade\Commands\Rsx;
 use Illuminate\Console\Command;
 use Symfony\Component\Process\Process;
 use App\RSpade\Core\Debug\Debugger;
+use App\RSpade\Core\Debug\Dev_Auth_Token;
+use App\RSpade\Core\Ide\Ide_Bridge_Token;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Portal\Portal_User_Model;
+use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
 
@@ -91,7 +94,10 @@ use App\RSpade\Core\Time\Rsx_Time;
  * 
  * IMPLEMENTATION DETAILS:
  * - Uses X-Playwright-Test header to trigger plain text error responses
- * - Uses X-Dev-Auth-User-Id header for backdoor authentication
+ * - Asserts its identity with the signed dev-auth headers (X-Dev-Auth-User-Id or
+ *   X-Dev-Auth-Portal-User-Id, X-Dev-Auth-Exp, X-Dev-Auth-Token). The signature is
+ *   keyed on the local development grant (Ide_Bridge_Token) and expires; the wire
+ *   format and the threat model are documented on Dev_Auth_Token.
  * - Auto-installs Playwright and Chromium if not present
  * - Route interception prevents CORS issues with CDN resources
  * - Works with both Laravel routes and RSX routes
@@ -175,9 +181,16 @@ class Route_Debug_Command extends Command
      */
     public function handle()
     {
-        // Check environment - throw fatal error in production
-        if (app()->environment('production')) {
-            throw new \RuntimeException('FATAL: rsx:debug command is not available in production environment. This is a development-only debugging tool.');
+        // DEVELOPMENT ONLY, and the question is Rsx::is_development() - RSX_MODE is the
+        // one mode switch, and "not production" would leave this live on a sealed debug
+        // box. The dev-auth credential is keyed on the local grant store, which exists
+        // in development and nowhere else, so there is nothing here to run elsewhere.
+        if (!Rsx::is_development()) {
+            throw new \RuntimeException(
+                'FATAL: rsx:debug is a development-only tool and this box is in ' . Rsx::get_mode()
+                . ' mode. Its browser authenticates with the development grant store, which a sealed'
+                . ' build does not have.'
+            );
         }
 
         // Check if --examples was requested
@@ -438,13 +451,17 @@ class Route_Debug_Command extends Command
             }
         }
         
-        // Generate signed request token for user/site context
-        // This prevents unauthorized requests from hijacking sessions via headers
-        $dev_auth_token = null;
+        // Mint the signed identity assertion the browser will present. The store is
+        // ensured FIRST: a box that has never served a development web request, or that
+        // runs with the IDE bridge switched off, has no grant yet and rsx:debug must
+        // still work there.
+        Ide_Bridge_Token::ensure_grant_store();
+
+        $dev_auth = null;
         if ($user_id) {
-            $dev_auth_token = $this->generate_dev_auth_token($url, $user_id, false);
+            $dev_auth = $this->generate_dev_auth_token($url, $user_id, false);
         } elseif ($portal_user_id) {
-            $dev_auth_token = $this->generate_dev_auth_token($url, $portal_user_id, true);
+            $dev_auth = $this->generate_dev_auth_token($url, $portal_user_id, true);
         }
 
         // Build command arguments
@@ -464,10 +481,6 @@ class Route_Debug_Command extends Command
             $command_args[] = "--portal-user={$portal_user_id}";
         }
 
-        if ($dev_auth_token) {
-            $command_args[] = "--dev-auth-token={$dev_auth_token}";
-        }
-        
         if ($show_log) {
             $command_args[] = '--log';
         }
@@ -576,6 +589,16 @@ class Route_Debug_Command extends Command
         $env = array_merge($_ENV, [
             'LARAVEL_LOG_PATH' => $laravel_log_path
         ]);
+
+        // THE CREDENTIAL TRAVELS IN THE CHILD'S ENVIRONMENT, NEVER ON ITS COMMAND LINE.
+        // argv is world-readable through ps(1) and /proc/<pid>/cmdline, so a token on
+        // the command line is a signed "log in as this user" assertion handed to every
+        // local account for as long as the process lives. The environment of a process
+        // is readable only by its owner and root.
+        if ($dev_auth) {
+            $env['RSX_DEV_AUTH_TOKEN'] = $dev_auth['token'];
+            $env['RSX_DEV_AUTH_EXP'] = (string) $dev_auth['exp'];
+        }
 
         // Add console debug filter to environment if provided
         if ($console_debug_filter) {
@@ -799,33 +822,29 @@ class Route_Debug_Command extends Command
     }
 
     /**
-     * Generate a signed dev auth token for Playwright requests
+     * Mint the signed dev-auth assertion the headless browser presents.
      *
-     * The token is an HMAC signature of the request parameters using APP_KEY.
-     * This ensures that only requests originating from rsx:debug (which has
-     * access to APP_KEY) can authenticate as different users.
+     * Signed with the local development GRANT SECRET (storage/rsx-ide-bridge), never
+     * APP_KEY: APP_KEY also encrypts every cookie and sits in backups, so signing an
+     * identity assertion with it made an APP_KEY disclosure an authentication bypass.
+     * The wire format lives in Dev_Auth_Token, which both sides use.
      *
      * @param string $url The URL being tested
      * @param int $user_id The user ID to authenticate as
      * @param bool $is_portal Whether this is a portal user (vs main site user)
-     * @return string The signed token
+     * @return array{token: string, exp: int}
      */
-    protected function generate_dev_auth_token(string $url, int $user_id, bool $is_portal = false): string
+    protected function generate_dev_auth_token(string $url, int $user_id, bool $is_portal = false): array
     {
-        $app_key = config('app.key');
-        if (!$app_key) {
-            $this->error("APP_KEY not configured - cannot generate dev auth token");
+        $minted = Dev_Auth_Token::mint($url, $user_id, $is_portal);
+        if ($minted === null) {
+            $this->error(
+                'No development grant is established in ' . Ide_Bridge_Token::bridge_dir()
+                . ' - cannot sign the dev-auth assertion.'
+            );
             exit(1);
         }
 
-        // Create payload with request parameters
-        $payload = json_encode([
-            'url' => $url,
-            'user_id' => $user_id,
-            'portal' => $is_portal,
-        ]);
-
-        // Sign with HMAC-SHA256
-        return hash_hmac('sha256', $payload, $app_key);
+        return $minted;
     }
 }

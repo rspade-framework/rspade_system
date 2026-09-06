@@ -19,6 +19,7 @@ use App\RSpade\Core\Api\Api_Dispatcher;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Csp\Rsx_Csp;
 use App\RSpade\Core\Debug\Debugger;
+use App\RSpade\Core\Debug\Dev_Auth_Token;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Env\Rsx_Env_Hostname_Guard;
@@ -484,11 +485,19 @@ class Dispatcher
      * Establish the staff development identity from signed dev-auth headers.
      *
      * The staff twin of Portal_Dispatcher::__handle_dev_auth: rsx:debug (and the
-     * Playwright harness) sends X-Dev-Auth-User-Id plus an HMAC of the request URI +
-     * user id + realm, signed with APP_KEY. Development environments only; an absent
-     * or invalid token grants no authentication override - but a token that is PRESENT and
-     * rejected names its failure through console_debug('AUTH', ...), because a rejected token
-     * is always a bug and never a legitimate anonymous request.
+     * standalone Playwright scripts) send X-Dev-Auth-User-Id + X-Dev-Auth-Exp +
+     * X-Dev-Auth-Token, the last being an HMAC over the request URI, user id, realm and
+     * expiry keyed on the local development GRANT SECRET (never APP_KEY). The wire
+     * format and the threat model are documented byte for byte on Dev_Auth_Token, which
+     * is the single verifier both realms call - the two sides cannot drift.
+     *
+     * DEVELOPMENT ONLY, asked as Rsx::is_development(). The old spelling asked Laravel
+     * for app()->environment(), which reports 'local' for BOTH development and debug -
+     * so a sealed debug box accepted these headers. RSX_MODE is the one mode switch.
+     *
+     * An absent token grants no authentication override; a token that is PRESENT and
+     * rejected names its failure through console_debug('AUTH', ...), because a rejected
+     * token is always a bug and never a legitimate anonymous request.
      *
      * This lives in the framework dispatcher rather than the application's
      * Main::pre_dispatch because it must run BEFORE the declarative #[Auth] gate
@@ -500,7 +509,7 @@ class Dispatcher
      */
     protected static function __handle_dev_auth(Request $request): void
     {
-        if (!in_array(app()->environment(), ['local', 'development', 'testing'], true)) {
+        if (!Rsx::is_development()) {
             return;
         }
 
@@ -511,24 +520,18 @@ class Dispatcher
             return;
         }
 
-        // Both headers are present from here on: a rejection is always a bug, never a
+        // A token is present from here on: a rejection is always a bug, never a
         // legitimate anonymous request, so every failure path names itself.
-        $app_key = config('app.key');
-        if (!$app_key) {
-            console_debug('AUTH', 'DEV AUTH REJECTED: APP_KEY not configured - rendering anonymous');
-            return;
-        }
+        $rejection = Dev_Auth_Token::verify(
+            $request->getRequestUri(),
+            (int) $dev_auth_user_id,
+            false,
+            $request->header('X-Dev-Auth-Exp'),
+            $dev_auth_token
+        );
 
-        // Must match Route_Debug_Command::generate_dev_auth_token byte for byte.
-        $payload = json_encode([
-            'url' => $request->getRequestUri(),
-            'user_id' => (int) $dev_auth_user_id,
-            'portal' => false,
-        ]);
-
-        if (!hash_equals(hash_hmac('sha256', $payload, $app_key), $dev_auth_token)) {
-            console_debug('AUTH', 'DEV AUTH REJECTED: signature mismatch for URI ' . $request->getRequestUri()
-                . ' user ' . (int) $dev_auth_user_id . ' - rendering anonymous');
+        if ($rejection !== null) {
+            console_debug('AUTH', 'DEV AUTH REJECTED: ' . $rejection . ' - rendering anonymous');
             return;
         }
 

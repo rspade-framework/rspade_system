@@ -60,8 +60,8 @@ HOW PLAYWRIGHT TESTS RUN
 
         node <path-to-test>.js
 
-    The script is self-contained: it reads APP_KEY from .env, mints its own
-    dev-auth token, targets the running dev web server (http://localhost),
+    The script is self-contained: it mints its own dev-auth headers through
+    system/bin/dev-auth.js, targets the running dev web server (http://localhost),
     and prints PASS:/FAIL: lines with an exit code. A CI wrapper that wants
     these in the run simply shells out to node per file and checks the exit
     code - the same PASS/FAIL/exit contract the shell runner already uses.
@@ -80,42 +80,60 @@ DEV-AUTH AUTHENTICATION
     dispatch; an invalid or missing token is silently ignored (the page
     simply renders unauthenticated - no error).
 
-    The token is an HMAC-SHA256 of a JSON payload, keyed by APP_KEY:
+    THE SIGNING KEY IS THE LOCAL DEVELOPMENT GRANT, NOT APP_KEY. The framework
+    keeps an unguessable grant file outside the docroot -
+
+        storage/rsx-ide-bridge/ide-grant-<hex>.token
+
+    a JSON document {"secret", "app_url", "issued_at"} - and the NEWEST
+    secret in it signs the assertion. Possession proves local disk read
+    access, which is the whole grant. APP_KEY is deliberately not used: it
+    also encrypts every cookie and rides along in .env copies and backups.
+    The store is established by any development web request, and by rsx:debug
+    itself; the two newest grants both verify, so a 15-minute rotation landing
+    mid-test is never a failure.
+
+    The token is an HMAC-SHA256 of a JSON payload:
 
         payload = json_encode([
             'url'     => <request URI the token is valid for>,
             'user_id' => <int user id>,
             'portal'  => <bool>,
+            'exp'     => <unix seconds; mint time + 60>,
         ])
-        token   = hash_hmac('sha256', payload, APP_KEY)
+        token   = hash_hmac('sha256', payload, <grant secret>)
 
-    (Verified against Route_Debug_Command::generate_dev_auth_token and the
-    verifiers in rsx/main.php and Portal_Dispatcher.)
+    THE ASSERTION EXPIRES. exp is inside the signature AND on the wire, and a
+    verifier refuses a past one - so mint immediately before navigating (which
+    is what every shipped test does). It is a credential lifetime, not a
+    timeout: nothing is aborted, the signature just stops verifying.
+
+    (App\RSpade\Core\Debug\Dev_Auth_Token is the one PHP implementation - it
+    mints for rsx:debug and verifies for both realms, and its docblock states
+    the wire format byte for byte.)
 
     Headers sent on the authenticated request:
 
         X-Dev-Auth-User-Id           staff user id (main site)
         X-Dev-Auth-Portal-User-Id    portal user id (portal, instead of above)
+        X-Dev-Auth-Exp               the exp above, decimal unix seconds
         X-Dev-Auth-Token             the HMAC token above
         X-Playwright-Test            '1' - plain-text error pages, safe always
 
-    Generating the token from JavaScript. PHP's json_encode escapes forward
-    slashes as \/. You MUST reproduce that byte-for-byte or the HMAC will not
-    match. The reference test does exactly this:
+    Generating the headers from JavaScript. DO NOT hand-roll this: the node
+    twin ships, reads the grant, and returns the three headers ready to use:
 
-        const crypto = require('crypto');
-        function dev_auth_token(url, user_id) {
-            const app_key = read_app_key();   // APP_KEY line from .env
-            const payload = JSON.stringify({
-                url: url, user_id: user_id, portal: false
-            }).replace(/\//g, '\\/');         // match PHP's \/ escaping
-            return crypto.createHmac('sha256', app_key)
-                         .update(payload).digest('hex');
-        }
+        const { dev_auth_headers } =
+            require('/var/www/html/system/bin/dev-auth.js');
 
-    (Alternatively, shell out to a `php -r` snippet to compute the token and
-    pass it in via argv - but the in-process crypto approach above keeps the
-    test a single `node` invocation.)
+        const auth_headers = {
+            ...dev_auth_headers(ROUTE, USER_ID),
+            'X-Playwright-Test': '1',
+        };
+
+    (If you must reimplement it: PHP's json_encode escapes forward slashes as
+    \/ and writes the keys in the order above. Reproduce both byte-for-byte or
+    the HMAC will not match. system/bin/dev-auth.js is the worked example.)
 
     URL scope. The token is bound to ONE request URI. The main-site verifier
     recomputes it against $request->getRequestUri() (path plus query string);
@@ -140,7 +158,9 @@ MAIN-SITE VS PORTAL BACKDOOR
 
     Testing a portal SPA differs from the main-site example in three ways:
     - send X-Dev-Auth-Portal-User-Id, not X-Dev-Auth-User-Id;
-    - sign the token with 'portal' => true in the payload;
+    - sign the token with 'portal' => true in the payload (dev-auth.js mints
+      the staff realm; a portal script signs its own payload the same way with
+      that flag flipped);
     - the portal verifier normalizes the URL by stripping the /_portal prefix
       BEFORE recomputing the token. Sign against the normalized (prefix-less)
       path, and validate_session (below) must be told it is a portal page.
@@ -299,8 +319,8 @@ THE REFERENCE TEST
     system/app/RSpade/tests/preview/playwright/document_preview_spa.js is a
     complete, currently-passing example of every pattern above. It:
 
-    - reads APP_KEY from .env and mints its own dev-auth token (with the \/
-      escaping fix);
+    - mints its dev-auth headers with dev_auth_headers() from
+      system/bin/dev-auth.js;
     - scopes auth headers to the first document request;
     - goes to /dev/document_preview with waitUntil: 'commit';
     - waits on _debug_ready, then patches validate_session;
@@ -320,10 +340,22 @@ COMMON PITFALLS
         response, so re-sending dev-auth headers is at best redundant. Scope
         them to the initial document request (see RESTRICTING AUTH HEADERS).
 
-    HMAC mismatch: forgetting the \/ escaping
-        PHP json_encode writes "\/" for "/". If your JS token is computed from
-        an unescaped JSON string, the HMAC never matches and the page renders
-        unauthenticated (no error). Apply .replace(/\//g, '\\/').
+    HMAC mismatch: hand-rolling the payload
+        PHP json_encode writes "\/" for "/" and fixes the key order. A payload
+        assembled by hand that differs in either never matches, and the page
+        renders unauthenticated with no error. Use dev_auth_headers() from
+        system/bin/dev-auth.js.
+
+    An expired assertion
+        The signature is valid for 60 seconds from mint. Mint immediately
+        before page.goto() - never at module load with a slow setup in
+        between - or the page renders unauthenticated with no error, and the
+        server names the reason in console_debug('AUTH').
+
+    No grant on the box
+        dev-auth.js throws "No development grant store at ...". Browse the site
+        once in development, or run `php artisan rsx:debug /login`, to
+        establish one. The grant file is the only key source.
 
     Signing the token for the wrong URL
         The main-site verifier checks against getRequestUri (path + query); the
@@ -391,8 +423,17 @@ FILES
         custom test. Source of the dev-auth header set and the _debug_ready
         wait pattern.
 
-    system/app/RSpade/Commands/Rsx/Route_Debug_Command.php
-        generate_dev_auth_token() - the authoritative token payload shape.
+    system/bin/dev-auth.js
+        dev_auth_headers() - the node minter every shipped Playwright test
+        uses. Reads the grant, signs, returns the three headers.
+
+    system/app/RSpade/Core/Debug/Dev_Auth_Token.php
+        The authoritative wire format, the mint, and the ONE verifier both
+        realms call.
+
+    system/app/RSpade/Core/Ide/Ide_Bridge_Token.php
+        The grant store the signing secret comes from (shared with the IDE
+        bridge): active_secrets(), ensure_grant_store(), rotation.
 
     system/app/RSpade/Core/Dispatch/Dispatcher.php
         __handle_dev_auth() - the main-site (staff) dev-auth verifier, called
