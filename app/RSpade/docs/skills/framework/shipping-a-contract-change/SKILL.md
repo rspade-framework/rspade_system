@@ -119,7 +119,7 @@ Worked examples:
 
 **Format, naming and the three category structures are defined by the charter** - `system/app/RSpade/breaking_changes/CLAUDE.md`. Read it before writing; do not invent a shape. In short: `{feature}_{MM}_{DD}.txt`; **Category 1** = `/rsx/` template diff with exact copy-paste code (only when the fork BREAKS without it); **Category 2** = a PUBLIC API call-shape change whose body is **ACTION REQUIRED** (what downstream must audit in their OWN code), never a description of the core fix; **Category 3** = an owner-requested feature whose implementation includes a template UI - the engine ships automatically and the interface does not, so the document maps the reference implementation under `system/app/RSpade/resource/reference_app/` and asks the operator to port it into their own app's equivalent surface, on their own navigation and permission model. **Show the code** for 1 and 2 - a document a developer has to diff against is a document that failed. For 3, show the MAP, not a blind diff.
 
-Downstream consumption (what your document will be read through): `rsx:framework:breaking_changes` / `:show <name>` / `:mark <name> --fulfilled`. Full detail: `php artisan rsx:ma breaking_changes`.
+Downstream consumption (what your document will be read through): `rsx:framework:breaking_changes` / `:show <name>` / `:mark <name> --fulfilled`. Full detail: `rsx:man breaking_changes`.
 
 ---
 
@@ -168,4 +168,4 @@ So `archive/` is the done pile; a file still at the top level is OPEN (`PARTIAL`
 
 Before calling the change shipped, re-read the six items and name, out loud, which ones applied and which did not and why. **"I updated the code and the man page" is not shipping** if the template still teaches the old way or a silent behavior change went out with no checklist entry.
 
-Details: `system/app/RSpade/breaking_changes/CLAUDE.md`, `php artisan rsx:ma breaking_changes`, `rsx:man prelaunch_checklist`. Related: `rspade:publishing-a-release`.
+Details: `system/app/RSpade/breaking_changes/CLAUDE.md`, `rsx:man breaking_changes`, `rsx:man prelaunch_checklist`. Related: `rspade:publishing-a-release`.

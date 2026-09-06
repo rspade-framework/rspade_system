@@ -146,4 +146,6 @@ FILES
     /system/app/RSpade/Core/Js/Width_Group.js
 
 SEE ALSO
-    jquery, responsive, jqhtml
+    rsx:man jquery
+    rsx:man responsive
+    rsx:man jqhtml

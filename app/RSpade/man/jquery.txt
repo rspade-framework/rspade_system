@@ -546,11 +546,12 @@ IMPLEMENTATION NOTES
     and ensures consistency across the codebase.
 
 SEE ALSO
-    width_group.txt - .width_group(name) / $.width_group_destroy() /
-                      $.width_group_recalculate(): synchronize min-width across a
-                      named group of elements (widest wins). Documented separately;
-                      it is a jQuery extension like the helpers above.
-    jqhtml.txt - JQHTML component system
-    controller.txt - Controller click handlers
-    ajax_error_handling.txt - the endpoint error contract ($.ajax is blocked)
-    error_handling.txt - JavaScript error patterns
+    rsx:man width_group - .width_group(name) / $.width_group_destroy() /
+                          $.width_group_recalculate(): synchronize min-width
+                          across a named group of elements (widest wins).
+                          Documented separately; it is a jQuery extension like
+                          the helpers above.
+    rsx:man jqhtml - JQHTML component system
+    rsx:man controller - Controller click handlers
+    rsx:man ajax_error_handling - the endpoint error contract ($.ajax is blocked)
+    rsx:man error_handling - JavaScript error patterns

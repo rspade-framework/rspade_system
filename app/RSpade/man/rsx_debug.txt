@@ -399,12 +399,11 @@ IMPORTANT NOTES
 * For more details on console_debug: php artisan rsx:man console_debug
   For config options: php artisan rsx:man config_rsx
 
-RELATED COMMANDS
+SEE ALSO
 
+rsx:man console_debug        console_debug() channels and filtering
+rsx:man config_rsx           the rsx.debug configuration block
+rsx:man routing              route declaration and URL generation
 php artisan rsx:routes       List all registered routes
 php artisan rsx:ajax         Test Ajax endpoints directly
 php artisan rsx:check        Run code quality checks
-
-SEE ALSO
-
-console_debug, config_rsx, routing

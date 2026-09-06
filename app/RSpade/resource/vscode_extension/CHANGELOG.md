@@ -6,6 +6,38 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.236] - 2026-09-06
+
+### Added
+- **Auth check names resolve.** Every quoted name in `#[Auth('is_logged_in', 'can_view_billing')]`
+  and in a JS `@auth('...')` decorator is its own go-to-definition target, landing on the
+  `#[Auth_Check]` method that answers it. The realm is inferred the way the manifest infers it -
+  an explicit `#[Auth_Realm(...)]`, else the portal realm under a portal root, else staff - so a
+  portal file resolves against the portal registry. Hovering a name says which `Class::method`
+  answers it.
+- **`.Class_Name` selectors resolve.** `$(".Backend_Index")`, `.closest('.Foo_Bar')`, a
+  `class="Foo_Bar"` attribute in a `.jqhtml` or `.blade.php`, and a `.Foo_Bar` rule in SCSS all
+  navigate to the jqhtml component (template and class both offered, template first) or to the
+  Blade view whose `@rsx_id` matches. Only PascalCase-with-underscore tokens qualify, so an
+  ordinary CSS class is never touched.
+- **Man page and skill references resolve.** `rsx:man tasks`, `rspade:background-tasks` and the
+  other accepted spellings are highlighted amber and open the page or the skill - in code
+  comments (PHP, JS/TS, SCSS, jqhtml, Blade) and inside the man pages themselves, including the
+  compact and multi-column rows of a `SEE ALSO` section. Resolution is local, so it works with
+  the server stopped; a reference that does not name a real page gets no colour and no link.
+- **`system/` is protected as framework property.** Unless the project's `.env` says
+  `IS_FRAMEWORK_DEVELOPER=true`, `system/**` is added to the workspace's `files.readonlyInclude`,
+  an amber banner appears at the top of any `system/` file you open, the explorer badges the
+  directory `FW`, and the first edit to such a file warns once. The banner names the remedy: a
+  class override in `rsx/`.
+- More framework attributes are highlighted: `Auth_Realm`, `Auth_Check`, `Api_Endpoint`,
+  `Api_Param`, `Ajax_Endpoint_Model_Fetch`, `OnEvent`, `Schedule`, `Command`, `Exclusive`,
+  `Debounce`, `Emitter`, `Realtime_Touch`, `Revision_Parent`, `Portal_Route`, `SPA`,
+  `Health_Check`, `Health_Heal`, `Replaceable`, `Sealed`, `FPC` and `Task_Attribute`.
+
+### Changed
+- Minimum VS Code raised to 1.79, the release that introduced `files.readonlyInclude`.
+
 ## [0.1.231] - 2026-08-29
 
 ### Changed

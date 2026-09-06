@@ -1320,18 +1320,18 @@ ENTRY 12: MONEY ARITHMETIC IN A FLOAT (amounts that drift)
 
 
 SEE ALSO
-    php artisan rsx:man login_redirect
-    php artisan rsx:man session
-    php artisan rsx:man csrf
-    php artisan rsx:man jqhtml
-    php artisan rsx:man realtime
-    php artisan rsx:man portal
-    php artisan rsx:man tasks
-    php artisan rsx:man app_mode
-    php artisan rsx:man csp
-    php artisan rsx:man external_resources
-    php artisan rsx:man time
-    php artisan rsx:man form_conventions
-    php artisan rsx:man template_app
-    php artisan rsx:man external_api
-    php artisan rsx:man standard_library
+    rsx:man login_redirect
+    rsx:man session
+    rsx:man csrf
+    rsx:man jqhtml
+    rsx:man realtime
+    rsx:man portal
+    rsx:man tasks
+    rsx:man app_mode
+    rsx:man csp
+    rsx:man external_resources
+    rsx:man time
+    rsx:man form_conventions
+    rsx:man template_app
+    rsx:man external_api
+    rsx:man standard_library

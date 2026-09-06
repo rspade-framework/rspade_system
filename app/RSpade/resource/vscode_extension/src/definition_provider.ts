@@ -76,6 +76,13 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { IdeBridgeClient } from './ide_bridge_client';
+import {
+    Auth_Realm,
+    infer_auth_realm,
+    recognize_auth_checks,
+    recognize_css_classes,
+    token_at,
+} from './rspade_recognizers';
 
 interface JqhtmlExtensionAPI {
     findComponent(name: string): {
@@ -158,6 +165,18 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
         const routeResult = await this.handleRoutePattern(document, position);
         if (routeResult) {
             return routeResult;
+        }
+
+        // #[Auth('check')] / @auth('check') - one target per quoted name
+        const authResult = await this.handleAuthCheck(document, position);
+        if (authResult) {
+            return authResult;
+        }
+
+        // .Class_Name selectors - jqhtml component, else a Blade view's @rsx_id
+        const cssClassResult = await this.handleCssClass(document, position);
+        if (cssClassResult) {
+            return cssClassResult;
         }
 
         // Check for config() pattern - works in PHP and Blade files
@@ -1033,6 +1052,130 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
         }
 
         return undefined;
+    }
+
+    /**
+     * The document's path relative to the RSpade root, forward slashes. The realm
+     * rule and every other path rule in this extension is written in that spelling.
+     */
+    private relative_path(document: vscode.TextDocument): string {
+        const rspade_root = this.find_rspade_root();
+        const file_path = document.fileName.replace(/\\/g, '/');
+        if (!rspade_root) {
+            return file_path;
+        }
+        return path.relative(rspade_root, document.fileName).replace(/\\/g, '/');
+    }
+
+    /**
+     * The realm an #[Auth] name in this document resolves in, by the same rule the
+     * manifest applies (Auth_ManifestSupport): an explicit #[Auth_Realm(...)], else
+     * the portal realm under a portal root, else staff.
+     */
+    public auth_realm_for_document(document: vscode.TextDocument): Auth_Realm {
+        return infer_auth_realm(this.relative_path(document), document.getText());
+    }
+
+    /**
+     * Resolve one auth check name to the #[Auth_Check] method that defines it.
+     * Public so the hover provider asks the same question through the same client.
+     */
+    public async lookup_auth_check(identifier: string, realm: Auth_Realm): Promise<any> {
+        return this.ide_bridge.request('/_ide/service/definition', {
+            type: 'auth_check',
+            identifier,
+            realm,
+        });
+    }
+
+    /**
+     * Handle a quoted check name inside #[Auth(...)] or @auth(...).
+     *
+     * The attributes are variadic, so each name is its own token and its own
+     * target; the recognizer is shared with the semantic-token side.
+     */
+    private async handleAuthCheck(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): Promise<vscode.Definition | undefined> {
+        const line_text = document.lineAt(position.line).text;
+        const token = token_at(recognize_auth_checks(line_text, position.line), position.line, position.character);
+        if (!token) {
+            return undefined;
+        }
+
+        try {
+            const result = await this.lookup_auth_check(token.value, this.auth_realm_for_document(document));
+            return this.createLocationFromResult(result);
+        } catch (error) {
+            console.error('Error querying IDE helper for auth check:', error);
+            return undefined;
+        }
+    }
+
+    /**
+     * Handle a .Class_Name selector: `$(".Backend_Index")`, `.closest('.Foo_Bar')`,
+     * a `class="Foo_Bar"` attribute in markup, a `.Foo_Bar` rule in SCSS.
+     *
+     * A jqhtml component answers with BOTH of its files - the template first,
+     * because that is what the selector names - and VS Code offers the choice.
+     */
+    private async handleCssClass(
+        document: vscode.TextDocument,
+        position: vscode.Position
+    ): Promise<vscode.Definition | undefined> {
+        const file_name = document.fileName;
+        const allow_class_attribute = file_name.endsWith('.jqhtml') || file_name.endsWith('.blade.php');
+        const line_text = document.lineAt(position.line).text;
+        const tokens = recognize_css_classes(line_text, position.line, allow_class_attribute);
+        const token = token_at(tokens, position.line, position.character);
+        if (!token) {
+            return undefined;
+        }
+
+        try {
+            const result = await this.ide_bridge.request('/_ide/service/definition', {
+                type: 'css_class',
+                identifier: token.value,
+            });
+            return this.createLocationsFromResult(result);
+        } catch (error) {
+            console.error('Error querying IDE helper for css class:', error);
+            return undefined;
+        }
+    }
+
+    /**
+     * A multi-location answer ({locations: [{file, line}, ...]}), in the order the
+     * server returned them.
+     */
+    private createLocationsFromResult(result: any): vscode.Location[] | undefined {
+        if (!result || !result.found || !Array.isArray(result.locations) || result.locations.length === 0) {
+            return undefined;
+        }
+
+        const rspade_root = this.find_rspade_root();
+        if (!rspade_root) {
+            return undefined;
+        }
+
+        const locations: vscode.Location[] = [];
+        for (const entry of result.locations) {
+            if (!entry || typeof entry.file !== 'string') {
+                continue;
+            }
+            locations.push(new vscode.Location(
+                vscode.Uri.file(path.join(rspade_root, entry.file)),
+                new vscode.Position(Math.max(0, (entry.line ?? 1) - 1), 0)
+            ));
+        }
+
+        if (locations.length === 0) {
+            return undefined;
+        }
+
+        this.clear_status_bar();
+        return locations;
     }
 
     private async queryIdeHelper(identifier: string, methodName?: string, type?: string): Promise<any> {

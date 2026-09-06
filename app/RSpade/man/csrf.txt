@@ -130,6 +130,10 @@ FILES
                                                        Honors the rejection response verbatim
 
 SEE ALSO
-    session, auth, portal, ajax_error_handling, external_api
+    rsx:man session
+    rsx:man auth
+    rsx:man portal
+    rsx:man ajax_error_handling
+    rsx:man external_api
 
 RSpade                           2026-08-09                            CSRF(7)

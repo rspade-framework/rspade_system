@@ -483,7 +483,7 @@ HISTORICAL NOTE
     The web side's counterpart global lock is gone too - see rsx:man locks.
 
 SEE ALSO
-    task_commands.txt - #[Command]: giving a task its own artisan command, and the
+    rsx:man task_commands - #[Command]: giving a task its own artisan command, and the
         stdout-is-the-value / stderr-is-the-narration output contract every console run has
-    locks.txt - cluster/system locks, wait-forever timeouts, semaphores (see LOCKS above)
-    logrotate - Log_Maintenance_Service::rotate, the framework's own nightly storage/logs sweep
+    rsx:man locks - cluster/system locks, wait-forever timeouts, semaphores (see LOCKS above)
+    rsx:man logrotate - Log_Maintenance_Service::rotate, the framework's own nightly storage/logs sweep

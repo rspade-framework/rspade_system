@@ -98,5 +98,16 @@ CREATING MAN PAGES
         SEE ALSO
             Related topics
 
+    The cross-reference section is headed SEE ALSO, one reference per line:
+    "rsx:man topic - description", or the compact "topic - description" the
+    heading disambiguates; a skill row is "skill rspade:name - description".
+    Paths and artisan commands stay spelled as themselves, and in prose a man
+    page is named "rsx:man topic" - never topic(7), topic.txt, or the full
+    "php artisan rsx:man topic". The VS Code extension resolves those spellings
+    into a highlight and a go-to-definition; anything else is unreachable.
+
 SEE ALSO
-    jqhtml, bundle_api, spa, coding_standards
+    rsx:man jqhtml
+    rsx:man bundle_api
+    rsx:man spa
+    rsx:man coding_standards

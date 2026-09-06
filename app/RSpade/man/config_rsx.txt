@@ -781,8 +781,24 @@ TROUBLESHOOTING
         the actual default in system/config/rsx.php before setting a var.
 
 SEE ALSO
-    app_mode, console_debug, dispatch, external_api, login_redirect, portal,
-    document_search, tasks, realtime, fpc, email, time, dependencies, locks,
-    turnstile, sso, csp, external_resources, logrotate
+    rsx:man app_mode
+    rsx:man console_debug
+    rsx:man dispatch
+    rsx:man external_api
+    rsx:man login_redirect
+    rsx:man portal
+    rsx:man document_search
+    rsx:man tasks
+    rsx:man realtime
+    rsx:man fpc
+    rsx:man email
+    rsx:man time
+    rsx:man dependencies
+    rsx:man locks
+    rsx:man turnstile
+    rsx:man sso
+    rsx:man csp
+    rsx:man external_resources
+    rsx:man logrotate
 
 CONFIG_RSX(1)                  RSpade Manual                  CONFIG_RSX(1)

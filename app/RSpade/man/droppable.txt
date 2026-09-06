@@ -369,8 +369,8 @@ TROUBLESHOOTING
         - Not hovering over any target in multi-target mode
 
 SEE ALSO
-    file_upload.txt - Server-side file upload system
-    jqhtml.txt - JQHTML component system
+    rsx:man file_upload - Server-side file upload system
+    rsx:man jqhtml - JQHTML component system
 
 VERSION
     RSpade Framework 1.0

@@ -235,6 +235,9 @@ PITFALLS
         form_input(7)); there is no such component today.
 
 SEE ALSO
-    time(7), form_conventions(7), form_input(7), jqhtml(3)
+    rsx:man time
+    rsx:man form_conventions
+    rsx:man form_input
+    rsx:man jqhtml
 
 RSpade                         January 2026                DATETIME_INPUTS(1)

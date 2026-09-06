@@ -77,7 +77,7 @@ MODELS
         Purpose: one row per logical upload, with metadata + attachment.
 
         To OVERRIDE this model in an app, use the class-override pattern
-        (copy-replace, per rsx:man manifest) - it is NOT an app model and does
+        (copy-replace, per rsx:man class_override) - it is NOT an app model and does
         NOT live in /rsx/models.
 
         Columns:

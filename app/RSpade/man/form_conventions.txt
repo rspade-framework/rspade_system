@@ -495,6 +495,11 @@ COMMON MISTAKES
         empty when they differ.
 
 SEE ALSO
-    form_input(3), modals(3), ajax(3), auth_gates(7), jqhtml(3), spa(3)
+    rsx:man form_input
+    rsx:man modals
+    rsx:man ajax_error_handling
+    rsx:man auth_gates
+    rsx:man jqhtml
+    rsx:man spa
 
 RSX Framework                     August 2026             FORM_CONVENTIONS(3)

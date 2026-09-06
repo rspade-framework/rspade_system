@@ -201,7 +201,7 @@ THE TWO RULES THAT MAKE THIS A LIBRARY
 
         If a package on this list is ever retired or moved across a major version
         boundary, it ships with a breaking_changes document naming the remedy -
-        never silently. See rsx:ma breaking_changes.
+        never silently. See rsx:man breaking_changes.
 
 RSX VS LARAVEL
     Laravel: every dependency is the application's own composer.json line. There

@@ -527,9 +527,9 @@ excluded automatically. Full treatment: rsx:man revisions.
 
 SEE ALSO
 
-php artisan rsx:man model_fetch - Ajax ORM fetch system
-php artisan rsx:man model_normalization - Database normalization process
-php artisan rsx:man enums - Complete enum system documentation
-php artisan rsx:man migrations - Migration system and safety
-php artisan rsx:man revisions - Per-model revision history
-php artisan rsx:man prelaunch_checklist - the unbounded-query audit (ENTRY 4)
+rsx:man model_fetch - Ajax ORM fetch system
+rsx:man model_normalization - Database normalization process
+rsx:man enums - Complete enum system documentation
+rsx:man migrations - Migration system and safety
+rsx:man revisions - Per-model revision history
+rsx:man prelaunch_checklist - the unbounded-query audit (ENTRY 4)

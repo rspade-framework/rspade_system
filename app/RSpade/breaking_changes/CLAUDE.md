@@ -116,7 +116,7 @@ Each downstream app tracks which of these documents it has already fulfilled
 versus which are still pending, in a local manifest managed via the
 `rsx:framework:breaking_changes` commands (list / show / mark). That is the
 CONSUMER's side of this system; it is documented for downstream developers in
-`php artisan rsx:ma breaking_changes`.
+`rsx:man breaking_changes`.
 
 **THIS file is the AUTHOR's side** - the format and charter for writing the
 documents a downstream developer will later consume. When the maintainer asks

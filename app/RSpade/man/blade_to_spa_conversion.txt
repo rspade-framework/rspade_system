@@ -132,6 +132,8 @@ NOTES
     - Blade knowledge is only needed for understanding legacy code
 
 SEE ALSO
-    spa(3), jqhtml(3), routing(3)
+    rsx:man spa
+    rsx:man jqhtml
+    rsx:man routing
 
 RSX Framework                     2025-11-23            BLADE_TO_SPA_CONVERSION(3)

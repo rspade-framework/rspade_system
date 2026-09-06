@@ -803,7 +803,12 @@ TROUBLESHOOTING
         Verify file extension matches.
 
 SEE ALSO
-    npm(3), manifest_api(3), jqhtml(3), controller(3),
-    external_resources(1), csp(1), app_mode(1)
+    rsx:man npm
+    rsx:man manifest_api
+    rsx:man jqhtml
+    rsx:man controller
+    rsx:man external_resources
+    rsx:man csp
+    rsx:man app_mode
 
 RSX Framework                     2025-12-09                      BUNDLE_API(3)

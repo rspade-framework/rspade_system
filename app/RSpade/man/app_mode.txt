@@ -616,7 +616,10 @@ GITIGNORE
     source. Commit what a compile adds.)
 
 SEE ALSO
-    bundle_api(3), manifest_api(3), storage_directories(3), config_rsx(3)
+    rsx:man bundle_api
+    rsx:man manifest_api
+    rsx:man storage_directories
+    rsx:man config_rsx
 
 AUTHOR
     RSpade Framework

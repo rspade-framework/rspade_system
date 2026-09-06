@@ -243,6 +243,6 @@ MIGRATING AN EXISTING APPLICATION
     NEW installs and for the test baseline.
 
 SEE ALSO
-    php artisan rsx:man event_hooks     the event system and the full event catalog
-    php artisan rsx:man session         Session, sign-in and account state
-    php artisan rsx:man acls            roles and the per-user permission layer
+    rsx:man event_hooks the event system and the full event catalog
+    rsx:man session     Session, sign-in and account state
+    rsx:man acls        roles and the per-user permission layer

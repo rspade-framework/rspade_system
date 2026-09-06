@@ -456,6 +456,10 @@ FILES
         that it is not manifest-discovered.
 
 SEE ALSO
-    rsx_debug, spa, jqhtml, portal, session
+    rsx:man rsx_debug
+    rsx:man spa
+    rsx:man jqhtml
+    rsx:man portal
+    rsx:man session
 
 CUSTOM_PLAYWRIGHT_TESTS_SPA(1)   RSpade Manual   CUSTOM_PLAYWRIGHT_TESTS_SPA(1)

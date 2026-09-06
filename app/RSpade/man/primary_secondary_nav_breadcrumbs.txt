@@ -543,6 +543,8 @@ FILES
         Primary sidebar navigation component
 
 SEE ALSO
-    spa(3), jqhtml(3), storage(3)
+    rsx:man spa
+    rsx:man jqhtml
+    rsx:man storage
 
 RSX Framework                    2025-12-16       PRIMARY_SECONDARY_NAV_BREADCRUMBS(3)

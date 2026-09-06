@@ -157,6 +157,9 @@ NOTES
     - There is no model, no JS stub, and no ORM fetch access by design.
 
 SEE ALSO
-    config_rsx(3), session(3), migrations(3), enums(3)
+    rsx:man config_rsx
+    rsx:man session
+    rsx:man migrations
+    rsx:man enums
 
 RSX Framework                     2026-06-22                       SETTINGS(3)

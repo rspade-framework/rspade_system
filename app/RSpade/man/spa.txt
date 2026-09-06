@@ -253,8 +253,8 @@ FEATURE CONTROLLERS
         - Use Flash_Alert with redirects for success messages
 
     See Also:
-        ajax_error_handling(3) for error patterns
-        controller(3) for #[Ajax_Endpoint] details
+        rsx:man ajax_error_handling for error patterns
+        rsx:man controller for #[Ajax_Endpoint] details
 
 JAVASCRIPT ACTIONS
     Creating Actions:
@@ -338,7 +338,7 @@ JAVASCRIPT ACTIONS
         on_ready()      DOM ready, setup event handlers
 
     See Also:
-        jqhtml(3) for complete lifecycle documentation
+        rsx:man jqhtml for complete lifecycle documentation
 
 ACTION TEMPLATES
     Creating Templates:
@@ -1149,16 +1149,16 @@ DETACHED ACTION LOADING
     action to clean up event listeners and prevent memory leaks.
 
 SEE ALSO
-    anchors(1) - in-page anchor deep links, and the framework-owned
-                 post-dispatch scroll position (drop your own scrollTop(0))
-    module_organization(3) - module/feature ladder and the generator commands
-    auth_gates(7) - @auth on actions, #[Auth] on the bootstrap, the client
-                    gate and the SPA error screens
-    controller(3) - Controller patterns and Ajax endpoints
-    jqhtml(3) - Component lifecycle and templates
-    routing(3) - URL generation and route patterns
-    modals(3) - Modal dialogs in SPA context
-    ajax_error_handling(3) - Error handling patterns
-    pagedata(3) - Passing server-side data to JavaScript
-    rsxapp(3) - Global JavaScript runtime object
-    scss(3) - SCSS scoping conventions and component-first philosophy
+    rsx:man anchors - in-page anchor deep links, and the framework-owned
+                      post-dispatch scroll position (drop your own scrollTop(0))
+    rsx:man module_organization - module/feature ladder and the generator commands
+    rsx:man auth_gates - @auth on actions, #[Auth] on the bootstrap, the
+                         client gate and the SPA error screens
+    rsx:man controller - Controller patterns and Ajax endpoints
+    rsx:man jqhtml - Component lifecycle and templates
+    rsx:man routing - URL generation and route patterns
+    rsx:man modals - Modal dialogs in SPA context
+    rsx:man ajax_error_handling - Error handling patterns
+    rsx:man pagedata - Passing server-side data to JavaScript
+    rsx:man rsxapp - Global JavaScript runtime object
+    rsx:man scss - SCSS scoping conventions and component-first philosophy

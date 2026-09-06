@@ -534,8 +534,8 @@ TROUBLESHOOTING
         describe, so a database transaction that rolls back takes them along.
 
 SEE ALSO
-    php artisan rsx:man model
-    php artisan rsx:man realtime
-    php artisan rsx:man migrations
-    php artisan rsx:man database_schema_architecture
-    php artisan rsx:man tasks
+    rsx:man model
+    rsx:man realtime
+    rsx:man migrations
+    rsx:man database_schema_architecture
+    rsx:man tasks

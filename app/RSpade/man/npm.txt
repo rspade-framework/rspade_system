@@ -258,6 +258,7 @@ EXAMPLES
         }
 
 SEE ALSO
-    bundle_api(3), jqhtml(3)
+    rsx:man bundle_api
+    rsx:man jqhtml
 
 RSX Framework                     2025-12-09                            NPM(3)

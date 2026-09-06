@@ -375,7 +375,7 @@ EXAMPLE IMPLEMENTATION
 
 SEE ALSO
     php artisan rsx:constants:regenerate - Generate constants and type hints
-    php artisan rsx:man model_fetch - Model fetching from JavaScript
-    php artisan rsx:man model - RSX model system overview
+    rsx:man model_fetch - Model fetching from JavaScript
+    rsx:man model - RSX model system overview
 
 RSpade 1.0                           December 2025                                  ENUMS(7)

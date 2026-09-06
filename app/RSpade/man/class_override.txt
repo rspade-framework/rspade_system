@@ -308,6 +308,6 @@ some other way.
 
 ## SEE ALSO
 
-rsx_upstream(7) - Framework update management
-manifest_api(7) - Manifest system documentation
-model(7) - Model documentation
+rsx:man rsx_upstream - Framework update management
+rsx:man manifest_api - Manifest system documentation
+rsx:man model - Model documentation

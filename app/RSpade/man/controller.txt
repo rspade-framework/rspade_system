@@ -401,7 +401,11 @@ TROUBLESHOOTING
         - Verify session configuration
 
 SEE ALSO
-    auth_gates(7), acls(7), manifest_api(3), bundle_api(3), jqhtml(3),
-    rsx:routes(1)
+    rsx:man auth_gates
+    rsx:man acls
+    rsx:man manifest_api
+    rsx:man bundle_api
+    rsx:man jqhtml
+    php artisan rsx:routes
 
 RSX Framework                   2025-09-17                      CONTROLLER(3)

@@ -100,7 +100,9 @@ API
         Returns true if any page data has been set (used internally).
 
 SEE ALSO
-    rsxapp(3), spa(3), bundle_api(3)
+    rsx:man rsxapp
+    rsx:man spa
+    rsx:man bundle_api
 
 AUTHOR
     RSpade Framework

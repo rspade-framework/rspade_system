@@ -2853,8 +2853,12 @@ PERFORMANCE
     - Sibling components load in parallel during on_load()
 
 SEE ALSO
-    anchors(1), bundle_api(3), controller(3), manifest_api(3),
-    semantic_composition(3), scss(3)
+    rsx:man anchors
+    rsx:man bundle_api
+    rsx:man controller
+    rsx:man manifest_api
+    rsx:man semantic_composition
+    rsx:man scss
 
     skill rspade:view-decomposition - breaking an over-long view template
     into region components (the ~325-line trigger, the seam test, the

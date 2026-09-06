@@ -135,7 +135,7 @@ TROUBLESHOOTING A RELEASE
 SEE ALSO
     rsx:man rsx_upstream        the update, from a downstream perspective
     rsx:man rsx_git             the proxy that keeps the submodule in step
-    rsx:ma breaking_changes    mandatory manual migrations
+    rsx:man breaking_changes    mandatory manual migrations
     rsx:man framework_debug_and_contrib
                                 debugging framework core and sending a patch upstream
     rsx:man maintenance_mode    the window an update raises

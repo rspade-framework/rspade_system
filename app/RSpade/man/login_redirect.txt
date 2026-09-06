@@ -285,6 +285,6 @@ COMMON PITFALLS
       dropped hop; the call exists precisely to make it a one-liner.
 
 SEE ALSO
-    php artisan rsx:man prelaunch_checklist   (entry #1 audits this wiring)
-    php artisan rsx:man session
-    php artisan rsx:man acls
+    rsx:man prelaunch_checklist   (entry #1 audits this wiring)
+    rsx:man session
+    rsx:man acls

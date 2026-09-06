@@ -701,7 +701,13 @@ MIGRATION FROM MANUAL AUTH
        are gone, not broken).
 
 SEE ALSO
-    acls(7), session(7), portal(7), model_fetch(7), realtime(7),
-    class_override(7), spa(7), login_redirect(7)
+    rsx:man acls
+    rsx:man session
+    rsx:man portal
+    rsx:man model_fetch
+    rsx:man realtime
+    rsx:man class_override
+    rsx:man spa
+    rsx:man login_redirect
 
 RSpade Framework                    2026-08-07                     AUTH_GATES(7)

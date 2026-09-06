@@ -21,6 +21,14 @@ import { RspadeSortClassMethodsProvider } from './sort_class_methods_provider';
 import { SymlinkRedirectProvider } from './symlink_redirect_provider';
 import { init_bridge_connectivity } from './bridge_connectivity';
 import { activate_use_folding } from './use_folding_provider';
+import {
+    DocReferenceIndex,
+    DocReferenceDefinitionProvider,
+    DocReferenceSemanticTokensProvider,
+    doc_reference_selectors
+} from './doc_reference_provider';
+import { AuthCheckHoverProvider } from './auth_check_hover_provider';
+import { FrameworkPropertyGuard } from './framework_property_guard';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -159,6 +167,16 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }
 
+    // Man-page and skill reference index. Local resolution, no bridge call, so it
+    // works with the server stopped; refreshed when a page or a SKILL.md appears
+    // or disappears.
+    const doc_reference_index = new DocReferenceIndex(rspade_root);
+    doc_reference_index.activate(context);
+
+    // system/ is framework property unless IS_FRAMEWORK_DEVELOPER=true.
+    const framework_property_guard = new FrameworkPropertyGuard(rspade_root);
+    framework_property_guard.activate(context);
+
     // Initialize providers
     file_watcher = new RspadeFileWatcher();
     formatting_provider = new RspadeFormattingProvider();
@@ -256,9 +274,23 @@ export async function activate(context: vscode.ExtensionContext) {
                 { language: 'blade' },
                 { language: 'html' },
                 { pattern: '**/*.jqhtml' },
-                { pattern: '**/*.blade.php' }
+                { pattern: '**/*.blade.php' },
+                { pattern: '**/*.scss' }
             ],
             definition_provider
+        )
+    );
+
+    // #[Auth('check')] / @auth('check') hover - names the Class::method that answers
+    context.subscriptions.push(
+        vscode.languages.registerHoverProvider(
+            [
+                { language: 'php' },
+                { language: 'javascript' },
+                { language: 'typescript' },
+                { pattern: '**/*.jqhtml' }
+            ],
+            new AuthCheckHoverProvider(definition_provider)
         )
     );
 
@@ -314,7 +346,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register combined semantic tokens provider for JavaScript/TypeScript
     // This includes: JQHTML lifecycle methods (orange), file references (teal), 'that' variable (blue)
-    const combined_semantic_provider = new CombinedSemanticTokensProvider();
+    const combined_semantic_provider = new CombinedSemanticTokensProvider(doc_reference_index);
 
     context.subscriptions.push(
         vscode.languages.registerDocumentSemanticTokensProvider(
@@ -339,7 +371,7 @@ export async function activate(context: vscode.ExtensionContext) {
     console.log('Comment file reference definition provider registered for JavaScript/TypeScript');
 
     // Register PHP attribute provider
-    const php_attribute_provider = new PhpAttributeSemanticTokensProvider();
+    const php_attribute_provider = new PhpAttributeSemanticTokensProvider(doc_reference_index);
 
     context.subscriptions.push(
         vscode.languages.registerDocumentSemanticTokensProvider(
@@ -350,6 +382,33 @@ export async function activate(context: vscode.ExtensionContext) {
     );
 
     console.log('PHP attribute provider registered for PHP files');
+
+    // Man-page / skill references outside PHP and JS: SCSS, jqhtml, Blade and the
+    // man pages themselves. PHP and JS/TS are served by the two providers above,
+    // because VS Code honours ONE semantic tokens legend per language.
+    const doc_reference_selector = doc_reference_selectors();
+
+    context.subscriptions.push(
+        vscode.languages.registerDocumentSemanticTokensProvider(
+            doc_reference_selector,
+            new DocReferenceSemanticTokensProvider(doc_reference_index),
+            new vscode.SemanticTokensLegend(['conventionMethod'])
+        )
+    );
+
+    context.subscriptions.push(
+        vscode.languages.registerDefinitionProvider(
+            [
+                ...(doc_reference_selector as vscode.DocumentFilter[]),
+                { language: 'php' },
+                { language: 'javascript' },
+                { language: 'typescript' }
+            ],
+            new DocReferenceDefinitionProvider(doc_reference_index)
+        )
+    );
+
+    console.log('Man page and skill reference providers registered');
 
     // Clear status bar on document save
     context.subscriptions.push(

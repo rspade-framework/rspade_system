@@ -467,7 +467,7 @@ SEE ALSO
                   ceremony, the policy hooks, connected accounts
     acls        - roles, permissions, the Permission facade, GRANT/DENY
     portal      - client portal: separate session, dispatch, and invitations
-    permission  - app-side Permission subclass conventions
+    skill rspade:permissions-acl - app-side Permission subclass conventions
     routing     - type-safe URL generation and route patterns
     model       - model system, fetch(), enums
 

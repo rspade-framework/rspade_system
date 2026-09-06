@@ -881,7 +881,7 @@ SEE ALSO
                                   disable refusal that protects an interrupted build
        rsx:man artisan_commands - How framework commands are registered, intercepted
                                   and stubbed, and why that directory is not linted
-       rsx:man database - Database system overview
+       rsx:man database_schema_architecture - Database system overview
        rsx:man coding_standards - General coding standards
        rsx:man error_handling - Error handling patterns
 

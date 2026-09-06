@@ -406,5 +406,12 @@ FILE NAMING
     (clients_controller.php, clients_datagrid.php).
 
 SEE ALSO
-    spa(3), crud(3), portal(3), routing(3), controller(3), bundle_api(3),
-    external_api(3), blade_to_spa_conversion(3), rspade(3)
+    rsx:man spa
+    rsx:man crud
+    rsx:man portal
+    rsx:man routing
+    rsx:man controller
+    rsx:man bundle_api
+    rsx:man external_api
+    rsx:man blade_to_spa_conversion
+    rsx:man rspade

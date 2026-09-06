@@ -322,12 +322,12 @@ COMMON PITFALLS
       the framework wraps it as HTTP 200 with a failure body.
 
 SEE ALSO
-    php artisan rsx:man ajax_error_handling  - Ajax error contract + client
-    php artisan rsx:man code_quality         - fail-loud enforcement rules
-    php artisan rsx:man acls                  - Permission require_* throwers
-    php artisan rsx:man console_debug         - channel-filtered debug output
-    php artisan rsx:man helpers               - shouldnt_happen, response_*
-                                                and the rest of the PHP helpers
-    php artisan rsx:man js_functions          - the JavaScript twins
+    rsx:man ajax_error_handling - Ajax error contract + client
+    rsx:man code_quality        - fail-loud enforcement rules
+    rsx:man acls                - Permission require_* throwers
+    rsx:man console_debug       - channel-filtered debug output
+    rsx:man helpers             - shouldnt_happen, response_* and the rest of
+                                  the PHP helpers
+    rsx:man js_functions        - the JavaScript twins
 
 ERROR_HANDLING(1)                RSpade Manual               ERROR_HANDLING(1)

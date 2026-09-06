@@ -2505,7 +2505,7 @@ SEE ALSO
     rsx:man framework_pull_mechanics    how a release is built and delivered
     rsx:man class_override              the supported way to change framework
                                         behaviour without a patch
-    rsx:ma breaking_changes            the mandatory manual migrations
+    rsx:man breaking_changes            the mandatory manual migrations
     rsx:man framework_fork              taking ownership of the framework
     rsx:man rsx_git                     the git proxy that keeps system/ in
                                         step

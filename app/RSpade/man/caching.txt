@@ -473,11 +473,10 @@ connection stays exactly as loud as ever (shouldnt_happen).
 See `rsx:man maintenance_mode`.
 
 
-RELATED SYSTEMS
-===============
+SEE ALSO
+========
 
-See also:
-- php artisan rsx:man locks       - RsxLocks cluster/system advisory locking
-- php artisan rsx:man maintenance_mode - behavior while the services are stopped
-- php artisan rsx:man manifest_build - Manifest build key system
+- rsx:man locks                          - RsxLocks cluster/system advisory locking
+- rsx:man maintenance_mode               - behavior while the services are stopped
+- rsx:man manifest_build                 - Manifest build key system
 - /system/app/RSpade/Core/REDIS_USAGE.md - Redis database allocation

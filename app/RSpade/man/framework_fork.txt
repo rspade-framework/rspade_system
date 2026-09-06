@@ -181,7 +181,7 @@ distribution repository:
 
 Also review new mandates under `system/app/RSpade/breaking_changes/` when
 porting - they describe required downstream actions that ship with
-framework changes (see rsx:ma breaking_changes).
+framework changes (see rsx:man breaking_changes).
 
 ## REVERTING TO MANAGED MODE
 
@@ -246,6 +246,6 @@ changes; `git -C system log` separates the two by commit.
 
 ## SEE ALSO
 
-rsx_upstream(7) - Managed updates: what the submodule model does and refuses
-breaking_changes(7) - Mandatory downstream change notices
-class_override(7) - Overriding framework classes WITHOUT forking
+rsx:man rsx_upstream - Managed updates: what the submodule model does and refuses
+rsx:man breaking_changes - Mandatory downstream change notices
+rsx:man class_override - Overriding framework classes WITHOUT forking

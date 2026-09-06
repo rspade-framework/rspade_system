@@ -292,9 +292,9 @@ FILE LOCATIONS
     /system/app/RSpade/Core/Rsx.php           HASH_ANCHOR_KEY, PHP Route()
 
 SEE ALSO
-    php artisan rsx:man spa
-    php artisan rsx:man url_hash
-    php artisan rsx:man jqhtml
-    php artisan rsx:man routing
+    rsx:man spa
+    rsx:man url_hash
+    rsx:man jqhtml
+    rsx:man routing
 
 RSPADE                           August 2026                        ANCHORS(1)

@@ -306,7 +306,7 @@ SEE ALSO
     rsx:man framework_pull_mechanics    how a release is built and delivered
     rsx:man rsx_git                     the git proxy that keeps system/ in step
     rsx:man class_override              the supported way to change framework code
-    rsx:ma breaking_changes            mandatory manual migrations
+    rsx:man breaking_changes            mandatory manual migrations
     rsx:man framework_fork              taking ownership of the framework
     rsx:man framework_debug_and_contrib
                                         debugging framework core and sending

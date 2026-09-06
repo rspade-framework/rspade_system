@@ -230,6 +230,7 @@ return [
         \App\RSpade\Core\Externals\Externals_ManifestSupport::class,
         \App\RSpade\Core\Task\Task_Command_ManifestSupport::class,
         \App\RSpade\Core\Mail\Email_ManifestSupport::class,
+        \App\RSpade\Core\Bundle\Bundle_Alias_ManifestSupport::class,
         // Auth gates run LAST: the consolidated #[Auth] index covers every surface
         // kind the modules above register.
         \App\RSpade\Core\Auth\Auth_ManifestSupport::class,

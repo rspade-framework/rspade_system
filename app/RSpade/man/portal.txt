@@ -1163,7 +1163,12 @@ NOTES
     - There is exactly one Portal_Main and one Portal_Spa_Controller per app.
 
 SEE ALSO
-    session(3), spa(3), auth(3), dispatch(3), class_override(3), config_rsx(3),
-    migrations(3)
+    rsx:man session
+    rsx:man spa
+    rsx:man auth
+    rsx:man dispatch
+    rsx:man class_override
+    rsx:man config_rsx
+    rsx:man migrations
 
 RSX Framework              Last updated 2026-09-01                  PORTAL(3)

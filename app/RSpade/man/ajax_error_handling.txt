@@ -447,6 +447,6 @@ COMMON PATTERNS
 
 SEE ALSO
 
-    php artisan rsx:man jqhtml         - Component system
-    php artisan rsx:man modals         - Modal dialogs
-    php artisan rsx:man error_handling - General error handling
+    rsx:man jqhtml         - Component system
+    rsx:man modals         - Modal dialogs
+    rsx:man error_handling - General error handling

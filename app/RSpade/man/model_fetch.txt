@@ -1116,12 +1116,12 @@ PAGINATED RELATIONSHIP RESULTS (todo, low priority)
         ORM-style access is preferred over DataGrid.
 
 SEE ALSO
-    auth_gates(7) - #[Auth] on fetch surfaces, the ORM seam, and the
-                    gate-vs-record split
-    crud(3) - Standard CRUD implementation using Model.fetch()
-    controller(3) - Internal API attribute patterns
-    manifest_api(3) - Model discovery and stub generation
-    coding_standards(3) - Security patterns and authorization
-    enums(3) - Model enum definitions and magic properties
+    rsx:man auth_gates - #[Auth] on fetch surfaces, the ORM seam, and the
+                         gate-vs-record split
+    rsx:man crud - Standard CRUD implementation using Model.fetch()
+    rsx:man controller - Internal API attribute patterns
+    rsx:man manifest_api - Model discovery and stub generation
+    rsx:man coding_standards - Security patterns and authorization
+    rsx:man enums - Model enum definitions and magic properties
 
 RSX Framework                   2025-11-23                      MODEL_FETCH(3)

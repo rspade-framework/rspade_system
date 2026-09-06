@@ -54,6 +54,9 @@ identifier resolves through the manifest:
 | `'include' => ['jqhtml', 'frontend']` | the bundle definition |
 | `href="/contacts"` | the controller that serves that URL |
 | a file path written in a comment | that file |
+| `#[Auth('is_logged_in')]`, `@auth('...')` | the `#[Auth_Check]` method, per quoted name |
+| `$(".Backend_Index")`, `.closest('.Foo_Bar')`, `.Foo_Bar {` in SCSS | the jqhtml component or the Blade view |
+| `rsx:man tasks`, `rspade:background-tasks` in a comment | the man page or the skill |
 
 Resolution is ordered per context — inside a `.jqhtml` file a bare class name
 tries components first, then JavaScript, then PHP, because that is the order the
@@ -70,9 +73,16 @@ redirect is resolved with the real path on disk, not from a list of known names.
 ## Read
 
 **Framework attributes are highlighted** — `#[Ajax_Endpoint]`, `#[Route]`,
-`#[Auth]`, `#[Task]`, `#[Relationship]` and friends are the load-bearing
-declarations in an RSpade class, and they read as declarations rather than as
-comments.
+`#[Auth]`, `#[Auth_Realm]`, `#[Task]`, `#[Schedule]`, `#[OnEvent]`,
+`#[Api_Endpoint]`, `#[Relationship]` and the rest of the declarative surface are
+the load-bearing declarations in an RSpade class, and they read as declarations
+rather than as comments. A name that is not coloured is a name nothing reads.
+
+**Documentation references are clickable.** `rsx:man tasks` in a comment, or
+`rspade:background-tasks`, is highlighted amber and `F12` opens the page or the
+skill. It works inside the man pages themselves too, `SEE ALSO` rows included.
+Resolution is local to the workspace, so it needs no server; a topic that does
+not exist gets no colour, which makes a wrong reference visible as you write it.
 
 **Convention methods stop looking dead.** `on_app_ready()`, `on_app_init()` and
 the rest of the boot chain are called by name at runtime, so every "unused
@@ -95,6 +105,15 @@ Expand it and it stays expanded. Turn it off with `rspade.foldUseStatements`.
 
 **Folder colours** mark `rsx/` — your code — apart from `system/`, which is the
 framework and which you do not edit.
+
+**`system/` is read-only.** It is a git submodule that every framework update
+resets hard, so an edit there is destroyed on the next pull with nothing to show
+for it. The extension adds `system/**` to the workspace's `files.readonlyInclude`,
+puts a banner at the top of any framework file you open, and badges the directory
+`FW` in the explorer. Everything you want to change is changed in `rsx/`, with a
+class override. A framework-developer checkout — one whose `.env` carries
+`IS_FRAMEWORK_DEVELOPER=true` — is exempt, because there `system/` is the source
+being written.
 
 ---
 

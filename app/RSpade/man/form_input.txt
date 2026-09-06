@@ -319,9 +319,9 @@ TROUBLESHOOTING
         user-only reactions.
 
 SEE ALSO
-    form_conventions(3) - the form contract this input plugs into
-    jqhtml(3) - component lifecycle and templates
-    modals(3) - dialogs that host a form
+    rsx:man form_conventions - the form contract this input plugs into
+    rsx:man jqhtml - component lifecycle and templates
+    rsx:man modals - dialogs that host a form
     system/app/RSpade/resource/reference_app/theme/components/inputs/CLAUDE.md
 
 RSX Framework                     August 2026                   FORM_INPUT(3)

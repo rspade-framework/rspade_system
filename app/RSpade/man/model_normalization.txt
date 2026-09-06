@@ -491,12 +491,13 @@ completion. Normal application queries are not affected.
 
 SEE ALSO
 --------
-- php artisan rsx:man actors            - The actor layer the *_by_type columns point at
-- php artisan rsx:man model_indexes      - Automatic index management
-- php artisan rsx:man migrations         - Migration guidelines
-- php artisan rsx:man module_organization - RSX application structure
-- php artisan rsx:man coding_standards   - Code standards
-- /app/RSpade/Core/Database/CLAUDE.md    - Database system docs
+- rsx:man actors                       - The actor layer the *_by_type columns
+                                         point at
+- rsx:man model_indexes                - Automatic index management
+- rsx:man migrations                   - Migration guidelines
+- rsx:man module_organization          - RSX application structure
+- rsx:man coding_standards             - Code standards
+- /app/RSpade/Core/Database/CLAUDE.md  - Database system docs
 
 AUTHOR
 ------

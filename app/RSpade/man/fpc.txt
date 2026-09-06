@@ -294,5 +294,5 @@ FILES
     system/app/RSpade/tests/fpc/                Integration tests
 
 SEE ALSO
-    ssr(3) - Server-side rendering (produces HTML that FPC caches)
-    session(3) - Session management and cookie behavior
+    rsx:man ssr - Server-side rendering (produces HTML that FPC caches)
+    rsx:man session - Session management and cookie behavior

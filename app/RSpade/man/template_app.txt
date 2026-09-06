@@ -289,7 +289,15 @@ NOTES
       APPLICATION". Strip them when building a real product.
 
 SEE ALSO
-    portal(3), spa(3), crud(3), jqhtml(3), model_fetch(3), enum(3), coding_standards(3)
-    rsx_upstream(1), class_override(1), framework_debug_and_contrib(1)
+    rsx:man portal
+    rsx:man spa
+    rsx:man crud
+    rsx:man jqhtml
+    rsx:man model_fetch
+    rsx:man enums
+    rsx:man coding_standards
+    rsx:man rsx_upstream
+    rsx:man class_override
+    rsx:man framework_debug_and_contrib
 
 RSX Framework              Last updated 2026-09-01              TEMPLATE_APP(3)

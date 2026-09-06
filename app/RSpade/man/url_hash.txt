@@ -114,8 +114,8 @@ FILE LOCATION
     /system/app/RSpade/Core/Js/Rsx.js
 
 SEE ALSO
-    php artisan rsx:man anchors
-    php artisan rsx:man storage
-    php artisan rsx:man spa
+    rsx:man anchors
+    rsx:man storage
+    rsx:man spa
 
 RSPADE                           April 2026                       URL_HASH(1)

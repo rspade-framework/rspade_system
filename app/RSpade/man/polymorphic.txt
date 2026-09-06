@@ -749,6 +749,9 @@ SECURITY CONSIDERATIONS
         - Consistent naming with actual class names
 
 SEE ALSO
-    actors(7), model(7), form_conventions(7), enums(7)
+    rsx:man actors
+    rsx:man model
+    rsx:man form_conventions
+    rsx:man enums
 
 RSX Framework                     2026-09-01                     POLYMORPHIC(7)

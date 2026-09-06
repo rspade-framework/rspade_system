@@ -729,12 +729,12 @@ EXISTING TEMPLATES
         Portal_Shared_Content_Email     content shared with a portal user
 
 SEE ALSO
-    php artisan rsx:man sms                 the deliberate mirror
-    php artisan rsx:man config_rsx          the config reference
-    php artisan rsx:man health              the health-check system
-    php artisan rsx:man tasks               #[Exclusive], #[Schedule], Task::dispatch
-    php artisan rsx:man file_upload         File_Attachment_Model, the blob store
-    php artisan rsx:man time                the datetime formatters an email must use
-    php artisan rsx:man portal              the experience fork the tenant resolution follows
+    rsx:man sms         the deliberate mirror
+    rsx:man config_rsx  the config reference
+    rsx:man health      the health-check system
+    rsx:man tasks       #[Exclusive], #[Schedule], Task::dispatch
+    rsx:man file_upload File_Attachment_Model, the blob store
+    rsx:man time        the datetime formatters an email must use
+    rsx:man portal      the experience fork the tenant resolution follows
 
 RSpade 1.0                          August 2026                                    EMAIL(7)

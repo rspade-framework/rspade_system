@@ -990,8 +990,8 @@ TROUBLESHOOTING
             4. Wait for automatic manifest rebuild (dev mode)
 
 SEE ALSO
-    php artisan rsx:man file_upload
-    php artisan rsx:man document_search
-    php artisan rsx:man turnstile
-    php artisan rsx:man manifest_api
-    php artisan rsx:man coding_standards
+    rsx:man file_upload
+    rsx:man document_search
+    rsx:man turnstile
+    rsx:man manifest_api
+    rsx:man coding_standards

@@ -192,6 +192,10 @@ FILES
     system/app/RSpade/Commands/Rsx/Constants_Regenerate_Command.php (docblock spanning)
 
 SEE ALSO
-    model_fetch(3), enum(3), model_normalization(3), crud(3), template_app(3)
+    rsx:man model_fetch
+    rsx:man enums
+    rsx:man model_normalization
+    rsx:man crud
+    rsx:man template_app
 
 RSX Framework              Last updated 2026-06-30              DETAIL_TABLES(3)

@@ -251,6 +251,61 @@ function handle_format_service($data) {
  * Handle definition service - find symbol definitions
  * Supports all the types from the VS Code definition provider
  */
+/**
+ * Absolute path of a manifest-relative file. The manifest addresses framework
+ * files from system/, the IDE from the project root - normalize_ide_path() is the
+ * one place that difference is spelled out, so this reuses it.
+ */
+function ide_absolute_path($relative_path) {
+    return IDE_BASE_PATH . '/' . normalize_ide_path($relative_path);
+}
+
+/**
+ * Line of a PHP method definition, 1 when the file or the method cannot be read.
+ * Line 1 is a working answer (the file still opens), never a silent wrong one.
+ */
+function ide_find_php_method_line($relative_path, $method_name) {
+    $absolute_path = ide_absolute_path($relative_path);
+
+    if (!$method_name || !file_exists($absolute_path)) {
+        return 1;
+    }
+
+    $lines = explode("\n", file_get_contents($absolute_path));
+    $pattern = '/^\s*(?:public|protected|private)?\s*(?:static\s+)?function\s+'
+        . preg_quote($method_name, '/') . '\s*\(/';
+
+    foreach ($lines as $index => $line) {
+        if (preg_match($pattern, $line)) {
+            return $index + 1;
+        }
+    }
+
+    return 1;
+}
+
+/**
+ * Line of a Blade view's @rsx_id declaration, 1 when it cannot be found.
+ */
+function ide_find_rsx_id_line($relative_path, $rsx_id) {
+    $absolute_path = ide_absolute_path($relative_path);
+
+    if (!file_exists($absolute_path)) {
+        return 1;
+    }
+
+    $lines = explode("\n", file_get_contents($absolute_path));
+    $pattern = '/@rsx_id\s*\(\s*[\'"]' . preg_quote($rsx_id, '/') . '[\'"]\s*\)/';
+
+    foreach ($lines as $index => $line) {
+        if (preg_match($pattern, $line)) {
+            return $index + 1;
+        }
+    }
+
+    return 1;
+}
+
 function handle_definition_service($data) {
     $identifier = $data['identifier'] ?? $data['symbol'] ?? null;
     $method = $data['method'] ?? null;
@@ -276,61 +331,22 @@ function handle_definition_service($data) {
 
     switch ($type) {
         case 'class':
-            // Search PHP classes with optional method
-            if (isset($manifest['php']['classes'][$identifier])) {
-                $class_data = $manifest['php']['classes'][$identifier];
-                $file = $class_data['file'];
-                $line = $class_data['line'] ?? 1;
-
-                // If method specified, try to find method line number
-                if ($method && isset($class_data['methods'][$method])) {
-                    $line = $class_data['methods'][$method]['line'] ?? $line;
-                }
-
-                $result = [
-                    'found' => true,
-                    'file' => $file,
-                    'line' => $line
-                ];
-            }
-            break;
-
         case 'view':
-            // Search Blade views by name or rsx_id
-            foreach ($manifest['blade']['views'] ?? [] as $view) {
-                if ($view['name'] === $identifier || $view['rsx_id'] === $identifier) {
-                    $result = [
-                        'found' => true,
-                        'file' => $view['file'],
-                        'line' => 1
-                    ];
-                    break;
-                }
-            }
-            break;
-
         case 'bundle_alias':
-            // Search bundle aliases defined in config/rsx.php
-            $config_file = ide_framework_path('config/rsx.php');
-            if (file_exists($config_file)) {
-                $config = include $config_file;
-                if (isset($config['bundle_aliases'][$identifier])) {
-                    $bundle_class = $config['bundle_aliases'][$identifier];
-                    // Extract class name from namespace
-                    $class_name = str_replace('\\', '_', str_replace('App\\RSpade\\', '', $bundle_class));
-
-                    // Find the bundle class file
-                    if (isset($manifest['php']['classes'][$class_name])) {
-                        $result = [
-                            'found' => true,
-                            'file' => $manifest['php']['classes'][$class_name]['file'],
-                            'line' => $manifest['php']['classes'][$class_name]['line'] ?? 1
-                        ];
-                    }
-                }
+            // These three lookups are the resolve_class service's; the definition service
+            // delegates rather than carrying a second reading of the manifest. (Earlier
+            // copies here read $manifest['php']['classes'] and $manifest['blade']['views'],
+            // keys the manifest has not carried for some time - so they silently found
+            // nothing while the man page documented them as working.)
+            $files_index = $manifest['files'] ?? [];
+            if ($type === 'class') {
+                $result = try_resolve_php_class($identifier, $method, ide_php_class_finder($files_index));
+            } elseif ($type === 'view') {
+                $result = try_resolve_view($identifier, ide_view_finder($files_index));
+            } else {
+                $result = try_resolve_bundle_alias($identifier, ide_php_class_finder($files_index), $manifest['bundle_aliases'] ?? []);
             }
             break;
-
         case 'jqhtml_template':
             // Search for .jqhtml template files
             foreach ($manifest['jqhtml']['components'] ?? [] as $component) {
@@ -385,6 +401,86 @@ function handle_definition_service($data) {
                         'found' => true,
                         'file' => $component['js_file'],
                         'line' => $line
+                    ];
+                    break;
+                }
+            }
+            break;
+
+        case 'auth_check':
+            // Resolve one #[Auth('name')] check name to the #[Auth_Check] method
+            // that answers it. The realm decides which registry is consulted:
+            // staff and portal are SEPARATE namespaces, so a name is looked up in
+            // exactly the realm the caller inferred, never in both - matching what
+            // the manifest itself would do for that file. 'any' is the one case
+            // that tries staff and then portal.
+            $realm = $data['realm'] ?? 'any';
+            $checks = $manifest['auth']['checks'] ?? [];
+            $realms = ($realm === 'staff' || $realm === 'portal') ? [$realm] : ['staff', 'portal'];
+
+            foreach ($realms as $candidate_realm) {
+                if (!isset($checks[$candidate_realm][$identifier])) {
+                    continue;
+                }
+
+                $check = $checks[$candidate_realm][$identifier];
+                $result = [
+                    'found' => true,
+                    'kind' => 'auth_check',
+                    'realm' => $candidate_realm,
+                    'class' => $check['class'],
+                    'method' => $check['method'],
+                    'file' => $check['file'],
+                    'line' => ide_find_php_method_line($check['file'], $check['method']),
+                ];
+                break;
+            }
+            break;
+
+        case 'css_class':
+            // A .Class_Name selector. A jqhtml component answers first and answers
+            // with BOTH of its files (template, then class), because the selector
+            // names the component and either file is a reasonable destination; a
+            // Blade view whose @rsx_id matches answers second.
+            $locations = [];
+
+            foreach ($manifest['jqhtml']['components'] ?? [] as $component) {
+                if (($component['name'] ?? null) !== $identifier) {
+                    continue;
+                }
+
+                if (!empty($component['template_file'])) {
+                    $locations[] = ['file' => $component['template_file'], 'line' => 1];
+                }
+                if (!empty($component['js_file'])) {
+                    $locations[] = ['file' => $component['js_file'], 'line' => $component['js_line'] ?? 1];
+                }
+
+                if ($locations) {
+                    $result = [
+                        'found' => true,
+                        'kind' => 'jqhtml_component',
+                        'identifier' => $identifier,
+                        'locations' => $locations,
+                    ];
+                }
+                break;
+            }
+
+            if (!$result) {
+                foreach ($manifest['files'] ?? [] as $file_path => $file_data) {
+                    if (($file_data['type'] ?? null) !== 'view' || ($file_data['id'] ?? null) !== $identifier) {
+                        continue;
+                    }
+
+                    $result = [
+                        'found' => true,
+                        'kind' => 'blade_view',
+                        'identifier' => $identifier,
+                        'locations' => [[
+                            'file' => $file_path,
+                            'line' => ide_find_rsx_id_line($file_path, $identifier),
+                        ]],
                     ];
                     break;
                 }
@@ -662,6 +758,39 @@ function handle_refactor_service($data) {
 }
 
 /**
+ * A finder over the manifest file index for a PHP class by simple name. Returns the file
+ * entry with 'file' added, or null. Shared by resolve_class and definition so the two
+ * services cannot disagree about where a class lives (the manifest has no separate class
+ * table with line numbers - the file index IS the registry).
+ */
+function ide_php_class_finder(array $files) {
+    return function($class_name) use ($files) {
+        foreach ($files as $file_path => $file_data) {
+            if (isset($file_data['class']) && $file_data['class'] === $class_name && str_ends_with($file_path, '.php')) {
+                $file_data['file'] = $file_path;
+                return $file_data;
+            }
+        }
+        return null;
+    };
+}
+
+/**
+ * A finder over the manifest file index for a Blade view by its @rsx_id. Shared for the
+ * same reason as ide_php_class_finder.
+ */
+function ide_view_finder(array $files) {
+    return function($view_name) use ($files) {
+        foreach ($files as $file_path => $file_data) {
+            if (isset($file_data['id']) && $file_data['id'] === $view_name) {
+                return $file_data;
+            }
+        }
+        return null;
+    };
+}
+
+/**
  * Try to resolve identifier as a PHP class
  */
 function try_resolve_php_class($identifier, $method_name, $find_php_class) {
@@ -877,18 +1006,15 @@ function try_resolve_view($identifier, $find_view) {
 /**
  * Try to resolve identifier as a bundle alias
  */
-function try_resolve_bundle_alias($identifier, $find_php_class) {
-    $config_path = IDE_SYSTEM_PATH . '/config/rsx.php';
-    if (!file_exists($config_path)) {
+function try_resolve_bundle_alias($identifier, $find_php_class, array $bundle_aliases = []) {
+    // The alias map comes from the MANIFEST (Bundle_Alias_ManifestSupport), never from an
+    // include of config/rsx.php: this handler runs before Laravel boots, and that file's
+    // first env() call fatals here - which is why this lookup had never worked.
+    if (!isset($bundle_aliases[$identifier])) {
         return null;
     }
 
-    $config = include $config_path;
-    if (!isset($config['bundle_aliases'][$identifier])) {
-        return null;
-    }
-
-    $bundle_class = $config['bundle_aliases'][$identifier];
+    $bundle_class = $bundle_aliases[$identifier];
     $class_parts = explode('\\', $bundle_class);
     $class_name = end($class_parts);
 
@@ -1132,31 +1258,9 @@ function handle_resolve_class_service($data) {
     $manifest_data = $manifest_raw['data'] ?? $manifest_raw;
     $files = $manifest_data['files'] ?? [];
 
-    // Helper function to find PHP class in manifest
-    $find_php_class = function($class_name) use ($files) {
-        foreach ($files as $file_path => $file_data) {
-            // Only match PHP files - check file extension and presence of PHP-specific metadata
-            if (isset($file_data['class']) && $file_data['class'] === $class_name) {
-                // Must be a PHP file (not .js, not .jqhtml)
-                if (str_ends_with($file_path, '.php')) {
-                    // Add file path to the data so caller knows which file it came from
-                    $file_data['file'] = $file_path;
-                    return $file_data;
-                }
-            }
-        }
-        return null;
-    };
-
-    // Helper function to find view in manifest
-    $find_view = function($view_name) use ($files) {
-        foreach ($files as $file_path => $file_data) {
-            if (isset($file_data['id']) && $file_data['id'] === $view_name) {
-                return $file_data;
-            }
-        }
-        return null;
-    };
+    // The manifest finders are shared with the definition service (one lookup each).
+    $find_php_class = ide_php_class_finder($files);
+    $find_view = ide_view_finder($files);
 
     // Helper function to convert PascalCase to snake_case
     $camel_to_snake = function($input) {
@@ -1200,7 +1304,7 @@ function handle_resolve_class_service($data) {
                 break;
 
             case 'bundle_alias':
-                $result = try_resolve_bundle_alias($identifier, $find_php_class);
+                $result = try_resolve_bundle_alias($identifier, $find_php_class, $manifest_data['bundle_aliases'] ?? []);
                 break;
 
             case 'jqhtml_template':

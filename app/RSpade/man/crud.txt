@@ -650,8 +650,13 @@ QUICK REFERENCE
         const record = await Client_Model.fetch(id);
 
 SEE ALSO
-    auth_gates(7), model_fetch(3), view_action_patterns(3),
-    form_conventions(3), spa(3), controller(3), module_organization(3),
-    semantic_composition(3)
+    rsx:man auth_gates
+    rsx:man model_fetch
+    rsx:man view_action_patterns
+    rsx:man form_conventions
+    rsx:man spa
+    rsx:man controller
+    rsx:man module_organization
+    rsx:man semantic_composition
 
 RSX Framework                   2025-11-23                          CRUD(3)

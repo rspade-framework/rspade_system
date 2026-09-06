@@ -51,6 +51,44 @@ The extension is built with TypeScript and follows VS Code extension best practi
 
    **Short Names:** If class is `Foo_Bar_Baz_Bom` in directory `./rsx/app/foo/bar/`, filename can be `baz_bom.php` instead of `foo_bar_baz_bom.php`
 
+## ONE recognizer per construct
+
+`src/rspade_recognizers.ts` holds the pure text analysis for every construct the
+extension both COLOURS and NAVIGATES: auth check names, `.Class_Name` selectors,
+man-page / skill references, and the `.env` gate parser. **It imports nothing from
+`vscode`**, which is what makes it testable with plain node, and both sides of
+every feature call the same function for the same ranges - so a token that is
+coloured is exactly a token that can be followed. **Never write a construct's
+pattern twice.** If you are about to add a regex to a provider, it belongs here.
+
+```bash
+bash build.sh                              # compiles; out/ survives the cleanup
+node ./out/test/run_recognizer_tests.js    # 78 assertions, no editor needed
+```
+
+The tests are the specification of the accepted spellings - the negatives
+(`.btn-primary`, `.Client_Card__header`, a reference outside a comment, a topic
+that is not a page) matter as much as the positives.
+
+## Semantic tokens: ONE legend per language
+
+VS Code honours a single `SemanticTokensLegend` per language, which is why
+`combined_semantic_provider.ts` exists. New amber tokens for PHP go into
+`php_attribute_provider.ts`, for JS/TS into `CombinedSemanticTokensProvider`;
+`DocReferenceSemanticTokensProvider` is registered only for the languages that
+have no provider yet (SCSS, jqhtml, Blade, and the man pages by path pattern).
+**Do not register a second provider for a language that already has one.**
+
+## system/ protection is gated on .env
+
+`framework_property_guard.ts` marks `system/` read-only, banners it and badges it
+unless `IS_FRAMEWORK_DEVELOPER=true` in the project-root `.env`. In THIS monorepo
+that key is true, so none of it activates - which also means it cannot be
+exercised here beyond the unit test of the gate parser. It writes exactly one key
+into `files.readonlyInclude` at `ConfigurationTarget.Workspace` and removes only
+that key when the gate turns off. `engines.vscode` is `^1.79.0` because that is
+the release which introduced the setting.
+
 ## The extension keeps no file index
 
 Everything the extension resolves - classes, views, components, bundles, routes -

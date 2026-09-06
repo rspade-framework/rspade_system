@@ -270,8 +270,13 @@ FRAMEWORK CONSUMERS
     Debugger        Reads console_debug for output filtering
 
 SEE ALSO
-    pagedata(3), bundle_api(3), time(3), storage(3), spa(3), acls(3),
-    auth_gates(7)
+    rsx:man pagedata
+    rsx:man bundle_api
+    rsx:man time
+    rsx:man storage
+    rsx:man spa
+    rsx:man acls
+    rsx:man auth_gates
 
 AUTHOR
     RSpade Framework

@@ -71,6 +71,62 @@ public static function define(): array
 }
 ```
 
+## Auth check names
+
+Every quoted name inside a PHP `#[Auth('a', 'b')]` or a JavaScript `@auth('a')` is
+a separate target. The extension asks the bridge's `definition` service with
+`{type: 'auth_check', identifier, realm}` and lands on the `#[Auth_Check]` method
+that answers the name.
+
+**The realm is inferred exactly as the manifest infers it** (see the AJAX REALM
+block in `Core/Auth/Auth_ManifestSupport.php`): a class-level
+`#[Auth_Realm('staff'|'portal'|'any')]` if the file declares one, else the portal
+realm when the file lives under `rsx/portal/` or `system/app/RSpade/Core/Portal/`,
+else staff. Staff and portal are separate registries, so the realm is what decides
+which `Permission` lineage answers; `any` tries staff and then portal.
+
+A hover on the same name reports `Class::method` and the realm.
+
+## .Class_Name selectors
+
+A leading-dot PascalCase-with-underscore token - `$(".Backend_Index")`,
+`.closest('.Foo_Bar')`, a `.Foo_Bar` rule in SCSS - and a bare `class="Foo_Bar"`
+attribute in a `.jqhtml` or `.blade.php` resolve through
+`{type: 'css_class', identifier}`. A jqhtml component answers first and answers
+with BOTH files, template before class, so VS Code offers the choice; a Blade view
+whose `@rsx_id` matches answers second.
+
+Only `/^[A-Z][A-Za-z0-9]*(_[A-Z][A-Za-z0-9]*)+$/` qualifies. `.btn-primary`,
+`.card`, `.foo_bar` and a BEM child like `.Client_Card__header` are not component
+names and are never touched; a name that matches nothing produces no link,
+silently.
+
+## Man pages and skills
+
+`rsx:man topic`, `php artisan rsx:man topic`, `man topic`, `see also a, b`,
+`topic(7)`, `topic.txt`, `rspade:skill-name` (bare, backticked, or after the word
+`skill`), and inside a man page's own `SEE ALSO` section the compact
+`topic - description` row and the multi-column `rsx:man a    rsx:man b` grid.
+
+**Resolution is LOCAL - no bridge call.** The topic must exist as
+`rsx/resource/man/<topic>.txt` (which wins) or `system/app/RSpade/man/<topic>.txt`;
+a skill as `rsx/resource/skills/<name>/SKILL.md` (which wins) or
+`system/app/RSpade/docs/skills/{shared,framework,app}/<name>/SKILL.md`. The listing
+is cached and refreshed by a file watcher. In code files the reference must be
+inside a comment; a man page is prose throughout, so no restriction applies there.
+
+## One recognizer per construct
+
+The patterns above live in `src/rspade_recognizers.ts`, which imports nothing from
+`vscode`. The semantic-token providers and the definition providers call the SAME
+function for the SAME ranges, so a token that is coloured is exactly a token that
+can be followed, and there is no second copy of a pattern to keep in step. Because
+the module is vscode-free it is tested with plain node:
+
+```bash
+node ./out/test/run_recognizer_tests.js
+```
+
 ## The extension builds no file index
 
 Resolution is always a question put to the IDE bridge, which answers from the

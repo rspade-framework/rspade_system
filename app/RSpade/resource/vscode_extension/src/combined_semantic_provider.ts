@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import { JqhtmlLifecycleSemanticTokensProvider } from './jqhtml_lifecycle_provider';
 import { CommentFileReferenceSemanticTokensProvider } from './comment_file_reference_provider';
 import { ThatVariableSemanticTokensProvider } from './that_variable_provider';
+import { DocReferenceIndex } from './doc_reference_provider';
 
 interface DecodedToken {
     line: number;
@@ -21,11 +22,13 @@ export class CombinedSemanticTokensProvider implements vscode.DocumentSemanticTo
     private jqhtml_provider: JqhtmlLifecycleSemanticTokensProvider;
     private file_ref_provider: CommentFileReferenceSemanticTokensProvider;
     private that_provider: ThatVariableSemanticTokensProvider;
+    private doc_reference_index: DocReferenceIndex | undefined;
 
-    constructor() {
+    constructor(doc_reference_index?: DocReferenceIndex) {
         this.jqhtml_provider = new JqhtmlLifecycleSemanticTokensProvider();
         this.file_ref_provider = new CommentFileReferenceSemanticTokensProvider();
         this.that_provider = new ThatVariableSemanticTokensProvider();
+        this.doc_reference_index = doc_reference_index;
     }
 
     async provideDocumentSemanticTokens(document: vscode.TextDocument): Promise<vscode.SemanticTokens> {
@@ -45,6 +48,21 @@ export class CombinedSemanticTokensProvider implements vscode.DocumentSemanticTo
 
         // Decode 'that' tokens (type 2 = macro, dark blue #569CD6 like 'this')
         this.decode_tokens(that_tokens.data, 2, decoded_tokens);
+
+        // Resolvable man-page and skill references in comments (type 0, amber).
+        // Merged in here rather than registered as their own provider because VS
+        // Code honours ONE semantic tokens legend per language.
+        if (this.doc_reference_index) {
+            for (const token of this.doc_reference_index.resolved_tokens(document)) {
+                decoded_tokens.push({
+                    line: token.line,
+                    char: token.start,
+                    length: token.end - token.start,
+                    type: 0,
+                    modifiers: 0
+                });
+            }
+        }
 
         // Sort tokens by line, then by character
         decoded_tokens.sort((a, b) => {

@@ -269,7 +269,7 @@ FRAMEWORK-PROVIDED PACKAGES
         expected to remain available indefinitely at a compatible major version -
         default tooling exists forever. If a breaking change or a retirement ever
         does happen, it is not silent: it ships with a breaking_changes document
-        (Category 2 - see `rsx:ma breaking_changes`), and the post-update
+        (Category 2 - see `rsx:man breaking_changes`), and the post-update
         reconciler surfaces it against your recorded dependencies. You inherit
         the framework's upgrade cadence for these packages, but you are never
         surprised by it.

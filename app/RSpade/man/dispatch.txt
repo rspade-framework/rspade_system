@@ -387,14 +387,14 @@ RSX VS LARAVEL
       handled by the sealed-build pipeline).
 
 SEE ALSO
-    php artisan rsx:man auth_gates           (the #[Auth] gate system)
-    php artisan rsx:man spa                  (client-side SPA routing / actions)
-    php artisan rsx:man external_api         (/api/vN external REST dispatch)
-    php artisan rsx:man portal               (parallel portal dispatch/session)
-    php artisan rsx:man fpc                  (full-page cache proxy)
-    php artisan rsx:man auth                 (Session and permission checks)
-    php artisan rsx:man login_redirect       (post-login return-URL threading)
-    php artisan rsx:man ajax_error_handling  (JSON error channel for endpoints)
-    php artisan rsx:routes                   (list all registered routes)
+    rsx:man auth_gates          (the #[Auth] gate system)
+    rsx:man spa                 (client-side SPA routing / actions)
+    rsx:man external_api        (/api/vN external REST dispatch)
+    rsx:man portal              (parallel portal dispatch/session)
+    rsx:man fpc                 (full-page cache proxy)
+    rsx:man auth                (Session and permission checks)
+    rsx:man login_redirect      (post-login return-URL threading)
+    rsx:man ajax_error_handling (JSON error channel for endpoints)
+    php artisan rsx:routes      (list all registered routes)
 
 DISPATCH(1)                      RSpade Manual                      DISPATCH(1)

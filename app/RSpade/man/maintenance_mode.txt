@@ -286,6 +286,12 @@ TROUBLESHOOTING
         first. Ctrl-C is safe; the maintenance flag stays raised, so nothing is half-open.
 
 SEE ALSO
-    rsx_git, framework_pull_mechanics, rsx_upstream, tasks, locks, caching, realtime
+    rsx:man rsx_git
+    rsx:man framework_pull_mechanics
+    rsx:man rsx_upstream
+    rsx:man tasks
+    rsx:man locks
+    rsx:man caching
+    rsx:man realtime
 
 MAINTENANCE_MODE(1)                 RSpade Manual                 MAINTENANCE_MODE(1)

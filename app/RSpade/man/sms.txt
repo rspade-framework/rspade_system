@@ -168,8 +168,8 @@ SMS LOG (read model)
     plus status_id__label/__badge and category_id__label/__badge.
 
 SEE ALSO
-    email(7)       the parallel email system, in full
-    tasks(7)       #[Exclusive], #[Schedule], Task::dispatch
-    config_rsx(7)  the configuration reference
+    rsx:man email      the parallel email system, in full
+    rsx:man tasks      #[Exclusive], #[Schedule], Task::dispatch
+    rsx:man config_rsx the configuration reference
 
 RSpade 1.0                          August 2026                          SMS(7)
