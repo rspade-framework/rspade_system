@@ -12,7 +12,7 @@ SUMMARY
     render-time validation demanded that a bundle cover the directory of the
     controller that dispatched the page. That validation now waives the
     controller check when the VIEW is a framework view, so the console ships its
-    own bundle (Api_Docs_Bundle, in system/app/RSpade/Core/Api/).
+    own bundle (_Apidocs_Bundle, in system/app/RSpade/Sys/app/apidocs/).
 
     What is left for an application is the ROUTE and the GATE. The integration is
     one call, with the simplicity of phpinfo():
@@ -157,10 +157,10 @@ VERIFICATION
     Headlessly, this asserts the same thing:
 
         php artisan rsx:debug /apidocs --user=1 --no-body --eval "
-          \$('.Api_Key_Bar__btn--warn').trigger('click');
+          \$('._Apidocs_Key_Bar__btn--warn').trigger('click');
           await new Promise(r => setTimeout(r, 500));
           return JSON.stringify({
-            submitting: \$('.Api_Key_Bar__btn--warn').hasClass('btn--submitting'),
+            submitting: \$('._Apidocs_Key_Bar__btn--warn').hasClass('btn--submitting'),
             spinner: \$('.Button_Utils__spinner').length
           });"
 

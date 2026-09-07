@@ -312,6 +312,27 @@ class _Manifest_PHP_Reflection_Helper
     }
 
     /**
+    * Merged column map for a model class, or null when the class is not an indexed model.
+    *
+    * O(1) class-keyed - the same array the JS stub generator consumes, so Class-Table
+    * Inheritance is already spanned (Model_ManifestSupport::__merge_detail_columns() merges a
+    * base model's detail-table columns into its map before this is ever read). Column entries
+    * carry the FULL metadata (type, max_length, nullable, ...), unlike db_get_table_columns()
+    * which flattens each column to its type string.
+    *
+    * @param string $class_name Class name (FQCN or simple - normalized either way)
+    * @return array|null column_name => metadata array, or null if not an indexed model
+    */
+    public static function php_model_columns(string $class_name): ?array
+    {
+        Manifest::init();
+
+        $class_name = self::_normalize_class_name($class_name);
+
+        return Manifest::$data['data']['models'][$class_name]['columns'] ?? null;
+    }
+
+    /**
      * Normalize class name to simple name (strip namespace qualifiers)
      *
      * Since RSX enforces unique simple class names across the codebase,

@@ -7,12 +7,16 @@
  */
 
 import {
+    class_name_start_is_valid,
+    CLASS_NAME_FRAGMENT,
     comment_flavor_for,
     comment_ranges,
     framework_property_gate_is_on,
     infer_auth_realm,
+    is_class_name,
     is_css_class_candidate,
     parse_env_value,
+    pascal_to_snake_case,
     recognize_auth_checks,
     recognize_css_classes,
     recognize_doc_references,
@@ -105,6 +109,100 @@ check('realm: a portal-named file outside a portal root is still staff',
     'staff');
 
 // -------------------------------------------------------------------------
+// B. class / component names (Rsx_Identifier: /^_?[A-Z][A-Za-z0-9_]*$/)
+// -------------------------------------------------------------------------
+
+check('name: ordinary class name', is_class_name('Sys_Layout'), true);
+check('name: single leading underscore is a framework-application name', is_class_name('_Sys_Layout'), true);
+check('name: two leading underscores are not a name', is_class_name('__Sys_Layout'), false);
+check('name: snake_case is not a name', is_class_name('_sys_layout'), false);
+check('name: a single segment is still a name', is_class_name('_Apidocs'), true);
+check('name: a trailing underscore is allowed by Rsx_Identifier', is_class_name('Sys_'), true);
+check('name: empty is not a name', is_class_name(''), false);
+
+check('name: start guard rejects a second leading underscore',
+    class_name_start_is_valid('__Bad_Thing', 1),
+    false);
+check('name: start guard accepts the head of a line',
+    class_name_start_is_valid('_Sys_Card', 0),
+    true);
+check('name: start guard accepts a name after a dot',
+    class_name_start_is_valid('this._Sys_Card', 5),
+    true);
+
+// The fragment is what every other recognizer embeds; these are the shapes it
+// has to pull out of real source lines.
+function fragment_match(text: string): string | null {
+    const match = new RegExp(CLASS_NAME_FRAGMENT).exec(text);
+    return match ? match[0] : null;
+}
+
+check("name: Rsx::Route('_Sys_Spa_Controller::index') class token",
+    (() => {
+        const route = new RegExp(
+            `(?:Rsx::Route|Rsx\\.Route)\\s*\\(\\s*['\"](${CLASS_NAME_FRAGMENT}[A-Za-z0-9_:]*)['\"].*?\\)`);
+        const match = route.exec("Rsx::Route('_Sys_Spa_Controller::index')");
+        return match ? match[1].split('::')[0] : null;
+    })(),
+    '_Sys_Spa_Controller');
+
+check("name: Rsx::Route('Frontend_Controller::view') is unchanged",
+    (() => {
+        const route = new RegExp(
+            `(?:Rsx::Route|Rsx\\.Route)\\s*\\(\\s*['\"](${CLASS_NAME_FRAGMENT}[A-Za-z0-9_:]*)['\"].*?\\)`);
+        const match = route.exec("Rsx::Route('Frontend_Controller::view', $id)");
+        return match ? match[1] : null;
+    })(),
+    'Frontend_Controller::view');
+
+check('name: <Define:_Sys_Card> extraction',
+    (() => {
+        const match = '<Define:_Sys_Card tag="div">'.match(new RegExp(`<Define:(${CLASS_NAME_FRAGMENT})`));
+        return match ? match[1] : null;
+    })(),
+    '_Sys_Card');
+
+check('name: <Define:Client_Card> extraction is unchanged',
+    (() => {
+        const match = '<Define:Client_Card>'.match(new RegExp(`<Define:(${CLASS_NAME_FRAGMENT})`));
+        return match ? match[1] : null;
+    })(),
+    'Client_Card');
+
+check('name: class _Sys_Sidebar_Nav extends Component',
+    (() => {
+        const match = 'class _Sys_Sidebar_Nav extends Component {'.match(
+            new RegExp(`^(?:abstract\\s+|final\\s+)?class\\s+(${CLASS_NAME_FRAGMENT})`));
+        return match ? match[1] : null;
+    })(),
+    '_Sys_Sidebar_Nav');
+
+check('name: class __Bad is not a class definition',
+    'class __Bad {'.match(new RegExp(`^(?:abstract\\s+|final\\s+)?class\\s+(${CLASS_NAME_FRAGMENT})`)),
+    null);
+
+check('name: fragment pulls the whole underscored token', fragment_match('  _Apidocs_App '), '_Apidocs_App');
+
+// The rename UI's new-name validator is is_class_name.
+check('rename: validator accepts _Sys_Layout', is_class_name('_Sys_Layout'), true);
+check('rename: validator rejects __Sys_Layout', is_class_name('__Sys_Layout'), false);
+check('rename: validator rejects a lowercase first letter', is_class_name('sys_Layout'), false);
+
+// -------------------------------------------------------------------------
+// B2. PascalCase to snake_case (the auto-rename filename suggestion)
+// -------------------------------------------------------------------------
+
+check('snake: plain name', pascal_to_snake_case('Sys_Card'), 'Sys_Card');
+check('snake: leading underscore is preserved, never doubled', pascal_to_snake_case('_Sys_Card'), '_Sys_Card');
+check('snake: lowercased suggestion for a framework-application name',
+    pascal_to_snake_case('_Sys_Card').toLowerCase(), '_sys_card');
+check('snake: lowercased suggestion for an ordinary name',
+    pascal_to_snake_case('Sys_Card').toLowerCase(), 'sys_card');
+check('snake: camel run is segmented', pascal_to_snake_case('TestComponent1'), 'Test_Component_1');
+check('snake: leading underscore with a camel run',
+    pascal_to_snake_case('_TestComponent1').toLowerCase(), '_test_component_1');
+
+// -------------------------------------------------------------------------
 // C. css class tokens
 // -------------------------------------------------------------------------
 
@@ -131,6 +229,26 @@ check('css: scss rule',
 check('css: BEM child class is rejected',
     values(recognize_css_classes('.Client_Card__header { }', 0, false)),
     []);
+
+check('css: token rule accepts a single leading underscore', is_css_class_candidate('_Sys_Card'), true);
+check('css: token rule rejects two leading underscores', is_css_class_candidate('__Bad'), false);
+check('css: token rule rejects a lowercase underscored name', is_css_class_candidate('_sys_card'), false);
+
+check('css: framework-application selector',
+    values(recognize_css_classes('._Sys_Card {', 0, false)),
+    ['_Sys_Card']);
+
+check('css: framework-application jQuery selector',
+    values(recognize_css_classes('$("._Sys_Card").hide();', 0, false)),
+    ['_Sys_Card']);
+
+check('css: double-underscore selector is not a name',
+    values(recognize_css_classes('.__Bad_Thing { }', 0, false)),
+    []);
+
+check('css: framework-application class attribute',
+    values(recognize_css_classes('<div class="_Sys_Card mt-2">', 0, true)),
+    ['_Sys_Card']);
 
 check('css: ordinary css class is untouched',
     values(recognize_css_classes('$(".btn-primary").addClass("card");', 0, true)),

@@ -22,7 +22,7 @@
 - Waiver 2: when the view is a framework view, the CONTROLLER check is waived too - the app
   controller then contributes only the route, and the bundle is framework-owned end to end
 - Waiver 2 is what lets a framework feature on an app route ship its own bundle
-  (`Rsx_Api_Docs::page()` -> `Api_Docs_App.blade.php` -> `Api_Docs_Bundle`)
+  (`Rsx_Api_Docs::page()` -> `_Apidocs_App.blade.php` -> `_Apidocs_Bundle`)
 
 **Auto-Discovery Rules:**
 - Asset Bundles discovered via directory scan cannot have directory paths in `include`

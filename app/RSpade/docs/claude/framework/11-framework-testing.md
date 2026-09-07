@@ -8,8 +8,10 @@
 
 **Bash tests** in `/system/app/RSpade/tests/` run against `rspade_test` like the PHP ones: deterministic, zero manual intervention.
 
-**The FULL framework suite runs in parallel docker containers automatically** on this dev box (any subset, or `--sequential`, runs in one process) - mechanics: `/system/bin/rsx-testd/CLAUDE.md`.
+**The FULL framework suite runs in parallel docker containers automatically** on this dev box (any subset, or `--sequential`, runs in one process), and **its verdict is cached by manifest build key plus a fingerprint of `system/bin`, `node_modules` and the docker resource dir** - a second full run with no source change replays the recorded result and says so - mechanics: `/system/bin/rsx-testd/CLAUDE.md`.
+
+**Cadence**: the FULL framework suite is for the end of a major change or before a release. For ordinary development, running the group(s) of the affected subsection (`--group=<concern>`) is sufficient - the conduct fragment's rule.
 
 Full structure, conventions, and per-kind harness details: `/system/app/RSpade/tests/CLAUDE.md`.
 
-**`--framework` is monorepo-only knowledge**: `bin/publish` excludes `app/RSpade/tests`, so a downstream release ships no framework tests and `rsx:test --framework` has nothing to run there. Never document it downstream as a usable command.
+**The framework suite SHIPS** (`bin/publish` copies `app/RSpade/tests`), and downstream it is documented as an administrator's integrity audit of the installed software and environment - run with `rsx:test --framework`, long, rarely needed, never a development step. Docker mode is this box's; downstream the suite runs sequentially.

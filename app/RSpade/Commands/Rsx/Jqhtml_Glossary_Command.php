@@ -3,6 +3,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 
 /**
  * rsx:jqhtml:glossary
@@ -79,6 +80,10 @@ class Jqhtml_Glossary_Command extends Command
             }
 
             $name = $m[1];
+
+            // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+            if (!Rsx_Identifier::is_visible_to_developer($name)) { continue; }
+
             $define_attrs = $m[2];
 
             $extends = '';

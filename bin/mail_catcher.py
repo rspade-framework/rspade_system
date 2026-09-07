@@ -49,8 +49,12 @@ def main(argv):
     host = argv[2] if len(argv) > 2 else DEFAULT_HOST
     port = int(argv[3]) if len(argv) > 3 else DEFAULT_PORT
 
-    # The Mailbox handler opens the Maildir but does not create the parent path.
-    os.makedirs(maildir, exist_ok=True)
+    # Create the Maildir OURSELVES, subdirectories included. mailbox.Maildir() creates
+    # cur/new/tmp only when the path does not exist yet; a parent that exists without
+    # them (a fresh install, a container whose storage/ was just created) opens fine and
+    # then fails on the first delivery, which the SMTP client sees as a refused message.
+    for sub in ("cur", "new", "tmp"):
+        os.makedirs(os.path.join(maildir, sub), exist_ok=True)
 
     controller = Controller(
         Mailbox(maildir),

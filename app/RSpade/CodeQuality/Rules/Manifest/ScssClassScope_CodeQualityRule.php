@@ -472,7 +472,8 @@ class ScssClassScope_CodeQualityRule extends CodeQualityRule_Abstract
         // Find all class selectors within the wrapper block
         // Pattern: . followed by uppercase letter, then word characters (letters, numbers, underscores)
         // Must NOT contain __ or -- (BEM elements/modifiers are allowed)
-        preg_match_all('/\.([A-Z][A-Za-z0-9_]*)\s*\{/', $wrapper_content, $matches, PREG_OFFSET_CAPTURE);
+        // The `_?[A-Z][A-Za-z0-9_]*` name shape lives in App\RSpade\Core\Naming\Rsx_Identifier.
+        preg_match_all('/\.(_?[A-Z][A-Za-z0-9_]*)\s*\{/', $wrapper_content, $matches, PREG_OFFSET_CAPTURE);
 
         foreach ($matches[1] as $match) {
             $nested_class = $match[0];

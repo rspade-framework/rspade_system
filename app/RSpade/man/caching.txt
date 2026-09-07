@@ -179,6 +179,37 @@ EXAMPLES:
     RsxCache::remember($key, $callback, 86400 * 30);        // 30 days
 
 
+CACHE KEYS ARE SCOPED ON THE BUILD *AND* THE DATABASE
+=====================================================
+
+Every redis key this cache writes has the shape
+
+    cache:<Rsx_Connection_Scope::token()>:<sha1 of the key body>
+
+and for the build-scoped API (get/set/delete/exists/remember) the key body is
+the manifest build key plus the caller's key. So two things are true at once:
+
+- A CODE CHANGE rotates the build key, and the old entries become invisible
+  without anything being cleared.
+- A DIFFERENT DATABASE is a different keyspace. Rsx_Connection_Scope::token()
+  is md5(<live default connection's database name>@<host>) - the same
+  (database, host) token RsxLocks and Task_Worker_Registry namespace their
+  state under. A process pointed at another database can neither read nor
+  overwrite this one's cache.
+
+The token is read LIVE on every key build and is never memoized: a process
+that swaps the default connection mid-run (rsx:test does exactly that) must
+change scope with it.
+
+WHY IT IS THE LIVE CONNECTION AND NOT A FLAG. The namespace used to be the
+boolean config('database.default') === 'test'. An artisan child spawned with
+DB_DATABASE pointed at the test database answered NO to it while reading the
+test database, so it wrote the test database's _type_refs map into the
+DEVELOPER's 'type_refs_map' cache key - and the dev site then 500'd with
+"Type ref ID 1 not found in registry" for the hour that key lived. A live
+connection cannot be fooled that way.
+
+
 CACHE KEY NAMING
 ================
 
@@ -204,7 +235,8 @@ BUILD-SCOPED CACHE:
 - Automatically cleared on manifest rebuild (code deployment)
 - Build key prefix ensures old cache invisible after deployment
 - Manual clear: RsxCache::delete($key)
-- Clear all: RsxCache::clear()
+- Clear all: RsxCache::clear() - every cache key of the CURRENT database
+  scope, and only those (see CACHE KEYS ARE SCOPED ... below)
 - CLEARED ON EVERY DATABASE TRANSACTION ROLLBACK (see below)
 - rsx:clean clears database 0 AND the reduced-volatility database 2 (FPC
   entries included); it never touches locks (1) or counters (3)
@@ -221,9 +253,11 @@ One redis instance, four databases. The RsxCache class header
 (system/app/RSpade/Core/Cache/RsxCache.php) is the authority; every subsystem
 that opens a connection points its comment there.
 
-    DB 0  VOLATILE CACHE. RsxCache (including its persistent namespace) and
-          the realtime emitter hashes (rsx_rt:em:*). Emptied by clear(), and
-          therefore on every database transaction rollback.
+    DB 0  VOLATILE CACHE. RsxCache (including its persistent namespace), the
+          realtime emitter hashes (rsx_rt:em:*) and AssetHandler's
+          rspade:public_asset:* entries. clear() empties the CURRENT database
+          scope's cache keys (cache:<token>:*) and nothing else, so the keys
+          this class did not write survive a cache reset.
     DB 1  LOCKS and the task worker registry.
     DB 2  REDUCED VOLATILITY CACHE ("RVC"). The full page cache writes here
           directly; RsxCache routes any key beginning with _RVC_ here.
@@ -268,12 +302,22 @@ clear() is implemented as SCAN + DEL rather than FLUSHDB: the shipped
 redis.conf disables FLUSHDB and FLUSHALL outright, so a flushDb() call clears
 nothing and answers false. A failed delete fails loud.
 
+The SCAN is MATCH-filtered on this scope's prefix, cache:<token>:*. A cache
+reset discards what THIS cache memoized under THIS database - never every key
+that happens to share database 0. Consequently the realtime emitter hashes
+(rsx_rt:*), AssetHandler's rspade:public_asset:* entries and another database
+scope's cache are all untouched by a reset.
+
+RsxCache::clear_reduced_volatility() (database 2) is deliberately NOT
+filtered: its one caller is rsx:clean, whose job includes orphaning the FPC
+entries, and those carry Rsx_FPC's own fpc:<build_key>: prefix.
+
 
 THE _RVC_ KEY CONVENTION (RESERVED)
 ===================================
 
 An INTERNAL cache-key convention, not a second API. A key beginning with
-_RVC_ is stored on database 2 under the ordinary build-key and test-run
+_RVC_ is stored on database 2 under the ordinary build-key and database-scope
 prefix, so a code update still misses it cleanly and it is LRU-evicted like
 everything else; it simply survives the otherwise frequent cache resets that
 transaction rollback causes.
@@ -312,8 +356,10 @@ rolled-back request silently zeroed a login-failure budget.
         Drop a counter or flag before its window runs out.
 
 NOT BUILD-SCOPED, deliberately: a counter measures real time and must survive
-a manifest rebuild. It DOES carry the same test-run namespace suffix the cache
-uses, so a test run never spends the developer's counters.
+a manifest rebuild. It IS database-scoped, under the same
+Rsx_Connection_Scope::token() prefix the cache uses (counter:<token>:<sha1>),
+so a test run - or any process pointed at another database - never spends,
+clears or inherits the developer's counters.
 
 MAINTENANCE MODE returns 0 without touching redis (redis is stopped), so a
 caller that throttles on the result fails OPEN for that window - a stopped
@@ -476,7 +522,9 @@ See `rsx:man maintenance_mode`.
 SEE ALSO
 ========
 
-- rsx:man locks                          - RsxLocks cluster/system advisory locking
+- rsx:man locks                          - RsxLocks cluster/system advisory locking, which
+                                           scopes its lock names under the same
+                                           (database, host) token
 - rsx:man maintenance_mode               - behavior while the services are stopped
 - rsx:man manifest_build                 - Manifest build key system
 - /system/app/RSpade/Core/REDIS_USAGE.md - Redis database allocation

@@ -357,6 +357,31 @@ RUNNING AND NARROWING A RUN
     mechanics of the parallel path - the images, the work queue, worker logs and
     how to debug one - live beside the code in system/bin/rsx-testd/CLAUDE.md.
 
+    DOWNSTREAM, THE FRAMEWORK SUITE IS AN INTEGRITY AUDIT. The suite ships
+    with every release so an administrator can verify that the installed
+    framework and its environment (PHP extensions, services, database,
+    Redis) behave as the maintainer's do: rsx:test --framework, sequential,
+    long. It is rarely needed - after provisioning a new host, before a
+    launch, when an environment is suspect - and it is never part of
+    development or of drafting a framework change request. Tests that
+    exercise the reference application's own models can fail on an
+    application that has removed those template modules; read such a
+    failure as "not applicable here", not as a framework defect.
+
+    THE FULL RUN IS CACHED BY BUILD KEY. A full framework run records its
+    verdict - every class's results and the exit code, pass or fail - under
+    the manifest build key (php artisan rsx:manifest:get_build_key, the hash
+    of every scanned source file) joined to a fingerprint of the names, sizes
+    and mtimes of every file under system/bin, system/node_modules and the
+    docker resource directory - the tooling a verdict also depends on. Running the full suite again with nothing
+    changed prints "Returning cached test results for build <key> from <file>"
+    and replays that verdict through the same printer, with the same exit
+    code, instead of running for minutes to re-prove it. Any edit to a
+    scanned file changes the key and the next run is live; deleting
+    storage/rsx-tmp/test-results/framework_<key>.json forces one. Subsets are
+    never cached. While a live run is in progress one line per finished class
+    streams as it completes; the full report follows at the end.
+
 PER-TEST STATE RESET
 
     A transaction rolls back rows, not statics. After every test_* method the

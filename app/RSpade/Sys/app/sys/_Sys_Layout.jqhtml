@@ -1,0 +1,31 @@
+<%--
+_Sys_Layout - the control panel's persistent chrome.
+
+Fixed sidebar on the left, a top bar carrying the page title and the sign-out
+link, and the <main $sid="content"> element every panel action renders into.
+--%>
+<Define:_Sys_Layout>
+
+    <nav class="_Sys_Layout__sidebar">
+        <div class="_Sys_Layout__brand">
+            <i class="bi bi-hdd-rack"></i>
+            <span>RSpade System</span>
+        </div>
+
+        <_Sys_Sidebar_Nav $sid="sidebar_nav" $sections=this.state.nav_sections />
+    </nav>
+
+    <div class="_Sys_Layout__content">
+        <header class="_Sys_Layout__topbar">
+            <h1 class="_Sys_Layout__page-title" $sid="page_title">&nbsp;</h1>
+
+            <a class="_Sys_Layout__logout" href="<%= Rsx.Route('_Sys_Controller::logout') %>">
+                <i class="bi bi-box-arrow-right"></i>
+                <span>Sign Out</span>
+            </a>
+        </header>
+
+        <main class="_Sys_Layout__page" $sid="content"></main>
+    </div>
+
+</Define:_Sys_Layout>

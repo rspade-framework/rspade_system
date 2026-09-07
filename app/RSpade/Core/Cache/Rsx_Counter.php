@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Cache;
 use InvalidArgumentException;
 use Redis;
 use RuntimeException;
+use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Rsx;
 
@@ -21,16 +22,17 @@ require_once __DIR__ . '/../../helpers.php';
  *
  * WHY IT IS NOT THE CACHE. A counter is not a cached answer: it is the only record that
  * something happened N times in the last M seconds, and there is nowhere to recompute it
- * from. RsxCache is flushed wholesale on every database transaction rollback (see the
- * RsxCache header for the full database map and the reason), which would silently zero a
- * login-failure budget every time a request rolled a transaction back. So counters live in
- * their own database, on their own connection, and the cache flush cannot reach them.
+ * from. RsxCache is flushed on every database transaction rollback (see the RsxCache header
+ * for the full database map and the reason), which would silently zero a login-failure
+ * budget every time a request rolled a transaction back. So counters live in their own
+ * database, on their own connection, and the cache flush cannot reach them.
  *
  * KEYS ARE NOT BUILD-SCOPED. A counter measures REAL TIME, so it must survive a manifest
  * rebuild - a build-scoped failure counter would reset to zero on every file change, which
- * is a throttle an attacker can clear by waiting for a deploy. It DOES carry the same
- * test-run namespace suffix RsxCache applies, so a test run can never spend, clear or
- * inherit the developer's counters.
+ * is a throttle an attacker can clear by waiting for a deploy. It IS DATABASE-SCOPED, under
+ * the same Rsx_Connection_Scope::token() prefix RsxCache applies, so a test run - or any
+ * process pointed at another database - can never spend, clear or inherit the developer's
+ * counters.
  *
  * VALUE ENCODING. Every key here holds a raw numeric string maintained by redis itself
  * (INCRBY, or a plain SET for a flag). Nothing in this database is ever serialize()d, so
@@ -307,23 +309,21 @@ class Rsx_Counter
     }
 
     /**
-     * The redis key for a counter: test-run namespace + hash of the caller's key.
+     * The redis key for a counter: the (database, host) scope + hash of the caller's key.
      *
      * Deliberately NOT build-scoped (see the class header). Hashed for the same reason
      * RsxCache hashes: a caller's key may embed an email address or an IP, and a raw one
      * would sit readable in redis for the life of the window.
+     *
+     * The scope is Rsx_Connection_Scope::token(), read LIVE and never memoized - exactly as
+     * RsxCache::_scope_prefix() derives it, and for the same reason: a process pointed at
+     * another database must never spend, clear or inherit this one's counters, and the
+     * connection can be swapped mid-process. It replaces an older boolean namespace
+     * (config('database.default') === 'test') that an artisan child launched with
+     * DB_DATABASE at the test database answered NO to while reading the test database.
      */
     private static function _make_key(string $key): string
     {
-        return 'counter:' . self::_test_run_suffix() . sha1($key);
-    }
-
-    /**
-     * Namespace suffix separating a TEST RUN's counters from the developer's - the same
-     * rule, for the same reason, as RsxCache::_test_run_suffix().
-     */
-    private static function _test_run_suffix(): string
-    {
-        return config('database.default') === 'test' ? '_test' : '';
+        return 'counter:' . Rsx_Connection_Scope::token() . ':' . sha1($key);
     }
 }

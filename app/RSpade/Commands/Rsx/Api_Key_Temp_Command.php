@@ -19,7 +19,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * what revokes it - and a job that dies half way leaves a credential that stops working by
  * itself rather than one that lives until somebody notices.
  *
- * It is the same mint /apidocs performs for its live tester (Api_Docs_Controller::mint_temporary_key),
+ * It is the same mint /apidocs performs for its live tester (_Apidocs_Controller::mint_temporary_key),
  * with the lifetime moved to the command line. The DEFAULT is one hour, matching that page.
  *
  * The name is deliberate and unmissable - it appears verbatim in rsx:api:key:list and in

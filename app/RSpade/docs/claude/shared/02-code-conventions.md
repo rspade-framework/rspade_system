@@ -2,7 +2,7 @@
 
 ## CODE CONVENTIONS
 
-**Naming — enforced by `rsx:check`**: PHP methods/variables `underscore_case`; constants `UPPERCASE_WITH_UNDERSCORES`; RSX application classes `Like_This_With_Underscores`; JS classes `Like_This`; files `lowercase_with_underscores`; database tables `lowercase_plural`. Input components follow `{Supertype}_{Variant}_{Supertype}` (`Select_Country_Input`).
+**Naming — enforced by `rsx:check`**: PHP methods/variables `underscore_case`; constants `UPPERCASE_WITH_UNDERSCORES`; RSX application classes `Like_This_With_Underscores`; JS classes `Like_This`; files `lowercase_with_underscores`; database tables `lowercase_plural`. Input components follow `{Supertype}_{Variant}_{Supertype}` (`Select_Country_Input`). A SINGLE leading underscore on a class, component or blade id is the framework-application prefix (`_Sys_Layout`) and is refused in `rsx/` (`NAME-RESERVED-01`).
 
 **Files sharing a prefix are one related set** (`frontend_calendar_event.php` / `.js` / `.jqhtml` / `.scss`) — when renaming, maintain the grouping across ALL of them, and **never create same-name different-case files**. Exceptions are declared with `@FILENAME-CONVENTION-EXCEPTION`.
 

@@ -35,9 +35,10 @@ class JqhtmlBladeCompiler
      */
     public static function precompile(string $value): string
     {
-        // Pattern to match tags that start with uppercase letter
+        // Pattern to match component tags. The `_?[A-Z][A-Za-z0-9_]*` name fragment is the
+        // shape whose home is App\RSpade\Core\Naming\Rsx_Identifier.
         // Matches both self-closing and paired tags
-        $pattern = '/<([A-Z][a-zA-Z0-9_]*)((?:\s+\$?[a-zA-Z0-9_\-:]+(?:=(?:"[^"]*"|\'[^\']*\'|[^>\s]+))?)*)\s*(?:\/>|>(.*?)<\/\1>)/s';
+        $pattern = '/<(_?[A-Z][A-Za-z0-9_]*)((?:\s+\$?[a-zA-Z0-9_\-:]+(?:=(?:"[^"]*"|\'[^\']*\'|[^>\s]+))?)*)\s*(?:\/>|>(.*?)<\/\1>)/s';
 
         $value = preg_replace_callback($pattern, function ($matches) {
             $component_name = $matches[1];

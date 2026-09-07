@@ -34,12 +34,18 @@ $compiler->compile_files($paths);
 ## Compilation Details
 - Uses `compileTemplate` from `@jqhtml/parser` directly (not CLI)
 - Always compiles in IIFE format with sourcemap support
-- Maintains existing cache strategy (mtime-based)
+- Two derived-cache namespaces, one per layer: `jqhtml-parsed` (the parser's raw output,
+  written by `JqhtmlWebpackCompiler`) and `jqhtml-compiled` (that output wrapped for the
+  bundle, written by `Jqhtml_BundleProcessor` - and it IS the bundle's input file). The
+  parser VERSION is the variant on both.
 - Throws `Jqhtml_Exception_ViewException` for template errors with line/column info
 
 ## Cache Integration
 Cache checked before RPC call - only uncached or stale templates sent to server for compilation.
-Cache directory: `storage/rsx-tmp/jqhtml-cache/`
+Cache location: `storage/rsx-tmp/derived/jqhtml-parsed/` and
+`storage/rsx-tmp/derived/jqhtml-compiled/`, both through
+`App\RSpade\Core\Cache\File_Content_Cache`. There is no private cleanup pass: the manifest
+build's Phase 7 sweep removes entries whose template (or parser version) is gone.
 
 ## Error Handling
 Server failure → fatal error (no fallback). Server must start or bundle compilation fails.

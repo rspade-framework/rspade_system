@@ -259,8 +259,8 @@ BUNDLE PLACEMENT
 
     The second waiver is what lets a framework feature mounted on an application
     route ship its own bundle. The shipped case is the API reference console:
-    Rsx_Api_Docs::page() renders Api_Docs_App.blade.php, which names the
-    framework's Api_Docs_Bundle, from whatever route the application declared.
+    Rsx_Api_Docs::page() renders _Apidocs_App.blade.php, which names the
+    framework's _Apidocs_Bundle, from whatever route the application declared.
     An application never writes a bundle for it. See external_api(3).
 
 ADDING CUSTOM NPM MODULES
@@ -372,6 +372,38 @@ ROUTE EXTRACTION (include_routes)
         // In frontend JavaScript (with login routes extracted)
         const logout_url = Rsx.Route('Login_Controller', 'logout');
         // Returns: '/logout'
+
+ALWAYS-PUBLISHED ROUTES
+    Some route targets are emitted into EVERY bundle's client route table,
+    whether or not the bundle includes - or is allowed to include - the code
+    that declares them. The list is config, not a bundle declaration:
+
+        // system/config/rsx.php (an app appends in rsx/resource/config/rsx.php;
+        // the merge is append-only, so the framework's entries always remain)
+        'always_published_routes' => [
+            '_Sys_Dashboard_Action',
+        ],
+
+    The spelling is the one Rsx::Route() takes: a bare SPA action class name,
+    or 'Controller::method' for a PHP route. At compile time the bundle
+    compiler resolves each target's patterns out of the manifest - the same
+    lookup Rsx::Route() performs server-side - and emits them beside the
+    ordinary route table. Their auth grants ship on every page in
+    window.rsxapp.auth_routes_published, so Permission.can_access() answers for
+    them too, in every bundle, without the opt-in auth_routes export.
+
+    A configured target with no routes in the manifest FAILS THE COMPILE. A
+    published entry that silently vanished would leave every page in the
+    application linking to a placeholder URL.
+
+    The shipped entry is the /_sys control panel's dashboard. An application
+    bundle may never include app/RSpade/Sys (CONV-BUNDLE-02, critical), so the
+    published entry is what makes Rsx.Route('_Sys_Dashboard_Action') resolve
+    from an application page. See rsx:man sys_panel.
+
+    This is NOT a substitute for include_routes. include_routes is a bundle
+    saying "I link to that module of mine"; always_published_routes is the
+    framework saying "every bundle links here".
 
 PUBLIC ASSET INCLUDES
     Bundles can include static assets from any public/ directory with

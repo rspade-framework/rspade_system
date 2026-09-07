@@ -1,0 +1,287 @@
+SYS_PANEL(1)                    RSpade Manual                    SYS_PANEL(1)
+
+NAME
+    sys_panel - the framework's own control panel at /_sys: the system
+    administrator's view of the framework, its `_Sys_*` reserved namespace,
+    the is_sysadmin gate, the rsx.sys_panel.enabled switch, and the rule that
+    an application never modifies or references it
+
+SYNOPSIS
+    The URL:
+        https://your.host/_sys                 dashboard (SPA)
+        https://your.host/_sys/logout          sign out of the panel
+
+    Linking to it from application code:
+        if (Permission::can_access('_Sys_Dashboard_Action')) {
+            $url = Rsx::Route('_Sys_Dashboard_Action');
+        }
+
+        // JavaScript
+        if (Permission.can_access('_Sys_Dashboard_Action')) {
+            const url = Rsx.Route('_Sys_Dashboard_Action');
+        }
+
+    Switching it off (rsx/resource/config/rsx.php):
+        'sys_panel' => ['enabled' => false],
+
+    The gate:
+        #[Auth('is_sysadmin')]                 // PHP surfaces
+        @auth('is_sysadmin')                   // JS actions
+        Permission_Abstract::is_sysadmin()     // the check itself
+
+    Where it lives:
+        system/app/RSpade/Sys/                 the framework's application tree
+
+DESCRIPTION
+    RSpade ships its own application. `Sys/` is a complete RSX application -
+    modules, bundles, a theme, a SPA layout, JS actions - that happens to live
+    inside the framework tree and is served by every install. It is the SYSTEM
+    ADMINISTRATOR's view of the framework: the operator's window onto what the
+    framework itself is doing, as distinct from anything the application's own
+    administrators do with tenants, billing or customers. Those are application
+    concepts and they stay in the application.
+
+    The panel today is chrome and scaffolding. Seven screens exist -
+    dashboard, debug flags, tasks, email, logs, sites, users - and each has a
+    real route, a real gate, a real nav entry and a real page frame; the bodies
+    are one sentence each naming what will live there. The feature set arrives
+    over releases. What is already load-bearing is the SHAPE: the tree, the
+    namespace, the gate and the switch, all of which an application has to
+    coexist with from day one.
+
+THE TREE
+        system/app/RSpade/Sys/
+          theme/          _Sys_Theme_Bundle: its own Bootstrap build, its own
+                          palette tokens, its own components
+          lib/            shared panel classes
+          handlers/       #[OnEvent] handlers
+          app/sys/        the panel module - bundle, SPA bootstrap controller,
+                          route controller, layout, one directory per screen
+          app/apidocs/    the API reference console (see THE API CONSOLE)
+
+    It mirrors `rsx/` deliberately, and it is scanned by the manifest like any
+    other application tree (`config('rsx.manifest.scan_directories')` lists
+    `app/RSpade/Sys`). Nothing about it is a special case in the runtime: it
+    declares routes, gates, bundles and components through the ordinary
+    mechanisms, and it is built the way the documentation tells everybody else
+    to build.
+
+    One invariant is its own: the panel's bundles NAME NO `rsx/` PATH and no
+    application-defined class (`CONV-BUNDLE-04`, critical). The panel is
+    framework code running beside somebody else's application, and that
+    application may restyle its theme, recompile its Bootstrap or delete a
+    component at will. The panel must still come up, so it ships its own
+    everything.
+
+THE URL
+    `/_sys`, and every screen under it. A leading `/_` on a URL path is the
+    house mark for a framework-owned endpoint - `/_ajax`, `/_upload`,
+    `/_vendor`, `/_download_zip` - and `/_sys` joins that set. An application
+    does not route under `/_`.
+
+THE GATE
+    Every dispatchable surface in the panel declares `#[Auth('is_sysadmin')]`
+    (JS actions: `@auth('is_sysadmin')`). `is_sysadmin` is a framework
+    `#[Auth_Check]` on `Permission_Abstract`, staff realm only.
+
+    Its body today is `Session::is_logged_in()` - every signed-in staff
+    identity may open the panel. That is deliberately the loosest useful
+    default and it is expected to narrow.
+
+    Narrowing it is the APPLICATION's move, and there is exactly one
+    documented mechanism: the check is marked `#[Replaceable]`, so an
+    application that CLASS-OVERRIDES the permission class (a same-named class
+    in `rsx/`, copy-and-replace - `rsx:man class_override`) redeclares
+    `is_sysadmin()` with a tighter body and every `#[Auth('is_sysadmin')]`
+    surface follows with no call-site change. There is no config key, no
+    registry and no hook for it: if the override is not the shape you want,
+    that is a framework change request, not a local workaround.
+
+    An anonymous caller is sent to the login page rather than shown a refusal,
+    like any other gated staff surface.
+
+THE SWITCH
+    `config('rsx.sys_panel.enabled')`, framework default TRUE. An application
+    turns it off in `rsx/resource/config/rsx.php`:
+
+        'sys_panel' => ['enabled' => false],
+
+    A disabled panel answers NOT FOUND at every `/_sys` URL - the refusal is a
+    `pre_dispatch()` returning the framework's 404 screen, stated on both
+    `_Sys_Spa_Controller` (which covers every SPA screen) and `_Sys_Controller`
+    (the server-rendered routes). No manifest or dispatcher mechanism removes a
+    route by config, so 404 is the honest answer rather than an absent route.
+
+    A link built with `Permission::can_access(...)` disappears on its own when
+    the gate denies; the config switch is enforced at dispatch, so a link to a
+    DISABLED panel would still render. Gate your own links on
+    `can_access()` and, if you also want them to follow the switch, on
+    `config('rsx.sys_panel.enabled')`.
+
+THE RESERVED NAMESPACE
+    Every class, jqhtml component, JS class and Blade `@rsx_id` declared in
+    this tree carries exactly ONE leading underscore: `_Sys_Layout`,
+    `<Define:_Sys_Section>`, `@rsx_id('_Apidocs_App')`. The shape lives in
+    `App\RSpade\Core\Naming\Rsx_Identifier` and the full name rule is in
+    `rsx:man coding_standards`.
+
+    `NAME-RESERVED-01` (critical, manifest-time) enforces it in BOTH
+    directions, keyed on the file's path:
+
+      - A name declared under `rsx/` may NOT start with an underscore.
+      - A name declared under `app/RSpade/Sys/` MUST start with one.
+
+    The first direction is the one that matters to an application, and it is
+    not cosmetic. A `_`-prefixed class in `rsx/` that matches a framework one
+    is read by the manifest as a CLASS OVERRIDE: the framework's file is
+    archived as `.upstream` and the application's copy is served instead, with
+    nothing reported anywhere. The panel would appear to change on its own.
+
+    DIRECTORIES are the exception - lowercase, never underscore-prefixed,
+    because the namespace generator PascalCases directory segments.
+
+    Beyond declaring names, there is the other direction:
+
+        AN APPLICATION MUST NOT USE THE `_Sys_*` OR `_Apidocs_*` CLASSES,
+        COMPONENTS, TEMPLATES OR ROUTES IN ITS OWN CODE.
+
+    They are framework internals that happen to be visible. Do not extend
+    `_Sys_Layout`, do not render `<_Sys_Section>`, do not call a `_Sys_*`
+    controller method, do not link to a `/_sys` sub-path by hand. The ONE
+    sanctioned use is linking to the panel through the two indirections that
+    are contracts in their own right: `Rsx::Route('_Sys_Dashboard_Action')`
+    and `Permission::can_access('_Sys_Dashboard_Action')`. Everything else
+    in the tree may be renamed, restructured or deleted in any release. The
+    section below says exactly what makes that one name special.
+
+    `NAME-RESERVED-02` (critical, manifest-time) enforces that paragraph.
+    Application code under `rsx/` that references a `_`-prefixed name the
+    MANIFEST knows the framework declares under `app/RSpade/` fails the build -
+    `extends`, `new`, `instanceof`, `::CONST`, `::class`, a `use` import, a type
+    hint, a `catch` type, a static call, a jqhtml or Blade tag, `@rsx_extends`
+    and `@rsx_include` alike, in PHP, JavaScript, jqhtml and Blade. So does a
+    call to a framework `_`- or `__`-prefixed STATIC METHOD on a class whose own
+    name is perfectly ordinary (`Ajax::_is_internal_call()`,
+    `Rsx._escape_html(...)`).
+
+    The manifest is the whole scope, which is what keeps the rule from being a
+    blanket underscore ban: your own `static::__helper()` calls, `__construct`,
+    `__DIR__` and every vendor API are untouched, and `static::` / `self::` /
+    `parent::` receivers are never checked at all. The two sanctioned carriers
+    above are STRINGS handed to a resolver and the rule never reads a string
+    literal, so they stay legal with no allowlist to keep in step.
+
+
+THE ENTRY ROUTE IS SPECIAL: `_Sys_Dashboard_Action`
+    One name in the reserved namespace is addressable from application code,
+    and it is the panel's INDEX ACTION - not its bootstrap controller.
+
+        Rsx::Route('_Sys_Dashboard_Action')                 // PHP
+        Rsx.Route('_Sys_Dashboard_Action')                  // JavaScript
+        Permission::can_access('_Sys_Dashboard_Action')     // PHP
+        Permission.can_access('_Sys_Dashboard_Action')      // JavaScript
+
+    All four answer in EVERY application bundle, even though that bundle never
+    includes `app/RSpade/Sys` - and it must not: an rsx/ bundle naming anything
+    in that tree is `CONV-BUNDLE-02`, critical.
+
+    WHY THE ACTION AND NOT THE CONTROLLER. A SPA route is registered under the
+    JS ACTION class, never under the PHP bootstrap controller that serves it, so
+    `Rsx::Route('_Sys_Spa_Controller::index')` THROWS ("JavaScript class
+    _Sys_Spa_Controller must extend Spa_Action"). That is true of every SPA
+    bootstrap controller in RSpade, the application's own included; the panel is
+    not a special case here.
+
+    HOW IT REACHES A BUNDLE THAT DOES NOT CONTAIN IT. The target is listed in
+    `config('rsx.always_published_routes')`, and the bundle compiler resolves its
+    patterns out of the manifest - the same lookup `Rsx::Route()` performs
+    server-side - and emits them into every bundle's client route table. Its auth
+    grants ride along in `window.rsxapp.auth_routes_published`, which is shipped
+    on every page and is NOT the opt-in `auth_routes` export. So the link's URL
+    and its visibility both follow the panel: move the route and every link
+    moves with it. A hardcoded '/_sys' is always wrong.
+
+    REFERENCING IT AS A STRING IS NOT A NAME-RESERVED-02 VIOLATION. Strings are
+    the sanctioned carrier - that rule reads code, never string literals - so
+    these four calls need no exception comment. Any OTHER `_Sys_*` reference is
+    refused: this is THE canonical way to link to the /_sys dashboard, and there
+    is no second one.
+
+    AN APPLICATION MAY ADD ITS OWN published targets by appending to
+    `always_published_routes` in `rsx/resource/config/rsx.php` (the merge is
+    append-only, so the framework's entry always remains). A configured target
+    with no routes in the manifest FAILS THE BUNDLE COMPILE rather than silently
+    resolving to a placeholder URL.
+
+
+THE MODIFICATION RULE
+    The tree is framework property. All of `system/` is overwritten by
+    `rsx:framework:pull` - downstream it is a git submodule reset to the
+    upstream tip - so a local edit inside `Sys/` survives exactly until the
+    next framework update and then vanishes without a trace.
+
+    It is modified in ONE place: the RSpade monorepo, on a box with
+    `IS_FRAMEWORK_DEVELOPER=true`, where `Sys/` is authored source rather than
+    a checkout.
+
+    A downstream developer who needs the panel to look or behave differently
+    files a FRAMEWORK CHANGE REQUEST - `rsx:man framework_debug_and_contrib`
+    carries the workflow. The class-override pattern is not an escape hatch
+    here either: overriding a `_Sys_*` class means declaring a `_`-prefixed
+    name under `rsx/`, which `NAME-RESERVED-01` refuses precisely because the
+    silent-shadowing failure is worse than the refusal.
+
+THE API CONSOLE
+    `app/apidocs/` is the second module in this tree: the developer console
+    for the external API - browse endpoints, read parameters, copy a sample,
+    send a real request. It shares the panel's THEME (one palette, one
+    Bootstrap build, so the framework's two shipped surfaces are one product)
+    and shares nothing else.
+
+    It is STANDALONE: no sidebar, no `_Sys_Layout`, no `/_sys` route, its own
+    history handling. And it is mounted by the APPLICATION, not by the
+    framework: the app routes to it and calls `Rsx_Api_Docs::page()`, so the
+    console's gate is whatever gate that route carries. The template app's
+    mount is `system/app/RSpade/resource/reference_app/app/apidocs/apidocs_controller.php`
+    - a gate and two one-line bodies, and the only thing an application writes.
+    Full treatment: `rsx:man external_api`.
+
+WHAT THE TOOLS SHOW
+    The framework's inventory commands HIDE `_`-prefixed names and files under
+    `app/RSpade/Sys/` unless the box is a framework developer
+    (`config('rsx.code_quality.is_framework_developer')`, from
+    `IS_FRAMEWORK_DEVELOPER` in the environment). The panel's classes,
+    components, routes, bundles and tasks are not part of an application
+    developer's working vocabulary, and listing them invites exactly the
+    references the section above forbids.
+
+    Affected: `rsx:routes`, `rsx:jqhtml:glossary`, `rsx:manifest:show`,
+    `rsx:manifest:dump`, `rsx:manifest:stats --detailed`, `rsx:bundle:show`,
+    `rsx:task:list`, and the IDE bridge's completion service. Two predicates
+    decide it: `Rsx_Identifier::is_visible_to_developer()` for a name and
+    `is_path_visible_to_developer()` for a file.
+
+    This is DISPLAY only. Nothing is removed from the manifest, no route stops
+    resolving, and the panel is fully reachable in a browser on any box. A
+    framework developer sees everything, unchanged.
+
+FILES
+    system/app/RSpade/Sys/                     the tree (and its CLAUDE.md)
+    system/app/RSpade/Sys/app/sys/             the panel module
+    system/app/RSpade/Sys/app/apidocs/         the API console
+    system/app/RSpade/Core/Naming/Rsx_Identifier.php    the name shape
+    system/app/RSpade/Core/Permission/Permission_Abstract.php   is_sysadmin
+    system/config/rsx.php                      sys_panel.enabled, scan list
+    rsx/resource/config/rsx.php                where an app overrides it
+
+SEE ALSO
+    rsx:man external_api - the API console's engine, keys, and mount contract
+    rsx:man auth_gates - #[Auth], the check vocabulary, can_access()
+    rsx:man class_override - the copy-and-replace pattern is_sysadmin uses
+    rsx:man config_rsx - the two-tier config merge and where to override
+    rsx:man framework_debug_and_contrib - filing a framework change request
+    rsx:man coding_standards - NAME-RESERVED-01/-02 and the full name shape
+    rsx:man code_quality - the rule catalog and the shared pass ledger
+    skill rspade:sys-panel - working alongside the panel from application code
+
+SYS_PANEL(1)                    RSpade Manual                    SYS_PANEL(1)

@@ -393,8 +393,11 @@ JAVASCRIPT
         'babel' => [
             'transform_enabled' => env('BABEL_TRANSFORM', true),
             'target' => env('BABEL_TARGET', 'modern'),  # modern|es6|es5
-            'cache_dir' => 'storage/rsx-tmp/babel_cache',
         ],
+        # There is no babel cache_dir setting. Every per-source-file derived
+        # cache lives under storage/rsx-tmp/derived/<namespace>/ and is
+        # addressed through App\RSpade\Core\Cache\File_Content_Cache.
+        # rsx:man storage_directories.
         'decorators' => true,
     ]
 

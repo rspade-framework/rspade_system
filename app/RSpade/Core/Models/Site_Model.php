@@ -80,8 +80,8 @@ class Site_Model extends Rsx_Model_Abstract
      * orphan that scope, so it is undeletable (soft-delete AND force-delete). This
      * is net-new: there is no other undeletable-row pattern in the framework.
      *
-     * NOTE: when the /root/sites tenant listing is built out (currently a
-     * placeholder in rsx/app/root/sites/root_sites_controller.php), it MUST exclude
+     * NOTE: when a tenant listing is built out (the framework panel's /_sys/sites
+     * page, or an application's own root console), it MUST exclude
      * id = 0 from the tenant list - the Default site is an infrastructure FK target,
      * not a tenant workspace.
      */

@@ -2,6 +2,7 @@
 
 namespace App\RSpade\CodeQuality\Support;
 
+use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 
 /**
@@ -12,9 +13,10 @@ use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 class FileSanitizer
 {
     /**
-     * Cache directory for sanitized JavaScript files
+     * Derived-cache namespace for sanitized JavaScript. See
+     * App\RSpade\Core\Cache\File_Content_Cache - the ONE per-source-file cache helper.
      */
-    protected const CACHE_DIR = 'storage/rsx-tmp/cache/js-sanitized';
+    protected const CACHE_NAMESPACE = 'js-sanitized';
 
     /**
      * Get PHP content with comments removed
@@ -86,38 +88,17 @@ class FileSanitizer
      */
     public static function sanitize_javascript(string $file_path): array
     {
-        // Create cache directory if it doesn't exist
-        $base_path = base_path();
-        $cache_dir = rsx_project_file_path(self::CACHE_DIR);
-        if (!is_dir($cache_dir)) {
-            mkdir($cache_dir, 0755, true);
+        // The cache key is the file's build hash, so a changed file misses by construction.
+        // The mtime guard is kept on top of it - this cache had one before the move, and a
+        // cache never gets weaker in a consolidation.
+        $sanitized = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, '', 'js', true);
+
+        if ($sanitized === null) {
+            // Sanitize via RPC server
+            $sanitized = static::_sanitize_via_rpc($file_path);
+
+            File_Content_Cache::put(self::CACHE_NAMESPACE, $file_path, '', 'js', $sanitized);
         }
-
-        // Generate cache path based on relative file path
-        $relative_path = str_replace($base_path . '/', '', $file_path);
-        $cache_path = $cache_dir . '/' . str_replace('/', '_', $relative_path) . '.sanitized';
-
-        // Check if cache is valid
-        if (file_exists($cache_path)) {
-            $source_mtime = filemtime($file_path);
-            $cache_mtime = filemtime($cache_path);
-
-            if ($cache_mtime >= $source_mtime) {
-                // Cache is valid, return cached content
-                $sanitized_content = file_get_contents($cache_path);
-                return [
-                    'content' => $sanitized_content,
-                    'lines' => explode("\n", $sanitized_content),
-                    'original_lines' => explode("\n", file_get_contents($file_path)),
-                ];
-            }
-        }
-
-        // Sanitize via RPC server
-        $sanitized = static::_sanitize_via_rpc($file_path);
-
-        // Save to cache
-        file_put_contents_safe($cache_path, $sanitized);
 
         return [
             'content' => $sanitized,

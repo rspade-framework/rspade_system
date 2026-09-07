@@ -65,7 +65,14 @@ class FrameworkFileDecorationProvider implements vscode.FileDecorationProvider {
         // Badge only - no colour. FolderColorProvider already mutes system/, and a
         // decoration that carries only a badge composes with one that carries only
         // a colour instead of replacing it.
-        return new vscode.FileDecoration('FW', 'RSpade framework property - overwritten on every framework update');
+        // The tooltip carries the naming half of the same fact: a class or
+        // component whose name begins with a single underscore (_Sys_Layout,
+        // <_Sys_Card>) is framework property too, wherever the file sits.
+        return new vscode.FileDecoration(
+            'FW',
+            'RSpade framework property - overwritten on every framework update. ' +
+            'Names beginning with a single underscore (_Sys_*) are framework property as well.'
+        );
     }
 }
 

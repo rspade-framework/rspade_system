@@ -65,7 +65,9 @@ function outputError(error, filePath, jsonOutput) {
 function preprocessDecorators(content, filePath) {
     // Check if file contains ES6 class declarations
     // Using regex to avoid parsing errors from decorators
-    const es6ClassRegex = /^\s*class\s+[A-Z]\w*\s*(?:extends\s+\w+\s*)?\{/m;
+    // `_?[A-Z]` - a SINGLE leading underscore is the framework-application prefix.
+    // The name shape's home is App\RSpade\Core\Naming\Rsx_Identifier (PHP).
+    const es6ClassRegex = /^\s*class\s+_?[A-Z]\w*\s*(?:extends\s+\w+\s*)?\{/m;
     const hasES6Class = es6ClassRegex.test(content);
 
     if (hasES6Class) {
@@ -120,9 +122,17 @@ const targetPresets = {
  * Babel emits underscore-prefixed top-level helpers/WeakMaps (e.g. `_applyDecs`,
  * `_classPrivateFieldGet`). RSpade concatenates every transformed file into one shared
  * non-module scope, so two files that both received a helper named `_applyDecs` would
- * collide. This plugin renames every top-level `_`-prefixed generated binding to
+ * collide. This plugin renames every top-level `_`-prefixed GENERATED binding to
  * `_<fileHash><name>` so each file's helpers are unique in the shared scope. This behavior
  * is load-bearing and unrelated to decorators.
+ *
+ * Generated-ness is decided by PROVENANCE, not by name shape. `pre()` records every
+ * top-level declared name of the UNTRANSFORMED AST (classes, vars, functions, through
+ * export wrappers) into `authoredNames`; `post()` prefixes a `_`-named top-level binding
+ * only when it is NOT in that set. A name the author wrote is therefore never rewritten,
+ * which is what lets a framework-application name (a SINGLE leading underscore - see
+ * App\RSpade\Core\Naming\Rsx_Identifier) survive the transform: `_Sys_Sidebar` stays
+ * `_Sys_Sidebar`, while Babel's own `_applyDecs` and its uids still get the hash.
  *
  * DECORATOR CLASS-BINDING CONTRACT (fail-closed assertion)
  * ========================================================
@@ -156,6 +166,36 @@ function createPrefixPlugin(fileHash) {
     // babel.transformSync call, so a plain closure set is correct here.
     let decoratedClassNames = new Set();
 
+    // Every top-level name the AUTHOR declared in the untransformed AST. Anything
+    // `_`-prefixed at top level after the transform that is NOT in here is Babel's.
+    let authoredNames = new Set();
+
+    // Unwrap `export ...` to reach the declaration it carries.
+    function unwrapExport(statement) {
+        if (statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration') {
+            return statement.declaration;
+        }
+        return statement;
+    }
+
+    // Record every name a top-level statement declares (class, function, var declarators).
+    function recordAuthoredNames(statement, target) {
+        const decl = unwrapExport(statement);
+        if (!decl) return;
+
+        if (decl.type === 'ClassDeclaration' || decl.type === 'FunctionDeclaration') {
+            if (decl.id && decl.id.name) target.add(decl.id.name);
+            return;
+        }
+
+        if (decl.type === 'VariableDeclaration') {
+            for (const declarator of decl.declarations) {
+                const name = declarator.id && declarator.id.name;
+                if (name) target.add(name);
+            }
+        }
+    }
+
     // Collect the id name of a top-level statement if it is a decorated class declaration,
     // looking through export wrappers.
     function recordIfDecoratedClass(statement, target) {
@@ -174,9 +214,11 @@ function createPrefixPlugin(fileHash) {
             name: 'prefix-generated-variables',
             pre(file) {
                 decoratedClassNames = new Set();
+                authoredNames = new Set();
                 const body = file.ast.program.body;
                 for (const statement of body) {
                     recordIfDecoratedClass(statement, decoratedClassNames);
+                    recordAuthoredNames(statement, authoredNames);
                 }
             },
             post(file) {
@@ -186,18 +228,20 @@ function createPrefixPlugin(fileHash) {
                 // Track all top-level variables and functions that start with underscore
                 const generatedNames = new Set();
 
-                // First pass: collect all generated variable and function names at top level
+                // First pass: collect the top-level `_`-named bindings the author did NOT
+                // declare. Provenance, not name shape - an authored `_Sys_Sidebar`,
+                // `_helper` or `_CONST` is left exactly as written.
                 for (const statement of program.node.body) {
                     if (statement.type === 'VariableDeclaration') {
                         for (const declarator of statement.declarations) {
                             const name = declarator.id?.name;
-                            if (name && name.startsWith('_')) {
+                            if (name && name.startsWith('_') && !authoredNames.has(name)) {
                                 generatedNames.add(name);
                             }
                         }
                     } else if (statement.type === 'FunctionDeclaration') {
                         const name = statement.id?.name;
-                        if (name && name.startsWith('_')) {
+                        if (name && name.startsWith('_') && !authoredNames.has(name)) {
                             generatedNames.add(name);
                         }
                     }

@@ -1,0 +1,9 @@
+<Define:_Sys_Logs_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Section $title="Logs" $icon="bi-journal-text">
+            <p class="mb-0">The logs screen: the files under storage/logs will be browsed and tailed here.</p>
+        </_Sys_Section>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Logs_Action>

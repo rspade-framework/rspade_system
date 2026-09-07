@@ -78,7 +78,7 @@ this.$sid('result_container').component('My_Component', {
 });
 ```
 
-**Class preservation**: only PascalCase component names (capital first letter, no `__`) are replaced. Utility classes (`text-muted`), BEM child classes (`Parent__child`) and all attributes are preserved - so the container keeps its layout classes across repeated calls. A `class="..."` set at invocation is additive too: it unions onto the root's existing classes, never replaces them.
+**Class preservation**: only component names (a capital first letter, optionally preceded by a single underscore, no `__`) are replaced. Utility classes (`text-muted`), BEM child classes (`Parent__child`) and all attributes are preserved - so the container keeps its layout classes across repeated calls. A `class="..."` set at invocation is additive too: it unions onto the root's existing classes, never replaces them.
 
 **A name with no definition still mounts.** `$(el).component('Not_Yet_Written')` behaves exactly like the undefined tag in a template: a div carrying the component name as a class that nests its contents. Nothing throws and nothing is deferred, so JS-side composition can be scaffolded out of names before a single one exists, the same as a template can.
 

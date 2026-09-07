@@ -1,0 +1,116 @@
+._Apidocs_Code_Samples {
+    border: 1px solid var(--rsx-border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--rsx-bg);
+
+    // Unfilled path placeholder inside a generated sample. Loud on purpose: the sample is
+    // otherwise syntactically fine and would run, against the wrong URL.
+    &__missing {
+        color: var(--rsx-danger);
+        font-weight: 700;
+        cursor: help;
+    }
+
+    // Right-aligned in the tab strip, so the tabs stay left and this reads as a mode switch
+    // for the panel rather than another tab.
+    &__fill {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12.5px;
+        color: var(--rsx-muted);
+        cursor: pointer;
+        padding-right: 4px;
+
+        input {
+            cursor: pointer;
+            margin: 0;
+        }
+
+        &:hover {
+            color: var(--rsx-text);
+        }
+    }
+
+    &__tabs {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px;
+        background: var(--rsx-surface);
+        border-bottom: 1px solid var(--rsx-border);
+        padding: 6px 6px 0;
+    }
+
+    &__tab {
+        appearance: none;
+        border: none;
+        background: transparent;
+        color: var(--rsx-muted);
+        font-family: var(--rsx-mono);
+        font-size: 12px;
+        padding: 8px 14px;
+        border-radius: 6px 6px 0 0;
+        cursor: pointer;
+
+        &:hover {
+            color: var(--rsx-text);
+            background: var(--rsx-raised);
+        }
+
+        &--active {
+            color: var(--rsx-text);
+            background: var(--rsx-bg);
+            border-bottom: 2px solid var(--rsx-accent);
+        }
+
+        &--active:hover {
+            background: var(--rsx-bg);
+        }
+    }
+
+    &__pane {
+        position: relative;
+
+        &--hidden {
+            display: none;
+        }
+    }
+
+    &__copy {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        appearance: none;
+        border: 1px solid var(--rsx-border);
+        background: var(--rsx-raised);
+        color: var(--rsx-muted);
+        font-size: 12px;
+        padding: 4px 9px;
+        border-radius: 6px;
+        cursor: pointer;
+
+        &:hover {
+            color: var(--rsx-text);
+            border-color: var(--rsx-accent);
+        }
+    }
+
+    // highlight.js is run against the <pre> ITSELF - there is no <code> child - so the code
+    // type is declared here. Left off, the element falls back to the user agent's monospace
+    // default, which is a different face at a different size from every other code run on the
+    // page.
+    &__pre {
+        margin: 0;
+        padding: 16px;
+        overflow-x: auto;
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+        line-height: 1.6;
+        white-space: pre;
+    }
+}

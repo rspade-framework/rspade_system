@@ -77,7 +77,8 @@ class WindowAssignment_CodeQualityRule extends CodeQualityRule_Abstract
 
             // Also check for generic window assignments that might be problematic
             // This catches window.SomeName = OtherName patterns that may also be incorrect
-            if (preg_match('/^\s*window\.([A-Z]\w+)\s*=\s*([A-Z]\w+)\s*;?/', $line, $matches)) {
+            // The `_?[A-Z]\w+` name shape lives in App\RSpade\Core\Naming\Rsx_Identifier.
+            if (preg_match('/^\s*window\.(_?[A-Z]\w+)\s*=\s*(_?[A-Z]\w+)\s*;?/', $line, $matches)) {
                 // Only flag if it's not the same-name pattern (already handled above)
                 if ($matches[1] !== $matches[2]) {
                     $this->add_violation(

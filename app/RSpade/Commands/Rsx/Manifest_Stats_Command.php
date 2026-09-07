@@ -4,6 +4,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use App\Console\Commands\FrameworkDeveloperCommand;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 use Illuminate\Console\Command;
 
 class Manifest_Stats_Command extends FrameworkDeveloperCommand
@@ -81,6 +82,9 @@ class Manifest_Stats_Command extends FrameworkDeveloperCommand
             $other_files = [];
 
             foreach ($data as $file => $metadata) {
+                // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+                if (!Rsx_Identifier::is_path_visible_to_developer((string) $file)) { continue; }
+
                 $size_kb = round($metadata['size'] / 1024, 2);
                 $modified = date('Y-m-d H:i:s', $metadata['mtime']);
                 $file_info = [

@@ -238,8 +238,9 @@ class Scss_ManifestModule extends ManifestModule_Abstract
         }
 
         // Check if content starts with a single class selector and everything is inside it
-        // Pattern: .ClassName { ... everything ... }
-        if (!preg_match('/^\.([A-Z][a-zA-Z0-9_]+)\s*\{(.*)\}\s*$/', $compact, $matches)) {
+        // Pattern: .ClassName { ... everything ... }   (the `_?[A-Z]...` name shape lives in
+        // App\RSpade\Core\Naming\Rsx_Identifier; a leading `_` is the framework prefix)
+        if (!preg_match('/^\.(_?[A-Z][A-Za-z0-9_]+)\s*\{(.*)\}\s*$/', $compact, $matches)) {
             return;
         }
 

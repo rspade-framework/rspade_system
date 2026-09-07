@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Manifest;
 
 use App\RSpade\CodeQuality\RuntimeChecks\ManifestErrors;
+use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\ExtensionRegistry;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -16,6 +17,12 @@ use App\RSpade\Core\Manifest\Manifest;
  */
 class _Manifest_Scanner_Helper
 {
+    /**
+     * Derived-cache namespace for the PHP reflection extracts, keyed by the manifest's own
+     * sha1 rather than by the build hash. See App\RSpade\Core\Cache\File_Content_Cache.
+     */
+    public const REFLECTION_NAMESPACE = 'php-reflection';
+
     // Static properties are defined on Manifest class and accessed via Manifest::$property
 
     /**
@@ -620,13 +627,6 @@ class _Manifest_Scanner_Helper
     */
     public static function _extract_reflection_for_changed_files(array $changed_files): void
     {
-        $cache_dir = storage_path('rsx-tmp/persistent/php_reflection');
-
-        // Ensure cache directory exists
-        if (!is_dir($cache_dir)) {
-            mkdir($cache_dir, 0755, true);
-        }
-
         // Build a set of changed files for quick lookup
         $changed_files_set = array_flip($changed_files);
 
@@ -643,8 +643,12 @@ class _Manifest_Scanner_Helper
             }
 
             $fqcn = $metadata['fqcn'];
+
+            // KEYED BY THE MANIFEST'S OWN HASH, not by the build hash - this cache already
+            // had the right key and keeps it; only the location moved, onto the shared
+            // derived-cache helper (App\RSpade\Core\Cache\File_Content_Cache), which is
+            // why the *_for_hash twins exist at all.
             $cache_key = $metadata['hash'];
-            $cache_file = $cache_dir . '/' . $cache_key . '.json';
 
             // Get absolute path - rsx/ files are in project root, not system/
             if (str_starts_with($file, 'rsx/')) {
@@ -656,14 +660,19 @@ class _Manifest_Scanner_Helper
             // Check if this file changed
             $file_changed = isset($changed_files_set[$file]);
 
-            // Try to use cached data if file hasn't changed
-            if (!$file_changed && file_exists($cache_file)) {
-                $cache_mtime = filemtime($cache_file);
-                $source_mtime = filemtime($absolute_path);
+            // Try to use cached data if file hasn't changed. The mtime guard on top of the
+            // hash hit is kept exactly as it was.
+            if (!$file_changed) {
+                $cached_json = File_Content_Cache::get_for_hash(
+                    self::REFLECTION_NAMESPACE,
+                    $cache_key,
+                    '',
+                    'json',
+                    $absolute_path
+                );
 
-                // If cache is newer than source, use cached data
-                if ($cache_mtime >= $source_mtime) {
-                    $cached_data = json_decode(file_get_contents($cache_file), true);
+                if ($cached_json !== null) {
+                    $cached_data = json_decode($cached_json, true);
                     if ($cached_data !== null) {
                         // Merge cached reflection data into manifest without breaking the reference
                         foreach ($cached_data as $key => $value) {
@@ -706,7 +715,13 @@ class _Manifest_Scanner_Helper
             }
 
             if (!empty($reflection_data)) {
-                file_put_contents_safe($cache_file, json_encode($reflection_data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+                File_Content_Cache::put_for_hash(
+                    self::REFLECTION_NAMESPACE,
+                    $cache_key,
+                    '',
+                    'json',
+                    json_encode($reflection_data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                );
             }
         }
     }

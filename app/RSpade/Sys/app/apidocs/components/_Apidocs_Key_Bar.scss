@@ -1,0 +1,161 @@
+._Apidocs_Key_Bar {
+    &__row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    &__status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+
+        // With a key set the status IS the whole bar, so it takes the width and pushes its
+        // own contents to the trailing edge - the key and its Clear button read as one
+        // control there rather than floating mid-bar.
+        &--set {
+            flex: 1 1 auto;
+            justify-content: flex-end;
+        }
+    }
+
+    &__dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--rsx-muted);
+
+        &--on {
+            background: var(--rsx-get);
+            box-shadow: 0 0 0 3px rgba(63, 185, 80, 0.18);
+        }
+    }
+
+    &__status-text {
+        font-size: 13px;
+        color: var(--rsx-text);
+
+        &--muted {
+            color: var(--rsx-muted);
+        }
+    }
+
+    &__masked {
+        font-family: var(--rsx-mono);
+        font-size: 12px;
+        color: var(--rsx-accent);
+        background: var(--rsx-accent-soft);
+        border: 1px solid var(--rsx-border);
+        border-radius: 5px;
+        padding: 2px 8px;
+    }
+
+    // How the adopted key is scoped. Muted by default: 'unrestricted' is the ordinary
+    // case and should not shout. 'scoped' is the one that explains a short listing or an
+    // insufficient_scope refusal, so it takes the accent.
+    &__scope {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--rsx-muted);
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+        padding: 2px 7px;
+
+        &--scoped {
+            color: var(--rsx-accent);
+            border-color: var(--rsx-accent);
+            background: var(--rsx-accent-soft);
+        }
+    }
+
+    // A rejected key. Cleared by any edit, so it describes what is typed NOW.
+    &__input--invalid {
+        border-color: var(--rsx-danger);
+        box-shadow: 0 0 0 3px rgba(248, 81, 73, 0.18);
+    }
+
+    &__error {
+        margin-top: 8px;
+        font-size: 12.5px;
+        color: var(--rsx-danger);
+        text-align: right;
+
+        &--hidden {
+            display: none;
+        }
+    }
+
+    &__controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    &__input {
+        width: 320px;
+        box-sizing: border-box;
+        max-width: 100%;
+        background: var(--rsx-raised);
+        color: var(--rsx-text);
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        padding: 7px 12px;
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+
+        &:focus {
+            outline: none;
+            border-color: var(--rsx-accent);
+            box-shadow: 0 0 0 3px var(--rsx-accent-soft);
+        }
+    }
+
+    &__btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        appearance: none;
+        border: 1px solid var(--rsx-border);
+        background: var(--rsx-raised);
+        color: var(--rsx-text);
+        font-size: 13px;
+        padding: 7px 14px;
+        border-radius: 6px;
+        cursor: pointer;
+
+        &:hover {
+            border-color: var(--rsx-accent);
+        }
+
+        // "Temporary Key" mints a real, live credential against the viewer's own account.
+        // Filled amber rather than the accent blue used for ordinary confirmations: it is
+        // the one control in this bar that CREATES something, and it should not read as the
+        // same weight as adopting a key that already exists.
+        &--warn {
+            background: var(--rsx-warn);
+            border-color: var(--rsx-warn);
+            color: #0D1117;
+            font-weight: 600;
+
+            &:hover {
+                border-color: var(--rsx-warn);
+                filter: brightness(1.12);
+            }
+        }
+
+        &--ghost {
+            background: transparent;
+        }
+
+        // The action button that is not currently on offer. Both are rendered so the swap
+        // is a class change; re-rendering on every keystroke would destroy the input the
+        // user is typing into.
+        &--hidden {
+            display: none;
+        }
+    }
+}

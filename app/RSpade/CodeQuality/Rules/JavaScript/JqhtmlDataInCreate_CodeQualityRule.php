@@ -3,9 +3,16 @@
 namespace App\RSpade\CodeQuality\Rules\JavaScript;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\CodeQuality\Support\Validation_Ledger;
 
 class JqhtmlDataInCreate_CodeQualityRule extends CodeQualityRule_Abstract
 {
+    /**
+     * The acorn walker this rule shells to. Checked-in source beside its client, never
+     * written at check time - see parse_with_acorn().
+     */
+    private const PARSER_SCRIPT = __DIR__ . '/../../Support/resource/parse-jqhtml-data.js';
+
     public function get_id(): string
     {
         return 'JS-JQHTML-01';
@@ -46,10 +53,23 @@ class JqhtmlDataInCreate_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        // Get violations from AST parser (with caching)
+        // A file whose exact bytes have already been judged clean is not parsed again.
+        // The verdict lives in the shared Validation_Ledger - see parse_with_acorn().
+        $file_hash = static::__file_hash($file_path, $metadata);
+        $ledger_id = static::__ledger_id();
+
+        if ($file_hash !== null && Validation_Ledger::has_passed($ledger_id, $file_hash)) {
+            return;
+        }
+
+        // Get violations from AST parser
         $violations = $this->parse_with_acorn($file_path);
 
         if (empty($violations)) {
+            if ($file_hash !== null) {
+                Validation_Ledger::record_pass($ledger_id, $file_hash);
+            }
+
             return;
         }
 
@@ -75,47 +95,29 @@ class JqhtmlDataInCreate_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Parse JavaScript file with acorn AST parser
-     * Results are cached based on file modification time
+     * Parse JavaScript file with acorn AST parser.
+     *
+     * NO DISK CACHE OF ITS OWN. What this returns is a list of VIOLATIONS, and the 316
+     * per-file JSON documents this rule used to keep averaged 47 bytes each - they were a
+     * directory of ways to write down "clean". That verdict now lives once, in
+     * Validation_Ledger; a file that DOES violate is re-parsed on every check, which is
+     * both cheap and honest (its violations are reported from live source, never a memo).
      */
     protected function parse_with_acorn(string $file_path): array
     {
-        // Create cache directory if needed
-        $cache_dir = storage_path('rsx-tmp/persistent/code-quality-jqhtml-data');
-        if (!is_dir($cache_dir)) {
-            mkdir($cache_dir, 0777, true);
-        }
-
-        // Generate cache key based on file path and mtime
-        $file_mtime = filemtime($file_path);
-        $file_size = filesize($file_path);
-        $cache_key = md5($file_path . ':jqhtml-data');
-        $cache_file = $cache_dir . '/' . $cache_key . '.json';
-
-        // Check if cached result exists and is valid
-        if (file_exists($cache_file)) {
-            $cache_data = json_decode(file_get_contents($cache_file), true);
-            if ($cache_data &&
-                isset($cache_data['mtime']) && $cache_data['mtime'] == $file_mtime &&
-                isset($cache_data['size']) && $cache_data['size'] == $file_size) {
-                // Cache is valid
-                return $cache_data['violations'] ?? [];
-            }
-        }
-
-        // Create parser script if it doesn't exist
-        $parser_script = storage_path('rsx-tmp/persistent/parse-jqhtml-data.js');
-        if (!file_exists($parser_script)) {
-            $this->create_parser_script($parser_script);
-        }
-
-        // Run parser. NODE_PATH pins module resolution at the framework's node_modules: the
-        // script lives under storage/rsx-tmp, which is at the PROJECT ROOT since storage was
-        // relocated out of system/, so node's upward walk never reaches system/node_modules.
+        // The parser is SOURCE, checked in beside its client - it is not written to disk at
+        // check time. It used to be a heredoc inside this class that materialized itself
+        // into storage/rsx-tmp/persistent/ if absent, which meant editing this file left the
+        // OLD script on disk running forever, and meant a code-quality rule owned a
+        // directory under storage. Both are gone: the script is a file, and this rule
+        // touches the filesystem for nothing.
+        //
+        // NODE_PATH is still pinned at the framework's node_modules rather than left to
+        // node's upward walk, so the resolution is stated rather than inferred.
         $command = sprintf(
             'NODE_PATH=%s node %s %s 2>&1',
             escapeshellarg(base_path('node_modules')),
-            escapeshellarg($parser_script),
+            escapeshellarg(self::PARSER_SCRIPT),
             escapeshellarg($file_path)
         );
 
@@ -127,136 +129,56 @@ class JqhtmlDataInCreate_CodeQualityRule extends CodeQualityRule_Abstract
 
         $result = json_decode($output, true);
         if (!$result || !isset($result['violations'])) {
-            // Parser error - don't cache
+            // Parser error - report nothing rather than a false positive.
             return [];
         }
-
-        // Cache the result
-        $cache_data = [
-            'mtime' => $file_mtime,
-            'size' => $file_size,
-            'violations' => $result['violations']
-        ];
-        file_put_contents_safe($cache_file, json_encode($cache_data));
 
         return $result['violations'];
     }
 
     /**
-     * Create the Node.js parser script
+     * The ledger key for one file: the manifest's own hash where the manifest knows the
+     * file, a content sha1 where it does not.
      */
-    protected function create_parser_script(string $script_path): void
+    private static function __file_hash(string $file_path, array $metadata): ?string
     {
-        $dir = dirname($script_path);
-        if (!is_dir($dir)) {
-            mkdir($dir, 0777, true);
+        $file_hash = $metadata['hash'] ?? null;
+
+        if (is_string($file_hash) && $file_hash !== '') {
+            return $file_hash;
         }
 
-        $script_content = <<<'JAVASCRIPT'
-#!/usr/bin/env node
-
-const fs = require('fs');
-const acorn = require('acorn');
-const walk = require('acorn-walk');
-
-// Classes that are Jqhtml components
-const JQHTML_COMPONENTS = new Set([
-    'Component', '_Base_Jqhtml_Component', 'Component'
-]);
-
-function analyzeFile(filePath) {
-    const code = fs.readFileSync(filePath, 'utf8');
-    const lines = code.split('\n');
-
-    let ast;
-    try {
-        ast = acorn.parse(code, {
-            ecmaVersion: 2020,
-            sourceType: 'module',
-            locations: true
-        });
-    } catch (e) {
-        // Parse error - return empty violations
-        console.log(JSON.stringify({ violations: [] }));
-        return;
-    }
-
-    const violations = [];
-    let currentClass = null;
-    let inOnCreate = false;
-
-    // Helper to check if a class extends Component
-    function isJqhtmlComponent(extendsClass) {
-        if (!extendsClass) return false;
-        return JQHTML_COMPONENTS.has(extendsClass) ||
-               extendsClass.includes('Component') ||
-               extendsClass.includes('Jqhtml');
-    }
-
-    // Walk the AST
-    walk.simple(ast, {
-        ClassDeclaration(node) {
-            currentClass = {
-                name: node.id.name,
-                extends: node.superClass?.name,
-                isJqhtml: isJqhtmlComponent(node.superClass?.name)
-            };
-        },
-
-        ClassExpression(node) {
-            currentClass = {
-                name: node.id?.name || 'anonymous',
-                extends: node.superClass?.name,
-                isJqhtml: isJqhtmlComponent(node.superClass?.name)
-            };
-        },
-
-        MethodDefinition(node) {
-            // Check if this is on_create method
-            if (node.key.name === 'on_create' && currentClass?.isJqhtml) {
-                inOnCreate = true;
-
-                // Walk the method body looking for this.data
-                walk.simple(node.value.body, {
-                    MemberExpression(memberNode) {
-                        // Check for this.data pattern
-                        if (memberNode.object.type === 'ThisExpression' &&
-                            memberNode.property.name === 'data') {
-                            // Found this.data in on_create
-                            const lineContent = lines[memberNode.loc.start.line - 1] || '';
-                            violations.push({
-                                line: memberNode.loc.start.line,
-                                column: memberNode.loc.start.column,
-                                className: currentClass.name,
-                                codeSnippet: lineContent.trim()
-                            });
-                        }
-                    }
-                });
-
-                inOnCreate = false;
-            }
+        if (!is_file($file_path)) {
+            return null;
         }
-    });
 
-    console.log(JSON.stringify({ violations }));
-}
+        return sha1_file($file_path) ?: null;
+    }
 
-// Main
-if (process.argv.length < 3) {
-    console.error('Usage: node parse-jqhtml-data.js <file-path>');
-    process.exit(1);
-}
+    /**
+     * A GENERATIONAL ledger id: `JS-JQHTML-01@<fingerprint>`.
+     *
+     * The verdict depends on two things beyond the file's own bytes - this rule's own
+     * source and the acorn script that does the walking - so both are folded in. Editing
+     * either retires every verdict the old logic issued, instead of letting a stale premise
+     * vouch for a file the new logic would flag.
+     */
+    private static function __ledger_id(): string
+    {
+        static $ledger_id = null;
 
-try {
-    analyzeFile(process.argv[2]);
-} catch (e) {
-    console.error('Error:', e.message);
-    console.log(JSON.stringify({ violations: [] }));
-}
-JAVASCRIPT;
+        if ($ledger_id !== null) {
+            return $ledger_id;
+        }
 
-        file_put_contents_safe($script_path, $script_content);
-        chmod($script_path, 0755);
+        $parts = [];
+
+        foreach ([__FILE__, self::PARSER_SCRIPT] as $input) {
+            $parts[] = is_file($input) ? md5_file($input) : 'missing';
+        }
+
+        $ledger_id = 'JS-JQHTML-01@' . substr(md5(implode(':', $parts)), 0, 16);
+
+        return $ledger_id;
     }
 }

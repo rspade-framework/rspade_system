@@ -1,0 +1,13 @@
+// The panel's Bootstrap build.
+//
+// @import is legal here and only here: the SCSS bundle processor permits it in a
+// file whose path contains '/vendor/'. Bootstrap's source is a FRAMEWORK npm
+// dependency (system/node_modules/bootstrap), reached by relative path because
+// node_modules is never recursed by the scanner and so can never be a bundle
+// include of its own.
+//
+// 1. Our variable overrides, so Bootstrap's `!default` values lose.
+@import "../variables";
+
+// 2. Bootstrap itself: system/app/RSpade/Root/theme/vendor -> system/
+@import "../../../../../node_modules/bootstrap/scss/bootstrap";

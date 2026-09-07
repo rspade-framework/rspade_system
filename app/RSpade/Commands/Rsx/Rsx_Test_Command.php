@@ -21,6 +21,7 @@ use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Time\Rsx_Time;
 use Symfony\Component\Process\Process;
 
 /**
@@ -95,6 +96,16 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * the operator scrolling back past a long build to find what actually broke.
      */
     const ORCHESTRATOR_TAIL_LINES = 20;
+
+    /**
+     * Where a full-suite run records its outcome, keyed by the manifest build key
+     * (storage/<dir>/framework_<build_key>.json). The key is the hash of every scanned
+     * source file, so an identical key means identical code: the recorded outcome IS the
+     * outcome that code would produce again, pass or fail, and a second full run under the
+     * same key replays the record instead of spending minutes re-proving it. Any edit to a
+     * scanned file changes the key and the next run is live. rsx:clean wipes rsx-tmp.
+     */
+    const RESULTS_CACHE_DIR = 'rsx-tmp/test-results';
 
     /**
      * A worker with no timing history for a $requires_db_reset class scores this many
@@ -1327,6 +1338,22 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      */
     protected function run_docker(array $selected, array $filters): int
     {
+        // RESULT CACHE. The build key names the code state; a record under it is this
+        // exact code's verdict. A hit replays through the one printer, so the output is the
+        // live run's output, and the exit code is the live run's exit code.
+        $build_key = self::current_build_key();
+        $cache_path = self::results_cache_path($build_key);
+        $cached = self::read_cached_results($cache_path, $build_key);
+        if ($cached !== null) {
+            $this->info('Returning cached test results for build ' . $build_key . ' (manifest build key + environment fingerprint) from ' . $cache_path);
+            $this->line('  recorded ' . $cached['recorded_at'] . ' by run ' . $cached['run_dir']
+                . '; no scanned file, script, node package or docker file has changed since. Edit one, or delete the'
+                . ' cache file, to run the suite again.');
+            $this->newLine();
+
+            return $this->report_records($cached['by_class'], $selected, $filters);
+        }
+
         $run_id = date('Ymd_His') . '_' . bin2hex(random_bytes(4));
         $run_dir = storage_path('rsx-tmp/test-run-' . $run_id);
         ensure_directory($run_dir);
@@ -1402,7 +1429,163 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             return 1;
         }
 
-        return $this->merge_and_report($run_dir . '/results.jsonl', $selected, $filters);
+        $by_class = self::read_results_file($run_dir . '/results.jsonl');
+        $exit_code = $this->report_records($by_class, $selected, $filters);
+
+        // Pass or fail, the verdict for this code state is recorded; an infrastructure
+        // failure never reaches here, so a missing record always means "not yet run".
+        self::write_cached_results($cache_path, $build_key, $run_dir, $by_class, $exit_code);
+
+        return $exit_code;
+    }
+
+    /**
+     * The manifest build key of the code this process booted with.
+     *
+     * @return string
+     */
+    protected static function current_build_key(): string
+    {
+        Manifest::init();
+
+        // The manifest build key covers every SCANNED source file - and nothing else. A
+        // verdict also depends on the tooling the suite runs through (system/bin scripts
+        // and daemons), the node toolchain (node_modules) and the test image (the docker
+        // resource dir), none of which the manifest indexes. Their fingerprint is folded
+        // in, so editing the mail catcher or bumping an npm package moves the key. The
+        // walk costs a second or two per full run; a stale verdict costs a false pass.
+        return Manifest::get_build_key() . '-' . substr(self::environment_fingerprint(), 0, 16);
+    }
+
+    /**
+     * The directories whose contents a full-suite verdict also depends on, relative to
+     * base_path(): the framework's scripts and daemons, the node toolchain, the test image.
+     */
+    const ENVIRONMENT_FINGERPRINT_DIRS = ['bin', 'node_modules', 'app/RSpade/resource/docker'];
+
+    /**
+     * A hash over the name, size and mtime of every file under ENVIRONMENT_FINGERPRINT_DIRS.
+     *
+     * @return string
+     */
+    protected static function environment_fingerprint(): string
+    {
+        $dirs = [];
+        foreach (self::ENVIRONMENT_FINGERPRINT_DIRS as $dir) {
+            $dirs[] = base_path($dir);
+        }
+
+        return self::fingerprint_directories($dirs);
+    }
+
+    /**
+     * Hash the relative name, size and mtime of every regular file under the given
+     * directories, in a deterministic order. Content is never read: the walk has to stay
+     * cheap over node_modules, and a size+mtime change is what an install or an edit leaves.
+     *
+     * @param string[] $directories Absolute paths; a missing directory contributes nothing
+     * @return string sha1
+     */
+    protected static function fingerprint_directories(array $directories): string
+    {
+        $rows = [];
+        foreach ($directories as $directory) {
+            if (!is_dir($directory)) {
+                continue;
+            }
+            $iterator = new \RecursiveIteratorIterator(
+                new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS)
+            );
+            foreach ($iterator as $file) {
+                if (!$file->isFile()) {
+                    continue;
+                }
+                $rows[] = substr($file->getPathname(), strlen($directory) + 1) . '|' . $file->getSize() . '|' . $file->getMTime();
+            }
+        }
+        sort($rows, SORT_STRING);
+
+        return sha1(implode("\n", $rows));
+    }
+
+    /**
+     * Where the full-suite verdict for a build key is recorded.
+     *
+     * @param string $build_key
+     * @return string
+     */
+    protected static function results_cache_path(string $build_key): string
+    {
+        return storage_path(self::RESULTS_CACHE_DIR . '/framework_' . $build_key . '.json');
+    }
+
+    /**
+     * The recorded verdict for $build_key, or null when there is none - absent file,
+     * unreadable JSON, or a record written under a different key (a renamed file is
+     * still a mismatch, not a hit).
+     *
+     * @param string $cache_path
+     * @param string $build_key
+     * @return array|null {build_key, recorded_at, run_dir, exit_code, by_class}
+     */
+    protected static function read_cached_results(string $cache_path, string $build_key): ?array
+    {
+        if (!is_file($cache_path)) {
+            return null;
+        }
+
+        $data = json_decode((string) file_get_contents($cache_path), true);
+        if (!is_array($data) || ($data['build_key'] ?? null) !== $build_key || !isset($data['by_class'], $data['exit_code'])) {
+            return null;
+        }
+
+        return $data;
+    }
+
+    /**
+     * Record a full-suite verdict under its build key.
+     *
+     * @param string $cache_path
+     * @param string $build_key
+     * @param string $run_dir     The live run's directory (worker logs live there)
+     * @param array  $by_class    fqcn => the per-class record merge reads
+     * @param int    $exit_code   What the run exited with (0 all passed, 1 any failure)
+     * @return void
+     */
+    protected static function write_cached_results(string $cache_path, string $build_key, string $run_dir, array $by_class, int $exit_code): void
+    {
+        ensure_directory(dirname($cache_path));
+
+        file_put_contents($cache_path, json_encode([
+            'build_key' => $build_key,
+            'recorded_at' => Rsx_Time::now_iso(),
+            'run_dir' => $run_dir,
+            'exit_code' => $exit_code,
+            'by_class' => $by_class,
+        ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+    }
+
+    /**
+     * Parse a results.jsonl into fqcn => record. Malformed lines are skipped, exactly as
+     * merge_and_report() always skipped them.
+     *
+     * @param string $results_path
+     * @return array
+     */
+    protected static function read_results_file(string $results_path): array
+    {
+        $by_class = [];
+        if (is_file($results_path)) {
+            foreach (file($results_path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
+                $rec = json_decode($line, true);
+                if (!is_array($rec) || !isset($rec['class'])) {
+                    continue;
+                }
+                $by_class[$rec['class']] = $rec;
+            }
+        }
+
+        return $by_class;
     }
 
     /**
@@ -1494,18 +1677,21 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      */
     protected function merge_and_report(string $results_path, array $selected, array $filters): int
     {
-        // fqcn => {short, results, duration, error?}
-        $by_class = [];
-        if (is_file($results_path)) {
-            foreach (file($results_path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-                $rec = json_decode($line, true);
-                if (!is_array($rec) || !isset($rec['class'])) {
-                    continue;
-                }
-                $by_class[$rec['class']] = $rec;
-            }
-        }
+        return $this->report_records(self::read_results_file($results_path), $selected, $filters);
+    }
 
+    /**
+     * Print per-class records (a live run's, or a cached verdict's) through the shared
+     * printer and return the exit code. THIS is the docker path's reporter; the results
+     * file is only one way the records arrive.
+     *
+     * @param array $by_class fqcn => {short, results, duration, error?}
+     * @param array $selected
+     * @param array $filters
+     * @return int
+     */
+    protected function report_records(array $by_class, array $selected, array $filters): int
+    {
         $totals = self::__empty_totals();
         $timings = [];
 

@@ -1,0 +1,96 @@
+// Sys panel theme variables - the midnight palette, plus the Bootstrap
+// variable overrides that make a stock Bootstrap build wear it.
+//
+// This file is imported by vendor/bootstrap.scss BEFORE Bootstrap's own
+// defaults, so every `!default` value below wins. It is also included as a
+// plain SCSS file by _Sys_Theme_Bundle, so the $rsx-* variables are in scope
+// for the panel's own components.
+//
+// The palette began as the API console's; the console now lives beside this file
+// (app/apidocs/) and reads these tokens, so the framework's two shipped surfaces
+// are one product wearing one theme.
+
+// -- Palette ------------------------------------------------------------
+$rsx-bg:            #0D1117;
+$rsx-surface:       #161B26;
+$rsx-raised:        #1C2333;
+$rsx-border:        #2A3245;
+$rsx-text:          #E6EDF3;
+$rsx-muted:         #DCE0E7;
+$rsx-accent:        #58A6FF;
+$rsx-accent-hover:  #79B8FF;
+$rsx-accent-soft:   #13233A;
+$rsx-success:       #3FB950;
+$rsx-danger:        #F85149;
+$rsx-warn:          #D29922;
+
+$rsx-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+$rsx-mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+
+// -- Bootstrap overrides ------------------------------------------------
+// Colors first: Bootstrap derives its theme map, component defaults and
+// $theme-colors from these, so overriding them here themes every component
+// that follows without a single per-component rule.
+$primary:   $rsx-accent;
+$secondary: $rsx-border;
+$success:   $rsx-success;
+$danger:    $rsx-danger;
+$warning:   $rsx-warn;
+$info:      $rsx-accent;
+$light:     $rsx-raised;
+$dark:      $rsx-bg;
+
+$body-bg:    $rsx-bg;
+$body-color: $rsx-text;
+
+$border-color:           $rsx-border;
+$border-radius:          6px;
+$border-radius-sm:       4px;
+$border-radius-lg:       8px;
+
+$link-color:             $rsx-accent;
+$link-hover-color:       $rsx-accent-hover;
+$link-decoration:        none;
+
+$font-family-base:       $rsx-sans;
+$font-family-monospace:  $rsx-mono;
+$font-size-base:         0.875rem; // 14px
+$line-height-base:       1.5;
+
+$headings-color:         $rsx-text;
+$text-muted:             $rsx-muted;
+
+$card-bg:                $rsx-surface;
+$card-border-color:      $rsx-border;
+$card-cap-bg:            $rsx-raised;
+$card-color:             $rsx-text;
+
+$input-bg:               $rsx-raised;
+$input-color:            $rsx-text;
+$input-border-color:     $rsx-border;
+$input-placeholder-color: $rsx-muted;
+$input-focus-bg:         $rsx-raised;
+$input-focus-color:      $rsx-text;
+$input-focus-border-color: $rsx-accent;
+
+$dropdown-bg:            $rsx-surface;
+$dropdown-color:         $rsx-text;
+$dropdown-border-color:  $rsx-border;
+$dropdown-link-color:    $rsx-text;
+$dropdown-link-hover-bg: $rsx-accent-soft;
+$dropdown-link-hover-color: $rsx-accent;
+
+$table-bg:               transparent;
+$table-color:            $rsx-text;
+$table-border-color:     $rsx-border;
+
+$modal-content-bg:       $rsx-surface;
+$modal-content-border-color: $rsx-border;
+
+$list-group-bg:          $rsx-surface;
+$list-group-color:       $rsx-text;
+$list-group-border-color: $rsx-border;
+
+// Bootstrap 5.3 builds its light/dark CSS variable sets from these.
+$body-secondary-color:   $rsx-muted;
+$body-tertiary-bg:       $rsx-raised;

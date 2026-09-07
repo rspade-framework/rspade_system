@@ -53,7 +53,7 @@ class Rsx_Api_Docs
     /**
      * Whether the console being rendered lists only what the adopted key may call.
      *
-     * Request-scoped, set by page() and read by rsxapp_data(), which Api_Docs_Bundle's
+     * Request-scoped, set by page() and read by rsxapp_data(), which _Apidocs_Bundle's
      * load_rsxapp_data() forwards to. That hook is a static with no arguments, so this is how
      * the caller's choice reaches it. Never assigned outside page().
      */
@@ -68,7 +68,7 @@ class Rsx_Api_Docs
     /**
      * Render the API reference console - the whole page, bundle and all.
      *
-     * The framework supplies its own module bundle (Api_Docs_Bundle) rather than taking one:
+     * The framework supplies its own module bundle (_Apidocs_Bundle) rather than taking one:
      * the page hosts framework components exclusively, so an application bundle could only
      * ever be a wrapper naming framework directories. The request is read from the container
      * rather than passed, so the call site carries no argument it does not choose.
@@ -86,11 +86,11 @@ class Rsx_Api_Docs
         self::$_restrict_to_key = $restrict_to_key;
         self::$_base_path = '/' . ltrim(request()->path(), '/');
 
-        return rsx_view('Api_Docs_App');
+        return rsx_view('_Apidocs_App');
     }
 
     /**
-     * The console's window.rsxapp.page_data payload, for Api_Docs_Bundle's
+     * The console's window.rsxapp.page_data payload, for _Apidocs_Bundle's
      * load_rsxapp_data() hook.
      *
      * The catalog is BAKED INTO THE PAGE rather than fetched: the console navigates between

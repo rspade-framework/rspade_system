@@ -29,6 +29,9 @@ source "$SCRIPT_DIR/test_env.sh"
 # Ensure test mode exits on script exit (success or failure)
 trap test_trap_exit EXIT
 
+# Enter test mode first
+test_mode_enter
+
 # Reset database and run ALL migrations from scratch
 echo "[SNAPSHOT] Resetting test database..." >&2
 
@@ -51,10 +54,7 @@ else
     rm -f "$TEMP_OUTPUT"
 fi
 
-# Enter test mode to verify database is accessible
-test_mode_enter > /dev/null 2>&1
-
-# Verify migrations ran
+# Verify migrations ran (already in test mode)
 migration_count=$(test_db_query "SELECT COUNT(*) FROM migrations")
 if [ -z "$migration_count" ] || [ "$migration_count" -eq 0 ]; then
     echo "[ERROR] No migrations found in database" >&2
@@ -65,21 +65,10 @@ fi
 
 echo "[SNAPSHOT] Found $migration_count migrations" >&2
 
-# Exit test mode before dump
-test_mode_exit > /dev/null 2>&1
-
-# Create snapshot
+# Create snapshot (already in test mode, .env points to rspade_test)
 echo "[SNAPSHOT] Creating snapshot file..." >&2
 
-# Backup current .env
-SNAPSHOT_ENV_BACKUP="/tmp/rspade_snapshot_backup_$$"
-cp /var/www/html/.env "$SNAPSHOT_ENV_BACKUP"
-
-# Switch to test database for dump
-sed -i 's/^DB_DATABASE=.*$/DB_DATABASE=rspade_test/' /var/www/html/.env
-php artisan config:clear > /dev/null 2>&1
-
-# Create dump
+# Create dump - connect directly to test database
 if ! mysqldump -h127.0.0.1 -urspade -prspadepass rspade_test \
     --no-tablespaces \
     --single-transaction \
@@ -87,14 +76,8 @@ if ! mysqldump -h127.0.0.1 -urspade -prspadepass rspade_test \
     --lock-tables=false \
     > "$SNAPSHOT_FILE" 2>/dev/null; then
     echo "[ERROR] Failed to create database dump" >&2
-    mv "$SNAPSHOT_ENV_BACKUP" /var/www/html/.env
-    php artisan config:clear > /dev/null 2>&1
     exit 1
 fi
-
-# Restore original .env
-mv "$SNAPSHOT_ENV_BACKUP" /var/www/html/.env
-php artisan config:clear > /dev/null 2>&1
 
 # Get snapshot size
 snapshot_size=$(du -h "$SNAPSHOT_FILE" | cut -f1)

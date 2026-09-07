@@ -13,7 +13,7 @@ User_Card.js         # logic, lifecycle, state (optional - only when behavior ex
 user_card.scss       # the component's COMPLETE look (wrapped in .User_Card)
 ```
 
-Names are **Pascal_Snake_Case** (`User_Card`, `Save_Button`) - not bare PascalCase; jqhtml's own public docs use `UserCard` style, do not follow it here.
+Names are **Pascal_Snake_Case** (`User_Card`, `Save_Button`) - not bare PascalCase; jqhtml's own public docs use `UserCard` style, do not follow it here. A name may carry ONE leading underscore before its capital (`_Sys_Card`): that is the **framework-application prefix**, owned by `app/RSpade/Sys/` and refused in `rsx/` (`NAME-RESERVED-01`).
 
 The manifest discovers them with zero registration, and an **undefined uppercase tag already renders** (as a div carrying the component name as a class), so a page can be scaffolded out of names before a single one exists.
 
@@ -108,7 +108,7 @@ $(selector).component('Component_Name', { arg1: value1, arg2: value2 });
 this.$sid('result_container').component('My_Component', { data: my_data, some_option: true });
 ```
 
-**Class preservation**: only PascalCase component names (capital first letter, no `__`) are replaced. Utility classes (`text-muted`), BEM child classes (`Parent__child`) and **all attributes** are preserved. So a container can carry layout/utility classes safely across repeated `.component()` calls.
+**Class preservation**: only component names (a capital first letter, optionally preceded by a single underscore, no `__`) are replaced. Utility classes (`text-muted`), BEM child classes (`Parent__child`) and **all attributes** are preserved. So a container can carry layout/utility classes safely across repeated `.component()` calls.
 
 Awaiting a dynamically created component: `await $(selector).component().ready()`. This is rarely needed inside a component (`on_ready()` already waits for children created during render) - it exists for dynamically created components and for Blade page JS reaching into a component.
 
@@ -150,6 +150,6 @@ Remedies included - most of these are silent, not thrown.
 19. **Never fire custom events with `this.$.trigger()`** - use `this.trigger()` (enforced by `JQHTML-EVENT-01`).
 20. **Iterate with the page renderer, not the lint suite.** `php artisan rsx:debug /path --user=1` surfaces compile, SCSS and runtime errors immediately; run the full `rsx:check` once at the end. For live timing/ordering bugs a single render pass cannot show (double-render, hook order, slow renders), `jqhtml.enableDebugMode('basic')` in the browser console logs each phase with timestamps.
 21. **Some args silently disable caching, and non-primitive args always disable load deduplication.** CACHING keys plain data by CONTENT (jqhtml >= 2.3.54), so `$filters={status:'open'}` and `$ids=[1,2]` cache correctly even though the template rebuilds them on every render; what declines is a function, a class instance, a DOM/jQuery object, a circular structure, or anything over 500 bytes - marked `data-nocache="<arg>:<reason>"`. DEDUPLICATION is stricter and does NOT use content keys: it needs primitive args or a `_jqhtml_cache_id` on the object, so a non-primitive arg still opts out of shared loads with no error.
-22. **A tag is a component only if its first letter is uppercase.** `<user_card>` is never a component no matter what is registered - it renders as a literal unknown HTML element with no scoping, lifecycle or `Component` class (`JQHTML-CLASS-01`).
+22. **A tag is a component only if it starts with a capital, optionally preceded by a single underscore.** `<user_card>` is never a component no matter what is registered - it renders as a literal unknown HTML element with no scoping, lifecycle or `Component` class (`JQHTML-CLASS-01`). `<_Sys_Card>` IS one, but the prefix is the framework's: an application may not declare it (`NAME-RESERVED-01`).
 23. **No inline `<script>` or `<style>` tags in a `.jqhtml` template** (`JQHTML-INLINE-01`). Behavior goes in the companion `.js` or a `<% %>` block; styling goes in the component's `.scss`.
 24. **`on_stop()` is not guaranteed to fire** - a node removed outside the framework skips it. Do not put cleanup there that would be catastrophic if skipped.

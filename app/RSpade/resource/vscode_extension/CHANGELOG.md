@@ -6,6 +6,20 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.237] - 2026-09-07
+
+### Changed
+- **Framework-application names (`_Sys_*`) are recognized everywhere.** A class, component,
+  `@rsx_id` or CSS class may carry ONE leading underscore before the capital letter -
+  `_Sys_Layout`, `<_Sys_Card>`, `._Sys_Card`, `Rsx::Route('_Sys_Spa_Controller::index')`,
+  `class _Sys_Sidebar_Nav extends Component`. Every recognizer now embeds one shared fragment
+  (`CLASS_NAME_FRAGMENT` / `is_class_name()` in `rspade_recognizers.ts`) whose rule of record is
+  `Rsx_Identifier` (`/^_?[A-Z][A-Za-z0-9_]*$/`), so colouring, go-to-definition, the
+  `.Class_Name` selector recognizer, the global-rename validator and the class-definition code
+  action all agree. Two leading underscores are still not a name. The auto-rename filename
+  suggestion keeps the single underscore (`_Sys_Card` -> `_sys_card`), and the `system/`
+  explorer badge says in its tooltip that `_Sys_*` names are framework property too.
+
 ## [0.1.236] - 2026-09-06
 
 ### Added

@@ -146,7 +146,8 @@ class JqhtmlInlineScript_CodeQualityRule extends CodeQualityRule_Abstract
      */
     private function extract_component_id(string $contents): ?string
     {
-        if (preg_match('/<Define:([A-Z][A-Za-z0-9_]*)>/', $contents, $matches)) {
+        // The `_?[A-Z][A-Za-z0-9_]*` name shape lives in App\RSpade\Core\Naming\Rsx_Identifier.
+        if (preg_match('/<Define:(_?[A-Z][A-Za-z0-9_]*)>/', $contents, $matches)) {
             return $matches[1];
         }
         return null;

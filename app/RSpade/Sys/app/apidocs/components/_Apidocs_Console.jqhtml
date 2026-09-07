@@ -1,0 +1,42 @@
+<%--
+_Apidocs_Console - the entire API reference: chrome, navigation and body, in ONE component.
+
+WHY ONE COMPONENT AND NOT AN SPA MODULE. The console is mounted by whatever route the
+APPLICATION declares for it (see Rsx_Api_Docs), so it cannot rely on the SPA router - and it
+turns out not to want to. Spa never reuses an action, so an SPA split rebuilt the header, key
+bar and sidebar on every endpoint click, and Spa._clear_container_attributes() strips the
+class off the element an action mounts into. Owning the whole page sidesteps both: only the
+$redrawable body is replaced on navigation, so the sidebar keeps its filter and its scroll
+position and the key bar keeps its input.
+
+Carries the _Apidocs_Page class so every frame rule in _Apidocs_Page.scss applies unchanged.
+--%>
+<Define:_Apidocs_Console tag="div" class="_Apidocs_Page">
+<% const version = this.state.version; %>
+<_Apidocs_Header $sid="header" $version=version />
+
+<div class="_Apidocs_Page__keybar-host">
+    <_Apidocs_Key_Bar />
+</div>
+
+<div class="_Apidocs_Page__body">
+    <_Apidocs_Sidebar $sid="sidebar" $version=version $active=this.state.slug />
+
+    <div class="_Apidocs_Page__main" $redrawable $sid="main">
+        <% const endpoint = _Apidocs_Catalog.find_endpoint(version, this.state.slug); %>
+        <% if (!_Apidocs_Catalog.exists()) { %>
+            <div class="_Apidocs_Page__notice">No external API endpoints are defined.</div>
+        <% } else if (endpoint) { %>
+            <%-- A multipart endpoint gets the card whose tester can actually send one. The
+                 catalog answers which it is, from the endpoint's own declared params. --%>
+            <% if (_Apidocs_Catalog.is_file_endpoint(endpoint)) { %>
+                <_Apidocs_File_Endpoint_Card $endpoint=endpoint />
+            <% } else { %>
+                <_Apidocs_Endpoint_Card $endpoint=endpoint />
+            <% } %>
+        <% } else { %>
+            <_Apidocs_Home $version=version />
+        <% } %>
+    </div>
+</div>
+</Define:_Apidocs_Console>

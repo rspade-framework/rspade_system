@@ -621,7 +621,7 @@ API KEYS
 
     TESTER KEYS. The docs page's tester normally takes a key the developer
     PASTES, created in Settings > API Keys like any other. It can also mint a
-    throwaway for itself (Api_Docs_Controller::mint_temporary_key): a live key
+    throwaway for itself (_Apidocs_Controller::mint_temporary_key): a live key
     for the signed-in user, named 'API Tester (temporary)', expiring in one
     hour. It is gated on the same Session::has_api_access() the page is, and it
     is the browser twin of rsx:api:key:temp.
@@ -1104,11 +1104,24 @@ DOCS AND TESTER PAGE
     reference_app/app/apidocs/apidocs_controller.php.
 
     THE CONSOLE IS FRAMEWORK PROPERTY, BUNDLE INCLUDED. Everything behind the
-    route - the view, the components, the styles and Api_Docs_Bundle - ships with
+    route - the view, the components, the styles and _Apidocs_Bundle - ships with
     the framework, so the integration is one call with the simplicity of
     phpinfo(). An application declares no bundle, forwards no hook, styles
     nothing and keeps no copy of anything; there is no supported way to customize
     the console, and nothing to re-adopt when the framework changes it.
+
+    IT LIVES IN THE FRAMEWORK'S OWN APPLICATION TREE, at
+    system/app/RSpade/Sys/app/apidocs/, beside the /_sys control panel and
+    named in that tree's reserved `_` prefix (_Apidocs_Bundle, _Apidocs_Console,
+    <_Apidocs_Key_Bar>). It wears that tree's theme: _Sys_Theme_Bundle's
+    Bootstrap build and the --rsx-* tokens in Sys/theme/theme.scss, which is
+    where the palette, the type stack and the --rsx-get/--rsx-post verb colours
+    are declared. The console holds no private palette of its own.
+
+    It remains STANDALONE - no sidebar, no _Sys_Layout, no /_sys route. The
+    mount is still whatever route the application declared, and the gate is
+    still that route's #[Auth]; sharing a theme with the panel is not sharing
+    its chrome or its access control.
 
     (Render-time bundle validation normally requires a bundle to cover the
     directory of the CONTROLLER that dispatched the page. That check is waived
@@ -1125,7 +1138,7 @@ DOCS AND TESTER PAGE
     scoped to the KEY'S user rather than the viewer's - the console is answering
     "what can this integration do". With no key the sidebar lists NOTHING and
     the landing card says why, because the key IS the question being asked.
-    Supplying one calls Api_Docs_Controller::adopt_tester_key and RELOADS: the
+    Supplying one calls _Apidocs_Controller::adopt_tester_key and RELOADS: the
     catalog is baked into the page at render, so a key adopted afterwards
     changes nothing until the page is built again.
 
@@ -1148,7 +1161,7 @@ DOCS AND TESTER PAGE
     forge. The PLAINTEXT stays in the browser for the tester's Authorization
     header; it cannot come back from the database, which holds only the hash.
 
-    ONE COMPONENT, NOT AN SPA MODULE. Api_Docs_Console owns the whole page and
+    ONE COMPONENT, NOT AN SPA MODULE. _Apidocs_Console owns the whole page and
     does its own history handling: a sidebar click pushes state and redraws only
     the $redrawable body, and Back/Forward restores the previous endpoint. It is
     mounted by an ordinary #[Route], so Spa's link interception does not apply
@@ -1161,23 +1174,23 @@ DOCS AND TESTER PAGE
 
     COMPONENTS:
 
-        Api_Docs_Console   the page: chrome, navigation, and the body region
-        Api_Docs_Header    wordmark (links home), version selector, openapi link
-        Api_Docs_Sidebar   resource-grouped nav plus a filter box; filtering is
+        _Apidocs_Console   the page: chrome, navigation, and the body region
+        _Apidocs_Header    wordmark (links home), version selector, openapi link
+        _Apidocs_Sidebar   resource-grouped nav plus a filter box; filtering is
                            DOM-level, not a re-render, so the focused input is
                            never rebuilt mid-keystroke
-        Api_Docs_Home      the landing pane, and the key gate when restricted
-        Api_Docs_Catalog   synchronous reader over the baked catalog - there is
+        _Apidocs_Home      the landing pane, and the key gate when restricted
+        _Apidocs_Catalog   synchronous reader over the baked catalog - there is
                            no loading state anywhere in the UI because there is
                            nothing to wait for
-        Api_Key_Bar        paste a key; VALIDATED against /api/v1/me before it is
+        _Apidocs_Key_Bar        paste a key; VALIDATED against /api/v1/me before it is
                            accepted, so a bad key fails here rather than later on
                            some unrelated endpoint. Held in session storage, never
                            persisted. With a key set the input is replaced by the
                            masked key and a Clear button
-        Api_Code_Samples   curl / php / js / python / powershell, generated from
+        _Apidocs_Code_Samples   curl / php / js / python / powershell, generated from
                            the catalog. See FILL IN VALUES below
-        Api_Tester         the live tester. See WHAT THE TESTER VALIDATES below
+        _Apidocs_Tester         the live tester. See WHAT THE TESTER VALIDATES below
 
     WHAT THE TESTER VALIDATES: path parameters, and nothing else. A URL cannot be
     built without them, so there would be no request to send and no server answer
@@ -1196,7 +1209,7 @@ DOCS AND TESTER PAGE
     swaps the samples from documentation to the exact request the tester beside
     them would send: the adopted key, the values typed, unset fields omitted,
     path parameters merged in, updating live as the reader types. It reads
-    Api_Tester::current_values() - the same method the Send button uses - so a
+    _Apidocs_Tester::current_values() - the same method the Send button uses - so a
     sample can never describe a different request from the one that would be made.
 
     Off, samples use each param's declared example and the literal {API_KEY}:
@@ -1207,7 +1220,7 @@ DOCS AND TESTER PAGE
     not would be worse than one that says what is missing.
 
     ESCAPING. Every value in a sample is escaped for the language it lands in
-    (api_docs_escaping.js: bash, php, python, powershell, js literals), and URL
+    (_apidocs_escaping.js: bash, php, python, powershell, js literals), and URL
     values are escaped TWICE - percent-encoded for the URL, then quoted for the
     language embedding it. Do only the first and a space breaks the command; do
     only the second and the server receives something else. In a shell sample the
@@ -1217,17 +1230,17 @@ DOCS AND TESTER PAGE
     example response) left, the things you act on (samples, tester) right - so a
     sample stays readable beside the tester that shaped it. The example response
     also starts expanded at that width, where a collapsed panel is just a click.
-        Api_Endpoint_Card  one card per endpoint (description, params, example)
-        Api_Params_Table   the #[Api_Param] specs rendered as a table
-        Api_Code_Samples   curl / php / js / python / powershell, GENERATED
+        _Apidocs_Endpoint_Card  one card per endpoint (description, params, example)
+        _Apidocs_Params_Table   the #[Api_Param] specs rendered as a table
+        _Apidocs_Code_Samples   curl / php / js / python / powershell, GENERATED
                            client-side from catalog data (never authored per
                            endpoint), with a {API_KEY} placeholder
-        Api_Tester         a live tester: a form built from the param specs (a
+        _Apidocs_Tester         a live tester: a form built from the param specs (a
                            plain JSON body textarea on POST), firing a native
                            fetch() with the Authorization header ($.ajax is
                            blocked framework-wide; fetch is not) and rendering
                            the status + highlighted JSON response
-        Api_Key_Bar        paste a key (the page never mints one); the key is
+        _Apidocs_Key_Bar        paste a key (the page never mints one); the key is
                            held in Rsx_Storage session scope (never persisted)
 
     THE OPENAPI DOCUMENT. /apidocs/openapi.json (login-gated) returns
@@ -1502,7 +1515,7 @@ TROUBLESHOOTING
 
     Docs page shows nothing / a key does not work in the tester
         /apidocs needs a logged-in staff session (it is not bearer-auth). Paste a
-        key into the Api_Key_Bar; create one first at Settings > API Keys. The
+        key into the _Apidocs_Key_Bar; create one first at Settings > API Keys. The
         tester fires a native fetch() - a blocked $.ajax error means something
         bypassed it.
 

@@ -1,0 +1,16 @@
+._Sys_Section {
+    &__header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+    }
+
+    &__title {
+        font-size: 14px;
+    }
+
+    &__body {
+        color: var(--rsx-text);
+    }
+}

@@ -9,7 +9,7 @@ The RSpade VS Code extension now supports "Go to Definition" navigation from Jav
 When you right-click on an identifier and select "Go to Definition", the extension will:
 
 ### For JavaScript Class References
-1. Detect if the identifier looks like an RSX class (contains underscore, starts with capital letter)
+1. Detect if the identifier looks like an RSX class (contains underscore, starts with a capital letter - or with ONE leading underscore before it, the framework-application form `_Sys_Layout`)
 2. Query the IDE helper endpoint (`/_idehelper`) to resolve the PHP file location
 3. If a method is being called (e.g., `Demo_Index_Controller.hello_world()`), navigate directly to that method
 4. Open the PHP file at the exact line where the class or method is defined
@@ -96,10 +96,11 @@ attribute in a `.jqhtml` or `.blade.php` resolve through
 with BOTH files, template before class, so VS Code offers the choice; a Blade view
 whose `@rsx_id` matches answers second.
 
-Only `/^[A-Z][A-Za-z0-9]*(_[A-Z][A-Za-z0-9]*)+$/` qualifies. `.btn-primary`,
-`.card`, `.foo_bar` and a BEM child like `.Client_Card__header` are not component
-names and are never touched; a name that matches nothing produces no link,
-silently.
+Only `/^_?[A-Z][A-Za-z0-9]*(_[A-Z][A-Za-z0-9]*)+$/` qualifies - the optional single
+leading underscore is the framework-application form (`._Sys_Card`), matching
+`Rsx_Identifier`. `.btn-primary`, `.card`, `.foo_bar`, `.__Bad` and a BEM child
+like `.Client_Card__header` are not component names and are never touched; a name
+that matches nothing produces no link, silently.
 
 ## Man pages and skills
 
@@ -168,6 +169,6 @@ After building the extension with `./build.sh`, install the generated `.vsix` fi
 
 ## Limitations
 
-- Only works for RSX class names (containing underscores, starting with capital letter)
+- Only works for RSX class names (containing underscores, starting with a capital letter or with one leading underscore)
 - Requires the RSpade manifest to be up-to-date
 - The PHP file must exist and be indexed in the manifest

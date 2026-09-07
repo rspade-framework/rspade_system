@@ -705,7 +705,7 @@ class Php_Fixer
      * Does a file defining this class exist under a framework path the manifest never scans?
      *
      * GUARD 1 (backlog B-68, the F-021 half). `config('rsx.manifest.scan_directories')` lists
-     * nine paths; everything else under app/RSpade/ - Commands, Database, Http, Ide,
+     * ten paths; everything else under app/RSpade/ - Commands, Database, Http, Ide,
      * SchemaQuality - is PERMANENTLY invisible to the manifest by design. An import of a
      * class living there is therefore unresolvable on a perfectly healthy index, and was
      * being deleted every single build.

@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Integrations\Jqhtml;
 
+use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 use App\RSpade\Integrations\Jqhtml\Jqhtml_Exception_ViewException;
 
@@ -23,15 +24,16 @@ use App\RSpade\Integrations\Jqhtml\Jqhtml_Exception_ViewException;
 class JqhtmlWebpackCompiler
 {
     /**
+     * Derived-cache namespace for the parser's RAW output. See
+     * App\RSpade\Core\Cache\File_Content_Cache - the ONE per-source-file cache helper.
+     */
+    public const PARSED_NAMESPACE = 'jqhtml-parsed';
+
+    /**
      * Path to jqhtml-compile binary for package validation (RPC server used for actual compilation)
      */
     protected string $compiler_path;
 
-    /**
-     * Cache directory for compiled templates
-     */
-    protected string $cache_dir;
-    
     /**
      * Constructor
      */
@@ -39,12 +41,6 @@ class JqhtmlWebpackCompiler
     {
         // Use official jqhtml CLI compiler from npm package
         $this->compiler_path = base_path('node_modules/@jqhtml/parser/bin/jqhtml-compile');
-        $this->cache_dir = storage_path('rsx-tmp/jqhtml-cache');
-
-        // Ensure cache directory exists
-        if (!is_dir($this->cache_dir)) {
-            mkdir($this->cache_dir, 0755, true);
-        }
 
         // Validate compiler exists - MUST exist
         if (!file_exists($this->compiler_path)) {
@@ -101,21 +97,22 @@ class JqhtmlWebpackCompiler
             throw new \RuntimeException("JQHTML template not found: {$file_path}");
         }
 
-        // Cache key = the template's identity + mtime + the PARSER'S OWN VERSION. The
-        // version is in the key because a compiled template is the parser's output: upgrade
-        // @jqhtml/parser and every cached compile is the OLD parser's work, still keyed
-        // valid by a path and an mtime that never moved. That is precisely how a wrong
-        // version (or a whole parser upgrade) kept being served for months - the daemon was
-        // recycled, the cache was not. Same discipline as Js_Transformer's toolchain
-        // fingerprint and the node service's .meta.
-        $mtime = filemtime($file_path);
-        $cache_key = md5($file_path) . '_' . $mtime . '_' . static::_parser_version();
-        $cache_file = $this->cache_dir . '/' . $cache_key . '.js';
+        // Cache key = the template's identity (the shared derived-cache key, which folds in
+        // mtime in development and the content in a sealed build) + the PARSER'S OWN VERSION
+        // as the VARIANT. The version is in the key because a compiled template is the
+        // parser's output: upgrade @jqhtml/parser and every cached compile is the OLD
+        // parser's work, still keyed valid by a path and an mtime that never moved. That is
+        // precisely how a wrong version (or a whole parser upgrade) kept being served for
+        // months - the daemon was recycled, the cache was not. Same discipline as
+        // Js_Transformer's toolchain fingerprint and the node service's .meta.
+        $variant = '_pv' . static::_parser_version();
 
-        // Check if cached version exists
-        if (file_exists($cache_file)) {
+        $cached = File_Content_Cache::get(self::PARSED_NAMESPACE, $file_path, $variant, 'js');
+
+        if ($cached !== null) {
             console_debug("JQHTML", "Using cached JQHTML template: {$file_path}");
-            return file_get_contents($cache_file);
+
+            return $cached;
         }
 
         console_debug("JQHTML", "Compiling JQHTML template: {$file_path}");
@@ -137,11 +134,10 @@ class JqhtmlWebpackCompiler
         // Ensure exactly one newline at end (no extra)
         $wrapped_js = rtrim($wrapped_js) . "\n";
 
-        // Cache the compiled result
-        file_put_contents_safe($cache_file, $wrapped_js);
-
-        // Clean up old cache files for this template
-        $this->cleanup_old_cache($file_path, $cache_key);
+        // Cache the compiled result. Entries for templates that no longer exist (or whose
+        // parser version has moved on) are removed by File_Content_Cache::sweep_all() at the
+        // end of the manifest build - there is no private per-template cleanup here.
+        File_Content_Cache::put(self::PARSED_NAMESPACE, $file_path, $variant, 'js', $wrapped_js);
 
         return $wrapped_js;
     }
@@ -190,80 +186,6 @@ class JqhtmlWebpackCompiler
         return basename($relative);
     }
     
-    /**
-     * Clean up old cache files for a template
-     * 
-     * @param string $file_path Original template path
-     * @param string $current_cache_key Current cache key to keep
-     */
-    protected function cleanup_old_cache(string $file_path, string $current_cache_key): void
-    {
-        $file_hash = md5($file_path);
-        $pattern = $this->cache_dir . '/' . $file_hash . '_*.js';
-        
-        foreach (glob($pattern) as $cache_file) {
-            $cache_key = basename($cache_file, '.js');
-            if ($cache_key !== $current_cache_key) {
-                unlink($cache_file);
-            }
-        }
-    }
-    
-    /**
-     * Clear all cached templates
-     */
-    public function clear_cache(): void
-    {
-        $pattern = $this->cache_dir . '/*.js';
-        foreach (glob($pattern) as $cache_file) {
-            unlink($cache_file);
-        }
-        
-        console_debug("JQHTML", "Cleared JQHTML template cache");
-    }
-    
-    /**
-     * Get cache statistics
-     * 
-     * @return array Cache statistics
-     */
-    public function get_cache_stats(): array
-    {
-        $pattern = $this->cache_dir . '/*.js';
-        $files = glob($pattern);
-        
-        $total_size = 0;
-        foreach ($files as $file) {
-            $total_size += filesize($file);
-        }
-        
-        return [
-            'cache_dir' => $this->cache_dir,
-            'cached_files' => count($files),
-            'total_size' => $total_size,
-            'total_size_human' => $this->format_bytes($total_size)
-        ];
-    }
-    
-    /**
-     * Format bytes to human readable
-     *
-     * @param int $bytes
-     * @return string
-     */
-    protected function format_bytes(int $bytes): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB'];
-        $i = 0;
-
-        while ($bytes >= 1024 && $i < count($units) - 1) {
-            $bytes /= 1024;
-            $i++;
-        }
-
-        return round($bytes, 2) . ' ' . $units[$i];
-    }
-
     /**
      * Compile file via the node service.
      *

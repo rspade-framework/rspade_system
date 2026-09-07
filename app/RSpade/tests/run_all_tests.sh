@@ -52,12 +52,13 @@ else
     echo ""
 fi
 
-# Find all run_test.sh files (excluding run_interactive_test.sh)
-echo -e "${BLUE}Finding tests...${NC}"
+# Find shell-based tests in the concern/type layout (http, cli, asset). PHP tests
+# are run separately by `php artisan rsx:test --framework`. _archive is excluded.
+echo -e "${BLUE}Finding shell tests (http/cli/asset)...${NC}"
+echo -e "${YELLOW}(PHP tests run via: php artisan rsx:test --framework)${NC}"
 echo ""
 
-# Find all test scripts
-test_scripts=$(find "$TESTS_DIR" -name "run_test.sh" -type f | sort)
+test_scripts=$(find "$TESTS_DIR" \( -path '*/http/*.sh' -o -path '*/cli/*.sh' -o -path '*/asset/*.sh' \) -type f -not -path '*/_archive/*' | sort)
 
 if [ -z "$test_scripts" ]; then
     echo -e "${RED}No tests found${NC}"
@@ -79,13 +80,13 @@ while IFS= read -r script; do
 
     echo -e "${BLUE}Running: $rel_path${NC}"
 
-    # Run test and capture stdout/stderr separately
-    # Stderr goes to terminal, stdout captured for result parsing
-    if output=$("$script" 2>&1 | tee /dev/stderr); then
-        exit_code=0
-    else
-        exit_code=$?
-    fi
+    # Run test and capture output. Explicit `bash` prefix per the repo mandate:
+    # downstream, core.fileMode false + the pull's rsync make the exec bit
+    # unreliable, and a 644 test script would otherwise die "Permission denied".
+    output=$(bash "$script" 2>&1) && exit_code=0 || exit_code=$?
+
+    # Show output
+    echo "$output"
 
     # Parse result from output (should be last non-empty line to stdout)
     result=$(echo "$output" | grep -E "^(PASS|FAIL|SKIP):" | tail -n 1)
@@ -95,13 +96,13 @@ while IFS= read -r script; do
     fi
 
     if [ $exit_code -eq 0 ] && echo "$result" | grep -q "^PASS:"; then
-        echo -e "${GREEN}✓ $result${NC}"
+        echo -e "${GREEN}[OK] $result${NC}"
         PASSED=$((PASSED + 1))
     elif echo "$result" | grep -q "^SKIP:"; then
-        echo -e "${YELLOW}○ $result${NC}"
+        echo -e "${YELLOW}[SKIP] $result${NC}"
         SKIPPED=$((SKIPPED + 1))
     else
-        echo -e "${RED}✗ $result${NC}"
+        echo -e "${RED}[FAIL] $result${NC}"
         FAILED=$((FAILED + 1))
     fi
 

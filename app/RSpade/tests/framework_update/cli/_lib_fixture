@@ -1,0 +1,359 @@
+#!/bin/bash
+# =============================================================================
+# framework_update CLI test fixture factory (sourced; intentionally has no .sh
+# extension so the run_all_tests.sh */cli/*.sh glob never runs it as a test).
+#
+# Builds, under a mktemp root:
+#   * a synthetic mini "rspade_system" tree spanning owned zones (app/RSpade,
+#     bin) and the three-way zone (three_way/);
+#   * a bare distribution repo with TWO commits (v1, v2) where v2 changes an
+#     owned file + a three-way file, deletes files, and adds a file;
+#   * a downstream app repo (project root with rsx/resource/, system/ = a chosen
+#     release, git-initialized).
+#
+# Each downstream system/ carries an `artisan` SHIM (a PHP file). When the pull
+# script calls `php <system>/artisan rsx:framework:prune_mutations`, the shim execs
+# the REAL repo's command with --base-dir=<its own dir> so the fixture tree is
+# pruned by the real implementation. rsx:manifest:build is stubbed to write a sentinel churn marker
+# (t9). Every other artisan subcommand is stubbed OK.
+#
+# Globals exported to a sourcing test: FX_ROOT, BARE, PROJECT, V1_SHA, V2_SHA,
+# FX_RELEASE_SHA (the last release fx_add_upstream_release published).
+# =============================================================================
+
+REAL_SCRIPT="/var/www/html/system/bin/framework-pull-upstream.sh.dist"
+REAL_ARTISAN="/var/www/html/system/artisan"
+
+FX_ROOT=""
+BARE=""
+PROJECT=""
+V1_SHA=""
+V2_SHA=""
+# The distribution cache for a fixture run. The real updater caches at
+# /tmp/rspade_upstream.git (Framework_Maintenance::upstream_cache_dir()); every
+# fixture invocation passes --cache-dir=$FX_CACHE so a test NEVER reads or
+# disturbs that shared clone. Tests that drive the script directly (t6/t7/t8)
+# must pass the same flag.
+FX_CACHE=""
+
+fx_init()    { FX_ROOT="$(mktemp -d)"; FX_CACHE="$FX_ROOT/upstream_cache.git"; }
+fx_cleanup() { [ -n "$FX_ROOT" ] && rm -rf "$FX_ROOT" 2>/dev/null || true; }
+
+fx_pass() { echo "PASS: $TEST_NAME"; exit 0; }
+fx_fail() { echo "FAIL: $TEST_NAME - $1"; exit 1; }
+
+fx_assert_contains() { grep -q -- "$2" "$1" 2>/dev/null || fx_fail "expected '$2' in $1"; }
+fx_assert_exists()   { [ -e "$1" ] || fx_fail "expected $1 to exist"; }
+fx_assert_absent()   { [ ! -e "$1" ] || fx_fail "expected $1 to be absent"; }
+
+# Write the fixture artisan shim to $1.
+fx_write_shim() {
+    # ---------------------------------------------------------------------------
+    # THE HEREDOC BELOW IS UNQUOTED (<<PHP, not <<'PHP') AND HAS TO BE:
+    # ${REAL_ARTISAN} is interpolated into the shim. That makes every $( ) and EVERY
+    # BACKTICK inside it a live command substitution, run by THIS shell, in whatever
+    # directory the test was started from.
+    #
+    # A COMMENT IS NOT SAFE HERE. A backticked phrase inside a code comment - the
+    # words for a hard clean, written between backticks - executed that command
+    # against the real repository on every test invocation, deleting untracked files
+    # in the monorepo including two other tests (2026-08-21). Every test still
+    # passed, because the damage was entirely outside the fixture.
+    #
+    # So: escape every dollar as \$, and never use a backtick, not even in prose.
+    # ---------------------------------------------------------------------------
+    cat > "$1" <<PHP
+#!/usr/bin/env php
+<?php
+\$dir  = __DIR__;
+\$args = array_slice(\$argv, 1);
+\$sub  = \$args[0] ?? '';
+if (\$sub === 'rsx:framework:prune_mutations') {
+    // Fixpack E test seams: simulate a live box where the prune's OWN artisan boot
+    // loses the build-lock race (lock timeout) or a broken-PHP tree (non-lock
+    // fatal). Absent BOTH seam files this is a transparent pass-through to the real
+    // command below, so t1-t13 are unaffected.
+    \$fatal_file     = \$dir . '/prune_fatal';          // present => non-lock fatal every time
+    \$countdown_file = \$dir . '/prune_fail_countdown'; // N>0 => lock-timeout, decrement
+    if (is_file(\$fatal_file)) {
+        fwrite(STDERR, "PHP Fatal error: Uncaught Error: Class 'Framework_Mutations' not found in prune\n");
+        exit(255);
+    }
+    if (is_file(\$countdown_file)) {
+        \$n = (int) trim(@file_get_contents(\$countdown_file));
+        if (\$n > 0) {
+            file_put_contents(\$countdown_file, (string) (\$n - 1));
+            // The EXACT RsxLocks lock-timeout line the retry wrapper greps for.
+            fwrite(STDERR, "Failed to acquire WRITE lock for server:MANIFEST_BUILD after 30 seconds\n");
+            exit(1);
+        }
+    }
+    // n==0 or no countdown file: fall through to the real prune exec below.
+}
+if (\$sub === 'rsx:framework:prune_mutations') {
+    // Exec the REAL command with --base-dir=<this fixture system> so the fixture
+    // store/tree is pruned by the real implementation (the prune is
+    // load-bearing for t13 - it must NOT be stubbed).
+    \$extra = array_slice(\$args, 1);
+    \$cmd = 'php ' . escapeshellarg('${REAL_ARTISAN}')
+         . ' ' . escapeshellarg(\$sub) . ' --base-dir=' . escapeshellarg(\$dir)
+         . ' ' . implode(' ', array_map('escapeshellarg', \$extra));
+    passthru(\$cmd, \$rc);
+    exit(\$rc);
+}
+if (\$sub === 'rsx:manifest:build') {
+    // Test seam (t20): a release whose OWN manifest validator fails DETERMINISTICALLY on
+    // the not-yet-migrated app - the field incident that motivated committing the release
+    // BEFORE the rebuild. Present => the rebuild dies every time, with a NON-lock error
+    // (so run_artisan_lock_retry surfaces it immediately instead of retrying). Absent =>
+    // the ordinary churn-recording stub below, so t1-t19 are unaffected.
+    // AT THE PROJECT ROOT, not inside system/: system/ is a submodule that every
+    // update resets (hard reset plus an untracked-file clean), which would delete an
+    // untracked seam file before the rebuild it is supposed to break.
+      if (is_file(dirname(\$dir) . '/manifest_fatal')) {
+        fwrite(STDERR, "[ERROR] Manifest build failed: 655 dispatchable surfaces have no #[Auth] gate\n");
+        exit(1);
+    }
+    // Simulate the real rebuild's manifest pass recording framework churn (class
+    // overrides, use-header rewrites) into the downstream mutation-marker store. t9
+    // proves this ledger SURVIVES the update - reset_store must run BEFORE the
+    // rebuild, not after (B-49).
+    \$store = \$dir . '/storage/rsx-framework';
+    @mkdir(\$store . '/shadow', 0777, true);
+    file_put_contents(\$store . '/mutations.json', '{"version":1,"entries":{"__sentinel__":{"mechanism":"file_write","state":"present"}}}');
+    file_put_contents(\$store . '/shadow/__sentinel__', "sentinel shadow bytes\n");
+    fwrite(STDOUT, "[shim] artisan rsx:manifest:build (stubbed; wrote sentinel churn marker)\n");
+    exit(0);
+}
+fwrite(STDOUT, "[shim] artisan " . implode(' ', \$args) . " (stubbed)\n");
+exit(0);
+PHP
+    chmod +x "$1"
+}
+
+# Populate a v1 mini system tree at $1.
+fx_make_tree_v1() {
+    local sys="$1"
+    mkdir -p "$sys/app/RSpade" "$sys/bin" "$sys/three_way"
+    cp "$REAL_SCRIPT" "$sys/bin/framework-pull-upstream.sh.dist"
+    chmod +x "$sys/bin/framework-pull-upstream.sh.dist"
+
+    # A flag-only maintenance-mode.sh, TRACKED IN THE FAKE UPSTREAM so it survives the
+    # submodule reset every update performs. A test that writes it into the project's
+    # system/ afterwards is writing into a checkout that `git clean -fdx` is about to
+    # empty - the real script would then be missing exactly when the update needs it.
+    #
+    # Flag-only on purpose: a test must never reach supervisorctl and stop the host's
+    # real services.
+    cat > "$sys/bin/maintenance-mode.sh" <<'MAINT'
+#!/bin/bash
+# Test stub: the flag half of maintenance mode, with no service control.
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+FLAG="$PROJECT_ROOT/storage/rsx-framework/.maintenance.mode.framework.update"
+mkdir -p "$(dirname "$FLAG")"
+case "$1" in
+    enable)  printf 'framework update in progress\nmode=development\n' > "$FLAG" ;;
+    disable) rm -f "$FLAG"; touch "$FLAG.disable_called" ;;
+esac
+exit 0
+MAINT
+    chmod +x "$sys/bin/maintenance-mode.sh"
+    fx_write_shim "$sys/artisan"
+    # Byte-fidelity fixture: `* -text` disables git line-ending normalization so a
+    # committed CRLF file survives checkout byte-for-byte (mirrors the real release
+    # tree's .gitattributes). t10 proves the update lands crlf_asset.txt matching its
+    # inventory hash - i.e. CRLF is never normalized to LF through the pull path.
+    printf '* -text\n'              > "$sys/.gitattributes"
+    # Ignored-but-present file (Fixpack C): .gitignore excludes junk-* yet the file
+    # is physically present in the worktree when the release json is generated. The
+    # committed-set (git ls-files) inventory must therefore NOT list it - mirroring
+    # the real vendored node_modules test fixtures/logs that .gitignore drops from
+    # `git add -A` but that used to leak into a find-based inventory (63 permanent
+    # [MISSING] verify errors downstream). t12 proves it never ships.
+    printf 'junk-*\n'               > "$sys/.gitignore"
+    # Optional HOSTILE ignore line (t16 / B-53): a downstream .gitignore that hides
+    # the updater's OWN entry script - the tracked-but-ignored bootstrap class. When
+    # FX_EXTRA_GITIGNORE is set the caller wants the script to be tracked upstream yet
+    # ignored downstream (fx_build_upstream force-adds it; fx_build_downstream's plain
+    # `git add -A` then skips it). Default unset, so t1-t15 are unaffected.
+    if [ -n "${FX_EXTRA_GITIGNORE:-}" ]; then
+        printf '%s\n' "$FX_EXTRA_GITIGNORE" >> "$sys/.gitignore"
+    fi
+    # Optional OWNED-FILE plant (t25): app/Http/Kernel.php is a framework-owned FILE,
+    # and it is the only owned file that lives in a NESTED directory - which is what
+    # proves the owned-file sync creates the parent directory instead of silently
+    # skipping the path. Default unset, so every other test's tree is unaffected.
+    if [ -n "${FX_PLANT_HTTP_KERNEL:-}" ]; then
+        mkdir -p "$sys/app/Http"
+        printf '<?php // Kernel v1\n' > "$sys/app/Http/Kernel.php"
+    fi
+    printf 'ignored build junk\n'   > "$sys/app/RSpade/junk-artifact.log"
+    printf 'line1\r\nline2\r\n'     > "$sys/app/RSpade/crlf_asset.txt"
+    printf 'keep_b constant\n'      > "$sys/app/RSpade/keep_b.php"
+    printf 'core_a VERSION 1\n'     > "$sys/app/RSpade/core_a.php"
+    printf 'gone removed in v2\n'   > "$sys/app/RSpade/gone.php"
+    printf 'stable constant\n'      > "$sys/three_way/stable.txt"
+    printf 'u1\n'                   > "$sys/three_way/upstream_change.txt"
+    printf 'c1\n'                   > "$sys/three_way/conflict.txt"
+    printf 'removed in v2\n'        > "$sys/three_way/removed.txt"
+}
+
+# Apply the v1 -> v2 delta in-place at $1.
+fx_apply_v2() {
+    local sys="$1"
+    rm -f "$sys/app/RSpade/gone.php" "$sys/three_way/removed.txt"
+    printf 'core_a VERSION 2 changed\n' > "$sys/app/RSpade/core_a.php"
+    # v2 adds an ignore rule. .gitignore is an OWNED FILE (2026-08-11), so this must
+    # arrive by hard sync on every box - including one that hand-edited its own copy.
+    # Under the old three-way treatment a single local tweak preserved that file
+    # forever, and the box silently stopped receiving every future rule (t25).
+    printf 'v2-only-ignore-rule\n'      >> "$sys/.gitignore"
+    # v2 changes the owned Kernel - the release editing the app's request stack on its
+    # behalf, which is the whole reason the file is owned rather than three-way merged.
+    if [ -n "${FX_PLANT_HTTP_KERNEL:-}" ]; then
+        printf '<?php // Kernel v2 with a new middleware\n' > "$sys/app/Http/Kernel.php"
+    fi
+    printf 'u2\n'                       > "$sys/three_way/upstream_change.txt"
+    printf 'c2\n'                       > "$sys/three_way/conflict.txt"
+    printf 'added in v2\n'              > "$sys/three_way/added.txt"
+}
+
+# Build the bare distribution repo with commits v1 and v2. Sets BARE/V1_SHA/V2_SHA.
+fx_build_upstream() {
+    local work="$FX_ROOT/upstream_work"
+    BARE="$FX_ROOT/upstream.git"
+    rm -rf "$work" "$BARE"
+    mkdir -p "$work"
+    ( cd "$work" && git init -q && git config user.email t@t && git config user.name test )
+
+    fx_make_tree_v1 "$work"
+    # Track the updater's own entry script even under a hostile FX_EXTRA_GITIGNORE
+    # (mirrors rspade_system, which keeps tracking the already-added file despite the
+    # ignore line). A no-op when the script is not ignored (t1-t15).
+    ( cd "$work" && git add -f bin/framework-pull-upstream.sh.dist >/dev/null 2>&1 || true )
+    ( cd "$work" && git add -A && git commit -q -m "v1 release" )
+    V1_SHA="$( cd "$work" && git rev-parse HEAD )"
+
+    fx_apply_v2 "$work"
+    # The v2 commit carries a REAL release-squash BODY, not just a subject. This mirrors
+    # rspade_system, where bin/publish embeds every underlying monorepo commit's full message
+    # into the release commit's body - which is the whole reason the framework-update commit
+    # can carry substantive text at all. A subject-only fixture would make the changelog
+    # trivially empty and prove nothing about it. The Co-Authored-By line is deliberate: it
+    # exercises the agent-attribution filter that keeps this text customer-facing.
+    ( cd "$work" && git add -A && git commit -q -F - <<'FXMSG'
+v2 release: change core_a + config, delete removed, add added
+
+abc1234567 2026-08-11
+Change core_a and add the config zone
+
+This is the SUBSTANTIVE rationale that must reach a downstream app's git history.
+It spans several lines and a blank line, because a real commit body does.
+
+  - core_a bumped to VERSION 2
+  - a config file added under the three-way zone
+
+Co-Authored-By: Somebody <nobody@example.com>
+FXMSG
+    )
+    V2_SHA="$( cd "$work" && git rev-parse HEAD )"
+
+    git clone -q --bare "$work" "$BARE"
+}
+
+# Publish ANOTHER release on top of whatever fx_build_upstream left in the upstream
+# work tree, and push it to the bare distribution. Sets FX_RELEASE_SHA.
+#
+# A THIRD release is what makes a multi-release range testable: a changelog that
+# spans B and C proves the range came from the recorded pointer rather than from any
+# single checkout. The body mirrors a real release squash (bin/publish embeds every
+# underlying monorepo commit's message), including the agent-attribution line the
+# changelog filter has to strip.
+FX_RELEASE_SHA=""
+fx_add_upstream_release() {
+    local subject="$1" marker="$2"
+    local work="$FX_ROOT/upstream_work"
+
+    printf '%s\n' "$marker" > "$work/app/RSpade/core_a.php"
+    (
+        cd "$work" || exit 1
+        git add -A
+        git commit -q -F - <<EOF
+$subject
+
+$marker
+
+Co-Authored-By: Somebody <nobody@example.com>
+EOF
+        git push -q "$BARE" master
+    ) || return 1
+    FX_RELEASE_SHA="$( cd "$work" && git rev-parse HEAD )"
+}
+
+# Build the downstream app repo with system/ at the given release (v1|v2).
+# Sets PROJECT.
+# Build a downstream project with system/ as a SUBMODULE of the fake distribution -
+# the shape every current environment has.
+#
+# protocol.file.allow=always is required throughout: git refuses file:// submodules by
+# default (CVE-2022-39253), and the whole fixture is local bare repositories.
+fx_build_downstream() {
+    local ver="${1:-v1}"
+    PROJECT="$FX_ROOT/project"
+    rm -rf "$PROJECT"
+    # storage/ lives at the PROJECT ROOT, one level above the submodule.
+    mkdir -p "$PROJECT/rsx/resource" "$PROJECT/storage/rsx-framework"
+
+    local sha="$V1_SHA"
+    [ "$ver" = "v2" ] && sha="$V2_SHA"
+
+    (
+        cd "$PROJECT" || exit 1
+        git init -q && git config user.email t@t && git config user.name test
+        printf 'IS_FRAMEWORK_DEVELOPER=false\n' > .env
+        git -c protocol.file.allow=always submodule add -q "$BARE" system >/dev/null 2>&1
+        git -C system checkout -q "$sha"
+        git add -A && git commit -q -m "downstream $ver"
+    )
+
+    chmod +x "$PROJECT/system/bin/framework-pull-upstream.sh.dist" "$PROJECT/system/artisan" 2>/dev/null || true
+}
+
+# Build a downstream project with system/ VENDORED - the pre-submodule shape, kept so
+# the one-time conversion can be tested. Nothing else should use this.
+fx_build_downstream_vendored() {
+    local ver="${1:-v1}"
+    PROJECT="$FX_ROOT/project"
+    rm -rf "$PROJECT"
+    mkdir -p "$PROJECT/system" "$PROJECT/rsx/resource"
+
+    local sha="$V1_SHA"
+    [ "$ver" = "v2" ] && sha="$V2_SHA"
+    git --git-dir="$BARE" archive --format=tar "$sha" | tar -x -C "$PROJECT/system"
+    chmod +x "$PROJECT/system/bin/framework-pull-upstream.sh.dist" "$PROJECT/system/artisan"
+
+    ( cd "$PROJECT" && git init -q && git config user.email t@t && git config user.name test \
+        && printf 'IS_FRAMEWORK_DEVELOPER=false\n' > .env \
+        && git add -A && git commit -q -m "downstream $ver (vendored)" )
+}
+
+# The revision the project RECORDS for system/, and the one it is CHECKED OUT at.
+fx_recorded_revision() {
+    git -C "$PROJECT" ls-files -s -- system 2>/dev/null | awk '$1 == "160000" { print $2; exit }'
+}
+fx_actual_revision() {
+    git -C "$PROJECT/system" rev-parse HEAD 2>/dev/null
+}
+
+# Run the pull script inside the downstream project. Captures FX_OUT / FX_RC.
+FX_OUT=""
+FX_RC=0
+fx_run_pull() {
+    # --no-service-control: tests must never stop/start the host's real php-fpm (a global
+    # supervisorctl action). The auto-commit still runs (the downstream is a real git repo),
+    # exercising that path in a temp repo with no global side effects.
+    FX_OUT="$( cd "$PROJECT" && git config protocol.file.allow always >/dev/null 2>&1;
+        bash "$PROJECT/system/bin/framework-pull-upstream.sh.dist" \
+        --upstream-url="$BARE" --no-service-control "$@" 2>&1 )"
+    FX_RC=$?
+}

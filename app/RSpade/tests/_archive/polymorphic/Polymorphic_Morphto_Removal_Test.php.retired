@@ -1,0 +1,44 @@
+<?php
+/**
+ * CODING CONVENTION:
+ * This file follows the coding convention where variable_names and function_names
+ * use snake_case (underscore_wherever_possible).
+ */
+
+namespace App\RSpade\Tests\Polymorphic\Php;
+
+use App\RSpade\Core\Files\File_Attachment_Model;
+use App\RSpade\Core\Search\Search_Index_Model;
+use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+
+/**
+ * Pins the removal of the two dead + broken morphTo()-backed relationships on the
+ * framework-core type-ref models (B4.3).
+ *
+ * Both File_Attachment_Model (fileable_type) and Search_Index_Model (indexable_type)
+ * store their polymorphic *_type discriminator as a BIGINT via $type_ref_columns.
+ * Laravel's morphTo() reads the raw integer and crashes on such a column, so the
+ * historic fileable()/indexable() methods were unusable dead code. They have been
+ * deleted; this test fails loud if either is ever reintroduced.
+ */
+class Polymorphic_Morphto_Removal_Test extends Rsx_Test_Abstract
+{
+    // Pure reflection - no database access.
+    protected static $use_database_transactions = false;
+
+    public static function test_file_attachment_model_has_no_fileable_relation()
+    {
+        static::__assert_false(
+            method_exists(File_Attachment_Model::class, 'fileable'),
+            'File_Attachment_Model must not expose a morphTo()-backed fileable() relation on a $type_ref_columns model'
+        );
+    }
+
+    public static function test_search_index_model_has_no_indexable_relation()
+    {
+        static::__assert_false(
+            method_exists(Search_Index_Model::class, 'indexable'),
+            'Search_Index_Model must not expose a morphTo()-backed indexable() relation on a $type_ref_columns model'
+        );
+    }
+}

@@ -5,6 +5,7 @@ namespace App\RSpade\Integrations\Jqhtml;
 use Exception;
 use RuntimeException;
 use App\RSpade\Core\Bundle\BundleProcessor_Abstract;
+use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Integrations\Jqhtml\JqhtmlWebpackCompiler;
 use App\RSpade\Integrations\Jqhtml\Jqhtml_Exception_ViewException;
 
@@ -16,6 +17,14 @@ use App\RSpade\Integrations\Jqhtml\Jqhtml_Exception_ViewException;
  */
 class Jqhtml_BundleProcessor extends BundleProcessor_Abstract
 {
+    /**
+     * Derived-cache namespace for the bundle-ready compiled template (the parser's output
+     * wrapped in its provenance comment). Its sibling namespace `jqhtml-parsed` holds the
+     * parser's RAW output, cached by JqhtmlWebpackCompiler one layer down. See
+     * App\RSpade\Core\Cache\File_Content_Cache.
+     */
+    public const COMPILED_NAMESPACE = 'jqhtml-compiled';
+
     /**
      * Compiler instance
      */
@@ -72,23 +81,21 @@ class Jqhtml_BundleProcessor extends BundleProcessor_Abstract
 
             console_debug('JQHTML', "Processing file: {$path}");
 
-            // Generate temp file path for compiled output. Keyed on the checkout-
-            // RELATIVE path plus file CONTENT (not absolute path + mtime/size): the
-            // temp filename participates in the bundle's file ordering, so a checkout-
-            // or mtime-dependent name would make the compiled-template concatenation
-            // order differ between two byte-identical checkouts.
-            // The parser's version is part of the key for the same reason it is part of
-            // compile_file()'s: a cached compile is the PARSER'S output, and neither the
+            // The wrapped compile lives in the shared derived cache, whose key is
+            // _rsx_file_hash_for_build() - the framework's ONE file-identity helper. That
+            // name participates in the bundle's file ordering, and the determinism the
+            // ordering needs is a SEALED-BUILD property: in production/debug the helper
+            // hashes the checkout-RELATIVE path plus the content, so two byte-identical
+            // checkouts produce identical names. In development it folds in mtime, which is
+            // exactly the staleness test this loop used to perform by hand.
+            // The parser's VERSION is the variant, for the same reason it is part of
+            // compile_file()'s key: a cached compile is the PARSER'S output, and neither the
             // template's path nor its content moves when @jqhtml/parser is upgraded.
-            $cache_key = md5(
-                _rsx_relative_build_path($path) . ':' . md5_file($path)
-                . ':' . JqhtmlWebpackCompiler::_parser_version()
-            );
-            $temp_file = storage_path('rsx-tmp/jqhtml_' . substr($cache_key, 0, 16) . '.js');
+            $variant = '_pv' . JqhtmlWebpackCompiler::_parser_version();
+            $temp_file = File_Content_Cache::path(self::COMPILED_NAMESPACE, $path, $variant, 'js');
 
             // Check if we need to compile
-            $needs_compile = !file_exists($temp_file) ||
-                           (filemtime($path) > filemtime($temp_file));
+            $needs_compile = File_Content_Cache::get(self::COMPILED_NAMESPACE, $path, $variant, 'js', true) === null;
 
             if ($needs_compile) {
                 console_debug('JQHTML', "Compiling: {$path}");
@@ -111,8 +118,14 @@ class Jqhtml_BundleProcessor extends BundleProcessor_Abstract
                         $wrapped_code .= "\n";
                     }
 
-                    // Write to temp file
-                    file_put_contents_safe($temp_file, $wrapped_code);
+                    // Write to the derived cache (atomic; this is also the bundle input)
+                    $temp_file = File_Content_Cache::put(
+                        self::COMPILED_NAMESPACE,
+                        $path,
+                        $variant,
+                        'js',
+                        $wrapped_code
+                    );
 
                     console_debug('JQHTML', "Compiled {$path} -> {$temp_file} (" . strlen($wrapped_code) . ' bytes)');
                 } catch (Jqhtml_Exception_ViewException $e) {

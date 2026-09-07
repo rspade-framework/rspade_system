@@ -1,0 +1,98 @@
+#!/bin/bash
+# =============================================================================
+# environment_updates CLI test fixture (sourced; intentionally has no .sh
+# extension so run_all_tests.sh's */cli/*.sh glob never runs it as a test).
+#
+# The scripts under test resolve PROJECT_ROOT and SYSTEM_DIR from the environment
+# when they are set, so a test runs the REAL script against a synthetic project
+# under a mktemp root. Nothing is copied: the script on disk is the subject.
+#
+# The container gate is satisfied by /.rspade_container, which exists on every box
+# these tests run on (they run inside the RSpade container). A test that finds it
+# absent SKIPs rather than asserting a no-op.
+#
+# Globals exported to a sourcing test: FX_ROOT, FX_APP, FX_OUT, FX_ERR, FX_RC.
+# =============================================================================
+
+FX_ENV_UPDATES="/var/www/html/system/bin/environment_updates"
+FX_POST_UPDATE="/var/www/html/system/bin/post-update.sh"
+
+FX_ROOT=""
+FX_APP=""
+FX_OUT=""
+FX_ERR=""
+FX_RC=0
+
+fx_pass() { echo "PASS: $TEST_NAME"; exit 0; }
+fx_fail() { echo "FAIL: $TEST_NAME - $1"; exit 1; }
+fx_skip() { echo "SKIP: $TEST_NAME - $1"; exit 0; }
+
+fx_init() {
+    [ -f /.rspade_container ] || fx_skip "not running inside the RSpade container (the scripts are container-gated)"
+    FX_ROOT="$(mktemp -d)"
+    FX_APP="$FX_ROOT/app"
+    mkdir -p "$FX_APP/system/bin" "$FX_APP/rsx/resource" "$FX_APP/.claude/skills"
+}
+
+fx_cleanup() { [ -n "$FX_ROOT" ] && rm -rf "$FX_ROOT" 2>/dev/null || true; }
+
+# fx_skill <name> - author an application skill in the sandbox.
+fx_skill() {
+    mkdir -p "$FX_APP/rsx/resource/skills/$1"
+    printf -- '---\nname: %s\ndescription: fixture skill.\n---\n\n# %s\n' "$1" "$1" \
+        > "$FX_APP/rsx/resource/skills/$1/SKILL.md"
+}
+
+# fx_run <script-basename> [VAR=VALUE ...] - run one environment update against the
+# sandbox, capturing stdout and stderr SEPARATELY (the quiet contract is about which
+# stream a line lands on).
+fx_run() {
+    local script="$1"; shift
+    local out_file="$FX_ROOT/stdout" err_file="$FX_ROOT/stderr"
+
+    env PROJECT_ROOT="$FX_APP" SYSTEM_DIR="$FX_APP/system" IS_FRAMEWORK_DEVELOPER=false "$@" \
+        bash "$FX_ENV_UPDATES/$script" > "$out_file" 2> "$err_file"
+    FX_RC=$?
+    FX_OUT="$(cat "$out_file")"
+    FX_ERR="$(cat "$err_file")"
+}
+
+fx_assert_rc() {
+    [ "$FX_RC" -eq "$1" ] || fx_fail "${2:-expected exit $1, got $FX_RC}. stdout: $FX_OUT stderr: $FX_ERR"
+}
+
+fx_assert_out() {
+    case "$FX_OUT" in
+        *"$1"*) : ;;
+        *) fx_fail "${2:-expected stdout to contain '$1'}. stdout: $FX_OUT" ;;
+    esac
+}
+
+fx_refute_out() {
+    case "$FX_OUT" in
+        *"$1"*) fx_fail "${2:-did not expect '$1' on stdout}. stdout: $FX_OUT" ;;
+    esac
+}
+
+fx_assert_err() {
+    case "$FX_ERR" in
+        *"$1"*) : ;;
+        *) fx_fail "${2:-expected stderr to contain '$1'}. stderr: $FX_ERR" ;;
+    esac
+}
+
+fx_assert_silent_stdout() {
+    [ -z "$FX_OUT" ] || fx_fail "${1:-expected no stdout}. stdout: $FX_OUT"
+}
+
+# fx_assert_link <name> <expected-literal-target>
+fx_assert_link() {
+    local link="$FX_APP/.claude/skills/$1"
+    [ -L "$link" ] || fx_fail "expected .claude/skills/$1 to be a symlink"
+    local actual
+    actual="$(readlink "$link")"
+    [ "$actual" = "$2" ] || fx_fail ".claude/skills/$1 -> '$actual', expected '$2'"
+    [ -e "$link" ] || fx_fail ".claude/skills/$1 does not resolve"
+}
+
+fx_assert_absent() { [ ! -e "$FX_APP/.claude/skills/$1" ] && [ ! -L "$FX_APP/.claude/skills/$1" ] || fx_fail "expected .claude/skills/$1 to be gone"; }

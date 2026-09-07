@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Manifest\Modules;
 
 use RuntimeException;
 use App\RSpade\Core\Manifest\ManifestModule_Abstract;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 
 /**
  * Module for processing Blade template files in the manifest
@@ -91,13 +92,14 @@ class Blade_ManifestModule extends ManifestModule_Abstract
         if (preg_match('/@rsx_id\s*\(\s*[\'"]([^\'"]+)[\'"]\s*\)/', $content, $matches)) {
             $rsx_id = $matches[1];
 
-            // Validate RSX ID format: must start with uppercase, have at least 2 segments separated by underscores
-            if (!preg_match('/^[A-Z][A-Za-z0-9]*(_[A-Za-z0-9]+)+$/', $rsx_id)) {
+            // Validate RSX ID format: at least 2 segments separated by underscores, and the
+            // name shape from Rsx_Identifier (a capital, optionally preceded by ONE underscore).
+            if (!preg_match('/^_?[A-Z][A-Za-z0-9]*(_[A-Za-z0-9]+)+$/', $rsx_id)) {
                 throw new RuntimeException(
                     "Invalid RSX ID format in {$file_path}\n" .
                     "  RSX ID: '{$rsx_id}'\n" .
                     "  RSX IDs must:\n" .
-                    "    - Start with an uppercase letter (A-Z)\n" .
+                    "    - Start with an uppercase letter (A-Z), optionally preceded by a single underscore\n" .
                     "    - Have at least 2 segments separated by underscores\n" .
                     "    - Contain only alphanumeric characters (A-Z, a-z, 0-9) and underscores\n" .
                     "  Convention: First segment describes the name, second describes the type\n" .
@@ -136,7 +138,7 @@ class Blade_ManifestModule extends ManifestModule_Abstract
             $rsx_extends = $matches[1];
 
             // Validate RSX extends format: must match RSX ID format (no periods, must be valid ID)
-            if (!preg_match('/^[A-Z][A-Za-z0-9_]*$/', $rsx_extends)) {
+            if (!Rsx_Identifier::is_class_name($rsx_extends)) {
                 // Check if periods were used (common mistake from Laravel @extends)
                 if (str_contains($rsx_extends, '.')) {
                     throw new RuntimeException(
@@ -151,7 +153,7 @@ class Blade_ManifestModule extends ManifestModule_Abstract
                         "    - NOT: @rsx_extends('app.dashboard.layout')\n" .
                         "  \n" .
                         "  RSX IDs must:\n" .
-                        "    - Start with an uppercase letter (A-Z)\n" .
+                        "    - Start with an uppercase letter (A-Z), optionally preceded by a single underscore\n" .
                         "    - Contain only alphanumeric characters (A-Z, a-z, 0-9) and underscores (_)\n" .
                         '    - Match exactly the @rsx_id defined in the target blade file'
                     );
@@ -161,7 +163,7 @@ class Blade_ManifestModule extends ManifestModule_Abstract
                     "Invalid @rsx_extends format in {$file_path}\n" .
                     "  @rsx_extends('{$rsx_extends}')\n" .
                     "  RSX IDs must:\n" .
-                    "    - Start with an uppercase letter (A-Z)\n" .
+                    "    - Start with an uppercase letter (A-Z), optionally preceded by a single underscore\n" .
                     "    - Contain only alphanumeric characters (A-Z, a-z, 0-9) and underscores (_)\n" .
                     "  Example: @rsx_extends('Dashboard_Layout')"
                 );
@@ -202,7 +204,7 @@ class Blade_ManifestModule extends ManifestModule_Abstract
 
             // Validate each RSX include format
             foreach ($rsx_includes as $rsx_include) {
-                if (!preg_match('/^[A-Z][A-Za-z0-9_]*$/', $rsx_include)) {
+                if (!Rsx_Identifier::is_class_name($rsx_include)) {
                     // Check if periods were used (common mistake from Laravel @include)
                     if (str_contains($rsx_include, '.')) {
                         throw new RuntimeException(
@@ -217,7 +219,7 @@ class Blade_ManifestModule extends ManifestModule_Abstract
                             "    - NOT: @rsx_include('partials.user.card')\n" .
                             "  \n" .
                             "  RSX IDs must:\n" .
-                            "    - Start with an uppercase letter (A-Z)\n" .
+                            "    - Start with an uppercase letter (A-Z), optionally preceded by a single underscore\n" .
                             "    - Contain only alphanumeric characters (A-Z, a-z, 0-9) and underscores (_)\n" .
                             '    - Match exactly the @rsx_id defined in the target blade file'
                         );
@@ -227,7 +229,7 @@ class Blade_ManifestModule extends ManifestModule_Abstract
                         "Invalid @rsx_include format in {$file_path}\n" .
                         "  @rsx_include('{$rsx_include}')\n" .
                         "  RSX IDs must:\n" .
-                        "    - Start with an uppercase letter (A-Z)\n" .
+                        "    - Start with an uppercase letter (A-Z), optionally preceded by a single underscore\n" .
                         "    - Contain only alphanumeric characters (A-Z, a-z, 0-9) and underscores (_)\n" .
                         "  Example: @rsx_include('User_Card')"
                     );

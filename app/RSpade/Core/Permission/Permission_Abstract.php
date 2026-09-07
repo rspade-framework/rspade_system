@@ -104,6 +104,21 @@ abstract class Permission_Abstract
     }
 
     /**
+     * The control-panel gate: may this user open the framework's /_sys panel?
+     *
+     * Today this is is_logged_in() - every signed-in staff identity may open the panel.
+     * Narrowing it to a role or ACL is a pending owner decision; when it lands it lands
+     * HERE, and every #[Auth('is_sysadmin')] surface follows without a call-site change.
+     * Marked #[Replaceable] for the same reason as is_logged_in().
+     */
+    #[Auth_Check]
+    #[Replaceable]
+    public static function is_sysadmin(): bool
+    {
+        return Session::is_logged_in();
+    }
+
+    /**
      * Whether every gate declared on a TARGET surface passes for the current user.
      *
      * Targets use the spellings Rsx::Route() takes: 'Controller::method' (a bare

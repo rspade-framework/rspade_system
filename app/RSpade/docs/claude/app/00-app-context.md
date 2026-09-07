@@ -25,13 +25,17 @@ Your `/rsx/` was **seeded from** the RSpade reference application and is yours f
 
 **It is READ-ONLY.** All of `system/` is overwritten by `rsx:framework:pull`; edits there vanish. Copy OUT of it into your `/rsx/`, never work inside it. It is invisible to the manifest and to `rsx:check` (any directory named `resource/` is ignored **by name** — which is what stops its classes colliding with yours). Details: `rsx:man template_app`.
 
+### The framework's own panel at `/_sys`
+
+**`/_sys` and everything named `_Sys_*` / `_Apidocs_*` are framework property**: never modify `system/app/RSpade/Sys/`, never declare a `_`-prefixed name in `rsx/` (`NAME-RESERVED-01` refuses it — the manifest would read it as a class override and silently shadow the framework's file), and never extend, render or hand-link a `_Sys_*` class, component or URL (`NAME-RESERVED-02` makes a REFERENCE to any framework-declared `_`-prefixed name — or to a framework `_`/`__`-prefixed static — fatal at manifest build) — linking to the panel is `Rsx::Route('_Sys_Dashboard_Action')` guarded by `Permission::can_access('_Sys_Dashboard_Action')`, and nothing else (both are strings, which is why they stay legal; the ACTION class is the target because a SPA route is never registered under its bootstrap controller, and the entry is published into every bundle so both answer client-side too). Switch it off with `'sys_panel' => ['enabled' => false]`, narrow its `is_sysadmin` gate by class-overriding the permission class, and take anything further to a framework change request (`rsx:man framework_debug_and_contrib`). Details: `rsx:man sys_panel`, skill `rspade:sys-panel`.
+
 ### Project documentation
 
 Write your own man pages as `rsx/resource/man/*.txt` - they are served by the same `php artisan rsx:man <topic>` as the framework's, and that directory's `CLAUDE.md` carries the format. Keep app-specific conventions there rather than growing this always-on file.
 
 ### Testing in your app
 
-`rsx:test` runs YOUR application suite (the tests under `/rsx/`). Framework tests are **not shipped** with a release, so `rsx:test --framework` has nothing to run here - it is a monorepo-only command.
+`rsx:test` runs YOUR application suite (the tests under `/rsx/`). `rsx:test --framework` runs the framework's own suite, which ships as a **software and environment integrity audit** for an administrator - long, rarely needed, never part of development. **Drafting a framework change request never runs a full suite**: run the group for the subsystem you touched (`rsx:test --group=<concern>`) or none at all and say so - the framework environment runs its whole suite when it integrates the request (`rsx:man framework_debug_and_contrib`).
 
 ### Auth vocabulary
 

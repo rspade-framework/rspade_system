@@ -8,6 +8,7 @@
 import * as vscode from 'vscode';
 import { RspadeFormattingProvider } from './formatting_provider';
 import { AutoRenameProvider } from './auto_rename_provider';
+import { CLASS_NAME_FRAGMENT, is_class_name } from './rspade_recognizers';
 
 export class RspadeClassRefactorProvider {
     private formatting_provider: RspadeFormattingProvider;
@@ -69,8 +70,8 @@ export class RspadeClassRefactorProvider {
                     if (!value) {
                         return 'Class name cannot be empty';
                     }
-                    if (!/^[A-Z][a-zA-Z0-9_]*$/.test(value)) {
-                        return 'Class name must be PascalCase (uppercase first letter)';
+                    if (!is_class_name(value)) {
+                        return 'Class name must be PascalCase (uppercase first letter), optionally with ONE leading underscore for a framework-application name';
                     }
                     if (value === class_info.class_name) {
                         return 'New class name must be different from current name';
@@ -183,7 +184,8 @@ export class RspadeClassRefactorProvider {
 
         // Check for class definition at indent level 0: class ClassName or class ClassName extends Parent
         // Must be at start of line (indent level 0)
-        const class_match = line.match(/^(?:abstract\s+|final\s+)?class\s+([A-Z][a-zA-Z0-9_]*)/);
+        const class_match = line.match(
+            new RegExp(`^(?:abstract\\s+|final\\s+)?class\\s+(${CLASS_NAME_FRAGMENT})`));
         if (class_match) {
             const class_name = class_match[1];
             return { class_name };

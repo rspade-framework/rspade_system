@@ -115,6 +115,10 @@ public static function save(Request $request, array $params = [])
 }
 ```
 
+**A server-side length check reads the column, never a literal**: `Model::field_length('col')`
+is the same number the input's `$max_length` binds, so `strlen()` rules and a private
+`const NAME_MAX = 255` copied out of the schema are both wrong (`rsx:man model`).
+
 **Blank is a value; absent means untouched.** Every input serializes on every submit, so
 a blank field arrives as `''` - something the user *did*, never an omission.
 

@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import { IdeBridgeClient } from './ide_bridge_client';
+import { pascal_to_snake_case } from './rspade_recognizers';
 
 /**
  * Provides automatic file renaming based on RSX naming conventions
@@ -451,21 +452,15 @@ export class AutoRenameProvider {
     }
 
     /**
-     * Convert PascalCase to snake_case
-     * Inserts underscores before uppercase letters and before first digit in number sequences
-     * Example: TestComponent1 -> Test_Component_1
+     * Convert PascalCase to snake_case.
+     *
+     * The conversion itself lives in rspade_recognizers so it is testable without
+     * an editor (out/test/run_recognizer_tests.js): TestComponent1 ->
+     * Test_Component_1, Sys_Card -> Sys_Card, _Sys_Card -> _Sys_Card (a single
+     * leading underscore survives and is never doubled).
      */
     private pascal_to_snake_case(name: string): string {
-        // Insert underscore before uppercase letters (except first character)
-        let result = name.replace(/(?<!^)([A-Z])/g, '_$1');
-
-        // Insert underscore before first digit in a run of digits
-        result = result.replace(/(?<!^)(?<![0-9])([0-9])/g, '_$1');
-
-        // Replace multiple consecutive underscores with single underscore
-        result = result.replace(/_+/g, '_');
-
-        return result;
+        return pascal_to_snake_case(name);
     }
 
     /**

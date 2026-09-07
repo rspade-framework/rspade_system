@@ -1,0 +1,50 @@
+._Sys_Sidebar_Nav {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+
+    &__section-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--rsx-muted);
+        padding: 0 12px 6px;
+    }
+
+    &__link {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 12px;
+        margin: 0 6px 2px;
+        border-radius: 6px;
+        color: var(--rsx-text);
+        text-decoration: none;
+
+        i {
+            width: 18px;
+            text-align: center;
+            color: var(--rsx-muted);
+        }
+
+        &:hover {
+            background: var(--rsx-raised);
+            color: var(--rsx-accent);
+
+            i {
+                color: var(--rsx-accent);
+            }
+        }
+
+        &.active {
+            background: var(--rsx-accent-soft);
+            color: var(--rsx-accent);
+            font-weight: 600;
+
+            i {
+                color: var(--rsx-accent);
+            }
+        }
+    }
+}

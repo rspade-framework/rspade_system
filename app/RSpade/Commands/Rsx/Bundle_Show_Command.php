@@ -4,6 +4,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
 
@@ -37,6 +38,9 @@ class Bundle_Show_Command extends Command
         foreach ($manifest_data as $file_info) {
             // Only show Module Bundles (compilable page bundles), not Asset Bundles
             $class_name = $file_info['class'] ?? null;
+            // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+            if ($class_name && !Rsx_Identifier::is_visible_to_developer($class_name)) { continue; }
+
             if ($class_name && Manifest::php_is_subclass_of($class_name, 'Rsx_Module_Bundle_Abstract')) {
                 $fqcn = $file_info['fqcn'] ?? $class_name;
                 $bundle_classes[$fqcn] = $class_name;

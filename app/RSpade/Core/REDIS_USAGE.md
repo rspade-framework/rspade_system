@@ -12,7 +12,7 @@ that opens a connection points its comment there.
 
 | DB | Holds | Flushed by `RsxCache::clear()` |
 |----|-------|-------------------------------|
-| 0 | Volatile cache (`RsxCache`, including its persistent namespace) and the realtime emitter hashes `rsx_rt:em:*` | YES - on every database transaction rollback |
+| 0 | Volatile cache (`RsxCache`, including its persistent namespace), the realtime emitter hashes `rsx_rt:em:*` and `AssetHandler`'s `rspade:public_asset:*` entries | YES for `cache:<scope token>:*` - on every database transaction rollback. Nothing else on DB 0 is touched |
 | 1 | Locks and the task worker registry (`Task_Worker_Registry`) | never |
 | 2 | Reduced-volatility cache: the full page cache (`Rsx_FPC`, `system/bin/fpc-proxy.js`) and `_RVC_`-prefixed cache keys | never |
 | 3 | Transient counters (`Rsx_Counter`) | never |
@@ -36,6 +36,11 @@ High-performance caching with automatic invalidation when code changes.
 
 ### Key Features
 - **Automatic prefixing**: Uses manifest build key to invalidate on code changes
+- **Database scoping**: every key is `cache:<Rsx_Connection_Scope::token()>:<sha1>` - the
+  same `(database, host)` token `RsxLocks` and `Task_Worker_Registry` use - so two
+  environments sharing one Redis (the developer database and the test database) share no
+  cache entry, and `clear()` MATCHes only the calling scope. `Rsx_Counter` keys carry the
+  same scope (`counter:<token>:<sha1>`)
 - **Persistent namespace**: `*_persistent()` keys skip the build prefix and survive a rebuild
 - **LRU eviction**: 128MB cache with automatic eviction of least-used items
 - **Type preservation**: Automatically serializes/deserializes complex types

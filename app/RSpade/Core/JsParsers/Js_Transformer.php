@@ -14,6 +14,7 @@ namespace App\RSpade\Core\JsParsers;
 
 use Illuminate\Support\Facades\File;
 use RuntimeException;
+use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 
 /**
@@ -29,9 +30,10 @@ class Js_Transformer
     protected const BABEL_SERVICE_MODULE = 'app/RSpade/Core/JsParsers/resource/babel-service.js';
 
     /**
-     * Cache directory for transformed JavaScript files
+     * Derived-cache namespace for transformed JavaScript. See
+     * App\RSpade\Core\Cache\File_Content_Cache - the ONE per-source-file cache helper.
      */
-    protected const CACHE_DIR = 'storage/rsx-tmp/babel_cache';
+    protected const CACHE_NAMESPACE = 'babel';
 
     /**
      * Vendored decorator fork bundle (participates in the cache fingerprint)
@@ -52,30 +54,40 @@ class Js_Transformer
      */
     public static function transform(string $file_path, string $target = 'modern'): string
     {
-        // Generate cache key using file hash, target, and toolchain fingerprint.
-        // The fingerprint folds in the transformer script, the vendored decorator fork,
-        // and the @babel/core version so that swapping any of them invalidates every
-        // cache entry automatically (old entries orphan harmlessly).
-        $cache_key = _rsx_file_hash_for_build($file_path) . '_' . $target . '_' . static::_toolchain_fingerprint();
-        $cache_file = rsx_project_file_path(self::CACHE_DIR . '/' . $cache_key . '.js');
+        return file_get_contents(static::transform_to_file($file_path, $target));
+    }
 
-        // Check if cached result exists
-        if (file_exists($cache_file)) {
-            $mtime_cache = filemtime($cache_file);
-            $mtime_source = filemtime($file_path);
+    /**
+     * Transform a JavaScript file and return the PATH of the cache entry holding the result.
+     *
+     * The bundle compiler wants the transformed code as a FILE (it hands the concatenator a
+     * path per input), and the cache entry already is that file. Returning it instead of
+     * writing a second copy under a name of the compiler's own is what removed 301 loose
+     * `rsx-tmp/babel_<md5 of path>.js` scratch files that nothing ever invalidated.
+     *
+     * @param string $file_path Path to JavaScript file
+     * @param string $target Target environment (modern, es6, es5)
+     * @return string Absolute path to the transformed file
+     */
+    public static function transform_to_file(string $file_path, string $target = 'modern'): string
+    {
+        // The VARIANT carries everything the transform depends on beyond the source bytes:
+        // the target, and the toolchain fingerprint (transformer script + vendored decorator
+        // fork + @babel/core version), so swapping any of them invalidates every entry
+        // automatically rather than serving the old tool's work.
+        $variant = '_' . $target . '_' . static::_toolchain_fingerprint();
 
-            if ($mtime_cache >= $mtime_source) {
-                return file_get_contents($cache_file);
-            }
+        // The mtime guard is kept from the pre-consolidation scheme: a cache never gets
+        // weaker in a move.
+        $cached = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, $variant, 'js', true);
+
+        if ($cached !== null) {
+            return File_Content_Cache::path(self::CACHE_NAMESPACE, $file_path, $variant, 'js');
         }
 
-        // Transform the file
         $result = static::_transform_without_cache($file_path, $target);
 
-        // Cache the result
-        static::_cache_result($cache_key, $result);
-
-        return $result;
+        return File_Content_Cache::put(self::CACHE_NAMESPACE, $file_path, $variant, 'js', $result);
     }
 
     /**
@@ -114,25 +126,6 @@ class Js_Transformer
     {
         // Use RPC server for transformation
         return static::_transform_via_rpc($file_path, $target, $original_path);
-    }
-
-    /**
-     * Cache the transformer result
-     *
-     * @param string $cache_key Cache key
-     * @param string $result Transformed code
-     */
-    protected static function _cache_result(string $cache_key, string $result): void
-    {
-        $cache_dir = rsx_project_file_path(self::CACHE_DIR);
-
-        // Ensure cache directory exists
-        if (!is_dir($cache_dir)) {
-            mkdir($cache_dir, 0755, true);
-        }
-
-        $cache_file = $cache_dir . '/' . $cache_key . '.js';
-        file_put_contents_safe($cache_file, $result);
     }
 
     /**
@@ -193,14 +186,7 @@ class Js_Transformer
      */
     public static function clear_cache(): void
     {
-        $cache_dir = rsx_project_file_path(self::CACHE_DIR);
-
-        if (is_dir($cache_dir)) {
-            $files = glob($cache_dir . '/*.js');
-            foreach ($files as $file) {
-                @unlink($file);
-            }
-        }
+        File_Content_Cache::clear(self::CACHE_NAMESPACE);
     }
 
 

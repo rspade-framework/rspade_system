@@ -1,0 +1,12 @@
+<Define:_Sys_Dashboard_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Section $title="Panel overview" $icon="bi-speedometer2">
+            <p class="mb-0">The control panel dashboard. Every panel screen the framework ships is reached from the sidebar beside this one.</p>
+            <%-- A stock Bootstrap button, here so the panel's own Bootstrap build is
+                 visibly doing the theming rather than a hand-written rule. --%>
+            <button class="btn btn-primary btn-sm mt-3" type="button">Themed Button</button>
+        </_Sys_Section>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Dashboard_Action>

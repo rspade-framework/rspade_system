@@ -95,10 +95,13 @@ THE ROLE
       output tree and never rebuilds from source, so a patch you make there
       changes nothing that is served. Diagnose and patch in development.
 
-      Your framework tests do not exist on this disk. The framework's own
-      test suite is stripped from every release (see WHAT IS ALREADY ON YOUR
-      DISK). The maintainer runs it against your patch; your job is to state
-      in the request exactly what you verified and how.
+      The framework's own test suite ships with every release
+      (app/RSpade/tests/, rsx:test --framework), but it is a SOFTWARE AND
+      ENVIRONMENT INTEGRITY AUDIT for an administrator, not a development
+      tool: a full run takes a very long time and the maintainer runs it
+      against your patch anyway. Run the one group your patch touches
+      (rsx:test --framework --group=<concern>) or nothing, and state in the
+      request exactly what you verified and how.
 
     You are not being asked to become the framework's maintainer. You are
     being asked to produce a diagnosis good enough that the maintainer can
@@ -165,8 +168,18 @@ THE PROCEDURE
     Exercise the neighbouring paths by hand: a framework function usually has
     more callers than the one you were looking at, and you cannot grep for
     the ones living in other applications. Record what you did - the
-    framework's own test suite is not on this disk, so your verification
-    narrative is the only evidence that travels with the patch.
+    maintainer re-runs the whole framework suite, so your verification
+    narrative is what tells them where to look.
+
+    DO NOT RUN A FULL TEST SUITE TO DRAFT A REQUEST. Not rsx:test over the
+    whole application, and not rsx:test --framework on a box that happens to
+    carry the framework tests. A full run takes a very long time and proves
+    nothing the maintainer will not re-prove: the framework environment runs
+    the entire framework suite when it integrates your request. Run the test
+    group(s) of the subsystem you touched (rsx:test --group=<concern>), or no
+    tests at all and say so in the verification section. A full suite exists
+    as an integrity check for an administrator verifying a deployment, never
+    as a step in a request-drafting protocol.
 
   5. Capture the patch
     CAPTURE BEFORE YOU PULL ANYTHING. The next pull destroys the working tree
@@ -290,8 +303,8 @@ THE FRAMEWORK CHANGE REQUEST
                     approach you considered and rejected.
         Verification performed downstream
                     The reproducer before and after, the commands you ran,
-                    what else you exercised. State plainly that the
-                    framework test suite was not available to you.
+                    what else you exercised. Name the framework test
+                    group(s) you ran, if any - never the full suite.
         Documentation affected
                     Which man page, skill or fragment states the OLD
                     behaviour. You have read them; the maintainer has not.
@@ -341,7 +354,7 @@ THE FRAMEWORK CHANGE REQUEST
         declared - before, the served image is the default size; after, it
         matches. `php artisan rsx:check` clean. Also exercised the
         placeholder branch and an unknown preset name, which still fails
-        loud as before. The framework test suite is not present on this disk.
+        loud as before. rsx:test --framework --group=thumbnails: 14/14.
 
         ## Documentation affected
         `rsx:man thumbnails` describes preset declaration as working today,
@@ -455,12 +468,11 @@ WHAT IS ALREADY ON YOUR DISK
       ../../bin/rsx-lockd/CLAUDE.md   the standalone lock daemon
 
   What does NOT ship
-    Three things are absent by design.
-
-      THE FRAMEWORK TEST SUITE (app/RSpade/tests/). Excluded from every
-      release, so rsx:test --framework has nothing to run downstream. The
-      maintainer runs it against your patch - which is why your request
-      carries a verification section written by hand.
+    Two things are absent by design. (The framework test suite,
+    app/RSpade/tests/, DOES ship - as an integrity audit of the installed
+    software and its environment for an administrator, run with
+    rsx:test --framework and rarely needed; see rsx:man testing. It is not
+    part of drafting a request.)
 
       FIVE MAN PAGES, stripped at publish because they document how the
       framework is BUILT rather than how it is used: manifest_api,

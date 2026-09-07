@@ -566,7 +566,7 @@ class Database_BundleIntegration extends BundleIntegration_Abstract
 
         // Generate field_length() method for varchar max lengths
         $varchar_lengths = [];
-        foreach ($columns as $col_name => $col_data) {
+        foreach (array_keys($columns) as $col_name) {
             // A single leading underscore marks a SYSTEM column. toArray() strips those
             // from every payload, so the client never holds one and can never need its
             // length; publishing it would only advertise a column that is not there.
@@ -574,8 +574,11 @@ class Database_BundleIntegration extends BundleIntegration_Abstract
                 continue;
             }
 
-            if (isset($col_data['max_length']) && $col_data['max_length'] !== null) {
-                $varchar_lengths[$col_name] = $col_data['max_length'];
+            // The LENGTH itself is the model's answer, not ours - Model::field_length() is the
+            // one definition, so a stub can never disagree with what the server enforces.
+            $length = $fqcn::field_length($col_name);
+            if ($length !== null) {
+                $varchar_lengths[$col_name] = $length;
             }
         }
 

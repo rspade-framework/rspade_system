@@ -16,6 +16,7 @@ use App\RSpade\Core\Bundle\Rsx_Module_Bundle_Abstract;
 use App\RSpade\Core\Externals\Rsx_Externals;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -146,7 +147,7 @@ class BundleCompiler
 
     /**
     * Mapping from babel-transformed files to their original source files
-    * ['storage/rsx-tmp/babel_xxx.js' => 'app/RSpade/Core/Js/SomeFile.js']
+    * ['storage/rsx-tmp/derived/babel/<hash>_<target>_<fingerprint>.js' => 'app/RSpade/Core/Js/SomeFile.js']
     */
     protected array $babel_file_mapping = [];
 
@@ -557,7 +558,7 @@ class BundleCompiler
         try {
             $file_path = Manifest::js_find_class($class_name);
         } catch (\RuntimeException $e) {
-            throw new \RuntimeException(
+            throw new RuntimeException(
                 "JavaScript model base class '{$class_name}' configured in rsx.js_model_base_class not found in manifest.\n" .
                 "Ensure the class is defined in a .js file within your application (e.g., rsx/lib/{$class_name}.js)"
             );
@@ -568,7 +569,7 @@ class BundleCompiler
         $extends = $metadata['extends'] ?? null;
 
         if ($extends !== 'Rsx_Js_Model') {
-            throw new \RuntimeException(
+            throw new RuntimeException(
                 "JavaScript model base class '{$class_name}' must extend Rsx_Js_Model.\n" .
                 "Found: extends {$extends}\n" .
                 "File: {$file_path}"
@@ -1801,7 +1802,7 @@ class BundleCompiler
         // Analyze each file for class information
         foreach ($js_files as $file) {
             // Check if this is a compiled jqhtml file
-            if (str_contains($file, 'storage/rsx-tmp/jqhtml_')) {
+            if (str_contains($file, '/derived/' . \App\RSpade\Integrations\Jqhtml\Jqhtml_BundleProcessor::COMPILED_NAMESPACE . '/')) {
                 $jqhtml_compiled_files[] = $file;
                 continue;
             }
@@ -2015,8 +2016,8 @@ class BundleCompiler
             if (str_contains($decorator_name, '.')) {
                 // Extract the class name (part before first dot)
                 $parts = explode('.', $decorator_name);
-                // Only return if it starts with uppercase (likely a class)
-                if (!empty($parts[0]) && ctype_upper($parts[0][0])) {
+                // Only return if it has the RSpade class-name shape (Rsx_Identifier is its home)
+                if (!empty($parts[0]) && Rsx_Identifier::is_class_name($parts[0])) {
                     return $parts[0];
                 }
             }
@@ -2749,13 +2750,17 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                     continue;
                 }
 
-                // Transform the file (will use cache if available)
+                // Transform the file (will use cache if available).
+                //
+                // THE CACHE ENTRY IS THE FILE WE HAND THE CONCATENATOR. This used to take
+                // the transformed CODE and write a second copy to
+                // `rsx-tmp/babel_<md5 of the source PATH>.js` - a name that never changed
+                // when the source did, so those 301 files were never invalidated and never
+                // read as a cache either: they were overwritten on every compile and lived
+                // forever. The transform cache already holds exactly these bytes under a
+                // key that DOES move, so the mapping points straight at it.
                 try {
-                    $transformed_code = \App\RSpade\Core\JsParsers\Js_Transformer::transform($file);
-
-                    // Write transformed code to a temp file
-                    $temp_file = storage_path('rsx-tmp/babel_' . md5($file) . '.js');
-                    file_put_contents_safe($temp_file, $transformed_code);
+                    $temp_file = \App\RSpade\Core\JsParsers\Js_Transformer::transform_to_file($file);
 
                     // Store mapping: original file => babel file
                     // During concatenation we'll use the babel version
@@ -2995,7 +3000,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
 
             // All JavaScript files MUST be in manifest
             if ($file_data === null) {
-                throw new \RuntimeException(
+                throw new RuntimeException(
                     "JavaScript file in bundle but not in manifest (this should never happen):\n" .
                     "File: {$file}\n" .
                     "Relative: {$relative}\n" .
@@ -3217,8 +3222,12 @@ JS;
             }
         }
 
+        // Always-published targets: their patterns are emitted into EVERY bundle, whether or
+        // not the declaring code is in it.
+        $published_spa_routes = $this->_collect_always_published_routes($routes);
+
         // If no routes found, return null
-        if (empty($routes)) {
+        if (empty($routes) && empty($published_spa_routes)) {
             return null;
         }
 
@@ -3234,10 +3243,98 @@ JS;
         // Generate JavaScript code
         $js_code = "// RSX Route Definitions - Generated by BundleCompiler\n";
         $js_code .= "// Provides route patterns for type-safe URL generation\n";
-        $js_code .= 'Rsx._define_routes(' . json_encode($routes, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . ");\n";
+
+        if (!empty($routes)) {
+            $js_code .= 'Rsx._define_routes(' . json_encode($routes, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . ");\n";
+        }
+
+        if (!empty($published_spa_routes)) {
+            ksort($published_spa_routes);
+            $js_code .= "// Always-published SPA action routes (config rsx.always_published_routes)\n";
+            $js_code .= 'Rsx._define_published_spa_routes('
+                . json_encode($published_spa_routes, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . ");\n";
+        }
 
         // Write to temporary file
         return $this->_write_temp_file($js_code, 'js');
+    }
+
+    /**
+     * Resolve config('rsx.always_published_routes') against the manifest and fold the result
+     * into this bundle's client route table.
+     *
+     * WHY THIS EXISTS. A bundle's client route table is built from the controllers the bundle
+     * INCLUDES, which is right for everything an application owns. It is wrong for the one
+     * framework page every application links to and no application bundle may include: the
+     * /_sys control panel (an rsx/ bundle naming app/RSpade/Sys is CONV-BUNDLE-02, and a
+     * framework bundle naming rsx/ is CONV-BUNDLE-04 - the tree is deliberately not shared).
+     * So the panel's ENTRY target is published into every bundle instead, resolved from the
+     * manifest exactly as Rsx::Route() resolves it server-side. The link therefore moves when
+     * the panel's route moves, and no URL is ever hardcoded.
+     *
+     * Two target spellings, matching Rsx::Route():
+     *   'Controller::method' - PHP route rows, merged straight into $routes so the ordinary
+     *                          client resolver handles them with no second mechanism.
+     *   'Action_Class'       - SPA rows, returned as the published-SPA map that
+     *                          Rsx._try_spa_action_route() consults second, when the class
+     *                          object is not in the bundle.
+     *
+     * FAILS LOUD. A configured target with no routes in the manifest is a misconfiguration
+     * that would otherwise show up as a silently wrong /_/<Class>/index URL on every page of
+     * every application.
+     *
+     * @param array $routes The PHP route table being built, appended to in place
+     * @return array<string, string[]> class name => route patterns, for the SPA form
+     */
+    protected function _collect_always_published_routes(array &$routes): array
+    {
+        $targets = config('rsx.always_published_routes', []);
+
+        if (empty($targets)) {
+            return [];
+        }
+
+        $manifest = Manifest::get_full_manifest();
+        $routes_by_target = $manifest['data']['routes_by_target'] ?? [];
+        $published = [];
+
+        foreach ($targets as $target) {
+            if (empty($routes_by_target[$target])) {
+                throw new RuntimeException(
+                    "Bundle compile: config('rsx.always_published_routes') names '{$target}', which has no "
+                    . 'routes in the manifest. An always-published target must resolve, or every bundle in '
+                    . 'the application would silently link to a URL that does not exist. Spell it the way '
+                    . "Rsx::Route() takes it - a bare SPA action class name, or 'Controller::method'."
+                );
+            }
+
+            $patterns = [];
+            foreach ($routes_by_target[$target] as $route_data) {
+                if (!empty($route_data['pattern'])) {
+                    $patterns[] = $route_data['pattern'];
+                }
+            }
+
+            if (empty($patterns)) {
+                throw new RuntimeException(
+                    "Bundle compile: always-published target '{$target}' resolved to route rows carrying no "
+                    . 'pattern - the manifest route index is malformed.'
+                );
+            }
+
+            if (str_contains($target, '::')) {
+                [$class_name, $method_name] = explode('::', $target, 2);
+                $routes[$class_name][$method_name] = array_values(array_unique(
+                    array_merge($routes[$class_name][$method_name] ?? [], $patterns)
+                ));
+
+                continue;
+            }
+
+            $published[$target] = array_values(array_unique($patterns));
+        }
+
+        return $published;
     }
 
     /**

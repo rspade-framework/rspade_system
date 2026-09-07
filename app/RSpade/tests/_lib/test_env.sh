@@ -16,13 +16,18 @@ function test_mode_enter() {
 
     echo "[TEST ENV] Entering test mode..." >&2
 
-    # Only backup .env if we're NOT already in test mode
-    # (Don't want to backup test config and mistake it for production)
+    # Check if .env is stuck in test mode from a previous interrupted run
     if grep -q "^DB_DATABASE=rspade_test" /var/www/html/.env; then
-        echo "[TEST ENV] WARNING: Already using test database - NOT creating backup" >&2
-        echo "[TEST ENV] This indicates .env was not properly restored from a previous test run" >&2
-        echo "[TEST ENV] Manually restore /var/www/html/.env to production credentials before running tests" >&2
-        return 1
+        if [ -f "$TEST_ENV_BACKUP" ]; then
+            echo "[TEST ENV] Detected unclean shutdown - restoring from backup..." >&2
+            cp "$TEST_ENV_BACKUP" /var/www/html/.env
+            # Skip config:clear during recovery - just restore the file
+            echo "[TEST ENV] Recovery complete" >&2
+        else
+            echo "[TEST ENV] ERROR: .env stuck in test mode but no backup exists" >&2
+            echo "[TEST ENV] Manually restore /var/www/html/.env to production credentials" >&2
+            return 1
+        fi
     fi
 
     # Backup current .env (production credentials)
@@ -38,10 +43,11 @@ function test_mode_enter() {
         sed -i 's|^RSX_ADDITIONAL_CONFIG=.*$|RSX_ADDITIONAL_CONFIG=/var/www/html/system/app/RSpade/tests/_lib/rsx_test_config.php|' /var/www/html/.env
     fi
 
-    # Clear Laravel config cache and rebuild manifest
+    # Clear Laravel config cache. NO TIMEOUT: this used to be `timeout 10 ... || true`,
+# which could expire SILENTLY right after .env was restored - leaving a cached config
+# pointing at the TEST database while .env named the dev one. See the no-timeout mandate.
     cd /var/www/html
-    php artisan config:clear > /dev/null 2>&1
-    php artisan rsx:clean > /dev/null 2>&1
+    php artisan config:clear > /dev/null 2>&1 || true
 
     TEST_MODE_ACTIVE=true
     echo "[TEST ENV] Test mode active (using rspade_test database)" >&2
@@ -60,10 +66,11 @@ function test_mode_exit() {
         mv "$TEST_ENV_BACKUP" /var/www/html/.env
     fi
 
-    # Clear Laravel config cache and rebuild manifest
+    # Clear Laravel config cache. NO TIMEOUT: this used to be `timeout 10 ... || true`,
+# which could expire SILENTLY right after .env was restored - leaving a cached config
+# pointing at the TEST database while .env named the dev one. See the no-timeout mandate.
     cd /var/www/html
-    php artisan config:clear > /dev/null 2>&1
-    php artisan rsx:clean > /dev/null 2>&1
+    php artisan config:clear > /dev/null 2>&1 || true
 
     TEST_MODE_ACTIVE=false
     echo "[TEST ENV] Test mode exited (restored original database)" >&2

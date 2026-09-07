@@ -18,7 +18,7 @@
         "blade",
         "formatter"
     ],
-    "version": "0.1.236",
+    "version": "0.1.237",
     "publisher": "rspade",
     "engines": {
         "vscode": "^1.79.0"

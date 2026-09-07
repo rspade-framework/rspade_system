@@ -1,0 +1,243 @@
+._Apidocs_Tester {
+    border: 1px solid var(--rsx-border);
+    border-radius: 8px;
+    overflow: hidden;
+
+    &__request {
+        padding: 16px;
+        background: var(--rsx-bg);
+    }
+
+    &__reqline {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+
+    &__verb {
+        font-family: var(--rsx-mono);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        padding: 3px 8px;
+        border-radius: 5px;
+        color: #0D1117;
+
+        &--get {
+            background: var(--rsx-get);
+        }
+
+        &--post {
+            background: var(--rsx-post);
+        }
+    }
+
+    &__pattern {
+        font-family: var(--rsx-mono);
+        font-size: 13px;
+        color: var(--rsx-text);
+    }
+
+    &__group {
+        margin-bottom: 14px;
+    }
+
+    &__group-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        color: var(--rsx-muted);
+        font-weight: 700;
+        margin-bottom: 8px;
+    }
+
+    &__field {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 8px;
+    }
+
+    &__label {
+        flex: 0 0 160px;
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+        color: var(--rsx-text);
+        text-align: right;
+    }
+
+    &__req-mark {
+        color: var(--rsx-danger);
+        margin-left: 2px;
+    }
+
+    &__input {
+        flex: 1 1 auto;
+        min-width: 0;
+        background: var(--rsx-surface);
+        color: var(--rsx-text);
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        padding: 7px 10px;
+        font-family: var(--rsx-mono);
+        font-size: 13px;
+
+        &:focus {
+            outline: none;
+            border-color: var(--rsx-accent);
+            box-shadow: 0 0 0 3px var(--rsx-accent-soft);
+        }
+
+        // int/float params render as type="number" (api_tester_input), whose spinners are
+        // noise here: these are API values typed or pasted, not quantities nudged up and
+        // down, and the buttons crowd an already-narrow monospace field. Two rules because
+        // the vendor spellings differ; the margin reset matters because WebKit keeps the
+        // buttons' gutter after hiding them, which would push the text off-centre against
+        // the text inputs beside it. Arrow keys and the scroll wheel still increment.
+        &[type='number'] {
+            appearance: textfield;
+            -moz-appearance: textfield;
+
+            &::-webkit-outer-spin-button,
+            &::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+            }
+        }
+    }
+
+    &__body {
+        width: 100%;
+        background: var(--rsx-surface);
+        color: var(--rsx-text);
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        padding: 10px 12px;
+        font-family: var(--rsx-mono);
+        font-size: 13px;
+        line-height: 1.5;
+        resize: vertical;
+
+        &:focus {
+            outline: none;
+            border-color: var(--rsx-accent);
+            box-shadow: 0 0 0 3px var(--rsx-accent-soft);
+        }
+    }
+
+    &__actions {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-top: 4px;
+    }
+
+    &__send {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        appearance: none;
+        border: none;
+        background: var(--rsx-accent);
+        color: #0D1117;
+        font-weight: 600;
+        font-size: 13px;
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+
+        &:hover {
+            background: var(--rsx-accent-hover);
+        }
+    }
+
+    &__key-hint {
+        font-size: 12px;
+        color: var(--rsx-muted);
+
+        &--warn {
+            color: var(--rsx-warn);
+        }
+    }
+
+    // -- Response ---------------------------------------------------------
+    &__response {
+        border-top: 1px solid var(--rsx-border);
+        background: var(--rsx-surface);
+    }
+
+    &__response-empty {
+        padding: 16px;
+        color: var(--rsx-muted);
+        font-size: 13px;
+    }
+
+    &__response-note {
+        padding: 14px 16px;
+        font-size: 13px;
+
+        &--warn {
+            color: var(--rsx-warn);
+        }
+
+        &--error {
+            color: var(--rsx-danger);
+        }
+    }
+
+    &__response-head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--rsx-border);
+    }
+
+    &__status {
+        font-family: var(--rsx-mono);
+        font-size: 12px;
+        font-weight: 700;
+        padding: 3px 10px;
+        border-radius: 5px;
+        color: #0D1117;
+
+        &--2xx {
+            background: var(--rsx-get);
+        }
+
+        &--3xx {
+            background: var(--rsx-accent);
+        }
+
+        &--4xx {
+            background: var(--rsx-warn);
+        }
+
+        &--5xx {
+            background: var(--rsx-danger);
+        }
+    }
+
+    &__timing {
+        font-family: var(--rsx-mono);
+        font-size: 12px;
+        color: var(--rsx-muted);
+    }
+
+    &__response-pre {
+        margin: 0;
+        padding: 16px;
+        overflow-x: auto;
+        max-height: 420px;
+
+        code {
+            font-family: var(--rsx-mono);
+            font-size: 12.5px;
+            line-height: 1.6;
+            background: transparent;
+            padding: 0;
+            white-space: pre;
+        }
+    }
+}

@@ -162,6 +162,12 @@ class Permission {
      *   PHP route target  - needs the opt-in window.rsxapp.auth_routes export
      *     (config rsx.auth.export_php_route_grants). Disabled by default; when it is
      *     off this logs a console.error naming the setting and returns false.
+     *   ALWAYS-PUBLISHED target - config rsx.always_published_routes, shipped as
+     *     window.rsxapp.auth_routes_published on every page. Answers for a page whose
+     *     code is NOT in this bundle - the /_sys control panel is the shipped entry -
+     *     and carries explicit denials, so an anonymous visitor reads a definite false
+     *     rather than the "unknown target" false. Consulted after the bundled class
+     *     (real code always wins) and before the opt-in table.
      *
      * Unknown target returns false: unresolvable and ungranted are one thing on the
      * client, which is what preserves the grants-only property (PHP throws instead,
@@ -192,6 +198,15 @@ class Permission {
             // Not a known JS class - a bare controller name implies '::index',
             // exactly like Rsx.Route(). Resolve it as a PHP route target.
             resolved = resolved + '::index';
+        }
+
+        // An always-published target answers under the spelling the config names it by,
+        // which is also the spelling Rsx.Route() takes - so it is looked up BEFORE the
+        // '::index' resolution above can matter, on the caller's own string.
+        const published = window.rsxapp.auth_routes_published;
+
+        if (published && published[target] !== undefined) {
+            return published[target] === 1;
         }
 
         const routes = window.rsxapp.auth_routes;

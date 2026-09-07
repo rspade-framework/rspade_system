@@ -331,6 +331,17 @@ class Rsx {
     static _routes = {};
 
     /**
+     * Route patterns for SPA action classes whose CODE IS NOT IN THIS BUNDLE.
+     *
+     * Populated by _define_published_spa_routes() from config('rsx.always_published_routes'),
+     * resolved against the manifest at compile time. The one shipped entry is the /_sys
+     * control panel's dashboard: an application bundle never includes app/RSpade/Sys (and
+     * must not - CONV-BUNDLE-02), so the class object _try_spa_action_route() normally reads
+     * is absent, and this table answers instead. See rsx:man sys_panel.
+     */
+    static _published_spa_routes = {};
+
+    /**
      * The storage scope key for the current environment.
      *
      * This is the single accessor Rsx_Storage (key scoping + scope-change
@@ -602,44 +613,65 @@ class Rsx {
      * @returns {string|null} The route pattern or null
      */
     static _try_spa_action_route(class_name, params_obj) {
-        // Get all classes from manifest
-        const all_classes = Manifest.get_all_classes();
+        const routes = Rsx._spa_route_patterns(class_name);
 
-        // Find the class by name
-        for (const class_info of all_classes) {
-            if (class_info.class_name === class_name) {
-                const class_object = class_info.class_object;
-
-                // Check if it's a SPA action (has Spa_Action in prototype chain)
-                if (typeof Spa_Action !== 'undefined' &&
-                    class_object.prototype instanceof Spa_Action) {
-
-                    // Get route patterns from decorator metadata
-                    const routes = class_object._spa_routes || [];
-
-                    if (routes.length > 0) {
-                        // Select best matching route based on parameters
-                        const selected = Rsx._select_best_route_pattern(routes, params_obj);
-
-                        if (!selected) {
-                            // Routes exist but none are satisfiable
-                            throw new Error(
-                                `No suitable route found for SPA action ${class_name} with provided parameters. ` +
-                                `Available routes: ${routes.join(', ')}`
-                            );
-                        }
-
-                        return selected;
-                    }
-                }
-
-                // Found the class but it's not a SPA action or has no routes
-                return null;
-            }
+        if (routes.length === 0) {
+            return null;
         }
 
-        // Class not found
-        return null;
+        // Select best matching route based on parameters - ONE selector, whether the patterns
+        // came off the class object or out of the published table.
+        const selected = Rsx._select_best_route_pattern(routes, params_obj);
+
+        if (!selected) {
+            // Routes exist but none are satisfiable
+            throw new Error(
+                `No suitable route found for SPA action ${class_name} with provided parameters. ` +
+                `Available routes: ${routes.join(', ')}`
+            );
+        }
+
+        return selected;
+    }
+
+    /**
+     * Every route pattern known for a SPA action class name.
+     *
+     * TWO SOURCES, IN THIS ORDER. The class object in this bundle is authoritative: its
+     * @route decorators are the declaration. When the class is not in this bundle - the
+     * /_sys panel from an application page - the always-published table answers instead.
+     * A published entry is consulted second and can never shadow real bundled code.
+     *
+     * @param {string} class_name The action class name
+     * @returns {Array<string>} Route patterns, empty when the name resolves to nothing
+     */
+    static _spa_route_patterns(class_name) {
+        const all_classes = Manifest.get_all_classes();
+
+        for (const class_info of all_classes) {
+            if (class_info.class_name !== class_name) {
+                continue;
+            }
+
+            const class_object = class_info.class_object;
+
+            // Check if it's a SPA action (has Spa_Action in prototype chain)
+            if (typeof Spa_Action !== 'undefined' &&
+                class_object.prototype instanceof Spa_Action) {
+
+                // Get route patterns from decorator metadata
+                const routes = class_object._spa_routes || [];
+
+                if (routes.length > 0) {
+                    return routes;
+                }
+            }
+
+            // Found the class but it is not a SPA action, or carries no routes.
+            break;
+        }
+
+        return Rsx._published_spa_routes[class_name] || [];
     }
 
     /**
@@ -655,6 +687,16 @@ class Rsx {
             for (const method_name in routes[class_name]) {
                 Rsx._routes[class_name][method_name] = routes[class_name][method_name];
             }
+        }
+    }
+
+    /**
+     * Define always-published SPA action routes from bundled data
+     * Called by generated JavaScript in bundles - see Rsx._published_spa_routes
+     */
+    static _define_published_spa_routes(routes) {
+        for (const class_name in routes) {
+            Rsx._published_spa_routes[class_name] = routes[class_name];
         }
     }
 

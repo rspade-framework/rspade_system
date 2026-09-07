@@ -1,0 +1,58 @@
+<Define:_Apidocs_Endpoint_Card tag="article">
+<% const ep = this.args.endpoint; %>
+<div class="_Apidocs_Endpoint_Card__col _Apidocs_Endpoint_Card__col--reference">
+<header class="_Apidocs_Endpoint_Card__head">
+    <div class="_Apidocs_Endpoint_Card__verbs">
+        <% for (const m of ep.methods) { %>
+            <% const mc = '_Apidocs_Endpoint_Card__pill--' + m.toLowerCase(); %>
+            <span class="_Apidocs_Endpoint_Card__pill <%= mc %>"><%= m %></span>
+        <% } %>
+    </div>
+    <code class="_Apidocs_Endpoint_Card__path"><%= ep.pattern %></code>
+</header>
+
+<% if (ep.description) { %>
+    <p class="_Apidocs_Endpoint_Card__desc"><%br= ep.description %></p>
+<% } %>
+
+<% if (ep.api_params && ep.api_params.length) { %>
+    <div class="_Apidocs_Endpoint_Card__section">
+        <div class="_Apidocs_Endpoint_Card__section-title">Parameters</div>
+        <_Apidocs_Params_Table $params=ep.api_params $pattern=ep.pattern />
+    </div>
+<% } %>
+
+<% if (ep.response_example) { %>
+    <%-- Open by default on a wide screen, where the two columns give it room and a collapsed
+         panel is just an extra click. Narrow, it stays shut so the page is scannable. --%>
+    <details class="_Apidocs_Endpoint_Card__example" <% if (this.args.example_open) { %>open<% } %>>
+        <summary class="_Apidocs_Endpoint_Card__example-summary"><%!= api_icon('chevron') %><span>Example response</span></summary>
+        <pre class="_Apidocs_Endpoint_Card__example-pre language-json" $sid="response_example"></pre>
+    </details>
+<% } %>
+</div>
+
+<%-- The split. Above 1850px these two become the second column: reference material above and
+     to the left, the things you ACT on to the right, so a sample can be read while the tester
+     that produced it stays on screen. --%>
+<div class="_Apidocs_Endpoint_Card__col _Apidocs_Endpoint_Card__col--actions">
+    <%-- THE TWO SWAPPABLE PIECES. Everything above this line is the same for every endpoint;
+         the samples and the tester are the parts a different KIND of endpoint replaces, so
+         they are named slots with the generic components as the defaults. A card whose
+         template is slots-only inherits this whole structure and overrides only what it must
+         - see _Apidocs_File_Endpoint_Card, which swaps in a multipart tester and leaves the rest
+         of the card, comments and all, in exactly one place. --%>
+    <% const _code_samples = content('code_samples'); %>
+    <% const _tester = content('tester'); %>
+
+    <div class="_Apidocs_Endpoint_Card__section">
+        <div class="_Apidocs_Endpoint_Card__section-title">Code samples</div>
+        <% if (_code_samples) { %><%= _code_samples %><% } else { %><_Apidocs_Code_Samples $endpoint=ep /><% } %>
+    </div>
+
+    <div class="_Apidocs_Endpoint_Card__section">
+        <div class="_Apidocs_Endpoint_Card__section-title">Try it</div>
+        <% if (_tester) { %><%= _tester %><% } else { %><_Apidocs_Tester $endpoint=ep /><% } %>
+    </div>
+</div>
+</Define:_Apidocs_Endpoint_Card>

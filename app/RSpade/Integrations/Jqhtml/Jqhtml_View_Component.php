@@ -9,6 +9,7 @@ namespace App\RSpade\Integrations\Jqhtml;
 
 use Illuminate\View\Component;
 use RuntimeException;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 use App\RSpade\Integrations\Jqhtml\Jqhtml;
 
 /**
@@ -31,10 +32,10 @@ class Jqhtml_View_Component extends Component
      */
     public function __construct(string $component, array $args = [])
     {
-        // Validate component name starts with uppercase
-        if (!ctype_upper($component[0])) {
+        // Validate the component name shape (Rsx_Identifier is the rule's home)
+        if (!Rsx_Identifier::is_class_name($component)) {
             throw new RuntimeException(
-                "JQHTML component name '{$component}' must start with an uppercase letter. " .
+                "JQHTML component name '{$component}' " . Rsx_Identifier::CLASS_NAME_RULE . '. ' .
                 'This is a hard requirement of the jqhtml library.'
             );
         }

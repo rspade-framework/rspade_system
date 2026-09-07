@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Cache;
 
 use Redis;
 use RuntimeException;
+use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
@@ -15,15 +16,21 @@ require_once __DIR__ . '/../../helpers.php';
 /**
  * Redis-based caching system with LRU eviction
  *
- * Uses Redis database 0 for general caching. Every key is prefixed with the current manifest
- * build key, so a code change invalidates the cache without anything being cleared.
+ * Uses Redis database 0 for general caching. EVERY KEY IS SCOPED ON BOTH THE BUILD AND THE
+ * DATABASE: the current manifest build key is folded into the hashed key body, so a code
+ * change invalidates the cache without anything being cleared, and the redis key itself is
+ * prefixed 'cache:<Rsx_Connection_Scope::token()>:' - the (database, host) token RsxLocks
+ * and Task_Worker_Registry already namespace their state under - so a process pointed at
+ * another database can neither read nor overwrite this one's entries. See _scope_prefix().
  *
  * THE REDIS DATABASE MAP (one instance, four databases). This class is the authority; every
  * other subsystem that opens a redis connection points its comment here.
  *
  *   DB 0  VOLATILE CACHE. This class (including its persistent namespace) and the realtime
- *         emitter hashes (rsx_rt:em:*). FLUSHED WHOLESALE on every database transaction
- *         rollback (see below) and by clear().
+ *         emitter hashes (rsx_rt:em:*). clear() empties THIS DATABASE SCOPE'S cache: keys
+ *         under 'cache:<token>:' and nothing else. It runs on every database transaction
+ *         rollback (see below). Keys this class did not write - the realtime rsx_rt:* keys
+ *         and AssetHandler's rspade:public_asset:* keys - therefore survive a cache reset.
  *   DB 1  LOCKS and the task worker registry (RsxLocks, Task_Worker_Registry).
  *   DB 2  REDUCED VOLATILITY CACHE ("RVC"). Reserved. The full page cache writes here
  *         directly (Rsx_FPC and system/bin/fpc-proxy.js), and this class routes any key
@@ -44,7 +51,7 @@ require_once __DIR__ . '/../../helpers.php';
  *
  * THE _RVC_ KEY CONVENTION is INTERNAL ONLY - it is a cache-key convention, not a second API.
  * A key beginning with _RVC_ is stored in database 2 under the ordinary build-key and
- * test-run prefix, so a code update still misses it cleanly and it is LRU-evicted like
+ * database-scope prefix, so a code update still misses it cleanly and it is LRU-evicted like
  * everything else; it simply survives the otherwise frequent cache resets that transaction
  * rollback causes. As of the time of writing nothing in PHP uses this feature. It is kept
  * here for reference and future implementation, and to reserve database 2, which is written
@@ -493,7 +500,8 @@ class RsxCache
     }
 
     /**
-     * Clear the entire volatile cache - database 0, and ONLY database 0.
+     * Clear this scope's volatile cache - database 0, and ONLY database 0, and within it only
+     * the keys this class wrote under the CURRENT (database, host) scope.
      *
      * Called on every database transaction rollback (see the class header), so it must never
      * reach the reduced-volatility database, the locks database or the counter database.
@@ -505,6 +513,12 @@ class RsxCache
      * touches only the database the connection is selected on, and is the same pattern
      * Rsx_FPC::clear() already uses. A failed delete FAILS LOUD: a flush that silently does
      * not happen is precisely the defect this method now exists to prevent.
+     *
+     * IT IS ALSO MATCH-FILTERED on _scope_prefix(). An unfiltered SCAN deleted every key on
+     * database 0 - another database scope's cache, the realtime emitter hashes (rsx_rt:*)
+     * and AssetHandler's rspade:public_asset:* entries included - on every transaction
+     * rollback. A cache reset means "discard what THIS cache memoized", never "empty the
+     * database that cache happens to live on".
      */
     public static function clear(): void
     {
@@ -522,7 +536,7 @@ class RsxCache
 
         // Database 0 only: the connection this class selects it on. The RVC connection
         // (database 2) is deliberately untouched, as are databases 1 and 3.
-        self::_delete_every_key(self::$_redis, 'clear');
+        self::_delete_every_key(self::$_redis, 'clear', self::_scope_prefix() . '*');
     }
 
     /**
@@ -533,6 +547,11 @@ class RsxCache
      * every _RVC_ key and every FPC entry (fpc:{build_key}:*) at once, and "clean" means the
      * orphans go now rather than whenever LRU gets round to them. Databases 0, 1 and 3 are
      * untouched - rsx:clean clears database 0 through clear() beside this call.
+     *
+     * DELIBERATELY UNFILTERED, unlike clear(). This is not the rollback flush: it is an
+     * operator typing rsx:clean on one box to discard that box's build artifacts, and the
+     * FPC entries it must also orphan carry Rsx_FPC's own fpc:<build_key>: prefix rather
+     * than this class's. Emptying database 2 whole is the intent, not an oversight.
      */
     public static function clear_reduced_volatility(): void
     {
@@ -552,15 +571,17 @@ class RsxCache
     }
 
     /**
-     * SCAN + DEL every key on the database the given connection is selected on. Fails loud
-     * on a delete redis refused - see clear() for why this is not FLUSHDB.
+     * SCAN + DEL every key MATCHING $pattern on the database the given connection is selected
+     * on. Fails loud on a delete redis refused - see clear() for why this is not FLUSHDB.
+     *
+     * @param string $pattern A redis MATCH glob; '*' means every key on the database.
      */
-    private static function _delete_every_key(Redis $redis, string $caller): void
+    private static function _delete_every_key(Redis $redis, string $caller, string $pattern = '*'): void
     {
         $iterator = null;
 
         do {
-            $keys = $redis->scan($iterator, '*', 500);
+            $keys = $redis->scan($iterator, $pattern, 500);
 
             if ($keys === false || count($keys) === 0) {
                 continue;
@@ -578,38 +599,50 @@ class RsxCache
         } while ($iterator > 0);
     }
 
-    // Build-scoped key: manifest build key + test-run namespace + user key.
+    // Build-scoped key: manifest build key + user key. The (database, host) scope is NOT
+    // folded in here - every entry point runs the result through _make_key_persistent(),
+    // which carries it, so the scope is applied in exactly one place.
     private static function _transform_key_build(string $key): string
     {
-        return Manifest::get_build_key() . static::_test_run_suffix() . '_' . $key;
+        return Manifest::get_build_key() . '_' . $key;
     }
 
     /**
-     * Create a full cache key with build prefix
+     * Create a full cache key: the database scope prefix plus a hash of the caller's key.
      *
-     * @param string $key User-provided key
+     * @param string $key User-provided key (already build-prefixed for the build-scoped API)
      * @return string Full cache key
      */
     private static function _make_key_persistent(string $key): string
     {
-        return 'cache:' . static::_test_run_suffix() . sha1($key);
+        return self::_scope_prefix() . sha1($key);
     }
 
     /**
-     * Namespace suffix separating a TEST RUN's cache from the developer's.
+     * THE PREFIX EVERY KEY THIS CLASS WRITES CARRIES: 'cache:<(database, host) token>:'.
      *
-     * rsx:test swaps the default DB connection to 'test' for the whole run, and the file
-     * subsystem is redirected to a test-scoped root - but Redis used to be SHARED, so any
-     * cache write during a test persisted test-database state into the key the next dev
-     * request reads (found 2026-08-18: a test run left _type_refs ids from rspade_test in
-     * 'type_refs_map', and rsx:health then reported the developer database's registry as a
-     * single entry). Keying off the default connection makes the split self-detecting for
-     * every build-scoped AND persistent key, in-process and in any subprocess that swaps
-     * the connection the same way.
+     * A cache key is abstractly keyed on BOTH the build and the database. The build key
+     * (folded into the hash input by _transform_key_build()) makes a code change invisible
+     * to the old cache; this prefix makes ANOTHER DATABASE's cache invisible to this one.
+     *
+     * The motivating defect: rsx:test runs against rspade_test, and an in-process run
+     * spawns artisan children with DB_DATABASE=rspade_test whose 'database.default' is
+     * still 'mysql'. The old namespace was the boolean config('database.default') === 'test',
+     * which those children answered NO to - so a child booted at the test database wrote
+     * the test database's _type_refs map into the DEVELOPER's 'type_refs_map' key, and the
+     * dev site then 500'd with "Type ref ID 1 not found in registry" for the hour that key
+     * lived. Rsx_Connection_Scope::token() reads the LIVE connection, so it cannot be
+     * fooled that way, and it is the same token RsxLocks and Task_Worker_Registry already
+     * namespace their state under.
+     *
+     * NOT MEMOIZED, deliberately: the token must track a setDefaultConnection() swap
+     * mid-process (rsx:test does exactly that), and a memo would answer with the scope the
+     * process started in. It costs a resolved container binding plus an md5 of a short
+     * string - the same price RsxLocks pays per lock.
      */
-    private static function _test_run_suffix(): string
+    private static function _scope_prefix(): string
     {
-        return config('database.default') === 'test' ? '_test' : '';
+        return 'cache:' . Rsx_Connection_Scope::token() . ':';
     }
 
     /**

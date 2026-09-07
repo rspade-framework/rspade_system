@@ -1,0 +1,63 @@
+// Sys panel theme tokens and reboot tweaks.
+//
+// The palette is published as CUSTOM PROPERTIES so every panel component can
+// reach it with var(--rsx-*) without importing anything. The SCSS variables in
+// variables.scss exist for Bootstrap's build; these exist for our own components -
+// the panel's and the API console's alike, which is why the HTTP-verb pair below
+// lives here rather than in either one.
+//
+// Included AFTER vendor/bootstrap.scss by _Sys_Theme_Bundle, so the handful of
+// reboot corrections below win over Bootstrap's.
+
+:root {
+    --rsx-bg: #0D1117;
+    --rsx-surface: #161B26;
+    --rsx-raised: #1C2333;
+    --rsx-border: #2A3245;
+    --rsx-text: #E6EDF3;
+    --rsx-muted: #DCE0E7;
+    --rsx-accent: #58A6FF;
+    --rsx-accent-hover: #79B8FF;
+    --rsx-accent-soft: #13233A;
+    --rsx-success: #3FB950;
+    --rsx-danger: #F85149;
+    --rsx-warn: #D29922;
+
+    // HTTP method pills. Separate names from --rsx-success/--rsx-accent even where
+    // the value coincides: "a GET" and "something succeeded" are different
+    // statements, and only one of them may be restyled without the other moving.
+    --rsx-get: #3FB950;
+    --rsx-post: #58A6FF;
+    --rsx-mono: ui-monospace, SFMono-Regular, 'JetBrains Mono', Menlo, Consolas, monospace;
+
+    // Panel geometry, so the layout and the scaffold agree on one number each.
+    --rsx-sidebar-width: 232px;
+    --rsx-topbar-height: 52px;
+    --rsx-page-pad: 24px;
+    --rsx-block-gap: 20px;
+}
+
+body {
+    background: var(--rsx-bg);
+    color: var(--rsx-text);
+}
+
+// Bootstrap paints .card-header from a translucent black; on a midnight ground
+// that reads as a smudge rather than a raised strip.
+.card > .card-header {
+    background: var(--rsx-raised);
+    border-bottom-color: var(--rsx-border);
+}
+
+code,
+kbd,
+samp,
+pre {
+    font-family: var(--rsx-mono);
+    color: var(--rsx-accent);
+}
+
+hr {
+    border-color: var(--rsx-border);
+    opacity: 1;
+}

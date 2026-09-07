@@ -9,6 +9,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 
 /**
@@ -61,6 +62,10 @@ class Task_List_Command extends Command
             }
 
             $service_name = $info['class'];
+
+            // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+            if (!Rsx_Identifier::is_visible_to_developer($service_name)) { continue; }
+
             $service_tasks = [];
 
             // Find methods with Task attribute

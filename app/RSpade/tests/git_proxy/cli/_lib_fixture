@@ -1,0 +1,391 @@
+#!/bin/bash
+# =============================================================================
+# git_proxy CLI test fixture factory (sourced; intentionally has no .sh extension
+# so run_all_tests.sh's */cli/*.sh glob never runs it as a test).
+#
+# Builds, under a mktemp root, a synthetic DOWNSTREAM app:
+#
+#   $PROJECT/                          git repo, branch master, remote -> $BARE
+#     .env                             (IS_FRAMEWORK_DEVELOPER absent by default)
+#     storage/.rspade_storage_relocated  so the maintenance flag lands in $PROJECT/storage
+#     system/bin/rsx-git.sh            COPY of the real proxy (it derives PROJECT_ROOT
+#                                      from its own location, so a symlink would resolve
+#                                      to the real repo - it must be a copy)
+#     system/bin/maintenance-mode.sh   COPY of the real script (the disable conflict
+#                                      guard under test is the REAL implementation)
+#     system/artisan                   SHIM (below)
+#     system/app/RSpade/core.php       a framework file, to dirty and to conflict
+#     app/app_file.txt                 an app file, to stage and to conflict
+#
+# THE SHIM answers the artisan calls rsx-git.sh makes:
+#   rsx:maintenance:enable|disable  -> exec the fixture's REAL maintenance-mode.sh with
+#                                      --no-services appended (no supervisor on a test box)
+#   rsx:clean / rsx:manifest:build  -> exit 0 (or 1 iff $PROJECT/rebuild_fail exists)
+#   anything else                   -> exit 0
+# Every call appends one line to $PROJECT/artisan.log, which is what the tests assert
+# the maintenance cycle against.
+#
+# Seams: $PROJECT/rebuild_fail, $PROJECT/maint_fail.
+#
+# Globals exported to a sourcing test: FX_ROOT, PROJECT, BARE, FX_OUT, FX_RC.
+# =============================================================================
+
+REAL_PROXY="/var/www/html/system/bin/rsx-git.sh"
+REAL_MAINT="/var/www/html/system/bin/maintenance-mode.sh"
+
+FX_ROOT=""
+PROJECT=""
+BARE=""
+FX_OUT=""
+FX_RC=0
+
+fx_init()    { FX_ROOT="$(mktemp -d)"; }
+fx_cleanup() { [ -n "$FX_ROOT" ] && rm -rf "$FX_ROOT" 2>/dev/null || true; }
+
+fx_pass() { echo "PASS: $TEST_NAME"; exit 0; }
+fx_fail() { echo "FAIL: $TEST_NAME - $1"; exit 1; }
+
+fx_assert_exists() { [ -e "$1" ] || fx_fail "expected $1 to exist"; }
+fx_assert_absent() { [ ! -e "$1" ] || fx_fail "expected $1 to be absent"; }
+
+# fx_assert_out <needle> <description>
+fx_assert_out() {
+    case "$FX_OUT" in
+        *"$1"*) : ;;
+        *) fx_fail "${2:-expected output to contain '$1'}. Output: $FX_OUT" ;;
+    esac
+}
+
+fx_refute_out() {
+    case "$FX_OUT" in
+        *"$1"*) fx_fail "${2:-did not expect '$1' in output}. Output: $FX_OUT" ;;
+    esac
+}
+
+# fx_assert_rc <expected> [description]
+fx_assert_rc() {
+    [ "$FX_RC" -eq "$1" ] || fx_fail "${2:-expected exit $1, got $FX_RC}. Output: $FX_OUT"
+}
+
+fx_assert_file_contains() {
+    grep -q -- "$2" "$1" 2>/dev/null || fx_fail "expected '$2' in $1"
+}
+
+fx_git() { git -C "$PROJECT" "$@"; }
+
+# -----------------------------------------------------------------------------
+# fx_write_shim <path-to-system-dir>
+# -----------------------------------------------------------------------------
+fx_write_shim() {
+    local system_dir="$1"
+
+    cat > "$system_dir/artisan" <<'PHP'
+#!/usr/bin/env php
+<?php
+$dir  = __DIR__;                       // <project>/system
+$root = dirname($dir);
+$args = array_slice($argv, 1);
+$sub  = $args[0] ?? '';
+
+file_put_contents($root . '/artisan.log', implode(' ', $args) . "\n", FILE_APPEND);
+
+if ($sub === 'rsx:maintenance:enable' || $sub === 'rsx:maintenance:disable') {
+    if ($sub === 'rsx:maintenance:enable' && is_file($root . '/maint_fail')) {
+        fwrite(STDERR, "fixture: maintenance enable forced to fail\n");
+        exit(1);
+    }
+
+    $action = substr($sub, strlen('rsx:maintenance:'));
+    $cmd = 'bash ' . escapeshellarg($dir . '/bin/maintenance-mode.sh') . ' ' . escapeshellarg($action);
+    foreach (array_slice($args, 1) as $arg) {
+        $cmd .= ' ' . escapeshellarg($arg);
+    }
+    $cmd .= ' --no-services';
+    passthru($cmd, $rc);
+    exit($rc);
+}
+
+if ($sub === 'rsx:clean' || $sub === 'rsx:manifest:build') {
+    // The real artisan refuses to boot while the recorded gitlink and the submodule
+    // checkout disagree (bootstrap/rsx_submodule_sync.php). Record what system/ was
+    // checked out at when each command ran, so a test can prove the sync only asks
+    // artisan for anything AFTER the checkout landed.
+    $head = trim((string) shell_exec('git -C ' . escapeshellarg($dir) . ' rev-parse HEAD 2>/dev/null'));
+    file_put_contents($root . '/artisan_head.log', $sub . ' ' . $head . "\n", FILE_APPEND);
+    exit(is_file($root . '/rebuild_fail') ? 1 : 0);
+}
+
+exit(0);
+PHP
+    chmod +x "$system_dir/artisan" 2>/dev/null || true
+}
+
+# -----------------------------------------------------------------------------
+# fx_build_project [framework_dev]
+#
+# Creates $PROJECT and commits the baseline. Pass "framework_dev" to write
+# IS_FRAMEWORK_DEVELOPER=true into .env (the monorepo-inertness test).
+# -----------------------------------------------------------------------------
+fx_build_project() {
+    PROJECT="$FX_ROOT/project"
+    FRAMEWORK_BARE="$FX_ROOT/framework.git"
+    # Rebuildable: a test that needs a second pristine project (fail-open exercises
+    # several broken environments) calls this again. The framework repo is built once
+    # and reused - it is the same distribution either way.
+    rm -rf "$PROJECT"
+    mkdir -p "$PROJECT" "$PROJECT/app" "$PROJECT/storage"
+
+    # -------------------------------------------------------------------------
+    # THE FRAMEWORK REPOSITORY, with two revisions.
+    #
+    # system/ is a submodule of this. The proxy, the maintenance script and the
+    # artisan shim all live INSIDE it, exactly as they do in reality - which is why
+    # a test may not write them into the project's system/ afterwards: that is a
+    # checkout the proxy resets.
+    # -------------------------------------------------------------------------
+    if [ ! -d "$FRAMEWORK_BARE" ]; then
+        git init -q --bare "$FRAMEWORK_BARE"
+        local fw="$FX_ROOT/framework_work"
+        mkdir -p "$fw/bin" "$fw/app/RSpade"
+        cp "$REAL_PROXY" "$fw/bin/rsx-git.sh"
+
+        # A FLAG-ONLY maintenance-mode.sh. The proxy calls this script directly (not
+        # through artisan), so there is no seam a test could use to pass --no-services -
+        # and a test that reached supervisorctl would stop the HOST's real php-fpm.
+        # Same shape as the real script's flag half, and nothing else.
+        cat > "$fw/bin/maintenance-mode.sh" <<'MAINT'
+#!/bin/bash
+# Test stub: the flag half of maintenance mode, with no service control.
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+FLAG="$PROJECT_ROOT/storage/rsx-framework/.maintenance.mode.framework.update"
+mkdir -p "$(dirname "$FLAG")"
+case "$1" in
+    enable)  printf 'framework update in progress\nmode=development\n' > "$FLAG" ;;
+    disable) rm -f "$FLAG"; touch "$FLAG.disable_called" ;;
+esac
+exit 0
+MAINT
+        chmod +x "$fw/bin/maintenance-mode.sh"
+        fx_write_shim "$fw"
+        printf 'framework v1\n' > "$fw/app/RSpade/core.php"
+        (
+            cd "$fw" && git init -q -b master \
+                && git config user.email fixture@example.com && git config user.name Fixture \
+                && git config commit.gpgsign false \
+                && git add -A && git commit -q -m "framework v1" \
+                && git push -q "$FRAMEWORK_BARE" master
+        )
+        FW_V1="$(git --git-dir="$FRAMEWORK_BARE" rev-parse master)"
+
+        printf 'framework v2\n' > "$fw/app/RSpade/core.php"
+        printf 'added by v2\n'  > "$fw/app/RSpade/added.php"
+        (
+            cd "$fw" && git add -A && git commit -q -m "framework v2" \
+                && git push -q "$FRAMEWORK_BARE" master
+        )
+        FW_V2="$(git --git-dir="$FRAMEWORK_BARE" rev-parse master)"
+        export FW_V1 FW_V2
+    fi
+
+    # -------------------------------------------------------------------------
+    # THE PROJECT, with system/ as a submodule pinned at v1.
+    # -------------------------------------------------------------------------
+    : > "$PROJECT/storage/.rspade_storage_relocated"
+
+    if [ "${1:-}" = "framework_dev" ]; then
+        printf 'RSX_MODE=development\nIS_FRAMEWORK_DEVELOPER=true\n' > "$PROJECT/.env"
+    else
+        printf 'RSX_MODE=development\n' > "$PROJECT/.env"
+    fi
+
+    printf 'app v1\n' > "$PROJECT/app/app_file.txt"
+
+    git -C "$PROJECT" init -q -b master
+    git -C "$PROJECT" config user.email "fixture@example.com"
+    git -C "$PROJECT" config user.name  "Fixture"
+    git -C "$PROJECT" config commit.gpgsign false
+    git -C "$PROJECT" config pull.rebase false
+    # file:// submodules are refused by default (CVE-2022-39253); the whole fixture
+    # is local bare repositories.
+    git -C "$PROJECT" config protocol.file.allow always
+
+    printf 'storage/\nartisan.log\nrebuild_fail\nmaint_fail\n' > "$PROJECT/.gitignore"
+
+    if [ "${1:-}" = "framework_dev" ]; then
+        # THE MONOREPO HAS NO SUBMODULE. There system/ IS the authored framework source,
+        # ordinary tracked files - so the fixture must not build a submodule for it, or
+        # the inertness test would be asserting against a shape that does not exist.
+        mkdir -p "$PROJECT/system/bin" "$PROJECT/system/app/RSpade"
+        cp "$REAL_PROXY" "$PROJECT/system/bin/rsx-git.sh"
+        fx_write_shim "$PROJECT/system"
+        printf 'framework v1\n' > "$PROJECT/system/app/RSpade/core.php"
+    else
+        # -c on the command line, not repo config: the submodule clone is a child
+        # process and this is the spelling that reliably reaches it.
+        git -C "$PROJECT" -c protocol.file.allow=always submodule add -q "$FRAMEWORK_BARE" system \
+            || fx_fail "fixture: could not add the framework submodule"
+    fi
+    # ignore = dirty: the manifest build renames .php <-> .php.upstream inside system/,
+    # and without this every `git status` in the parent reports ` M system` forever for
+    # churn that regenerates itself. Publish writes the same line.
+    if [ "${1:-}" != "framework_dev" ]; then
+        git -C "$PROJECT" config --file "$PROJECT/.gitmodules" submodule.system.ignore dirty
+        git -C "$PROJECT/system" checkout -q "$FW_V1"
+    fi
+
+    git -C "$PROJECT" add -A >/dev/null 2>&1
+    git -C "$PROJECT" commit -q -m "baseline"
+}
+
+# The revision the project RECORDS for system/, and the one it is CHECKED OUT at.
+fx_recorded_revision() {
+    git -C "$PROJECT" ls-files -s -- system 2>/dev/null | awk '$1 == "160000" { print $2; exit }'
+}
+fx_actual_revision() {
+    git -C "$PROJECT/system" rev-parse HEAD 2>/dev/null
+}
+
+# -----------------------------------------------------------------------------
+# fx_build_upstream
+#
+# Clones $PROJECT into a bare repo, wires it as origin/master, and leaves $BARE
+# set. Call fx_upstream_commit to add commits to it.
+# -----------------------------------------------------------------------------
+fx_build_upstream() {
+    BARE="$FX_ROOT/upstream.git"
+    # Rebuildable alongside fx_build_project (see there).
+    rm -rf "$BARE"
+    git -c protocol.file.allow=always clone -q --bare "$PROJECT" "$BARE"
+    git -C "$PROJECT" remote add origin "$BARE"
+    git -C "$PROJECT" fetch -q origin
+    git -C "$PROJECT" branch -q --set-upstream-to=origin/master master
+}
+
+# -----------------------------------------------------------------------------
+# fx_upstream_commit <framework-content> <app-content> [message]
+#
+# Adds one commit to the upstream bare repo touching system/ and/or app/. Pass "-"
+# for a file that should not change.
+#
+# system/ is a git submodule downstream, so what a real upstream commit moves is the
+# GITLINK. This fixture's upstream repo carries system/ as ordinary files (it is a
+# synthetic peer, not the distribution), which is enough for every proxy behavior under
+# test: the proxy reconciles on recorded-vs-checked-out revision, and reads no release
+# marker of any kind - that reconciliation was retired with the vendored model.
+# -----------------------------------------------------------------------------
+
+fx_upstream_commit() {
+    local fw="$1" app="$2" msg="${3:-breaking change}"
+    local work="$FX_ROOT/work.$RANDOM"
+
+    git clone -q "$BARE" "$work"
+    git -C "$work" config user.email "upstream@example.com"
+    git -C "$work" config user.name  "Upstream"
+    git -C "$work" config commit.gpgsign false
+
+    if [ "$fw" != "-" ]; then
+        printf '%s\n' "$fw" > "$work/system/app/RSpade/core.php"
+    fi
+    [ "$app" = "-" ] || printf '%s\n' "$app" > "$work/app/app_file.txt"
+
+    git -C "$work" add -A >/dev/null 2>&1
+    git -C "$work" commit -q -m "$msg"
+    git -C "$work" push -q origin master
+    rm -rf "$work"
+}
+
+# -----------------------------------------------------------------------------
+# fx_stale_index
+#
+# Makes every tracked file STAT-stale without changing a byte of content, which is what
+# forces git to refresh (and normally rewrite) the index. Each call uses a different past
+# date, so a second call re-stales a tree the previous round already refreshed.
+# -----------------------------------------------------------------------------
+FX_STALE_ROUND=0
+
+fx_stale_index() {
+    FX_STALE_ROUND=$((FX_STALE_ROUND + 1))
+
+    local when
+    when="$(printf '20%02d-01-01 00:00:00' "$FX_STALE_ROUND")"
+    git -C "$PROJECT" ls-files -z 2>/dev/null | (cd "$PROJECT" && xargs -0 -r touch -d "$when" --) 2>/dev/null || true
+}
+
+# -----------------------------------------------------------------------------
+# fx_git_shim
+#
+# Installs a `git` shim early in the PATH used by fx_run. It makes the CALLER'S OWN
+# pull/merge die exactly the way the field failure does - `fatal: stash failed`, rc 128,
+# no index.lock anywhere - while every call the proxy makes internally runs the real git.
+#
+# The discrimination is precise, not heuristic: every internal invocation passes a git
+# GLOBAL option first (`-C <dir>` via ROOT_GIT/dgit, or `--no-optional-locks` via the
+# read-only twins), so the only invocation whose FIRST argument is the bare subcommand is
+# the user's own op. The scratch worktree's merge (`git -C <scratch> merge`) therefore
+# passes through untouched, which is the whole point of the escape.
+#
+# It fails EVERY time (the failure under test is deterministic, not a race) and appends
+# one line per sabotage to $FX_SHIM_LOG, so a test can assert the op was attempted once
+# and never retried.
+# -----------------------------------------------------------------------------
+FX_SHIM_DIR=""
+FX_SHIM_LOG=""
+
+fx_git_shim() {
+    FX_SHIM_DIR="$FX_ROOT/shim"
+    FX_SHIM_LOG="$FX_ROOT/shim.log"
+    mkdir -p "$FX_SHIM_DIR"
+    : > "$FX_SHIM_LOG"
+
+    local real_git
+    real_git="$(command -v git)"
+
+    cat > "$FX_SHIM_DIR/git" <<SHIM
+#!/bin/bash
+if [ "\${1:-}" = "pull" ] || [ "\${1:-}" = "merge" ]; then
+    printf '%s\n' "\$*" >> "$FX_SHIM_LOG"
+    printf 'fatal: stash failed\n' >&2
+    exit 128
+fi
+exec "$real_git" "\$@"
+SHIM
+    chmod +x "$FX_SHIM_DIR/git"
+}
+
+# How many times the shim sabotaged the caller's own op.
+fx_shim_count() {
+    [ -n "$FX_SHIM_LOG" ] && [ -e "$FX_SHIM_LOG" ] || { printf '0'; return 0; }
+    grep -c . "$FX_SHIM_LOG" 2>/dev/null || printf '0'
+}
+
+# -----------------------------------------------------------------------------
+# fx_run <args...> - run the proxy from $PROJECT, capturing stdout+stderr and rc.
+# -----------------------------------------------------------------------------
+fx_run() {
+    FX_OUT="$(cd "$PROJECT" && PATH="${FX_SHIM_DIR:+$FX_SHIM_DIR:}$PATH" bash "$PROJECT/system/bin/rsx-git.sh" "$@" 2>&1)"
+    FX_RC=$?
+}
+
+# Simulate a COLLEAGUE updating the framework and pushing it.
+#
+# Moves the recorded revision to v2 in the project's own origin, WITHOUT touching this
+# working copy's submodule - which is precisely the state a plain `git pull` lands you
+# in, and the only thing the proxy exists to fix.
+fx_publish_framework_update() {
+    local clone="$FX_ROOT/peer"
+    rm -rf "$clone"
+    git -c protocol.file.allow=always clone -q "$BARE" "$clone" || return 1
+    (
+        cd "$clone" \
+            && git config user.email peer@example.com && git config user.name Peer \
+            && git config commit.gpgsign false \
+            && git -c protocol.file.allow=always submodule update -q --init \
+            && git -C system checkout -q "$FW_V2" \
+            && git add system \
+            && git commit -q -m "framework update to v2" \
+            && git push -q origin master
+    )
+}
+
+# The maintenance flag path inside the fixture.
+fx_maint_flag() { printf '%s' "$PROJECT/storage/rsx-framework/.maintenance.mode.framework.update"; }

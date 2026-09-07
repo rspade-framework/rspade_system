@@ -1,0 +1,9 @@
+<Define:_Sys_Email_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Section $title="Email" $icon="bi-envelope">
+            <p class="mb-0">The email screen: the outbound mail queue, its statuses and one message's full detail will be shown here.</p>
+        </_Sys_Section>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Email_Action>

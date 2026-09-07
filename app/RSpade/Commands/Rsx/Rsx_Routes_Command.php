@@ -8,6 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 use Exception;
 use Illuminate\Console\Command;
 
@@ -125,6 +126,11 @@ class Rsx_Routes_Command extends Command
     protected function filter_routes($routes)
     {
         $filtered = $routes;
+
+        // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+        // The class is spelled FQCN on a standard route and short on a SPA one, so the declaring FILE decides.
+        $filtered = array_filter($filtered, fn ($route) => Rsx_Identifier::is_path_visible_to_developer($route['file'] ?? '')
+            && Rsx_Identifier::is_visible_to_developer($route['js_action_class'] ?? ''));
 
         // Filter by type
         $type = $this->option('type');

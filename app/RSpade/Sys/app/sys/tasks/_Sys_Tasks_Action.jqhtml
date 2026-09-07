@@ -1,0 +1,9 @@
+<Define:_Sys_Tasks_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Section $title="Tasks" $icon="bi-list-check">
+            <p class="mb-0">The tasks screen: queued, running and scheduled #[Task] work will be listed and inspected here.</p>
+        </_Sys_Section>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Tasks_Action>

@@ -14,6 +14,7 @@ SYNOPSIS
 
     Search (app-facing):
         File_Attachment_Model::search_text($query [, $mode])   // Eloquent Builder
+        Search_Index_Model::search_ranked($query [, $mode])    // + relevance score
         $attachment->get_extracted_text()                      // ?string
         $attachment->get_extraction_status()                   // ?int (null = pending)
 
@@ -250,6 +251,41 @@ SEARCH API
 
         Dedup note: one matching blob may back several attachments, so the builder can
         yield multiple rows per blob - exactly what a staff-wide Files index wants.
+
+    Search_Index_Model::search_ranked(string $query, string $mode = 'BOOLEAN')
+        The same query as search(), with MySQL's relevance score SELECTED as
+        `relevance` and the builder pre-ordered by it descending. search() answers
+        "does this match?", which is all a filter needs; search_ranked() answers
+        "which of these matches best?", which is what a results LIST needs - without
+        it a page either re-derives a worse score in PHP or hand-writes
+        MATCH...AGAINST in app code.
+
+            $rows = Search_Index_Model::search_ranked('contract')
+                ->where('indexable_type', 'File_Storage_Model')
+                ->where('status_id', Search_Index_Model::STATUS_EXTRACTED)
+                ->get();
+            // $rows[0]->relevance is a float, highest first
+
+        It returns an ordinary Builder, so further where()/join()/pagination compose
+        normally and keep both the score and the ordering. An orderBy() of your own
+        APPENDS to the ranking rather than replacing it - call reorder() first to
+        discard it.
+
+        The MATCH expression appears in both the select and the where. MySQL
+        recognises the identical expression and performs ONE full-text scan, so the
+        duplication costs no extra index work.
+
+        THE SCORE IS NOT NORMALISED. In BOOLEAN mode it is comparable only WITHIN one
+        result set and is meaningless across queries: order by it, never threshold on
+        it and never render it as a percentage. In NATURAL LANGUAGE mode a term
+        appearing in more than 50% of the rows scores zero and drops out of the match
+        set entirely - a ranking artifact of the mode, not of this method.
+
+        The rows are index rows, not attachments: relevance belongs to the
+        deduplicated blob, and one blob can back several attachments. Map
+        indexable_id (a File_Storage_Model id) to your own results and sort them.
+        See the reference app's Dev_Document_Preview_Controller::search_text_ranked()
+        (system/app/RSpade/resource/reference_app/app/dev/document_preview/).
 
     $attachment->get_extracted_text(): ?string
         The extracted text, or null if the blob has not been indexed yet. Routes

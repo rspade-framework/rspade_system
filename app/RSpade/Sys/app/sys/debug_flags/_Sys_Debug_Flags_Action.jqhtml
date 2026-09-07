@@ -1,0 +1,9 @@
+<Define:_Sys_Debug_Flags_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Section $title="Debug Flags" $icon="bi-toggles">
+            <p class="mb-0">The debug-flags screen: the diagnostic switches under config('rsx.development') will be listed and toggled here.</p>
+        </_Sys_Section>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Debug_Flags_Action>

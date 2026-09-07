@@ -10,7 +10,7 @@
 
 **Blank is a value; absent means untouched.** Every input serializes on every submit, so a blank field arrives as `''` and must validate — a required field rejects it identically on create and edit. An ABSENT key means "leave it alone"; **"keep the old value when blank" is forbidden server-side** — it makes a failed clear look like a success. Endpoints answer `response_form_error($message, ['title' => 'Required'])`.
 
-**Every form places exactly one `<Form_Errors />`** where its layout wants failure feedback — a form without one throws. **`$name` goes on the INPUT, never on `Form_Field`, and you NEVER set `$value`.** `$max_length` is REQUIRED on `Text_Input` (`Model.field_length('col')`, a number, or `-1`).
+**Every form places exactly one `<Form_Errors />`** where its layout wants failure feedback — a form without one throws. **`$name` goes on the INPUT, never on `Form_Field`, and you NEVER set `$value`.** `$max_length` is REQUIRED on `Text_Input` (`Model.field_length('col')`, a number, or `-1`) - and server-side `Model::field_length('col')` is the SAME number, so a length rule never mirrors a schema literal.
 
 **An input implements `_get_value()`/`_set_value()` — NEVER `val()`**, calls `_mark_ready()` at the earliest moment a write would stick (buffering makes `val()` timing-indifferent), and announces user edits with `_notify_input(value)` — never a hand-triggered `'input'`+`'val'` pair. Events: the form fires `'submitted'`, `'submit_error'` and `'input'`.
 

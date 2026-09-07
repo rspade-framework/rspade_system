@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\Jqhtml;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 
 /**
  * JQHTML Class Naming Rule
@@ -103,15 +104,16 @@ class JqhtmlClassNaming_CodeQualityRule extends CodeQualityRule_Abstract
         $kebab_case = $this->to_kebab_case($component_name);
         $underscore_lower = strtolower($component_name);
 
-        // Check 1: Component name must start with uppercase
-        if (!ctype_upper($component_name[0])) {
+        // Check 1: Component name must have the RSpade name shape (Rsx_Identifier is its home)
+        if (!Rsx_Identifier::is_class_name($component_name)) {
             $this->add_violation(
                 $file_path,
                 $component_line_number,
-                "JQHTML component name '{$component_name}' must start with an uppercase letter",
+                "JQHTML component name '{$component_name}' " . Rsx_Identifier::CLASS_NAME_RULE,
                 trim($lines[$component_line_number - 1]),
-                "Change '{$component_name}' to '" . ucfirst($component_name) . "'. " .
-                "This is a hard requirement of the jqhtml library - component names MUST start with an uppercase letter.",
+                "Rename '{$component_name}'. A component name " . Rsx_Identifier::CLASS_NAME_RULE . '. ' .
+                'This is a hard requirement of the jqhtml library. A SINGLE leading underscore is the ' .
+                'framework-application prefix and is reserved (NAME-RESERVED-01).',
                 'critical'
             );
         }
@@ -287,14 +289,15 @@ class JqhtmlClassNaming_CodeQualityRule extends CodeQualityRule_Abstract
 
             foreach ($class_definitions as $class_name => $line_num) {
                 if (Manifest::js_is_subclass_of($class_name, 'Component')) {
-                    if (!ctype_upper($class_name[0])) {
+                    if (!Rsx_Identifier::is_class_name($class_name)) {
                         $this->add_violation(
                             $file_path,
                             $line_num,
-                            "JQHTML component class '{$class_name}' must start with an uppercase letter",
+                            "JQHTML component class '{$class_name}' " . Rsx_Identifier::CLASS_NAME_RULE,
                             trim($lines[$line_num - 1]),
-                            "Change '{$class_name}' to '" . ucfirst($class_name) . "'. " .
-                            "This is a hard requirement of the jqhtml library - component names MUST start with an uppercase letter.",
+                            "Rename '{$class_name}'. A component class name " . Rsx_Identifier::CLASS_NAME_RULE . '. ' .
+                            'This is a hard requirement of the jqhtml library. A SINGLE leading underscore is the ' .
+                            'framework-application prefix and is reserved (NAME-RESERVED-01).',
                             'critical'
                         );
                     }
@@ -310,14 +313,15 @@ class JqhtmlClassNaming_CodeQualityRule extends CodeQualityRule_Abstract
             if (preg_match('/jqhtml\.component\([\'"]([a-zA-Z_][a-zA-Z0-9_]*)[\'"]/', $line, $matches)) {
                 $component_name = $matches[1];
 
-                if (!ctype_upper($component_name[0])) {
+                if (!Rsx_Identifier::is_class_name($component_name)) {
                     $this->add_violation(
                         $file_path,
                         $line_number,
-                        "JQHTML component registration '{$component_name}' must use uppercase name",
+                        "JQHTML component registration '{$component_name}' " . Rsx_Identifier::CLASS_NAME_RULE,
                         trim($line),
-                        "Change '{$component_name}' to '" . ucfirst($component_name) . "'. " .
-                        "This is a hard requirement of the jqhtml library - component names MUST start with an uppercase letter.",
+                        "Rename '{$component_name}'. A registered component name " . Rsx_Identifier::CLASS_NAME_RULE . '. ' .
+                        'This is a hard requirement of the jqhtml library. A SINGLE leading underscore is the ' .
+                        'framework-application prefix and is reserved (NAME-RESERVED-01).',
                         'critical'
                     );
                 }
@@ -326,11 +330,15 @@ class JqhtmlClassNaming_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Convert PascalCase_With_Underscores to kebab-case
+     * Convert PascalCase_With_Underscores to kebab-case.
+     *
+     * The framework-application prefix is stripped first, so `_Sys_Card` yields `root-card`
+     * rather than a leading-hyphen non-class. The DOM class stays `_Sys_Card` - only this
+     * kebab derivative (used to RECOGNISE a wrongly-cased BEM prefix) drops the underscore.
      */
     private function to_kebab_case(string $component_name): string
     {
-        return strtolower(str_replace('_', '-', $component_name));
+        return strtolower(str_replace('_', '-', Rsx_Identifier::bare($component_name)));
     }
 
     /**

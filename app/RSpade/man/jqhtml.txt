@@ -1572,8 +1572,13 @@ CLASS-TEMPLATE ASSOCIATION
 
 NAMING CONVENTIONS
     Component Names (Like_This_With_Underscores - RSpade convention):
-        - Component names start uppercase, words separated by underscores
+        - Component names start with a capital letter, optionally preceded
+          by a SINGLE underscore, words separated by underscores
         - Examples: User_Card, Test_Component_1, Product_List
+        - The underscore form (_Sys_Card) is the FRAMEWORK-APPLICATION
+          prefix: it belongs to the framework's own application tree at
+          app/RSpade/Sys/ and is refused in application code
+          (NAME-RESERVED-01)
         - This matches the RSX class convention used everywhere else in
           the framework (see rsx:man coding_standards)
 
@@ -1633,7 +1638,9 @@ BLADE SYNTAX (UPPERCASE TAGS)
     These transform to Jqhtml::component() calls automatically.
 
     Important rules:
-        - Component names MUST start with uppercase letter
+        - Component names MUST start with a capital letter, optionally
+          preceded by a single underscore (the framework-application
+          prefix - reserved from application code, NAME-RESERVED-01)
         - Only self-closing tags allowed in Blade (no innerHTML/slot content)
         - Use $ prefix for component args: $name="value"
         - Use content() for a single content region, named slots for

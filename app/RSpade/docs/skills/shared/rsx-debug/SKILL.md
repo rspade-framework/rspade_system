@@ -1,6 +1,6 @@
 ---
 name: rsx-debug
-description: "Rendering and inspecting RSX routes headlessly with php artisan rsx:debug - Playwright-backed page capture, authenticated and portal sessions, screenshots at device widths, layout dimension dumps, and in-page JavaScript evaluation. Use when verifying a page change actually renders, capturing a screenshot, debugging a layout or component that \"looks wrong\", reading console_debug output from a real page load, testing a portal screen, or when a route returns 404 and you are tempted to blame \"SPA can't be tested server-side\"."
+description: "Rendering and inspecting RSX routes headlessly with php artisan rsx:debug - Playwright-backed page capture, authenticated and portal sessions, screenshots at device widths, layout dimension dumps, and in-page JavaScript evaluation. Use when verifying a page change actually renders, capturing a screenshot, debugging a layout or component that \"looks wrong\", reading console_debug output from a real page load, testing a portal screen, or when a route returns 404 and you are tempted to blame \"SPA can't be tested server-side\". READ THIS FIRST if rsx:debug itself looks broken - if --eval returns undefined, if --wait-for times out, or if you are about to work around the tool instead of using it."
 ---
 
 # rsx:debug - headless route rendering
@@ -85,7 +85,38 @@ rsx:debug /contacts --eval="$('.btn-add').click(); await sleep(1000)"
 
 - The eval body is async - `await` works, and `sleep(ms)` is available.
 - **`return` gives you the value**; anything logged needs `--console` to be shown.
+  A bare expression is NOT the value: the body is a function body, so `--eval="1+1"` prints
+  `undefined` and `--eval="return 1+1"` prints `2`. `undefined` from a trivial expression
+  means you forgot `return` - it does not mean eval is broken.
 - The DOM is captured AFTER the eval completes, which is what makes this the way to test click/input behaviour headlessly.
+
+### Traps when driving a real page
+
+**Scope every selector to the component under test.** A class like `.Search_Input__input` is
+shared by every instance on the page, so `$('.Search_Input__input').val('x').trigger('input')`
+types into ALL of them - a record page can easily carry five. You then drive widgets you never
+meant to touch, and the failure surfaces somewhere else entirely. Reach the one you want
+through its owner: `$('.My_Widget .Search_Input__input')`, or better
+`$('.My_Widget').component().$sid('search_input')`.
+
+**Never select by `data-sid`.** `$('[data-sid=save_btn]')` THROWS - the attribute is a
+DevTools aid, stripped in production. Go through the component: `c.$sid('save_btn').click()`.
+
+**Poll for the state you want; don't `sleep` past it.** A fixed wait either lands mid-request
+(you read a half-applied state) or runs long enough to collide with something else. Loop until
+the condition holds:
+
+```js
+while (c.state.loading) await sleep(100);   // the page decides when it is done, not a counter
+```
+
+**`Execution context was destroyed, most likely because of a navigation`** means the page
+navigated while your script was running, so there is nothing left to return into. Usual causes,
+in order of likelihood: your script triggered an unhandled exception that the error handler
+routed to an error page; you clicked something that really does navigate; or a redirect fired
+on load. It is a symptom of the page, NOT of `--eval` - bisect by running the same steps
+individually, shortening the wait until one returns, and by checking whether a broadly-scoped
+selector (above) is driving code you did not intend to reach.
 
 ## Other options worth knowing
 

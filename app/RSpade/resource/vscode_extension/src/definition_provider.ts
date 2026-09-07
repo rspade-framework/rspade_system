@@ -78,7 +78,10 @@ import * as fs from 'fs';
 import { IdeBridgeClient } from './ide_bridge_client';
 import {
     Auth_Realm,
+    CLASS_NAME_FRAGMENT,
+    class_name_start_is_valid,
     infer_auth_realm,
+    is_class_name,
     recognize_auth_checks,
     recognize_css_classes,
     token_at,
@@ -272,7 +275,8 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
 
         // Match Route() with single string parameter
         // Matches: Rsx::Route('Something') or Rsx.Route("Something") or Rsx::Route('Class::method')
-        const routePattern = /(?:Rsx::Route|Rsx\.Route)\s*\(\s*['"]([A-Z][A-Za-z0-9_:]+)['"].*?\)/;
+        const routePattern = new RegExp(
+            `(?:Rsx::Route|Rsx\\.Route)\\s*\\(\\s*['"](${CLASS_NAME_FRAGMENT}[A-Za-z0-9_:]*)['"].*?\\)`);
         const match = line.match(routePattern);
 
         if (match) {
@@ -488,7 +492,7 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
         const line = document.lineAt(position.line).text;
 
         // Match extends="ClassName" or extends='ClassName'
-        const extendsPattern = /extends\s*=\s*(['"])([A-Z][A-Za-z0-9_]*)\1/g;
+        const extendsPattern = new RegExp(`extends\\s*=\\s*(['"])(${CLASS_NAME_FRAGMENT})\\1`, 'g');
         let match;
 
         while ((match = extendsPattern.exec(line)) !== null) {
@@ -529,7 +533,8 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
 
         // Match $attribute=Value or $attribute=this.method or $attribute=Class.method
         // Pattern: $word=(this.)?(Word)(.word)?
-        const attrPattern = /\$[a-z_][a-z0-9_]*\s*=\s*(this\.)?([A-Z][A-Za-z0-9_]*)(?:\.([a-z_][a-z0-9_]*))?/gi;
+        const attrPattern = new RegExp(
+            `\\$[a-z_][a-z0-9_]*\\s*=\\s*(this\\.)?(${CLASS_NAME_FRAGMENT})(?:\\.([a-z_][a-z0-9_]*))?`, 'gi');
         let match;
 
         while ((match = attrPattern.exec(line)) !== null) {
@@ -547,7 +552,7 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
                     // Get the component name from the file
                     let componentName: string | undefined;
                     const fullText = document.getText();
-                    const defineMatch = fullText.match(/<Define:([A-Z][A-Za-z0-9_]*)/);
+                    const defineMatch = fullText.match(new RegExp(`<Define:(${CLASS_NAME_FRAGMENT})`));
 
                     if (defineMatch) {
                         componentName = defineMatch[1];
@@ -620,7 +625,7 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
         // Get the component name from the file
         let componentName: string | undefined;
         const fullText = document.getText();
-        const defineMatch = fullText.match(/<Define:([A-Z][A-Za-z0-9_]*)/);
+        const defineMatch = fullText.match(new RegExp(`<Define:(${CLASS_NAME_FRAGMENT})`));
 
         if (defineMatch) {
             componentName = defineMatch[1];
@@ -681,7 +686,7 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
         console.log('[JQHTML Component] JQHTML API available');
 
         // 1. Get the word at cursor position (component name pattern)
-        const word_range = document.getWordRangeAtPosition(position, /[A-Z][A-Za-z0-9_]*/);
+        const word_range = document.getWordRangeAtPosition(position, new RegExp(CLASS_NAME_FRAGMENT));
         if (!word_range) {
             console.log('[JQHTML Component] No word range found at cursor position');
             return undefined;
@@ -690,7 +695,8 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
         console.log('[JQHTML Component] Found word at cursor:', component_name);
 
         // 2. Verify it's a component reference (starts with uppercase)
-        if (!/^[A-Z]/.test(component_name)) {
+        if (!is_class_name(component_name) ||
+            !class_name_start_is_valid(document.lineAt(position.line).text, word_range.start.character)) {
             console.log('[JQHTML Component] Word does not start with uppercase - not a component');
             return undefined;
         }
@@ -748,13 +754,14 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
         const line = document.lineAt(position.line).text;
 
         // Try to match a class name first (uppercase with underscores)
-        let wordRange = document.getWordRangeAtPosition(position, /[A-Z][A-Za-z0-9_]*/);
+        let wordRange = document.getWordRangeAtPosition(position, new RegExp(CLASS_NAME_FRAGMENT));
 
         if (wordRange) {
             const word = document.getText(wordRange);
 
             // Check if this looks like an RSX class name (contains underscore and starts with capital)
-            if (word.includes('_') && /^[A-Z]/.test(word)) {
+            if (word.includes('_') && is_class_name(word) &&
+                class_name_start_is_valid(line, wordRange.start.character)) {
                 // Check if we're on a method call (look for a dot and method name after the class)
                 let method_name: string | undefined;
                 const wordEnd = wordRange.end.character;
@@ -787,13 +794,14 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
 
             // Look backwards for "ClassName." or "ClassName::" pattern before the method
             const beforeMethod = line.substring(0, wordStart);
-            const classMatch = beforeMethod.match(/([A-Z][A-Za-z0-9_]*)(?:\.|::)$/);
+            const classMatch = beforeMethod.match(new RegExp(`(${CLASS_NAME_FRAGMENT})(?:\\.|::)$`));
 
             if (classMatch) {
                 const class_name = classMatch[1];
+                const class_start = beforeMethod.length - classMatch[0].length;
 
                 // Check if the class name looks like an RSX class (contains underscore)
-                if (class_name.includes('_')) {
+                if (class_name.includes('_') && class_name_start_is_valid(beforeMethod, class_start)) {
                     // Query the IDE helper for this class and method
                     try {
                         const result = await this.queryIdeHelper(class_name, method_name, 'js_class,php_class');
@@ -934,12 +942,13 @@ export class RspadeDefinitionProvider implements vscode.DefinitionProvider {
         }
 
         if (!isInRoute) {
-            const wordRange = document.getWordRangeAtPosition(position, /[A-Z][A-Za-z0-9_]*/);
+            const wordRange = document.getWordRangeAtPosition(position, new RegExp(CLASS_NAME_FRAGMENT));
             if (wordRange) {
                 const word = document.getText(wordRange);
 
                 // Check if this looks like an RSX class name
-                if (word.includes('_') && /^[A-Z]/.test(word)) {
+                if (word.includes('_') && is_class_name(word) &&
+                    class_name_start_is_valid(line, wordRange.start.character)) {
                     try {
                         // When resolving from PHP files, only look for PHP classes
                         // This prevents jumping to JavaScript files when clicking on PHP class references

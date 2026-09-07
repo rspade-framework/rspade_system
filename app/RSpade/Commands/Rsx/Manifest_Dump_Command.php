@@ -4,6 +4,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use Illuminate\Console\Command;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 use Symfony\Component\Yaml\Yaml;
 
 class Manifest_Dump_Command extends Command
@@ -64,6 +65,9 @@ class Manifest_Dump_Command extends Command
         
         // Get full manifest structure for dumping
         $data = Manifest::get_full_manifest();
+
+        // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+        $data = $this->hide_framework_application($data);
         
         // Apply filters
         if ($filter) {
@@ -80,6 +84,27 @@ class Manifest_Dump_Command extends Command
         return Command::SUCCESS;
     }
     
+    /**
+     * Drop the framework's own application tree from a dumped file map.
+     *
+     * Display only - the manifest itself is untouched. A framework developer sees
+     * everything (rsx:man sys_panel, WHAT THE TOOLS SHOW).
+     */
+    protected function hide_framework_application(array $data): array
+    {
+        if (!isset($data['data']['files'])) {
+            return $data;
+        }
+
+        foreach (array_keys($data['data']['files']) as $path) {
+            if (!Rsx_Identifier::is_path_visible_to_developer((string) $path)) {
+                unset($data['data']['files'][$path]);
+            }
+        }
+
+        return $data;
+    }
+
     /**
      * Filter manifest data by file path pattern
      */

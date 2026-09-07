@@ -1,0 +1,69 @@
+<%--
+_Apidocs_Key_Bar - the shared tester-key control.
+
+With a key adopted it also carries a SCOPE BADGE - 'scoped' or 'unrestricted' - read from
+the server's view of the adopted key, plus a 'read-only' badge when that key may GET only. A listing drawn for a scoped key describes what that
+credential reaches, which is a narrower claim than what its owner reaches, and a reader
+comparing two consoles has no other way to tell which they are looking at.
+
+Two mutually exclusive states, never both: with no key it is an input, with one it is a
+status line. Showing an empty "paste a key" box beside an active key invites pasting over a
+working key by accident, and showing a masked key beside nothing is noise.
+
+The no-key state's ACTION BUTTON is likewise one or the other, never both. An empty box
+offers "Temporary Key" - the one useful thing to do with nothing typed - and the moment
+anything is typed it becomes "Use Key", which is the only useful thing to do with something
+typed. _Apidocs_Key_Bar._sync_action() does that swap on every keystroke; the classes below are
+only its starting position, computed for the empty box this renders with.
+
+The offer is made only to a signed-in account that HAS API access, because minting for any
+other caller is refused by _Apidocs_Controller::mint_temporary_key() - a button whose only
+possible outcome is an error is not an offer. Everyone else gets "Use Key" unconditionally:
+a key from elsewhere still works, whoever is holding it.
+--%>
+<Define:_Apidocs_Key_Bar tag="div">
+<% const key = this.state.key; %>
+<div class="_Apidocs_Key_Bar__row">
+    <% if (key) { %>
+        <div class="_Apidocs_Key_Bar__status _Apidocs_Key_Bar__status--set">
+            <span class="_Apidocs_Key_Bar__dot _Apidocs_Key_Bar__dot--on"></span>
+            <span class="_Apidocs_Key_Bar__status-text">Key active</span>
+            <code class="_Apidocs_Key_Bar__masked"><%= api_key_mask(key) %></code>
+            <%-- The SERVER's view of the adopted key, not the browser's: the console asked
+                 it which endpoints this credential reaches, and this says on what basis. It
+                 is absent when no key is adopted server-side, because then there is nothing
+                 to describe. --%>
+            <% const scoped = _Apidocs_Catalog.key_scoped(); %>
+            <% if (scoped !== null) { %>
+                <span class="_Apidocs_Key_Bar__scope <%= scoped ? '_Apidocs_Key_Bar__scope--scoped' : '' %>"
+                      title="<%= scoped ? 'This key carries scopes that narrow it below its owner\'s authority.' : 'This key carries its owner\'s full authority.' %>"><%= scoped ? 'scoped' : 'unrestricted' %></span>
+            <% } %>
+            <%-- The other axis, and a different sentence: 'scoped' says which PATHS the key
+                 reaches, 'read-only' says which VERBS it may use. A read-only key's listing
+                 has no write endpoints in it at all, so the badge is what stops that absence
+                 reading as "this API has no write endpoints". --%>
+            <% if (_Apidocs_Catalog.key_read_only()) { %>
+                <span class="_Apidocs_Key_Bar__scope _Apidocs_Key_Bar__scope--scoped"
+                      title="This key may execute GET requests only. Every other verb is refused."
+                      >read-only</span>
+            <% } %>
+            <button type="button" $sid="clear" class="_Apidocs_Key_Bar__btn _Apidocs_Key_Bar__btn--ghost">Clear</button>
+        </div>
+    <% } else { %>
+        <div class="_Apidocs_Key_Bar__status">
+            <span class="_Apidocs_Key_Bar__dot"></span>
+            <span class="_Apidocs_Key_Bar__status-text _Apidocs_Key_Bar__status-text--muted">No API key set</span>
+        </div>
+        <% const can_mint = Permission.is_logged_in() && Permission.has_api_access(); %>
+        <% const use_class = can_mint ? '_Apidocs_Key_Bar__btn _Apidocs_Key_Bar__btn--hidden' : '_Apidocs_Key_Bar__btn'; %>
+        <div class="_Apidocs_Key_Bar__controls">
+            <input type="text" $sid="input" class="_Apidocs_Key_Bar__input" placeholder="Paste an API key" spellcheck="false" autocomplete="off">
+            <button type="button" $sid="use" class="<%= use_class %>">Use Key</button>
+            <% if (can_mint) { %>
+                <button type="button" $sid="temporary" class="_Apidocs_Key_Bar__btn _Apidocs_Key_Bar__btn--warn">Temporary Key</button>
+            <% } %>
+        </div>
+    <% } %>
+</div>
+<div $sid="error" class="_Apidocs_Key_Bar__error _Apidocs_Key_Bar__error--hidden"></div>
+</Define:_Apidocs_Key_Bar>

@@ -79,6 +79,14 @@ class Filename_ShortName
      */
     private static function _match_prefix_length(array $name_parts, array $dir_parts): int
     {
+        // A framework-application prefix (a SINGLE leading underscore - see
+        // App\RSpade\Core\Naming\Rsx_Identifier) explodes to an empty first segment, which
+        // is not a name part and is never directory-redundant. Refuse a short name outright
+        // rather than reasoning about an empty segment.
+        if ($name_parts !== [] && $name_parts[0] === '') {
+            return 0;
+        }
+
         $original_segment_count = count($name_parts);
 
         // Longest short name first (fewest dropped parts), down to a 2-segment short name.

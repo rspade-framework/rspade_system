@@ -381,6 +381,19 @@ abstract class Rsx_Bundle_Abstract
             $rsxapp_data['auth_routes'] = Auth_Gates::export_route_grants($auth_realm);
         }
 
+        // Always-published targets (config rsx.always_published_routes): the reachability
+        // of pages whose CODE IS NOT IN THIS BUNDLE, so a link to /_sys can be gated from
+        // an application page. ALWAYS shipped and NOT opt-in - a handful of framework
+        // entries, carrying explicit denials (0) as well as grants, because "absent" here
+        // has to keep meaning "not published" rather than "denied". Consulted by
+        // Permission.can_access() ahead of the opt-in auth_routes table.
+        //
+        // Held aside and attached AFTER __filter_underscore_keys() below - see the comment
+        // there. Its keys are ROUTE TARGETS, and the framework reserves a single leading
+        // underscore for its own (_Sys_Dashboard_Action), which the payload-field filter
+        // would otherwise strip.
+        $published_route_grants = Auth_Gates::export_published_route_grants($auth_realm);
+
         // Rsx_Storage scope key: the md5 of the exact ingredients Rsx.scope_key()
         // used to join CLIENT-side (session_hash / user id / site id / build_key).
         // Computed here, server-side, so client code never derives storage scope
@@ -581,6 +594,15 @@ abstract class Rsx_Bundle_Abstract
 
         // Filter out keys starting with single underscore (but allow double underscore like __MODEL)
         $rsxapp_data = static::__filter_underscore_keys($rsxapp_data);
+
+        // ATTACHED AFTER THE FILTER, deliberately. The filter exists for PAYLOAD FIELDS: a
+        // single leading underscore marks something the framework owns and the client must
+        // never hold (the system-column convention). The always-published map is not fields
+        // at all - its keys are the route targets an application spells in
+        // Permission.can_access(), and the framework reserves exactly that leading
+        // underscore for its own page names, so running the field filter over it would strip
+        // the one entry the map exists to carry.
+        $rsxapp_data['auth_routes_published'] = $published_route_grants;
 
         // Pretty print rsxapp for browser-devtools readability in development and
         // debug (both non-production); compact in strict production (smaller payload,
@@ -893,7 +915,7 @@ abstract class Rsx_Bundle_Abstract
         // page but the route it is mounted on, and the bundle is framework-owned end to end,
         // so there is no app-side JS for it to be missing. This is what lets a framework
         // feature be MOUNTED on an application route and still ship its own bundle - the API
-        // reference console (Api_Docs_App.blade.php + Api_Docs_Bundle) is the shipped case.
+        // reference console (_Apidocs_App.blade.php + _Apidocs_Bundle) is the shipped case.
         $view_is_framework_owned = str_starts_with($view_path, 'app/RSpade/');
 
         // Only validate if we're in a route dispatch context (controller and action are set)

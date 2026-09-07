@@ -1,0 +1,44 @@
+# environment_updates - test catalog
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| ENVUPD-070-CREATE | 070 creates `.claude/skills/<name> -> ../../rsx/resource/skills/<name>` for an authored skill, relative target | cli | sandbox with one SKILL.md | link created, one `[env] Linked` line | implemented | 2026-08-23 |
+| ENVUPD-070-NOT-A-SKILL | a directory without SKILL.md is ignored silently (it is not a skill) | cli | skills/notes/README.md | no link, no output | implemented | 2026-08-23 |
+| ENVUPD-070-IDEMPOTENT | a healthy re-run prints nothing on either stream | cli | second run | empty stdout + stderr, exit 0 | implemented | 2026-08-23 |
+| ENVUPD-070-INCREMENTAL | a skill added later is linked without re-announcing the existing ones | cli | add a second skill | one line, naming only the new skill | implemented | 2026-08-23 |
+| ENVUPD-070-QUIET | RSPADE_ENV_UPDATE_QUIET=true suppresses the create line, and the link is still written | cli | quiet run, link removed first | silent stdout, link present | implemented | 2026-08-23 |
+| ENVUPD-070-MONOREPO | BOTH contexts: IS_FRAMEWORK_DEVELOPER=true still wires the template app's skills | cli | monorepo flag | link present | implemented | 2026-08-23 |
+| ENVUPD-070-PRUNE-OURS | a dangling link is pruned for BOTH recognised literal prefixes (rsx/resource/skills, system/app/RSpade) | cli | two dead ours-links | both removed, one line each | implemented | 2026-08-23 |
+| ENVUPD-070-PRUNE-LIMITS | a dangling FOREIGN link, a healthy link and a real directory are never touched | cli | mixed .claude/skills contents | all three survive | implemented | 2026-08-23 |
+| ENVUPD-070-RETARGET | a link of ours pointing at a vanished old name is retargeted, not left dead | cli | link -> kept-old-name | link -> kept, resolves | implemented | 2026-08-23 |
+| ENVUPD-070-NO-CLOBBER-DIR | a real directory on a skill's name is reported on stderr and left byte-identical | cli | .claude/skills/occupied/ | exit 0, stderr report, content intact | implemented | 2026-08-23 |
+| ENVUPD-070-NO-CLOBBER-LINK | a foreign symlink that RESOLVES is reported and left pointing where it pointed | cli | link -> ../../elsewhere/occupied | exit 0, target unchanged | implemented | 2026-08-23 |
+| ENVUPD-070-RESERVED | an app skill named `rspade` is refused (the framework plugin namespace) and never linked | cli | skills/rspade/SKILL.md | exit 0, stderr names the reserved name | implemented | 2026-08-23 |
+| ENVUPD-070-PROBLEMS-NOT-QUIET | quiet mode suppresses informational lines only - stderr problems still print | cli | quiet run with blocked + reserved | silent stdout, both stderr reports | implemented | 2026-08-23 |
+| ENVUPD-080-SET | 080 sets `submodule.system.ignore = dirty` in the tracked .gitmodules when absent, leaving url/branch untouched | cli | git repo + fabricated system entry | ignore=dirty, one line asking for the commit | implemented | 2026-08-24 |
+| ENVUPD-080-IDEMPOTENT | a healthy re-run prints nothing on either stream; a WRONG value (`all`) is corrected, not only an absent one | cli | second run; then ignore=all | silent; then ignore=dirty | implemented | 2026-08-24 |
+| ENVUPD-080-UNSET-BLANKET | a repo-wide `diff.ignoreSubmodules` in .git/config is unset whatever its value (it hides the pointer, and every other gitlink) | cli | --local diff.ignoreSubmodules all, then dirty | key gone both times, one line | implemented | 2026-08-24 |
+| ENVUPD-080-NOT-OURS | a .gitmodules with no `system` entry - or none at all - is skipped silently and byte-identically | cli | model-builder-only .gitmodules; then no file | no output, file unchanged / not created | implemented | 2026-08-24 |
+| ENVUPD-080-MONOREPO | DOWNSTREAM ONLY: IS_FRAMEWORK_DEVELOPER=true writes nothing (system/ is authored source here) | cli | monorepo flag | exit 0, .gitmodules untouched | implemented | 2026-08-24 |
+| ENVUPD-080-QUIET | quiet mode prints nothing on stdout and still applies both changes | cli | quiet run, both defects present | silent stdout, both fixed | implemented | 2026-08-24 |
+| ENVUPD-090-REWRITE | 090 rewrites the starter README's clone line to the project's own origin, dropping `--depth 1` and adjusting the requirements note - and nothing else in the file | cli | git repo + pristine copy + origin | new clone line, exactly two changed lines, one `[env]` line naming the URL | implemented | 2026-08-24 |
+| ENVUPD-090-PRISTINE-GATE | byte identity with the shipped pristine copy is the ONLY authorization: one appended byte, or an already-personalized README, ends it forever | cli | edited README; then a second run | silent no-op, file byte-identical | implemented | 2026-08-24 |
+| ENVUPD-090-NO-PRISTINE | a release too old to carry `resource/starter/README.md`, or a README with no clone line, is a silent no-op | cli | pristine removed; then --no-clone-line fixture | no output, README untouched | implemented | 2026-08-24 |
+| ENVUPD-090-NO-ORIGIN | no origin is a no-op that keeps the pristine window open | cli | repo with no remote | README byte-identical, stdout silent | implemented | 2026-08-24 |
+| ENVUPD-090-STARTER-ORIGIN | an origin that IS the starter (rspade-framework/rspade, both URL shapes, and rspade_project) is a no-op - a checkout of the starter is not a project | cli | three starter URLs | silent, shipped line intact | implemented | 2026-08-24 |
+| ENVUPD-090-MONOREPO | DOWNSTREAM ONLY: IS_FRAMEWORK_DEVELOPER=true rewrites nothing (that README is the authored source) | cli | monorepo flag | exit 0, README untouched | implemented | 2026-08-24 |
+| ENVUPD-090-QUIET | quiet mode prints nothing on stdout and still rewrites; the single-commit note appears only in a loud run | cli | quiet run; then loud run on a 1-commit repo | silent then "fresh template repository" | implemented | 2026-08-24 |
+| ENVUPD-060-PLUGIN-CREATE | 060 creates `.claude/skills/rspade -> ../../system/app/RSpade/docs` when the docs tree exists | cli | sandbox with docs tree | link created, one line | implemented | 2026-08-23 |
+| ENVUPD-060-PLUGIN-REPAIR | a dead rspade link pointing inside the framework tree is repaired | cli | link -> old_docs_location | retargeted to the docs tree | implemented | 2026-08-23 |
+| ENVUPD-060-PLUGIN-FOREIGN | a link pointing OUTSIDE the framework tree is reported and left untouched | cli | link -> ../../my_own_docs | exit 0, target unchanged | implemented | 2026-08-23 |
+| ENVUPD-060-QUIET | quiet mode suppresses 060's informational lines and its first-run advisories | cli | quiet create run | silent stdout, link present | implemented | 2026-08-23 |
+| ENVUPD-POST-LOUD | post-update.sh prints a script's informational line, and reports a failing script as non-fatal | cli | chatty + failing fixture scripts | line on stdout, WARNING + count on stderr, exit 0 | implemented | 2026-08-23 |
+| ENVUPD-POST-QUIET | --quiet exports RSPADE_ENV_UPDATE_QUIET and hides the informational line, keeping both problem lines | cli | same, with --quiet | silent stdout, stderr unchanged | implemented | 2026-08-23 |
+| ENVUPD-060-MEMORY-IMPORT | the downstream memory import prepended to rsx/resource/CLAUDE.md (created when absent, never duplicated) | cli | downstream sandbox | one import line, idempotent | planned | 2026-08-23 |
+| ENVUPD-RSXGIT-HOOK | rsx:git pull runs post-update.sh --quiet after an op that moved HEAD, and never after one that did not | cli | git_proxy fixture + a spy post-update | invoked once, only on a real pull; a failing one is a warning | implemented (lives in `git_proxy/cli/t23`, whose fixture builds a real submodule project) | 2026-08-23 |
+| ENVUPD-010/050/061 | the remaining installers (statusline + preference defaults, post-commit hook, system/rsx symlink) | cli | per-script sandboxes | augment-only, idempotent, silent | planned | 2026-08-23 |
+| ENVUPD-100-STEADY | 100 is silent and creates nothing when neither manifest dotfile exists | cli | empty rsx/resource | empty stdout, exit 0, no files | implemented | 2026-09-04 |
+| ENVUPD-100-ADOPT | the old-name fulfillment record is renamed to the new name byte-for-byte, one info line | cli | .upstream_changes_manifest.json present | .breaking_changes_manifest.json identical, old gone, `adopted` on stdout | implemented | 2026-09-04 |
+| ENVUPD-100-IDEMPOTENT | a second run after adoption is silent and alters nothing | cli | rerun | empty stdout, record unchanged | implemented | 2026-09-04 |
+| ENVUPD-100-BOTH | both names present: WARNING on stderr, NEITHER file touched (rule 7) | cli | both dotfiles seeded differently | both byte-identical afterwards, stderr WARNING, exit 0 | implemented | 2026-09-04 |
+| ENVUPD-100-QUIET | RSPADE_ENV_UPDATE_QUIET=true still adopts, prints nothing | cli | quiet env + old file | adoption happened, empty stdout | implemented | 2026-09-04 |

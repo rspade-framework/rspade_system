@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Core\JsParsers;
 
+use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\JsParsers\Js_Exception;
 use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 
@@ -18,35 +19,36 @@ use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 class Js_Parser
 {
     /**
-     * Cache directory for parsed JavaScript files
+     * Derived-cache namespace for parsed JavaScript. See
+     * App\RSpade\Core\Cache\File_Content_Cache - the ONE per-source-file cache helper.
      */
-    protected const CACHE_DIR = 'storage/rsx-tmp/persistent/js_parser';
+    protected const CACHE_NAMESPACE = 'js-parser';
 
     /**
      * Parse a JavaScript file using Node.js AST parser with caching
      */
     public static function parse($file_path)
     {
-        // Generate cache key using the file hash
-        $cache_key = _rsx_file_hash_for_build($file_path);
-        $cache_file = rsx_project_file_path(self::CACHE_DIR . '/' . $cache_key . '.json');
+        // Keyed by the file's build hash - the same key this cache always used, now spelled
+        // through the shared helper rather than a private path.
+        $cached_data = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, '', 'json');
 
-        // Check if cached result exists
-        if (file_exists($cache_file)) {
-            $cached_data = file_get_contents($cache_file);
+        if ($cached_data !== null) {
             $parsed_data = json_decode($cached_data, true);
+
             if (json_last_error() === JSON_ERROR_NONE) {
                 return $parsed_data;
             }
-            // Cache is corrupt, delete it and continue to parse
-            @unlink($cache_file);
+
+            // Cache is corrupt, drop it and continue to parse
+            File_Content_Cache::forget(self::CACHE_NAMESPACE, $file_path, '', 'json');
         }
 
         // Parse the file (original logic continues below)
         $result = static::_parse_without_cache($file_path);
 
         // Cache the result
-        static::_cache_result($cache_key, $result);
+        static::_cache_result($file_path, $result);
 
         return $result;
     }
@@ -179,16 +181,8 @@ class Js_Parser
     /**
      * Cache the parser result
      */
-    protected static function _cache_result($cache_key, $result)
+    protected static function _cache_result($file_path, $result)
     {
-        $cache_dir = rsx_project_file_path(self::CACHE_DIR);
-
-        // Ensure cache directory exists
-        if (!is_dir($cache_dir)) {
-            mkdir($cache_dir, 0755, true);
-        }
-
-        $cache_file = $cache_dir . '/' . $cache_key . '.json';
         $json_data = json_encode($result);
 
         if (json_last_error() !== JSON_ERROR_NONE) {
@@ -196,7 +190,7 @@ class Js_Parser
             return;
         }
 
-        file_put_contents_safe($cache_file, $json_data);
+        File_Content_Cache::put(self::CACHE_NAMESPACE, $file_path, '', 'json', $json_data);
     }
 
     /**

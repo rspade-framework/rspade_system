@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Manifest;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 
 /**
  * FilenameClassMatch_CodeQualityRule - Enforces filename matches class name
@@ -332,22 +333,14 @@ class FilenameClassMatch_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Convert PascalCase to snake_case
-     * Inserts underscores before uppercase letters and before first digit in a run of digits
-     * Example: TestComponent1 -> Test_Component_1
+     * Convert PascalCase to snake_case.
+     *
+     * One implementation, in Rsx_Identifier - it also preserves the single leading
+     * framework-application underscore (`_Sys_Card` -> `_root_card`).
      */
     private function pascal_to_snake_case(string $name): string
     {
-        // Insert underscore before uppercase letters (except first character)
-        $result = preg_replace('/(?<!^)([A-Z])/', '_$1', $name);
-
-        // Insert underscore before first digit in a run of digits
-        $result = preg_replace('/(?<!^)(?<![0-9])([0-9])/', '_$1', $result);
-
-        // Replace multiple consecutive underscores with single underscore
-        $result = preg_replace('/_+/', '_', $result);
-
-        return $result;
+        return Rsx_Identifier::to_snake_case($name);
     }
 
     /**

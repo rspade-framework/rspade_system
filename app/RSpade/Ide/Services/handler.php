@@ -548,6 +548,25 @@ function handle_definition_service($data) {
 }
 
 /**
+ * Is a class name visible to the developer on this box?
+ *
+ * The standalone mirror of App\RSpade\Core\Naming\Rsx_Identifier::is_visible_to_developer().
+ * This handler runs WITHOUT Laravel, so neither the autoloader nor config() is reachable
+ * and the flag is read from the process environment: a `_`-prefixed name belongs to the
+ * framework's own application (rsx:man sys_panel) and is offered only where the web
+ * server carries IS_FRAMEWORK_DEVELOPER.
+ */
+function ide_name_visible_to_developer($name) {
+    if (!preg_match('/^_[A-Z][A-Za-z0-9_]*$/', (string) $name)) {
+        return true;
+    }
+
+    $flag = $_SERVER['IS_FRAMEWORK_DEVELOPER'] ?? $_ENV['IS_FRAMEWORK_DEVELOPER'] ?? getenv('IS_FRAMEWORK_DEVELOPER');
+
+    return in_array(strtolower((string) $flag), ['1', 'true', 'on', 'yes'], true);
+}
+
+/**
  * Handle complete service - provide autocomplete suggestions
  */
 function handle_complete_service($data) {
@@ -563,13 +582,16 @@ function handle_complete_service($data) {
     $manifest = include $manifest_file;
     $suggestions = [];
 
-    // Search PHP classes
-    foreach ($manifest['php']['classes'] ?? [] as $class_name => $class_data) {
+    // Search PHP classes. The built index is data.php_classes: class name => relative path.
+    foreach ($manifest['data']['php_classes'] ?? [] as $class_name => $class_path) {
+        // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+        if (!ide_name_visible_to_developer($class_name)) { continue; }
+
         if (stripos($class_name, $prefix) === 0) {
             $suggestions[] = [
                 'label' => $class_name,
                 'kind' => 'class',
-                'detail' => $class_data['file']
+                'detail' => $class_path
             ];
         }
     }
@@ -1264,7 +1286,10 @@ function handle_resolve_class_service($data) {
 
     // Helper function to convert PascalCase to snake_case
     $camel_to_snake = function($input) {
+        // Collapse underscore runs so a single leading framework-application underscore
+        // survives (`_Sys_Card` -> `_root_card`). Shape home: App\RSpade\Core\Naming\Rsx_Identifier.
         $result = preg_replace('/(?<!^)[A-Z]/', '_$0', $input);
+        $result = preg_replace('/(?<!^)_+/', '_', $result);
         return strtolower($result);
     };
 
@@ -1276,7 +1301,8 @@ function handle_resolve_class_service($data) {
 
     // If no type list specified, try auto-detection with legacy 'class' type
     if (empty($type_list)) {
-        if (!$type || $type === 'class' || preg_match('/^[A-Z][A-Za-z0-9_]*$/', $identifier)) {
+        // `_?[A-Z][A-Za-z0-9_]*` is the RSpade name shape (App\RSpade\Core\Naming\Rsx_Identifier).
+        if (!$type || $type === 'class' || preg_match('/^_?[A-Z][A-Za-z0-9_]*$/', $identifier)) {
             // Legacy: Try PHP class with auto-detection fallback
             $type_list = ['php_class', 'view', 'bundle_alias', 'jqhtml_template', 'jqhtml_class'];
         }

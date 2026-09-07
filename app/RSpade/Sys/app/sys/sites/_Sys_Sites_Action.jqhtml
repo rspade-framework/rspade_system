@@ -1,0 +1,9 @@
+<Define:_Sys_Sites_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Section $title="Sites" $icon="bi-diagram-3">
+            <p class="mb-0">The sites screen: the tenants this install serves will be listed and administered here.</p>
+        </_Sys_Section>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Sites_Action>

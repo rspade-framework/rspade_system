@@ -9,6 +9,7 @@ namespace App\RSpade\Commands\Rsx;
 
 use App\Console\Commands\FrameworkDeveloperCommand;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Identifier;
 
 class Manifest_Show_Command extends FrameworkDeveloperCommand
 {
@@ -117,6 +118,9 @@ class Manifest_Show_Command extends FrameworkDeveloperCommand
         // Show routes
         $routes = [];
         foreach ($data['files'] ?? [] as $file_data) {
+            // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+            if (!Rsx_Identifier::is_visible_to_developer($file_data['class'] ?? '')) { continue; }
+
             if (!empty($file_data['routes'])) {
                 foreach ($file_data['routes'] as $route) {
                     $routes[] = [
@@ -142,6 +146,9 @@ class Manifest_Show_Command extends FrameworkDeveloperCommand
         $views = [];
         
         foreach ($data['files'] ?? [] as $file_data) {
+            // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+            if (!Rsx_Identifier::is_visible_to_developer($file_data['class'] ?? $file_data['view_id'] ?? '')) { continue; }
+
             if (!empty($file_data['class'])) {
                 $extends = !empty($file_data['extends']) ? ' extends ' . $file_data['extends'] : '';
                 $info = $file_data['class'] . $extends;
@@ -190,6 +197,9 @@ class Manifest_Show_Command extends FrameworkDeveloperCommand
     {
         $this->line('Indexed Files:');
         foreach ($data['files'] ?? [] as $path => $info) {
+            // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
+            if (!Rsx_Identifier::is_path_visible_to_developer($path)) { continue; }
+
             $class = !empty($info['class']) ? ' [' . $info['class'] . ']' : '';
             $size = $this->format_bytes($info['size'] ?? 0);
             $clean_path = str_replace('\\', '/', $path);

@@ -1,0 +1,66 @@
+# Concern: class_override
+
+## Domain
+
+The class-override system (`rsx:man class_override`) lets an application replace a
+framework class with its own copy by placing a same-simple-named class under
+`rsx/`. During the manifest rebuild the framework file is renamed to
+`<Name>.php.upstream` and the `rsx/` copy becomes authoritative; references to the
+old framework FQCN keep resolving via the manifest simple-name loader plus
+`class_alias`.
+
+This concern covers the **stale-classmap self-healing** that keeps those references
+resolving even though composer's committed classmap still maps the old framework
+FQCN to the now-renamed `.php` path. Two orthogonal mechanisms (owner ruling
+2026-07-24, Option B):
+
+1. **Runtime tolerance (Autoloader).** A scoped PHP error-handler carve-out swallows
+   ONLY the include/include_once warning that originates from composer's
+   `vendor/composer/ClassLoader.php` (composer's classmap branch returns a path with
+   no `file_exists()` check, then bare-`include`s it). Without the carve-out,
+   Laravel's `HandleExceptions` promotes that warning to a fatal `ErrorException`
+   mid-autoload, defeating the RSX fallback loader. Everything else keeps existing
+   fail-loud behavior.
+2. **Data hygiene (Manifest rebuild).** Immediately after the override rename/restore
+   pass settles, the rebuild validates composer's classmap against the filesystem and,
+   if any entry points at a missing file, runs a blocking `composer dump-autoload` to
+   regenerate it. Dev-mode / rebuild-only; prod seals already regenerate the composer
+   autoloader in `rsx:prod:build`.
+
+The two are complementary: the tolerance is the runtime guarantee for the current
+process (whose in-memory classmap is already loaded and cannot be un-staled
+mid-request); the dump fixes the on-disk data so future processes never hit the miss.
+
+## Source under test
+
+- `app/RSpade/Core/Autoloader.php` - `register()` installs the tolerance;
+  `_handle_php_error()` / `_should_tolerate_classloader_warning()` are the carve-out.
+- `app/RSpade/Core/Manifest/_Manifest_Quality_Helper.php` - `_validate_composer_classmap()`,
+  `_find_stale_classmap_entries()`, `_run_composer_dump()` (+ the `$_composer_dump_runner`
+  test seam); also `_check_unique_base_class_names()` (the override/restore pass).
+- `app/RSpade/Core/Manifest/Manifest.php` - calls `_validate_composer_classmap()` in the
+  rebuild pipeline after the settled override pass.
+- `vendor/composer/ClassLoader.php` - the composer behavior being tolerated (findFile
+  no-file_exists classmap branch + bare include closure).
+
+## Man pages
+
+- `class_override.txt` - section "HOW REFERENCES KEEP RESOLVING" documents all three
+  resolution layers + the scoped tolerance and why it is not a fail-loud violation;
+  "WHAT THE BUILD PRINTS WHEN IT ARCHIVES" and "WHEN THE BUILD REFUSES TO ARCHIVE"
+  document the archive notice and the two conditions that decline the rename.
+
+## Testable surface
+
+| Area | Type | Notes |
+|------|------|-------|
+| Error-handler predicate (which warnings are tolerated) | php | pure - covered |
+| Error-handler branches (swallow vs delegate) | php | handler invoked directly; delegate via injected spy - covered |
+| Classmap staleness detector | php | fixture classmap - covered |
+| Validator dump-seam invocation (fires iff stale) | php | `$_composer_dump_runner` spy - covered |
+| Archive guard: index names an rsx/ twin that is not on disk | php | synthetic file list + real probe files - covered (`Override_Archive_Guard_Test`) |
+| Archive guard: build already marked its manifest bad | php | covered - archiving is skipped entirely |
+| Archive notice names the archived file and the rsx/ twin | php | covered - asserted on the real rename path |
+| Full override -> rename -> validator dump -> alias resolution | e2e | proven manually during ticket verification (tinker); not automated (mutates the real vendor tree + framework files) |
+| Mid-transition (stale classmap still resolves via tolerance) | e2e | proven manually; same reason |
+| Real `composer dump-autoload` fail-loud on non-zero exit | - | deferred - would require breaking composer; the seam covers invocation |

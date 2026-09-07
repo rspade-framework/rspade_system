@@ -28,8 +28,13 @@ The Code Quality system is a modular, extensible framework for enforcing coding 
 ### Support Classes
 
 - **ViolationCollector** - Aggregates violations from all rules
-- **CacheManager** - Caches sanitized file contents to improve performance
 - **FileSanitizer** - Removes comments and strings for accurate code analysis
+- **Validation_Ledger** - the ONE store of "this file already passed this check". A rule
+  that remembers a per-file verdict uses it; a rule may NOT create a cache directory of
+  its own (enforced by a test in `tests/code_quality/`).
+- Sanitized file contents are cached by `CodeQualityChecker` in the shared derived cache
+  (`App\RSpade\Core\Cache\File_Content_Cache`, namespace `code-quality-sanitized`) - there
+  is no CacheManager any more.
 
 ## Rule Categories
 

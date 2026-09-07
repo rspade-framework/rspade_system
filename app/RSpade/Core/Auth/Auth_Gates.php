@@ -307,6 +307,73 @@ class Auth_Gates
         return $reachable;
     }
 
+    /**
+     * The ALWAYS-SHIPPED reachability map for config('rsx.always_published_routes'),
+     * exported as window.rsxapp.auth_routes_published.
+     *
+     * NOT the same contract as export_route_grants(). That map is opt-in, grants-only
+     * and covers every page surface of the realm, so absence there means "no answer".
+     * This one is tiny, always present, and DENIALS ARE CARRIED EXPLICITLY (0), because
+     * its whole job is to let Permission.can_access() give a definite answer for a page
+     * whose code is not in the bundle: an anonymous visitor must read 0, not "unknown".
+     * A target absent from this map falls through to the existing behaviour.
+     *
+     * SAME SEAM as export_route_grants(): the surface index, and gates_pass_at_seam() so a
+     * name unknown in this realm denies-and-logs rather than 500ing a page render.
+     *
+     * REALM. A published target is exported only when its own surface belongs to the
+     * ACTIVE realm (or to REALM_ANY). The shipped entry is a staff surface, so a portal
+     * page ships an empty map rather than a staff answer - identity is not experience,
+     * and Portal_Permission has no business answering for /_sys.
+     *
+     * SPA ACTION TARGETS ARE KIND 'js_action', NOT 'spa'. The 'spa' surface is the PHP
+     * bootstrap controller (_Sys_Spa_Controller::index); the ACTION class carries its own
+     * surface with its own @auth list, and that is the target Rsx::Route() takes. So this
+     * method filters on nothing but realm - the configured target names the surface it
+     * means, whatever kind it is.
+     *
+     * @param string $realm self::REALM_STAFF or self::REALM_PORTAL
+     * @return array<string, int> target => 1 (reachable) or 0 (denied)
+     */
+    public static function export_published_route_grants(string $realm): array
+    {
+        $targets = config('rsx.always_published_routes', []);
+
+        if (empty($targets)) {
+            return [];
+        }
+
+        $surfaces = static::get_surfaces();
+        $published = [];
+
+        foreach ($targets as $target) {
+            $surface = $surfaces[$target] ?? null;
+
+            if ($surface === null) {
+                continue;
+            }
+
+            if (($surface['realm'] ?? null) !== $realm && ($surface['realm'] ?? null) !== self::REALM_ANY) {
+                continue;
+            }
+
+            // A gateless surface cannot assert reachability (see export_route_grants).
+            if (empty($surface['auth'])) {
+                continue;
+            }
+
+            $published[$target] = static::gates_pass_at_seam(
+                $surface['auth'],
+                $realm,
+                "auth_routes_published export of {$target}"
+            ) ? 1 : 0;
+        }
+
+        ksort($published);
+
+        return $published;
+    }
+
     // =========================================================================
     // TARGET RESOLUTION (can_access)
     // =========================================================================

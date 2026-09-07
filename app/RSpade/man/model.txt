@@ -142,6 +142,26 @@ Static Methods:
 - get_table_static() - Get table name without instantiating model
 - getColumns() - Get array of column names for model's table
 - hasColumn($column) - Check if column exists
+- field_length($column) - Max character length of a varchar/char column, or NULL for
+  every other column type. This is the ONE definition of "how long may this field be":
+  the generated JS model stubs bake their own field_length() table from it, so a
+  server-side length check and the client's $max_length cannot drift and app code never
+  mirrors a schema literal in a constant.
+
+      $max = Client_Model::field_length('name');   // 255
+      Client_Model::field_length('id');            // null - a bigint has no limit
+
+  NULL means "this column has no character limit" - a real answer, never a lookup
+  failure. A column the model does not have throws a RuntimeException naming the model
+  and the column: answering NULL for a typo'd name would read as "unlimited" and defeat
+  the very check being written. Class-Table Inheritance is spanned, because the manifest
+  merges a base model's detail-table columns into its map, so a base model answers for
+  its detail columns too.
+
+  Reads the manifest (memoized per class), never the database. Columns whose name starts
+  with a single underscore are SYSTEM columns and are omitted from the JS stub - PHP
+  still answers for them, because what a column's length IS and what may be published to
+  a client are different questions.
 - get_relationships() - Get array of relationship method names, unioned across the
   lineage: this class's #[Relationship] methods plus every manifest-visible ancestor's
   (which is how the framework audit relations created_by / updated_by / deleted_by,

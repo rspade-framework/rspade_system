@@ -122,7 +122,7 @@ AUTHENTICATION
     widens it):
 
         #[Route('/admin')]
-        #[Auth('is_root_admin')]
+        #[Auth('can_manage_users')]
         public static function admin_panel(Request $request, array $params = [])
         {
             return rsx_view('Admin_Panel');

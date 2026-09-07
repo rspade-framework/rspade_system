@@ -31,7 +31,11 @@ FileSanitizer::sanitize_javascript($file_path);  // Cache first, then the node s
 ```
 
 ### Cache Integration
-Cache checked before RPC call - only files with stale cache sent to server for sanitization. Cache directory: `storage/rsx-tmp/cache/js-sanitized/`
+Cache checked before RPC call - only files with stale cache sent to server for sanitization.
+Cache location: the shared derived cache, namespace `js-sanitized`
+(`storage/rsx-tmp/derived/js-sanitized/`), through
+`App\RSpade\Core\Cache\File_Content_Cache` - keyed by the file's build hash, with the
+source-mtime guard kept on top of it.
 
 ### Error Handling
 Server failure → fatal error (no fallback). Server must start or code quality check fails.
@@ -101,8 +105,13 @@ violation list.
 
 ### Cache Integration
 Both lint and analyze_this have their own caching layers:
-- **Lint cache:** Flag files in `storage/rsx-tmp/cache/js-lint-passed/` (mtime-based)
-- **This-usage cache:** JSON files in `storage/rsx-tmp/cache/code-quality/js-this/` (mtime-based)
+- **Lint cache:** the shared `Validation_Ledger` (`storage/rsx-tmp/persistent/validation_ledger.php`),
+  under the rule id `JS-LINT`, keyed by the file's sha1 - the same hash the manifest keys a
+  file by, so a verdict survives a manifest clear. (`PHP-LINT` is the PHP stage's key.)
+- **This-usage cache:** none. `analyze_this()` returns a VIOLATION LIST, which is not worth
+  storing - the rule (`ThisUsage_CodeQualityRule`) banks the CLEAN verdict in the shared
+  `Validation_Ledger` under the generational id `JS-THIS-01@<fingerprint of this rule +
+  quality-service.js>`, and re-analyzes the few files that are not clean.
 
 Cache is checked before RPC call - only files with stale cache are sent to the server.
 

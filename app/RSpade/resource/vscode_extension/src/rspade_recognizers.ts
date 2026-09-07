@@ -105,15 +105,76 @@ export function infer_auth_realm(relative_path: string, document_text: string): 
 }
 
 // =========================================================================
+// B. CLASS / COMPONENT NAMES
+// =========================================================================
+
+/**
+ * The shape of an RSX class, component or `@rsx_id` name.
+ *
+ * The rule of record is `Rsx_Identifier`
+ * (system/app/RSpade/Core/Naming/Rsx_Identifier.php): `/^_?[A-Z][A-Za-z0-9_]*$/`.
+ * A SINGLE leading underscore marks a framework-application name (`_Sys_Layout`,
+ * `<_Sys_Card>`, `._Sys_Card`); TWO leading underscores are not a name at all.
+ *
+ * Embed CLASS_NAME_FRAGMENT in a larger regex rather than writing a local
+ * `[A-Z][A-Za-z0-9_]*` - every recognizer in the extension has to agree with
+ * Rsx_Identifier, and a hand-written fragment is how they stop agreeing.
+ */
+export const CLASS_NAME_FRAGMENT = '_?[A-Z][A-Za-z0-9_]*';
+
+export const CLASS_NAME_PATTERN = new RegExp('^' + CLASS_NAME_FRAGMENT + '$');
+
+export function is_class_name(name: string): boolean {
+    return CLASS_NAME_PATTERN.test(name);
+}
+
+/**
+ * Whether a class name matched at `start` really begins there.
+ *
+ * CLASS_NAME_FRAGMENT consumes at most one leading underscore, so a match inside
+ * `__Bad` starts one character in and looks like the legal `_Bad`. The character
+ * before the match settles it: another underscore means the token was never a
+ * name.
+ */
+export function class_name_start_is_valid(line_text: string, start: number): boolean {
+    return start <= 0 || line_text[start - 1] !== '_';
+}
+
+/**
+ * PascalCase (or `_PascalCase`) to snake_case, the conversion the auto-rename
+ * provider suggests a filename with: `Sys_Card` -> `sys_card`,
+ * `_Sys_Card` -> `_sys_card` (the single leading underscore is preserved and
+ * never doubled), `TestComponent1` -> `Test_Component_1`.
+ *
+ * Callers lowercase the result themselves; the case is left alone here so the
+ * segmenting is visible in a log line.
+ */
+export function pascal_to_snake_case(name: string): string {
+    // Insert underscore before uppercase letters (except first character)
+    let result = name.replace(/(?<!^)([A-Z])/g, '_$1');
+
+    // Insert underscore before first digit in a run of digits
+    result = result.replace(/(?<!^)(?<![0-9])([0-9])/g, '_$1');
+
+    // Collapse the runs the two passes above create - this is also what keeps a
+    // leading `_Sys` from becoming `__sys`.
+    result = result.replace(/_+/g, '_');
+
+    return result;
+}
+
+// =========================================================================
 // C. .Class_Name SELECTORS
 // =========================================================================
 
 /**
  * The whole of the qualifying-token rule: PascalCase segments joined by
- * underscores, at least two segments. `.btn-primary`, `.card`, `.foo_bar` and
- * `.Foo` are all excluded, so an ordinary CSS class is never touched.
+ * underscores, at least two segments, with the optional single leading
+ * underscore of a framework-application name (see CLASS_NAME_FRAGMENT).
+ * `.btn-primary`, `.card`, `.foo_bar`, `.Foo` and `.__Bad` are all excluded, so
+ * an ordinary CSS class is never touched.
  */
-export const CSS_CLASS_PATTERN = /^[A-Z][A-Za-z0-9]*(_[A-Z][A-Za-z0-9]*)+$/;
+export const CSS_CLASS_PATTERN = /^_?[A-Z][A-Za-z0-9]*(_[A-Z][A-Za-z0-9]*)+$/;
 
 export function is_css_class_candidate(value: string): boolean {
     return CSS_CLASS_PATTERN.test(value);
@@ -134,7 +195,7 @@ export function recognize_css_classes(
 ): Recognized_Token[] {
     const tokens: Recognized_Token[] = [];
 
-    const dotted = /\.([A-Z][A-Za-z0-9]*(?:_[A-Z][A-Za-z0-9]*)+)/g;
+    const dotted = /\.(_?[A-Z][A-Za-z0-9]*(?:_[A-Z][A-Za-z0-9]*)+)/g;
     let match: RegExpExecArray | null;
     while ((match = dotted.exec(line_text)) !== null) {
         const preceding = match.index > 0 ? line_text[match.index - 1] : '';

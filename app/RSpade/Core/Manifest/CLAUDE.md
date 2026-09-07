@@ -71,7 +71,7 @@ The build process follows these phases (implementations in helper classes):
 ### Phase 1: File Discovery
 - Implemented in `_Manifest_Scanner_Helper::_get_rsx_files()`
 - Scans directories from `config('rsx.manifest.scan_directories')`
-- Default (relative to `base_path()` = `system/`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/temp']`
+- Default (relative to `base_path()` = `system/`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/temp', 'app/RSpade/tests', 'app/RSpade/Sys']` - `app/RSpade/Sys` is the framework's own application (the /_sys control panel)
 - Excludes filenames via `config('rsx.manifest.excluded_files')` and path segments via `config('rsx.manifest.excluded_dirs')` (vendor, node_modules, storage, .git, public, resource, Core/Manifest)
 - Returns array of file paths with basic stats (mtime, size)
 
@@ -375,7 +375,7 @@ When testing manifest functionality:
 - Cache file: `storage/rsx-build/manifest_data.php`
 - JS stubs: `storage/rsx-build/js-stubs/`
 - Model stubs: `storage/rsx-build/js-model-stubs/`
-- Default scan dirs (see `config('rsx.manifest.scan_directories')`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/temp']`
+- Default scan dirs (see `config('rsx.manifest.scan_directories')`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/temp', 'app/RSpade/tests', 'app/RSpade/Sys']` - the last is the framework's own application tree (the /_sys control panel)
 
 ## Direct Data Access
 

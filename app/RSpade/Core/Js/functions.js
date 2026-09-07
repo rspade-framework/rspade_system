@@ -465,9 +465,17 @@ function snake_to_camel(string, capitalize_first = false) {
  * @returns {string} Snake case string
  */
 function camel_to_snake(string) {
-    return String(string)
+    // Runs of underscores collapse and a SINGLE leading underscore survives, so the
+    // framework-application prefix round-trips: `_Sys_Card` -> `_root_card`.
+    // The name shape itself lives in App\RSpade\Core\Naming\Rsx_Identifier (PHP).
+    const value = String(string);
+    const prefix = /^_[A-Z]/.test(value) ? '_' : '';
+    const bare = prefix ? value.slice(1) : value;
+
+    return prefix + bare
         .replace(/^[A-Z]/, (letter) => letter.toLowerCase())
-        .replace(/[A-Z]/g, (letter) => '_' + letter.toLowerCase());
+        .replace(/[A-Z]/g, (letter) => '_' + letter.toLowerCase())
+        .replace(/_+/g, '_');
 }
 
 /**

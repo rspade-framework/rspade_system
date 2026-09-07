@@ -1,0 +1,16 @@
+# initial_user - test catalog
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| IU-01 | Both halves are created with id 1 even when the AUTO_INCREMENT counter has advanced past it | php | initial account removed, a probe row inserted+deleted on both tables, then `create()` | `users`.id = 1 and `login_users`.id = 1 read back from the database | implemented | 2026-08-24 |
+| IU-02 | A second initial user is an impossible condition, not a case to handle | php | `create()` while the baseline account exists | RuntimeException containing "already has a row with id 1" | implemented | 2026-08-24 |
+| IU-03 | `is_needed()` answers the caller's setup check off `login_users` | php | baseline present, then removed | false, then true | implemented | 2026-08-24 |
+| IU-04 | `user.initial.created` fires once with the documented payload | php | `create(..., source: first_run)` with a recording fixture handler | one payload: user id 1, login_user id 1, site_id, source = first_run | implemented | 2026-08-24 |
+| IU-05 | A handler in `/rsx/handlers/` runs on creation | php | `create()` | the reference handler's rows exist: role ROOT_ADMIN, Administrators group, membership | implemented | 2026-08-24 |
+| IU-06 | The event fires for the TEST BASELINE too, so handler rows are part of every test's starting state | php | committed baseline (no setup) | Administrators group exists with user 1 in it | implemented | 2026-08-24 |
+| IU-07 | A caller-chosen role is not overruled by a handler | php | `create(..., role_id: ROLE_DEVELOPER)` | role stays ROLE_DEVELOPER | implemented | 2026-08-24 |
+| IU-08 | The first-run setup screen creates the account through `Rsx_Initial_User` | playwright | fresh database, browse any URL in development | wizard renders, submits, account is id 1 | deferred - the screen requires an EMPTY login_users on a live server, which no in-suite database can offer while the suite's own baseline account exists | 2026-08-24 |
+| IU-09 | The post-migrate step refuses blank `RSPADE_DEFAULT_*` outside development and the test database | cli | migrate with blank credentials in production mode | migrate fails, reporting the two missing keys | deferred - environment-dependent (mode + database identity); the same two rules the retired migration always had | 2026-08-24 |
+| IU-10 | The test provisioning migrate never seeds an env account of its own (`--_no-initial-user`) | cli | provisioning run with `RSPADE_DEFAULT_*` configured | the baseline user is the account at id 1 | deferred - would require a provisioning run under two different env states; the flag is unconditional in `run_migrate_subprocess()` | 2026-08-24 |
+| IU-11 | The env seed is a no-op once an account exists (the property that makes running it after every migrate harmless) | php | `create_from_env_if_needed()` with the baseline present | null, nothing written | implemented | 2026-08-24 |
+| IU-12 | The env seed runs end to end on an empty database, and any account it produces is id 1 | php | initial account removed, then `create_from_env_if_needed()` | null (declined) or a user with id 1 - asserted both ways, since RSPADE_DEFAULT_* is a property of the box | implemented | 2026-08-24 |

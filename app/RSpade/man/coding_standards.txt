@@ -27,6 +27,60 @@ NAMING CONVENTIONS
         - Exception: When extending Laravel classes, use Laravel's PascalCase
         - Default for framework internals: PascalCase (existing Laravel convention)
 
+    Reserved Prefix - the Framework-Application Underscore
+    (NAME-RESERVED-01 declares, NAME-RESERVED-02 references):
+        A name may carry ONE leading underscore before its capital:
+            /^_?[A-Z][A-Za-z0-9_]*$/
+        applying identically to a PHP class, a JavaScript class, a jqhtml
+        component (<Define:_Sys_Card>), a Blade @rsx_id / @rsx_extends /
+        @rsx_include, and an SCSS wrapper class (._Sys_Card).
+
+        That underscore form is the FRAMEWORK-APPLICATION PREFIX. It belongs
+        to the framework's own application tree at app/RSpade/Sys/ - the
+        shipped control panel and the surfaces that travel with it - and it
+        mirrors the `_`-prefixed system TABLES and system COLUMNS: one
+        character says who owns the name, with no registry to keep in step.
+
+        DECLARATION - two directions, both enforced by NAME-RESERVED-01
+        (critical, manifest-time), both keyed on the file's PATH:
+        - Code under rsx/ may NOT declare a `_`-prefixed name. A colliding
+          one is read by the manifest as a CLASS OVERRIDE: the framework's
+          file is archived as .upstream and yours is served instead, with
+          nothing reported anywhere.
+        - Code under app/RSpade/Sys/ MUST declare `_`-prefixed names.
+
+        REFERENCE - NAME-RESERVED-02 (critical, manifest-time). Application
+        code under rsx/ may not USE a framework-reserved name either:
+
+            class My_Page extends _Sys_Layout          // no
+            _Sys_Spa_Controller::index($request)       // no
+            new _Sys_Sidebar_Nav()                     // no (JS)
+            <_Sys_Section>...</_Sys_Section>           // no (jqhtml/blade)
+            @rsx_extends('_Apidocs_App')               // no (blade)
+            Ajax::_is_internal_call()                  // no
+            Rsx._escape_html('x')                      // no (JS)
+
+        The rule is scoped by the MANIFEST, not by the character: a name is
+        its business only when the framework actually declares that name (or
+        that `_`/`__`-prefixed static) under app/RSpade/. So a class calling
+        its own helpers is untouched - static::, self:: and parent:: receivers
+        are never checked at all - and so are __construct, __DIR__ and every
+        vendor API that happens to spell a method with an underscore.
+
+        The two sanctioned references to the framework's own application are
+        STRINGS handed to a resolver, and the rule never reads a string
+        literal, so they are legal by construction with no allowlist:
+
+            Rsx::Route('_Sys_Dashboard_Action')
+            Permission::can_access('_Sys_Dashboard_Action')
+            Rsx.Route(...) / Permission.can_access(...)   // the JS spellings
+
+        TWO or more leading underscores are not a name at all.
+
+        The shape has one home in code:
+        App\RSpade\Core\Naming\Rsx_Identifier (is_class_name(),
+        is_framework_reserved(), bare(), to_snake_case()).
+
     Critical Rule - Case-Sensitive Files:
         NEVER create files with same name but different case in same directory.
         Examples to avoid: Helpers.php and helpers.php

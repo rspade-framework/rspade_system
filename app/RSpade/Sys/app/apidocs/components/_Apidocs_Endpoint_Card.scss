@@ -1,0 +1,137 @@
+._Apidocs_Endpoint_Card {
+    position: relative;
+    display: block;
+
+    // Two columns on a wide screen: reference (verb, params, example) on the left, the things
+    // you ACT on (samples, tester) on the right, so a sample stays readable beside the tester
+    // that shaped it. Below this the columns simply stack in source order, which is the
+    // reading order anyway - no reordering needed.
+    //
+    // A bare media query rather than an RSX breakpoint mixin: 1850 is a property of THIS
+    // card's content (a params table beside a code block), not of the app's device tiers, and
+    // this bundle deliberately loads none of the theme.
+    @media (min-width: 1850px) {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 0 26px;
+        align-items: start;
+    }
+
+    &__col {
+        min-width: 0;
+    }
+    background: var(--rsx-surface);
+    border: 1px solid var(--rsx-border);
+    border-radius: 10px;
+    padding: 20px 22px;
+
+    &__head {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    &__verbs {
+        display: flex;
+        gap: 4px;
+    }
+
+    &__pill {
+        display: inline-block;
+        font-family: var(--rsx-mono);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        padding: 3px 8px;
+        border-radius: 5px;
+        color: #0D1117;
+
+        &--get {
+            background: var(--rsx-get);
+        }
+
+        &--post {
+            background: var(--rsx-post);
+        }
+    }
+
+    &__path {
+        font-family: var(--rsx-mono);
+        font-size: 15px;
+        color: var(--rsx-text);
+        background: var(--rsx-bg);
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        padding: 4px 10px;
+    }
+
+    &__desc {
+        margin: 14px 0 0;
+        color: var(--rsx-muted);
+        font-size: 14px;
+    }
+
+    &__section {
+        margin-top: 20px;
+    }
+
+    &__section-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+        color: var(--rsx-muted);
+        font-weight: 700;
+        margin-bottom: 10px;
+    }
+
+    &__example {
+        margin-top: 18px;
+        border: 1px solid var(--rsx-border);
+        border-radius: 8px;
+        overflow: hidden;
+        background: var(--rsx-bg);
+    }
+
+    &__example-summary {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 14px;
+        cursor: pointer;
+        color: var(--rsx-muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        font-weight: 700;
+        list-style: none;
+        user-select: none;
+
+        &:hover {
+            color: var(--rsx-text);
+        }
+    }
+
+    &__example[open] &__example-summary svg {
+        transform: rotate(180deg);
+    }
+
+    &__example-summary::-webkit-details-marker {
+        display: none;
+    }
+
+    // highlight.js is run against the <pre> ITSELF - there is no <code> child - so the code
+    // type is declared here. Left off, the element falls back to the user agent's monospace
+    // default, which is a different face at a different size from every other code run on the
+    // page.
+    &__example-pre {
+        margin: 0;
+        padding: 16px;
+        border-top: 1px solid var(--rsx-border);
+        overflow-x: auto;
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+        line-height: 1.6;
+        white-space: pre;
+    }
+}

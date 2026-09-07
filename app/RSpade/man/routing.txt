@@ -31,6 +31,24 @@ BASIC USAGE
           Defaults to 'index' method if no :: present
         - $params: Integer sets 'id', array/object provides named params
 
+    A SPA TARGET IS THE ACTION CLASS, NEVER THE BOOTSTRAP CONTROLLER. A SPA
+    route is registered in the manifest under the JS action class that declares
+    @route(), so that is the name Route() takes:
+
+        Rsx::Route('Contacts_Index_Action')             // correct
+        Rsx::Route('Frontend_Spa_Controller::index')    // THROWS
+
+    The second spelling names the #[SPA] bootstrap controller, which owns no
+    route of its own; it fails with "JavaScript class Frontend_Spa_Controller
+    must extend Spa_Action". True of every SPA module, the framework's /_sys
+    panel included, whose entry target is '_Sys_Dashboard_Action'.
+
+    Client-side, Rsx.Route() reads the action class out of the bundle - so a
+    target whose code is not in this bundle normally cannot resolve. The
+    exception is a target listed in config('rsx.always_published_routes'),
+    whose patterns the compiler emits into EVERY bundle (rsx:man bundle_api,
+    rsx:man sys_panel).
+
     PHP Syntax:
         use App\RSpade\Core\Rsx;
 

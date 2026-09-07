@@ -7,6 +7,7 @@
 
 import * as vscode from 'vscode';
 import { RspadeClassRefactorProvider } from './class_refactor_provider';
+import { CLASS_NAME_FRAGMENT } from './rspade_recognizers';
 
 export class RspadeClassRefactorCodeActionsProvider implements vscode.CodeActionProvider {
     private refactor_provider: RspadeClassRefactorProvider;
@@ -37,7 +38,8 @@ export class RspadeClassRefactorCodeActionsProvider implements vscode.CodeAction
         const line = document.lineAt(position.line).text;
 
         // Must be class definition at start of line (indent level 0)
-        const class_definition_match = line.match(/^(?:abstract\s+|final\s+)?class\s+([A-Z][a-zA-Z0-9_]*)/);
+        const class_definition_match = line.match(
+            new RegExp(`^(?:abstract\\s+|final\\s+)?class\\s+(${CLASS_NAME_FRAGMENT})`));
         if (class_definition_match) {
             return this.create_refactor_actions();
         }

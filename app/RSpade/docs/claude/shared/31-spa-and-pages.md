@@ -25,4 +25,6 @@ A **layout** extends `Spa_Layout` and its template MUST contain a `$sid="content
 
 **Modules and bundles**: scaffold with `rsx:app:module:create` / `:module:feature:create` (SPA by default, `--blade` for the server-rendered ladder) / `:submodule:create` / `rsx:app:component:create`. **One bundle per module**, compiled JIT on web request — never a manual build step.
 
+**The framework ships its own SPA control panel at `/_sys`** (`rsx:man sys_panel`, skill `rspade:sys-panel`) — its `_Sys_*` classes and components are framework property that an app never declares (`NAME-RESERVED-01`) and never extends, renders, calls or routes to by hand (`NAME-RESERVED-02` — a REFERENCE to any framework-declared `_`-prefixed name, or to a framework `_`/`__`-prefixed static, is fatal at manifest build; only the STRING carriers `Rsx::Route('_Sys_Dashboard_Action')` / `Permission::can_access('_Sys_Dashboard_Action')` link to it - the INDEX ACTION, since a SPA route is registered under its JS action class and never under the bootstrap controller, and that one target is published into every bundle so `Rsx.Route()`/`Permission.can_access()` answer client-side too), and a `/_`-prefixed URL path is framework-owned in general.
+
 Skills: `rspade:spa`, `rspade:blade-views`, `rspade:bundles`, and the app skill `crud-patterns`. Details: `rsx:man spa`, `rsx:man crud`, `rsx:man routing`.

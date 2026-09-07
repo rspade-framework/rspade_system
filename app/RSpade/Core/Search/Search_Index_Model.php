@@ -161,6 +161,44 @@ class Search_Index_Model extends Rsx_Model_Abstract
     }
 
     /**
+     * Full-text search that also EXPOSES the relevance score, so callers can rank results.
+     *
+     * search() answers "does this match?" and is enough for a filter. It cannot answer
+     * "which of these matches best?", because MySQL's relevance score is produced by the
+     * MATCH expression and is discarded unless it is selected. Ranking in the app layer
+     * would otherwise mean either re-deriving relevance from scratch (a worse score than
+     * the index already computed) or hand-writing the MATCH...AGAINST in app code, which
+     * is exactly the raw SQL the model layer exists to keep out of the app.
+     *
+     * The score is selected as `relevance` and the builder is ordered by it descending.
+     * The MATCH expression is repeated in the select and the where - MySQL recognises the
+     * pair and evaluates the full-text scan ONCE, so this costs no extra index work.
+     *
+     * The caller receives an ordinary Builder and may compose freely (scope by site, join
+     * to attachments, paginate). Composing an `orderBy` of your own appends to the ranking
+     * rather than replacing it; call `reorder()` first if you want to discard it.
+     *
+     * NOTE: in BOOLEAN mode MySQL returns a score that is NOT normalised to any range -
+     * it is comparable WITHIN one result set and meaningless across queries. Use it to
+     * order, never to threshold or to display as a percentage.
+     *
+     * @param string $query Full-text query.
+     * @param string $mode 'BOOLEAN' or 'NATURAL LANGUAGE'.
+     * @return \Illuminate\Database\Eloquent\Builder Builder with `relevance` selected, ordered desc.
+     */
+    public static function search_ranked($query, $mode = 'BOOLEAN')
+    {
+        $mode_string = $mode === 'BOOLEAN' ? 'IN BOOLEAN MODE' : 'IN NATURAL LANGUAGE MODE';
+        $match = "MATCH(content) AGAINST(? {$mode_string})";
+
+        $table = (new static())->getTable();
+
+        return static::selectRaw("{$table}.*, {$match} AS relevance", [$query])
+            ->whereRaw($match, [$query])
+            ->orderByDesc('relevance');
+    }
+
+    /**
      * Scope to get indexes for a specific model
      *
      * @param \Illuminate\Database\Eloquent\Builder $query

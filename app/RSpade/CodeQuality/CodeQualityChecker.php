@@ -3,23 +3,41 @@
 namespace App\RSpade\CodeQuality;
 
 use App\RSpade\CodeQuality\CodeQuality_Violation;
-use App\RSpade\CodeQuality\Support\CacheManager;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\CodeQuality\Support\Js_CodeQuality_Rpc;
+use App\RSpade\CodeQuality\Support\Validation_Ledger;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
+use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\Manifest\Manifest;
 
 class CodeQualityChecker
 {
+    /**
+     * The two syntax-lint stages record their verdicts in the shared Validation_Ledger
+     * under these ids. They are not code-quality RULES - nothing discovers them - they are
+     * ledger keys, and they are spelled here because this is the only thing that writes them.
+     */
+    protected const LINT_RULE_PHP = 'PHP-LINT';
+    protected const LINT_RULE_JS = 'JS-LINT';
+
     protected static ?ViolationCollector $collector = null;
-    protected static ?CacheManager $cache_manager = null;
+
+    /**
+     * The derived-cache namespace holding one sanitized copy of each checked file - the
+     * {content, lines, original_lines} document every rule reads instead of re-tokenizing
+     * the source. See App\RSpade\Core\Cache\File_Content_Cache.
+     */
+    protected const SANITIZED_NAMESPACE = 'code-quality-sanitized';
+
+    /** Per-process memo in front of the disk cache. */
+    protected static array $sanitized_memory = [];
     protected static array $rules = [];
     protected static array $config = [];
 
     public static function init(array $config = []): void
     {
         static::$collector = new ViolationCollector();
-        static::$cache_manager = new CacheManager();
+        static::$sanitized_memory = [];
         static::$config = $config;
 
         // Load all rules via auto-discovery
@@ -143,18 +161,10 @@ class CodeQualityChecker
             }
         }
         
-        // Get cached sanitized file if available
-        $cached_data = static::$cache_manager->get_sanitized_file($file_path);
-        
-        if ($cached_data === null) {
-            // Sanitize the file
-            $sanitized_data = FileSanitizer::sanitize($file_path);
-            
-            // Cache the sanitized data
-            static::$cache_manager->set_sanitized_file($file_path, $sanitized_data);
-        } else {
-            $sanitized_data = $cached_data;
-        }
+        // Get cached sanitized file if available. The entry is keyed by the file's build
+        // hash (path+size+mtime in development, content in a sealed build), so a changed
+        // file simply misses - there is no mtime comparison to get wrong.
+        $sanitized_data = static::get_sanitized_file($file_path);
         
         // Get metadata from manifest if available
         try {
@@ -244,6 +254,10 @@ class CodeQualityChecker
         foreach ($file_paths as $file_path) {
             static::check_file($file_path);
         }
+
+        // Write the pass ledger now rather than at shutdown: a fatal later in this process
+        // must not cost the work this pass already did.
+        Validation_Ledger::flush();
     }
     
     /**
@@ -319,11 +333,49 @@ class CodeQualityChecker
     }
     
     /**
+     * The sanitized {content, lines, original_lines} document for one file, from the
+     * per-process memo, then the derived cache, then the sanitizer.
+     */
+    protected static function get_sanitized_file(string $file_path): array
+    {
+        if (isset(static::$sanitized_memory[$file_path])) {
+            return static::$sanitized_memory[$file_path];
+        }
+
+        $cached = File_Content_Cache::get(self::SANITIZED_NAMESPACE, $file_path, '', 'json');
+
+        if ($cached !== null) {
+            $decoded = json_decode($cached, true);
+
+            if (is_array($decoded)) {
+                static::$sanitized_memory[$file_path] = $decoded;
+
+                return $decoded;
+            }
+        }
+
+        $sanitized_data = FileSanitizer::sanitize($file_path);
+
+        File_Content_Cache::put(
+            self::SANITIZED_NAMESPACE,
+            $file_path,
+            '',
+            'json',
+            json_encode($sanitized_data)
+        );
+
+        static::$sanitized_memory[$file_path] = $sanitized_data;
+
+        return $sanitized_data;
+    }
+
+    /**
      * Clear cache
      */
     public static function clear_cache(): void
     {
-        static::$cache_manager->clear();
+        static::$sanitized_memory = [];
+        File_Content_Cache::clear(self::SANITIZED_NAMESPACE);
     }
     
     /**
@@ -368,39 +420,22 @@ class CodeQualityChecker
             return false;
         }
         
-        // Create cache directory for lint flags
-        $cache_dir = function_exists('storage_path') ? storage_path('rsx-tmp/cache/php-lint-passed') : '/var/www/html/storage/rsx-tmp/cache/php-lint-passed';
-        if (!is_dir($cache_dir)) {
-            mkdir($cache_dir, 0755, true);
+        // A file whose exact bytes have already linted clean does not lint again. The
+        // verdict lives in the shared Validation_Ledger, keyed by the same sha1 the
+        // manifest keys a file by - so it survives a manifest clear, and it costs one
+        // array entry rather than a zero-byte flag file per source file.
+        $file_hash = sha1_file($file_path);
+
+        if ($file_hash !== false && Validation_Ledger::has_passed(self::LINT_RULE_PHP, $file_hash)) {
+            return false; // No errors
         }
-        
-        // Generate flag file path (no .php extension to avoid IDE detection)
-        $base_path = function_exists('base_path') ? base_path() : '/var/www/html';
-        $relative_path = str_replace($base_path . '/', '', $file_path);
-        $flag_path = $cache_dir . '/' . str_replace('/', '_', $relative_path) . '.lintpass';
-        
-        // Check if lint was already passed
-        if (file_exists($flag_path)) {
-            $source_mtime = filemtime($file_path);
-            $flag_mtime = filemtime($flag_path);
-            
-            if ($flag_mtime >= $source_mtime) {
-                // File hasn't changed since last successful lint
-                return false; // No errors
-            }
-        }
-        
+
         // Run PHP lint check
         $command = sprintf('php -l %s 2>&1', escapeshellarg($file_path));
         $output = shell_exec('bash -c ' . escapeshellarg($command));
         
         // Check if there's a syntax error
         if (!str_contains($output, 'No syntax errors detected')) {
-            // Delete flag file if it exists (file now has errors)
-            if (file_exists($flag_path)) {
-                unlink($flag_path);
-            }
-            
             // Just capture the error as-is
             static::$collector->add(
                 new CodeQuality_Violation(
@@ -417,9 +452,10 @@ class CodeQualityChecker
             return true; // Error found
         }
         
-        // Create flag file to indicate successful lint
-        touch($flag_path);
-        
+        if ($file_hash !== false) {
+            Validation_Ledger::record_pass(self::LINT_RULE_PHP, $file_hash);
+        }
+
         return false; // No errors
     }
     
@@ -444,26 +480,11 @@ class CodeQualityChecker
             return false;
         }
 
-        // Create cache directory for lint flags
-        $cache_dir = function_exists('storage_path') ? storage_path('rsx-tmp/cache/js-lint-passed') : '/var/www/html/storage/rsx-tmp/cache/js-lint-passed';
-        if (!is_dir($cache_dir)) {
-            mkdir($cache_dir, 0755, true);
-        }
+        // Same memo as the PHP stage, in the same ledger, under its own rule id.
+        $file_hash = sha1_file($file_path);
 
-        // Generate flag file path (no .js extension to avoid IDE detection)
-        $base_path = function_exists('base_path') ? base_path() : '/var/www/html';
-        $relative_path = str_replace($base_path . '/', '', $file_path);
-        $flag_path = $cache_dir . '/' . str_replace('/', '_', $relative_path) . '.lintpass';
-
-        // Check if lint was already passed
-        if (file_exists($flag_path)) {
-            $source_mtime = filemtime($file_path);
-            $flag_mtime = filemtime($flag_path);
-
-            if ($flag_mtime >= $source_mtime) {
-                // File hasn't changed since last successful lint
-                return false; // No errors
-            }
+        if ($file_hash !== false && Validation_Ledger::has_passed(self::LINT_RULE_JS, $file_hash)) {
+            return false; // No errors
         }
 
         // Lint via RPC server (lazy starts if not running)
@@ -471,11 +492,6 @@ class CodeQualityChecker
 
         // Check if there's a syntax error
         if ($error !== null) {
-            // Delete flag file if it exists (file now has errors)
-            if (file_exists($flag_path)) {
-                unlink($flag_path);
-            }
-
             $line_number = $error['line'] ?? 0;
             $message = $error['message'] ?? 'Unknown syntax error';
 
@@ -494,8 +510,9 @@ class CodeQualityChecker
             return true; // Error found
         }
 
-        // Create flag file to indicate successful lint
-        touch($flag_path);
+        if ($file_hash !== false) {
+            Validation_Ledger::record_pass(self::LINT_RULE_JS, $file_hash);
+        }
 
         return false; // No errors
     }

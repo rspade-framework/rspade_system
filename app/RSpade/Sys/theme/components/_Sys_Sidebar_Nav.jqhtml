@@ -1,0 +1,26 @@
+<%--
+_Sys_Sidebar_Nav - the control panel's section/item navigation.
+
+$sections - [{title, items: [{label, icon, href, route}]}]
+
+Deliberately simpler than the template app's Sidebar_Nav: the panel's own pages
+are one level deep, so there are no expandable parents and no submenus. Active
+state is recomputed on every SPA navigation through on_action().
+--%>
+<Define:_Sys_Sidebar_Nav>
+    <% for (const section of this.data.sections) { %>
+        <div class="_Sys_Sidebar_Nav__section">
+            <% if (section.title) { %>
+                <div class="_Sys_Sidebar_Nav__section-title"><%= section.title %></div>
+            <% } %>
+            <% for (const item of section.items) { %>
+                <a href="<%= item.href %>" class="_Sys_Sidebar_Nav__link<%= item.active ? ' active' : '' %>">
+                    <% if (item.icon) { %>
+                        <i class="<%= 'bi ' + item.icon %>"></i>
+                    <% } %>
+                    <span><%= item.label %></span>
+                </a>
+            <% } %>
+        </div>
+    <% } %>
+</Define:_Sys_Sidebar_Nav>

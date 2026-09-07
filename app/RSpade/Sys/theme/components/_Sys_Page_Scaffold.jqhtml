@@ -1,0 +1,14 @@
+<%--
+_Sys_Page_Scaffold - the panel's page shell.
+
+<Slot:main> - the page's content (required)
+
+Owns the panel's page max width and page padding, and nothing else, so no page
+of the panel authors a layout shell of its own. Mirrors the template app's
+Page_Scaffold with the sidebar column dropped: the panel has no entity sidebar.
+--%>
+<Define:_Sys_Page_Scaffold>
+    <div class="_Sys_Page_Scaffold__main">
+        <%= content('main') %>
+    </div>
+</Define:_Sys_Page_Scaffold>

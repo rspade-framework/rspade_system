@@ -2,7 +2,7 @@
 
 ## AUTH GATES
 
-**`#[Auth]` is MANDATORY on every dispatchable surface** — `#[Route]`, `#[SPA]`, `#[Ajax_Endpoint]`, `#[Ajax_Endpoint_Model_Fetch]`, `#[Api_Endpoint]`, `@route` JS actions. Surfaces are **CLOSED BY DEFAULT**: one with no gate does not deploy, and the manifest build FAILS with a per-violation worklist. There is no attribute-free spelling of "open" and **no off switch** — a public surface declares `#[Auth('public')]`. One attribute, variadic check names, AND semantics (`#[Auth('is_logged_in','can_view_billing')]`); a class-level attribute covers every surface in the class and a method-level one is ADDITIVE (gates only narrow).
+**`#[Auth]` is MANDATORY on every dispatchable surface** — `#[Route]`, `#[SPA]`, `#[Ajax_Endpoint]`, `#[Ajax_Endpoint_Model_Fetch]`, `#[Api_Endpoint]`, `@route` JS actions. Surfaces are **CLOSED BY DEFAULT**: one with no gate does not deploy, and the manifest build FAILS with a per-violation worklist. There is no attribute-free spelling of "open" and **no off switch** — a public surface declares `#[Auth('public')]`. Built-in check names are `public`, `closed`, `is_logged_in` and `is_sysadmin` (the `/_sys` panel's gate — `rsx:man sys_panel`). One attribute, variadic check names, AND semantics (`#[Auth('is_logged_in','can_view_billing')]`); a class-level attribute covers every surface in the class and a method-level one is ADDITIVE (gates only narrow).
 
 **`pre_dispatch()` performs NO authorization anywhere** — it is for other middleware concerns (tenant setup, interstitials, redirects). `@auth-exempt` is dead syntax; authorization is declared, not detected.
 

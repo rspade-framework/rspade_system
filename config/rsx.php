@@ -306,6 +306,34 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Always-Published Routes
+    |--------------------------------------------------------------------------
+    |
+    | Targets whose route patterns are emitted into EVERY bundle's client route
+    | table, so Rsx.Route() answers for them in a bundle that does not - and must
+    | not - include the code that declares them. The patterns are resolved from
+    | the manifest at compile time, exactly as Rsx::Route() resolves them
+    | server-side, so moving the page moves every link to it; a hardcoded URL is
+    | never the answer here. A target with no routes in the manifest FAILS THE
+    | COMPILE rather than silently vanishing.
+    |
+    | The spelling is the one Rsx::Route() takes: a bare SPA action class name, or
+    | 'Controller::method' for a PHP route. The shipped entry is the system control
+    | panel's dashboard - the ONE sanctioned way to link to /_sys from an
+    | application page (see rsx:man sys_panel). Auth grants for these targets are
+    | exported alongside them, so Permission.can_access() answers in every bundle
+    | too.
+    |
+    | An application appends its own entries from /rsx/resource/config/rsx.php;
+    | the two-tier merge is append-only, so the framework's entry always remains.
+    |
+    */
+    'always_published_routes' => [
+        '_Sys_Dashboard_Action',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Bundle Aliases
     |--------------------------------------------------------------------------
     |
@@ -505,6 +533,7 @@ return [
             'app/RSpade/Lib',              // UI features (Flash alerts, etc.)
             'app/RSpade/temp',             // Framework developer testing directory
             'app/RSpade/tests',            // Framework tests (php/cli/asset dirs are PHP; see excluded_dirs)
+            'app/RSpade/Sys',             // The framework's own application: the /_sys control panel
         ],
 
         // Specific filenames to exclude from manifest scanning (anywhere in tree)
@@ -630,6 +659,28 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Sys Control Panel
+    |--------------------------------------------------------------------------
+    |
+    | The framework's own control panel at /_sys, developed like any RSpade app
+    | and shipped inside app/RSpade/Sys/ (see rsx:man sys_panel).
+    |
+    | Linking to it from an application page is Rsx::Route('_Sys_Dashboard_Action')
+    | / Rsx.Route('_Sys_Dashboard_Action'), gated on can_access() of the same
+    | target - the INDEX ACTION, because a SPA route is registered under its JS
+    | action class and never under its bootstrap controller. That target is listed
+    | in 'always_published_routes' above, which is what makes both answer from a
+    | bundle that does not include app/RSpade/Sys (and must not - CONV-BUNDLE-02).
+    |
+    */
+    'sys_panel' => [
+        // The framework's own control panel at /_sys (rsx:man sys_panel). Application
+        // behaviour, not deployment: an app switches it off in rsx/resource/config/rsx.php.
+        'enabled' => true,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | IDE Integration Configuration
     |--------------------------------------------------------------------------
     |
@@ -665,8 +716,9 @@ return [
             // Target environment for transformation (modern, es6, es5)
             'target' => env('BABEL_TARGET', 'modern'),
 
-            // Cache directory for transformed files
-            'cache_dir' => 'storage/rsx-tmp/babel_cache',
+            // There is no cache_dir here. Every per-source-file derived cache lives under
+            // storage/rsx-tmp/derived/<namespace>/ and is addressed through
+            // App\RSpade\Core\Cache\File_Content_Cache - one location, not a setting.
         ],
 
         // Enable decorator support (parsed and optionally transformed)

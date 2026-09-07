@@ -109,20 +109,70 @@ RSX-TMP DIRECTORY
     Location: storage/rsx-tmp/
 
     Contents:
-        cache/
-            code-quality/    code-quality analysis cache
-            js-sanitized/    sanitized JS file cache
-            js-lint-passed/  JS lint-pass memo
-            php-lint-passed/ PHP lint-pass memo
+        derived/             THE PER-SOURCE-FILE DERIVED CACHES. One directory per
+                             NAMESPACE, one file per entry, one key scheme for all of
+                             them:
+
+                                 derived/<namespace>/<hash><variant>.<ext>
+
+                             <hash> is _rsx_file_hash_for_build() - the framework's
+                             single file-identity helper (development: path+size+mtime;
+                             production/debug: relative path + content, so a sealed build
+                             is deterministic). <variant> carries everything the artifact
+                             depends on BEYOND the source bytes - a compile target, a
+                             toolchain fingerprint, a parser version - so a toolchain
+                             upgrade retires the entries it invalidates instead of
+                             serving the old tool's work.
+
+                             A subsystem does NOT invent a directory, a filename scheme
+                             or a staleness test of its own: it calls
+                             App\RSpade\Core\Cache\File_Content_Cache. The namespaces:
+
+                                 babel/            transformed JS (variant = target +
+                                                   toolchain fingerprint). Also the file
+                                                   the concatenator is handed - the
+                                                   bundle compiler writes no second copy.
+                                 js-parser/        parsed-AST metadata
+                                 js-sanitized/     sanitized JS (comments + string
+                                                   contents blanked) for the rules
+                                 code-quality-sanitized/
+                                                   the {content, lines, original_lines}
+                                                   document each rule reads
+                                 jqhtml-parsed/    the jqhtml parser's raw output
+                                                   (variant = parser version)
+                                 jqhtml-compiled/  that output wrapped for the bundle;
+                                                   this IS the bundle's input file
+                                 php-reflection/   reflection extracts, keyed by the
+                                                   MANIFEST's own sha1 rather than the
+                                                   build hash (put_for_hash/get_for_hash)
+
+                             Nothing here expires on a clock. The manifest build's
+                             Phase 7 calls File_Content_Cache::sweep_all() with the union
+                             of every live file's identities - it is the one moment the
+                             framework knows which sources still exist - and rsx:clean
+                             wipes the whole tree anyway.
         persistent/          caches that survive between builds
-                             js_parser/       parsed-AST cache, keyed by file hash
-                             php_reflection/  reflection cache
-        jqhtml-cache/        compiled jqhtml template cache
-        babel_cache/         babel transform cache
+                             validation_ledger.php
+                                 THE PASS LEDGER. One var_export'd array -
+                                 ['version'=>1,'rules'=>[<rule id>=>[<file
+                                 hash>=>1]]] - recording that a file already
+                                 passed an expensive code-quality check. Keyed
+                                 by the file's sha1 (the same hash the manifest
+                                 keys a file by), so a verdict survives a
+                                 manifest clear; written atomically, last writer
+                                 wins. It replaced the per-file `.lintpass` flag
+                                 directories (1254 zero-byte files) and is the
+                                 ONE place a rule banks a verdict - a new rule
+                                 uses it rather than inventing a directory of
+                                 its own - and a rule may NOT create a cache
+                                 directory of its own. Owner:
+                                 CodeQuality/Support/Validation_Ledger.php; see
+                                 rsx:man code_quality.
         npm-cache/           npm module resolution cache
         npm-compile/         npm compile scratch
-        (babel_*.js, jqhtml_*.js, bundle_*.js scratch files written by the
-         transform and compile helpers)
+        (bundle_*.js, scss_*.css, css_bundle_*.css scratch files written by the
+         bundle compiler - one per BUNDLE, not per source file, and therefore
+         not derived-cache entries)
         test-storage/        test-run file subsystem (blob store + thumbnail and
                              rendition caches) redirected here by rsx:test so a
                              test-DB attachment delete never unlinks a blob shared

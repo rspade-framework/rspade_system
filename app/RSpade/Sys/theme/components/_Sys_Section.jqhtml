@@ -1,0 +1,23 @@
+<%--
+_Sys_Section - a titled panel section: header strip plus padded body.
+
+$title - the header title [optional; the header is omitted without one]
+$icon="bi-gear" - a Bootstrap Icons class for the header [optional]
+
+Body content is written loose. Built on Bootstrap's .card so the panel's
+Bootstrap build is what paints it - the theme's variable overrides do the
+theming, not a per-component colour rule.
+--%>
+<Define:_Sys_Section class="card">
+    <% if (this.args.title || this.args.icon) { %>
+        <div class="_Sys_Section__header card-header">
+            <% if (this.args.icon) { %>
+                <i class="<%= 'bi ' + this.args.icon %>"></i>
+            <% } %>
+            <span class="_Sys_Section__title"><%= this.args.title %></span>
+        </div>
+    <% } %>
+    <div class="_Sys_Section__body card-body">
+        <%= content() %>
+    </div>
+</Define:_Sys_Section>

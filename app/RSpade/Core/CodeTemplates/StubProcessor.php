@@ -70,7 +70,7 @@ class StubProcessor
     public static function to_title(string $name): string
     {
         $parts = explode('_', $name);
-        return implode(' ', array_map('ucfirst', $parts));
+        return trim(implode(' ', array_map('ucfirst', $parts)));
     }
 
     /**

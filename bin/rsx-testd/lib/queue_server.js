@@ -31,6 +31,29 @@ const net = require('net');
 
 const { encode_frame, decode_frame, Frame_Reader } = require('./protocol.js');
 
+
+/**
+ * One line per finished class, for the operator watching the run:
+ *   worker 3: Foo_Test 12/12 passed (4.1s)
+ *   worker 1: Bar_Test 9/12 passed, 3 FAILED (2.0s)
+ * results arrives as an array or an object keyed by method (PHP encodes an empty set as []).
+ */
+function describe_result(worker_id, record) {
+    const rows = Array.isArray(record.results) ? record.results : Object.values(record.results || {});
+    let passed = 0, failed = 0, skipped = 0;
+    for (const row of rows) {
+        if (row && row.status === 'passed') passed++;
+        else if (row && row.status === 'failed') failed++;
+        else if (row && row.status === 'skipped') skipped++;
+    }
+    const duration = record.duration === undefined ? '' : ' (' + Number(record.duration).toFixed(1) + 's)';
+    let verdict = passed + '/' + rows.length + ' passed';
+    if (failed > 0) verdict += ', ' + failed + ' FAILED';
+    if (skipped > 0) verdict += ', ' + skipped + ' skipped';
+    if (record.error) verdict = 'ERROR: ' + record.error;
+    return 'worker ' + worker_id + ': ' + record.short + ' ' + verdict + duration;
+}
+
 class Queue_Server {
     /**
      * @param {object} options
@@ -212,6 +235,10 @@ class Queue_Server {
         if (frame.error !== undefined && frame.error !== null) {
             record.error = frame.error;
         }
+
+        // The live per-class line. The full per-method report is printed by PHP once every
+        // container has finished; this is what an operator watches in the meantime.
+        this.log(describe_result(frame.worker_id, record));
 
         fs.appendFileSync(this.results_path, JSON.stringify(record) + '\n');
         this.result_count++;

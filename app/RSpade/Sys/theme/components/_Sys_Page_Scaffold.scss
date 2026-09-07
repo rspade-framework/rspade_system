@@ -1,0 +1,14 @@
+._Sys_Page_Scaffold {
+    display: block;
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: var(--rsx-page-pad);
+
+    &__main {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rsx-block-gap);
+        min-width: 0;
+    }
+}

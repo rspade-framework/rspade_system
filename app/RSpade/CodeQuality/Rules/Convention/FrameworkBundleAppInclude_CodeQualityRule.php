@@ -15,7 +15,7 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  * WHY IT MATTERS, from the incident that produced this rule. The API docs console is
  * framework code mounted on an application route - since the console became wholly
- * framework-owned (Api_Docs_Bundle in Core/Api) this rule guards its bundle directly, but
+ * framework-owned (_Apidocs_Bundle in Sys/app/apidocs) this rule guards its bundle directly, but
  * the incident predates that, when the bundle still lived in the app. That bundle had
  * borrowed four things from the template app: the theme variables, the responsive mixins, the app's Bootstrap
  * build and the app's Modal library. Every one of those is the APPLICATION'S to change -
@@ -25,7 +25,7 @@ use App\RSpade\Core\Manifest\Manifest;
  * with nothing in the framework to point at, because the framework had not changed.
  *
  * The fix is never to include the app path. It is to own the dependency on the framework
- * side - Api_Confirm_Dialog and api_docs_page_reset.scss are what those four includes
+ * side - _Apidocs_Confirm_Dialog and _apidocs_page_reset.scss are what those four includes
  * became - so the console renders identically no matter what the host app does to itself.
  * The same reasoning later moved Button_Utils out of the optional Lib tier and into
  * Core/Ui: a dependency of a CORE api belongs where every bundle already looks.
@@ -279,8 +279,8 @@ class FrameworkBundleAppInclude_CodeQualityRule extends CodeQualityRule_Abstract
                 . "FIX: own the dependency on the framework side instead of borrowing the app's. The API docs console is "
                 . "the worked example - it dropped rsx/theme/variables.scss, rsx/theme/responsive.scss, Bootstrap5_Src_Bundle "
                 . "and rsx/lib/modal in favour of framework-owned equivalents beside the components that need them "
-                . "(Api_Confirm_Dialog, api_docs_page_reset.scss), so it renders identically whatever the host app does. "
-                . "See app/RSpade/Core/Api/Api_Docs_Bundle.php for the resulting include list.\n"
+                . "(_Apidocs_Confirm_Dialog, _apidocs_page_reset.scss), so it renders identically whatever the host app does. "
+                . "See app/RSpade/Sys/app/apidocs/_Apidocs_Bundle.php for the resulting include list.\n"
                 . "\n"
                 . "Naming a bundle CLASS instead of a path does not make the dependency framework-owned - what matters is "
                 . "where the included file lives.\n"

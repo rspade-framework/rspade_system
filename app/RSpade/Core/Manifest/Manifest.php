@@ -339,6 +339,21 @@ class Manifest
     }
 
     /**
+    * Merged column map for a model class, or null when the class is not an indexed model.
+    *
+    * O(1) class-keyed. Column entries carry the FULL metadata (type, max_length, nullable,
+    * ...), unlike db_get_table_columns() which flattens each column to its type string, and
+    * a base model's Class-Table-Inheritance detail columns are already merged in.
+    *
+    * @param string $class_name Class name (FQCN or simple - normalized either way)
+    * @return array|null column_name => metadata array, or null if not an indexed model
+    */
+    public static function php_model_columns(string $class_name): ?array
+    {
+        return _Manifest_PHP_Reflection_Helper::php_model_columns($class_name);
+    }
+
+    /**
     * Find a JavaScript class
     */
     public static function js_find_class(string $class_name): string
@@ -1389,6 +1404,15 @@ class Manifest
         static::_generate_vscode_stubs();
         static::_save();
 
+        // Sweep the per-source-file DERIVED caches. This is the one moment the framework
+        // holds a complete answer to "which source files still exist", so it is the only
+        // place the sweep can be cheap - building the manifest to prune would cost more
+        // than the bytes it reclaims. Development only: a sealed build is compiled once,
+        // and hashing every file's content there to reclaim disk would be work for nothing.
+        if (Rsx::is_development()) {
+            static::_sweep_derived_caches();
+        }
+
         // Clear view cache when manifest changes to prevent stale @rsx_extends references
         // This ensures that renamed blade files with @rsx_extends are properly recompiled
         \Illuminate\Support\Facades\Artisan::call('view:clear', [], new \Symfony\Component\Console\Output\NullOutput());
@@ -1404,6 +1428,39 @@ class Manifest
         if (static::$_needs_manifest_restart) {
             console_debug('MANIFEST', 'File auto-renamed during code quality check, restarting manifest build');
             goto manifest_start;
+        }
+    }
+
+    /**
+    * Remove derived-cache entries whose source file the manifest no longer knows.
+    *
+    * The live set is the UNION of both identities a source file can be keyed by: the
+    * manifest's own sha1 (what the reflection cache keys on) and _rsx_file_hash_for_build()
+    * (what every other derived cache keys on). A superset is harmless - sweep() only ever
+    * removes an entry that matches nothing at all.
+    */
+    public static function _sweep_derived_caches(): void
+    {
+        $live = [];
+
+        foreach (static::$data['data']['files'] ?? [] as $file => $metadata) {
+            if (isset($metadata['hash']) && $metadata['hash'] !== '') {
+                $live[] = $metadata['hash'];
+            }
+
+            $absolute_path = str_starts_with($file, 'rsx/')
+                ? rsxrealpath(base_path('../' . $file))
+                : rsxrealpath(base_path($file));
+
+            if (is_string($absolute_path) && $absolute_path !== '' && is_file($absolute_path)) {
+                $live[] = _rsx_file_hash_for_build($absolute_path);
+            }
+        }
+
+        $removed = \App\RSpade\Core\Cache\File_Content_Cache::sweep_all($live);
+
+        if ($removed > 0) {
+            console_debug('MANIFEST', "Derived cache sweep removed {$removed} dead entries");
         }
     }
 

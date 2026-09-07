@@ -162,9 +162,11 @@ $storageDirs = [
     'rsx-build/bundles',
     'rsx-build/js-stubs',
     'rsx-tmp',
-    'rsx-tmp/cache',
-    'rsx-tmp/jqhtml-cache',
     'rsx-tmp/npm-cache',
+    // No per-source-file cache directory is pre-created here. Every one of them lives
+    // under rsx-tmp/derived/<namespace>/ and is created on demand by
+    // App\RSpade\Core\Cache\File_Content_Cache - one owner, not a bootstrap list to
+    // keep in step.
     'rsx-locks',
 ];
 

@@ -89,10 +89,6 @@ class Jqhtml_ManifestModule extends ManifestModule_Abstract
         $metadata['dependencies'] = $dependencies;
         $metadata['slots'] = $slots;
 
-        // Check if this template has a matching ES6 class
-        $class_name = $this->to_class_name($template_name);
-        $metadata['expected_class'] = $class_name;
-
         return $metadata;
     }
     
@@ -163,8 +159,9 @@ class Jqhtml_ManifestModule extends ManifestModule_Abstract
     {
         $components = [];
         
-        // Match PascalCase tags (likely components)
-        preg_match_all('/<([A-Z][a-zA-Z0-9_]*)(?:\s+[^>]*)?\/?>|<\/([A-Z][a-zA-Z0-9_]*)>/', $content, $matches);
+        // Match component tags. The `_?[A-Z][A-Za-z0-9_]*` fragment is the name shape whose
+        // home is App\RSpade\Core\Naming\Rsx_Identifier (a leading `_` is the framework prefix).
+        preg_match_all('/<(_?[A-Z][A-Za-z0-9_]*)(?:\s+[^>]*)?\/?>|<\/(_?[A-Z][A-Za-z0-9_]*)>/', $content, $matches);
         
         foreach ($matches[1] as $tag) {
             if ($tag && !in_array($tag, $components)) {
@@ -239,27 +236,4 @@ class Jqhtml_ManifestModule extends ManifestModule_Abstract
         return $slots;
     }
     
-    /**
-     * Convert template name to expected class name
-     * 
-     * @param string $template_name Template name
-     * @return string Expected class name
-     */
-    protected function to_class_name(string $template_name): string
-    {
-        // Handle snake_case to PascalCase
-        if (strpos($template_name, '_') !== false) {
-            $parts = explode('_', $template_name);
-            return implode('', array_map('ucfirst', $parts));
-        }
-        
-        // Handle kebab-case to PascalCase
-        if (strpos($template_name, '-') !== false) {
-            $parts = explode('-', $template_name);
-            return implode('', array_map('ucfirst', $parts));
-        }
-        
-        // Already PascalCase or needs first letter capitalized
-        return ucfirst($template_name);
-    }
 }

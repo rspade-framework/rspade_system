@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\JavaScript;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\Support\Js_CodeQuality_Rpc;
+use App\RSpade\CodeQuality\Support\Validation_Ledger;
 
 /**
  * JavaScript 'this' Usage Rule
@@ -74,10 +75,24 @@ class ThisUsage_CodeQualityRule extends CodeQualityRule_Abstract
             return; // Not a class file
         }
 
+        // A file whose exact bytes have already been judged clean is not analyzed again.
+        // The verdict lives in the shared Validation_Ledger, not in a directory of
+        // per-file JSON documents - see the docblock on parse_with_acorn().
+        $file_hash = static::__file_hash($file_path, $metadata);
+        $ledger_id = static::__ledger_id();
+
+        if ($file_hash !== null && Validation_Ledger::has_passed($ledger_id, $file_hash)) {
+            return;
+        }
+
         // Get violations from AST parser
         $violations = $this->parse_with_acorn($file_path);
 
         if (empty($violations)) {
+            if ($file_hash !== null) {
+                Validation_Ledger::record_pass($ledger_id, $file_hash);
+            }
+
             return;
         }
 
@@ -95,42 +110,70 @@ class ThisUsage_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Analyze JavaScript file for 'this' usage violations via RPC server
+     * Analyze JavaScript file for 'this' usage violations via RPC server.
+     *
+     * NO DISK CACHE OF ITS OWN. What this returns is a list of VIOLATIONS, and a violation
+     * list is not worth storing: 275 of the 275 files that had one of these JSON documents
+     * held the two bytes `[]`, so the cache was a per-file, per-rule way of writing down
+     * "clean" - which is precisely what Validation_Ledger is for, in ONE array. The few
+     * files that DO violate are re-analyzed on every check, which is the cheap half of the
+     * work and keeps their violations reported from live source rather than from a memo.
      */
     private function parse_with_acorn(string $file_path): array
     {
-        // Setup cache directory
-        $cache_dir = storage_path('rsx-tmp/cache/code-quality/js-this');
-        if (!is_dir($cache_dir)) {
-            mkdir($cache_dir, 0755, true);
-        }
-
-        // Cache based on file modification time
-        $cache_key = md5($file_path) . '-' . filemtime($file_path);
-        $cache_file = $cache_dir . '/' . $cache_key . '.json';
-
-        // Check cache first
-        if (file_exists($cache_file)) {
-            $cached = json_decode(file_get_contents($cache_file), true);
-            if ($cached !== null) {
-                return $cached;
-            }
-        }
-
-        // Clean old cache files for this source file
-        $pattern = $cache_dir . '/' . md5($file_path) . '-*.json';
-        foreach (glob($pattern) as $old_cache) {
-            if ($old_cache !== $cache_file) {
-                unlink($old_cache);
-            }
-        }
-
         // Analyze via RPC server (lazy starts if not running)
-        $violations = Js_CodeQuality_Rpc::analyze_this($file_path);
+        return Js_CodeQuality_Rpc::analyze_this($file_path);
+    }
 
-        // Cache the result
-        file_put_contents_safe($cache_file, json_encode($violations));
+    /**
+     * The ledger key for one file: the manifest's own hash where the manifest knows the
+     * file, a content sha1 where it does not.
+     */
+    private static function __file_hash(string $file_path, array $metadata): ?string
+    {
+        $file_hash = $metadata['hash'] ?? null;
 
-        return $violations;
+        if (is_string($file_hash) && $file_hash !== '') {
+            return $file_hash;
+        }
+
+        if (!is_file($file_path)) {
+            return null;
+        }
+
+        return sha1_file($file_path) ?: null;
+    }
+
+    /**
+     * A GENERATIONAL ledger id: `JS-THIS-01@<fingerprint>`.
+     *
+     * The verdict depends on two things beyond the file's own bytes - this rule's own
+     * source, and the acorn analyzer in the node service's `quality` subsystem that
+     * actually walks the AST. Folding both into the id means editing either one retires
+     * every verdict the old logic issued, instead of letting a stale premise vouch for a
+     * file the new logic would flag.
+     */
+    private static function __ledger_id(): string
+    {
+        static $ledger_id = null;
+
+        if ($ledger_id !== null) {
+            return $ledger_id;
+        }
+
+        $inputs = [
+            __FILE__,
+            base_path('app/RSpade/CodeQuality/Support/resource/quality-service.js'),
+        ];
+
+        $parts = [];
+
+        foreach ($inputs as $input) {
+            $parts[] = is_file($input) ? md5_file($input) : 'missing';
+        }
+
+        $ledger_id = 'JS-THIS-01@' . substr(md5(implode(':', $parts)), 0, 16);
+
+        return $ledger_id;
     }
 }

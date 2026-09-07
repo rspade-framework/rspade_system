@@ -1,0 +1,356 @@
+._Apidocs_Page {
+    // The palette, the type stack and the geometry are the framework application's,
+    // published as --rsx-* custom properties by Sys/theme/theme.scss. Nothing is
+    // redeclared here: the console and the control panel are one product wearing one
+    // theme, and a second copy of a colour is a second thing to keep in step.
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    background: var(--rsx-bg);
+    color: var(--rsx-text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+
+    &__notice {
+        padding: 40px;
+        color: var(--rsx-muted);
+        font-size: 15px;
+
+        &--error {
+            color: var(--rsx-danger);
+        }
+    }
+
+    // -- Header -----------------------------------------------------------
+    &__header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 24px;
+        flex-wrap: wrap;
+        padding: 16px 28px;
+        background: var(--rsx-surface);
+        border-bottom: 1px solid var(--rsx-border);
+    }
+
+    // The wordmark is a link back to the docs home. It must not READ as a link - an
+    // accent-colored header title competes with the sidebar for "where do I click".
+    &__brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        text-decoration: none;
+
+        &:hover ._Apidocs_Page__brand-text {
+            color: var(--rsx-accent);
+        }
+    }
+
+    &__brand-mark {
+        font-family: var(--rsx-mono);
+        font-weight: 700;
+        font-size: 18px;
+        color: var(--rsx-accent);
+        background: var(--rsx-accent-soft);
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        padding: 2px 8px;
+    }
+
+    &__brand-text {
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+        // Explicit: inside an <a> this would otherwise inherit the UA link color.
+        color: var(--rsx-text);
+    }
+
+    &__header-controls {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        flex-wrap: wrap;
+    }
+
+    &__version {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    &__version-caption {
+        color: var(--rsx-muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+    }
+
+    &__version-select {
+        appearance: none;
+        background: var(--rsx-raised);
+        color: var(--rsx-text);
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        padding: 6px 30px 6px 12px;
+        font-family: var(--rsx-mono);
+        font-size: 13px;
+        cursor: pointer;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%238B98AD' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+        background-repeat: no-repeat;
+        background-position: right 8px center;
+
+        &:hover {
+            border-color: var(--rsx-accent);
+        }
+
+        &:focus {
+            outline: none;
+            border-color: var(--rsx-accent);
+            box-shadow: 0 0 0 3px var(--rsx-accent-soft);
+        }
+    }
+
+    &__catalog-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: var(--rsx-accent);
+        text-decoration: none;
+        font-size: 13px;
+        padding: 6px 10px;
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        background: var(--rsx-raised);
+
+        &:hover {
+            color: var(--rsx-accent-hover);
+            border-color: var(--rsx-accent);
+            background: var(--rsx-accent-soft);
+        }
+
+        svg {
+            flex: 0 0 auto;
+        }
+    }
+
+    &__keybar-host {
+        background: var(--rsx-surface);
+        border-bottom: 1px solid var(--rsx-border);
+        padding: 12px 28px;
+    }
+
+    // -- Body: sidebar + main --------------------------------------------
+    &__body {
+        display: flex;
+        align-items: flex-start;
+        flex: 1 1 auto;
+        min-height: 0;
+    }
+
+    &__sidebar {
+        flex: 0 0 300px;
+        width: 300px;
+        align-self: stretch;
+        background: var(--rsx-surface);
+        border-right: 1px solid var(--rsx-border);
+        padding: 20px 14px;
+        position: sticky;
+        top: 0;
+        max-height: 100vh;
+        overflow-y: auto;
+    }
+
+    // -- Endpoint filter -------------------------------------------------
+    // An input group: the clear button sits inside the field's box rather than beside it,
+    // so the control reads as one thing and the field keeps the sidebar's full width.
+    &__filter {
+        position: relative;
+        margin-bottom: 18px;
+    }
+
+    &__filter-input {
+        width: 100%;
+        // This bundle is hermetic - no Bootstrap, no global reset - so nothing else sets
+        // border-box. Without it, width:100% plus the padding and border overflows the
+        // sidebar's content box.
+        box-sizing: border-box;
+        appearance: none;
+        background: var(--rsx-bg);
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        color: var(--rsx-text);
+        font-family: inherit;
+        font-size: 13px;
+        padding: 7px 30px 7px 10px;
+
+        &::placeholder {
+            color: var(--rsx-muted);
+        }
+
+        &:focus {
+            outline: none;
+            border-color: var(--rsx-accent);
+            box-shadow: 0 0 0 3px var(--rsx-accent-soft);
+        }
+    }
+
+    &__filter-clear {
+        position: absolute;
+        top: 50%;
+        right: 6px;
+        transform: translateY(-50%);
+        appearance: none;
+        border: 0;
+        background: transparent;
+        color: var(--rsx-muted);
+        font-size: 18px;
+        line-height: 1;
+        padding: 0 4px;
+        cursor: pointer;
+
+        &:hover {
+            color: var(--rsx-text);
+        }
+
+        // Only offered when there is something to clear.
+        &--hidden {
+            display: none;
+        }
+    }
+
+    &__filter-empty {
+        font-size: 12.5px;
+        color: var(--rsx-muted);
+        padding: 4px 8px 12px;
+
+        &--hidden {
+            display: none;
+        }
+    }
+
+    &__nav-group {
+        margin-bottom: 22px;
+
+        // A group whose every link was filtered out takes its heading with it.
+        &--filtered {
+            display: none;
+        }
+    }
+
+    &__nav-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.7px;
+        color: var(--rsx-muted);
+        font-weight: 700;
+        padding: 0 8px 8px;
+    }
+
+    &__nav-link {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 6px;
+        text-decoration: none;
+        color: var(--rsx-text);
+        margin-bottom: 2px;
+
+        &:hover {
+            background: var(--rsx-raised);
+        }
+
+        &--filtered {
+            display: none;
+        }
+
+        // The selected endpoint. The sidebar is the only indication of where you are once
+        // the body shows one endpoint at a time, so this has to read at a glance.
+        &--active {
+            background: var(--rsx-accent-soft);
+            box-shadow: inset 2px 0 0 var(--rsx-accent);
+
+            ._Apidocs_Page__nav-path {
+                color: var(--rsx-text);
+                font-weight: 600;
+            }
+        }
+    }
+
+    &__nav-verbs {
+        flex: 0 0 auto;
+        display: flex;
+        gap: 3px;
+    }
+
+    &__nav-path {
+        font-family: var(--rsx-mono);
+        font-size: 12px;
+        color: var(--rsx-muted);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    &__nav-link:hover &__nav-path {
+        color: var(--rsx-text);
+    }
+
+    // -- Method pills -----------------------------------------------------
+    &__pill {
+        display: inline-block;
+        font-family: var(--rsx-mono);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.4px;
+        padding: 2px 5px;
+        border-radius: 4px;
+        color: #0D1117;
+
+        &--get {
+            background: var(--rsx-get);
+        }
+
+        &--post {
+            background: var(--rsx-post);
+        }
+    }
+
+    // -- Main pane --------------------------------------------------------
+    // The body pane fills the space beside the sidebar, then caps itself and centres.
+    // Without the cap, a params table on a wide monitor stretches to unreadable line
+    // lengths; without the auto margins, capped content hugs the sidebar and leaves a
+    // lopsided gutter on the right. Auto margins on a flex item absorb the free space
+    // evenly, which is what centres it.
+    &__main {
+        flex: 1 1 auto;
+        min-width: 0;
+        width: 100%;
+        max-width: 1500px;
+        margin: 0 auto;
+        padding: 28px 32px 80px;
+    }
+
+    &__resource {
+        margin-bottom: 40px;
+    }
+
+    &__resource-title {
+        font-size: 22px;
+        font-weight: 600;
+        margin: 0 0 16px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--rsx-border);
+    }
+
+    @media (max-width: 1023px) {
+        &__sidebar {
+            display: none;
+        }
+
+        &__main {
+            padding: 20px 16px 60px;
+        }
+    }
+}

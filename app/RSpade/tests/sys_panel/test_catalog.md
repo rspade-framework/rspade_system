@@ -1,0 +1,31 @@
+# sys_panel - test catalog
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| RP-SPA-01 | Every panel screen is a SPA route on `_Sys_Spa_Controller`, gated `is_sysadmin`, served by its own action | php | Persisted route index | seven patterns, `type=spa`, `auth`/`auth_action` contain `is_sysadmin` | implemented | 2026-09-07 |
+| RP-SPA-02 | The panel has EXACTLY seven screens - an eighth cannot arrive unnoticed | php | Persisted route index | the pattern set equals the catalog's | implemented | 2026-09-07 |
+| RP-SPA-03 | Every panel action declares `_Sys_Layout` | php | Action file metadata | `@layout` == `['_Sys_Layout']` | implemented | 2026-09-07 |
+| RP-ROUTE-01 | `/_sys/logout` is a GET route on `_Sys_Controller`, gated `is_sysadmin` | php | Persisted route index | `type=standard`, methods `['GET']` | implemented | 2026-09-07 |
+| RP-BUNDLE-01 | Neither panel bundle names an `rsx/` path (CONV-BUNDLE-04, stated in the suite) | php | `define()` of both bundles | no include/watch entry under `rsx/` | implemented | 2026-09-07 |
+| RP-BUNDLE-02 | `_Sys_Bundle` includes the panel's theme bundle, theme dir and its own module dir | php | `_Sys_Bundle::define()` | all three present | implemented | 2026-09-07 |
+| RP-BUNDLE-03 | The theme bundle compiles: Bootstrap arrives through the `/vendor/` `@import`, the palette overrides win | php | `BundleCompiler::compile()` | CSS carries `.btn`, `--rsx-accent` and `#58a6ff` | implemented | 2026-09-07 |
+| RP-APIDOCS-01 | The API console's bundle names no `rsx/` path (CONV-BUNDLE-04, stated in the suite) | php | `_Apidocs_Bundle::define()` | no include/watch entry under `rsx/` | implemented | 2026-09-07 |
+| RP-APIDOCS-02 | The console wears the framework application's theme instead of a private palette | php | `_Apidocs_Bundle::define()` | `_Sys_Theme_Bundle` and `app/RSpade/Sys/theme` both included | implemented | 2026-09-07 |
+| RP-APIDOCS-03 | The manifest holds `_Apidocs_App` (blade id) and `_Apidocs_Console` (jqhtml), at their console-module paths | php | Manifest view + jqhtml index | both resolve under `app/RSpade/Sys/app/apidocs/` | implemented | 2026-09-07 |
+| RP-APIDOCS-04 | `Core/Api/` is engine-only: no `.jqhtml`, `.blade.php` or `.scss` under it | php | Recursive scan of `app/RSpade/Core/Api` | empty offender list | implemented | 2026-09-07 |
+| RP-CONFIG-01 | `rsx.sys_panel.enabled = false` makes `/_sys` NOT FOUND, for a user who would otherwise pass | php | `Dispatcher::dispatch('/_sys')` as user 1 | 404 | implemented | 2026-09-07 |
+| RP-CONFIG-02 | Enabled, a signed-in identity gets the panel on its own bundle | php | `Dispatcher::dispatch('/_sys')` as user 1 | 200, body names `_Sys_Bundle` | implemented | 2026-09-07 |
+| RP-AUTH-01 | An anonymous caller is sent to login, not shown a 403 | php | `Dispatcher::dispatch('/_sys')`, no session | 302 to `/login` | implemented | 2026-09-07 |
+| RP-LOGOUT-01 | `/_sys/logout` clears the session identity and redirects to `/` | php | `Dispatcher::dispatch('/_sys/logout')` as user 1 | 302 to `/`, `Session::is_logged_in()` false | implemented | 2026-09-07 |
+| RP-TOOLS-01 | `rsx:manifest:show --classes` hides `_Sys_*` from an application developer, shows it to a framework developer | php | `Artisan::call` with the flag both ways | no `_Sys_` when false, `_Sys_` when true, ordinary classes unaffected | implemented | 2026-09-07 |
+| RP-TOOLS-02 | `rsx:routes` hides every `/_sys` route from an application developer | php | `Artisan::call` with the flag both ways | no `/_sys` when false, eight when true, `/login` unaffected | implemented | 2026-09-07 |
+| RP-TOOLS-03 | `rsx:manifest:show --files` hides the tree's classless files (.jqhtml, .scss) by PATH | php | `Artisan::call` with the flag both ways | no `app/RSpade/Sys/` when false, present when true | implemented | 2026-09-07 |
+| RP-TOOLS-04 | The predicate itself: a reserved NAME and a `Sys/` PATH follow the flag, ordinary ones never do | php | `Rsx_Identifier::is_visible_to_developer` / `is_path_visible_to_developer` | flag false hides both, flag true shows both | implemented | 2026-09-07 |
+| RP-UI-01 | The midnight palette paints and Bootstrap components wear it | playwright | `/_sys` as a signed-in user | sidebar surface, accent-soft active item, themed `.btn-primary` and `.card` | not implemented | 2026-09-07 |
+| RP-UI-02 | The sidebar's active item follows SPA navigation without a reload | playwright | `/_sys` -> `/_sys/users` | `.active` moves, no full page load | not implemented | 2026-09-07 |
+| RP-UI-03 | A denied screen's nav entry does not render (nav honesty) | playwright | a screen whose gate denies | the link is absent | not implemented | 2026-09-07 |
+| RP-PUB-01 | The panel's INDEX ACTION (not its bootstrap controller) is the configured always-published target, and it resolves in the manifest | php | `config('rsx.always_published_routes')` + `routes_by_target` | `_Sys_Dashboard_Action` present with patterns; `_Sys_Spa_Controller::index` has none | implemented | 2026-09-07 |
+| RP-PUB-02 | A compiled application bundle carries the published route table with the pattern resolved FROM THE MANIFEST, and no panel code | php | in-process `BundleCompiler::compile('Frontend_Bundle')` | generated JS contains `Rsx._define_published_spa_routes` + the target + each manifest pattern; no `_Sys_Layout` | implemented | 2026-09-07 |
+| RP-PUB-03 | A configured target with no routes FAILS THE COMPILE rather than silently vanishing | php | `_collect_always_published_routes` with a bogus target | RuntimeException | implemented | 2026-09-07 |
+| RP-PUB-04 | `auth_routes_published` is always present and carries explicit denials: 1 signed in, 0 anonymous | php | `export_published_route_grants('staff')` before/after `__acting_as_user(1)` | key present both times; 0 then 1 | implemented | 2026-09-07 |
+| RP-PUB-05 | The map is realm-scoped - a staff target is never answered for in the portal realm | php | `export_published_route_grants('portal')` | key absent | implemented | 2026-09-07 |

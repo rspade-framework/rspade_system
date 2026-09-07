@@ -256,6 +256,30 @@ load a PHP class to answer.
 dropped. Records are appended AS THEY ARRIVE, not at the end, so a run that dies half way
 still leaves every finished class on disk.
 
+## The result cache - one verdict per build key
+
+A full docker run ends with PHP recording the per-class records and the exit code under
+`storage/rsx-tmp/test-results/framework_<key>.json`, where the key is
+`Manifest::get_build_key()` (also `php artisan rsx:manifest:get_build_key`: the hash of
+every scanned source file) joined to an ENVIRONMENT FINGERPRINT - a sha1 over the name,
+size and mtime of every file under `system/bin`, `system/node_modules` and
+`system/app/RSpade/resource/docker` (`Rsx_Test_Command::ENVIRONMENT_FINGERPRINT_DIRS`),
+because a verdict also depends on the daemons, the node toolchain and the test image, none
+of which the manifest indexes. The walk costs a second or two per full run. The next full run computes the key FIRST, before the image
+build, the sweep or a single container; if a record exists under it, PHP prints
+"Returning cached test results for build <key> from <file>" and replays the record through
+`report_records()` - the same printer as a live run, so the output and the exit code are
+the live run's. Pass or fail is recorded alike: the verdict belongs to the code, and the
+code has not changed. Only an INFRASTRUCTURE failure (node exit non-zero) records nothing.
+
+Invalidation is the key itself: edit any scanned file and the next run is live. To force a
+live run without editing anything, delete the record. `rsx:clean` wipes `rsx-tmp/`, so it
+wipes the cache too. Subsets never consult it - they never reach docker mode.
+
+While a live run is in progress the queue server prints one line per finished class as the
+result arrives (`worker 3: Foo_Test 12/12 passed (4.1s)`, `... 3 FAILED`, or `ERROR: ...`);
+the full per-method report still comes once, at the end, from PHP.
+
 ## Dead workers
 
 `queue.next` records `holder = worker_id`; `queue.result` clears it. When a container exits,

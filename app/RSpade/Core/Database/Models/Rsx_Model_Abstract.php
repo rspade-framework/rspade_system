@@ -14,6 +14,7 @@ use App\RSpade\Core\Database\Lifecycle\Model_Lifecycle_Registry;
 use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Actor_Model_Abstract;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Realtime\Realtime_Emissions;
 use App\RSpade\Core\Realtime\Realtime_Touch_Registry;
@@ -164,22 +165,12 @@ abstract class Rsx_Model_Abstract extends Model
 
         if (!empty($class::$enums)) {
             foreach ($class::$enums as $column => $enum_config) {
-                // Create a copy to avoid modifying the static property
-                $sorted_config = $enum_config;
-
-                // Sort by 'order' property first, then by key
-                uksort($sorted_config, function ($keyA, $keyB) use ($sorted_config) {
-                    $orderA = isset($sorted_config[$keyA]['order']) ? $sorted_config[$keyA]['order'] : 0;
-                    $orderB = isset($sorted_config[$keyB]['order']) ? $sorted_config[$keyB]['order'] : 0;
-
-                    // First compare by order
-                    if ($orderA !== $orderB) {
-                        return $orderA - $orderB;
-                    }
-
-                    // If order is same, compare by key (use spaceship operator for string comparison)
-                    return $keyA <=> $keyB;
-                });
+                // Sorted once per class+column, not once per call. The sort is by the enum's
+                // declared `order` then by key, and neither depends on the record - but this
+                // method is reached from __get, so an unmemoized uksort here was a full sort
+                // per enum column on EVERY attribute read, performed before we even knew
+                // whether the key could match.
+                $sorted_config = static::__sorted_enum_config($class, $column, $enum_config);
 
                 // field__enum() - All enum definitions with full metadata
                 if ($key == $column . '__enum') {
@@ -225,6 +216,42 @@ abstract class Rsx_Model_Abstract extends Model
     }
 
     /**
+     * One enum column's config, sorted by `order` then key, memoized per class+column.
+     *
+     * The ordering is a property of the DECLARATION, not of any record, so it can be
+     * computed once. Callers must not mutate the returned array - it is the shared copy.
+     *
+     * @param string $class The called class, used as half the memo key
+     * @param string $column The enum column
+     * @param array $enum_config That column's raw $enums entry
+     * @return array
+     */
+    private static function __sorted_enum_config(string $class, string $column, array $enum_config): array
+    {
+        static $cache = [];
+
+        if (isset($cache[$class][$column])) {
+            return $cache[$class][$column];
+        }
+
+        $sorted_config = $enum_config;
+        uksort($sorted_config, function ($keyA, $keyB) use ($sorted_config) {
+            $orderA = isset($sorted_config[$keyA]['order']) ? $sorted_config[$keyA]['order'] : 0;
+            $orderB = isset($sorted_config[$keyB]['order']) ? $sorted_config[$keyB]['order'] : 0;
+
+            // First compare by order
+            if ($orderA !== $orderB) {
+                return $orderA - $orderB;
+            }
+
+            // If order is same, compare by key (use spaceship operator for string comparison)
+            return $keyA <=> $keyB;
+        });
+
+        return $cache[$class][$column] = $sorted_config;
+    }
+
+    /**
      * Magic getter for enum properties
      *
      * Uses BEM-style double underscore to separate field from property:
@@ -238,21 +265,39 @@ abstract class Rsx_Model_Abstract extends Model
      */
     public function __get($key)
     {
-        // Check for enum lookup functions: __enum, __enum_select, __enum_ids
-        $static_call = self::_get_static_magic($key);
-        if ($static_call !== null) {
-            return $static_call;
-        }
+        // FAST PATH
+        // __get fires on EVERY column read: Eloquent keeps attributes in an array, not as
+        // declared properties, so `$model->title` lands here. Anything unconditional in this
+        // method is therefore paid once per column per row, and a list endpoint reading 20
+        // columns across a thousand rows pays it twenty thousand times.
+        //
+        // Every magic key this method can answer is BEM-style and contains a DOUBLE
+        // underscore: the static lookups (`field__enum`, `field__enum_select`,
+        // `field__enum_labels`, `field__enum_ids`) and the per-value properties
+        // (`field__label`, `field__constant`, and any custom one). An ordinary column name
+        // does not - not `title`, and not a system column like `_ext_src`, which has a
+        // single leading underscore. One substring test therefore skips the entire enum
+        // machinery for the overwhelming majority of reads.
+        //
+        // A `__`-prefixed column takes the slow path and still resolves correctly (it simply
+        // matches nothing and falls through) - it is merely not accelerated.
+        if (str_contains($key, '__')) {
+            // Check for enum lookup functions: __enum, __enum_select, __enum_ids
+            $static_call = self::_get_static_magic($key);
+            if ($static_call !== null) {
+                return $static_call;
+            }
 
-        // Look up enum properties related to current column value (BEM-style: field__property)
-        if (!empty(static::$enums)) {
-            foreach (static::$enums as $column => $enum_config) {
-                // Look for specific enum property (e.g., field__label, field__constant)
-                foreach ($enum_config as $enum_val => $enum_properties) {
-                    foreach ($enum_properties as $prop_name => $prop_value) {
-                        if ($key == $column . '__' . $prop_name && $this->$column == $enum_val) {
-                            return $prop_value;
-                        }
+            // Look up enum properties related to current column value (BEM-style:
+            // field__property). The map is precomputed per class, so this is one hash
+            // lookup rather than a walk of every column x value x property combination.
+            $enum_map = static::__enum_property_map();
+            if (isset($enum_map[$key])) {
+                [$column, $by_value] = $enum_map[$key];
+                $current = $this->$column;
+                foreach ($by_value as $enum_val => $prop_value) {
+                    if ($current == $enum_val) {
+                        return $prop_value;
                     }
                 }
             }
@@ -268,6 +313,44 @@ abstract class Rsx_Model_Abstract extends Model
     }
 
     /**
+     * `field__property` => [column, [enum_value => property_value, ...]], memoized per class.
+     *
+     * Inverts static::$enums once so a magic-property read is a hash lookup instead of a
+     * nested walk of every column x value x property combination. Declaration order is
+     * preserved inside each key, so when several enum values define the same property the
+     * first one whose value matches still wins - the same answer the walk gave.
+     *
+     * @return array<string, array{0: string, 1: array}>
+     */
+    private static function __enum_property_map(): array
+    {
+        static $cache = [];
+
+        $class = static::class;
+        if (isset($cache[$class])) {
+            return $cache[$class];
+        }
+
+        $map = [];
+        foreach ((array) static::$enums as $column => $enum_config) {
+            foreach ((array) $enum_config as $enum_val => $enum_properties) {
+                if (!is_array($enum_properties)) {
+                    continue;
+                }
+                foreach ($enum_properties as $prop_name => $prop_value) {
+                    $magic_key = $column . '__' . $prop_name;
+                    if (!isset($map[$magic_key])) {
+                        $map[$magic_key] = [$column, []];
+                    }
+                    $map[$magic_key][1][$enum_val] = $prop_value;
+                }
+            }
+        }
+
+        return $cache[$class] = $map;
+    }
+
+    /**
      * Magic isset for enum properties
      *
      * Required because PHP's ?? operator calls __isset() before __get().
@@ -279,18 +362,19 @@ abstract class Rsx_Model_Abstract extends Model
      */
     public function __isset($key)
     {
-        // Check for enum magic properties (BEM-style: field__property)
-        if (!empty(static::$enums)) {
-            foreach (static::$enums as $column => $enum_config) {
-                // field__label, field__constant, field__* (any custom enum property)
-                foreach ($enum_config as $enum_val => $enum_properties) {
-                    foreach ($enum_properties as $prop_name => $prop_value) {
-                        if ($key == $column . '__' . $prop_name) {
-                            // Property exists if current column value matches this enum value
-                            if ($this->$column == $enum_val) {
-                                return true;
-                            }
-                        }
+        // Same fast path as __get, and for the same reason: PHP calls __isset() before
+        // __get() for every `??`, so this is on the hot path too. See __get for why a
+        // double underscore is the reliable discriminator.
+        if (str_contains($key, '__')) {
+            // field__label, field__constant, field__* (any custom enum property)
+            $enum_map = static::__enum_property_map();
+            if (isset($enum_map[$key])) {
+                [$column, $by_value] = $enum_map[$key];
+                $current = $this->$column;
+                foreach (array_keys($by_value) as $enum_val) {
+                    // Property exists if current column value matches this enum value
+                    if ($current == $enum_val) {
+                        return true;
                     }
                 }
             }
@@ -601,21 +685,65 @@ abstract class Rsx_Model_Abstract extends Model
      * IMPORTANT: Date and datetime columns return STRINGS, not Carbon objects.
      * This prevents timezone bugs and keeps PHP/JS in sync with identical formats.
      *
-     * Users can still override by defining their own $casts property.
+     * Users can still override by defining their own $casts property, and mergeCasts()
+     * still adds casts to a single INSTANCE at runtime: the schema-derived half is
+     * memoized per class+table (__schema_derived_casts()), the parent's half is not.
      *
      * @return array
      */
     public function getCasts(): array
     {
-        // Start with parent casts (includes $casts property + timestamps)
+        // Start with parent casts (includes $casts property + timestamps). Deliberately NOT
+        // memoized: mergeCasts() can add casts to a SINGLE instance at runtime, and those
+        // must keep winning for that instance and not leak to any other. It is a cheap
+        // array read.
         $casts = parent::getCasts();
 
-        // Get table name
-        $table_name = $this->getTable();
+        // The schema-derived half IS memoized - see __schema_derived_casts() for why that
+        // matters far more than it looks. Merged with the parent's casts winning, which is
+        // the same precedence the inline version had.
+        foreach (static::__schema_derived_casts($this->getTable()) as $column => $cast) {
+            if (!isset($casts[$column])) {
+                $casts[$column] = $cast;
+            }
+        }
+
+        return $casts;
+    }
+
+    /**
+     * The casts implied by the TABLE SCHEMA and the class's type-ref declarations, memoized
+     * per class+table.
+     *
+     * Eloquent calls getCasts() from hasCast(), which runs on EVERY attribute read. Building
+     * this map inline therefore meant four Manifest column-type scans plus a type-ref pass
+     * per column per row - the dominant cost of reading a model attribute, measured by a
+     * downstream field report at ~21us per read against ~0.1us for a raw array element.
+     * Nothing here varies by record or even by instance: it is a function of the schema and
+     * the class, both fixed for the life of the process.
+     *
+     * The key is class+table because both inputs vary independently - two models may share a
+     * table, and one model may be pointed at a different table.
+     *
+     * Precedence inside this map is FIRST WINS, in the original declaration order: boolean,
+     * datetime, date, time, then the type-ref columns.
+     *
+     * @param string $table_name
+     * @return array<string, string> column => cast
+     */
+    private static function __schema_derived_casts(string $table_name): array
+    {
+        static $cache = [];
+
+        $cache_key = static::class . '|' . $table_name;
+        if (isset($cache[$cache_key])) {
+            return $cache[$cache_key];
+        }
+
+        $casts = [];
 
         // Auto-detect boolean columns (TINYINT(1))
-        $boolean_columns = \App\RSpade\Core\Manifest\Manifest::db_get_columns_by_type($table_name, 'boolean');
-        foreach ($boolean_columns as $column) {
+        foreach (Manifest::db_get_columns_by_type($table_name, 'boolean') as $column) {
             if (!isset($casts[$column])) {
                 $casts[$column] = 'boolean';
             }
@@ -623,8 +751,7 @@ abstract class Rsx_Model_Abstract extends Model
 
         // Auto-detect datetime columns (DATETIME, TIMESTAMP)
         // Returns ISO 8601 UTC strings, NOT Carbon objects
-        $datetime_columns = \App\RSpade\Core\Manifest\Manifest::db_get_columns_by_type($table_name, 'datetime');
-        foreach ($datetime_columns as $column) {
+        foreach (Manifest::db_get_columns_by_type($table_name, 'datetime') as $column) {
             if (!isset($casts[$column])) {
                 $casts[$column] = \App\RSpade\Core\Time\Rsx_DateTime_Cast::class;
             }
@@ -632,8 +759,7 @@ abstract class Rsx_Model_Abstract extends Model
 
         // Auto-detect date columns (DATE)
         // Returns YYYY-MM-DD strings, NOT Carbon objects
-        $date_columns = \App\RSpade\Core\Manifest\Manifest::db_get_columns_by_type($table_name, 'date');
-        foreach ($date_columns as $column) {
+        foreach (Manifest::db_get_columns_by_type($table_name, 'date') as $column) {
             if (!isset($casts[$column])) {
                 $casts[$column] = \App\RSpade\Core\Time\Rsx_Date_Cast::class;
             }
@@ -641,8 +767,7 @@ abstract class Rsx_Model_Abstract extends Model
 
         // Auto-detect time columns (TIME)
         // Laravel's 'time' cast returns strings, which is what we want
-        $time_columns = \App\RSpade\Core\Manifest\Manifest::db_get_columns_by_type($table_name, 'time');
-        foreach ($time_columns as $column) {
+        foreach (Manifest::db_get_columns_by_type($table_name, 'time') as $column) {
             if (!isset($casts[$column])) {
                 $casts[$column] = 'string';
             }
@@ -656,7 +781,7 @@ abstract class Rsx_Model_Abstract extends Model
             }
         }
 
-        return $casts;
+        return $cache[$cache_key] = $casts;
     }
 
     /**
@@ -1205,6 +1330,46 @@ EXAMPLE;
     }
 
     /**
+     * Max character length of a varchar/char column, or null for every other column type.
+     *
+     * The ONE definition of "how long may this field be". The JS model stubs bake their
+     * field_length() table from this method, so a server-side length check and the client's
+     * cannot drift, and app code never has to mirror a schema literal in a constant.
+     *
+     * Null means "this column has no character limit" (an int, a datetime, a text blob) - it
+     * is a real answer, never a lookup failure. A column the model does not have is a coding
+     * error and throws, matching the manifest's fail-fast lookups: silently answering null
+     * would let a typo'd column name read as "unlimited" and defeat the check being written.
+     *
+     * Class-Table Inheritance: the manifest merges a base model's detail-table columns into
+     * its column map, so a base model answers for its detail columns too.
+     *
+     * @param string $column Column name
+     * @return int|null Max length for varchar/char, null for any other type
+     * @throws RuntimeException When the model has no such column (or is not indexed)
+     */
+    public static function field_length(string $column): ?int
+    {
+        $class_name = Manifest::_normalize_class_name(get_called_class());
+
+        // Memoized per class: this is consulted per column while generating every model's JS
+        // stub, and again on request paths, but the schema cannot change inside one process.
+        static $columns_by_class = [];
+
+        if (!array_key_exists($class_name, $columns_by_class)) {
+            $columns_by_class[$class_name] = Manifest::php_model_columns($class_name);
+        }
+
+        $columns = $columns_by_class[$class_name];
+
+        if ($columns === null || !array_key_exists($column, $columns)) {
+            throw new RuntimeException("field_length(): {$class_name} has no column '{$column}'");
+        }
+
+        return $columns[$column]['max_length'] ?? null;
+    }
+
+    /**
      * Re-entrancy depth of a SINGLE model write (this class's own save()/delete()). A single
      * write already routes its DB statement through RestrictedEloquentBuilder::update()/delete()
      * (Eloquent's performUpdate / performDeleteOnModel run through the model's builder), so the
@@ -1591,7 +1756,7 @@ EXAMPLE;
             return self::$_audit_columns_present[$memo_key];
         }
 
-        $manifest_columns = \App\RSpade\Core\Manifest\Manifest::db_get_table_columns($table);
+        $manifest_columns = Manifest::db_get_table_columns($table);
         foreach ($columns as $column) {
             if (!isset($manifest_columns[$column])) {
                 $manifest_columns = null;
@@ -2388,7 +2553,7 @@ EXAMPLE;
             return self::$_relationships_cache[$called_class];
         }
 
-        $manifest_data = \App\RSpade\Core\Manifest\Manifest::php_get_metadata_by_fqcn($called_class);
+        $manifest_data = Manifest::php_get_metadata_by_fqcn($called_class);
 
         if (!$manifest_data) {
             throw new RuntimeException("Class {$called_class} not found in manifest");
@@ -2434,15 +2599,15 @@ EXAMPLE;
      */
     private static function __manifest_entry_for_fqcn(string $fqcn): ?array
     {
-        $simple_name = \App\RSpade\Core\Manifest\Manifest::_normalize_class_name($fqcn);
+        $simple_name = Manifest::_normalize_class_name($fqcn);
 
         try {
-            $file = \App\RSpade\Core\Manifest\Manifest::php_find_class($simple_name);
+            $file = Manifest::php_find_class($simple_name);
         } catch (RuntimeException $e) {
             return null;
         }
 
-        $entry = \App\RSpade\Core\Manifest\Manifest::get_file($file);
+        $entry = Manifest::get_file($file);
 
         return (($entry['fqcn'] ?? null) === $fqcn) ? $entry : null;
     }

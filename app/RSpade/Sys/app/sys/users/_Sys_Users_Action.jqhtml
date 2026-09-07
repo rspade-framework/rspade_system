@@ -1,0 +1,9 @@
+<Define:_Sys_Users_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+        <_Sys_Section $title="Users" $icon="bi-person-badge">
+            <p class="mb-0">The users screen: the identities that may sign in to this install will be listed and administered here.</p>
+        </_Sys_Section>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Users_Action>

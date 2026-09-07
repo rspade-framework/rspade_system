@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Core\PHP;
 
+use App\RSpade\Core\Naming\Rsx_Identifier;
 use App\RSpade\Core\PHP\Filename_ShortName;
 
 /**
@@ -112,25 +113,17 @@ class Filename_Suggester
     }
 
     /**
-     * Convert PascalCase to snake_case
-     * Inserts underscores before uppercase letters and before first digit in number sequences
-     * Example: TestComponent1 -> Test_Component_1
+     * Convert PascalCase to snake_case.
+     *
+     * One implementation, in Rsx_Identifier - it also preserves the single leading
+     * framework-application underscore (`_Sys_Card` -> `_root_card`).
      *
      * @param string $name PascalCase name
      * @return string snake_case name
      */
     public static function pascal_to_snake_case(string $name): string
     {
-        // Insert underscore before uppercase letters (except first character)
-        $result = preg_replace('/(?<!^)([A-Z])/', '_$1', $name);
-
-        // Insert underscore before first digit in a run of digits
-        $result = preg_replace('/(?<!^)(?<![0-9])([0-9])/', '_$1', $result);
-
-        // Replace multiple consecutive underscores with single underscore
-        $result = preg_replace('/_+/', '_', $result);
-
-        return $result;
+        return Rsx_Identifier::to_snake_case($name);
     }
 
     /**

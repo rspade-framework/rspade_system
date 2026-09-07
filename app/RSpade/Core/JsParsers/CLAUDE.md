@@ -111,15 +111,22 @@ destructor already reaps what this process spawned.
 ## JS Parser
 - `Js_Parser.php` - PHP client (cache + marshaling + `Js_Exception` vocabulary)
 - `resource/parser-service.js` - the `parser` subsystem
-- Cache: `storage/rsx-tmp/persistent/js_parser/`, keyed by file hash. Checked FIRST - only a
-  miss reaches the service, so a fully cached manifest build never starts node.
+- Cache: the shared derived cache, namespace `js-parser`
+  (`storage/rsx-tmp/derived/js-parser/`), keyed by `_rsx_file_hash_for_build()` through
+  `App\RSpade\Core\Cache\File_Content_Cache`. Checked FIRST - only a miss reaches the
+  service, so a fully cached manifest build never starts node.
 - `Js_Parser::parse($file_path)` / `Js_Parser::extract_metadata($file_path)`
 
 ## JS Transformer (Babel)
 - `Js_Transformer.php` - PHP client (cache + toolchain fingerprint + error vocabulary)
 - `resource/babel-service.js` - the `babel` subsystem
-- Cache: `storage/rsx-tmp/babel_cache/`, keyed by file hash + target + toolchain fingerprint
+- Cache: the shared derived cache, namespace `babel` (`storage/rsx-tmp/derived/babel/`),
+  keyed by `_rsx_file_hash_for_build()` with the target + toolchain fingerprint as the
+  VARIANT, through `App\RSpade\Core\Cache\File_Content_Cache`
 - `Js_Transformer::transform($path, $target)` / `transform_string($code, $path, $target)`
+- `Js_Transformer::transform_to_file($path, $target)` returns the CACHE ENTRY'S PATH. The
+  bundle compiler hands the concatenator that file directly instead of writing a second
+  copy of the same bytes under a name of its own.
 
 ### Transformation details
 - Preprocesses `@decorator` on standalone functions
