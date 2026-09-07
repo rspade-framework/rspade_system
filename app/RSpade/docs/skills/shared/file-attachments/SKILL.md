@@ -242,7 +242,12 @@ $attachment->file_extension;  // lowercased, no dot
 $attachment->mime_type;
 $attachment->get_size();      // bytes (works even for externally-resident bytes)
 $attachment->fileable_type;   // polymorphic PAIR with fileable_id (+ fileable_category)
+$attachment->fileable;        // the PARENT RECORD itself (null while unclaimed)
 ```
+
+**`fileable` is the framework's own `#[Relationship]` `morphTo()` — never hand-roll one.** Read it as a PROPERTY; call the method only for the relation object (`$attachment->fileable()->withTrashed()->first()`). The integer discriminator in `fileable_type` is transparent: it is declared in the model's `$type_ref_columns`, so stock `morphTo()` resolves it.
+
+**Staff row visibility is `Staff_Authorizable`**, which `File_Attachment_Model` adopts: `$model->can_view($user)` per row and `Model::scope_can_view($query, $user)` per set, in SQL, before pagination. Both defaults are PERMISSIVE — the framework owns the SEAM, an app owns the POLICY, and a class's own method always beats a trait's. A model with a real rule states it in BOTH (a `can_view()` that denies what `scope_can_view()` returns is a leak with a passing test). It is the staff twin of the portal's `portal_can_read()`, and it exists **so an app never class-overrides a core model just to attach a visibility pair** — see `rsx:man class_override`.
 
 Authorship is the polymorphic pair (`created_by_type` + `created_by_id`), never a bare id — see `rspade:actors-and-authorship`.
 

@@ -657,10 +657,13 @@ SUBSYSTEM PRIMERS
     tree, and everything else reads from it. If you understand the manifest
     you understand why the framework has no configuration.
 
-    WHAT IT SCANS. config('rsx.manifest.scan_directories'), relative to
-    base_path() - which is system/, not the project root. The list covers
-    rsx/ (the application, reached through a symlink), Core, Integrations,
-    Bundles, CodeQuality, Lib and a few more. A configured path that does not
+    WHAT IT SCANS. Manifest::scan_directories() - config('rsx.manifest.
+    scan_directories'), relative to base_path() (which is system/, not the
+    project root), plus the test trees while the process is a test run. The
+    configured list covers rsx/ (the application, reached through a symlink),
+    Core, Integrations, Bundles, CodeQuality, Lib and a few more; it does NOT
+    cover app/RSpade/tests, app/RSpade/temp or rsx/tests, which are indexed
+    only under rsx:test (rsx:man testing). A configured path that does not
     exist is a fatal error, not a skipped entry. Two exclusion lists apply:
     file basenames (CLAUDE.md, .gitkeep, ...) and directory basenames
     (vendor, node_modules, storage, public, resource, .git, playwright).

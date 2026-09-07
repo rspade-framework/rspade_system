@@ -567,6 +567,13 @@ AUTHORIZATION
     Core models' portal_can_read() use Portal_Session; app models' use
     Portal_Permission (no core->app dependency).
 
+    THE STAFF TWIN. App\RSpade\Core\Auth\Staff_Authorizable is the same seam for
+    the STAFF realm: can_view($user) per row, scope_can_view($query, $user) per set
+    in SQL, permissive by default, its body referencing no class at all for the same
+    reason this one does not. Never mix them - a portal rule belongs in
+    portal_can_read() and a staff rule in can_view(). See rsx:man file_upload,
+    STAFF ROW VISIBILITY.
+
   Route gating
     Declared, not detected. Public portal controllers (login, register, password
     reset, logout) carry #[Auth('public')]; everything else names portal-realm
@@ -1168,6 +1175,7 @@ SEE ALSO
     rsx:man auth
     rsx:man dispatch
     rsx:man class_override
+    rsx:man file_upload - Staff_Authorizable, the staff twin of Portal_Authorizable
     rsx:man config_rsx
     rsx:man migrations
 

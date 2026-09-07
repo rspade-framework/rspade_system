@@ -41,7 +41,17 @@ class Task_Command_Cli_Test extends Rsx_Test_Abstract
         $stdout_file = tempnam(sys_get_temp_dir(), 'rsx-task-cmd-out-');
         $stderr_file = tempnam(sys_get_temp_dir(), 'rsx-task-cmd-err-');
 
-        $parts = [escapeshellarg(PHP_BINARY), escapeshellarg(base_path('artisan'))];
+        // THE CHILD MUST BE PART OF THIS TEST RUN. The command under test, rsx_test:echo, is
+        // a #[Command] on a FIXTURE service, and the test trees are indexed only while
+        // Rsx_Test_Abstract::suite_is_running() (Manifest::scan_directories()). Rsx_Artisan
+        // attaches this token to every child it spawns; this spawn is raw by design (the
+        // stream contract is the subject), so it attaches it itself. artisan strips every
+        // --_ token from argv pre-boot, so it cannot reach the stdout/stderr under test.
+        $parts = [
+            escapeshellarg(PHP_BINARY),
+            escapeshellarg(base_path('artisan')),
+            escapeshellarg(Rsx_Test_Abstract::TEST_RUN_FLAG),
+        ];
 
         foreach ($argv as $token) {
             $parts[] = escapeshellarg($token);

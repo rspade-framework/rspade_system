@@ -26,6 +26,44 @@ class _Manifest_Scanner_Helper
     // Static properties are defined on Manifest class and accessed via Manifest::$property
 
     /**
+     * The three trees that hold test fixtures, and are indexed ONLY while the process is a
+     * test run. See _scan_directories().
+     */
+    public const TEST_SCAN_DIRECTORIES = ['app/RSpade/tests', 'app/RSpade/temp', 'rsx/tests'];
+
+    /**
+     * The directories this build indexes.
+     *
+     * config('rsx.manifest.scan_directories') is the whole answer for a served site. A TEST
+     * RUN adds the three test trees on top: a fixture is real indexed source - a route, an
+     * Ajax surface, an #[Auth] naming a check - and a served site must not carry one. The
+     * outage that set this rule was a fixture whose #[Auth] named a check only the reference
+     * application declares, which failed the manifest build of every install that scanned it.
+     *
+     * suite_is_running() reads the --_test-run internal flag that rsx:test declares on itself
+     * and Rsx_Artisan forwards to every child, so a docker worker, a --sequential run and a
+     * command a test spawns all see the fixtures. The web entrypoint carries no argv, so a
+     * served request never does - and the manifest's ordinary add/remove handles the
+     * transition in both directions, on the first request after a run.
+     *
+     * @return array<int,string>
+     */
+    public static function _scan_directories(): array
+    {
+        $scan_paths = config('rsx.manifest.scan_directories', ['rsx']);
+
+        if (\App\RSpade\Core\Testing\Rsx_Test_Abstract::suite_is_running()) {
+            foreach (self::TEST_SCAN_DIRECTORIES as $test_path) {
+                if (!in_array($test_path, $scan_paths, true)) {
+                    $scan_paths[] = $test_path;
+                }
+            }
+        }
+
+        return $scan_paths;
+    }
+
+    /**
     * Get all files in configured scan directories (returns relative paths)
     */
     public static function _get_rsx_files(): array
@@ -35,7 +73,13 @@ class _Manifest_Scanner_Helper
         }
 
         $base_path = base_path();
-        $scan_paths = config('rsx.manifest.scan_directories', ['rsx']);
+        $scan_paths = static::_scan_directories();
+        // rsx/tests lives INSIDE the rsx/ scan root, so leaving it out of the list is not
+        // enough to keep it out of an ordinary build - it has to be skipped by path.
+        $suppressed_trees = array_values(array_filter(
+            self::TEST_SCAN_DIRECTORIES,
+            fn ($tree) => !in_array($tree, $scan_paths, true)
+        ));
         $files = [];
 
         foreach ($scan_paths as $scan_path) {
@@ -43,7 +87,9 @@ class _Manifest_Scanner_Helper
 
             // Check if path exists - throw fatal error if not (except for app/RSpade/temp)
             if (!file_exists($full_path)) {
-                // Special case: silently skip app/RSpade/temp if it doesn't exist
+                // Special case: silently skip app/RSpade/temp if it doesn't exist. It is the
+                // framework developer's scratch tree and is legitimately absent; every other
+                // path in the list - the test trees a test run adds included - is a fatal.
                 if ($scan_path === 'app/RSpade/temp') {
                     continue;
                 }
@@ -114,6 +160,10 @@ class _Manifest_Scanner_Helper
                             ManifestErrors::old_file_pattern($relative_path);
                         }
 
+                        if (static::__is_under_tree($relative_path, $suppressed_trees)) {
+                            continue;
+                        }
+
                         $files[] = $relative_path;
                     }
                 }
@@ -136,6 +186,22 @@ class _Manifest_Scanner_Helper
         Manifest::$_get_rsx_files_cache = $files;
 
         return $files;
+    }
+
+    /**
+     * Is this relative path inside one of the given directory trees?
+     *
+     * @param array<int,string> $trees
+     */
+    private static function __is_under_tree(string $relative_path, array $trees): bool
+    {
+        foreach ($trees as $tree) {
+            if (str_starts_with($relative_path, rtrim($tree, '/') . '/')) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

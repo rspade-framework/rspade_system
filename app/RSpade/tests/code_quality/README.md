@@ -198,6 +198,20 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   or comment, framework code under `app/RSpade/`, and the vendored / node_modules /
   `.cdn-cache` trees. One row pins the ledger: a clean file is banked under an id
   carrying the reserved-name index's own hash, never the bare rule id.
+- **TEST-AUTH-01 (implemented):** `Test_Fixture_Auth_Check_Rule_Test` drives the rule's
+  public `check()` over in-memory sources - nothing is written, because the rule never
+  reads the filesystem. The rule exists because of a live outage: a fixture carrying
+  `#[Auth('can_view_data', ...)]` is indexed as a real surface wherever the suite runs, and
+  closed-by-default validation then resolves that name against whatever application is
+  installed - so an install that does not declare it gets a FAILED MANIFEST BUILD, which is
+  a hard-down site rather than a failing test. Coverage: the method-level and class-level
+  attribute forms, the `@auth` decorator, `rsx/tests/` in scope alongside the framework
+  tree, the four framework checks accepted, and the negatives that keep the rule honest -
+  an attribute inside a PHP STRING (this concern's own fixer fixtures are full of them, and
+  a text-matching rule would flag every one), an attribute inside a docblock, application
+  code out of scope, and a neighbouring attribute's arguments not being read as check names.
+  Detection is the PHP token stream, so the string and comment rows hold by construction.
+
 - **The validation ledger (implemented):** `Validation_Ledger_Test` covers the
   properties a flag file gave for free - record/read roundtrip, verdicts not leaking
   across rule ids, flush-then-reload from disk, an unknown hash (an edited file) not

@@ -704,11 +704,15 @@ class Php_Fixer
     /**
      * Does a file defining this class exist under a framework path the manifest never scans?
      *
-     * GUARD 1 (backlog B-68, the F-021 half). `config('rsx.manifest.scan_directories')` lists
-     * ten paths; everything else under app/RSpade/ - Commands, Database, Http, Ide,
-     * SchemaQuality - is PERMANENTLY invisible to the manifest by design. An import of a
-     * class living there is therefore unresolvable on a perfectly healthy index, and was
-     * being deleted every single build.
+     * GUARD 1 (backlog B-68, the F-021 half). The manifest indexes a short list of paths;
+     * everything else under app/RSpade/ - Commands, Database, Http, Ide, SchemaQuality - is
+     * PERMANENTLY invisible to it by design, and app/RSpade/tests and app/RSpade/temp are
+     * invisible to every build that is not a test run. An import of a class living in any of
+     * them is therefore unresolvable on a perfectly healthy index, and was being deleted
+     * every single build.
+     *
+     * The list comes from Manifest::scan_directories(), not from config, so this asks what
+     * THIS build actually indexed rather than what a served site normally indexes.
      *
      * Deletion must rest on positive proof that a class is gone, never on absence of
      * evidence. This is that proof, and it is cheap: one glob per unresolved name.
@@ -719,7 +723,7 @@ class Php_Fixer
             return false;
         }
 
-        $scanned = config('rsx.manifest.scan_directories', []);
+        $scanned = \App\RSpade\Core\Manifest\Manifest::scan_directories();
         $framework_root = base_path('app/RSpade');
 
         if (!is_dir($framework_root)) {

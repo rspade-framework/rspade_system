@@ -126,8 +126,14 @@ clean-shutdown rule below). In order:
       `prepare_test_database()` + `ensure_baseline_cache()`: `rspade_test` migrated, the
       baseline user seeded, and the migration-hash dump under `storage/db_backups` that an
       in-container reset restores from. It runs no tests.
-   2. `php system/artisan rsx:manifest:build --clean`.
+   2. `php system/artisan rsx:manifest:build --clean --_test-run`.
    3. `php system/artisan rsx:bundle:compile`.
+
+**THE BAKED MANIFEST IS A TEST MANIFEST, and `--_test-run` is what makes it one.** The test
+trees (`app/RSpade/tests`, `app/RSpade/temp`, `rsx/tests`) are indexed only under that flag;
+`rsx:test` declares it on itself, but step 2 is a SEPARATE process and has to carry the token
+in argv the way every child does. Without it the image bakes a manifest with no test class in
+it and every worker container pays a cold rebuild before its first test.
 
 **ORDER TRAP 1 - the manifest build comes AFTER provisioning, and it is `--clean`.** The
 model index (and with it every auto-detected datetime/date/boolean CAST) is built by
@@ -339,9 +345,11 @@ so a box that runs the suite all day still has the last few post-mortems and not
 
 ## The test-run allowance
 
-`rsx:test` declares the internal `--_test-run` flag on ITSELF and `Rsx_Artisan` forwards it to
-every child it spawns, so a migrate or a command a test runs in `debug`/`production` mode is
-still recognisably under the suite. `Rsx_App_Url::enforce_scheme_from_env()` grants http to
+`rsx:test` declares the internal `--_test-run` flag on ITSELF (in `system/artisan`, PRE-BOOT,
+because the manifest loads during boot and what it indexes depends on the answer) and
+`Rsx_Artisan` forwards it to every child it spawns, so a migrate or a command a test runs in
+`debug`/`production` mode is still recognisably under the suite. It is also what puts the test
+trees in the manifest (`rsx:man testing`). `Rsx_App_Url::enforce_scheme_from_env()` grants http to
 any process carrying it (`Rsx_Test_Abstract::suite_is_running()`). That matters here because a
 test container is an http box by construction (`APP_URL=http://$HOSTNAME`, no TLS in front of
 it) and no test can arrange otherwise. Nothing security-relevant reads the flag, and a served

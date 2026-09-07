@@ -138,7 +138,7 @@ class Auth_Live_Index_Test extends Rsx_Test_Abstract
 
         static::__assert_array_has_key('Auth_Gates_Surface_Fixture::merged_gates', $surfaces);
         static::__assert_equals(
-            ['is_logged_in', 'can_view_data'],
+            ['is_logged_in', 'is_sysadmin'],
             $surfaces['Auth_Gates_Surface_Fixture::merged_gates']['auth']
         );
 

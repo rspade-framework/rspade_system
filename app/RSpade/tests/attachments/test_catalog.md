@@ -50,3 +50,10 @@
 | STO-01 | Row present, file missing: the bytes are rewritten under the SAME storage record (no duplicate-hash insert) | php | store_blob, unlink the blob, store_blob the same bytes | same id + hash, file restored, exactly one `_file_storage` row | implemented | 2026-08-22 |
 | STO-02 | The repair corrects a size that no longer describes the bytes | php | row size forced to 1, blob unlinked, re-store | same id, size = strlen(bytes) | implemented | 2026-08-22 |
 | STO-03 | Positive control: an INTACT blob still dedups and is not rewritten | php | store_blob twice over identical bytes | same id, blob mtime unchanged | implemented | 2026-08-22 |
+| FBL-01 | `$attachment->fileable` resolves the real parent record through the integer discriminator | php | attach to a Site_Model, reload, read the property | the owning Site_Model row | implemented | 2026-09-07 |
+| FBL-02 | An unattached upload has no fileable, and does not throw | php | unclaimed row | null | implemented | 2026-09-07 |
+| FBL-03 | The method form is the relation object, and `withTrashed()` still widens it | php | `->fileable()` and `->fileable()->withTrashed()` | MorphTo both times | implemented | 2026-09-07 |
+| FBL-04 | `fileable` is declared to the ORM, not just to PHP | php | `get_relationships()` | contains 'fileable' | implemented | 2026-09-07 |
+| SAU-01 | `can_view()` default is permissive - the framework supplies a seam, never a policy | php | attachment, no override | true | implemented | 2026-09-07 |
+| SAU-02 | `scope_can_view()` returns the SAME builder with no clause added | php | `File_Attachment_Model::query()` | identical builder, identical SQL | implemented | 2026-09-07 |
+| SAU-03 | A model that states a policy of its own beats the trait (a class's own method wins) | php | fixture adopting the trait AND declaring the pair | fixture's answers, not the trait's | implemented | 2026-09-07 |

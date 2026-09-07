@@ -45,6 +45,18 @@ class _Manifest_Cache_Helper
     */
     public static function _load_cached_data()
     {
+        // The change memo is a statement ABOUT the currently loaded data ("this file matches
+        // what the manifest records"), so replacing that data invalidates every entry in it.
+        //
+        // Without this, init()'s re-check under the build lock answered from a memo computed
+        // against the PREVIOUS cache: a process that loaded a cache containing the test trees,
+        // was sent to the lock by something else (a concurrent build regenerating the Phase-6
+        // stub outputs), and then reloaded the tests-LESS cache another process had just
+        // written, was told every test file was unchanged - and ran with a manifest that did
+        // not contain them. Observed as an intermittent "No test classes found" from rsx:test
+        // racing a manifest build.
+        Manifest::$_has_changed_cache = [];
+
         $cache_file = Manifest::_get_cache_file_path();
 
         if (file_exists($cache_file)) {

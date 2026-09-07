@@ -241,6 +241,20 @@ ATTACHMENT API
             Clear the polymorphic fields without deleting the file. The file
             becomes an unassigned orphan (reclaimable by rsx:storage:cleanup).
 
+        fileable   [#[Relationship] morphTo]
+            The record this file is attached to. READ IT AS A PROPERTY -
+            $attachment->fileable is the parent record itself, or null while the
+            upload is unclaimed. Call the METHOD only when you need the relation
+            object ($attachment->fileable()->withTrashed()->first()); the
+            #[Relationship] attribute is what makes the property form work.
+
+            The integer discriminator is transparent here. fileable_type holds a
+            type-ref id, declared in the model's $type_ref_columns, and the
+            framework registers each id as a morph-map alias - so STOCK
+            morphTo() resolves it and there is nothing to hand-roll. An app that
+            wrote its own fileable() accessor should delete it (rsx:man
+            polymorphic).
+
     External (handler-backed) attachments skip the claim guard entirely: they
     are created and attached by trusted app code (create_external) - see
     EXTERNAL BYTE RESIDENCY.
@@ -1029,6 +1043,38 @@ FILE TYPE ICONS
     Icons are cached by extension + dimensions. Cache-Control: public,
     max-age=86400.
 
+STAFF ROW VISIBILITY: Staff_Authorizable
+
+    App\RSpade\Core\Auth\Staff_Authorizable is the staff-realm twin of
+    Portal_Authorizable, and File_Attachment_Model adopts it. Where the portal
+    trait answers "may this PORTAL user read this row", this one answers "may
+    this STAFF user see this row":
+
+        $model->can_view($user)                  row check
+        Model::scope_can_view($query, $user)     set filter, applied in SQL
+
+    TWO CALL SHAPES, ONE POLICY. A visibility rule has to be expressible per-row
+    AND per-set (before pagination) or every list endpoint re-implements it. A
+    model that states a real policy MUST state it in BOTH, expressing the same
+    rule - a can_view() that denies what scope_can_view() returns is a leak with
+    a passing test.
+
+    THE DEFAULT IS PERMISSIVE, DELIBERATELY. The framework does not know any
+    application's visibility rules, and a fail-closed default would mean every
+    model in every app must override the pair before anything renders at all. So
+    the trait supplies "visible", and core owns the SEAM rather than the policy.
+    A class's own method always beats a trait's, so adopting the trait can never
+    shadow a policy the model already states.
+
+    NO TYPE HINT ON $user, ON PURPOSE. The trait body references no class at all
+    (the same rule Portal_Authorizable follows): the user model is an app concern
+    and is itself commonly class-overridden. Callers pass their own user object;
+    implementors are free to type their override.
+
+    An application that was class-overriding a core model ONLY to attach this
+    pair no longer needs the override at all - see rsx:man class_override,
+    DISCIPLINE FOR LIVING WITH AN OVERRIDE.
+
 SECURITY HOOKS
 
     File access is centralized in a small set of authorization gates. Register
@@ -1441,6 +1487,8 @@ SEE ALSO
     rsx:man locks              Cluster/system locks and counting semaphores
     rsx:man model              Model system, enums, fetch()
     rsx:man external_api       /api/v1/files, Bearer access to the byte routes
+    rsx:man portal             Portal_Authorizable, the portal twin of Staff_Authorizable
+    rsx:man class_override     Override drift, and preferring a seam over a clone
 
 VERSION
     RSpade Framework 1.0

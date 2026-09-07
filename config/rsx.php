@@ -531,9 +531,13 @@ return [
             'app/RSpade/Breadcrumbs',      // Progressive breadcrumb resolution
             'app/RSpade/CodeQuality',      // Code quality rules and checks
             'app/RSpade/Lib',              // UI features (Flash alerts, etc.)
-            'app/RSpade/temp',             // Framework developer testing directory
-            'app/RSpade/tests',            // Framework tests (php/cli/asset dirs are PHP; see excluded_dirs)
             'app/RSpade/Sys',             // The framework's own application: the /_sys control panel
+            // NOT LISTED, deliberately: app/RSpade/tests, app/RSpade/temp and rsx/tests.
+            // A test fixture is real indexed source - a route, a surface, an #[Auth] naming a
+            // check - and a served site has no business carrying one. _Manifest_Scanner_Helper
+            // ::_scan_directories() appends those three ONLY while the process is a test run
+            // (Rsx_Test_Abstract::suite_is_running()); the manifest's ordinary add/remove
+            // handles the transition in both directions.
         ],
 
         // Specific filenames to exclude from manifest scanning (anywhere in tree)

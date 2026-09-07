@@ -86,6 +86,73 @@ be out of date. Two conditions make the build decline and say so instead:
 Both lines are informational. An override that is genuinely present is archived
 on the next build, with the ordinary notice above.
 
+## DRIFT: AN OVERRIDE THAT STOPS CARRYING WHAT UPSTREAM DECLARES
+
+An override is a COPY, and a copy is frozen the moment it is taken. The framework
+file it replaced is archived to <Name>.php.upstream and keeps moving with every
+`rsx:framework:pull`. Nothing in PHP relates the two files afterwards.
+
+THE FAILURE SHAPE. The framework adds a member to that class and then CALLS it -
+core calling into a class it believes is its own - and the call lands on the
+application's older copy, which never had that member. A downstream field report
+records both halves of it: a hook the framework only INVOKES simply never ran, so
+a background queue enqueued nothing for months and looked healthy doing it; and a
+framework controller called a method the loaded class did not define, so one whole
+document type answered 500. Neither had an error to follow back to the override.
+
+    CLASS-OVERRIDE-DRIFT-01 (rsx:check)
+
+Names every PUBLIC or PROTECTED member the archived file declares and the override
+does not - methods static and instance, declared properties, and `use Trait;`
+adoptions (dropping one drops every member the trait supplied). One finding per
+member, naming the class, the member, both file paths, and the remedy. Alongside
+it the finding prints the override's OWN additions as INFO context, because the
+reader's next move is a re-clone and a re-clone has to carry every one of them
+forward.
+
+It is HIGH, and deliberately NOT a manifest-build fatal. The drift arrives on a
+PULL, not on anything the developer just typed, and the site it appears on is
+running: taking that site down until somebody finds time to re-clone would turn a
+latent defect into an immediate outage. The finding is the alarm; the developer
+schedules the work. Suppress a deliberate divergence with
+`@CLASS-OVERRIDE-DRIFT-01-EXCEPTION` in the OVERRIDE file.
+
+Two things it cannot see. A member present in both files whose BODY has diverged
+is indistinguishable from a deliberate override, so it is never reported. And a
+member the override adds is never a violation - that is the work the override
+exists to hold.
+
+    Class Override Drift (rsx:health)
+
+The same analysis as an operator row: WARN, never FAIL, one row per drifting
+override, counting the missing members and pointing at rsx:check. It exists
+because the moment drift appears is a framework pull, which is exactly when
+somebody is looking at rsx:health and not at the linter.
+
+## DISCIPLINE FOR LIVING WITH AN OVERRIDE
+
+PREFER A SEAM OVER A CLONE. Most overrides exist to attach POLICY, not logic, and
+policy has framework seams that hold no copy of anything:
+
+    can_view() / scope_can_view()   Staff_Authorizable  - staff row visibility,
+                                    per row and per set (rsx:man file_upload)
+    portal_can_read()               Portal_Authorizable - the portal twin
+                                    (rsx:man portal)
+    fetch()                         the model's own read gate (rsx:man model_fetch)
+    #[OnEvent] handlers             behaviour interception (rsx:man event_hooks)
+
+An addition that fits one of those is not a reason to hold 2,000 lines of
+framework code. Reach for the seam first, and clone only what genuinely has no
+seam.
+
+WHEN YOU DO CLONE, ENUMERATE THE ADDITIONS IN A BANNER at the top of the override
+- one line per item, in the order they appear. A re-clone then becomes mechanical:
+copy the .upstream file over the override, fix the namespace, re-apply the list.
+Without the banner, every re-clone is a diff of a file nobody wrote most of.
+
+RE-CLONE ON THE FINDING, NOT ON A SCHEDULE. The rule fires when the framework has
+actually moved. That is the moment the diff is smallest and the reason is known.
+
 ## COMMON OVERRIDE TARGETS
 
 These framework classes are commonly overridden to add application-specific
@@ -287,7 +354,9 @@ Ensure class names match exactly. Check with:
 ### Missing methods after override
 
 Your override replaces the entire class. Copy all needed functionality from
-the .upstream file or extend from a different base class.
+the .upstream file or extend from a different base class. If the member exists
+upstream and not in your copy, CLASS-OVERRIDE-DRIFT-01 already named it - see
+DRIFT above.
 
 ### Framework file not renamed
 
@@ -309,5 +378,8 @@ some other way.
 ## SEE ALSO
 
 rsx:man rsx_upstream - Framework update management
+rsx:man file_upload - Staff_Authorizable, the staff row-visibility seam
+rsx:man portal - Portal_Authorizable, its portal twin
+rsx:man event_hooks - #[OnEvent], behaviour interception without a copy
 rsx:man manifest_api - Manifest system documentation
 rsx:man model - Model documentation

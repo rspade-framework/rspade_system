@@ -16,8 +16,10 @@ use App\RSpade\Core\Task\Task_Instance;
  * No real #[Schedule] attribute - tasks are never auto-run by the cron processor.
  * Methods are trivial and side-effect-free.
  *
- * NOTE: Because app/RSpade/tests/php is in the manifest scan_directories list,
- * this class IS discovered by Task::internal() / Task::dispatch().
+ * NOTE: Under a test run the manifest indexes app/RSpade/tests (Manifest::
+ * scan_directories()), so this class IS discovered by Task::internal() / Task::dispatch().
+ * A build that is not a test run does not index it at all, which is the point: a fixture
+ * task must not exist on a served site.
  *
  * The two #[Command] attributes give the tasks/cli tests a pair of REAL registered artisan
  * aliases to drive - one that returns a value and one that throws - without touching a

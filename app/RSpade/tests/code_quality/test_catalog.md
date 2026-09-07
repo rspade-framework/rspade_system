@@ -343,3 +343,24 @@ properties a flag file gave for free. Every row runs against a throwaway ledger 
 | CB2-SYS-CLASS | the same dependency spelled as a reserved bundle CLASS is judged identically | php | fixture including `_Sys_Theme_Bundle` | 1 critical violation naming the class | implemented | 2026-09-07 |
 | CB2-SYS-ROUTES | `include_routes` is judged like `include` - extraction without assets is still reaching in | php | fixture with `include_routes: app/RSpade/Sys/app/sys` | 1 critical violation naming the list | implemented | 2026-09-07 |
 | CB2-SYS-CLEAN | a Frontend_Bundle-shaped include list (rsx/ paths, an app bundle class, npm aliases, __DIR__) is clean | php | fixture bundle | 0 critical violations | implemented | 2026-09-07 |
+
+## TEST-AUTH-01 (TestFixtureAuthCheck_CodeQualityRule)
+
+`App\RSpade\CodeQuality\Rules\Manifest\TestFixtureAuthCheck_CodeQualityRule`, via
+`Test_Fixture_Auth_Check_Rule_Test`. A fixture under `tests/` carrying a real
+`#[Auth(...)]` / `@auth(...)` is indexed as a real surface wherever the suite runs, so a
+name only the reference application declares fails the MANIFEST BUILD on an install that
+does not have it. The vocabulary is therefore the framework's own four checks. Sources are
+handed to `check()` in memory - the rule never touches the filesystem.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| TA1-APP-CHECK | the outage shape: an application check on a fixture method attribute | php | fixture `#[Auth('can_view_data', 'is_logged_in')]` | 1 violation naming `can_view_data`, remediation names the scanned-into-every-install reason | implemented | 2026-09-07 |
+| TA1-CLASS-LEVEL | a class-level attribute is the same declaration, reported on its own line | php | fixture `#[Auth('can_admin_role')]` above the class | 1 violation, line 3 | implemented | 2026-09-07 |
+| TA1-JS-DECORATOR | the JS half: a `@route` action fixture is a scanned surface too | php | fixture `@auth('can_export_data')` | 1 violation | implemented | 2026-09-07 |
+| TA1-APP-TESTS | `rsx/tests/` is in scope on the same terms as the framework's tree | php | absolute fixture path under `/rsx/tests/` | 1 violation | implemented | 2026-09-07 |
+| TA1-FRAMEWORK-CLEAN | the four framework checks are always allowed, including the two-name merge the live auth_gates fixture uses | php | fixture naming `is_logged_in`, `is_sysadmin`, `public`, `closed` | 0 violations | implemented | 2026-09-07 |
+| TA1-STRING-SOURCE | THE negative that matters: `#[Auth('x')]` inside a PHP STRING is fixture source a validation test writes to a temp file, not a declaration (tokens, not text) | php | fixture assigning a `$source` string containing the attribute | 0 violations | implemented | 2026-09-07 |
+| TA1-COMMENT | a name written in a docblock is prose | php | fixture with `#[Auth('alpha','beta')]` inside a docblock | 0 violations | implemented | 2026-09-07 |
+| TA1-SCOPE | application code names application checks - that is what a Permission class is for | php | fixture at `rsx/app/frontend/clients/...` | 0 violations | implemented | 2026-09-07 |
+| TA1-OTHER-ATTRIBUTE | a neighbouring attribute's arguments are not check names | php | fixture with `#[Route('/fixture/path')]` above `#[Auth('public')]` | 0 violations | implemented | 2026-09-07 |

@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\Log;
 use Imagick;
 use ImagickException;
 use Throwable;
+use App\RSpade\Core\Auth\Staff_Authorizable;
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Icons;
@@ -122,6 +123,12 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
      * portal payload matches the staff one exactly.
      */
     use Portal_Authorizable;
+
+    /**
+     * Staff record-read contract (can_view() / scope_can_view()). Permissive by default -
+     * an app states a real policy by overriding the pair, which beats the trait.
+     */
+    use Staff_Authorizable;
 
     /**
      * Enum field definitions
@@ -260,6 +267,25 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
     public function site()
     {
         return $this->belongsTo(Site::class, 'site_id');
+    }
+
+    /**
+     * The record this file is attached to (polymorphic parent).
+     *
+     * Read it as a PROPERTY ($attachment->fileable); call the method only for the relation
+     * object itself (->fileable()->withTrashed()->first()). The #[Relationship] attribute is
+     * what makes the property form work.
+     *
+     * The integer discriminator in fileable_type is transparent here: it is declared in
+     * $type_ref_columns below, so the framework's morph-map registration resolves the id like
+     * any other alias and stock morphTo() is correct. Never hand-roll a resolver.
+     *
+     * @return \Illuminate\Database\Eloquent\Relations\MorphTo
+     */
+    #[Relationship]
+    public function fileable()
+    {
+        return $this->morphTo();
     }
 
     /**

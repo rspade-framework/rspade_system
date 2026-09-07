@@ -122,6 +122,30 @@ TEST DISCOVERY AND SUITES
     list is ksort'ed by name - so a run is reproducible and a failure that
     depends on ordering is reproducible too.
 
+THE TEST TREES IN THE MANIFEST
+
+    The three directories that hold tests and fixtures - app/RSpade/tests,
+    app/RSpade/temp and rsx/tests - are indexed ONLY while rsx:test is running.
+    They are not in config('rsx.manifest.scan_directories'); Manifest::
+    scan_directories() appends them when Rsx_Test_Abstract::suite_is_running()
+    is true, which is the --_test-run internal flag that rsx:test declares on
+    itself (pre-boot, in system/artisan, because the manifest loads during boot)
+    and that Rsx_Artisan forwards to every child it spawns. A docker worker and
+    a --sequential run are both rsx:test, so both see the fixtures.
+
+    So a PLAIN BUILD CARRIES NO FIXTURE: no fixture class, no fixture route, no
+    fixture surface exists on a served site, and `rsx:manifest:show --classes`
+    lists no test class. This is not tidiness. A fixture is real indexed source,
+    and a fixture that declared #[Auth] naming a check only the reference
+    application provides failed the manifest build - and therefore the whole
+    site - of every install that scanned it. TEST-AUTH-01 now refuses that
+    declaration as well.
+
+    The transition costs one rebuild in each direction and nothing else. A test
+    run rebuilds to add the trees; the next ordinary web request rebuilds to
+    drop them again, through the normal add/remove path, and every request after
+    that is steady. Nothing has to be cleaned and nothing has to be remembered.
+
 API REFERENCE
 
   Assertions
@@ -499,11 +523,13 @@ CONFIGURATION
                               config array, merged LAST over config/rsx.php and
                               rsx/resource/config/rsx.php (array_merge_deep).
                               The framework's shell test harness points it at
-                              app/RSpade/tests/_lib/rsx_test_config.php to bring
-                              the test tree into the manifest scan. It is a
-                              general merge seam, not a test-only feature, but a
-                              test harness is the only thing that should be
-                              setting it.
+                              app/RSpade/tests/_lib/rsx_test_config.php, which
+                              is an EMPTY override today - the test tree reaches
+                              the manifest through the --_test-run flag, not
+                              through a config file (see THE TEST TREES IN THE
+                              MANIFEST). It is a general merge seam, not a
+                              test-only feature, but a test harness is the only
+                              thing that should be setting it.
 
 RSX VS LARAVEL
     Laravel:  PHPUnit; phpunit.xml declares suites and paths; test classes

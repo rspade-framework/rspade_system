@@ -24,8 +24,12 @@ use Illuminate\Http\Request;
 class Auth_Gates_Surface_Fixture
 {
     /**
-     * Expected gate list in the auth index: ['is_logged_in', 'can_view_data'] - the
+     * Expected gate list in the auth index: ['is_logged_in', 'is_sysadmin'] - the
      * class-level gate first, the method's own appended, the repeat de-duplicated.
+     *
+     * Both names are framework-owned checks (TEST-AUTH-01): this file is scanned into
+     * the manifest of every install that runs the suite, so a check only the reference
+     * application defines would fail the build wherever that application is not present.
      *
      * The method-level list deliberately avoids 'public': a member-level 'public'
      * under a restricting class-level gate is a build-time CONTRADICTION (the
@@ -36,7 +40,7 @@ class Auth_Gates_Surface_Fixture
      * @return array
      */
     #[Ajax_Endpoint]
-    #[Auth('can_view_data', 'is_logged_in')]
+    #[Auth('is_sysadmin', 'is_logged_in')]
     public static function merged_gates(Request $request, array $params = [])
     {
         return ['ok' => true];

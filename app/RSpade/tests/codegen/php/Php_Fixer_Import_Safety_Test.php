@@ -183,9 +183,11 @@ class Php_Fixer_Import_Safety_Test extends Rsx_Test_Abstract
 
     public static function test_a_class_in_an_unscanned_framework_zone_is_proof_of_existence()
     {
-        // config('rsx.manifest.scan_directories') deliberately omits Commands, Database,
-        // Http, Ide and SchemaQuality, so imports of classes living there were unresolvable
-        // on a PERFECTLY HEALTHY index and were being deleted every build.
+        // Manifest::scan_directories() deliberately omits Commands, Database, Http, Ide and
+        // SchemaQuality, so imports of classes living there were unresolvable on a PERFECTLY
+        // HEALTHY index and were being deleted every build. (It also omits app/RSpade/tests
+        // and app/RSpade/temp on any build that is not a test run - the guard asks what THIS
+        // build indexed, so both answers are correct in their own process.)
         static::__assert_true(
             (bool) static::__invoke_seam('__class_file_exists_outside_the_index', ['Maint_Migrate']),
             'a real class under the unscanned Commands/ zone is found on disk'

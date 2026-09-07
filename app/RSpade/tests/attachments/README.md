@@ -44,7 +44,19 @@ Related framework capabilities on the file-attachment subsystem:
    `File_Disposal_Service::sweep_unclaimed_uploads` (every 6 hours) SOFT-deletes it into the
    normal retention window.
 
-6. **Record-side attachment readers** - the helpers on `Rsx_Model_Abstract` that answer
+6. **The polymorphic parent + the staff read seam** - `fileable()`, a `#[Relationship]`
+   `morphTo()` on `File_Attachment_Model`. The framework owns `fileable_type`/`fileable_id`
+   and already declared `fileable_type` in `$type_ref_columns`, but shipped no accessor for
+   its own polymorphic parent, so every app hand-rolled one - a hand-rolled morph accessor
+   being one of the reasons an app ends up cloning the whole model. The integer
+   discriminator is transparent: the morph map registers the type-ref id as an alias, so
+   STOCK `morphTo()` resolves it. Alongside it, `Core/Auth/Staff_Authorizable` - the
+   staff-realm twin of `Portal_Authorizable` - supplies `can_view()` / `scope_can_view()`
+   with PERMISSIVE defaults. The framework owns the seam, the app owns the policy, and a
+   class's own method beats a trait's, so adopting it never shadows a rule a model already
+   states.
+
+7. **Record-side attachment readers** - the helpers on `Rsx_Model_Abstract` that answer
    "which attachments belong to this record". `find_attachment($id_or_key, $category)` is the
    OWNERSHIP RE-VERIFICATION step an endpoint must use when the CALLER named the attachment:
    `File_Attachment_Model::find()`/`find_by_key()` are tenant-scoped and nothing more, so within
@@ -58,7 +70,9 @@ Related framework capabilities on the file-attachment subsystem:
 
 ## Source under test
 
-- `system/app/RSpade/Core/Files/File_Attachment_Model.php` (residency APIs, ingest metadata)
+- `system/app/RSpade/Core/Files/File_Attachment_Model.php` (residency APIs, ingest metadata,
+  `fileable()`, the `Staff_Authorizable` adoption)
+- `system/app/RSpade/Core/Auth/Staff_Authorizable.php` (`can_view()` / `scope_can_view()`)
 - `system/app/RSpade/Core/Files/File_Storage_Model.php` (`store_blob`)
 - `system/app/RSpade/Core/Files/File_Attachment_Controller.php` (upload gate, serve paths, renderer registry)
 - `system/app/RSpade/Core/Events/Event_Registry.php` (`has_handlers()` + the test-handler seam)
@@ -89,6 +103,11 @@ Related framework capabilities on the file-attachment subsystem:
   (foreign record, wrong category, unattached, soft-deleted), garbage identifiers, the all-digits
   key that must not be coerced to an id, and `get_all_attachments()` spanning categories while
   excluding soft-deleted rows.
+  Plus the polymorphic parent and the staff read seam: `$attachment->fileable` resolving a real
+  record through the type-ref discriminator, the null case for an unclaimed upload, the method
+  form being a `MorphTo` that `withTrashed()` still widens, the relationship being declared to
+  the ORM, the permissive `can_view()` / `scope_can_view()` defaults, and a model that states a
+  policy of its own beating the trait.
   Plus blob ingest when the row outlives its file: re-storing the bytes of a record whose blob
   was removed from disk rewrites them under that SAME record (the row and its attachments stay
   valid, and the uniquely-indexed hash is never inserted twice), corrects a stale recorded size,
@@ -98,7 +117,8 @@ Related framework capabilities on the file-attachment subsystem:
 
 ## Fixtures
 
-`Attachment_Fixture_Handler` (deterministic PNG bytes + fetch counter), `Attachment_Fixture_Fresh_Handler`
+`Attachment_Fileable_Policy_Fixture` (adopts `Staff_Authorizable` AND states a policy, proving
+which declaration PHP resolves), `Attachment_Fixture_Handler` (deterministic PNG bytes + fetch counter), `Attachment_Fixture_Fresh_Handler`
 (freshness opt-in), `Attachment_Fixture_Renderer` (dispatch counter + throw toggle). Registered at
 runtime via `config([...])` in each test's `setup()`.
 

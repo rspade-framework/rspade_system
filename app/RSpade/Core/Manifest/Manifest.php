@@ -1148,6 +1148,11 @@ class Manifest
 
         // Reset manifest structure, retaining only existing files data
         $existing_files = static::$data['data']['files'] ?? [];
+        // php_fixer_hash is the fixer's memory of the last class structure it saw; it is
+        // what lets _run_php_fixer() fix only the CHANGED files. Dropping it here made
+        // every rebuild a full pass over every PHP file (measured: 3.1s of a 5s one-file
+        // rebuild), because the comparison always saw null.
+        $existing_fixer_hash = static::$data['data']['php_fixer_hash'] ?? null;
         static::$data = [
             'generated' => date('Y-m-d H:i:s'),
             'hash' => '',
@@ -1155,6 +1160,7 @@ class Manifest
                 'files' => $existing_files,
                 'autoloader_class_map' => [],
                 'routes' => [],
+                'php_fixer_hash' => $existing_fixer_hash,
             ],
         ];
 
@@ -1782,6 +1788,17 @@ class Manifest
     public static function _get_rsx_files(): array
     {
         return _Manifest_Scanner_Helper::_get_rsx_files();
+    }
+
+    /**
+    * The directories THIS build indexes: the configured list, plus the test trees while the
+    * process is a test run. The ONE answer to "does the manifest see this path".
+    *
+    * @return array<int,string>
+    */
+    public static function scan_directories(): array
+    {
+        return _Manifest_Scanner_Helper::_scan_directories();
     }
 
     /**

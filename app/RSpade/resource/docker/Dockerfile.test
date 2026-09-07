@@ -136,9 +136,16 @@ RUN bash -c 'set -e; \
     # Building last puts the default connection back on the fully migrated \
     # rspade, and --clean is what makes it actually rebuild: the manifest is \
     # "fresh" by then, so an incremental build would keep the empty index. \
+    # \
+    # --_test-run is what makes the baked manifest a TEST manifest. The test trees \
+    # (app/RSpade/tests, app/RSpade/temp, rsx/tests) are indexed only under that flag, \
+    # and rsx:test declares it on itself - but this is a separate process, so it has to \
+    # carry the token in argv the way every child does. Without it the image would bake \
+    # a manifest with no test classes in it and every worker container would pay a cold \
+    # rebuild before its first test. \
     bash /usr/local/bin/rspade-entrypoint bash -c "set -e; \
         php system/artisan rsx:test --framework --_provision-only; \
-        php system/artisan rsx:manifest:build --clean; \
+        php system/artisan rsx:manifest:build --clean --_test-run; \
         php system/artisan rsx:bundle:compile"; \
     \
     # AND THE BUNDLES, because a container never serves a web request. Bundles compile \

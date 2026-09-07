@@ -38,7 +38,7 @@ The Code Quality system is a modular, extensible framework for enforcing coding 
 
 ## Rule Categories
 
-136 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
+145 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
 Database, JavaScript, Jqhtml, Manifest, Meta, Models, PHP, Scss). The listings below are
 ILLUSTRATIVE SAMPLES of each category, not an inventory - the rule set is discovered from the
 filesystem, so `Rules/` itself is the authoritative list - read the directory for the full set.
@@ -260,6 +260,42 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
    - Cross-file, AST-based (nikic/php-parser); runs at manifest-time; deliberately silent on a
      `belongsTo` whose target cannot be resolved statically; honors `@REVISION-01-EXCEPTION`
    - Severity: Critical
+
+10. **TestFixtureAuthCheck_CodeQualityRule** (TEST-AUTH-01)
+   - An `#[Auth(...)]` / `@auth(...)` inside a `tests/` directory (framework or application
+     tree) may only name a check the FRAMEWORK provides: `public`, `closed`, `is_logged_in`,
+     `is_sysadmin`
+   - A fixture is scanned into a manifest wherever the suite runs, and closed-by-default
+     validation resolves the name against whatever application is installed - so a fixture
+     naming an application check FAILS THE MANIFEST BUILD there, which is a hard-down site
+     rather than a failing test (this happened)
+   - Per-file (`is_incremental() = true`), PHP token-stream detection: the same characters
+     inside a string literal (fixture SOURCE a validation test writes to a temp file) or a
+     comment are not a declaration. `@auth` is line-anchored over comment-blanked JS
+   - NO exception marker, deliberately: a fixture that must exercise an application check
+     hands SYNTHETIC metadata to the auth index instead of declaring a live attribute
+   - Severity: Critical
+
+### Convention Rules (`Rules/Convention/`)
+
+1. **ClassOverrideDrift_CodeQualityRule** (CLASS-OVERRIDE-DRIFT-01)
+   - A class override that no longer declares a public or protected member the framework
+     class it replaced still declares - methods (static/instance), declared properties, and
+     `use Trait;` adoptions. Privates are out of scope: framework code cannot call one
+   - The failure it exists to see is core calling into a class it believes is its own and
+     landing on the application's frozen copy - a 500 at a call site, or silence when the
+     member is a hook the framework only invokes
+   - Cross-file (`is_incremental() = false`), pairs every `.php.upstream` sidecar with the
+     class shadowing it; the comparison is a `PhpToken` pass
+     (`Core/Manifest/Class_Override_Drift`), never reflection - an archived file carries no
+     reflection metadata and reflection on the override reports the whole lineage
+   - NOT a manifest-time rule, deliberately: the drift arrives on a framework pull, and
+     failing the build would take a running site down for a defect that predates it
+   - One finding per missing member; the override's own additions ride along as INFO
+     context, because the fix is a re-clone. Honors `@CLASS-OVERRIDE-DRIFT-01-EXCEPTION`
+     itself, read off the OVERRIDE file (the checker's generic file-level check never sees
+     it - the file that triggers this rule is not the override)
+   - Severity: High. Paired with the `Class Override Drift` health row (WARN, never FAIL)
 
 ## Configuration
 
@@ -645,8 +681,8 @@ public function check(string $file_path, string $contents, array $metadata = [])
 
 ### Current Manifest-Time Rules
 
-**43 of the 136 rules** return `true` from `is_called_during_manifest_scan()` (verified
-2026-08-13). This list drifts; regenerate it from the source of truth:
+**47 of the 145 rules** return `true` from `is_called_during_manifest_scan()` (verified
+2026-09-07). This list drifts; regenerate it from the source of truth:
 
 ```bash
 cd system/app/RSpade/CodeQuality
@@ -657,13 +693,13 @@ Approved for manifest-time execution, by rule directory:
 
 - `Blade/` - BLADE-EVENT-01, BLADE-LAYOUT-ASSETS-01, BLADE-SCRIPT-01
 - `Common/` - FILE-CASE-DUP-01, FILE-SPACE-01, ROUTE-SYNTAX-01
-- `Convention/` - CONV-BUNDLE-03
+- `Convention/` - CONV-BUNDLE-03, NAME-RESERVED-01, NAME-RESERVED-02
 - `JavaScript/` - JQHTML-EVENT-01, JQHTML-IMPL-01, JS-CATCH-FALLBACK-01, JS-DECORATOR-01,
   JS-DECORATOR-IDENT-01, JS-DUPLICATE-METHOD-01, JS-LIFECYCLE-01, JS-READY-01
 - `Jqhtml/` - JQHTML-CLASS-01, JQHTML-COMMENT-01, JQHTML-INLINE-01
 - `Manifest/` - ABSTRACT-ATTR-01, ACTOR-01, MANIFEST-CTRL-01, MANIFEST-INST-01,
   MANIFEST-MONO-01, PHP-PARENT-CHAIN-01, PHP-SPA-01, POLY-01, RELATIONSHIP-OVERRIDE-01,
-  SCSS-SCOPE-01, SEALED-01
+  REVISION-01, SCSS-SCOPE-01, SEALED-01, TEST-AUTH-01
 - `Models/` - MODEL-AJAX-FETCH-01, MODEL-CARBON-01, MODEL-EXTENDS-01, MODEL-FETCH-DATE-01
 - `PHP/` - CONTROLLER-STATIC-01, PHP-ALIAS-01, PHP-CONTROLLER-REQUEST-01, PHP-MASS-01,
   PHP-ROUTE-QUERY-01, PHP-RSX-FQCN-01, PHP-STATIC-PROP-01, PHP-STRUCTURE-01,

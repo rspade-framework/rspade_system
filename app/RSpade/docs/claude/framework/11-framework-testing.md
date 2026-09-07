@@ -4,6 +4,8 @@
 
 `rsx:test` runs the APPLICATION suite (under `/rsx/`); **`rsx:test --framework` runs the framework suite instead** - the tests under `app/RSpade/tests/`. The two never mix in one run; every other selector (class name, `--filter=`, `--group=`) narrows within whichever suite is selected.
 
+**The test trees (`app/RSpade/tests`, `app/RSpade/temp`, `rsx/tests`) are in the manifest ONLY while `rsx:test` runs** - `Manifest::scan_directories()` appends them under `Rsx_Test_Abstract::suite_is_running()` - so a plain build carries no fixture class or route, and the first ordinary request after a run rebuilds to drop them again.
+
 **Framework tests live in `app/RSpade/tests/<concern>/`**, one directory per concern, each owning a README and a test catalog. Inside a concern the tests are split by execution kind: `php/`, `cli/`, `asset/`, `http/`, `playwright/`. A `--group=<concern>` selector matches that directory name exactly.
 
 **Bash tests** in `/system/app/RSpade/tests/` run against `rspade_test` like the PHP ones: deterministic, zero manual intervention.

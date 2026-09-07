@@ -174,6 +174,13 @@ subset - a class, `--filter`, `--group` - always runs in this process. Mechanics
 scanned file changed replays the recorded verdict, pass or fail, and says so. Mechanics:
 `system/bin/rsx-testd/CLAUDE.md`.
 
+**The test trees are in the manifest only while `rsx:test` is running.** `app/RSpade/tests`,
+`app/RSpade/temp` and `rsx/tests` are appended to the scan list by
+`Manifest::scan_directories()` when `Rsx_Test_Abstract::suite_is_running()` is true, so a
+plain build carries no fixture class, route or surface, and the first ordinary web request
+after a run drops them again - a fixture is real indexed source and a served site must not
+have one (`rsx:man testing`, THE TEST TREES IN THE MANIFEST; rule TEST-AUTH-01).
+
 **Class run order is deterministic (by class name) only in sequential mode.** The docker
 runner pulls from a shared queue, so a class can be preceded by a class it has never
 followed before - never write a test that leans on run order.

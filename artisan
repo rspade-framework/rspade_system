@@ -197,6 +197,26 @@ if (!empty($_SERVER['argv'])) {
     }
 }
 
+/*
+ | THIS PROCESS IS THE TEST SUITE.
+ |
+ | rsx:test declares --_test-run on itself so that everything it and its children do is
+ | recognisably part of a test run. It has to be declared HERE, pre-boot, and not in the
+ | command's handle(): Manifest::init() runs during boot, and what the manifest indexes
+ | DEPENDS on the answer - the test trees (app/RSpade/tests, app/RSpade/temp, rsx/tests)
+ | are scanned only under a test run, so a flag set after boot arrives one manifest too
+ | late and the runner finds no test classes.
+ |
+ | Children get the token in argv (Rsx_Artisan forwards it), so they are already covered
+ | by the strip above; this is the parent's own declaration.
+ | Mirrors App\RSpade\Core\Testing\Rsx_Test_Abstract::TEST_RUN_FLAG.
+ */
+
+if (isset($argv[1]) && $argv[1] === 'rsx:test'
+    && !in_array('--_test-run', $GLOBALS['__rsx_internal_flags'], true)) {
+    $GLOBALS['__rsx_internal_flags'][] = '--_test-run';
+}
+
 // The pull's own sub-calls carry this token so they run while the gate is up.
 // Mirrors App\RSpade\Core\Framework\Framework_Maintenance::OVERRIDE_FLAG.
 $__fw_update_override = in_array('--_framework-update-override', $GLOBALS['__rsx_internal_flags'], true);

@@ -187,7 +187,13 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     {
         // This process IS the test suite, and so is everything it spawns: Rsx_Artisan forwards
         // the flag to every child, which is how a test-run migrate in another mode gets the
-        // http-APP_URL allowance a real deployment in that mode does not.
+        // http-APP_URL allowance a real deployment in that mode does not - and how a child
+        // sees the test trees in the manifest.
+        //
+        // system/artisan declares the flag PRE-BOOT for this process, because Manifest::init()
+        // runs during boot and the scan list depends on the answer. This re-declaration is
+        // idempotent and covers the in-process entry point (Artisan::call('rsx:test')), which
+        // never passes through the pre-boot block.
         Rsx_Internal_Flags::set(\App\RSpade\Core\Testing\Rsx_Test_Abstract::TEST_RUN_FLAG);
 
         // ONE test run per box at a time, whichever path it takes. Two concurrent runs share

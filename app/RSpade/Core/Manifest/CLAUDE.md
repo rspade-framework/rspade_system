@@ -70,8 +70,11 @@ The build process follows these phases (implementations in helper classes):
 
 ### Phase 1: File Discovery
 - Implemented in `_Manifest_Scanner_Helper::_get_rsx_files()`
-- Scans directories from `config('rsx.manifest.scan_directories')`
-- Default (relative to `base_path()` = `system/`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/temp', 'app/RSpade/tests', 'app/RSpade/Sys']` - `app/RSpade/Sys` is the framework's own application (the /_sys control panel)
+- Scans the directories `_Manifest_Scanner_Helper::_scan_directories()` returns (facade: `Manifest::scan_directories()`) - the ONE answer to "does this build index that path"
+- Configured list (relative to `base_path()` = `system/`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/Sys']` - `app/RSpade/Sys` is the framework's own application (the /_sys control panel)
+- **THE TEST TREES ARE NOT IN IT.** `app/RSpade/tests`, `app/RSpade/temp` and `rsx/tests` are appended ONLY while `Rsx_Test_Abstract::suite_is_running()` (the `--_test-run` internal flag `system/artisan` declares pre-boot for `rsx:test` and `Rsx_Artisan` forwards to every child). A fixture is real indexed source - a route, an Ajax surface, an `#[Auth]` naming a check - and a served site must not carry one; the outage that set this rule was a fixture whose `#[Auth]` named an application-only check, which failed the manifest build of every install that scanned it. `rsx/tests` lives inside the `rsx/` root, so it is additionally skipped BY PATH when it is not in the list
+- The transition costs one rebuild in each direction and nothing else: the first ordinary request after a test run drops the fixtures again through the normal add/remove path (measured on this box: 5.7 s for that request, 0.11 s steady)
+- A missing scan path is a FATAL, `app/RSpade/temp` excepted (the framework developer's scratch tree is legitimately absent)
 - Excludes filenames via `config('rsx.manifest.excluded_files')` and path segments via `config('rsx.manifest.excluded_dirs')` (vendor, node_modules, storage, .git, public, resource, Core/Manifest)
 - Returns array of file paths with basic stats (mtime, size)
 
@@ -317,6 +320,25 @@ Register the class in `config('rsx.manifest_support')`.
 **Cause**: Missing `Ajax_Endpoint` attribute or method not public static
 **Solution**: Check method has attribute and correct visibility
 
+## Class_Override_Drift (the sidecar comparison)
+
+`Core/Manifest/Class_Override_Drift.php` is a plain helper beside the manifest, not part
+of the build. It pairs every `php.upstream` entry with the active `php` entry of the same
+simple `class` (which, by construction of the override pass, is the rsx/ file shadowing
+it) and compares the members each FILE declares.
+
+**It reads the files, not the manifest's method metadata, and that is forced.**
+`_extract_reflection_data()` runs only for extension `php` — an archived file is never
+loaded, because its class name belongs to the override — so an `.upstream` entry carries
+`class`/`namespace`/`extends`/`static_properties` and no methods at all. And reflection on
+the override would report its whole LINEAGE, when the only thing a re-clone can be measured
+against is what the file itself declares. So `declared_members()` is a `PhpToken` pass over
+each file: public/protected methods, declared properties, and class-body `use Trait;`
+adoptions, keyed `method:` / `property:` / `trait:` so two files compare directly.
+
+Consumed by `CLASS-OVERRIDE-DRIFT-01` (`CodeQuality/Rules/Convention/`) and by the
+`Class Override Drift` health row. Contract: `rsx:man class_override`, section DRIFT.
+
 ## Code Quality Integration
 
 The manifest integrates with code quality checks via metadata storage. Rules that run during manifest scan store violations in `code_quality_metadata` field for each file.
@@ -375,7 +397,7 @@ When testing manifest functionality:
 - Cache file: `storage/rsx-build/manifest_data.php`
 - JS stubs: `storage/rsx-build/js-stubs/`
 - Model stubs: `storage/rsx-build/js-model-stubs/`
-- Default scan dirs (see `config('rsx.manifest.scan_directories')`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/temp', 'app/RSpade/tests', 'app/RSpade/Sys']` - the last is the framework's own application tree (the /_sys control panel)
+- Scan dirs (`Manifest::scan_directories()`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/Sys']` - the last is the framework's own application tree (the /_sys control panel) - plus `app/RSpade/tests`, `app/RSpade/temp` and `rsx/tests` while the process is a test run
 
 ## Direct Data Access
 

@@ -361,7 +361,10 @@ class Rsx_Locks_Api_Test extends Rsx_Test_Abstract
         try {
             // Wait for the helper to hold B (it writes its pid) and park on A.
             $parked = false;
-            for ($attempt = 0; $attempt < 150; $attempt++) {
+            // 120 s is the house bound (tests/CLAUDE.md, the contention principle): the
+            // helper is a detached PHP process that boots the framework before it can park,
+            // and a loaded box gives it arbitrarily little CPU. Reaching the bound is evidence.
+            for ($attempt = 0; $attempt < 1200; $attempt++) {
                 if (file_exists($ready_file)
                     && RsxLocks::get_lock_stats(RsxLocks::CLUSTER_LOCK, $lock_a)['queue_length'] === 1) {
                     $helper_pid = (int) file_get_contents($ready_file);
