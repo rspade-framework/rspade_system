@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Core\Database;
 
+use App\RSpade\Core\Database\Model_Fetch_Lineage;
+use App\RSpade\Core\Database\Model_Lineage_Fingerprint;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
 
@@ -12,9 +14,10 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * AN ORDINARY SUPPORT MODULE, the same list as every other; it runs after
  * Model_ManifestSupport because the list says so, and it reads that module's column map.
  *
- * WHAT IT WILL NOT DO IS WRITE FOR NOTHING. Three gates, cheapest first: the source mtime,
- * the model metadata hash (recomputed only when the model FILE HASH moved - the reflection
- * behind it is the expensive part), and finally a content compare against the file on disk.
+ * WHAT IT WILL NOT DO IS WRITE FOR NOTHING. Three gates, cheapest first: the newest mtime in
+ * the model's LINEAGE, the model metadata hash (recomputed only when a lineage file's hash
+ * moved - the reflection behind it is the expensive part), and finally a content compare
+ * against the file on disk.
  * A rebuild that changes no model rewrites no stub, so no bundle recompiles on a churned
  * mtime.
  */
@@ -96,13 +99,20 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             // Check if stub needs regeneration
             $stub_content = null;
             $needs_regeneration = true;
-            $source_hash = $metadata['hash'] ?? '';
+
+            // THE KEY IS THE LINEAGE, NOT THE FILE. A core model is a base carrying every
+            // member and a three-line concrete an application replaces, so the constants,
+            // enums, relationships and detail accessors this stub declares are read from
+            // ancestors the concrete's own hash knows nothing about. Keyed on the concrete
+            // alone, a change to the base leaves the stub silently stale - the generator's
+            // gate says "unchanged" and the browser keeps the old surface.
+            $source_hash = Model_Lineage_Fingerprint::lineage_hash($class_name, $manifest_data);
             $columns_hash = md5(json_encode($manifest_data['data']['models'][$class_name]['columns'] ?? []));
             $inputs_hash = $source_hash . ':' . $columns_hash;
 
             if (file_exists($stub_full_path)) {
-                // Get mtime of source PHP file
-                $source_mtime = $metadata['mtime'] ?? 0;
+                // The newest mtime anywhere in the lineage, for the same reason.
+                $source_mtime = Model_Lineage_Fingerprint::lineage_mtime($class_name, $manifest_data);
                 $stub_mtime = filemtime($stub_full_path);
 
                 // Only regenerate if source is newer than stub
@@ -110,8 +120,8 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
                     // THE REFLECTION IS THE EXPENSIVE PART, so it is not run to decide
                     // whether to run it. _get_model_metadata_for_hash() calls
                     // get_relationships(), reads every public constant and re-reads the
-                    // column map; its answer can only move when the model FILE or its
-                    // COLUMNS moved, so the stored hash records WHICH inputs it was
+                    // column map; its answer can only move when a file in the model's
+                    // LINEAGE or its COLUMNS moved, so the stored hash records WHICH inputs it was
                     // computed for and the reflection is skipped when they are unchanged.
                     $stored = $metadata['model_metadata_hash'] ?? null;
                     $stored_inputs = $metadata['model_metadata_inputs'] ?? null;
@@ -246,14 +256,10 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             $model_metadata['columns'] = $manifest_data['data']['models'][$class_name]['columns'];
         }
 
-        // Get public constants defined directly on this class
-        $reflection = new \ReflectionClass($fqcn);
-        $constants = [];
-        foreach ($reflection->getReflectionConstants(\ReflectionClassConstant::IS_PUBLIC) as $const) {
-            if ($const->getDeclaringClass()->getName() === $fqcn) {
-                $constants[$const->getName()] = $const->getValue();
-            }
-        }
+        // Public constants the MODEL declares - itself or on its abstract base. A split model
+        // is a base carrying every member plus a three-line concrete; "declared directly on
+        // this class" would answer nothing for every core model at once.
+        $constants = static::_model_constants($fqcn);
         if (!empty($constants)) {
             $model_metadata['constants'] = $constants;
         }
@@ -312,13 +318,21 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
 
         // Get relationships that are Ajax-fetchable
         // Only include relationships with BOTH #[Relationship] AND #[Ajax_Endpoint_Model_Fetch]
+        // get_relationships() already unions the LINEAGE, and so does the attribute lookup
+        // beside it: a split model declares its relationships on the abstract base, so asking
+        // the concrete's own file record would answer "no fetchable relationships" for every
+        // core model at once.
         $all_relationships = $fqcn::get_relationships();
-        $model_metadata = \App\RSpade\Core\Manifest\Manifest::php_get_metadata_by_fqcn($fqcn);
         $fetchable_relationships = [];
 
         foreach ($all_relationships as $rel_name) {
-            $method_data = $model_metadata['public_instance_methods'][$rel_name] ?? [];
-            if (isset($method_data['attributes']['Ajax_Endpoint_Model_Fetch'])) {
+            $declaration = Model_Fetch_Lineage::instance_declaration(
+                $class_name,
+                $rel_name,
+                'Ajax_Endpoint_Model_Fetch'
+            );
+
+            if ($declaration !== null) {
                 $fetchable_relationships[] = $rel_name;
             }
         }
@@ -348,20 +362,15 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             }
         }
 
-        // Get all public constants defined directly on this model class (not inherited)
-        $reflection = new \ReflectionClass($fqcn);
+        // Every public constant the MODEL declares - itself or on its abstract base - minus
+        // the ones the enum block already emits.
         $non_enum_constants = [];
-        foreach ($reflection->getReflectionConstants(\ReflectionClassConstant::IS_PUBLIC) as $const) {
-            // Only include constants defined directly on this class
-            if ($const->getDeclaringClass()->getName() !== $fqcn) {
-                continue;
-            }
-            $const_name = $const->getName();
-            // Skip constants already generated from enums
+        foreach (static::_model_constants($fqcn) as $const_name => $const_value) {
             if (in_array($const_name, $enum_constant_names)) {
                 continue;
             }
-            $non_enum_constants[$const_name] = $const->getValue();
+
+            $non_enum_constants[$const_name] = $const_value;
         }
 
         // DERIVED PROPERTIES - the model's $appends. These reach the JS record through
@@ -617,5 +626,41 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         $content .= "}\n";
 
         return $content;
+    }
+
+    /**
+     * The public constants a model DECLARES - on itself or on the abstract base a split model
+     * carries every member on - nearest declaration first.
+     *
+     * THE BOUNDARY IS Rsx_Model_Abstract. Above it lives the framework's shared model
+     * machinery, whose constants belong to every model in the tree and to none of them in
+     * particular; publishing those onto each generated stub would be noise the application
+     * never asked for. Below it is the model, however many files it happens to be written in.
+     *
+     * @return array<string, mixed> constant name => value
+     */
+    private static function _model_constants(string $fqcn): array
+    {
+        $declaring = [];
+
+        for ($class = $fqcn; $class !== false; $class = get_parent_class($class)) {
+            if (class_basename($class) === 'Rsx_Model_Abstract') {
+                break;
+            }
+
+            $declaring[$class] = true;
+        }
+
+        $constants = [];
+
+        foreach ((new \ReflectionClass($fqcn))->getReflectionConstants(\ReflectionClassConstant::IS_PUBLIC) as $const) {
+            if (!isset($declaring[$const->getDeclaringClass()->getName()])) {
+                continue;
+            }
+
+            $constants[$const->getName()] = $const->getValue();
+        }
+
+        return $constants;
     }
 }

@@ -80,7 +80,7 @@ class Autoloader
      * framework file to `<Name>.php.upstream` during the manifest rebuild. But
      * composer's COMMITTED classmap (vendor/composer/autoload_classmap.php) still maps
      * the framework FQCN to the now-renamed `.php` path until the rebuild's validator
-     * regenerates it (see _Manifest_Quality_Helper::_validate_composer_classmap).
+     * regenerates it (see Manifest_Indexer::_validate_composer_classmap).
      *
      * Composer's ClassLoader::findFile() returns a classmap entry with NO file_exists()
      * check, and its include closure does a bare `include $file`. A missing-file

@@ -143,10 +143,12 @@ class Model_Fetch_Auth_Lineage_Rule_Test extends Rsx_Test_Abstract
     {
         $lineage = Manifest::php_get_lineage(self::SITE_MODEL_CLASS);
 
-        static::__assert_equals(
-            'Rsx_Site_Model_Abstract',
-            $lineage[0] ?? null,
-            'the site-scoped fixture class has an intermediate abstract as its immediate parent'
+        // A core model is a shell over its own abstract base (Portal_Notification_Model ->
+        // Portal_Notification_Model_Abstract -> Rsx_Site_Model_Abstract -> ...), so the
+        // site-scoped abstract is REACHED through the lineage, never the immediate parent.
+        static::__assert_true(
+            in_array('Rsx_Site_Model_Abstract', $lineage, true) && ($lineage[0] ?? null) !== 'Rsx_Model_Abstract',
+            'the site-scoped model reaches Rsx_Site_Model_Abstract through intermediate abstracts, never Rsx_Model_Abstract directly'
         );
 
         static::__assert_true(

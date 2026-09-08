@@ -5,6 +5,7 @@ namespace App\RSpade\CodeQuality\Rules;
 use App\RSpade\CodeQuality\CodeQuality_Violation;
 use App\RSpade\CodeQuality\Support\Source_Cache;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
+use App\RSpade\Core\Manifest\Manifest;
 
 #[Instantiatable]
 abstract class CodeQualityRule_Abstract
@@ -297,5 +298,62 @@ abstract class CodeQualityRule_Abstract
         $normalized_commands_dir = str_replace('\\', '/', $commands_dir);
 
         return str_starts_with($normalized_path, $normalized_commands_dir);
+    }
+
+    /**
+     * Does this class, or any ANCESTOR of it, DECLARE a property of this name?
+     *
+     * A rule that reads a declaration out of the file in front of it is asking the right
+     * question only while every class is one file. A model is not: a core model carries
+     * `$table`, `$enums` and the rest on an abstract base and ships a three-line concrete an
+     * application replaces, and an application's own override declares only what it changes.
+     * So "this file does not declare it" is not "this class does not have it".
+     *
+     * Manifest records only, no file reads: `php_class_metadata()` gives each link's
+     * `extends` and the file that declares it, and the file record carries the properties
+     * that class DECLARES (reflection, filtered to the declaring class). The walk stops at a
+     * class the index does not know and on a cycle.
+     *
+     * @param string $class_name    Simple class name to start from.
+     * @param string $property_name Property name, without the `$`.
+     * @param string|null $stop_at  Simple class name to stop BEFORE, when the search should
+     *                              not credit a framework base (e.g. Rsx_Model_Abstract).
+     */
+    final protected function lineage_declares_property(
+        string $class_name,
+        string $property_name,
+        ?string $stop_at = null
+    ): bool {
+        $seen = [];
+        $current = $class_name;
+
+        while ($current !== null && $current !== '' && !isset($seen[$current])) {
+            if ($current === $stop_at) {
+                return false;
+            }
+
+            $seen[$current] = true;
+
+            $record = Manifest::php_class_metadata($current);
+
+            if ($record === null) {
+                return false;
+            }
+
+            $file = $record['file'] ?? null;
+            $file_record = $file === null ? null : (Manifest::$data['data']['files'][$file] ?? null);
+
+            if ($file_record !== null && $current !== $class_name) {
+                foreach ($file_record['properties'] ?? [] as $property) {
+                    if (($property['name'] ?? '') === $property_name) {
+                        return true;
+                    }
+                }
+            }
+
+            $current = $record['extends'] ?? null;
+        }
+
+        return false;
     }
 }

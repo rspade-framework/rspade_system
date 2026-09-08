@@ -66,6 +66,15 @@ HTTP response), added with the B4.4 / B4.6 fixes.
   where loopback means the peer is loopback and every address a proxy declared in
   `X-Forwarded-For` / `X-Real-IP` is loopback as well.
 
+## Test fixtures
+
+- `php/Dispatch_Abort_Fixture_Controller.php` - `/_test/dispatch/*` routes whose actions
+  only `abort()`, for the status-code seam.
+- `php/Dispatch_Page_Fixture_Controller.php` - `/test-dispatch/page`, a routable GET page
+  with NO leading underscore. The full-page rejection tests assert the intended URL is
+  threaded back as `?redirect=`, and `Login_Redirect` drops an underscore-led target, so
+  that assertion needs a route of this shape - which the framework declares none of.
+
 ## Testable surface
 
 - **php** (in-process, direct on `Dev_Auth_Token` and the handler/predicate): the

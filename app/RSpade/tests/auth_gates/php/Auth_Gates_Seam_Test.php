@@ -21,6 +21,7 @@ use App\RSpade\Core\Response\Rsx_Response_Abstract;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\AuthGates\Php\Auth_Gates_Check_Fixture;
 use App\RSpade\Tests\AuthGates\Php\Auth_Gates_Seam_Fixture_Controller;
+use App\RSpade\Tests\AuthGates\Php\Auth_Gates_Seam_Fixture_Model;
 
 /**
  * The five server dispatch seams that ENFORCE declarative #[Auth] gates:
@@ -46,9 +47,14 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
     private const FIXTURE = Auth_Gates_Check_Fixture::class;
 
     private const AJAX_TARGET = 'Auth_Gates_Seam_Fixture_Controller::endpoint';
-    private const MODEL_TARGET = 'Client_Model::fetch';
-    private const USER_MODEL_TARGET = 'User_Model::fetch';
-    private const RELATIONSHIP_TARGET = 'Client_Model::contacts';
+
+    // The ORM seam is driven against FRAMEWORK models only: User_Model for fetch (which
+    // has a record-level body check of its own, so the two layers are seen composing) and
+    // this concern's own fixture for the relationship, which is the only model declaring
+    // a fetchable #[Relationship] outside an application.
+    private const MODEL_TARGET = 'User_Model::fetch';
+    private const RELATIONSHIP_MODEL = 'Auth_Gates_Seam_Fixture_Model';
+    private const RELATIONSHIP_TARGET = 'Auth_Gates_Seam_Fixture_Model::children';
 
     // =========================================================================
     // ROUTE SEAM (Dispatcher)
@@ -316,7 +322,7 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
     {
         static::__install(['denies']);
 
-        $denied = Orm_Controller::fetch(static::__ajax_request(), ['model' => 'Client_Model', 'ids' => [1]]);
+        $denied = Orm_Controller::fetch(static::__ajax_request(), ['model' => 'User_Model', 'ids' => [1]]);
 
         static::__assert_true(is_array($denied), 'a denial returns a records map, not an error response');
         static::__assert_equals([], $denied['records']);
@@ -326,7 +332,7 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
 
         $missing = Orm_Controller::fetch(
             static::__ajax_request(),
-            ['model' => 'Client_Model', 'ids' => [999999999]]
+            ['model' => 'User_Model', 'ids' => [999999999]]
         );
 
         static::__assert_equals($denied['records'], $missing['records']);
@@ -407,9 +413,9 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
         static::__install(['grants'], ['denies']);
 
         $result = Orm_Controller::fetch_relationship(static::__ajax_request(), [
-            'model' => 'Client_Model',
+            'model' => self::RELATIONSHIP_MODEL,
             'id' => 1,
-            'relationship' => 'contacts',
+            'relationship' => 'children',
         ]);
 
         static::__assert_instance_of(Rsx_Response_Abstract::class, $result);
@@ -498,7 +504,10 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
         $surfaces = [
             self::AJAX_TARGET => static::__surface(Auth_Gates::REALM_ANY, $ajax_and_fetch_gates),
             self::MODEL_TARGET => static::__surface(Auth_Gates::REALM_STAFF, $ajax_and_fetch_gates),
-            self::USER_MODEL_TARGET => static::__surface(Auth_Gates::REALM_STAFF, $ajax_and_fetch_gates),
+            self::RELATIONSHIP_MODEL . '::fetch' => static::__surface(
+                Auth_Gates::REALM_STAFF,
+                $ajax_and_fetch_gates
+            ),
             self::RELATIONSHIP_TARGET => static::__surface(
                 Auth_Gates::REALM_ANY,
                 $relationship_gates ?? $ajax_and_fetch_gates

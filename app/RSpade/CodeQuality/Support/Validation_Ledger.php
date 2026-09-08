@@ -20,19 +20,20 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  * shaped
  *
- *     ['version' => 1, 'rules' => [ <rule id> => [ <file hash> => 1 ] ]]
+ *     ['version' => 2,
+ *      'rules'   => [ <rule id> => [ <file hash> => 1 ] ],
+ *      'derived' => [ <rule id> => [ <slot> => <key> ] ]]
  *
  * It is deliberately the same shape and the same mechanics as the manifest index: a
  * var_export'd array included once per process (so OPcache serves it where OPcache is
  * on), written atomically through a temp file plus rename.
  *
  * THE KEY IS THE MANIFEST FILE HASH, NOT THE PATH. A caller passes
- * `$metadata['hash']` - the value the manifest already computed for that file (in
- * development md5 of path+size+mtime, in production a content hash; the ledger does not
- * care which, only that it changes when the file does). Keying on the hash rather than
- * on the path plus an mtime comparison is what lets a verdict SURVIVE a manifest clear:
- * the manifest can be rebuilt from scratch and every unchanged file still carries the
- * hash that vouches for it.
+ * `$metadata['hash']` - the sha1 the manifest already computed for that file (the ledger
+ * does not care how it is computed, only that it changes when the file does). Keying on
+ * the hash rather than on the path plus an mtime comparison is what lets a verdict
+ * SURVIVE a manifest clear: the manifest can be rebuilt from scratch and every unchanged
+ * file still carries the hash that vouches for it.
  *
  * WHEN A VERDICT MUST NOT SURVIVE. A rule whose answer depends on something other than
  * the file's own bytes - a whole-tree index, a config value - must fold that something

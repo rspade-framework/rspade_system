@@ -17,7 +17,6 @@ use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
 
 /**

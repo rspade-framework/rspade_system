@@ -1,5 +1,13 @@
 # api - test catalog
 
+The three `http/` scripts address FRAMEWORK endpoints only - `/api/v1/me` (which declares
+no parameters, so any query parameter is an undeclared one) and `/api/v1/files` +
+`/api/v1/files/:key` (the framework's only POST, and a GET whose unknown key is the
+endpoint's own 404). The two are on opposite sides of every scope grant they mint, which
+is all those subjects need, so the scripts run in an application that declares no API
+endpoints at all. The `php/` scope tests pass URL strings to a pure path matcher; the
+paths there are inert literals that resolve to nothing.
+
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | SCAN-VALID-BAKE | a valid #[Api_Endpoint] bakes into routes + api_endpoints | php | synthetic manifest_data | routes[pattern] type=api, version=1, path_key, catalog entry present | implemented | 2026-07-23 |
@@ -89,7 +97,7 @@
 | HELP-ERROR | error() builds an arbitrary status, omits absent fields | php | 418 | 418, no fields key | implemented | 2026-07-23 |
 | HELP-ERROR-FIELDS | error() includes fields when present | php | 422 + fields | fields present | implemented | 2026-07-23 |
 | HTTP-401 | unauth -> 401 error shape, no Set-Cookie | http | no bearer | 401, auth_required, no cookie | implemented | 2026-07-23 |
-| HTTP-200 | authed -> 200 bare JSON, no Set-Cookie | http | bearer | 200, items, no success envelope, no cookie | implemented | 2026-07-23 |
+| HTTP-200 | authed -> 200 bare JSON, no Set-Cookie | http | bearer GET `/api/v1/me` | 200, user_id, no success envelope, no cookie | implemented | 2026-09-08 |
 | HTTP-PUT-405 | PUT -> 405 | http | bearer + PUT | 405 | implemented | 2026-07-23 |
 | HTTP-HEAD-405 | HEAD -> 405 | http | bearer + HEAD | 405 | implemented | 2026-07-23 |
 | HTTP-404 | unknown endpoint -> 404 not_found | http | bearer /api/v9/nope | 404, not_found | implemented | 2026-07-23 |
@@ -163,17 +171,17 @@
 | CLI-SCOPE-REFUSE-TEMP | key:temp refuses a malformed scope the same way | php (cli) | /not/an/api/path | code 1, scopes_invalid, count unchanged | implemented | 2026-09-01 |
 | CLI-SCOPE-OLDLANG | the retired rule language is refused by the CLI | php (cli) | Grant GET /api/v1/contacts/** | code 1, scopes_invalid, count unchanged | implemented | 2026-09-01 |
 | CLI-SCOPE-TEMP | key:temp carries its scope and still expires | php (cli) | /api/v1/me | scopes stored, expires_at set | implemented | 2026-09-01 |
-| HTTP-SCOPE-REACH | a scoped key reaches an endpoint its scopes name | http | scoped bearer GET | 200 items | implemented | 2026-09-01 |
-| HTTP-SCOPE-DENY | an unreachable endpoint is 403 insufficient_scope with required=route pattern | http | scoped bearer, other path | 403, code + "required":"/api/v1/clients" | implemented | 2026-09-01 |
+| HTTP-SCOPE-REACH | a scoped key reaches an endpoint its scopes name | http | scoped bearer GET `/api/v1/files/<unknown>` | the endpoint's own 404 not_found, never insufficient_scope | implemented | 2026-09-08 |
+| HTTP-SCOPE-DENY | an unreachable endpoint is 403 insufficient_scope with required=route pattern | http | scoped bearer, other path | 403, code + "required":"/api/v1/me" | implemented | 2026-09-08 |
 | HTTP-SCOPE-METHODLESS | a path scope covers POST as well as GET | http | scoped bearer POST create | not 403 | implemented | 2026-09-01 |
 | HTTP-SCOPE-BEFORE-VALIDATION | the scope check precedes param validation | http | unreachable path + bogus param | 403, not 422 | implemented | 2026-09-01 |
-| HTTP-SCOPE-QUERY | a query string does not change the scope answer | http | scoped bearer ?page=1 | 200 | implemented | 2026-09-01 |
+| HTTP-SCOPE-QUERY | a query string does not change the scope answer | http | scoped bearer ?page=1 | not 403, no insufficient_scope (whatever the endpoint then makes of the parameter) | implemented | 2026-09-08 |
 | HTTP-SCOPE-NULL-KEY | a NULL-scope key behaves exactly as before | http | unscoped bearer | 200 / 422 as applicable | implemented | 2026-09-01 |
 | HTTP-SCOPE-WEB-FILES | /_download refuses a key scoped away from files | http | scoped vs unscoped bearer | 403 insufficient_scope vs 404 | implemented | 2026-09-01 |
 | HTTP-SCOPE-WEB-GRANT | a files scope reopens the web download path | http | files-scoped bearer | 404 (route's own answer) | implemented | 2026-09-01 |
 | HTTP-SCOPE-LOGGED | every scope denial reaches _api_request_log with its handler | http | after the run | 403 rows, code insufficient_scope, handler set | implemented | 2026-09-01 |
 | HTTP-SCOPE-ME | /me reports the key's own scopes, null when unrestricted | http | scoped then unscoped bearer | scope text / "scopes":null | implemented | 2026-09-01 |
-| HTTP-SCOPE-FAILCLOSED | a malformed-only scope set denies every path and logs one warning per scope | http | raw UPDATE planting /api/v1/contacts* | 403 x3 + "ignoring malformed scope" in laravel.log | implemented | 2026-09-01 |
+| HTTP-SCOPE-FAILCLOSED | a malformed-only scope set denies every path and logs one warning per scope | http | raw UPDATE planting /api/v1/files* | 403 on every probed path + "ignoring malformed scope" in laravel.log | implemented | 2026-09-08 |
 | HTTP-NO-BYNAME | there is no by-name addressing channel | http | /api/v1/<Controller>/<action> style URLs | 404 not_found each | implemented | 2026-09-01 |
 | KEY-RO-DEFAULT | generate() defaults to a read+write key | php | no read_only argument | read_only false, stored false | implemented | 2026-09-01 |
 | KEY-RO-STORE | generate() stores the read_only flag | php | read_only true | true on the model and in the row | implemented | 2026-09-01 |
@@ -194,7 +202,7 @@
 | CLI-RO-TEMP | key:temp carries the flag and still expires | php (cli) | --read-only --expires | read_only true, expires_at set | implemented | 2026-09-01 |
 | CLI-RO-LIST-JSON | key:list --json reports read_only per key | php (cli) | a read-only key | row read_only true | implemented | 2026-09-01 |
 | CLI-RO-LIST-TABLE | key:list carries an Access column | php (cli) | a read-only key | 'Access' header + 'read-only' cell | implemented | 2026-09-01 |
-| HTTP-RO-GET | a read-only key GETs normally | http | read-only bearer GET | 200 items | implemented | 2026-09-01 |
+| HTTP-RO-GET | a read-only key GETs normally | http | read-only bearer GET `/api/v1/me` | 200, user_id | implemented | 2026-09-08 |
 | HTTP-RO-POST | any non-GET with a read-only key is 403 read_only_key | http | read-only bearer POST | 403, code + the exact message | implemented | 2026-09-01 |
 | HTTP-RO-BEFORE-ROUTE | the refusal precedes route resolution | http | read-only POST to an unknown path | 403 read_only_key, not 404 | implemented | 2026-09-01 |
 | HTTP-RO-ORDER | read_only is decided before the scopes, proven both ways | http | read-only scoped key | out-of-scope GET -> insufficient_scope; in-scope POST -> read_only_key; in-scope GET 200 | implemented | 2026-09-01 |

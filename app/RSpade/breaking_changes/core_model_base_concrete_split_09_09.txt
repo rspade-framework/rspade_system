@@ -1,0 +1,377 @@
+EVERY CORE MODEL IS AN ABSTRACT BASE PLUS AN EMPTY SHELL - AN OVERRIDE EXTENDS IT
+Date: 2026-09-09
+
+IF YOU DO NOTHING: any rsx/models/ class override of a core framework model that is a
+    COPY of the framework file fails the manifest build outright with "Fatal: Invalid
+    override of the split framework class", and nothing in your application boots until
+    you rewrite that file as `class X_Model extends X_Model_Abstract` carrying only the
+    members it changes.
+
+SUMMARY
+    Each of the 28 framework models is now two files: an abstract base carrying the
+    entire implementation, and a concrete shell beside it that declares nothing.
+
+        system/app/RSpade/Core/Files/File_Attachment_Model_Abstract.php   (everything)
+        system/app/RSpade/Core/Files/File_Attachment_Model.php            (empty shell)
+
+    An application overrides one by EXTENDING the base:
+
+        // rsx/models/file_attachment_model.php
+        namespace Rsx\Models;
+
+        class File_Attachment_Model extends File_Attachment_Model_Abstract
+        {
+            // only what this application changes
+        }
+
+    The manifest archives the SHELL as .php.upstream, your class becomes
+    File_Attachment_Model for the whole tree, and it keeps inheriting everything the
+    framework adds to the base from now on.
+
+    A COPY of the framework file is refused at manifest build. That is the whole
+    breakage in this document, and it applies to exactly one kind of file: an override
+    of a core model that you wrote by copying. Every other class override - a
+    controller, a service, a UI helper, a permission class - is unchanged and stays a
+    copy.
+
+    Nothing moves in JavaScript. The __MODEL name, the generated Base_<Model>_Model.js
+    stub and every bundle that names the model are keyed on the CONCRETE name, which
+    did not change.
+
+THE CHANGE
+
+    WHY. An override is a copy, frozen the moment it is taken, while the framework's
+    own class keeps moving. A downstream field report records what that costs: five
+    overridden core models had drifted by hundreds of lines, and one had lost members
+    that framework code later called - a hook the framework only INVOKES simply never
+    ran, so a background queue enqueued nothing for months and looked healthy doing it.
+    Nothing compared the two files, so nothing said a word.
+
+    An override that EXTENDS a base cannot have that failure. It inherits every member
+    the base has today and every member it gains tomorrow, and the surface that can
+    drift shrinks to the members the application actually declared.
+
+    THE 28 SPLIT MODELS
+
+        Api_Key_Model                  Api_Request_Log_Model
+        Country_Model                  Email_Attachment_Model
+        Email_Queue_Model              Email_Recipient_Model
+        File_Attachment_Model          File_Storage_Model
+        Flash_Alert_Model              Ip_Address_Model
+        Login_User_Model               Portal_Notification_Model
+        Portal_User_Model              Region_Model
+        Revision_Model                 Search_Index_Model
+        Site_Model                     Sms_Queue_Model
+        Sms_Recipient_Model            Sso_Identity_Model
+        Transaction_Model              Two_Factor_Credential_Model
+        User_Invite_Model              User_Model
+        User_Permission_Model          User_Profile_Model
+        User_Verification_Model        Zip_Download_Request_Model
+
+    Each base sits beside its shell in the same directory, named <Model>_Abstract.php.
+    Session is NOT one of them: it is a static facade, not a model, and replacing it is
+    not a supported concept.
+
+    WHAT THE BASE CARRIES, AND THEREFORE WHAT YOUR OVERRIDE INHERITS
+
+        $table, $enums, $type_ref_columns, $revisions, $realtime, $appends,
+        $detail_tables, every constant, every trait adoption, every relationship,
+        fetch() / portal_fetch(), the after_* hooks, and the _AUTO_GENERATED_
+        docblock and enum-constant regions.
+
+        MODEL-TABLE-01 and MODEL-ENUMS-01 walk the lineage, so an override that does
+        not change the table or the enums declares NEITHER. Redeclaring one is how a
+        tree ends up with two answers to "which table".
+
+        php artisan rsx:constants:regenerate writes the generated regions into the
+        class that DECLARES $table / $enums - the framework's base, or your own file
+        if your override redeclares them.
+
+        #[Ajax_Endpoint_Model_Fetch] and its #[Auth] gates resolve by lineage: a
+        fetch() on the base IS the concrete's fetch surface, and an override that
+        redeclares fetch() replaces it.
+
+    WHICH MEMBERS YOU MAY REPLACE OUTRIGHT
+
+        PHP-PARENT-CHAIN-01 (a manifest-build FATAL) requires an override of an
+        inherited method to call parent::<same-method>(). The exception is a member
+        the base marks #[Replaceable] - the framework saying "this is where the
+        application states policy":
+
+            fetch()                 the model's own read gate
+            portal_fetch()          its portal twin
+            portal_can_read()       the portal record rule
+            get_printed_name()      how an actor's name renders
+            get_view_profile_url()  where an actor's profile screen is
+            determine_file_type()   attachment classification
+
+        on the models that carry them. Everything else chains - and that chaining IS
+        the protection: the base keeps moving and your override keeps inheriting it.
+
+    THE REFUSAL, VERBATIM
+
+        Fatal: Invalid override of the split framework class 'File_Attachment_Model'.
+
+          Override: rsx/models/file_attachment_model.php (extends Rsx_Site_Model_Abstract)
+          Required: extends File_Attachment_Model_Abstract
+
+        File_Attachment_Model is a SPLIT framework class:
+        app/RSpade/Core/Files/File_Attachment_Model.php declares nothing but
+        `class File_Attachment_Model extends File_Attachment_Model_Abstract`, and
+        every member lives on the base. The shell exists so an application can
+        replace it WITHOUT holding a copy of the implementation.
+
+        REWRITE THE OVERRIDE AS:
+
+             class File_Attachment_Model extends File_Attachment_Model_Abstract
+             {
+                 // only what this application changes
+             }
+
+        A copy of the framework file is a second implementation of a class the
+        framework keeps developing: every member added to
+        File_Attachment_Model_Abstract after the copy was taken is missing from
+        it, and framework code calls those members on this class regardless.
+
+    CLASS-OVERRIDE-DRIFT-01 and the rsx:health "Class Override Drift" row report
+    nothing for a model override that extends its base: there is no frozen copy to
+    measure. Both keep reporting in full on a COPY of a non-model class.
+
+ACTION REQUIRED
+
+    1. FIND YOUR CORE-MODEL OVERRIDES.
+
+           ls rsx/models/
+           ls system/app/RSpade/Core/**/*.php.upstream
+
+       Any file in rsx/models/ whose class name appears in the list of 28 above is an
+       override you must rewrite. A .php.upstream sidecar under system/ names one
+       directly: it is the framework file your copy displaced.
+
+       If you have none, this document is finished - there is nothing else to do, and
+       the build will not fail.
+
+    2. REWRITE EACH ONE AS AN EXTENSION OF THE BASE.
+
+       Open the framework's base beside the shell your copy displaced - for example
+       system/app/RSpade/Core/Files/File_Attachment_Model_Abstract.php - and keep in
+       your file ONLY the members that differ from it.
+
+       Work through the copy member by member:
+
+           - IDENTICAL to the base (the overwhelming majority) -> DELETE IT. It is
+             inherited, and holding a duplicate is the drift this change ends.
+           - $table, $enums, $type_ref_columns, $revisions, $realtime, $appends,
+             $detail_tables, constants, traits -> DELETE unless you are CHANGING the
+             value. They are inherited and the lint rules walk the lineage.
+           - A member that DIFFERS and the base marks #[Replaceable] -> KEEP it as
+             it is. It replaces the base's outright; no parent:: call.
+           - A member that DIFFERS and is NOT #[Replaceable] -> KEEP it and add
+             parent::<same-method>() (see step 3).
+           - A member of YOUR OWN that the base does not have -> KEEP it. That is
+             the work the override exists to hold.
+
+       Change the parent, and nothing else about the class line:
+
+           class File_Attachment_Model extends Rsx_Site_Model_Abstract    // BEFORE
+           class File_Attachment_Model extends File_Attachment_Model_Abstract  // AFTER
+
+       The namespace stays `Rsx\Models`, and no `use` statement for the base is
+       needed - the manifest's simple-name loader resolves it.
+
+    3. ADD parent:: WHERE PHP-PARENT-CHAIN-01 DEMANDS IT.
+
+       Run the build and read the finding; it is a manifest-build FATAL, so it stops
+       you rather than letting a half-converted override run:
+
+           php artisan rsx:manifest:build
+
+       The finding names the class, the method and the ancestor that declares it. If
+       the method appears there, the base's version is NOT #[Replaceable] and your
+       override is meant to EXTEND its behavior:
+
+           public function delete()
+           {
+               $result = parent::delete();      // add this
+               Audit_Service::record($this);
+               return $result;
+           }
+
+       Read the base's method before choosing where the call goes - before your work,
+       after it, or around a return value. If your intent is genuinely to REPLACE
+       framework behavior that is not #[Replaceable], that is a framework change
+       request (rsx:man framework_debug_and_contrib), not something to route around.
+
+    4. RE-RUN THE CODEGEN.
+
+           php artisan rsx:constants:regenerate
+
+       It writes the docblock and the enum constants into the class that declares
+       $table / $enums. After step 2 that is the framework's base for anything you did
+       not redeclare, so a stale _AUTO_GENERATED_ block left in your override is
+       removed rather than maintained in two places.
+
+    5. RE-CHECK WHETHER THE OVERRIDE STILL NEEDS TO EXIST.
+
+       A rewritten override is often three lines and an #[OnEvent] handler away from
+       nothing at all. If yours exists only to ATTACH policy, the seams beat it:
+
+           can_view() / scope_can_view()   Staff_Authorizable (staff row visibility)
+           portal_can_read()               Portal_Authorizable (the portal twin)
+           fetch()                         the model's own read gate
+           #[OnEvent] handlers             behaviour interception
+
+       The reference app ships NO core-model override for exactly this reason: the one
+       framework answer only an application can give - where a staff user's profile
+       screen is - is asked through the resolve hook `user.view_profile_url` and
+       answered from a handler. It is on your disk at
+       system/app/RSpade/resource/reference_app/handlers/User_Profile_Url_Handlers.php.
+
+A FULL BEFORE AND AFTER
+
+    BEFORE - rsx/models/file_attachment_model.php, a 1,900-line copy of the framework
+    file taken at some point in the past. Its opening lines:
+
+        <?php
+
+        namespace Rsx\Models;
+
+        use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+        use App\RSpade\Core\Files\File_Storage_Model;
+        use App\RSpade\Core\Session\Session;
+        // ...twenty more imports
+
+        class File_Attachment_Model extends Rsx_Site_Model_Abstract
+        {
+            protected $table = '_file_attachments';
+
+            const FILE_TYPE_IMAGE = 1;
+            const FILE_TYPE_VIDEO = 2;
+            // ...every other constant
+
+            public static $enums = [ /* the whole map */ ];
+
+            public function file_storage() { /* ... */ }
+            public function fileable() { /* ... */ }
+            // ...roughly ninety more methods, all of them byte-identical to the
+            //    framework's, except the two this application actually changed
+
+            public function can_view($user = null): bool
+            {
+                if ($this->fileable_type === Type_Ref::id_for('Client_Model')) {
+                    return Client_Access::may_read($user, $this->fileable_id);
+                }
+
+                return true;
+            }
+
+            public static function determine_file_type($mime_type)
+            {
+                if ($mime_type === 'application/vnd.acme.plan') {
+                    return self::FILE_TYPE_DOCUMENT;
+                }
+
+                // ...and here, inline, the framework's entire ninety-line mime
+                //    classification table, copied and frozen
+            }
+        }
+
+    AFTER - the same application's behavior, in twenty lines:
+
+        <?php
+
+        namespace Rsx\Models;
+
+        /**
+         * File_Attachment_Model - this application's attachment record.
+         *
+         * Extends the framework base; declares only what this application changes.
+         */
+        class File_Attachment_Model extends File_Attachment_Model_Abstract
+        {
+            /**
+             * Staff read rule. Not #[Replaceable] - the framework's permissive
+             * default is the fallback, so the parent call stays.
+             */
+            public function can_view($user = null): bool
+            {
+                if (!parent::can_view($user)) {
+                    return false;
+                }
+
+                if ($this->fileable_type === Type_Ref::id_for('Client_Model')) {
+                    return Client_Access::may_read($user, $this->fileable_id);
+                }
+
+                return true;
+            }
+
+            /**
+             * #[Replaceable] on the base - classification is the application's to
+             * state, so no parent:: call is required. Calling it anyway for every
+             * other mime is what keeps the framework's table the one definition.
+             */
+            public static function determine_file_type($mime_type)
+            {
+                if ($mime_type === 'application/vnd.acme.plan') {
+                    return self::FILE_TYPE_DOCUMENT;
+                }
+
+                return parent::determine_file_type($mime_type);
+            }
+        }
+
+    Everything else - $table, every constant and enum, the relationships, fetch(),
+    portal_fetch(), the hooks, the disposal machinery - is inherited, and every future
+    framework change to it arrives with the pull instead of sitting in a .upstream file
+    waiting to be noticed.
+
+VERIFICATION
+
+    1. The build completes:
+
+           php artisan rsx:manifest:build
+
+       No "Invalid override of the split framework class" and no PHP-PARENT-CHAIN-01
+       fatal. The archive notice names the SHELL, which is the file your override now
+       displaces:
+
+           [Manifest] Class override: File_Attachment_Model - archived
+           app/RSpade/Core/Files/File_Attachment_Model.php to
+           app/RSpade/Core/Files/File_Attachment_Model.php.upstream, overridden by
+           rsx/models/file_attachment_model.php
+
+    2. The archived file is three lines. Confirm what you displaced is the shell and
+       not an implementation:
+
+           cat system/app/RSpade/Core/Files/File_Attachment_Model.php.upstream
+
+    3. Lint and health are clean:
+
+           php artisan rsx:check
+           php artisan rsx:health
+
+       CLASS-OVERRIDE-DRIFT-01 reports nothing for the rewritten override, and the
+       "Class Override Drift" row carries no WARN for it. A finding that remains names
+       a COPY of a non-model class, which is a separate piece of work.
+
+    4. No duplicated declarations survive in the override:
+
+           grep -n 'protected \$table\|public static \$enums\|const ' \
+               rsx/models/file_attachment_model.php
+
+       Every hit should be something this application is deliberately CHANGING.
+
+    5. The behavior you kept still works - exercise the screens that depend on it, and
+       confirm a record still fetches from the browser:
+
+           php artisan rsx:debug / --user=1 --eval="const a = await \
+               File_Attachment_Model.fetch(<id>); return JSON.stringify(a);"
+
+SEE ALSO
+    php artisan rsx:man class_override     the two override recipes, the refusals, drift
+    php artisan rsx:man model              where a model's members live
+    php artisan rsx:man model_fetch        fetch() as a read gate rather than an override
+    php artisan rsx:man event_hooks        #[OnEvent], policy without a copy
+    php artisan rsx:man actors             overriding one of the three framework actors
+    Skills: rspade:model-fetch, rspade:actors-and-authorship, rspade:file-attachments

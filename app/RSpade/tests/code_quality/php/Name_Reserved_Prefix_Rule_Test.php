@@ -169,17 +169,16 @@ class Name_Reserved_Prefix_Rule_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Framework code OUTSIDE the Sys tree is not governed by either direction - the
-     * `_Manifest_*_Helper` classes are the standing proof that a framework-internal
-     * `_`-name is ordinary.
+     * Framework code OUTSIDE the Sys tree is not governed by either direction: a
+     * framework-internal `_`-name outside `Sys/` is ordinary and draws no finding.
      */
     public static function test_framework_code_outside_the_sys_tree_is_untouched()
     {
         $violations = self::__run(
-            'app/RSpade/Core/Manifest/_Manifest_Scanner_Helper.php',
-            "<?php\n\nclass _Manifest_Scanner_Helper\n{\n}\n"
+            'app/RSpade/Core/Manifest/_Framework_Internal_Example.php',
+            "<?php\n\nclass _Framework_Internal_Example\n{\n}\n"
         );
 
-        static::__assert_count(0, $violations, 'framework code outside Root/ is out of scope');
+        static::__assert_count(0, $violations, 'framework code outside Sys/ is out of scope');
     }
 }

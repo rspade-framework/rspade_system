@@ -11,14 +11,15 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * Support module for extracting Spa route metadata from Spa_Action classes
  * This runs after the primary manifest is built to add Spa routes to the unified routes index
  *
- * An SPA route row carries TWO gate lists, because two different surfaces answer for
- * one URL:
- *   'auth'        - the PHP bootstrap method's gates (class-level #[Auth] on the SPA
- *                   controller then the #[SPA] method's own). The server dispatcher
- *                   evaluates these before rendering the bootstrap.
- *   'auth_action' - the JS action's @auth(...) check names. These are the CLIENT
- *                   gate (Spa.dispatch resolves them against the render-time auth
- *                   snapshot); the server never renders a denial for them.
+ * TWO SURFACES ANSWER FOR ONE SPA URL, and the row names neither gate list itself.
+ * The PHP bootstrap method's gates are `auth.surfaces[<controller>::<method>]`, which is
+ * what the row's 'surface' points at and what the server dispatcher evaluates before
+ * rendering. The JS action's own `@auth(...)` names are
+ * `auth.surfaces[<action class>]`, reached through the row's 'target'; `Spa.dispatch`
+ * resolves those against the render-time auth snapshot.
+ *
+ * The row therefore carries POINTERS, never copies: a gate list lives in exactly one
+ * place, and `Auth_Gates::surface_gates()` is how both are read.
  * See php artisan rsx:man auth_gates.
  */
 class Spa_ManifestSupport extends ManifestSupport_Abstract
@@ -198,12 +199,13 @@ class Spa_ManifestSupport extends ManifestSupport_Abstract
                 'js_action_class' => $class_name,
                 'pattern' => $route_pattern,
                 // The gates enforced at dispatch are the BOOTSTRAP CONTROLLER's, so the
-                // surface is the controller's, not the action's. The action's own gates
-                // are auth.surfaces[$class_name] and stay named here as auth_action.
+                // surface is the controller's, not the action's. The ACTION's own gates are
+                // auth.surfaces[$class_name] - reached through 'target' below, never copied
+                // onto the row.
                 'surface' => Manifest::_normalize_class_name($php_controller_fqcn) . '::' . $php_controller_method,
-                // For SPA, the URL-generation target is the JS action class name.
+                // For SPA, the URL-generation target is the JS action class name - and it is
+                // also the action's own auth surface.
                 'target' => $class_name,
-                'auth_action' => $route_info['auth'],
             ];
         }
     }

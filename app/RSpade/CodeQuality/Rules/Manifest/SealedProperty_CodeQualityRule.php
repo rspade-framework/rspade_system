@@ -2,8 +2,6 @@
 
 namespace App\RSpade\CodeQuality\Rules\Manifest;
 
-use PhpParser\Node;
-use PhpParser\NodeFinder;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -31,9 +29,11 @@ use App\RSpade\Core\Manifest\Manifest;
  * violation. Redeclaring with the SAME value is still a violation: the point is that
  * the declaration lives in exactly one place.
  *
- * Detection is AST-based (nikic/php-parser), never a regex over raw source, so a
- * comment or string mentioning the property cannot spoof it, and lineage comes from
- * the manifest (php_get_lineage). Vendor ancestors are naturally out of scope - the
+ * Detection is AST-derived (nikic/php-parser), never a regex over raw source, so a
+ * comment or string mentioning the property cannot spoof it. The parse happens once,
+ * inside Source_Cache::declared_members(), and this rule reads the summary: property
+ * names, their #[Sealed] marker and their exception markers. Lineage comes from the
+ * manifest (php_get_lineage); vendor ancestors are naturally out of scope, since the
  * manifest never scans vendor/.
  *
  * Honors @SEALED-01-EXCEPTION at file level (via CodeQualityChecker) and, with
@@ -185,30 +185,24 @@ class SealedProperty_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function evaluate_class_properties(string $child_file, string $child_class, array $ancestry): void
     {
-        $child_node = $this->find_class_node($child_file, $child_class);
-        if ($child_node === null) {
-            return;
-        }
+        $child_properties = $this->source()->declared_members($child_file, $child_class)['properties'];
 
-        $child_properties = $this->collect_properties($child_node);
         if (empty($child_properties)) {
             return;
         }
 
         // Sealed name => declaring class, collected across the WHOLE ancestry: a seal
-        // binds every descendant, not just direct children.
+        // binds every descendant, not just direct children. An ancestor that cannot be
+        // located or parsed summarizes to no members and contributes no seals.
         $sealed = [];
-        foreach ($ancestry as $ancestor) {
-            $ancestor_node = $this->find_class_node($ancestor['file'], $ancestor['class']);
-            if ($ancestor_node === null) {
-                continue;
-            }
 
-            foreach ($this->collect_properties($ancestor_node) as $name => $property) {
+        foreach ($ancestry as $ancestor) {
+            foreach ($this->source()->declared_members($ancestor['file'], $ancestor['class'])['properties'] as $name => $property) {
                 if (isset($sealed[$name])) {
                     continue;
                 }
-                if ($this->property_is_sealed($property['node'])) {
+
+                if (isset($property['attributes']['sealed'])) {
                     $sealed[$name] = $ancestor['class'];
                 }
             }
@@ -219,15 +213,14 @@ class SealedProperty_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         $contents = $this->source()->content($child_file);
-        $lines = $contents === false ? [] : explode("\n", $contents);
-        $marker = '@' . self::RULE_ID . '-EXCEPTION';
+        $lines = $contents === '' ? [] : explode("\n", $contents);
 
         foreach ($child_properties as $name => $property) {
             if (!isset($sealed[$name])) {
                 continue;
             }
 
-            if ($this->property_has_exception($property['node'], $lines, $marker)) {
+            if (isset($property['exceptions'][self::RULE_ID])) {
                 continue;
             }
 
@@ -255,97 +248,4 @@ class SealedProperty_CodeQualityRule extends CodeQualityRule_Abstract
             );
         }
     }
-
-    /**
-     * Every property DECLARED in a class node, as name => ['node' => Property, 'line'].
-     *
-     * A single `public $a, $b;` statement declares two properties from one node; both
-     * are indexed, and both point at the same statement's line.
-     *
-     * @return array<string, array{node: Node\Stmt\Property, line: int}>
-     */
-    private function collect_properties(Node\Stmt\ClassLike $class_node): array
-    {
-        $properties = [];
-
-        foreach ($class_node->stmts as $stmt) {
-            if (!($stmt instanceof Node\Stmt\Property)) {
-                continue;
-            }
-
-            foreach ($stmt->props as $prop) {
-                $properties[$prop->name->toString()] = [
-                    'node' => $stmt,
-                    'line' => $stmt->getStartLine(),
-                ];
-            }
-        }
-
-        return $properties;
-    }
-
-    /**
-     * Whether a property statement carries the #[Sealed] marker attribute. Read by
-     * name from the AST attribute groups (the attribute class is never defined -
-     * framework marker-attribute convention).
-     */
-    private function property_is_sealed(Node\Stmt\Property $property): bool
-    {
-        foreach ($property->attrGroups as $group) {
-            foreach ($group->attrs as $attr) {
-                $parts = explode('\\', $attr->name->toString());
-                $simple = end($parts);
-                if (strcasecmp($simple, 'Sealed') === 0) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Per-property exception detection for @SEALED-01-EXCEPTION: in the property's
-     * attached comments/docblock, on its declaration line, or on the line immediately
-     * before it. (Whole-file exceptions are handled generically by CodeQualityChecker
-     * before the rule runs under rsx:check; this covers the manifest-time driver,
-     * which does not.)
-     */
-    private function property_has_exception(Node\Stmt\Property $property, array $lines, string $marker): bool
-    {
-        foreach ($property->getComments() as $comment) {
-            if (str_contains($comment->getText(), $marker)) {
-                return true;
-            }
-        }
-
-        $start_line = $property->getStartLine();
-        $index = $start_line - 1;
-
-        if ($index >= 0 && isset($lines[$index]) && str_contains($lines[$index], $marker)) {
-            return true;
-        }
-        if ($index - 1 >= 0 && isset($lines[$index - 1]) && str_contains($lines[$index - 1], $marker)) {
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Locate the ClassLike node named $class_name inside $abs_file. Returns null when
-     * the file is missing/unparseable or the class is absent (an unverifiable ancestor
-     * simply contributes no seals).
-     */
-    private function find_class_node(string $abs_file, string $class_name): ?Node\Stmt\ClassLike
-    {
-        // THE DRIVER OWNS PARSING, and it owns this lookup too: the node is memoized
-        // beside the file's AST and evicted with it. Four rules each ran a full
-        // NodeFinder traversal per ASK, and PHP-PARENT-CHAIN-01 asks once per ancestor
-        // per method.
-        $node = $this->source()->class_node($abs_file, $class_name);
-
-        return $node instanceof Node\Stmt\ClassLike ? $node : null;
-    }
-
 }

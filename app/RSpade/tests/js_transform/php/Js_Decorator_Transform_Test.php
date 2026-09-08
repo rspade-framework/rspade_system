@@ -144,8 +144,8 @@ class Js_Decorator_Transform_Test extends Rsx_Test_Abstract
             static::__assert_equals(['overview', 'history'], $facts['method_reads_static'], "method reads static [{$target}]");
             static::__assert_true($facts['instanceof_base'], "instanceof base [{$target}]");
             static::__assert_equals('/fixture/static', $facts['decorator_ran']['route'] ?? null, "route decorator ran [{$target}]");
-            static::__assert_equals('Frontend_Spa_Layout', $facts['decorator_ran']['layout'] ?? null, "layout decorator ran [{$target}]");
-            static::__assert_equals('Frontend_Spa_Controller::index', $facts['decorator_ran']['spa'] ?? null, "spa decorator ran [{$target}]");
+            static::__assert_equals('Fixture_Spa_Layout', $facts['decorator_ran']['layout'] ?? null, "layout decorator ran [{$target}]");
+            static::__assert_equals('Fixture_Spa_Controller::index', $facts['decorator_ran']['spa'] ?? null, "spa decorator ran [{$target}]");
         }
     }
 

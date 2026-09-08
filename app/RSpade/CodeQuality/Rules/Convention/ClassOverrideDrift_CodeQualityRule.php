@@ -29,6 +29,12 @@ use App\RSpade\Core\Manifest\Class_Override_Drift;
  * site down until somebody finds time to re-clone would convert a latent defect into an
  * immediate outage. The finding is the alarm; the developer schedules the re-clone.
  *
+ * WHAT IT DOES NOT LOOK AT. A SPLIT framework class - one that ships an abstract base
+ * carrying every member and a three-line concrete an application replaces - has no drift
+ * surface: an override that extends the base inherits everything, now and after every pull.
+ * Such a pair is skipped. That is the pattern this framework asks applications to use, and
+ * the manifest's override pass refuses any other shape of it.
+ *
  * WHAT IT DOES NOT SEE. A member present in both files whose BODY has diverged is not
  * drift this rule can name - it is a deliberate override in the ordinary case and an
  * ordinary stale copy in the bad one, and the two are indistinguishable from the outside.

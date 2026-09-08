@@ -139,10 +139,12 @@ RSX-TMP DIRECTORY
                                  code-quality-sanitized/
                                                    the {content, lines, original_lines}
                                                    document each rule reads
-                                 jqhtml-parsed/    the jqhtml parser's raw output
-                                                   (variant = parser version)
-                                 jqhtml-compiled/  that output wrapped for the bundle;
-                                                   this IS the bundle's input file
+                                 jqhtml/           compiled jqhtml templates, both
+                                                   layers: variant `_parsed_pv<ver>` is
+                                                   the parser's raw output and
+                                                   `_compiled_pv<ver>` is that output
+                                                   wrapped for the bundle - the second
+                                                   IS the bundle's input file
                                  php-reflection/   reflection extracts, keyed by the
                                                    MANIFEST's own sha1 rather than the
                                                    build hash (put_for_hash/get_for_hash)

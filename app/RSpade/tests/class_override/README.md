@@ -53,7 +53,7 @@ mid-request); the dump fixes the on-disk data so future processes never hit the 
 - `app/RSpade/Core/Health/Class_Override_Drift_Health_Checks.php` - the WARN-never-FAIL row.
 - `app/RSpade/Core/Autoloader.php` - `register()` installs the tolerance;
   `_handle_php_error()` / `_should_tolerate_classloader_warning()` are the carve-out.
-- `app/RSpade/Core/Manifest/_Manifest_Quality_Helper.php` - `_validate_composer_classmap()`,
+- `app/RSpade/Core/Manifest/Manifest_Indexer.php` - `_validate_composer_classmap()`,
   `_find_stale_classmap_entries()`, `_run_composer_dump()` (+ the `$_composer_dump_runner`
   test seam); also `_check_unique_base_class_names()` (the override/restore pass).
 - `app/RSpade/Core/Manifest/Manifest.php` - calls `_validate_composer_classmap()` in the

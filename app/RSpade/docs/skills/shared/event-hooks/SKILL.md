@@ -92,7 +92,7 @@ public static function extract_special($data)
 }
 ```
 
-The three document chains (`document.extract_text`, `document.preview_rendition`, `document.thumbnail_render`) are the canonical resolve hooks - see `rspade:document-preview`.
+The three document chains (`document.extract_text`, `document.preview_rendition`, `document.thumbnail_render`) are the canonical resolve hooks - see `rspade:document-preview`. `user.view_profile_url` `{user}` is the one a staff-realm app answers first: where a `<Record_Author>` link goes (null = plain text; the reference app answers it in `rsx/handlers/User_Profile_Url_Handlers.php`).
 
 ---
 

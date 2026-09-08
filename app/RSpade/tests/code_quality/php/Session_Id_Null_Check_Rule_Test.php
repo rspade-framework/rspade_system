@@ -374,7 +374,7 @@ class Session_Id_Null_Check_Rule_Test extends Rsx_Test_Abstract
         static::__assert_equals('critical', $rule->get_default_severity(), 'violations are critical');
 
         // A critical violation raised during the manifest scan is what aborts the build
-        // (_Manifest_Quality_Helper throws YoureDoingItWrongException on the first one),
+        // (Manifest_Indexer throws YoureDoingItWrongException on the first one),
         // so pin the severity the emitted violation actually carries.
         $violations = self::__run_body('if (' . self::CALL . ' === null) { return 1; }');
         static::__assert_count(1, $violations, 'the fixture violates');

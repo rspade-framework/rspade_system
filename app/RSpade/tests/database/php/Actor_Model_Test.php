@@ -28,8 +28,10 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *     (site-scoped vs not) for each
  *   - get_printed_name() never returns empty, works on a TRASHED record, and returns the
  *     SAME string trashed as live (owner ruling: no "(deleted)" marker)
- *   - get_view_profile_url() answers per VIEWER, resolving through the destination's own
- *     auth gates - a real route when the gates pass, null when they do not
+ *   - get_view_profile_url() answers per VIEWER. The destination is the APPLICATION's -
+ *     User_Model_Abstract answers null and the override states the policy - so what is
+ *     pinned here is the contract: a usable route or null, and never a link for a viewer
+ *     the destination's own gates would turn away
  *
  * Plus the soft-delete mandate at the schema level (deleted_at on all three tables), and
  * the display pair Rsx_Model_Abstract::get_created_by_author() hands to <Record_Author>.
@@ -304,27 +306,61 @@ class Actor_Model_Test extends Rsx_Test_Abstract
         );
     }
 
-    public static function test_staff_viewing_their_own_record_gets_their_profile_page()
+    /**
+     * A PROFILE LINK IS THE APPLICATION'S ANSWER, so the framework suite asserts the CONTRACT
+     * and not a destination.
+     *
+     * User_Model_Abstract::get_view_profile_url() is #[Replaceable] and returns null: the
+     * framework has no screens, and which route shows a staff user is a decision only an
+     * application can make (the reference app's rsx/models/user_model.php is the worked
+     * example, and this suite runs in applications that ship no override at all). So a
+     * PERMITTED viewer gets a usable route OR null - both are correct - and the assertion is
+     * that whatever comes back is a usable route when it is not null.
+     *
+     * The DENIED case below is the one with a single right answer, and it is where the
+     * behaviour that matters is actually pinned.
+     */
+    public static function test_a_staff_profile_url_is_either_a_usable_route_or_null()
     {
         $user = User_Model::find(self::USER_ID);
 
         $url = $user->get_view_profile_url();
 
-        static::__assert_not_null($url, 'a signed-in staff user can always reach their own profile');
-        static::__assert_contains('profile_display', $url, 'and it is the profile screen, not user admin');
+        if ($url === null) {
+            static::__pass('this application declares no staff profile screen');
+
+            return;
+        }
+
+        static::__assert_true(
+            str_starts_with($url, '/'),
+            'a declared destination is a site-relative route, not a bare label: ' . $url
+        );
     }
 
-    public static function test_staff_viewing_another_user_gets_the_admin_screen_when_permitted()
+    public static function test_staff_viewing_another_user_gets_a_usable_route_or_null()
     {
-        // The acting user (id 1) is a developer, so the can_manage_users gate on the
-        // user-management detail screen passes.
+        // The acting user (id 1) is the most privileged role this application declares, so
+        // any gate an application put on its own user-administration screen passes.
         $other = self::__make_staff_user();
 
         $url = $other->get_view_profile_url();
 
-        static::__assert_not_null($url, 'a user-manager gets a link to another user');
-        static::__assert_contains('user_management', $url, 'and it is the user-management detail screen');
-        static::__assert_contains((string) $other->id, $url, 'carrying that user\'s id');
+        if ($url === null) {
+            static::__pass('this application declares no staff user-administration screen');
+
+            return;
+        }
+
+        static::__assert_true(
+            str_starts_with($url, '/'),
+            'a declared destination is a site-relative route: ' . $url
+        );
+        static::__assert_contains(
+            (string) $other->id,
+            $url,
+            'and it names the user it is about'
+        );
     }
 
     public static function test_a_viewer_without_user_management_gets_no_link()
@@ -343,11 +379,15 @@ class Actor_Model_Test extends Rsx_Test_Abstract
             'a viewer without user-management rights gets no link to another user'
         );
 
-        // ... while their OWN record still resolves, because the profile screen is
-        // gated only on being signed in.
-        static::__assert_not_null(
-            $viewer->get_view_profile_url(),
-            'the same viewer can still reach their own profile'
+        // ... while their OWN record answers whatever this application declares for it. The
+        // framework base answers null; an application that declares a self-service profile
+        // screen answers a route. Either is correct - what must never happen is the DENIED
+        // case above answering a link.
+        $own = $viewer->get_view_profile_url();
+
+        static::__assert_true(
+            $own === null || str_starts_with($own, '/'),
+            'the same viewer\'s own record answers null or a usable route'
         );
 
         static::__acting_as_user(self::USER_ID);

@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use ReflectionClass;
 use App\RSpade\Core\Cache\RsxCache;
+use App\RSpade\Core\Database\Model_Lineage_Fingerprint;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
 use App\RSpade\Core\Support\Rsx_Fingerprint;
@@ -64,7 +65,12 @@ class Model_ManifestSupport extends ManifestSupport_Abstract
 
             $fqcn = $model_entry['fqcn'];
             $class_name = $model_entry['class'] ?? '';
-            $fingerprint = ($model_entry['hash'] ?? '') . '__' . $schema_fingerprint;
+            // THE LINEAGE, NOT THE FILE. A core model carries its $table, $enums and
+            // $detail_tables on an abstract base and ships a three-line concrete an
+            // application replaces, so a row derived from the concrete's own hash cannot
+            // notice the base moving underneath it.
+            $lineage_hash = Model_Lineage_Fingerprint::lineage_hash($class_name, $manifest_data);
+            $fingerprint = $lineage_hash . '__' . $schema_fingerprint;
 
             // 1. The row this build inherited, if its fingerprint still holds.
             if (($previous[$class_name]['fingerprint'] ?? null) === $fingerprint) {

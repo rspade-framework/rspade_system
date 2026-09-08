@@ -9,12 +9,45 @@ of the process, and those arrays were **1.12 GB of a 1,237 MB cold build** - mem
 proportional to FILES PARSED rather than to the index being produced.
 
 ```php
-$this->source()->content($path)          // raw bytes, '' when unreadable
-$this->source()->tokens($path)           // PhpToken::tokenize() output
-$this->source()->ast($path)              // one nikic parse, null on a syntax error
-$this->source()->token_array($code)      // token_get_all() over a string in hand
-$this->source()->php_tokens_of($code)    // PhpToken::tokenize() over a string in hand
+$this->source()->content($path)                  // raw bytes, '' when unreadable
+$this->source()->tokens($path)                   // PhpToken::tokenize() output
+$this->source()->ast($path)                      // one nikic parse, null on a syntax error
+$this->source()->class_node($path, $class)       // that class's own AST node, memoized by name
+$this->source()->declared_members($path, $class) // an AST-FREE summary of the class
+$this->source()->token_array($code)              // token_get_all() over a string in hand
+$this->source()->php_tokens_of($code)            // PhpToken::tokenize() over a string in hand
+$this->source()->forget($path)                   // after a write, before the next read
 ```
+
+Each of the path-taking calls accepts the file's manifest HASH as a trailing argument; pass it
+when you have the metadata, because the hash is what says the bytes moved.
+
+### `declared_members()` - the one bucket the LRU does not evict
+
+`declared_members($path, $class)` returns a flat summary holding **no nikic nodes**: per method
+`name, line, abstract, static, visibility, attributes, has_body, parent_calls, exceptions`, and
+per property the same plus `has_default` and the LITERAL `default`.
+
+**Not evicting it is the point, not an oversight.** The four ancestry rules
+(PHP-PARENT-CHAIN-01, SEALED-01, REVISION-01, POLY-01) each iterate the whole index and ask
+structural questions about a class and its ancestors. A 16-entry LRU cannot hold 700 files, so
+each rule paid for its own full parse of the tree: four passes, **5,212 ms of a 10.3 s cold
+build**. Sharing the AST could not fix that - the AST is exactly what the budget forbids
+retaining. A summary is proportional to the INDEX, which is what the budget permits to grow,
+so the file is parsed ONCE for the whole pass and every later question is answered from the
+summary. **5,212 ms -> 1,532 ms, cold build 10.3 s -> ~6.5 s, for +4.1 MB of peak.**
+
+Per rule afterwards: SEALED-01 and PHP-PARENT-CHAIN-01 hold no AST at all; REVISION-01 bails on
+the summary before parsing (3 ms); POLY-01 bails on a `str_contains($contents, 'morph')` content
+test and parses only the files that do make morph calls (158 ms). PHP-PARENT-CHAIN-01 is the one
+that still parses, because it runs first and its 1.37 s IS the single tree-wide parse the other
+three then ride on for free.
+
+One measured refinement worth keeping: computing `parent_calls` with a `NodeFinder` traversal
+per method made PHP-PARENT-CHAIN-01 *worse* (3,153 ms), because every method paid for a walk
+where only methods with a declarer used to. Two string tests decide it now - does the FILE
+contain `parent::`, then does the method's own line range - and the AST stays authoritative for
+the ones that pass.
 
 **The budget it implements** (owner ruling): peak memory is proportional to the index plus a
 constant bounded by the LARGEST SINGLE FILE, never to the number of files parsed. So it is an
@@ -25,7 +58,9 @@ at once - and `release()` empties it at the end of the pass. Nothing in it is st
 the class default is 64. On this reference tree a cold build peaks at 124.8 MB with 64,
 110.1 MB with 32 and 105.9 MB with 16, and the wall time does NOT get worse as it shrinks
 (12.0 s / 11.4 s / 11.2 s) - the allocation an eviction avoids costs more than the re-parse it
-causes. Below 16 it turns: 8 thrashes to 15.4 s.
+causes. Below 16 it turns: 8 thrashes to 15.4 s. Re-swept on a cold build after the member
+summary landed and 16 is still the answer (16: 99.1 MB / 11 s; 32: 105.4 MB / 12 s; 64:
+120.1 MB / 16 s).
 
 **The build shares one instance.** `Manifest::build()->source_cache()` is the manifest build's,
 and both `Php_Fixer` (phase 2) and `Manifest_Rule_Driver` (phase 7) read through it, so a file
@@ -53,8 +88,15 @@ discovered and never run. `Rule_Discovery_Depth_Test` writes one and proves it i
 See `rsx:man code_quality`, THE VALIDATION LEDGER, for the contract. What is worth repeating
 here: **the DRIVER writes it, not the rule.** Every entry is filed under
 `"<RULE ID>@<md5 of the rule's file . fingerprint_extra()>"`, so editing a rule retires every
-verdict it recorded; a cross-file rule's entry is keyed by the pseudo-hash
-`deps:<hash of its depends_on() inputs>` rather than by a file hash.
+verdict it recorded.
+
+**A CROSS-FILE rule lives in the DERIVED bucket, which the prune does not govern** (shape
+version 2): one slot per rule holding the current key rather than a set - `deps`, the
+fingerprint of its `depends_on()` inputs taken over the tree WITHOUT the test trees, plus
+`tdeps` under a test run, the same fingerprint over both halves. Both must match for the rule
+to be skipped. Filing that premise among the FILE HASHES is what had
+`__prune_against_manifest()` delete it on every flush: the cross-file skip had never once
+fired across processes, so every build re-ran every cross-file rule.
 
 ## FileSanitizer - the `sanitize` subsystem of the node service
 
@@ -110,20 +152,37 @@ Before RPC: 900+ Node.js process spawns during manifest build (~30-60s overhead)
 After RPC: one shared Node.js process, reused across all sanitizations (~1-2s startup
 overhead) - and shared with every other build subsystem since the 2026-09-04 consolidation.
 
-## Comment blanking (no RPC)
+## Comment blanking - ONE stripper per language family
 
-Two pure-PHP helpers on `FileSanitizer` for rules whose subject IS a string literal, so
-the string-blanking `sanitize_javascript()` is the wrong tool:
+`FileSanitizer` owns every comment stripper the framework has, and there is exactly one per
+language family. Nothing else may hand-roll one:
 
 ```php
+FileSanitizer::sanitize_php($content);             // whole PHP file, via the tokenizer;
+                                                   // returns the LINES, not a string
+FileSanitizer::blank_php_comments($fragment);      // a PHP FRAGMENT - one line - where the
+                                                   // whole-file tokenizer cannot be used;
+                                                   // `#` counts as a line comment here
 FileSanitizer::blank_template_comments($content);  // <%-- --%>, {{-- --}}, <!-- -->
 FileSanitizer::blank_js_comments($content);        // // and /* */, quote-aware
+FileSanitizer::blank_scss_comments($content);      // // and /* */, url()- and quote-aware
 ```
 
-Both replace comment bodies with spaces and keep every newline, so line and column
-numbers still address the original file. `blank_js_comments()` tracks quoting, so a `//`
-inside `"https://example.com"` is never read as a comment opener. Used by
-URL-HARDCODE-01; `sanitize()` itself is unchanged, so no other rule's view moves.
+All of them BLANK rather than delete: comment bodies become spaces and every newline survives,
+so line and column numbers still address the original file. The last three share one
+line-preserving scanner.
+
+**Eight hand-rolled implementations became calls to these**, and two defects came out with
+them. Every hand-rolled SCSS stripper was `preg_replace('#//.*$#m', '', ...)`, which truncates
+a line at the `//` of an unquoted `url(https://fonts.googleapis.com/...)` - the shared scanner
+steps over an unquoted `url()` and tracks quoting. And the four template/blade strippers
+DELETED their comments where the sanitizer blanks them, so every line number computed
+downstream was off by the height of each multi-line comment above it.
+
+`sanitize_javascript()` (the RPC path, which additionally blanks string CONTENTS) is unchanged
+and is still what `rsx:check` hands a JS rule as `$contents`. A rule whose subject IS a string
+literal - URL-HARDCODE-01 - reads the raw bytes and blanks comments itself with the helpers
+above.
 
 ## One service, two subsystems
 Both node-service clients in this directory are clients of the ONE node service. See

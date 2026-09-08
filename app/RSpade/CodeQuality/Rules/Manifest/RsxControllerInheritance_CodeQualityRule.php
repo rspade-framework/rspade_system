@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Manifest;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * RsxControllerInheritanceRule - Enforces proper controller inheritance in RSX
@@ -102,7 +103,7 @@ class RsxControllerInheritance_CodeQualityRule extends CodeQualityRule_Abstract
                 continue;
             }
 
-            if (!str_starts_with($file, 'rsx/')) {
+            if (!Rsx_Paths::is_application($file)) {
                 continue;
             }
 

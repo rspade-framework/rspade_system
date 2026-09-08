@@ -18,6 +18,7 @@ use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Response\Error_Response;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Tests\Dispatch\Php\Dispatch_Page_Fixture_Controller;
 
 /**
  * Dispatcher auth-rejection surface - the two adjacent bugs on the full-page path.
@@ -81,7 +82,7 @@ class Dispatcher_Auth_Rejection_Test extends Rsx_Test_Abstract
         return $method->invokeArgs(null, [$response]);
     }
 
-    private static function __bind_page_request(string $uri = '/dashboard'): void
+    private static function __bind_page_request(string $uri = Dispatch_Page_Fixture_Controller::PAGE): void
     {
         app()->instance('request', Request::create($uri, 'GET'));
         Rsx_Portal::_clear_cache();
@@ -143,7 +144,7 @@ class Dispatcher_Auth_Rejection_Test extends Rsx_Test_Abstract
     public static function test_auth_required_full_page_redirects_to_login_with_intended_url()
     {
         static::__reset_session();
-        static::__bind_page_request('/dashboard');
+        static::__bind_page_request(Dispatch_Page_Fixture_Controller::PAGE);
 
         $result = static::__invoke_handle_special_response(new Error_Response(Ajax::ERROR_AUTH_REQUIRED));
 
@@ -156,14 +157,17 @@ class Dispatcher_Auth_Rejection_Test extends Rsx_Test_Abstract
         $target = $result->getTargetUrl();
         static::__assert_contains('/login', $target, 'redirect target must be the login route');
         static::__assert_contains('redirect=', $target, 'the intended URL must be threaded as ?redirect=');
-        // /dashboard url-encoded is %2Fdashboard.
-        static::__assert_contains('%2Fdashboard', $target, 'the intended path must be captured');
+        static::__assert_contains(
+            Dispatch_Page_Fixture_Controller::PAGE_ENCODED,
+            $target,
+            'the intended path must be captured'
+        );
     }
 
     public static function test_unauthorized_logged_out_redirects_to_login()
     {
         static::__reset_session();
-        static::__bind_page_request('/dashboard');
+        static::__bind_page_request(Dispatch_Page_Fixture_Controller::PAGE);
 
         // Sanity: the branch is gated on !Session::is_logged_in().
         static::__assert_false(Session::is_logged_in(), 'precondition: logged out');
@@ -189,7 +193,7 @@ class Dispatcher_Auth_Rejection_Test extends Rsx_Test_Abstract
 
         Session::set_site_id((int) $user->site_id);
         static::__acting_as_user((int) $user->id);
-        static::__bind_page_request('/dashboard');
+        static::__bind_page_request(Dispatch_Page_Fixture_Controller::PAGE);
 
         static::__assert_true(Session::is_logged_in(), 'precondition: logged in');
 
@@ -210,7 +214,7 @@ class Dispatcher_Auth_Rejection_Test extends Rsx_Test_Abstract
     public static function test_ajax_channel_throws_unauthorized_not_redirect()
     {
         static::__reset_session();
-        static::__bind_page_request('/dashboard');
+        static::__bind_page_request(Dispatch_Page_Fixture_Controller::PAGE);
 
         // The SAME rejection through the ajax handler yields the error_code JSON
         // contract (via the thrown exception the Ajax_Exception_Handler formats),

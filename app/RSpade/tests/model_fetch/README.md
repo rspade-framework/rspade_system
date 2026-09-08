@@ -54,3 +54,21 @@ denial-is-indistinguishable-from-missing assertion).
   collapsing to ONE request, dedup, `fetch_or_null` -> null, `fetch` -> `not_found`,
   chunking past the cap.
 - **http** - not applicable; the endpoint is exercised in-process and through the browser.
+
+## Fixtures and their two halves
+
+The PHP half drives the concern's own fixture family (`Model_Fetch_Parent_Fixture_Model`,
+`Model_Fetch_Child_Fixture_Model`, `Model_Fetch_Fixture_Model`) on tables
+`Model_Fetch_Fixture_Tables::create()` builds in `setup()` and drops in `teardown()`. That is
+what makes the concern portable: the batch endpoint can only be driven against a model
+declaring the whole surface - a gated `fetch()`, a `#[Relationship]` carrying
+`#[Ajax_Endpoint_Model_Fetch]`, and real rows - and borrowing an application model for it is
+what made the concern fail in an installed application.
+
+The BROWSER half cannot use them. The test trees enter the manifest only while `rsx:test` is
+running, and the playwright script drives the ordinary web server - a different process, a
+different manifest and a different database - so neither the fixture class nor its table
+exists there. It runs on the control panel at `/_sys` against `User_Model`, whose generated
+stub reaches every bundle, and fetches the signed-in identity's own record: the one row every
+install is guaranteed to have. Per-caller resolution is proved by callers that get DIFFERENT
+answers (one record, two nulls) rather than by three separate rows.

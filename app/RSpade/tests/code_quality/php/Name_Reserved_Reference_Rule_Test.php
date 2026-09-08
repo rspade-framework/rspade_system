@@ -145,7 +145,7 @@ class Name_Reserved_Reference_Rule_Test extends Rsx_Test_Abstract
             'instanceof' => "        return \$x instanceof _Sys_Controller;",
             'classconst' => "        return _Sys_Controller::class;",
             'typehint'   => "        return static::take(null);",
-            'catch'      => "        try { } catch (_Manifest_Cache_Helper \$e) { }",
+            'catch'      => "        try { } catch (_Sys_Bundle \$e) { }",
         ];
 
         foreach ($forms as $label => $body) {

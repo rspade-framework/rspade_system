@@ -49,14 +49,19 @@ DESCRIPTION
            to paste blindly.
 
         4. A change to a framework class you are LIKELY to have CLASS-OVERRIDDEN
-           - a framework model in particular - that adds or alters members your
-           copy should have. An override is a copy-and-replace, not a subclass
-           (`rsx:man class_override`): your file is served and ours is archived
-           beside it as `.php.upstream`, so the improvement reaches your disk and
-           none of your users, with nothing thrown to tell you.
+           that adds or alters members your copy should have. An override of a
+           NON-MODEL framework class is a copy-and-replace (`rsx:man
+           class_override`): your file is served and ours is archived beside it as
+           `.php.upstream`, so the improvement reaches your disk and none of your
+           users, with nothing thrown to tell you. A core MODEL override EXTENDS
+           the framework's base and inherits every such change, so this trigger
+           reaches it only where the change is one the override itself must state
+           - a member it redeclares, or a contract its own body depends on.
 
            `rsx:check` (CLASS-OVERRIDE-DRIFT-01) and the `rsx:health` "Class
-           Override Drift" row NAME the members you are missing. The document is
+           Override Drift" row NAME the members a COPY is missing (a model
+           override that extends the base has no drift surface and is reported by
+           neither). The document is
            what tells you what they are for, why your copy needs them, and what
            breaks silently if you skip them. Propagating them is HIGHLY
            RECOMMENDED, not mandatory - you may decide your override should keep

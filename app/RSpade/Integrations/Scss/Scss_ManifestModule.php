@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Integrations\Scss;
 
+use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\Core\Manifest\ManifestModule_Abstract;
 
 /**
@@ -113,9 +114,9 @@ class Scss_ManifestModule extends ManifestModule_Abstract
         // Extract main selectors (top-level classes/IDs)
         $selectors = [];
 
-        // Remove comments to avoid false positives
-        $clean_content = preg_replace('/\/\*.*?\*\//s', '', $content);
-        $clean_content = preg_replace('/\/\/.*$/m', '', $clean_content);
+        // Remove comments to avoid false positives. One implementation, line-preserving,
+        // and url()-aware - a `//` inside url(https://...) is not a comment.
+        $clean_content = FileSanitizer::blank_scss_comments($content);
 
         // Extract class selectors
         if (preg_match_all('/^\.([a-zA-Z_][\w-]*)/m', $clean_content, $matches)) {

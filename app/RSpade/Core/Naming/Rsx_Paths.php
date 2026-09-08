@@ -2,7 +2,7 @@
 
 namespace App\RSpade\Core\Naming;
 
-use App\RSpade\Core\Manifest\_Manifest_Scanner_Helper;
+use App\RSpade\Core\Manifest\Manifest_Scanner;
 
 /**
  * THE ONE ANSWER TO "WHERE IS THIS FILE".
@@ -22,6 +22,8 @@ use App\RSpade\Core\Manifest\_Manifest_Scanner_Helper;
  *   absolute()     manifest key form -> a real path on disk
  *   is_framework() the file is framework property (app/RSpade/...)
  *   is_application() the file is application code (rsx/...)
+ *   under_framework() / under_application()  the same tests, narrowed to a SUBTREE
+ *   framework_subpath() / application_subpath()  the part of the path inside that tree
  *   is_test_tree() the file is under one of the three test trees
  *
  * Every predicate accepts BOTH spellings - relative, absolute, and the `system/rsx`
@@ -122,7 +124,28 @@ class Rsx_Paths
      */
     public static function is_framework(string $path): bool
     {
-        return static::__has_segment_prefix($path, static::FRAMEWORK_PREFIX);
+        return static::under_framework($path);
+    }
+
+    /**
+     * Is this framework property, and (when $subtree is given) under `app/RSpade/<subtree>`?
+     *
+     * $subtree is spelled WITHOUT the tree prefix and with no leading slash - `Sys/`,
+     * `Commands/`, `CodeQuality/Rules/`. A trailing slash is optional; it is added, because
+     * the test is over whole segments and `Sys` must not match `Systems`.
+     */
+    public static function under_framework(string $path, string $subtree = ''): bool
+    {
+        return static::__has_segment_prefix($path, static::FRAMEWORK_PREFIX . static::__subtree($subtree));
+    }
+
+    /**
+     * The part of $path INSIDE the framework tree (`Core/Rsx.php` for
+     * `app/RSpade/Core/Rsx.php`), or null when the path is not framework property.
+     */
+    public static function framework_subpath(string $path): ?string
+    {
+        return static::__subpath($path, static::FRAMEWORK_PREFIX);
     }
 
     /**
@@ -134,7 +157,27 @@ class Rsx_Paths
      */
     public static function is_application(string $path): bool
     {
-        return static::__has_segment_prefix($path, static::APPLICATION_PREFIX);
+        return static::under_application($path);
+    }
+
+    /**
+     * Is this application code, and (when $subtree is given) under `rsx/<subtree>`?
+     *
+     * $subtree is spelled WITHOUT the `rsx/` prefix - `app/`, `theme/components/`,
+     * `views/`. Segment-wise, so `app` never matches `apple`.
+     */
+    public static function under_application(string $path, string $subtree = ''): bool
+    {
+        return static::__has_segment_prefix($path, static::APPLICATION_PREFIX . static::__subtree($subtree));
+    }
+
+    /**
+     * The part of $path INSIDE the application tree (`app/frontend/x.php` for
+     * `rsx/app/frontend/x.php`), or null when the path is not application code.
+     */
+    public static function application_subpath(string $path): ?string
+    {
+        return static::__subpath($path, static::APPLICATION_PREFIX);
     }
 
     /**
@@ -148,13 +191,42 @@ class Rsx_Paths
      */
     public static function is_test_tree(string $path): bool
     {
-        foreach (_Manifest_Scanner_Helper::TEST_SCAN_DIRECTORIES as $tree) {
+        foreach (Manifest_Scanner::TEST_SCAN_DIRECTORIES as $tree) {
             if (static::__has_segment_prefix($path, rtrim($tree, '/') . '/')) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * A subtree argument normalized to `x/y/` (empty stays empty).
+     */
+    private static function __subtree(string $subtree): string
+    {
+        $subtree = ltrim($subtree, '/');
+
+        return $subtree === '' ? '' : rtrim($subtree, '/') . '/';
+    }
+
+    /**
+     * The remainder of $path after $prefix, in either spelling, or null when $path is not
+     * under it.
+     */
+    private static function __subpath(string $path, string $prefix): ?string
+    {
+        if (str_starts_with($path, $prefix)) {
+            return substr($path, strlen($prefix));
+        }
+
+        $position = strpos($path, '/' . $prefix);
+
+        if ($position === false) {
+            return null;
+        }
+
+        return substr($path, $position + strlen($prefix) + 1);
     }
 
     /**

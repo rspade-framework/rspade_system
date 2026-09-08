@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Integrations\Scss;
 
+use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\Core\Bundle\BundleProcessor_Abstract;
 use App\RSpade\Integrations\Scss\Scss_Compiler;
 
@@ -412,19 +413,16 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
     }
     
     /**
-     * Remove comments from SCSS content to avoid false positives in validation
-     * 
+     * Blank the comments in SCSS content, to avoid false positives in validation.
+     *
+     * One implementation, in FileSanitizer: line-preserving, quote-aware, and it steps over
+     * an unquoted `url(https://...)` rather than reading its `//` as a comment opener.
+     *
      * @param string $content The SCSS content
-     * @return string The content without comments
+     * @return string The content with comment bodies blanked
      */
     protected static function __remove_scss_comments(string $content): string
     {
-        // Remove single-line comments (// ...)
-        $content = preg_replace('#//.*?$#m', '', $content);
-        
-        // Remove multi-line comments (/* ... */)
-        $content = preg_replace('#/\*.*?\*/#s', '', $content);
-        
-        return $content;
+        return FileSanitizer::blank_scss_comments($content);
     }
 }

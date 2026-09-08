@@ -70,6 +70,15 @@ class ModelTable_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Check for protected $table property
         if (!preg_match('/protected\s+\$table\s*=\s*[\'"]([^\'"]+)[\'"]\s*;/', $processed_contents, $match)) {
+            // THE FILE IS THE FAST PATH, NOT THE ANSWER. An override of a split framework
+            // model declares only what it changes - `class X_Model extends X_Model_Abstract`
+            // with the table, the enums and everything else on the base - so a $table this
+            // file does not declare is not a $table the model lacks. Walk the lineage and
+            // ask whether an ANCESTOR declares it before reporting anything.
+            if ($this->lineage_declares_property($class_name, 'table', 'Rsx_Model_Abstract')) {
+                return;
+            }
+
             // Find class definition line
             $class_line = 1;
             foreach ($lines as $i => $line) {

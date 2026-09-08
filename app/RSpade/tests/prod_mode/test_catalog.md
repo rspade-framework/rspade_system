@@ -104,6 +104,17 @@ Real node/Terser RPC round-trip; server force-restarted before, stopped after.
 | CON-01 | strip flag adds pure_funcs -> console_debug( call site removed | asset | minify with strip=true | call site gone, side-effect code kept | implemented | 2026-07-15 |
 | CON-01b | no strip flag (debug builds) keeps console_debug( | asset | minify with strip=false | call site retained | implemented | 2026-07-15 |
 
+## Bundle emission order (`php/Bundle_Emission_Order_Test.php`)
+
+The bundle is resolved from the manifest - an application module bundle that has been
+compiled and whose include list has at least two directories emitting JS classes - and the
+classes compared are found by SHAPE, so nothing here names an application class or bundle.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| EMIT-01 | The eval chain a module-scope model reference depends on holds: Rsx_Js_Model -> model stub -> concrete alias -> a class from a LATER include directory | php | newest compiled app JS of a qualifying application bundle | the four line numbers strictly increasing | implemented | 2026-09-08 |
+| EMIT-02 | An EARLIER include directory's class precedes a later one's - declared include order IS eval order | php | the same bundle's first and last emitting include directories | first < last | implemented | 2026-09-08 |
+
 ## Deferred / planned (later batches)
 
 | ID | Purpose | Type | Status | Last updated |

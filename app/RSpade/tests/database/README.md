@@ -40,3 +40,19 @@ Nothing in this concern is application-facing except through the model surface.
 | `mergeCasts()` stays per instance; two classes on different tables keep separate cast maps | php | implemented (`Model_Attribute_Read_Test`) |
 | Enum magic reads (`field__label`/`__constant`/custom, `isset()`, the instance and static lookup forms) | php | implemented (`Model_Attribute_Read_Test`) |
 | A `_`-prefixed system column reads back through the slow path and stays out of `toArray()` | php | implemented (`Model_Attribute_Read_Test`, own fixture table) |
+
+## Fixture models
+
+Two fixture models on two fixture tables, created in `Model_Attribute_Read_Test::setup()`
+and dropped in its `teardown()`:
+
+| Fixture | Table | Why it exists |
+|---|---|---|
+| `System_Column_Fixture_Model` | `model_attribute_read_fixtures` | the only `_`-prefixed SYSTEM column in the tree, plus one enum column with a custom property |
+| `Attribute_Read_Enum_Fixture_Model` | `model_attribute_read_enum_fixtures` | a SECOND enum map, on a DIFFERENT table - the per-class and per-class+column memos cannot be proved unshared with one model |
+
+The CTI fixtures the `detail_tables` concern owns are NOT usable for a length or cast
+assertion: those answers come from the manifest's column map, which is built from the live
+schema at manifest-build time, and a table created during the run was not there to be seen.
+Where a schema-derived answer needs a subject the framework does not declare (a CTI base, a
+DATE column), the test DERIVES one from the manifest and skips when the application has none.

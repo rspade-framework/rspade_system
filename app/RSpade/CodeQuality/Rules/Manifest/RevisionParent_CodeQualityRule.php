@@ -160,13 +160,30 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function evaluate_file(string $abs_file, string $class_name): void
     {
+        // THE CHEAP QUESTION FIRST. #[Revision_Parent] is rare - a handful of methods in a
+        // whole tree - and the member summary answers "does this class carry one anywhere"
+        // without the rule ever holding an AST. Only a class that does carry one pays for
+        // the walk below, which needs real nodes to find the belongsTo call.
+        $members = $this->source()->declared_members($abs_file, $class_name);
+        $annotated = [];
+
+        foreach ($members['methods'] as $key => $method) {
+            if (isset($method['attributes']['revision_parent'])) {
+                $annotated[$key] = true;
+            }
+        }
+
+        if (empty($annotated)) {
+            return;
+        }
+
         $class_node = $this->find_class_node($abs_file, $class_name);
         if ($class_node === null) {
             return;
         }
 
         $contents = $this->source()->content($abs_file);
-        if ($contents === false) {
+        if ($contents === '') {
             return;
         }
 
@@ -179,10 +196,10 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         $lines = explode("\n", $contents);
-        $declares_revisions = $this->declares_revisions_in_node($class_node);
+        $declares_revisions = $this->class_summary_declares_revisions($members);
 
         foreach ($class_node->getMethods() as $method) {
-            if (!$this->method_has_revision_parent($method)) {
+            if (!isset($annotated[strtolower($method->name->toString())])) {
                 continue;
             }
 
@@ -296,24 +313,6 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Whether a method carries #[Revision_Parent] (bare or namespaced).
-     */
-    private function method_has_revision_parent(Node\Stmt\ClassMethod $method): bool
-    {
-        foreach ($method->attrGroups as $group) {
-            foreach ($group->attrs as $attribute) {
-                $parts = explode('\\', $attribute->name->toString());
-
-                if (end($parts) === 'Revision_Parent') {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * The `$this->belongsTo(...)` call inside a method, or null when there is none.
      */
     private function find_belongs_to(Node\Stmt\ClassMethod $method): ?Node\Expr\MethodCall
@@ -344,28 +343,13 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Whether a class node declares `$revisions = true`.
-     */
-    private function declares_revisions_in_node(Node\Stmt\ClassLike $class_node): bool
-    {
-        foreach ($class_node->getProperties() as $property) {
-            foreach ($property->props as $prop) {
-                if ($prop->name->toString() !== 'revisions') {
-                    continue;
-                }
-
-                return $prop->default instanceof Node\Expr\ConstFetch
-                    && strcasecmp($prop->default->name->toString(), 'true') === 0;
-            }
-        }
-
-        return false;
-    }
-
-    /**
      * Whether a SIMPLE class name declares `$revisions = true`, climbing its manifest-visible
      * lineage until a class declares the property at all. Null when the class cannot be
      * located or parsed - the rule then declines to judge.
+     *
+     * Answered from Source_Cache::declared_members(): the property's LITERAL default is a
+     * field of the summary, so an ancestor is summarized once for the whole pass instead of
+     * re-parsed by every rule that asks about it.
      */
     private function class_declares_revisions(string $class_name): ?bool
     {
@@ -388,28 +372,29 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
                 continue;
             }
 
-            $node = $this->find_class_node($file, $name);
-            if ($node === null) {
+            $members = $this->source()->declared_members($file, $name);
+
+            if (empty($members['methods']) && empty($members['properties'])) {
                 continue;
             }
 
             $located = true;
 
-            foreach ($node->getProperties() as $property) {
-                foreach ($property->props as $prop) {
-                    if ($prop->name->toString() !== 'revisions') {
-                        continue;
-                    }
-
-                    return $prop->default instanceof Node\Expr\ConstFetch
-                        && strcasecmp($prop->default->name->toString(), 'true') === 0;
-                }
+            if (isset($members['properties']['revisions'])) {
+                return $members['properties']['revisions']['default'] === true;
             }
         }
 
-        // Located, and nothing in the lineage declares the property: it inherits the base's
-        // `false`, which is a definite answer.
         return $located ? false : null;
+    }
+
+    /**
+     * Whether a class SUMMARY declares `$revisions = true`.
+     */
+    private function class_summary_declares_revisions(array $members): bool
+    {
+        return isset($members['properties']['revisions'])
+            && $members['properties']['revisions']['default'] === true;
     }
 
     /**

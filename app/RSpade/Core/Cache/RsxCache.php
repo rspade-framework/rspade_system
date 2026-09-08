@@ -66,7 +66,7 @@ require_once __DIR__ . '/../../helpers.php';
  *     Model_ManifestSupport         '<model file hash>__<hash of every migration file>'
  *                                   - the column map, which is a function of the model file
  *                                     and of the schema, and of nothing else
- *     _Manifest_Builder_Helper      a stat fingerprint of the framework subtrees the
+ *     Manifest_Indexer      a stat fingerprint of the framework subtrees the
  *                                   manifest never indexes - their class names
  *
  *   A persistent entry has no expiry by default and is never flushed by clear(); an entry

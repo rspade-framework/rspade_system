@@ -2,74 +2,35 @@
 
 namespace App\RSpade\Core\Models;
 
-use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
-use App\RSpade\Core\Models\Country_Model;
+use App\RSpade\Core\Models\Region_Model_Abstract;
 
 /**
- * RSX:USE
- * Region_Model - ISO 3166-2 subdivision data (states, provinces, territories)
+ * Region_Model - ISO 3166-2 subdivision data (states, provinces, territories).
  *
- * Represents geographic subdivisions with their ISO codes and names.
- * Data populated from sokil/php-isocodes via rsx:seed:geographic-data command.
+ * THIS FILE IS A SHELL, AND THAT IS ITS ENTIRE JOB. Every member lives on
+ * Region_Model_Abstract (`Region_Model_Abstract.php`, beside this file); this class exists
+ * so that an application can REPLACE it without holding a copy of the implementation.
+ *
+ * TO CUSTOMIZE IT, declare your own class of the same name under rsx/models/,
+ * extending the base:
+ *
+ *     namespace Rsx\Models;
+ *
+ *     class Region_Model extends Region_Model_Abstract
+ *     {
+ *         // only the members you change
+ *     }
+ *
+ * The manifest archives this file as Region_Model.php.upstream, your class becomes
+ * Region_Model for the whole tree, and it keeps inheriting everything the framework
+ * adds to the base from then on - so your override drifts by exactly the members you
+ * declared and no others. A member the base marks #[Replaceable] is replaced outright;
+ * any other override calls parent:: (PHP-PARENT-CHAIN-01). Copying the base's
+ * implementation into your class instead is a second implementation of a class the
+ * framework keeps developing, and the manifest refuses it by name.
+ *
+ * See: php artisan rsx:man class_override
  */
-/**
- * _AUTO_GENERATED_ Database type hints - do not edit manually
- * Table: regions
- *
- * @property int $id
- * @property string $code
- * @property string $country_alpha2
- * @property string $name
- * @property string $type
- * @property int $enabled
- * @property string $created_at
- * @property string $updated_at
- * @property int $created_by_id
- * @property int $created_by_type
- * @property int $updated_by_id
- * @property int $updated_by_type
- *
- * @mixin \Eloquent
- */
-class Region_Model extends Rsx_Model_Abstract
-                     {
-    public static $enums = [];
-
-    protected $table = 'regions';
-
-    protected $casts = [
-        'enabled' => 'boolean',
-    ];
-
-    /**
-     * Get the country this region belongs to
-     */
-    public function country()
-    {
-        return $this->belongsTo(Country_Model::class, 'country_alpha2', 'alpha2');
-    }
-
-    /**
-     * Scope to only enabled regions
-     */
-    public function scopeEnabled($query)
-    {
-        return $query->where('enabled', true);
-    }
-
-    /**
-     * Scope to regions for a specific country
-     */
-    public function scopeForCountry($query, string $country_alpha2)
-    {
-        return $query->where('country_alpha2', $country_alpha2);
-    }
-
-    /**
-     * Get region by code
-     */
-    public static function findByCode(string $code): ?self
-    {
-        return static::where('code', $code)->first();
-    }
+class Region_Model extends Region_Model_Abstract
+{
 }

@@ -63,8 +63,9 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
                 in_array('is_sysadmin', Auth_Gates::surface_gates($row['surface']), true),
                 "{$pattern} bootstrap is not gated on is_sysadmin"
             );
+            // The ACTION's own gates are its own auth surface, reached through 'target'.
             static::__assert_true(
-                in_array('is_sysadmin', $row['auth_action'], true),
+                in_array('is_sysadmin', Auth_Gates::surface_gates($row['target']), true),
                 "{$pattern} action is not gated on is_sysadmin"
             );
             static::__assert_equals(

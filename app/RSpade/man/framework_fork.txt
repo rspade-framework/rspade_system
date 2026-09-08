@@ -56,10 +56,11 @@ For most developers, Laravel's existence is transparent. You work in
 EVERY UPDATE (see rsx:man rsx_upstream).
 
 **There is exactly one supported way to change framework behaviour without
-forking: a CLASS OVERRIDE in `rsx/`** (rsx:man class_override). Copy the
-class into `rsx/` under the same name; the manifest uses yours, every
-reference to the original FQCN keeps resolving, and it survives every update
-because it lives outside the submodule.
+forking: a CLASS OVERRIDE in `rsx/`** (rsx:man class_override). Declare a
+class of the same simple name in `rsx/` - a core MODEL by EXTENDING its
+`<Name>_Model_Abstract` base, every other framework class by COPYING it. The
+manifest uses yours, every reference to the original FQCN keeps resolving,
+and it survives every update because it lives outside the submodule.
 
 There is no longer a middle tier. Under the vendored model, edits to
 `system/` outside `system/app/RSpade/` were preserved by a three-way merge -

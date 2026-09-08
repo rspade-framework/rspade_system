@@ -35,6 +35,17 @@
 | CO-H01 | Health is OK when no override is active | php | empty manifest file list | OK | implemented | 2026-09-07 |
 | CO-H02 | A drifting override WARNs, counts the missing members and names them; never FAILs | php | synthetic pair + fixture files | WARN, "1 member(s)", rsx:check in the remediation | implemented | 2026-09-07 |
 | CO-H03 | An override that carries everything is reported OK and still counted | php | synthetic pair + fixture files | OK, "1 class override(s) active" | implemented | 2026-09-07 |
+| CO-A04 | An override of a SPLIT framework class that does not extend its base is a manifest-build FATAL naming the base | php | synthetic file list: framework `X extends X_Abstract`, rsx/ `X extends Rsx_Site_Model_Abstract` | RuntimeException naming X_Abstract, the override file and rsx:man class_override; nothing archived | implemented | 2026-09-08 |
+| CO-A05 | An override of a split class that DOES extend the base is archived normally | php | both extend X_Abstract | framework shell renamed to .upstream, notice names the override | implemented | 2026-09-08 |
+| CO-A06 | Extending the shell itself is refused, and the refusal tells a split-class developer to extend the base | php | rsx/ `X extends X` over a split framework `X extends X_Abstract` | message contains the split recipe and `extends X_Abstract` | implemented | 2026-09-08 |
+| CO-A07 | Extending a NON-split framework class still gets the clone-and-replace recipe | php | rsx/ `X extends X` over framework `X extends Rsx_Controller_Abstract` | message contains "Copy the framework file to your rsx/ directory" | implemented | 2026-09-08 |
+| CO-D10 | A split pair (archived shell + override sharing the base) reports NO drift - the override inherits every member | php | fixture pair both `extends X_Abstract` | missing 0, added 0 | implemented | 2026-09-08 |
+| CO-D11 | A namespaced/qualified `extends` names the same base | php | override extends `\App\RSpade\Fixture\X_Abstract` | missing 0 | implemented | 2026-09-08 |
+| CO-D12 | A clone of a NON-split class is still compared in full | php | fixture pair, no extends, one member dropped | 1 violation | implemented | 2026-09-08 |
+| CO-D13 | `declared_parent()` answers the SIMPLE name and ignores comments and strings | php | source with decoy comment/string plus a real qualified extends | 'Right_Parent'; null when nothing is extended | implemented | 2026-09-08 |
+| CO-S01 | Every framework concrete model extends `<Same>_Abstract` declared in the same directory | php | `php_get_extending('Rsx_Model_Abstract')`, framework files, minus `Session` and fixtures | no offenders | implemented (RED until the split lands) | 2026-09-08 |
+| CO-S02 | A framework model's concrete shell declares no methods, properties or constants of its own | php | the same set; reflection records plus a token pass for class-body `const` | no offenders | implemented (RED until the split lands) | 2026-09-08 |
+| CO-S03 | Every split base has exactly one concrete - the framework shell, or the application class that replaced it | php | bases derived as `<concrete>_Abstract`; concretes framework AND application | exactly one per base | implemented | 2026-09-08 |
 
 CO-A01..A03 (`Override_Archive_Guard_Test`) come from a downstream field report on 2026-08-25. A new
 framework-core JS class tripped a scan rule on its first scan while the index still carried the
@@ -51,3 +62,11 @@ app copy: every uploaded document silently failed to queue a render (6,347 blobs
 framework's own preview controller answered 500 on every Office document because the loaded class
 did not define the method it called. Nothing compared the two files. The rule is that comparison,
 and the health row is the operator-facing view of it on a box that has just taken a pull.
+
+CO-S01..S03 (`Core_Model_Split_Test`) are B-109 as a structural assertion. The 2026-09-07 field
+report found five downstream overrides of core models drifted by hundreds of lines, one of them
+missing members core later added and CALLED. The answer is that a core model is an abstract base
+plus a three-line shell, so an application's override EXTENDS the base and its drift surface is
+only what it declared. These three tests are that shape stated over the real tree; CO-A04..A07
+are the manifest refusal that stops a clone coming back in by the side door, and CO-D10..D13 are
+the drift analyzer knowing a split pair has nothing to compare.

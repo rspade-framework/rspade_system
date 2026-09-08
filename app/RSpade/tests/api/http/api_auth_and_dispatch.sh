@@ -10,6 +10,11 @@ TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # This test mints its own temporary API key (bootstrapping the framework), exercises the
 # pipeline, and cleans up every row it created via a trap.
 #
+# EVERY ENDPOINT IT CALLS IS THE FRAMEWORK'S OWN - /api/v1/me (the identity endpoint,
+# which declares no parameters, so any query parameter is an undeclared one) and
+# /api/v1/files (the upload endpoint, the framework's only POST). No application
+# endpoint is named, so this runs in any install.
+#
 # Loopback requests are exempt from the dev hostname guard, so localhost works without
 # extra host setup.
 
@@ -47,7 +52,7 @@ fail() {
 # Setup - verify the server, snapshot the log id watermark, mint a key.
 # ---------------------------------------------------------------------------
 echo "[SETUP] Verifying dev server..." >&2
-if ! curl -s -o /dev/null --connect-timeout 3 "$BASE/api/v1/contacts"; then
+if ! curl -s -o /dev/null --connect-timeout 3 "$BASE/api/v1/me"; then
     echo "SKIP: $TEST_NAME - dev server not reachable on $BASE"
     exit 0
 fi
@@ -85,7 +90,7 @@ echo "[TEST] Running API dispatch assertions..." >&2
 # Test 1: Unauthenticated -> 401 with error shape and NO Set-Cookie
 # ---------------------------------------------------------------------------
 echo "[TEST] 1. Unauthenticated request -> 401, no cookie..." >&2
-headers=$(curl -s -D - -o /tmp/api_test_401_body.txt -w '' "$BASE/api/v1/contacts")
+headers=$(curl -s -D - -o /tmp/api_test_401_body.txt -w '' "$BASE/api/v1/me")
 status=$(echo "$headers" | grep -iE '^HTTP/' | tail -1 | awk '{print $2}')
 [ "$status" = "401" ] || fail "unauth expected 401, got $status"
 if echo "$headers" | grep -qi '^set-cookie'; then
@@ -100,13 +105,13 @@ echo "[TEST] 1. OK" >&2
 # Test 2: Authenticated -> 200 bare JSON (has items, no envelope), no Set-Cookie
 # ---------------------------------------------------------------------------
 echo "[TEST] 2. Authenticated request -> 200 bare JSON..." >&2
-headers=$(curl -s -D - -o /tmp/api_test_200_body.txt -H "Authorization: Bearer $KEY" "$BASE/api/v1/contacts")
+headers=$(curl -s -D - -o /tmp/api_test_200_body.txt -H "Authorization: Bearer $KEY" "$BASE/api/v1/me")
 status=$(echo "$headers" | grep -iE '^HTTP/' | tail -1 | awk '{print $2}')
 [ "$status" = "200" ] || fail "authed expected 200, got $status"
 if echo "$headers" | grep -qi '^set-cookie'; then
     fail "authed response leaked a Set-Cookie header"
 fi
-grep -q '"items"' /tmp/api_test_200_body.txt || fail "200 body missing items key"
+grep -q '"user_id"' /tmp/api_test_200_body.txt || fail "200 body missing user_id key"
 if grep -q '"success"' /tmp/api_test_200_body.txt; then
     fail "200 body carries a {success} envelope (must be bare JSON)"
 fi
@@ -117,7 +122,7 @@ echo "[TEST] 2. OK" >&2
 # Test 3: PUT -> 405
 # ---------------------------------------------------------------------------
 echo "[TEST] 3. PUT -> 405..." >&2
-status=$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $KEY" "$BASE/api/v1/contacts")
+status=$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $KEY" "$BASE/api/v1/me")
 [ "$status" = "405" ] || fail "PUT expected 405, got $status"
 echo "[TEST] 3. OK" >&2
 
@@ -125,7 +130,7 @@ echo "[TEST] 3. OK" >&2
 # Test 4: HEAD -> 405 (API deliberately diverges from the main dispatcher)
 # ---------------------------------------------------------------------------
 echo "[TEST] 4. HEAD -> 405..." >&2
-status=$(curl -s -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $KEY" "$BASE/api/v1/contacts")
+status=$(curl -s -o /dev/null -w '%{http_code}' -I -H "Authorization: Bearer $KEY" "$BASE/api/v1/me")
 [ "$status" = "405" ] || fail "HEAD expected 405, got $status"
 echo "[TEST] 4. OK" >&2
 
@@ -144,8 +149,8 @@ echo "[TEST] 5. OK" >&2
 # Test 6: Undeclared parameter -> 422 with fields
 # ---------------------------------------------------------------------------
 echo "[TEST] 6. Undeclared param -> 422..." >&2
-curl -s -o /tmp/api_test_422_body.txt -w '' -H "Authorization: Bearer $KEY" "$BASE/api/v1/contacts?bogus=1"
-status=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" "$BASE/api/v1/contacts?bogus=1")
+curl -s -o /tmp/api_test_422_body.txt -w '' -H "Authorization: Bearer $KEY" "$BASE/api/v1/me?bogus=1"
+status=$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $KEY" "$BASE/api/v1/me?bogus=1")
 [ "$status" = "422" ] || fail "bogus param expected 422, got $status"
 grep -q '"fields"' /tmp/api_test_422_body.txt || fail "422 body missing fields"
 grep -q 'bogus' /tmp/api_test_422_body.txt || fail "422 body does not name the bogus field"
@@ -157,9 +162,9 @@ echo "[TEST] 6. OK" >&2
 # ---------------------------------------------------------------------------
 echo "[TEST] 7. Invalid JSON body -> 400..." >&2
 curl -s -o /tmp/api_test_400_body.txt -w '' -X POST -H "Authorization: Bearer $KEY" \
-    -H 'Content-Type: application/json' --data '{bad json' "$BASE/api/v1/contacts/create"
+    -H 'Content-Type: application/json' --data '{bad json' "$BASE/api/v1/files"
 status=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $KEY" \
-    -H 'Content-Type: application/json' --data '{bad json' "$BASE/api/v1/contacts/create")
+    -H 'Content-Type: application/json' --data '{bad json' "$BASE/api/v1/files")
 [ "$status" = "400" ] || fail "invalid JSON expected 400, got $status"
 grep -q '"invalid_json"' /tmp/api_test_400_body.txt || fail "400 body missing invalid_json code"
 rm -f /tmp/api_test_400_body.txt
@@ -170,7 +175,7 @@ echo "[TEST] 7. OK" >&2
 # ---------------------------------------------------------------------------
 echo "[TEST] 8. Authed call does not create a session..." >&2
 sessions_before=$(dev_db "SELECT COUNT(*) FROM _sessions")
-curl -s -o /dev/null -H "Authorization: Bearer $KEY" "$BASE/api/v1/contacts"
+curl -s -o /dev/null -H "Authorization: Bearer $KEY" "$BASE/api/v1/me"
 sessions_after=$(dev_db "SELECT COUNT(*) FROM _sessions")
 [ "$sessions_before" = "$sessions_after" ] || fail "session count changed ($sessions_before -> $sessions_after)"
 echo "[TEST] 8. OK" >&2
@@ -179,7 +184,7 @@ echo "[TEST] 8. OK" >&2
 # Test 9: Cookie + Bearer -> 200 using the Bearer identity, no Set-Cookie
 # ---------------------------------------------------------------------------
 echo "[TEST] 9. Cookie + Bearer -> 200, no Set-Cookie..." >&2
-headers=$(curl -s -D - -o /dev/null -b 'rsx=bogus_session_token' -H "Authorization: Bearer $KEY" "$BASE/api/v1/contacts")
+headers=$(curl -s -D - -o /dev/null -b 'rsx=bogus_session_token' -H "Authorization: Bearer $KEY" "$BASE/api/v1/me")
 status=$(echo "$headers" | grep -iE '^HTTP/' | tail -1 | awk '{print $2}')
 [ "$status" = "200" ] || fail "cookie+bearer expected 200, got $status"
 if echo "$headers" | grep -qi '^set-cookie'; then

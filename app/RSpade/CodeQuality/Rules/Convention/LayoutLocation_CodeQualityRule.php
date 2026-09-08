@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Convention;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 class LayoutLocation_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -42,12 +43,12 @@ class LayoutLocation_CodeQualityRule extends CodeQualityRule_Abstract
         $relative_path = str_replace(base_path() . '/', '', $file_path);
 
         // Only check layouts in rsx/ directory (not app/RSpade)
-        if (!str_starts_with($relative_path, 'rsx/')) {
+        if (!Rsx_Paths::is_application($relative_path)) {
             return;
         }
 
         // Check if it's in rsx/app directory
-        if (!str_starts_with($relative_path, 'rsx/app/')) {
+        if (!Rsx_Paths::under_application($relative_path, 'app/')) {
             $this->add_violation(
                 $file_path,
                 0,
@@ -60,7 +61,7 @@ class LayoutLocation_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Count directory levels after rsx/app/
-        $after_app = substr($relative_path, strlen('rsx/app/'));
+        $after_app = substr((string) Rsx_Paths::application_subpath($relative_path), strlen('app/'));
         $parts = explode('/', $after_app);
 
         // Layout must be at least 2 levels deep: module/file.php

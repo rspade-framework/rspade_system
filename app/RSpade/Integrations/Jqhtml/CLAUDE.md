@@ -34,16 +34,19 @@ $compiler->compile_files($paths);
 ## Compilation Details
 - Uses `compileTemplate` from `@jqhtml/parser` directly (not CLI)
 - Always compiles in IIFE format with sourcemap support
-- Two derived-cache namespaces, one per layer: `jqhtml-parsed` (the parser's raw output,
-  written by `JqhtmlWebpackCompiler`) and `jqhtml-compiled` (that output wrapped for the
-  bundle, written by `Jqhtml_BundleProcessor` - and it IS the bundle's input file). The
-  parser VERSION is the variant on both.
+- ONE derived-cache namespace, `jqhtml`, with the LAYER carried in the variant:
+  `_parsed` (the parser's raw output, written by `JqhtmlWebpackCompiler`) and `_compiled`
+  (that output wrapped for the bundle, written by `Jqhtml_BundleProcessor` - and it IS the
+  bundle's input file). The parser VERSION rides in the same variant, after the layer, so an
+  upgrade misses both. The names are `JqhtmlWebpackCompiler::CACHE_NAMESPACE`,
+  `JqhtmlWebpackCompiler::PARSED_VARIANT` and `Jqhtml_BundleProcessor::COMPILED_VARIANT`; the
+  two layers key on the same template file, expire together and are swept together, which is
+  why they are one namespace rather than two.
 - Throws `Jqhtml_Exception_ViewException` for template errors with line/column info
 
 ## Cache Integration
 Cache checked before RPC call - only uncached or stale templates sent to server for compilation.
-Cache location: `storage/rsx-tmp/derived/jqhtml-parsed/` and
-`storage/rsx-tmp/derived/jqhtml-compiled/`, both through
+Cache location: `storage/rsx-tmp/derived/jqhtml/`, through
 `App\RSpade\Core\Cache\File_Content_Cache`. There is no private cleanup pass: the manifest
 build's Phase 7 sweep removes entries whose template (or parser version) is gone.
 

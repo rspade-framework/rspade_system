@@ -20,12 +20,18 @@ A rule receives a path, the contents and the manifest metadata, and says what is
    - Owns the incremental decision: `Validation_Ledger::has_passed("<ID>@<fingerprint>", hash)`
      before `check()`, `record_pass` after a clean one
    - Runs cross-file rules once, after the per-file pass, each gated on a fingerprint of its
-     `depends_on()` inputs stored under the pseudo-hash `deps:<hash>`
+     `depends_on()` inputs, recorded in the ledger's DERIVED slots (`deps`, plus `tdeps` under
+     a test run) - which the manifest prune does not govern, because a cross-file premise is
+     not a file hash and filing it as one had it deleted on every flush
 
 2. **Support/Source_Cache** (`Support/Source_Cache.php`)
    - The ONE reader, tokenizer and parser of a source file, per pass
-   - `content()` / `tokens()` / `ast()`, lazy and memoized, with a hard LRU entry bound so
-     peak memory tracks files IN FLIGHT rather than files in the tree
+   - `content()` / `tokens()` / `ast()` / `class_node()`, lazy and memoized, with a hard LRU
+     entry bound so peak memory tracks files IN FLIGHT rather than files in the tree
+   - `declared_members($path, $class)` is the AST-FREE per-class summary, and the ONE bucket
+     the LRU does not evict: it holds no nikic nodes, so it is proportional to the INDEX, which
+     is what the budget permits to grow. It is what stopped the four ancestry rules re-parsing
+     the whole tree one after another (5,212 ms -> 1,532 ms, for +4.1 MB of peak)
    - The manifest pass uses the BUILD's instance (`Manifest::build()->source_cache()`,
      capacity 16), which `Php_Fixer` reads through too
 
@@ -658,6 +664,17 @@ All original rule logic has been preserved exactly, ensuring no regression in co
 - **Caching**: Sanitized file contents are cached to avoid repeated processing
 - **Incremental Linting**: Files are only linted if changed since last check
 - **Efficient Scanning**: Smart directory traversal skips excluded paths
+- **Per-rule attribution is printed, not guessed**: the driver emits
+  `console_debug('MANIFEST', 'Cross-file rule <ID>: <n>ms')` for every cross-file rule it
+  runs, the same channel and shape the module pipeline uses. A cross-file rule is the most
+  expensive thing a build does, and this is how you learn which one:
+  `CONSOLE_DEBUG_FILTER=MANIFEST php artisan rsx:manifest:build`
+- **Where a rule's memo may live**: not a static property, not a directory of its own. A
+  per-file verdict goes in the `Validation_Ledger` (the driver writes it); a derived VALUE goes
+  in `RsxCache::get_persistent()`/`set_persistent()` keyed on a content hash. The BUILD-SCOPED
+  `RsxCache::get()`/`set()` is unusable at manifest time by construction - its key is prefixed
+  with `Manifest::get_build_key()`, which raises `shouldnt_happen()` before the manifest is
+  ready.
 
 ## Manifest-Time Checking
 
@@ -698,11 +715,15 @@ public function depends_on(): array
 }
 ```
 
-**A cross-file rule does NOT guard itself with a static flag.** The driver calls it exactly
-once. `DuplicateCaseFiles` is the cautionary tale: it was declared per-file, guarded itself
-with a static flag, and RESET that flag at the end of every call - so it rebuilt a map of the
-whole tree once per changed file, 18.5 seconds of a cold build spent answering the same
-question 1,400 times.
+**A cross-file rule needs no self-guard: the driver calls it exactly once per pass.**
+`DuplicateCaseFiles` is the cautionary tale: it was declared per-file, guarded itself with a
+static flag, and RESET that flag at the end of every call - so it rebuilt a map of the whole
+tree once per changed file, 18.5 seconds of a cold build spent answering the same question
+1,400 times. Seventeen cross-file rules still open `check()` with a never-reset
+`static $already_checked` from before `kind()` existed. It is inert belt-and-braces where the
+driver already guarantees one call, and it is WRONG in the one process that runs two passes
+(a build followed by `rsx:check`), where the second pass would be skipped. **Do not add one to
+a new rule**; the existing ones are a standing cleanup (backlog B-114).
 
 **When in doubt, `depends_on()` lists `files:<your own patterns>`.** An under-stated
 dependency is a rule that silently stops firing; an over-stated one only costs time.
@@ -774,7 +795,7 @@ The archetype is `Rsx_Actor_Model_Abstract::$actor_soft_deletes`: the declared s
 
 ### When a Manifest-Time Violation Fires: save-then-check + poison flag
 
-Manifest-time rules run AFTER the manifest is saved, and a violation keeps re-firing until the source is fixed. The full mechanism (save at `Manifest.php:1346`, check at `:1356`, `manifest_is_bad` poison flag forcing a full rebuild + re-fire on every subsequent load) is documented in `Core/Manifest/CLAUDE.md` (Code Quality Integration). In short: a `PHP-PARENT-CHAIN-01` violation aborts the build via `YoureDoingItWrongException`, sets the poison flag, and re-fires on every load — so a missing parent-call cannot be dodged by a no-op incremental pass; it stays broken until you add the `parent::` call or mark the parent `#[Replaceable]`.
+Manifest-time rules run AFTER the manifest is saved, and a violation keeps re-firing until the source is fixed. The full mechanism (`Manifest_Store::_save()` writes a clean index and clears the flag, then `Manifest_Indexer::_run_manifest_time_code_quality_checks()` runs the pass; the `manifest_is_bad` sidecar forces a full rebuild and a re-fire on every subsequent load) is documented in `Core/Manifest/CLAUDE.md` (Code Quality Integration). In short: a `PHP-PARENT-CHAIN-01` violation aborts the build via `YoureDoingItWrongException`, sets the poison flag, and re-fires on every load — so a missing parent-call cannot be dodged by a no-op incremental pass; it stays broken until you add the `parent::` call or mark the parent `#[Replaceable]`.
 
 ## Severity Levels
 

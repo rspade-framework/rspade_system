@@ -285,7 +285,7 @@ it is correct before the Sys tree exists; the fixtures are synthetic.
 | NAME-RESERVED-APP-CLEAN | an ordinary application name is untouched - the rule must not become a tax on rsx/ | php | fixture `rsx/models/widget_model.php` declaring `Widget_Model` | 0 violations | implemented | 2026-09-07 |
 | NAME-RESERVED-ROOT-OK | a prefixed name inside the framework-application tree is compliant | php | synthetic `app/RSpade/Sys/app/sys/_Sys_Controller.php` | 0 violations | implemented | 2026-09-07 |
 | NAME-RESERVED-ROOT-BARE | a BARE name inside that tree is the other direction of the rule, and the remediation names the prefixed spelling | php | synthetic `app/RSpade/Sys/app/sys/Sys_Controller.php` | 1 violation; suggestion contains `_Sys_Controller` | implemented | 2026-09-07 |
-| NAME-RESERVED-SCOPE | framework code OUTSIDE the Sys tree is governed by neither direction - the `_Manifest_*_Helper` classes are the standing proof | php | fixture `app/RSpade/Core/Manifest/_Manifest_Scanner_Helper.php` | 0 violations | implemented | 2026-09-07 |
+| NAME-RESERVED-SCOPE | framework code OUTSIDE the Sys tree is governed by neither direction - a `_`-prefixed framework class outside `Sys/` is legal | php | fixture `app/RSpade/Core/Manifest/_Framework_Internal_Example.php` | 0 violations | implemented | 2026-09-07 |
 
 ## NAME-RESERVED-02 - referencing a reserved framework name (Name_Reserved_Reference_Rule_Test)
 
@@ -364,3 +364,59 @@ handed to `check()` in memory - the rule never touches the filesystem.
 | TA1-COMMENT | a name written in a docblock is prose | php | fixture with `#[Auth('alpha','beta')]` inside a docblock | 0 violations | implemented | 2026-09-07 |
 | TA1-SCOPE | application code names application checks - that is what a Permission class is for | php | fixture at `rsx/app/frontend/clients/...` | 0 violations | implemented | 2026-09-07 |
 | TA1-OTHER-ATTRIBUTE | a neighbouring attribute's arguments are not check names | php | fixture with `#[Route('/fixture/path')]` above `#[Auth('public')]` | 0 violations | implemented | 2026-09-07 |
+
+## MODEL-TABLE-01 / MODEL-ENUMS-01 lineage (`Model_Table_Lineage_Rule_Test`)
+
+Both rules read one file and called "this file does not declare it" the same thing as "this
+model does not have it". A core model is a base plus a shell now, and an application's override
+of one declares only the members it changes - so the file-only reading turned the framework's own
+recommended shape into two findings telling the developer to copy declarations back out of the
+framework, which is exactly the frozen clone B-109 exists to prevent. The regex over the file
+stays as the fast path; when it misses, the rules walk the manifest `extends` chain.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MTL-INHERITED | an override of a split model that declares neither $table nor $enums passes both rules - the base declares them | php | fixture `class User_Model extends User_Model_Abstract` under rsx/ | 0 + 0 violations | implemented | 2026-09-08 |
+| MTL-STILL-FIRES | a model whose lineage declares neither is still two findings; Rsx_Model_Abstract's own default $enums does not count, or the rule would be retired everywhere at once | php | fixture `class Client_Model extends Rsx_Site_Model_Abstract`, empty body | 1 + 1 violations naming each property | implemented | 2026-09-08 |
+| MTL-FAST-PATH | a model that declares both in its own file passes without the lineage being consulted | php | fixture declaring $table and $enums | 0 + 0 violations | implemented | 2026-09-08 |
+
+## FILE-CASE-01 - filename case under rsx/ (`Filename_Case_Rule_Test`)
+
+The rule never opens a file: it reads the basename, the metadata the driver hands it, and
+the manifest's NAME indexes. Every path below is therefore synthetic and need not exist,
+and the one case that needs a name the manifest knows uses a FRAMEWORK class name, which
+is present in every install.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| FC-UPPER | an uppercase filename carrying no class name is a violation | php | `rsx/lib/Some_Notes.php`, no metadata | 1 violation | implemented | 2026-09-08 |
+| FC-PHP-CLASS | a PHP class file named for its class is clean | php | synthetic path + matching `class` metadata | 0 violations | implemented | 2026-09-08 |
+| FC-COMPANION | a companion sharing a REAL class's stem is clean | php | `rsx/app/probe/Rsx_Storage.scss`, no metadata | 0 violations (the framework JS class is in the name index) | implemented | 2026-09-08 |
+| FC-JS-CLASS | a JS class file named for its class is clean | php | synthetic path + matching `class` metadata | 0 violations | implemented | 2026-09-08 |
+| FC-JQHTML | a jqhtml file named for its component is clean | php | synthetic path + matching `id` metadata | 0 violations | implemented | 2026-09-08 |
+| FC-UNKNOWN-STEM | a stem in no index is still a violation, whatever class the file declares | php | `rsx/lib/Zz_No_Such_Class.js` + a DIFFERENT `class` | 1 violation | implemented | 2026-09-08 |
+| FC-FRAMEWORK | framework files are out of scope | php | a path under `system/app/RSpade` | 0 violations | implemented | 2026-09-08 |
+
+## Framework-suite portability (`Framework_Test_Portability_Test`)
+
+A structural sweep in the shape of `Rule_Private_Cache_Test`, not a code-quality rule: it
+answers a question about one directory and about framework core, and would cost something on
+every check of every file if it were a rule. NOTHING IS WHITELISTED - a test that wants an
+exception wants a fixture.
+
+The boundary is stated in the class docblock: TABLE names, URL paths and BUNDLE names are NOT
+guarded, because none of them has an index to resolve against and a regex over plausible
+spellings would flag the framework's own. That half of the rule lives in `tests/CLAUDE.md`
+(PORTABILITY) and in review.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| FTP-CORE-CONST | framework CORE names no role or permission constant - the mistake that made `rsx:test` itself unrunnable in an application with different roles | php | every `.php` under `app/RSpade` outside `tests/`, comments blanked | 0 hits | implemented | 2026-09-08 |
+| FTP-REFERENCES | every simple name a framework test file references resolves (php / js / jqhtml) to a file OUTSIDE `rsx/` | php | `referenced_simple_names` of every manifest record under `app/RSpade/tests/` | 0 hits; a class OVERRIDE (proved by its `.php.upstream` archive) is not one | implemented | 2026-09-08 |
+| FTP-TEST-CONST | no framework test names a role or permission constant | php | every `.php`/`.js`/`.sh` under `tests/`, comments blanked | 0 hits | implemented | 2026-09-08 |
+| FTP-QUOTED | no framework test embeds an application class name as a STRING - it resolves at runtime, so FTP-REFERENCES cannot see it | php | the same files, minus `tests/code_quality` (whose rule fixtures feed application names to a rule as synthetic INPUT) | 0 hits | implemented | 2026-09-08 |
+
+The constant set is DERIVED, never listed: the role names come from
+`User_Model::$enums['role_id'][*]['constant']` (plus the same for `Portal_User_Model` and
+`Login_User_Model`), and `PERM_` is matched as a prefix because the manifest indexes no class
+constants. A hardcoded list here would be the very mistake the test exists to catch.

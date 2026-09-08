@@ -242,9 +242,10 @@ ADDING YOUR OWN ACTOR
 2. Model: extend the matching abstract; implement the two methods.
 3. That is all. Soft deletes, the audit pairs, and <Record_Author> already work.
 
-If you OVERRIDE one of the three framework actors (the standard class-override pattern -
-a same-named class in rsx/models/ replacing the framework file), your replacement MUST
-extend the same actor abstract. ACTOR-01 fails the manifest build if it does not, because
+If you OVERRIDE one of the three framework actors (a same-named class in rsx/models/),
+extend that actor's OWN base - User_Model_Abstract, Login_User_Model_Abstract,
+Portal_User_Model_Abstract - which already extends the right actor abstract. A base picked
+by hand instead drops the actor layer, and ACTOR-01 fails the manifest build, because
 the stamp will still write that class name into audit columns and every authorship
 display would then die at read time, far from the change.
 

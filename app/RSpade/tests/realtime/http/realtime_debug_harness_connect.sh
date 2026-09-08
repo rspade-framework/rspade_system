@@ -24,7 +24,7 @@ if ! grep -q '^REALTIME_ENABLED=true' .env 2>/dev/null; then
     exit 0
 fi
 
-result="$(timeout 180 php artisan rsx:debug /dashboard --user=1 \
+result="$(timeout 180 php artisan rsx:debug /_sys --user=1 \
     --eval="Rsx_Realtime._connect(); await sleep(2000); return JSON.stringify({state: Rsx_Realtime._state, url: Rsx_Realtime._connect_url()})" 2>&1 \
     | grep -o '{"state":[^}]*}')"
 

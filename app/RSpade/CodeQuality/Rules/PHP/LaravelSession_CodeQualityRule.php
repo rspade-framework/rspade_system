@@ -3,6 +3,8 @@
 namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\CodeQuality\Support\FileSanitizer;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 class LaravelSession_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -37,7 +39,7 @@ class LaravelSession_CodeQualityRule extends CodeQualityRule_Abstract
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         // Only check files in rsx/ directory
-        if (!str_contains($file_path, '/rsx/') && !str_starts_with($file_path, 'rsx/')) {
+        if (!Rsx_Paths::is_application($file_path)) {
             return;
         }
 
@@ -62,8 +64,7 @@ class LaravelSession_CodeQualityRule extends CodeQualityRule_Abstract
 
             // Skip lines that contain session() only in strings or comments
             $line_without_strings = preg_replace('/["\'].*?["\']/', '', $line);
-            $line_without_comments = preg_replace('/\/\/.*$/', '', $line_without_strings);
-            $line_without_comments = preg_replace('/\/\*.*?\*\//', '', $line_without_comments);
+            $line_without_comments = FileSanitizer::blank_php_comments($line_without_strings);
 
             // Look for session() function calls in the cleaned line
             if (preg_match('/\bsession\s*\(/', $line_without_comments)) {

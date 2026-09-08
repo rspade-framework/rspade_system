@@ -52,7 +52,8 @@ DELIVERY MODES
     Unlike email there is no class, no template, no subject and no rendered HTML -
     `body` is the content.
 
-    Models (framework core, overridable via the class-override pattern):
+    Models (framework core; each is a base plus a shell, so an app override extends
+    <Name>_Abstract in rsx/models/ - rsx:man class_override):
         App\RSpade\Core\Models\Sms_Queue_Model      the queue
         App\RSpade\Core\Models\Sms_Recipient_Model  per-number blocklist + stats
 

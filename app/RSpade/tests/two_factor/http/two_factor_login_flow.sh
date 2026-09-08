@@ -37,11 +37,20 @@ TEST_NAME="Two-Factor Login Flow"
 #
 # Uses the dev default credentials. If a site overrides RSPADE_DEFAULT_EMAIL /
 # RSPADE_DEFAULT_PASSWORD, adjust below.
+#
+# The endpoint-driven half of this flow is also covered in process by the application
+# suite (rsx/tests/Two_Factor_Login_Verify_Test.php). What only exists here is what only
+# HTTP can show: the last_login stamp and the ambient per-IP throttle.
 
 LOGIN_EMAIL="admin@test.com"
 LOGIN_PASSWORD="admintest99"
 BASE="http://localhost"
 ARTISAN="php artisan"
+
+# Every artisan call below is relative to the framework root, so the script fixes its
+# own working directory rather than depending on the caller's (the shell runner does not
+# change it).
+cd /var/www/html/system
 
 JAR="$(mktemp)"
 JAR2="$(mktemp)"
@@ -59,6 +68,27 @@ fail() {
     echo "FAIL: $TEST_NAME - $1"
     exit 1
 }
+
+# ---------------------------------------------------------------------------
+# APPLICABILITY. Everything below the framework's own verify_challenge() belongs to the
+# APPLICATION: the verification endpoint, the login form, the challenge screen and the
+# destination a completed challenge lands on. The framework ships none of them, so this
+# script only has a flow to drive where an application declares one. Probe the endpoint
+# and skip when it is absent - an unknown ajax controller answers the fatal envelope
+# naming the class it could not find, which is the whole signal needed here.
+# ---------------------------------------------------------------------------
+probe="$(curl -s -X POST -H 'Content-Type: application/json' -d '{}' \
+    "${BASE}/_ajax/Login_Controller/verify_2fa" 2>/dev/null)"
+
+if [ -z "$probe" ]; then
+    echo "SKIP: $TEST_NAME - web server not reachable on $BASE"
+    exit 0
+fi
+
+if printf '%s' "$probe" | grep -qi 'class not found\|method not found\|not callable'; then
+    echo "SKIP: $TEST_NAME - this application ships no Login_Controller::verify_2fa endpoint"
+    exit 0
+fi
 
 # A live authenticator code for the enrolled seed, computed by the framework's own Totp so
 # the test never carries a second implementation of RFC 6238.

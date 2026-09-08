@@ -7,7 +7,7 @@
 namespace App\RSpade\Tests\FrameworkUpdate\Php;
 
 use App\RSpade\Core\Bundle\BundleCompiler;
-use App\RSpade\Core\Manifest\_Manifest_Cache_Helper;
+use App\RSpade\Core\Manifest\Manifest_Store;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -20,7 +20,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Two independent fail-loud guards close it, each unit tested here with synthetic
  * inputs + a real temp file (no full manifest/bundle build required):
- *   Fix 1: _Manifest_Cache_Helper::_first_missing_stub_output() - the dev cache
+ *   Fix 1: Manifest_Store::_first_missing_stub_output() - the dev cache
  *          validation seam that marks the cache STALE when a recorded stub output
  *          is gone.
  *   Fix 2: BundleCompiler::_assert_stub_output_present() - the compile choke point
@@ -52,7 +52,7 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
             ];
 
             static::__assert_null(
-                _Manifest_Cache_Helper::_first_missing_stub_output($files),
+                Manifest_Store::_first_missing_stub_output($files),
                 'A files map whose stub outputs all exist must report no missing stub'
             );
         } finally {
@@ -68,7 +68,7 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
             'rsx/app/frontend/x.js'     => ['extension' => 'js', 'class' => 'X'],
         ];
 
-        static::__assert_null(_Manifest_Cache_Helper::_first_missing_stub_output($files));
+        static::__assert_null(Manifest_Store::_first_missing_stub_output($files));
     }
 
     // A recorded model stub missing from disk -> its path is returned (cache STALE).
@@ -80,7 +80,7 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(
             self::MISSING_MODEL_STUB,
-            _Manifest_Cache_Helper::_first_missing_stub_output($files),
+            Manifest_Store::_first_missing_stub_output($files),
             'A recorded model stub absent from disk must be reported'
         );
     }
@@ -94,7 +94,7 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(
             self::MISSING_CONTROLLER_STUB,
-            _Manifest_Cache_Helper::_first_missing_stub_output($files)
+            Manifest_Store::_first_missing_stub_output($files)
         );
     }
 
@@ -107,7 +107,7 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(
             self::MISSING_STUB_DIR,
-            _Manifest_Cache_Helper::_first_missing_stub_output($files),
+            Manifest_Store::_first_missing_stub_output($files),
             'A stub under a missing directory must be reported (catches whole-dir absence)'
         );
     }
@@ -121,7 +121,7 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
         ];
 
         static::__assert_null(
-            _Manifest_Cache_Helper::_first_missing_stub_output($files),
+            Manifest_Store::_first_missing_stub_output($files),
             'Entries without is_stub/is_model_stub must be ignored by the stub-output guard'
         );
     }
@@ -138,7 +138,7 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
 
             static::__assert_equals(
                 self::MISSING_MODEL_STUB,
-                _Manifest_Cache_Helper::_first_missing_stub_output($files)
+                Manifest_Store::_first_missing_stub_output($files)
             );
         } finally {
             static::__unlink_temp_stub($present_rel);

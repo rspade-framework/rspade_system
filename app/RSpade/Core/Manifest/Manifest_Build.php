@@ -5,7 +5,7 @@ namespace App\RSpade\Core\Manifest;
 use App\RSpade\CodeQuality\Support\Source_Cache;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Manifest\_Manifest_Scanner_Helper;
+use App\RSpade\Core\Manifest\Manifest_Scanner;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -19,8 +19,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * a test to build a small fixture tree and assert on the index that came out - and therefore
  * no way to hold the build to a MEMORY BUDGET, which is what this epic is about.
  *
- * DELIBERATELY MINIMAL. The phase code still lives in the `_Manifest_*_Helper` family and
- * still reaches `Manifest::$data` directly; what moved here is only the two things that were
+ * DELIBERATELY MINIMAL. The phase code lives in `Manifest_Scanner`, `Manifest_Indexer` and
+ * `Manifest_Store`, and still reaches `Manifest::$data` directly; what moved here is only the two things that were
  * hardcoded inside the build and that a test has to be able to move:
  *
  *   - `scan_directories()` - where source is read from (config, plus the test trees when the
@@ -93,7 +93,7 @@ class Manifest_Build
         $scan_paths = config('rsx.manifest.scan_directories', ['rsx']);
 
         if (Rsx_Test_Abstract::suite_is_running()) {
-            foreach (_Manifest_Scanner_Helper::TEST_SCAN_DIRECTORIES as $test_path) {
+            foreach (Manifest_Scanner::TEST_SCAN_DIRECTORIES as $test_path) {
                 if (!in_array($test_path, $scan_paths, true)) {
                     $scan_paths[] = $test_path;
                 }

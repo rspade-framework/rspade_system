@@ -5,7 +5,7 @@
  * use snake_case (underscore_wherever_possible).
  */
 
-namespace App\RSpade\Tests\TwoFactor\Php;
+namespace Rsx\Tests;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -19,16 +19,18 @@ use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
 use App\RSpade\Core\TwoFactor\Totp;
+use Rsx\App\Login\Login_Controller;
 
 /**
- * The APPLICATION's half of the challenge: Login_Controller::verify_2fa.
+ * This application's half of the challenge: Login_Controller::verify_2fa.
  *
- * WHY THIS SITS IN THE FRAMEWORK SUITE. verify_challenge() is deliberately not a framework
+ * WHY THIS SITS IN THE APPLICATION SUITE. verify_challenge() is deliberately not a framework
  * endpoint - where a signed-in user lands is application logic, so the app owns the
- * verification endpoint and <Two_Factor_Challenge> is pointed at it. That makes the template
- * app's endpoint the ONLY worked example of the contract, and the contract is what these
- * tests pin: one argument shape in, {redirect} out, and every failure a user-safe
- * ERROR_VALIDATION rather than an exception the challenge screen cannot render.
+ * verification endpoint and <Two_Factor_Challenge> is pointed at it. The endpoint, its
+ * destinations and its screens are all declared here, so the tests are here too. What they
+ * pin is the contract the framework component depends on: one argument shape in, {redirect}
+ * out, and every failure a user-safe ERROR_VALIDATION rather than an exception the challenge
+ * screen cannot render.
  *
  * ENDPOINTS ARE CALLED AS STATIC METHODS, which is what the dispatcher does once the gate has
  * passed - so the Ajax envelope is not applied here and the assertions are on the RAW return.
@@ -39,7 +41,7 @@ use App\RSpade\Core\TwoFactor\Totp;
  * single-site identity lands on the dashboard, and a membership-less one lands on the
  * unauthorized screen.
  */
-class Login_Verify_Endpoint_Test extends Rsx_Test_Abstract
+class Two_Factor_Login_Verify_Test extends Rsx_Test_Abstract
 {
     private const PASSWORD = 'correct-horse-battery-staple';
 

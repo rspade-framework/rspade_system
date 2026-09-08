@@ -610,9 +610,9 @@ ERROR SCREENS
         application is broken, so they depend on as little as possible.
 
         CUSTOMIZING (PHP): copy-replace Error_Screens via the standard
-        class-override pattern (rsx:man class_override) - the framework's one
-        sanctioned way to replace core behavior. Override the class, keep the
-        signatures, own the markup.
+        class-override pattern (rsx:man class_override) - it is not a model, so
+        the override is a COPY under the same class name. Keep the signatures,
+        own the markup.
 
     JS (SPA)
         The Error_Screens JS class renders the same-coded error body into the

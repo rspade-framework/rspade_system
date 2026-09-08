@@ -6,6 +6,7 @@ use Exception;
 use Illuminate\Http\Request;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
+use App\RSpade\Core\Database\Model_Fetch_Lineage;
 use App\RSpade\Core\Database\Orm_Fetch_Preload;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -139,13 +140,13 @@ class Orm_Controller extends Rsx_Controller_Abstract
         // This is acceptable because: (1) attacker already knows model name from client code,
         // (2) detailed message is essential for developers diagnosing configuration issues,
         // (3) knowing a model lacks fetch() doesn't expose exploitable information.
-        $has_fetch_attribute = false;
-        if (isset($model_metadata['public_static_methods'][$fetch_method_name])) {
-            $fetch_method = $model_metadata['public_static_methods'][$fetch_method_name];
-            if (isset($fetch_method['attributes']['Ajax_Endpoint_Model_Fetch'])) {
-                $has_fetch_attribute = true;
-            }
-        }
+        // THROUGH THE LINEAGE, not one file record: a core model declares fetch() on its
+        // abstract base, and an application override declares only what it changes.
+        $has_fetch_attribute = Model_Fetch_Lineage::static_declaration(
+            $model_name,
+            $fetch_method_name,
+            'Ajax_Endpoint_Model_Fetch'
+        ) !== null;
 
         if (!$has_fetch_attribute) {
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, "Model {$model_name} {$fetch_method_name}() method missing Ajax_Endpoint_Model_Fetch attribute");
@@ -265,13 +266,11 @@ class Orm_Controller extends Rsx_Controller_Abstract
         $fetch_method_name = static::_resolve_fetch_method_name();
 
         // Check if the fetch method has the Ajax_Endpoint_Model_Fetch attribute
-        $has_fetch_attribute = false;
-        if (isset($model_metadata['public_static_methods'][$fetch_method_name])) {
-            $fetch_method = $model_metadata['public_static_methods'][$fetch_method_name];
-            if (isset($fetch_method['attributes']['Ajax_Endpoint_Model_Fetch'])) {
-                $has_fetch_attribute = true;
-            }
-        }
+        $has_fetch_attribute = Model_Fetch_Lineage::static_declaration(
+            $model_name,
+            $fetch_method_name,
+            'Ajax_Endpoint_Model_Fetch'
+        ) !== null;
 
         if (!$has_fetch_attribute) {
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, "Model {$fetch_method_name}() not available");
@@ -279,14 +278,17 @@ class Orm_Controller extends Rsx_Controller_Abstract
 
         // Verify the relationship exists and is fetchable
         // Check if method has #[Relationship] attribute
-        $has_relationship_attr = false;
-        $has_fetch_attr_on_rel = false;
-
-        if (isset($model_metadata['public_instance_methods'][$relationship_name])) {
-            $rel_method = $model_metadata['public_instance_methods'][$relationship_name];
-            $has_relationship_attr = isset($rel_method['attributes']['Relationship']);
-            $has_fetch_attr_on_rel = isset($rel_method['attributes']['Ajax_Endpoint_Model_Fetch']);
-        }
+        // The lineage again: a relationship declared on the abstract base is the model's.
+        $has_relationship_attr = Model_Fetch_Lineage::instance_declaration(
+            $model_name,
+            $relationship_name,
+            'Relationship'
+        ) !== null;
+        $has_fetch_attr_on_rel = Model_Fetch_Lineage::instance_declaration(
+            $model_name,
+            $relationship_name,
+            'Ajax_Endpoint_Model_Fetch'
+        ) !== null;
 
         if (!$has_relationship_attr) {
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND, "No such relationship: {$relationship_name}");

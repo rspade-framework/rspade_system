@@ -270,7 +270,7 @@ Who may impersonate is the app's call.
 
 ## Part G - Accounts, invites and memberships
 
-`Portal_User_Model` (framework-core, table `portal_users`, site-scoped) is the **account/identity**: `STATUS_*`, `can_login()`, `check_password()`, `set_password()`, `touch_last_login()`, `find_by_email($site_id, $email)`, plus `portal_fetch()`/`portal_can_read()` (own record only). Override it via the class-override pattern, and **keep app concepts (CRM links, memberships) in separate app models**, never bolted onto the core model.
+`Portal_User_Model` (framework-core, table `portal_users`, site-scoped) is the **account/identity**: `STATUS_*`, `can_login()`, `check_password()`, `set_password()`, `touch_last_login()`, `find_by_email($site_id, $email)`, plus `portal_fetch()`/`portal_can_read()` (own record only). Override it by EXTENDING its base - `class Portal_User_Model extends Portal_User_Model_Abstract` in `rsx/models/`, declaring only what changes (`get_printed_name()`, `get_view_profile_url()` and `portal_can_read()` are `#[Replaceable]` there; a copy of the framework file is refused at manifest build - `rsx:man class_override`). **Keep app concepts (CRM links, memberships) in separate app models**, never bolted onto the core model.
 
 **Onboarding is invite-only by default** - no open self-registration. Staff invite a contact, a single-use expiring code is emailed, the recipient sets a password. **The invitation proves email ownership, so accounts are created already verified** (`is_verified = true`) with no separate verification step. **An app adding open signup must verify the email itself.**
 

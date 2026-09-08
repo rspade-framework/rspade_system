@@ -31,6 +31,11 @@ Two concerns live here, both of them about SILENT wrongness:
 - `system/node_modules/@jqhtml/core/dist/jqhtml-core.esm.js` - `jQuery.fn.component`, the render cascade
 - `system/app/RSpade/Core/Forms/Rsx_Form.js` - `_sync_loading_overlay()`, the canonical cascade mount
 
+The probe drives the framework control panel at `/_sys` and registers its components in
+the browser at runtime, so it names no application screen, modal or bundle. A page under
+the test tree could not serve it: the test trees enter the manifest only while `rsx:test`
+is running, and the probe drives the ordinary web server.
+
 ## Man pages
 
 - `rsx:man jqhtml`

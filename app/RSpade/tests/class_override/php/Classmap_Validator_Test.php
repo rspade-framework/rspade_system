@@ -6,7 +6,7 @@
 
 namespace App\RSpade\Tests\ClassOverride\Php;
 
-use App\RSpade\Core\Manifest\_Manifest_Quality_Helper;
+use App\RSpade\Core\Manifest\Manifest_Indexer;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -58,7 +58,7 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
         ]);
 
         try {
-            $stale = _Manifest_Quality_Helper::_find_stale_classmap_entries($fixture);
+            $stale = Manifest_Indexer::_find_stale_classmap_entries($fixture);
 
             static::__assert_count(1, $stale, 'Exactly one stale entry expected');
             static::__assert_true(isset($stale['App\\Gone_Model']), 'The missing-file FQCN must be reported');
@@ -77,7 +77,7 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
         ]);
 
         try {
-            $stale = _Manifest_Quality_Helper::_find_stale_classmap_entries($fixture);
+            $stale = Manifest_Indexer::_find_stale_classmap_entries($fixture);
             static::__assert_empty($stale, 'No entries should be stale when every file exists');
         } finally {
             @unlink($fixture);
@@ -98,18 +98,18 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
         ]);
 
         $invoked_with = null;
-        $saved = _Manifest_Quality_Helper::$_composer_dump_runner;
-        _Manifest_Quality_Helper::$_composer_dump_runner = function ($stale) use (&$invoked_with) {
+        $saved = Manifest_Indexer::$_composer_dump_runner;
+        Manifest_Indexer::$_composer_dump_runner = function ($stale) use (&$invoked_with) {
             $invoked_with = $stale;
         };
 
         try {
-            _Manifest_Quality_Helper::_validate_composer_classmap($fixture);
+            Manifest_Indexer::_validate_composer_classmap($fixture);
 
             static::__assert_not_empty($invoked_with, 'Dump runner must be invoked when the classmap is stale');
             static::__assert_true(isset($invoked_with['App\\Gone_Model']), 'Runner must receive the stale entries');
         } finally {
-            _Manifest_Quality_Helper::$_composer_dump_runner = $saved;
+            Manifest_Indexer::$_composer_dump_runner = $saved;
             @unlink($fixture);
         }
     }
@@ -122,16 +122,16 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
         ]);
 
         $invoked = false;
-        $saved = _Manifest_Quality_Helper::$_composer_dump_runner;
-        _Manifest_Quality_Helper::$_composer_dump_runner = function ($stale) use (&$invoked) {
+        $saved = Manifest_Indexer::$_composer_dump_runner;
+        Manifest_Indexer::$_composer_dump_runner = function ($stale) use (&$invoked) {
             $invoked = true;
         };
 
         try {
-            _Manifest_Quality_Helper::_validate_composer_classmap($fixture);
+            Manifest_Indexer::_validate_composer_classmap($fixture);
             static::__assert_false($invoked, 'A clean classmap must not trigger a composer dump');
         } finally {
-            _Manifest_Quality_Helper::$_composer_dump_runner = $saved;
+            Manifest_Indexer::$_composer_dump_runner = $saved;
             @unlink($fixture);
         }
     }
@@ -140,16 +140,16 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
     public static function test_validate_noops_on_missing_classmap()
     {
         $invoked = false;
-        $saved = _Manifest_Quality_Helper::$_composer_dump_runner;
-        _Manifest_Quality_Helper::$_composer_dump_runner = function ($stale) use (&$invoked) {
+        $saved = Manifest_Indexer::$_composer_dump_runner;
+        Manifest_Indexer::$_composer_dump_runner = function ($stale) use (&$invoked) {
             $invoked = true;
         };
 
         try {
-            _Manifest_Quality_Helper::_validate_composer_classmap(storage_path('rsx-tmp/no_such_classmap_' . uniqid() . '.php'));
+            Manifest_Indexer::_validate_composer_classmap(storage_path('rsx-tmp/no_such_classmap_' . uniqid() . '.php'));
             static::__assert_false($invoked, 'A missing classmap must be a silent no-op');
         } finally {
-            _Manifest_Quality_Helper::$_composer_dump_runner = $saved;
+            Manifest_Indexer::$_composer_dump_runner = $saved;
         }
     }
 
@@ -165,7 +165,7 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
     */
     public static function test_composer_dump_skips_scripts()
     {
-        $reflection = new \ReflectionMethod(_Manifest_Quality_Helper::class, '_run_composer_dump');
+        $reflection = new \ReflectionMethod(Manifest_Indexer::class, '_run_composer_dump');
         $file = file($reflection->getFileName());
         $body = implode('', array_slice(
             $file,

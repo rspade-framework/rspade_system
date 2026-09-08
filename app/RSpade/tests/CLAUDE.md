@@ -84,6 +84,25 @@ bundle name. Fixture models and fixture routes declared under `tests/` are the w
 concrete record or surface to test against. A test whose SUBJECT is the template application
 - its handlers, its screens, its endpoints - belongs in `rsx/tests`, not here.
 
+**`Framework_Test_Portability_Test` enforces the part of this a machine can see** (four
+assertions, nothing whitelisted): framework CORE names no role or permission constant; every
+type a test file references resolves to a file outside `rsx/`; no test names such a constant;
+no test quotes an application class name. It does NOT guard table names, URL paths or bundle
+names - none has an index to resolve against - so those stay a review question: a framework
+test names a framework table or a fixture table of its own, a `/_`-prefixed or `/api/` route,
+and a bundle it resolved from the manifest.
+
+**A SCHEMA-DERIVED answer cannot come from a fixture table.** Casts and column lengths are
+read out of the manifest's column map, which is built from the live schema when the manifest
+is built - before any test creates its tables. A test needing one drives a framework model on
+a framework table, or DERIVES its subject from the manifest and skips when the application
+declares none.
+
+**A browser test cannot see the test tree at all.** The trees enter the manifest only while
+`rsx:test` runs, and a playwright script drives the ordinary web server - another process,
+another manifest, another database. Such a test uses a framework-served page (`/_sys`) and
+framework classes, and registers whatever else it needs at runtime in the browser.
+
 ## Database isolation (PHP tests)
 
 | Need | Declare | Effect |

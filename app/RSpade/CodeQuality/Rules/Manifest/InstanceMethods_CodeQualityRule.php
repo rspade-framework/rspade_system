@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Manifest;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * InstanceMethodsRule - Enforces static-only classes unless marked Instantiatable
@@ -173,7 +174,7 @@ class InstanceMethods_CodeQualityRule extends CodeQualityRule_Abstract
             // Found violation - class has instance methods but is not instantiatable
             // Build remediation text based on whether class has parent
             $parent_class = $metadata['extends'] ?? null;
-            $is_framework_file = str_starts_with($file, 'app/RSpade/');
+            $is_framework_file = Rsx_Paths::is_framework($file);
 
             if ($parent_class) {
                 $suggestion = "RSpade discourages creating classes solely to perform operations (utility/service pattern). " .

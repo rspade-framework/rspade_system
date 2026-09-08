@@ -67,8 +67,8 @@ Is the obligation RECURRING (must be re-checked by every app, forever)?
                (the fourth trigger below - File_Attachment_Model, File_Storage_Model,
                 User_Model, Login_User_Model, Site_Model, Portal_User_Model, and any
                 class the reference app itself overrides)
-                ├─ yes -> a breaking_changes document (Category 2) listing the members
-                │         to re-clone into their frozen copy
+                ├─ yes -> a breaking_changes document (Category 2) naming the members
+                │         and what the override holder must state for itself
                 └─ no  -> NOTHING. Do not write a document.
 ```
 
@@ -94,14 +94,14 @@ Three tests, in order. Any single "no" ends it:
 
 > A change to a framework-provided model - or any other core class an application is LIKELY to class-override - ships a document whenever it ADDS OR ALTERS MEMBERS the override holder should propagate into their copy.
 
-A class override here is copy-and-replace, not a subclass (`rsx:man class_override`): the manifest serves the app's file and archives ours as `.php.upstream`, so the improvement reaches their disk and none of their users. `CLASS-OVERRIDE-DRIFT-01` (`rsx:check`, high) and the `rsx:health` "Class Override Drift" row already NAME the missing members - **the document is not the detector, it is the explanation**: what the members are for, why the copy needs them, and what breaks silently without them. Propagation is **highly recommended, not optional**; the holder may decide their override keeps its old behavior, but that must be a decision rather than something that happened to them.
+An override of a NON-MODEL framework class is copy-and-replace (`rsx:man class_override`): the manifest serves the app's file and archives ours as `.php.upstream`, so the improvement reaches their disk and none of their users. `CLASS-OVERRIDE-DRIFT-01` (`rsx:check`, high) and the `rsx:health` "Class Override Drift" row already NAME the missing members - **the document is not the detector, it is the explanation**: what the members are for, why the copy needs them, and what breaks silently without them. A CORE MODEL override EXTENDS the framework's `<Name>_Model_Abstract` base and inherits every addition, so it has no drift surface and neither reporter names it; the trigger still fires for a change the override must state ITSELF - a member it redeclares, a `#[Replaceable]` seam whose contract moved, or a base member it is now expected to chain into. Propagation is **highly recommended, not optional**; the holder may decide their override keeps its old behavior, but that must be a decision rather than something that happened to them.
 
 The likely-overridden set, named so the trigger is mechanical:
 
     File_Attachment_Model    File_Storage_Model    User_Model
     Login_User_Model         Site_Model            Portal_User_Model
 
-plus any framework class the reference app itself overrides - any `rsx/` file whose class also exists under `system/app/RSpade/Core`, i.e. one carrying a `.php.upstream` sidecar. **The template overrides none of them today** (the seams - `Staff_Authorizable`, `Portal_Authorizable`, `fetch()`, `#[OnEvent]` - are the sanctioned way to attach policy, and beat a clone); when it starts, that class joins the set and the charter's list is updated with it.
+plus any framework class the reference app itself overrides - any `rsx/` file whose class also exists under `system/app/RSpade/Core`, i.e. one carrying a `.php.upstream` sidecar. Every model in that list is a SPLIT model, so what the document asks for is a rewrite of the override's own members rather than a re-clone. **The template overrides none of them today** (the seams - `Staff_Authorizable`, `Portal_Authorizable`, `fetch()`, `#[OnEvent]` - are the sanctioned way to attach policy, and beat a clone); when it starts, that class joins the set and the charter's list is updated with it.
 
 **The counter-example is the limit.** A change to an internal nobody plausibly overrides - the manifest scanner, a build helper, the bundle compiler - still gets NO document. **Likelihood of override is the test, not possibility**: somebody who cloned the manifest scanner has diverged past what a document repairs; somebody who cloned `File_Attachment_Model` to attach one visibility rule is an ordinary developer following a documented pattern, and is who this is for.
 

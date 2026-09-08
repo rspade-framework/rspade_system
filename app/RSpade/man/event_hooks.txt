@@ -503,6 +503,19 @@ FRAMEWORK EVENT CATALOG
                     (serve this file) | ['unsupported'=>true] (415)
             Use for: overriding how an attachment becomes the PDF pdf.js loads.
 
+        user.view_profile_url (resolve)
+            Fired from: User_Model_Abstract::get_view_profile_url(), on every ask -
+                        never memoized, because the answer is about WHO IS ASKING.
+            Data: {user: User_Model}
+            Return: null (decline) | string (the URL the current viewer may follow)
+            Use for: naming the application's profile / user-management screens for a
+                     staff user. The framework has no screens, so with no handler the
+                     answer is null and <Record_Author> renders the name as plain
+                     text. Resolve each destination through
+                     Auth_Gates::accessible_route() so the link is present exactly
+                     when the viewer may follow it. The reference app's handler:
+                     system/app/RSpade/resource/reference_app/handlers/User_Profile_Url_Handlers.php
+
         document.thumbnail_render (resolve)
             Fired from: File_Attachment_Controller::_render_thumbnail_data, STILL at
                         the top of the thumbnail pipeline - ahead of both the

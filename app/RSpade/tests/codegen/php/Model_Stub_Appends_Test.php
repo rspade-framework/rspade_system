@@ -8,11 +8,14 @@
 namespace App\RSpade\Tests\Codegen\Php;
 
 use ReflectionMethod;
+use App\RSpade\Core\Database\Model_Lineage_Fingerprint;
 use App\RSpade\Core\Database\Model_Stub_ManifestSupport;
 use App\RSpade\Core\Files\File_Attachment_Model;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Codegen\Php\Appends_Fixture_Model;
 use App\RSpade\Tests\Codegen\Php\No_Appends_Fixture_Model;
+use App\RSpade\Tests\Codegen\Php\Split_Fixture_Model;
 
 /**
  * The JS model stub DECLARES a model's derived properties ($appends).
@@ -126,5 +129,76 @@ class Model_Stub_Appends_Test extends Rsx_Test_Abstract
                 "the stub declares {$name}"
             );
         }
+    }
+
+    // =====================================================================
+    // A SPLIT model: the members live on the base
+    // =====================================================================
+
+    // CODEGEN-SPLIT-REFLECTS-BASE: a framework model carries every member on an abstract base
+    // and ships a three-line concrete an application replaces. The stub is generated for the
+    // CONCRETE, so it has to reflect what the BASE declares - the appended property, the
+    // constants, the field_length table - or the split would silently empty every stub in the
+    // framework.
+    public static function test_the_stub_of_a_split_model_declares_the_bases_members()
+    {
+        $content = static::__generate(
+            Split_Fixture_Model::class,
+            'Split_Fixture_Model',
+            'Base_Split_Fixture_Model'
+        );
+
+        static::__assert_contains(
+            '@property {*} base_display_id - derived (appended by the PHP model); read-only',
+            $content,
+            'the appended property declared on the base reaches the concrete\'s stub'
+        );
+        static::__assert_contains(
+            'SPLIT_FIXTURE_STATE_OPEN',
+            $content,
+            'and so do the constants the base declares'
+        );
+        static::__assert_contains(
+            'static field_length(column)',
+            $content,
+            'and the stub is otherwise a normal one'
+        );
+    }
+
+    // CODEGEN-SPLIT-STALENESS-KEY: the generator decides whether to rewrite a stub from a
+    // staleness key, and a key computed from the CONCRETE file alone cannot move when the base
+    // moves - so a renamed constant would keep its old name in the browser with nothing
+    // reporting it. The key covers the whole lineage, up to but excluding Rsx_Model_Abstract.
+    public static function test_the_staleness_key_covers_the_whole_lineage()
+    {
+        $manifest_data = Manifest::get_full_manifest();
+
+        $files = Model_Lineage_Fingerprint::lineage_files('Split_Fixture_Model', $manifest_data);
+
+        static::__assert_contains(
+            'Split_Fixture_Model.php',
+            implode(' ', $files),
+            'the concrete is in the key'
+        );
+        static::__assert_contains(
+            'Split_Fixture_Model_Abstract.php',
+            implode(' ', $files),
+            'and so is the base whose members the stub actually declares'
+        );
+
+        foreach ($files as $file) {
+            static::__assert_false(
+                str_contains($file, 'Rsx_Model_Abstract.php'),
+                'the walk stops before the framework base machinery: ' . $file
+            );
+        }
+
+        // The key is a function of those files' content hashes, so a different lineage is a
+        // different key - which is the whole property the generator relies on.
+        static::__assert_not_equals(
+            Model_Lineage_Fingerprint::lineage_hash('Appends_Fixture_Model', $manifest_data),
+            Model_Lineage_Fingerprint::lineage_hash('Split_Fixture_Model', $manifest_data),
+            'two models with different lineages have different keys'
+        );
     }
 }

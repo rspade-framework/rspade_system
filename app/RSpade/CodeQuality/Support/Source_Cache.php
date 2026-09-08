@@ -59,6 +59,13 @@ class Source_Cache
     /** [key => array<string,?object>] class nodes found in a file's AST, by class name. */
     private array $class_nodes = [];
 
+    /**
+     * [key => array<string,array>] per-class MEMBER SUMMARIES, by lowercased class name.
+     *
+     * NOT bound by $capacity, and that is deliberate - see declared_members().
+     */
+    private array $members = [];
+
     /** [key => array] PhpToken streams, most-recently-used last. */
     private array $tokens = [];
 
@@ -69,7 +76,7 @@ class Source_Cache
     private ?object $parser = null;
 
     /** Counters, for the build's own reporting: how many times each bucket did real work. */
-    private array $work = ['content' => 0, 'tokens' => 0, 'ast' => 0];
+    private array $work = ['content' => 0, 'tokens' => 0, 'ast' => 0, 'members' => 0];
 
     public function __construct(int $capacity = self::DEFAULT_CAPACITY)
     {
@@ -205,6 +212,298 @@ class Source_Cache
     }
 
     /**
+     * A flat, AST-FREE SUMMARY of what $class_name declares inside $path.
+     *
+     *   [
+     *     'methods'    => [lower_name => [
+     *                        'name', 'line', 'abstract', 'static', 'visibility',
+     *                        'attributes'   => [lower simple attribute name => true],
+     *                        'has_body'     => bool,
+     *                        'parent_calls' => [lower method name => true] (plus '*' for
+     *                                          a dynamic parent::{$x}() call),
+     *                        'exceptions'   => [rule id => true],
+     *                     ]],
+     *     'properties' => [name => [
+     *                        'name', 'line', 'static', 'visibility',
+     *                        'attributes' => [...], 'exceptions' => [...],
+     *                        'has_default', 'default' => scalar|string[]|null,
+     *                     ]],
+     *   ]
+     *
+     * WHY IT IS NOT BOUND BY $capacity, when the AST and the token stream are.
+     *
+     * The four ANCESTRY rules (PHP-PARENT-CHAIN-01, SEALED-01, REVISION-01, POLY-01) each
+     * walk the whole indexed tree and ask structural questions about a class and its
+     * ancestors. They ran one after another over the same ~700 files, and a 16-entry LRU
+     * cannot hold 700 files, so every rule re-parsed every file: four full parses of the
+     * tree, 5.2 s of a 10.3 s cold build. Sharing the AST could not fix that - the AST is
+     * exactly the thing the budget forbids retaining.
+     *
+     * A summary is not. It holds no nikic nodes, only scalars and short lists, so its size
+     * is proportional to the INDEX (a few kilobytes per class), which is precisely what the
+     * memory budget permits to grow - "peak proportional to the index plus a constant
+     * bounded by the largest single file". So the file is parsed ONCE for the whole pass and
+     * every later question is answered from the summary; `release()` drops the lot.
+     *
+     * The fields are the union of what those four rules actually need, which is why
+     * `parent_calls` and `exceptions` are in here rather than left to the caller: computing
+     * them needs the AST, and the point of the summary is that the caller never holds one.
+     */
+    public function declared_members(string $path, string $class_name, string $hash = ''): array
+    {
+        $key = $this->__key($path, $hash);
+        $lower = strtolower($class_name);
+
+        if (isset($this->members[$key]) && array_key_exists($lower, $this->members[$key])) {
+            return $this->members[$key][$lower];
+        }
+
+        $summary = ['methods' => [], 'properties' => []];
+        $node = $this->class_node($path, $class_name, $hash);
+
+        if ($node !== null) {
+            $content = $this->content($path, $hash);
+            $lines = explode("\n", $content);
+
+            // A body walk is the one expensive part of this summary, and `parent::` is rare:
+            // most files contain the token nowhere at all, and in a file that does, most
+            // methods do not. Two string tests - the whole file, then the method's own line
+            // range - decide whether the traversal happens. The AST stays authoritative; a
+            // mention inside a comment or a string only costs one traversal that finds
+            // nothing, and a method whose range has no mention cannot contain a real call.
+            $file_mentions_parent = str_contains($content, 'parent::');
+
+            foreach ($node->getMethods() as $method) {
+                $name = $method->name->toString();
+                $parent_calls = [];
+
+                if ($file_mentions_parent
+                    && $this->__range_mentions($lines, $method->getStartLine(), $method->getEndLine(), 'parent::')) {
+                    $parent_calls = $this->__parent_calls($method);
+                }
+
+                $summary['methods'][strtolower($name)] = [
+                    'name' => $name,
+                    'line' => $method->getStartLine(),
+                    'abstract' => $method->isAbstract(),
+                    'static' => $method->isStatic(),
+                    'visibility' => $this->__visibility_of($method),
+                    'attributes' => $this->__attribute_names($method->attrGroups),
+                    'has_body' => $method->stmts !== null,
+                    'parent_calls' => $parent_calls,
+                    'exceptions' => $this->__exception_ids($method, $lines),
+                ];
+            }
+
+            foreach ($node->getProperties() as $property) {
+                foreach ($property->props as $prop) {
+                    $name = $prop->name->toString();
+                    $summary['properties'][$name] = [
+                        'name' => $name,
+                        'line' => $property->getStartLine(),
+                        'static' => $property->isStatic(),
+                        'visibility' => $this->__visibility_of($property),
+                        'attributes' => $this->__attribute_names($property->attrGroups),
+                        'exceptions' => $this->__exception_ids($property, $lines),
+                        'has_default' => $prop->default !== null,
+                        'default' => $this->__literal_default($prop->default),
+                    ];
+                }
+            }
+        }
+
+        $this->work['members']++;
+        $this->members[$key][$lower] = $summary;
+
+        return $summary;
+    }
+
+    /**
+     * 'public' | 'protected' | 'private' for any node carrying PHP's modifier flags.
+     */
+    private function __visibility_of(object $node): string
+    {
+        if (method_exists($node, 'isPrivate') && $node->isPrivate()) {
+            return 'private';
+        }
+
+        if (method_exists($node, 'isProtected') && $node->isProtected()) {
+            return 'protected';
+        }
+
+        return 'public';
+    }
+
+    /**
+     * [lowercased SIMPLE attribute name => true] over a node's attribute groups.
+     *
+     * Simple names because a marker attribute is never a defined class (framework
+     * convention), so the only thing an author can have written is its short name.
+     */
+    private function __attribute_names(array $attr_groups): array
+    {
+        $names = [];
+
+        foreach ($attr_groups as $group) {
+            foreach ($group->attrs as $attr) {
+                $parts = explode('\\', $attr->name->toString());
+                $names[strtolower((string) end($parts))] = true;
+            }
+        }
+
+        return $names;
+    }
+
+    /**
+     * Does any source line between $start and $end (1-based, inclusive) contain $needle?
+     */
+    private function __range_mentions(array $lines, int $start, int $end, string $needle): bool
+    {
+        for ($i = max(1, $start) - 1; $i < $end && isset($lines[$i]); $i++) {
+            if (str_contains($lines[$i], $needle)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Which methods this method's body invokes through `parent::`.
+     *
+     * [lowercased name => true], plus `'*' => true` for a dynamic `parent::{$x}()` - the
+     * parent IS invoked and the name is unprovable, so a caller asking "does this chain"
+     * fails open, which is the contract PHP-PARENT-CHAIN-01 documents.
+     */
+    private function __parent_calls(object $method): array
+    {
+        if (!isset($method->stmts) || $method->stmts === null) {
+            return [];
+        }
+
+        $calls = [];
+
+        foreach ((new \PhpParser\NodeFinder())->findInstanceOf($method->stmts, \PhpParser\Node\Expr\StaticCall::class) as $call) {
+            if (!($call->class instanceof \PhpParser\Node\Name)) {
+                continue;
+            }
+
+            if (strcasecmp($call->class->toString(), 'parent') !== 0) {
+                continue;
+            }
+
+            if ($call->name instanceof \PhpParser\Node\Identifier) {
+                $calls[strtolower($call->name->toString())] = true;
+
+                continue;
+            }
+
+            $calls['*'] = true;
+        }
+
+        return $calls;
+    }
+
+    /**
+     * The rule ids named by an `@<RULE-ID>-EXCEPTION` marker attached to this member.
+     *
+     * Looks in the member's own comments, on its declaration line and on the line
+     * immediately above it - the three places every rule that honors a per-member exception
+     * has always looked. Returns [rule id => true], almost always empty.
+     */
+    private function __exception_ids(object $node, array $lines): array
+    {
+        $text = '';
+
+        foreach ($node->getComments() as $comment) {
+            $text .= $comment->getText() . "\n";
+        }
+
+        $index = $node->getStartLine() - 1;
+
+        foreach ([$index, $index - 1] as $candidate) {
+            if ($candidate >= 0 && isset($lines[$candidate])) {
+                $text .= $lines[$candidate] . "\n";
+            }
+        }
+
+        if (!str_contains($text, '-EXCEPTION')) {
+            return [];
+        }
+
+        $ids = [];
+
+        if (preg_match_all('/@([A-Z0-9][A-Z0-9-]*)-EXCEPTION/', $text, $matches)) {
+            foreach ($matches[1] as $id) {
+                $ids[$id] = true;
+            }
+        }
+
+        return $ids;
+    }
+
+    /**
+     * The LITERAL default of a property, when it is one this summary can carry:
+     * a bool/int/float/string scalar, or a flat list of scalars. Anything else is null.
+     *
+     * The three ancestry questions asked of a default are `$revisions = true`,
+     * `$type_ref_columns = ['a', 'b']` and `$table = '...'`; none of them needs an
+     * expression, and a summary that carried one would be carrying AST again.
+     */
+    private function __literal_default(?object $default)
+    {
+        if ($default === null) {
+            return null;
+        }
+
+        if ($default instanceof \PhpParser\Node\Scalar\String_
+            || $default instanceof \PhpParser\Node\Scalar\Int_
+            || $default instanceof \PhpParser\Node\Scalar\Float_) {
+            return $default->value;
+        }
+
+        if ($default instanceof \PhpParser\Node\Expr\ConstFetch) {
+            $name = strtolower($default->name->toString());
+
+            if ($name === 'true') {
+                return true;
+            }
+
+            if ($name === 'false') {
+                return false;
+            }
+
+            if ($name === 'null') {
+                return null;
+            }
+
+            return null;
+        }
+
+        if ($default instanceof \PhpParser\Node\Expr\Array_) {
+            $items = [];
+
+            foreach ($default->items as $item) {
+                if ($item === null) {
+                    continue;
+                }
+
+                $value = $this->__literal_default($item->value);
+
+                if (is_array($value) || $value === null) {
+                    continue;
+                }
+
+                $items[] = $value;
+            }
+
+            return $items;
+        }
+
+        return null;
+    }
+
+    /**
      * `PhpToken::tokenize()` over a string the caller already holds - the object shape, for
      * a caller checking CONTENT it was handed rather than a file on disk (a rule fixture the
      * test never wrote to that path).
@@ -237,11 +536,11 @@ class Source_Cache
     {
         $key = $this->__key($path, $hash);
 
-        unset($this->content[$key], $this->tokens[$key], $this->ast[$key], $this->class_nodes[$key]);
+        unset($this->content[$key], $this->tokens[$key], $this->ast[$key], $this->class_nodes[$key], $this->members[$key]);
 
         // A path written under one hash is also the path spelled with no hash.
         if ($hash !== '') {
-            unset($this->content[$path], $this->tokens[$path], $this->ast[$path], $this->class_nodes[$path]);
+            unset($this->content[$path], $this->tokens[$path], $this->ast[$path], $this->class_nodes[$path], $this->members[$path]);
         }
     }
 
@@ -254,13 +553,14 @@ class Source_Cache
         $this->tokens = [];
         $this->ast = [];
         $this->class_nodes = [];
+        $this->members = [];
         $this->parser = null;
     }
 
     /**
      * How many times each bucket did real work (reads, tokenizations, parses).
      *
-     * @return array{content:int,tokens:int,ast:int}
+     * @return array{content:int,tokens:int,ast:int,members:int}
      */
     public function work_counts(): array
     {
@@ -276,6 +576,7 @@ class Source_Cache
             'content' => count($this->content),
             'tokens' => count($this->tokens),
             'ast' => count($this->ast),
+            'members' => count($this->members),
         ];
     }
 

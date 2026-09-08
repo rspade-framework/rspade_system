@@ -104,9 +104,9 @@ class Login_Redirect_Portal_Test extends Rsx_Test_Abstract
     public static function test_capture_prefix_portal_page_returns_target()
     {
         static::__portal_prefix_context();
-        $request = Request::create('/_portal/workspace/5', 'GET');
+        $request = Request::create('/_portal/test-login-redirect/item/5', 'GET');
         static::__assert_equals(
-            ['redirect' => '/_portal/workspace/5'],
+            ['redirect' => '/_portal/test-login-redirect/item/5'],
             Login_Redirect::capture($request)
         );
     }
@@ -125,8 +125,8 @@ class Login_Redirect_Portal_Test extends Rsx_Test_Abstract
     public static function test_params_prefix_accepts_portal_page()
     {
         static::__portal_prefix_context();
-        static::__bind_redirect('/_portal/workspace/5');
-        static::__assert_equals(['redirect' => '/_portal/workspace/5'], Login_Redirect::params());
+        static::__bind_redirect('/_portal/test-login-redirect/item/5');
+        static::__assert_equals(['redirect' => '/_portal/test-login-redirect/item/5'], Login_Redirect::params());
     }
 
     public static function test_params_prefix_rejects_non_prefix_path()
@@ -187,8 +187,8 @@ class Login_Redirect_Portal_Test extends Rsx_Test_Abstract
     public static function test_params_domain_accepts_unprefixed_page()
     {
         static::__portal_domain_context();
-        static::__bind_redirect('/workspace/5');
-        static::__assert_equals(['redirect' => '/workspace/5'], Login_Redirect::params());
+        static::__bind_redirect('/test-login-redirect/item/5');
+        static::__assert_equals(['redirect' => '/test-login-redirect/item/5'], Login_Redirect::params());
     }
 
     public static function test_params_domain_rejects_login()
@@ -213,7 +213,7 @@ class Login_Redirect_Portal_Test extends Rsx_Test_Abstract
     {
         // A staff redirect can never point under the portal prefix.
         static::__staff_context();
-        static::__bind_redirect('/_portal/workspace/5');
+        static::__bind_redirect('/_portal/test-login-redirect/item/5');
         static::__assert_empty(Login_Redirect::params());
     }
 
@@ -250,10 +250,10 @@ class Login_Redirect_Portal_Test extends Rsx_Test_Abstract
     public static function test_consume_prefix_returns_valid_target()
     {
         static::__portal_prefix_context();
-        static::__bind_redirect('/_portal/workspace/5');
+        static::__bind_redirect('/_portal/test-login-redirect/item/5');
         static::__assert_equals(
-            '/_portal/workspace/5',
-            Login_Redirect::consume('/_portal/dashboard')
+            '/_portal/test-login-redirect/item/5',
+            Login_Redirect::consume('/_portal/test-login-redirect/page')
         );
     }
 
@@ -261,7 +261,7 @@ class Login_Redirect_Portal_Test extends Rsx_Test_Abstract
     {
         static::__portal_prefix_context();
         static::__bind_redirect('//evil.example');
-        static::__assert_equals('/_portal/dashboard', Login_Redirect::consume('/_portal/dashboard'));
+        static::__assert_equals('/_portal/test-login-redirect/page', Login_Redirect::consume('/_portal/test-login-redirect/page'));
     }
 
     // =====================================================================
@@ -320,7 +320,7 @@ class Login_Redirect_Portal_Test extends Rsx_Test_Abstract
         // Confirms the gate resolves against the portal table (a portal route
         // the staff Dispatcher does not know).
         static::__portal_prefix_context();
-        static::__bind_redirect('/_portal/dashboard');
-        static::__assert_equals(['redirect' => '/_portal/dashboard'], Login_Redirect::params());
+        static::__bind_redirect('/_portal/test-login-redirect/page');
+        static::__assert_equals(['redirect' => '/_portal/test-login-redirect/page'], Login_Redirect::params());
     }
 }

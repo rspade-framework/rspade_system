@@ -150,3 +150,16 @@ running them against the pre-fix client (see the Status column note).
 | DRIFT-02 | The 60-minute stale-CODE reload still fires - exactly once - through the drift-forced reconnect's auth_ok | http | same script (_do_reload stubbed) | 1 reload | implemented | 2026-08-24 |
 | LIVE-01 | A quiet link sends an application ping and the relay answers with pong | http | same script | ping sent, pong observed | implemented | 2026-08-24 |
 | LIVE-02 | A ping unanswered by the next tick forces a reconnect and the client recovers | http | same script | 1 new socket, connected | implemented | 2026-08-24 |
+
+## The page the http harnesses browse
+
+Every `http/realtime_*.sh` harness drives `php artisan rsx:debug /_sys --user=1 --eval=...`.
+The control panel is a FRAMEWORK-served page, so the harnesses run in an installed
+application that ships none of the reference app's screens; the realtime client,
+`Realtime_Controller` and the watch registry are all framework globals present in every
+bundle, which is the whole requirement.
+
+KNOWN FAILURE, pre-existing and unrelated to the page: `HARNESS-01` asserts the derived
+socket URL is literally `ws://localhost/ws`, while `rsx:debug` browses the host `APP_URL`
+names. On a box whose `APP_URL` is not `localhost` the row fails on the hostname, not on the
+derivation it is about.

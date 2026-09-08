@@ -37,6 +37,34 @@ class Sys_Panel_Published_Route_Test extends Rsx_Test_Abstract
     private const ENTRY_TARGET = '_Sys_Dashboard_Action';
 
     /**
+     * The APPLICATION module bundle this test compiles: the first one the application
+     * declares, in name order.
+     *
+     * Resolved from the manifest rather than written down - the panel's claim is about
+     * "an application bundle", and which bundles exist is the application's business.
+     * Bundles declared under app/RSpade are excluded on both counts: the panel's own two
+     * are not application bundles, and a bundle fixture in the test tree is not compilable.
+     */
+    private static function __application_bundle_name(): ?string
+    {
+        $names = [];
+
+        foreach (Manifest::php_get_extending('Rsx_Module_Bundle_Abstract') as $name => $metadata) {
+            $file = $metadata['file'] ?? '';
+
+            if (str_starts_with($name, '_') || !str_starts_with($file, 'rsx/')) {
+                continue;
+            }
+
+            $names[] = $name;
+        }
+
+        sort($names);
+
+        return $names[0] ?? null;
+    }
+
+    /**
      * The route patterns the manifest holds for a target, which is exactly what
      * Rsx::Route() resolves server-side.
      *
@@ -85,12 +113,20 @@ class Sys_Panel_Published_Route_Test extends Rsx_Test_Abstract
      */
     public static function test_an_application_bundle_publishes_the_entry_route()
     {
+        $bundle_name = static::__application_bundle_name();
+
+        if ($bundle_name === null) {
+            static::__skip('this application declares no module bundle of its own');
+
+            return;
+        }
+
         $compiler = new BundleCompiler();
-        $compiled = $compiler->compile('Frontend_Bundle');
+        $compiled = $compiler->compile($bundle_name);
 
         $app_js = $compiled['app_js_bundle_path'] ?? null;
 
-        static::__assert_not_empty($app_js, 'Frontend_Bundle produced no app JS bundle');
+        static::__assert_not_empty($app_js, "{$bundle_name} produced no app JS bundle");
 
         // compile() answers the OUTPUT FILENAME; the build artifacts live under
         // storage/rsx-build/bundles/, which storage_path() resolves.

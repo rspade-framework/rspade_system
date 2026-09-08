@@ -502,9 +502,10 @@ PORTAL USER MODEL
     Portal_User_Model exposes portal_fetch() (not fetch()) - it is read by portal
     JavaScript, not staff JavaScript. See AUTHORIZATION below.
 
-    Overriding: to add columns or app-specific lookups, use the standard class
-    override (see class_override(3)) - a same-named class in /rsx/models/
-    replaces the core one wholesale. Keep app concepts (CRM links, client
+    Overriding: to add columns or app-specific lookups, declare `class
+    Portal_User_Model extends Portal_User_Model_Abstract` in /rsx/models/ - it
+    replaces the framework's shell and declares only what it changes, inheriting
+    the rest (rsx:man class_override). Keep app concepts (CRM links, client
     memberships) OUT of the core model; model them as separate app models that
     reference portal_users.id, exactly as site data sits beside User_Model.
 

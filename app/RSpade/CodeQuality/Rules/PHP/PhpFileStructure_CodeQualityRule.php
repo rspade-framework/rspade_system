@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * Enforces PHP file structure restrictions for files without classes.
@@ -85,7 +86,7 @@ class PhpFileStructure_CodeQualityRule extends CodeQualityRule_Abstract
             }
 
             // Only apply rules to files in ./rsx directory
-            if (!str_starts_with($file_path, 'rsx/')) {
+            if (!Rsx_Paths::is_application($file_path)) {
                 continue;
             }
 

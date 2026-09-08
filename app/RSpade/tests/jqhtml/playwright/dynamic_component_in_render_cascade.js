@@ -11,15 +11,24 @@
  *
  *   1. SYNTHETIC: a component registered at runtime appends a node in its own on_render()
  *      and mounts a component on it. The instance must be live and its template painted.
- *   2. CANONICAL: the edit-user modal - its body arms the form's loading overlay from
- *      on_render(), while the whole modal subtree is still in its first render pass. The
- *      registered spinner must be painted inside the overlay, with no deferral anywhere.
+ *   2. CANONICAL: the shape Rsx_Form._sync_loading_overlay() used to defer around - a
+ *      component mounts an Rsx_Form on a hand-appended node from inside its OWN first
+ *      render pass and arms the loading overlay there. The overlay instantiates the
+ *      registered spinner on a node it has just created, two cascades deep. The spinner
+ *      must be painted, with no deferral anywhere.
  *   3. A component name that is registered NOWHERE still resolves to the base component
  *      class - documented behavior, asserted here so a change to it is a visible failure.
  *
  * A template-only component (no companion .js) legitimately reports _Jqhtml_Component as its
  * constructor: the base class drives the registered template. Constructor identity is
  * therefore NOT the test - painted output is.
+ *
+ * EVERYTHING IT TOUCHES IS THE FRAMEWORK'S. The page is the control panel at /_sys, the
+ * mounted components are Rsx_Form and the registered default spinner, and the probe
+ * components are registered at runtime in the browser - so no application screen, modal or
+ * bundle is involved and the probe runs in any install. A test-tree fixture page could not
+ * serve this: the test trees enter the manifest only while rsx:test is running, and this
+ * script drives the ordinary web server.
  *
  * Self-contained: mints its own dev-auth headers through tests/_lib/dev_auth.js (the
  * node twin of Dev_Auth_Token, keyed on the local development grant), so it runs with a bare
@@ -31,7 +40,7 @@ const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
 const { chromium } = require('/var/www/html/system/node_modules/playwright');
 
 const BASE_URL = 'http://localhost';
-const ROUTE = '/frontend/settings/user_management';
+const ROUTE = '/_sys';
 const USER_ID = 1;
 
 function fail(msg) {
@@ -90,21 +99,50 @@ async function probe_synthetic(page) {
 }
 
 /**
- * Probe 2 - the canonical case: the edit-user modal body arms the form's loading overlay
- * from its own on_render(). Sample the overlay the moment it exists.
+ * Probe 2 - the canonical case: a component mounts an Rsx_Form from inside its own first
+ * render pass and arms the form's loading overlay there, so the overlay's spinner is
+ * instantiated two cascades deep. Sample the overlay the moment it exists.
+ *
+ * The spinner is whatever Rsx.get_default_spinner() names - the framework's own unless the
+ * application registered one - so the assertion is that the host carries a live component
+ * that painted SOMETHING, never that it is a particular class.
  */
 async function probe_loading_overlay(page) {
     return await page.evaluate(async () => {
         const observed = { samples: [] };
 
-        Edit_User_Modal.show(1);
+        class Rsx_Cascade_Form_Probe_Temp extends Component {
+            on_render() {
+                this.$.append('<div class="rsx_cascade_form_slot_temp"></div>');
+                const $slot = this.$.find('.rsx_cascade_form_slot_temp');
+
+                // Mounting a framework component on a node appended during THIS render, then
+                // driving it - the overlay it draws mounts a component of its own.
+                $slot.component('Rsx_Form', {
+                    controller: 'Rsx_Cascade_Probe_Controller_Temp',
+                    method: 'never_called',
+                });
+
+                const form = $slot.component();
+                if (form && form.set_loading) {
+                    form.set_loading(true);
+                }
+            }
+        }
+
+        jqhtml.register_component('Rsx_Cascade_Form_Probe_Temp', Rsx_Cascade_Form_Probe_Temp);
+
+        $('body').append('<div id="rsx_cascade_form_mount_temp"></div>');
+        $('#rsx_cascade_form_mount_temp').component('Rsx_Cascade_Form_Probe_Temp');
 
         for (let i = 0; i < 100; i++) {
-            const $overlay = $('.Rsx_Form__loading');
+            const $overlay = $('#rsx_cascade_form_mount_temp').find('.Rsx_Form__loading');
             if ($overlay.length) {
+                const $host = $overlay.find('.Rsx_Form__loading-spinner').first();
                 observed.samples.push({
-                    circles: $overlay.find('.Rsx_Default_Spinner__circle').length,
-                    host_classes: $('.Rsx_Form__loading-spinner').first().attr('class') || '',
+                    has_spinner_instance: !!$host.component(),
+                    painted_children: $host.children().length,
+                    host_classes: $host.attr('class') || '',
                 });
                 if (observed.samples.length >= 3) {
                     break;
@@ -112,6 +150,8 @@ async function probe_loading_overlay(page) {
             }
             await sleep(20);
         }
+
+        $('#rsx_cascade_form_mount_temp').remove();
 
         return observed;
     });
@@ -200,11 +240,11 @@ async function run() {
         const overlay = await probe_loading_overlay(page);
 
         if (overlay.samples.length === 0) {
-            fail('the edit-user modal never armed the form loading overlay');
-        } else if (overlay.samples[0].circles !== 1) {
+            fail('the probe component never armed the form loading overlay');
+        } else if (!overlay.samples[0].has_spinner_instance || overlay.samples[0].painted_children === 0) {
             fail('the loading overlay carried no painted spinner at its first observed moment '
                 + '(host classes: "' + overlay.samples[0].host_classes + '") - the spinner is instantiated '
-                + 'from the modal body\'s on_render(), inside the initial render cascade');
+                + 'from the overlay the form draws inside the initial render cascade');
         } else {
             console.log('PASS: the form loading overlay paints its spinner with no deferral');
         }

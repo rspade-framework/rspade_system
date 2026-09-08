@@ -38,7 +38,7 @@ class NameReservedPrefix_CodeQualityRule extends CodeQualityRule_Abstract
     private const RULE_ID = 'NAME-RESERVED-01';
 
     /** The framework-application tree. Everything declared under it is `_`-prefixed. */
-    private const SYS_TREE = 'app/RSpade/Sys/';
+    private const SYS_TREE = Rsx_Paths::FRAMEWORK_PREFIX . 'Sys/';
 
     public function get_id(): string
     {

@@ -5,6 +5,7 @@ namespace App\RSpade\CodeQuality\Rules\JavaScript;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\CodeQuality\Support\InitializationSuggestions;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 class FrameworkInitialization_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -150,8 +151,8 @@ class FrameworkInitialization_CodeQualityRule extends CodeQualityRule_Abstract
         // Extract allowed RSpade subdirectories
         $allowed_subdirs = [];
         foreach ($scan_directories as $scan_dir) {
-            if (str_starts_with($scan_dir, 'app/RSpade/')) {
-                $subdir = substr($scan_dir, strlen('app/RSpade/'));
+            if (Rsx_Paths::is_framework($scan_dir)) {
+                $subdir = Rsx_Paths::framework_subpath($scan_dir);
                 if ($subdir) {
                     $allowed_subdirs[] = $subdir;
                 }

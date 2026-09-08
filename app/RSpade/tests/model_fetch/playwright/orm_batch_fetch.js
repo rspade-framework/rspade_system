@@ -4,18 +4,31 @@
  *
  * The batcher only exists in a browser, so this is where it is proved:
  *
- *   1. Three distinct Task_Model.fetch() calls plus a DUPLICATE, all issued in one turn,
- *      produce exactly ONE Orm_Controller/fetch request, and each caller resolves with
- *      its own record.
+ *   1. Three distinct User_Model.fetch_or_null() calls plus a DUPLICATE, all issued in one
+ *      turn, produce exactly ONE Orm_Controller/fetch request, and each caller resolves
+ *      with its OWN answer - the signed-in identity's record for the id that exists, null
+ *      for the two that do not.
  *   2. fetch_or_null() on a nonexistent id resolves null.
  *   3. fetch() on a nonexistent id rejects with code 'not_found'.
  *   4. More distinct ids than rsx.model_fetch.batch_max_ids split into TWO requests -
  *      chunking is driven by the ids REQUESTED, so the ids need not exist.
  *
+ * EVERYTHING IT TOUCHES IS THE FRAMEWORK'S. The page is the control panel at /_sys and the
+ * model is User_Model, whose generated stub reaches every bundle - so no application
+ * screen, model or bundle is involved and the probe runs in any install. The concern's own
+ * fixture models could NOT serve this half: the test trees enter the manifest only while
+ * rsx:test is running and this script drives the ordinary web server, whose manifest (and
+ * whose database) carries neither the fixture class nor its table.
+ *
+ * The one existing id is the signed-in identity's own, which every install has by
+ * construction. That is why the batch is one real id plus two missing ones rather than
+ * three real ones: a fresh install has exactly one user, and per-caller resolution is
+ * proved just as well by callers that get DIFFERENT answers.
+ *
  * Self-contained: mints its own dev-auth headers through tests/_lib/dev_auth.js (the
  * node twin of Dev_Auth_Token, keyed on the local development grant), so it runs with a bare
  * `node orm_batch_fetch.js`. Runs against the dev web server on localhost (the same
- * target rsx:debug uses) and reads real Task ids off the page it lands on.
+ * target rsx:debug uses).
  *
  * NOTE: the dev site runs in development mode, where Ajax batching (the TRANSPORT
  * batcher, /_ajax/_batch) is off - so each ORM request is its own direct
@@ -27,9 +40,10 @@ const { dev_auth_headers } = require('/var/www/html/system/bin/dev-auth.js');
 const { chromium } = require('/var/www/html/system/node_modules/playwright');
 
 const BASE_URL = 'http://localhost';
-const ROUTE = '/tasks';
+const ROUTE = '/_sys';
 const USER_ID = 1;
 const MISSING_ID = 99999999;
+const MISSING_ID_2 = 99999998;
 
 function fail(msg) {
     console.log('FAIL: ORM batch fetch - ' + msg);
@@ -102,36 +116,20 @@ async function run() {
             return;
         }
 
-        // Real task ids, straight off the rendered datagrid rows (href = /tasks/view/:id).
-        const task_ids = await page.evaluate(() => {
-            const ids = [];
-            $('tr[data-href]').each(function () {
-                const m = ($(this).attr('data-href') || '').match(/\/tasks\/view\/(\d+)/);
-                if (m) {
-                    ids.push(parseInt(m[1], 10));
-                }
-            });
-            return ids;
-        });
-
-        if (task_ids.length < 3) {
-            fail('need at least 3 task rows on ' + ROUTE + ', found ' + task_ids.length);
+        const model_present = await page.evaluate(() => typeof User_Model !== 'undefined');
+        if (!model_present) {
+            fail('User_Model is not in the served bundle - the generated model stub did not reach it');
             await browser.close();
             return;
         }
 
-        const ids = task_ids.slice(0, 3);
+        const ids = [USER_ID, MISSING_ID, MISSING_ID_2, USER_ID];
 
         // --- 1. parallel + duplicate -> ONE request ---
         orm_requests = 0;
         const resolved = await page.evaluate(async (ids) => {
-            const results = await Promise.all([
-                Task_Model.fetch(ids[0]),
-                Task_Model.fetch(ids[1]),
-                Task_Model.fetch(ids[2]),
-                Task_Model.fetch(ids[0]),
-            ]);
-            return results.map((r) => r.id);
+            const results = await Promise.all(ids.map((id) => User_Model.fetch_or_null(id)));
+            return results.map((r) => (r === null ? 'null' : String(r.id)));
         }, ids);
 
         if (orm_requests !== 1) {
@@ -140,16 +138,16 @@ async function run() {
             console.log('PASS: 4 parallel fetches (3 distinct + 1 duplicate) = 1 request');
         }
 
-        const expected = [ids[0], ids[1], ids[2], ids[0]].join(',');
+        const expected = [String(USER_ID), 'null', 'null', String(USER_ID)].join(',');
         if (resolved.join(',') !== expected) {
-            fail('each caller must get its own record: expected [' + expected + '], got [' + resolved.join(',') + ']');
+            fail('each caller must get its own answer: expected [' + expected + '], got [' + resolved.join(',') + ']');
         } else {
-            console.log('PASS: every caller resolved with its own record');
+            console.log('PASS: every caller resolved with its own answer');
         }
 
         // --- 2. fetch_or_null on a missing id ---
         const or_null = await page.evaluate(
-            async (id) => String(await Task_Model.fetch_or_null(id)),
+            async (id) => String(await User_Model.fetch_or_null(id)),
             MISSING_ID
         );
 
@@ -162,7 +160,7 @@ async function run() {
         // --- 3. fetch on a missing id ---
         const thrown = await page.evaluate(async (id) => {
             try {
-                await Task_Model.fetch(id);
+                await User_Model.fetch(id);
                 return 'NO THROW';
             } catch (e) {
                 return e.code + '|' + e.message;
@@ -185,7 +183,7 @@ async function run() {
                 // Deliberately nonexistent: chunking is decided by the ids REQUESTED.
                 ids.push(900000000 + i);
             }
-            const results = await Promise.all(ids.map((id) => Task_Model.fetch_or_null(id)));
+            const results = await Promise.all(ids.map((id) => User_Model.fetch_or_null(id)));
             return results.length;
         }, cap);
 

@@ -91,7 +91,7 @@ unsub();
 return JSON.stringify(results);
 JS
 
-result="$(timeout 300 php artisan rsx:debug /dashboard --user=1 --timeout=120000 --eval="$EVAL" 2>&1 \
+result="$(timeout 300 php artisan rsx:debug /_sys --user=1 --timeout=120000 --eval="$EVAL" 2>&1 \
     | grep -o '{"setup_state":[^}]*}')"
 
 if [ -z "$result" ]; then

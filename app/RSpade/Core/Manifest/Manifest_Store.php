@@ -8,14 +8,17 @@ use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
- * _Manifest_Cache_Helper - Persistence, loading, and validation
+ * Manifest_Store - the index on disk.
  *
- * This helper class contains function implementations for Manifest.
- * Functions in this class are called via delegation from Manifest.php.
+ * Loads the hot half, loads the cold half on demand, derives the load-time indexes, writes
+ * both halves atomically as compact PHP literals, computes the build key over a normalized
+ * hash material, validates a loaded index and raises or clears the bad-manifest flag.
  *
- * @internal Do not use directly - use Manifest:: methods instead.
+ * The only class that knows the index's FILE SHAPE. Everything else reads Manifest::$data.
+ *
+ * @internal Reached through the Manifest facade.
  */
-class _Manifest_Cache_Helper
+class Manifest_Store
 {
     /**
     * Get or create the kernel instance

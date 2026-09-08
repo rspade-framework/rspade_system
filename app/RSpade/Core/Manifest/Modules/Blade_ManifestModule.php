@@ -3,8 +3,10 @@
 namespace App\RSpade\Core\Manifest\Modules;
 
 use RuntimeException;
+use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\Core\Manifest\ManifestModule_Abstract;
 use App\RSpade\Core\Naming\Rsx_Identifier;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * Module for processing Blade template files in the manifest
@@ -28,17 +30,17 @@ class Blade_ManifestModule extends ManifestModule_Abstract
     }
 
     /**
-     * Remove Blade comments from content
+     * Blank the Blade comments in content.
+     *
+     * One implementation, in FileSanitizer, and line-preserving - the bodies become spaces,
+     * so every offset this module then computes still addresses the original view.
      *
      * @param string $content Blade content
-     * @return string Content with comments removed
+     * @return string Content with comment bodies blanked
      */
     protected function remove_blade_comments(string $content): string
     {
-        // Remove {{-- --}} style comments
-        $content = preg_replace('/\{\{--.*?--\}\}/s', '', $content);
-
-        return $content;
+        return FileSanitizer::blank_template_comments($content);
     }
 
     /**
@@ -370,8 +372,8 @@ class Blade_ManifestModule extends ManifestModule_Abstract
         // Handle different view locations
         if (str_starts_with($path, 'resources/views/')) {
             $path = substr($path, strlen('resources/views/'));
-        } elseif (str_starts_with($path, 'rsx/views/')) {
-            $path = 'rsx::' . substr($path, strlen('rsx/views/'));
+        } elseif (Rsx_Paths::under_application($path, 'views/')) {
+            $path = 'rsx::' . substr((string) Rsx_Paths::application_subpath($path), strlen('views/'));
         }
 
         // Convert path separators to dots

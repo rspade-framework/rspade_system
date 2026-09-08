@@ -243,11 +243,11 @@ class FrameworkBundleAppInclude_CodeQualityRule extends CodeQualityRule_Abstract
 
         foreach ($this->__app_roots() as $root) {
             if ($normalized === $root) {
-                return 'rsx/';
+                return Rsx_Paths::APPLICATION_PREFIX;
             }
 
             if (str_starts_with($normalized, $root . '/')) {
-                return 'rsx/' . ltrim(substr($normalized, strlen($root)), '/');
+                return Rsx_Paths::APPLICATION_PREFIX . ltrim(substr($normalized, strlen($root)), '/');
             }
         }
 

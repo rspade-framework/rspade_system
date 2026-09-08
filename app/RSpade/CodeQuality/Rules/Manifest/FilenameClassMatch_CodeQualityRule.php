@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\Manifest;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Naming\Rsx_Identifier;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * FilenameClassMatch_CodeQualityRule - Enforces filename matches class name
@@ -70,8 +71,8 @@ class FilenameClassMatch_CodeQualityRule extends CodeQualityRule_Abstract
             }
 
             // Only check files in ./rsx or ./app/RSpade
-            $is_rsx = str_starts_with($file, 'rsx/');
-            $is_rspade = str_starts_with($file, 'app/RSpade/');
+            $is_rsx = Rsx_Paths::is_application($file);
+            $is_rspade = Rsx_Paths::is_framework($file);
 
             if (!$is_rsx && !$is_rspade) {
                 continue;

@@ -126,7 +126,7 @@ Rsx_Js_Model.orm_cache_reset('Contact_Model', 5);      // one record
 
 ## Data-fetching policy - the ORM endpoint is the way
 
-- **The model lacks `fetch()`**: add one, with `#[Ajax_Endpoint_Model_Fetch]` and its `#[Auth]`. For a FRAMEWORK model (in `system/`), create a class override in `rsx/models/`. **Do NOT create separate controller endpoints to fetch single records - this duplicates ORM functionality and is an anti-pattern.**
+- **The model lacks `fetch()`**: add one, with `#[Ajax_Endpoint_Model_Fetch]` and its `#[Auth]`. For a FRAMEWORK model (in `system/`), override it in `rsx/models/` by EXTENDING its base - `class X_Model extends X_Model_Abstract` declaring only `fetch()` (the base marks `fetch()`/`portal_fetch()` `#[Replaceable]`, so no `parent::` call, and `$table`/`$enums` are inherited). Copying the framework file is refused at manifest build; see `rsx:man class_override`. **Do NOT create separate controller endpoints to fetch single records - this duplicates ORM functionality and is an anti-pattern.**
 - **The model is not available in the JS bundle**: **STOP and ask the developer.** Bundles should include the models they need. Do not create workaround endpoints without approval.
 - **Custom Ajax endpoints require developer approval**, and are only for:
   - aggregations, batch operations, or complex result sets;

@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Convention;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 class BundleLocation_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -49,12 +50,12 @@ class BundleLocation_CodeQualityRule extends CodeQualityRule_Abstract
         $relative_path = str_replace(base_path() . '/', '', $file_path);
 
         // Check if it's in rsx/app directory
-        if (!str_starts_with($relative_path, 'rsx/app/')) {
+        if (!Rsx_Paths::under_application($relative_path, 'app/')) {
             return; // Bundle is not in rsx/app, that's ok (could be in rsx/lib etc)
         }
 
         // Count directory levels after rsx/app/
-        $after_app = substr($relative_path, strlen('rsx/app/'));
+        $after_app = substr((string) Rsx_Paths::application_subpath($relative_path), strlen('app/'));
         $parts = explode('/', $after_app);
 
         // If more than 2 levels deep (module/feature/file.php), it's a violation

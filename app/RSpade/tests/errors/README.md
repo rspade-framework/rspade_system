@@ -38,6 +38,14 @@ the live layout's content area using the app-owned theme components in
 - `app/RSpade/Core/Portal/Portal_Dispatcher.php` (terminal paths)
 - `app/RSpade/Core/SPA/Error_Screens.js`, `app/RSpade/Core/SPA/Spa.js`
 
+## Test fixtures
+
+- `php/Error_Screens_Route_Fixture_Controller.php` - one routable GET surface
+  (`/test-errors/record/:id`) standing in for the deep page a denied caller was trying
+  to reach. `Login_Redirect` drops an underscore-led or unroutable target, so the
+  threading assertion needs a route that is neither, and the framework declares none of
+  its own. Indexed only while the suite is running.
+
 ## Behavior of record
 
 - `php artisan rsx:man auth_gates` - ERROR SCREENS

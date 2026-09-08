@@ -43,4 +43,4 @@ Write your own man pages as `rsx/resource/man/*.txt` - they are served by the sa
 
 Session, login-history and Turnstile settings are yours to tune: the `rsx.sessions.*` windows (web/anonymous timeouts, `max_web_sessions_per_user`, `login_history_retention_days`, the `login_throttle` block), `rsx.portal.*` and `rsx.turnstile.*` are all overridable in `rsx/resource/config/rsx.php`.
 
-To change the behavior of a core auth model (`User_Model`, `Portal_User_Model`, `Login_User_Model`), use the **class-override** pattern — a same-named class in `rsx/models/`. Keep app concepts (CRM links, memberships) in **separate** app models, never bolted onto the overridden core model.
+To change the behavior of a core auth model (`User_Model`, `Portal_User_Model`, `Login_User_Model`), override it in `rsx/models/` by **extending its base** — `class User_Model extends User_Model_Abstract`, declaring only what changes (a COPY of the framework file is refused at manifest build; `rsx:man class_override`). Keep app concepts (CRM links, memberships) in **separate** app models, never bolted onto the overridden core model.

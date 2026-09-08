@@ -44,8 +44,8 @@ alone dies at "Manifest support module must extend ManifestSupport_Abstract".
 |---|---|
 | The build as an object | `Core/Manifest/Manifest_Build.php` |
 | The facade and the phase sequence | `Core/Manifest/Manifest.php` (`init`, `_refresh_manifest`) |
-| Discovery and change detection | `Core/Manifest/_Manifest_Scanner_Helper.php` |
-| Persistence, the bad-manifest flag | `Core/Manifest/_Manifest_Cache_Helper.php` |
+| Discovery and change detection | `Core/Manifest/Manifest_Scanner.php` |
+| Persistence, the bad-manifest flag | `Core/Manifest/Manifest_Store.php` |
 | The code-quality pass | `CodeQuality/Manifest_Rule_Driver.php`, `CodeQuality/Support/Source_Cache.php` |
 
 Man pages: `rsx:man manifest_build`, `rsx:man manifest_api`, `rsx:man code_quality`.

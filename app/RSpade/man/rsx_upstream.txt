@@ -29,10 +29,11 @@ DESCRIPTION
     there is nothing worth reporting: the tree is a checkout of somebody
     else's repository, and a modification to it is drift, not work.
 
-    Customize the framework with a CLASS OVERRIDE in rsx/ - copy the class
-    into rsx/ under the same name (rsx:man class_override). That is the
-    supported path, it survives every update, and it is the reason none of
-    this needs a merge.
+    Customize the framework with a CLASS OVERRIDE in rsx/ - a class of the
+    same simple name (rsx:man class_override): a core MODEL EXTENDS its
+    <Name>_Model_Abstract base and declares only what it changes, every other
+    framework class is COPIED. That is the supported path, it survives every
+    update, and it is the reason none of this needs a merge.
 
     WHY A SUBMODULE. When system/ was vendored - ordinary tracked files in the
     application's own repository - the framework and the application shared

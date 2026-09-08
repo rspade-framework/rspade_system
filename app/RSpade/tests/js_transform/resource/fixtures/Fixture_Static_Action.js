@@ -4,8 +4,8 @@
 // reachable in the concatenated bundle. The runtime harness supplies the decorator
 // stubs (route/layout/spa) and the Spa_Action base class.
 @route('/fixture/static')
-@layout('Frontend_Spa_Layout')
-@spa('Frontend_Spa_Controller::index')
+@layout('Fixture_Spa_Layout')
+@spa('Fixture_Spa_Controller::index')
 class Fixture_Static_Action extends Spa_Action {
 
     static TABS = ['overview', 'history'];

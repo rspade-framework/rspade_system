@@ -51,13 +51,15 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
     /**
      * Write one fixture class whose body is the given lines, and return its absolute path.
      */
-    private static function __write(string $relative, array $body_lines): string
+    private static function __write(string $relative, array $body_lines, ?string $extends = null): string
     {
         $path = base_path($relative);
         ensure_directory(dirname($path));
 
+        $declaration = 'class ' . self::PROBE_CLASS . ($extends === null ? '' : ' extends ' . $extends);
+
         $lines = array_merge(
-            ['<?php', '', 'class ' . self::PROBE_CLASS, '{'],
+            ['<?php', '', $declaration, '{'],
             $body_lines,
             ['}', '']
         );
@@ -351,5 +353,107 @@ class Class_Override_Drift_Test extends Rsx_Test_Abstract
         } finally {
             static::__remove_fixtures();
         }
+    }
+
+    // =====================================================================
+    // A split framework class has no drift surface
+    // =====================================================================
+
+    /**
+     * THE SPLIT MODEL IS NOT A CLONE. When the archived file declares nothing but
+     * `class X extends X_Abstract`, every member lives on the base - and an override that
+     * extends that same base INHERITS every one of them, including the ones the framework
+     * adds tomorrow. There is no frozen copy here and nothing to compare, so the analyzer
+     * reports nothing rather than naming the base's members as "missing" from a class that
+     * inherits them.
+     *
+     * (An override of a split class that does NOT extend the base never reaches this code:
+     * the manifest's override pass refuses it outright.)
+     */
+    public static function test_a_split_pair_that_shares_the_base_reports_nothing()
+    {
+        $upstream = static::__write(self::UPSTREAM_FILE, [], self::PROBE_CLASS . '_Abstract');
+        $override = static::__write(
+            self::OVERRIDE_FILE,
+            ['    public function app_only() {}'],
+            self::PROBE_CLASS . '_Abstract'
+        );
+
+        try {
+            $analysis = Class_Override_Drift::analyze_pair($upstream, $override, self::PROBE_CLASS);
+
+            static::__assert_count(0, $analysis['missing'], 'the base carries everything; nothing is missing');
+            static::__assert_count(
+                0,
+                $analysis['added'],
+                'and the override\'s own members are not reported as additions to a shell either'
+            );
+        } finally {
+            static::__remove_fixtures();
+        }
+    }
+
+    /**
+     * A qualified `extends` is the same declaration. An override in another namespace writes
+     * the base as `\App\...\X_Abstract` or imports it; both must read as the same base.
+     */
+    public static function test_a_split_pair_is_recognized_through_a_qualified_parent()
+    {
+        $upstream = static::__write(self::UPSTREAM_FILE, [], self::PROBE_CLASS . '_Abstract');
+        $override = static::__write(
+            self::OVERRIDE_FILE,
+            [],
+            '\\App\\RSpade\\Fixture\\' . self::PROBE_CLASS . '_Abstract'
+        );
+
+        try {
+            $analysis = Class_Override_Drift::analyze_pair($upstream, $override, self::PROBE_CLASS);
+
+            static::__assert_count(0, $analysis['missing'], 'the namespaced spelling names the same base');
+        } finally {
+            static::__remove_fixtures();
+        }
+    }
+
+    /**
+     * A CLONE of a non-split class is still compared in full. The exemption is about the
+     * split shape, not about overrides in general.
+     */
+    public static function test_a_clone_of_a_non_split_class_is_still_compared()
+    {
+        $violations = static::__run_rule(
+            ['    public function upstream_only() {}'],
+            ['    public function shared() {}']
+        );
+
+        static::__assert_count(1, $violations, 'a clone that dropped a member is still a finding');
+    }
+
+    /**
+     * The parent reader is token-based, like every other reader here: it answers with the
+     * SIMPLE name, and a mention of the parent in a comment or a string is not a
+     * declaration.
+     */
+    public static function test_the_parent_reader_answers_the_simple_name()
+    {
+        $source = implode("\n", [
+            '<?php',
+            '// class ' . self::PROBE_CLASS . ' extends Wrong_Comment_Parent',
+            '$x = "class ' . self::PROBE_CLASS . ' extends Wrong_String_Parent";',
+            'class ' . self::PROBE_CLASS . ' extends \\Some\\Space\\Right_Parent',
+            '{',
+            '}',
+        ]);
+
+        static::__assert_equals(
+            'Right_Parent',
+            Class_Override_Drift::declared_parent($source, self::PROBE_CLASS),
+            'the declaration wins over the comment and the string, and the answer is simple'
+        );
+
+        static::__assert_null(
+            Class_Override_Drift::declared_parent("<?php\nclass " . self::PROBE_CLASS . "\n{\n}\n", self::PROBE_CLASS),
+            'a class that extends nothing answers null'
+        );
     }
 }

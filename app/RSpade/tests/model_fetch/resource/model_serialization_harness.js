@@ -24,31 +24,31 @@ function load_model_class() {
 function main() {
     const Rsx_Js_Model = load_model_class();
 
-    class Harness_Client_Model extends Rsx_Js_Model {}
-    class Harness_Project_Model extends Rsx_Js_Model {}
+    class Harness_Parent_Model extends Rsx_Js_Model {}
+    class Harness_Child_Model extends Rsx_Js_Model {}
 
-    const client = new Harness_Client_Model({ id: 7, name: 'Acme' });
-    const project = new Harness_Project_Model({
+    const parent = new Harness_Parent_Model({ id: 7, name: 'Parent Record' });
+    const child = new Harness_Child_Model({
         id: 42,
-        title: 'Rollout',
-        client_id: 7,
-        client: client,
+        title: 'Child Record',
+        parent_id: 7,
+        parent: parent,
     });
 
-    const cloned = JSON.parse(JSON.stringify(project));
-    const wrapped = JSON.parse(JSON.stringify({ rec: project }));
+    const cloned = JSON.parse(JSON.stringify(child));
+    const wrapped = JSON.parse(JSON.stringify({ rec: child }));
 
     const result = {
-        to_json_type: typeof project.toJSON(),
+        to_json_type: typeof child.toJSON(),
         cloned_type: typeof cloned,
         cloned_is_array: Array.isArray(cloned),
         cloned_id: cloned === null || typeof cloned !== 'object' ? null : cloned.id,
         cloned_title: cloned === null || typeof cloned !== 'object' ? null : cloned.title,
-        cloned_nested_type: cloned === null || typeof cloned !== 'object' ? null : typeof cloned.client,
+        cloned_nested_type: cloned === null || typeof cloned !== 'object' ? null : typeof cloned.parent,
         cloned_nested_name:
-            cloned === null || typeof cloned !== 'object' || cloned.client === null || typeof cloned.client !== 'object'
+            cloned === null || typeof cloned !== 'object' || cloned.parent === null || typeof cloned.parent !== 'object'
                 ? null
-                : cloned.client.name,
+                : cloned.parent.name,
         wrapped_rec_type: typeof wrapped.rec,
         wrapped_rec_id: wrapped.rec === null || typeof wrapped.rec !== 'object' ? null : wrapped.rec.id,
         // With a string-returning toJSON() the clone is the model's own JSON TEXT, so this

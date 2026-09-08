@@ -15,8 +15,8 @@ instance of `Manifest_Build`, reachable as `Manifest::build()`:
 
 | It carries | Read by |
 |---|---|
-| scan roots, relative to `base_path()` | `_Manifest_Scanner_Helper::_scan_directories()` |
-| the storage root (where `rsx-build/` lives) | `_Manifest_Cache_Helper::_get_cache_file_path()` |
+| scan roots, relative to `base_path()` | `Manifest_Scanner::_scan_directories()` |
+| the storage root (where `rsx-build/` lives) | `Manifest_Store::_get_cache_file_path()` |
 | the mode | reporting |
 | the build's ONE `Source_Cache` | `Php_Fixer::fix()` (phase 2) and the code-quality driver (phase 7) |
 
@@ -40,9 +40,9 @@ An extra root cannot be the ONLY root: the framework's own support modules, mode
 classes are resolved THROUGH the index, so a build of a fixture tree alone dies at "Manifest
 support module must extend ManifestSupport_Abstract". `tests/manifest/` is the worked example.
 
-**It is deliberately minimal.** The phase code still lives in the `_Manifest_*_Helper` family
-and still reaches `Manifest::$data` directly; what moved is only what a test has to be able to
-move.
+**It is deliberately minimal.** The phase code lives in `Manifest_Scanner`,
+`Manifest_Indexer` and `Manifest_Store` and still reaches `Manifest::$data` directly; what
+moved onto the seam is only what a test has to be able to move.
 
 ## THE MEMORY BUDGET
 
@@ -132,24 +132,26 @@ three times, and every file record repeated its own path as a value (3.3% of `fi
 **Never write the "iterate every file, filter php, read attribute X off public_static_methods"
 loop.** It existed in six places; `by_attribute()` is the one answer.
 
-### Helper Class Architecture
+### File map
 
-Manifest.php uses a delegator pattern with 8 helper classes for better organization:
+The build is four classes plus the facade. `Manifest` is the public API and the query
+surface; the other four own one phase each and are reached through it.
 
-| Helper Class | Purpose | Functions |
-|--------------|---------|-----------|
-| `_Manifest_PHP_Reflection_Helper` | PHP class reflection | php_find_class, php_get_extending, php_is_subclass_of, etc. |
-| `_Manifest_JS_Reflection_Helper` | JS class reflection | js_find_class, js_get_extending, js_is_subclass_of, etc. |
-| `_Manifest_Reflection_Helper` | Views, attributes, routes | find_view, get_with_attribute, get_routes, etc. |
-| `_Manifest_Scanner_Helper` | File discovery, change detection | _get_rsx_files, _has_changed, _scan_directory_for_classes, etc. |
-| `_Manifest_Builder_Helper` | Index generation | _build_autoloader_class_map, _collate_files_by_classes, etc. |
-| `_Manifest_Cache_Helper` | Persistence, validation | _get_kernel, _load_cached_data, _save, _validate_cached_data, etc. |
-| `_Manifest_Quality_Helper` | Code quality entry point, IDE support | _run_manifest_time_code_quality_checks (a thin call into `CodeQuality\Manifest_Rule_Driver`), _check_unique_base_class_names, _generate_vscode_stubs |
-| `_Manifest_Database_Helper` | Database schema | db_get_tables, db_get_table_columns, _verify_database_provisioned, etc. |
+| File | Owns | Entry points |
+|------|------|--------------|
+| `Manifest.php` | The public API AND every read accessor, implemented here. Boot (`init`, `post_init`), the build loop `_refresh_manifest()` with its restart accounting, and the lookups: `php_find_class`, `php_class_metadata`, `php_get_extending`, `php_is_subclass_of`, `php_get_lineage`, the `js_*` twins, `find_view`, `by_attribute`, `get_with_attribute`, `get_routes`, `db_get_*`, `model_for_table`, `php_model_columns` | everything a caller outside `Core/Manifest/` uses |
+| `Manifest_Build.php` | The build SEAM - an instance carrying scan roots, storage root and mode, constructed from config, and owning the pass's `Source_Cache`. What `tests/manifest/` substitutes to build a fixture tree | `Manifest_Build::from_config()` |
+| `Manifest_Scanner.php` | Phases 1-2: directory discovery, per-file change detection, the token parse that produces each file record, `Php_Fixer` with its class-structure delta, and the PHP reflection extract with its derived-cache restore | `_get_rsx_files`, `_has_changed`, `_process_file`, `_run_php_fixer`, `_extract_reflection_for_changed_files` |
+| `Manifest_Indexer.php` | Phases 3-6: the derived indexes (autoloader class map, blade views, attribute index, models-by-table, event handlers, classless files), the duplicate-class detectors, the class-override archive pass, the composer classmap validation, the code-quality pass entry and the VS Code stub | `_build_autoloader_class_map`, `_build_attribute_index`, `_check_unique_base_class_names`, `_run_manifest_time_code_quality_checks`, `_generate_vscode_stubs` |
+| `Manifest_Store.php` | The index ON DISK: load hot, load cold on demand, derive the load-time indexes, write both halves atomically as compact PHP literals, the build key, validation, the bad-manifest flag | `_load_cached_data`, `_load_cold_files`, `_save`, `_compute_hash`, `_validate_cached_data` |
+| `ManifestSupport_Abstract.php`, `Modules/` | The incremental module pipeline (phase 5). One module per index section | `process(&$data, $changed, $removed)` |
+| `Class_Override_Drift.php` | The `CLASS-OVERRIDE-DRIFT-01` analysis of an `rsx/` copy against its archived `.upstream` | `analyze_pair()` |
 
-**Pattern**: Manifest.php contains the public API and delegator methods. Each delegator forwards to the corresponding helper class method. Internal methods use single `_` prefix (conceptually private but technically public for cross-class access).
-
-**When modifying**: Edit the helper class containing the implementation, not Manifest.php (unless changing the public API signature).
+**Reads live in `Manifest.php`; writes live in the four build classes.** A method that answers
+a question about the indexed tree belongs on the facade with its body; a method that produces
+or persists a section of the index belongs in the phase class that owns that section. The
+`_`-prefixed statics on `Manifest` are the build-phase entry points - public for cross-class
+reach, not part of the surface an application calls.
 
 ### Core Data Structure
 
@@ -191,13 +193,15 @@ php artisan rsx:manifest:schema_dump --no-pretty-print
 
 This tool deduplicates array structures, showing unique patterns with example values. Essential for understanding the actual data structure when writing code that directly accesses manifest data.
 
-## 6-Phase Build Process
+## The build phases
 
-The build process follows these phases (implementations in helper classes):
+The build runs seven phases, then the code-quality pass. Implementations live in
+`Manifest_Scanner` (1-2), `Manifest_Indexer` (3-6) and `Manifest_Store` (7); see the file
+map above.
 
 ### Phase 1: File Discovery
-- Implemented in `_Manifest_Scanner_Helper::_get_rsx_files()`
-- Scans the directories `_Manifest_Scanner_Helper::_scan_directories()` returns (facade: `Manifest::scan_directories()`) - the ONE answer to "does this build index that path"
+- Implemented in `Manifest_Scanner::_get_rsx_files()`
+- Scans the directories `Manifest_Scanner::_scan_directories()` returns (facade: `Manifest::scan_directories()`) - the ONE answer to "does this build index that path"
 - Configured list (relative to `base_path()` = `system/`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/Sys']` - `app/RSpade/Sys` is the framework's own application (the /_sys control panel)
 - **THE TEST TREES ARE NOT IN IT.** `app/RSpade/tests`, `app/RSpade/temp` and `rsx/tests` are appended ONLY while `Rsx_Test_Abstract::suite_is_running()` (the `--_test-run` internal flag `system/artisan` declares pre-boot for `rsx:test` and `Rsx_Artisan` forwards to every child). A fixture is real indexed source - a route, an Ajax surface, an `#[Auth]` naming a check - and a served site must not carry one; the outage that set this rule was a fixture whose `#[Auth]` named an application-only check, which failed the manifest build of every install that scanned it. `rsx/tests` lives inside the `rsx/` root, so it is additionally skipped BY PATH when it is not in the list
 - The transition costs one rebuild in each direction and nothing else: the first ordinary request after a test run drops the fixtures again through the normal add/remove path (measured on this box: 5.7 s for that request, 0.11 s steady)
@@ -206,14 +210,14 @@ The build process follows these phases (implementations in helper classes):
 - Returns array of file paths with basic stats (mtime, size)
 
 ### Phase 2: Token Parsing
-- Implemented in `_Manifest_Scanner_Helper::_process_file()`
+- Implemented in `Manifest_Scanner::_process_file()`
 - Uses `token_get_all()` for fast PHP parsing without loading
 - Extracts: namespace, class name, extends, implements
 - **Normalizes all class references to simple names** (strips namespace qualifiers)
 - Builds dependency graph for loading order
 
 ### Phase 3: Dependency Loading
-- Implemented in `_Manifest_Scanner_Helper::_load_changed_php_files()`
+- Implemented in `Manifest_Scanner::_load_changed_php_files()`
 - Loads PHP files in dependency order (parents before children)
 - Uses `_load_class_hierarchy()` to ensure parent classes exist
 - Critical for reflection to work properly
@@ -240,25 +244,24 @@ full pass on the next build. It is not in the index because the hot half is incl
 on every request and a request reads none of it, and the cold half is a flat `files`
 map with no room for another section. A lost copy costs one full fixer pass.
 
-### Phase 4: Reflection & Module Processing
-- Implemented in `_Manifest_Scanner_Helper::_extract_reflection_data()`
-- PHP and JavaScript are parsed directly in Manifest.php (NOT modules) - PHP attribute/method reflection and JS class extraction are first-class
-- Runs registered per-file modules (`config('rsx.manifest_modules')`), then support modules (`config('rsx.manifest_support')`):
-  - `Blade_ManifestModule`: Parses Blade directives (per-file module)
-  - `Scss_ManifestModule`: SCSS metadata (per-file module, in `Integrations/Scss`)
-  - `Model_ManifestSupport`: Adds database schema to models (support module)
-  - plus `Route_`, `Portal_Route_`, `Portal_Spa_`, `Jqhtml_`, `Spa_`, `Api_Endpoint_` support modules
+### Phase 4: Reflection
+- Implemented in `Manifest_Scanner::_extract_reflection_data()`, over the CHANGED set only
+- PHP and JavaScript are parsed directly by the scanner (NOT modules) - PHP attribute/method reflection and JS class extraction are first-class
 - Stores ALL attributes without validation (agnostic extraction)
 
-### Phase 5: Stub Generation
-- Implemented in Manifest.php (not delegated)
-- Creates JavaScript stub classes for:
-  - Controllers with `Ajax_Endpoint` methods → `storage/rsx-build/js-stubs/`
-  - Models with `fetch()` methods → `storage/rsx-build/js-model-stubs/`
-- Enables clean JavaScript API calls without manual Ajax wiring
+### Phase 5: Modules
+- Per-file modules (`config('rsx.manifest_modules')`) already ran during the scan, in `priority()` order: `Blade_ManifestModule`, `Scss_ManifestModule` (`Integrations/Scss`)
+- Support modules (`config('rsx.manifest_support')`) run here, in the listed order, each handed the CHANGED and REMOVED sets - see THE INCREMENTAL MODULE CONTRACT
+- The last three entries are the STUB GENERATORS, which are ordinary support modules that happen to write files (see THE STUB GENERATORS ARE MODULES)
 
-### Phase 6: Cache Writing
-- Implemented in `_Manifest_Cache_Helper::_save()`
+### Phase 6: Stub Generation
+- `Controller_Stub_ManifestSupport` -> `storage/rsx-build/js-stubs/`
+- `Model_Stub_ManifestSupport` -> `storage/rsx-build/js-model-stubs/`
+- `Auth_Stub_ManifestSupport` -> `storage/rsx-build/js-auth-stubs/`
+- Every generator CONTENT-COMPARES before writing, so a rebuild that changes no source rewrites no stub and recompiles no bundle
+
+### Phase 7: Cache Writing
+- Implemented in `Manifest_Store::_save()`
 - Writes `storage/rsx-build/manifest_index.php` and `manifest_files.php` (see THE INDEX IS
   TWO FILES, above)
 - Emits a COMPACT PHP literal (short arrays, no whitespace), STREAMED to the temp file in
@@ -295,7 +298,7 @@ public static function _normalize_class_name(string $class_name): string
 
 **Applied At**:
 1. **Token parsing** - `Php_Parser::_extract_class_info()` normalizes `extends` at extraction
-2. **Parent lookups** - `_Manifest_PHP_Reflection_Helper::_load_class_hierarchy()` normalizes before comparison
+2. **Parent lookups** - `Manifest::_load_class_hierarchy()` normalizes before comparison
 3. **All class name operations** - Any code comparing class names uses normalization
 
 **Why This Works**: RSX's unique simple class name enforcement means we only need FQCNs at actual `include_once` time. Throughout the manifest, simple names are sufficient and eliminate format inconsistencies.
@@ -389,7 +392,7 @@ The manifest practices **agnostic attribute extraction**:
 3. **No Class Loading** - Attributes don't need backing classes
 4. **Raw Storage** - Stores exactly what reflection provides
 
-Example from `_Manifest_Scanner_Helper::_extract_reflection_data()`:
+Example from `Manifest_Scanner::_extract_reflection_data()`:
 ```php
 foreach ($method->getAttributes() as $attribute) {
     $attributes[] = [
@@ -406,7 +409,7 @@ Files are tracked by:
 - `size` - File size in bytes (secondary)
 - `hash` - SHA1, only computed when mtime/size change
 
-The `_Manifest_Scanner_Helper::_has_changed()` method compares these to detect changes.
+The `Manifest_Scanner::_has_changed()` method compares these to detect changes.
 
 ### Error Handling
 
@@ -548,13 +551,28 @@ reflection behind that hash is not run in order to decide whether to run it.
 - Token parsing avoids loading PHP files unnecessarily
 - Dependency ordering minimizes class loading failures
 - SHA1 hashing only when size/mtime indicate changes
-- `var_export()` format allows fast PHP `include()`
+- A compact PHP literal (short arrays, no whitespace) STREAMED to the temp file - `var_export()`
+  built the whole 8.8 MB file as one string first - and included, so OPcache serves it where
+  OPcache is on
+
+### The numbers, and where they come from
+
+Cold ~6.5 s / 107.5 MB peak; no-change rebuild 0.26 - 0.37 s; a one-file rebuild inside a web
+request 0.37 s (scss) to 0.69 s (php); the test-tree transition 2.3 - 3.2 s in and ~0.7 s out.
+The largest item in a cold build is the code-quality pass, and inside it the four cross-file
+ANCESTRY rules (~1.5 s between them, down from 5.2 s once `Source_Cache::declared_members()`
+let them stop re-parsing the tree one after another).
+
+`console_debug('MANIFEST', ...)` prints a per-module and a per-cross-file-rule wall time on
+every build, so the attribution is readable without a probe:
+`CONSOLE_DEBUG_FILTER=MANIFEST php artisan rsx:manifest:build`. **A run that lost the build
+lock measured a LOAD, not a build** (peak ~46 MB, no rule lines) - discard it.
 
 ## Common Issues & Solutions
 
 ### Issue: "Class not found" during reflection
 **Cause**: Parent class not loaded before child
-**Solution**: Check `_Manifest_PHP_Reflection_Helper::_load_class_hierarchy()` is working correctly
+**Solution**: Check `Manifest::_load_class_hierarchy()` is working correctly
 
 ### Issue: Parent class not found (extends mismatch)
 **Cause**: Namespace format variations in `extends` declarations (e.g., `\Rsx\Lib\DataGrid` vs `Rsx\Lib\DataGrid`)
@@ -572,6 +590,22 @@ reflection behind that hash is not run in order to decide whether to run it.
 **Cause**: Missing `Ajax_Endpoint` attribute or method not public static
 **Solution**: Check method has attribute and correct visibility
 
+## The override pass and the SPLIT refusal
+
+`Manifest_Indexer::_check_unique_base_class_names()` archives the framework twin
+when exactly one `rsx/` file declares the same simple name. Two of its four exits are FATAL.
+The first refuses an `rsx/` class that declares `extends <its own name>`. The second is the
+SPLIT refusal - when the framework file about to be archived declares nothing but
+`class X extends X_Abstract`, the `rsx/` class MUST extend that same `X_Abstract`, and
+anything else (a copy of the framework file, a different parent, no parent) throws
+"Fatal: Invalid override of the split framework class 'X'" naming the override file, the
+parent it declares and the base it must extend. A copy is a second implementation of a class
+the framework keeps developing: every member added to the base afterwards is missing from it
+and core calls those members regardless, which is the failure the split exists to end - so it
+is refused rather than reported. The other two exits stay informational (a stale index entry,
+a poisoned manifest) and archive nothing. Contract: `rsx:man class_override`, section WHEN
+THE BUILD REFUSES.
+
 ## Class_Override_Drift (the sidecar comparison)
 
 `Core/Manifest/Class_Override_Drift.php` is a plain helper beside the manifest, not part
@@ -588,16 +622,40 @@ against is what the file itself declares. So `declared_members()` is a `PhpToken
 each file: public/protected methods, declared properties, and class-body `use Trait;`
 adoptions, keyed `method:` / `property:` / `trait:` so two files compare directly.
 
+**A SPLIT class is skipped.** When the archived file declares nothing but
+`class X extends X_Abstract` and the override extends that same base, there is no frozen copy
+to measure - the override inherits every member the base has now and every member it gains
+later - so `analyze_pair()` returns an empty result rather than naming the base's members as
+missing. `declared_parent()` is the token reader that decides it (simple name, qualified
+spelling accepted). An override of a split class that does NOT extend the base never reaches
+here: `_check_unique_base_class_names()` refuses it, naming the abstract.
+
 Consumed by `CLASS-OVERRIDE-DRIFT-01` (`CodeQuality/Rules/Convention/`) and by the
 `Class Override Drift` health row. Contract: `rsx:man class_override`, section DRIFT.
 
 ## Code Quality Integration
 
-`_Manifest_Quality_Helper::_run_manifest_time_code_quality_checks()` is one call into
+`Manifest_Indexer::_run_manifest_time_code_quality_checks()` is one call into
 `App\RSpade\CodeQuality\Manifest_Rule_Driver`, handing it the build's changed-file list and
 the build's `Source_Cache`. The DRIVER owns everything else - discovery, patterns, reading,
 parsing, the per-file ledger skip and the cross-file dependency gate. See
 `CodeQuality/CLAUDE.md` and `rsx:man code_quality`.
+
+**Three classes, and the build owns none of their internals.** `Manifest_Rule_Driver` is the
+pass (`rsx:check` runs the same one); `Support/Source_Cache` is the ONE reader, tokenizer and
+parser, shared with `Php_Fixer` so a file read in phase 2 is not read again in the pass, and
+LRU-bounded at 16 during a build (`Manifest_Build::BUILD_SOURCE_CACHE_CAPACITY`);
+`Support/Validation_Ledger` is the ONE memory of "already passed", at
+`storage/rsx-tmp/persistent/validation_ledger.php`, keyed on the manifest's own file hash so a
+verdict survives a manifest clear. The build hands over the changed set and the cache and takes
+back a verdict; everything else is the driver's contract, in `rsx:man code_quality` and skill
+`rspade:code-quality-rules`.
+
+**A manifest-time RULE or MODULE cannot use the build-scoped `RsxCache`.** Its key is prefixed
+with `Manifest::get_build_key()`, and during a build the manifest is not ready - the accessor
+raises `shouldnt_happen('called before manifest was loaded')`. `RsxCache::get_persistent()` /
+`set_persistent()` keyed on a CONTENT HASH is the tool; `Manifest_Indexer`'s unindexed-framework
+-class map (keyed on a stat fingerprint, prefix `..._v1_`) is the worked example.
 
 There is no `code_quality_metadata` in the index any more, and no `on_manifest_file_update`
 hook: a rule that used to compute findings in a pre-pass and store them for its own `check()`
@@ -654,11 +712,19 @@ php artisan rsx:manifest:build --verbose
 ## Testing Considerations
 
 When testing manifest functionality:
-1. Use `Manifest::clear()` between tests to reset state
-2. Mock file system for predictable test data
-3. Test both scan() and rebuild() paths
+1. Build a FIXTURE TREE rather than mocking: `Manifest::_use_build_for_tests()` swaps the
+   `Manifest_Build` in process, and the four `--_manifest-*` internal flags drive a CHILD
+   build into a scratch storage root. `tests/manifest/` is the worked example, and an extra
+   root can never be the only root (the framework's own support modules and parent classes
+   resolve THROUGH the index)
+2. Use `Manifest::clear()` between tests to reset state
+3. There is no `scan()` / `rebuild()`: `init()` is the single entry point, and
+   `_refresh_manifest()` is the loop underneath it
 4. Verify exception throwing for not-found cases
-5. Check stub generation for API methods
+5. Check stub generation for API methods - and their mtimes, which is what
+   `Manifest_Stub_Rewrite_Test` asserts
+6. An incremental index must be BYTE-IDENTICAL to a cold one over the same tree
+   (`Manifest_Incremental_Modules_Test`); two determinism defects were found by requiring it
 
 ## Important Constants & Paths
 

@@ -9,7 +9,7 @@
  * Cleared by: test_mode_exit.sh
  *
  * IT NO LONGER APPENDS THE TESTS DIRECTORY. The test trees are added by
- * _Manifest_Scanner_Helper::_scan_directories() when the process is a test run
+ * Manifest_Scanner::_scan_directories() when the process is a test run
  * (Rsx_Test_Abstract::suite_is_running(), the --_test-run flag), which reaches every
  * child a test spawns as well - an env file only reaches processes that read it.
  *

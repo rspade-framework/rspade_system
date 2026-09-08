@@ -24,10 +24,19 @@ use App\RSpade\Integrations\Jqhtml\Jqhtml_Exception_ViewException;
 class JqhtmlWebpackCompiler
 {
     /**
-     * Derived-cache namespace for the parser's RAW output. See
-     * App\RSpade\Core\Cache\File_Content_Cache - the ONE per-source-file cache helper.
+     * The ONE derived-cache namespace for jqhtml, shared with Jqhtml_BundleProcessor. The
+     * two LAYERS - the parser's raw output and the bundle-ready wrap of it - are told apart
+     * by the VARIANT, not by a namespace each: they key on the same template file, expire
+     * together, and are swept together. See App\RSpade\Core\Cache\File_Content_Cache.
+     *
+     * NOT named NAMESPACE: `namespace` is a PHP keyword, so `self::NAMESPACE` lexes as
+     * T_NAMESPACE and the token-based import fixer reads every use of it as the top of a
+     * new file.
      */
-    public const PARSED_NAMESPACE = 'jqhtml-parsed';
+    public const CACHE_NAMESPACE = 'jqhtml';
+
+    /** Variant prefix for the parser's RAW output. */
+    public const PARSED_VARIANT = '_parsed';
 
     /**
      * Path to jqhtml-compile binary for package validation (RPC server used for actual compilation)
@@ -105,9 +114,9 @@ class JqhtmlWebpackCompiler
         // precisely how a wrong version (or a whole parser upgrade) kept being served for
         // months - the daemon was recycled, the cache was not. Same discipline as
         // Js_Transformer's toolchain fingerprint and the node service's .meta.
-        $variant = '_pv' . static::_parser_version();
+        $variant = self::PARSED_VARIANT . '_pv' . static::_parser_version();
 
-        $cached = File_Content_Cache::get(self::PARSED_NAMESPACE, $file_path, $variant, 'js');
+        $cached = File_Content_Cache::get(self::CACHE_NAMESPACE, $file_path, $variant, 'js');
 
         if ($cached !== null) {
             console_debug("JQHTML", "Using cached JQHTML template: {$file_path}");
@@ -137,7 +146,7 @@ class JqhtmlWebpackCompiler
         // Cache the compiled result. Entries for templates that no longer exist (or whose
         // parser version has moved on) are removed by File_Content_Cache::sweep_all() at the
         // end of the manifest build - there is no private per-template cleanup here.
-        File_Content_Cache::put(self::PARSED_NAMESPACE, $file_path, $variant, 'js', $wrapped_js);
+        File_Content_Cache::put(self::CACHE_NAMESPACE, $file_path, $variant, 'js', $wrapped_js);
 
         return $wrapped_js;
     }

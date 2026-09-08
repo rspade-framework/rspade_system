@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Common;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 class RsxTestFiles_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -56,8 +57,8 @@ class RsxTestFiles_CodeQualityRule extends CodeQualityRule_Abstract
         if ($pre_commit_tests) {
             // Check both rsx/temp and app/RSpade/temp
             $temp_dirs = [
-                $rsx_dir . '/temp' => 'rsx/temp',
-                $base_path . '/app/RSpade/temp' => 'app/RSpade/temp'
+                $rsx_dir . '/temp' => Rsx_Paths::APPLICATION_PREFIX . 'temp',
+                $base_path . '/app/RSpade/temp' => Rsx_Paths::FRAMEWORK_PREFIX . 'temp'
             ];
             
             foreach ($temp_dirs as $temp_dir => $temp_name) {

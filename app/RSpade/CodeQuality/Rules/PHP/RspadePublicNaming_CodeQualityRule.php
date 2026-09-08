@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 class RspadePublicNaming_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -35,7 +36,7 @@ class RspadePublicNaming_CodeQualityRule extends CodeQualityRule_Abstract
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         // Only apply to files in app/RSpade directory
-        if (!str_contains($file_path, '/app/RSpade/') && !str_contains($file_path, 'app/RSpade/')) {
+        if (!Rsx_Paths::is_framework($file_path)) {
             return;
         }
         

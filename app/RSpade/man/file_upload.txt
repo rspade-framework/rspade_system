@@ -76,9 +76,11 @@ MODELS
         Base:   Rsx_Site_Model_Abstract (site-scoped, multi-tenant)
         Purpose: one row per logical upload, with metadata + attachment.
 
-        To OVERRIDE this model in an app, use the class-override pattern
-        (copy-replace, per rsx:man class_override) - it is NOT an app model and does
-        NOT live in /rsx/models.
+        To OVERRIDE this model in an app, declare `class File_Attachment_Model
+        extends File_Attachment_Model_Abstract` in rsx/models/, carrying only the
+        members it changes (rsx:man class_override). A COPY of the framework file is
+        refused at manifest build. The framework's own declaration lives on the base,
+        File_Attachment_Model_Abstract.php, beside the file named above.
 
         Columns:
             id                 Primary key

@@ -542,7 +542,7 @@ return [
             'app/RSpade/Sys',             // The framework's own application: the /_sys control panel
             // NOT LISTED, deliberately: app/RSpade/tests, app/RSpade/temp and rsx/tests.
             // A test fixture is real indexed source - a route, a surface, an #[Auth] naming a
-            // check - and a served site has no business carrying one. _Manifest_Scanner_Helper
+            // check - and a served site has no business carrying one. Manifest_Scanner
             // ::_scan_directories() appends those three ONLY while the process is a test run
             // (Rsx_Test_Abstract::suite_is_running()); the manifest's ordinary add/remove
             // handles the transition in both directions.

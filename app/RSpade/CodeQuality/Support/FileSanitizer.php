@@ -6,9 +6,21 @@ use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\JsParsers\Rsx_Node_Service;
 
 /**
- * Comment and string blanking for the code-quality rules. JavaScript goes through the
- * `sanitize` subsystem of the node service (Rsx_Node_Service); PHP and template blanking
- * are done here in PHP.
+ * COMMENT AND STRING BLANKING - ONE IMPLEMENTATION PER LANGUAGE FAMILY.
+ *
+ * PHP goes through the tokenizer (`sanitize_php`); JavaScript through the `sanitize`
+ * subsystem of the node service when strings must go too (`sanitize_javascript`), and
+ * through `blank_js_comments` when they must stay; templates through
+ * `blank_template_comments` (jqhtml, blade and html comment forms); stylesheets through
+ * `blank_scss_comments`; a PHP FRAGMENT (one line, where the tokenizer cannot be used)
+ * through `blank_php_comments`.
+ *
+ * EVERY ONE OF THEM IS LINE-PRESERVING. A comment body is replaced with spaces rather than
+ * removed, so a line and column computed against the sanitized text still addresses the
+ * original file - which is what a violation's reported line number is. That is also why
+ * this class exists rather than eight `preg_replace` calls scattered across rules and
+ * manifest modules: several of those DELETED the comment, so every line after the first
+ * multi-line docblock in the file was reported one or more lines off.
  */
 class FileSanitizer
 {
@@ -200,6 +212,48 @@ class FileSanitizer
      */
     public static function blank_js_comments(string $content): string
     {
+        return static::__blank_slash_comments($content, false);
+    }
+
+    /**
+     * Blank out SCSS comments, preserving every byte position and line break.
+     *
+     * SAME COMMENT SYNTAX AS JAVASCRIPT, one difference that matters: CSS accepts an
+     * UNQUOTED url(), and `url(https://fonts.googleapis.com/...)` contains `//`. The four
+     * hand-rolled `preg_replace('#//.*$#m', '', ...)` strippers this replaced all truncated
+     * such a line at the scheme separator - silently, since what they deleted was the rest of
+     * an at-rule the caller then failed to match. So an unquoted url(...) is skipped whole.
+     */
+    public static function blank_scss_comments(string $content): string
+    {
+        return static::__blank_slash_comments($content, true);
+    }
+
+    /**
+     * Blank out PHP comments in a FRAGMENT - one line, or any string that is not a whole
+     * file - preserving every byte position and line break.
+     *
+     * `sanitize_php()` above is the whole-file tool and is the better one: it runs the PHP
+     * TOKENIZER, so it is exact. It cannot be pointed at a single line, because a line is
+     * not parseable PHP. Two rules walk a file line by line and need the comment gone from
+     * the line in hand; this is what they call, and it recognizes PHP's `#` line comment as
+     * well as the two C-style forms.
+     */
+    public static function blank_php_comments(string $content): string
+    {
+        return static::__blank_slash_comments($content, false, true);
+    }
+
+    /**
+     * The scanner both of the above are: `//` to end of line and `/* *\/` blanked to spaces,
+     * quoting tracked so a separator inside a string is never a comment, newlines kept so
+     * every line and column still addresses the original.
+     *
+     * $skip_unquoted_urls additionally steps over a CSS `url(...)` token; $hash_comments
+     * additionally treats `#` as a line comment, which it is in PHP and is not in the others.
+     */
+    private static function __blank_slash_comments(string $content, bool $skip_unquoted_urls, bool $hash_comments = false): string
+    {
         $out = '';
         $length = strlen($content);
         $i = 0;
@@ -230,7 +284,15 @@ class FileSanitizer
                 continue;
             }
 
-            if ($char === '/' && $next === '/') {
+            if ($skip_unquoted_urls && ($char === 'u' || $char === 'U') && stripos(substr($content, $i, 4), 'url(') === 0) {
+                $close = strpos($content, ')', $i);
+                $close = $close === false ? $length : $close + 1;
+                $out .= substr($content, $i, $close - $i);
+                $i = $close;
+                continue;
+            }
+
+            if (($char === '/' && $next === '/') || ($hash_comments && $char === '#')) {
                 while ($i < $length && $content[$i] !== "\n") {
                     $out .= ' ';
                     $i++;
@@ -270,6 +332,18 @@ class FileSanitizer
         } elseif (in_array($extension, ['js', 'jsx', 'ts', 'tsx'])) {
             // JavaScript sanitization needs file path, not content
             return self::sanitize_javascript($file_path);
+        } elseif (in_array($extension, ['scss', 'css'])) {
+            if ($content === null) {
+                $content = file_get_contents($file_path);
+            }
+
+            $blanked = self::blank_scss_comments($content);
+
+            return [
+                'content' => $blanked,
+                'lines' => explode("\n", $blanked),
+                'original_lines' => explode("\n", $content),
+            ];
         } else {
             // For other files, return as-is
             if ($content === null) {

@@ -7,7 +7,7 @@
 
 namespace App\RSpade\Tests\Codegen\Php;
 
-use Illuminate\Support\Facades\Schema;
+use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -21,41 +21,44 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *   - DATE / DATETIME columns are documented as `string` (framework string-time philosophy),
  *     never `\Carbon\Carbon`.
  *
- * Proven against the template app's Party demo (the reference detail-table entity). A
- * framework-only install without the template tables skips - the feature is inherently
- * template-data-backed.
+ * The SUBJECT is derived, never named: the framework declares no CTI model of its own, so
+ * the test asks the manifest for a base model carrying an enum and at least one merged
+ * detail column, and asserts against what that model actually declares. An application with
+ * no such model cannot express the case and skips.
  */
 class Constants_Regenerate_Metadata_Test extends Rsx_Test_Abstract
 {
     protected static $requires_db_reset = true;
     protected static $use_database_transactions = false;
 
-    private const PARTY_MODEL = 'Rsx\\Models\\Party_Model';
-
     public static function test_detail_spanning_bem_and_string_dates()
     {
-        // The Party demo is template-app data; its detail table's presence proves the template
-        // app (and its Party_Model) is installed. A framework-only install skips.
-        if (!Schema::hasTable('party_person_details')) {
-            static::__skip('Template app Party detail tables not present (framework-only install)');
+        $subject = static::__a_cti_model_with_an_enum();
+
+        if ($subject === null) {
+            static::__skip('this application declares no class-table-inheritance model with an enum column');
+
             return;
         }
 
+        [$fqcn, $detail_tables, $enum_column, $first_enum_id, $first_enum_constant] = $subject;
+
         $command = new \App\RSpade\Commands\Rsx\Constants_Regenerate_Command();
-        [$doc_block, $constants_block] = $command->build_metadata(self::PARTY_MODEL);
+        [$doc_block, $constants_block] = $command->build_metadata($fqcn);
 
         // Ported feature 1: CTI detail columns spanned into the base docblock, tagged.
-        static::__assert_contains('(detail: party_person_details)', $doc_block);
-        static::__assert_contains('(detail: party_company_details)', $doc_block);
+        foreach ($detail_tables as $detail_table) {
+            static::__assert_contains("(detail: {$detail_table})", $doc_block);
+        }
 
         // Ported feature 3: BEM double-underscore, typed enum members (not single-underscore mixed).
-        static::__assert_contains('@property-read string $type_id__label', $doc_block);
-        static::__assert_contains('@property-read string $type_id__constant', $doc_block);
-        static::__assert_contains('@method static array type_id__enum()', $doc_block);
-        static::__assert_contains('@method static array type_id__enum_select()', $doc_block);
+        static::__assert_contains("@property-read string \${$enum_column}__label", $doc_block);
+        static::__assert_contains("@property-read string \${$enum_column}__constant", $doc_block);
+        static::__assert_contains("@method static array {$enum_column}__enum()", $doc_block);
+        static::__assert_contains("@method static array {$enum_column}__enum_select()", $doc_block);
         static::__assert_true(
-            !str_contains($doc_block, 'type_id_enum()'),
-            'Legacy single-underscore enum method survived'
+            !str_contains($doc_block, "{$enum_column}_enum()"),
+            'Retired single-underscore enum method survived'
         );
 
         // Ported feature 4: DATE/DATETIME columns are string, never Carbon.
@@ -67,6 +70,64 @@ class Constants_Regenerate_Metadata_Test extends Rsx_Test_Abstract
 
         // The canonical (B1) enum-constants block is produced.
         static::__assert_contains('_AUTO_GENERATED_ Enum constants', $constants_block);
-        static::__assert_contains('const TYPE_PERSON = 1;', $constants_block);
+        static::__assert_contains("const {$first_enum_constant} = {$first_enum_id};", $constants_block);
+    }
+
+    /**
+     * The first model this application declares that has BOTH merged detail columns and an
+     * enum column, as [fqcn, detail_tables, enum_column, first_enum_id, first_enum_constant]
+     * - or null when it declares none.
+     *
+     * A merged detail column is recognised by its source_table tag: the manifest records
+     * which physical table each column came from, and a CTI base model's map carries columns
+     * from its detail tables. Deterministic - the model index is walked in sorted order.
+     *
+     * @return array{0: string, 1: array, 2: string, 3: int, 4: string}|null
+     */
+    private static function __a_cti_model_with_an_enum(): ?array
+    {
+        $models = Manifest::$data['data']['models'] ?? [];
+        ksort($models);
+
+        foreach ($models as $model_class => $model) {
+            $fqcn = $model['fqcn'] ?? null;
+            $base_table = $model['table'] ?? null;
+
+            if ($fqcn === null || $base_table === null) {
+                continue;
+            }
+
+            $detail_tables = [];
+
+            foreach (Manifest::php_model_columns($model_class) ?? [] as $meta) {
+                $source_table = $meta['source_table'] ?? $base_table;
+
+                if ($source_table !== $base_table) {
+                    $detail_tables[$source_table] = true;
+                }
+            }
+
+            if (empty($detail_tables)) {
+                continue;
+            }
+
+            $enums = $fqcn::$enums ?? [];
+
+            foreach ($enums as $enum_column => $values) {
+                foreach ($values as $id => $definition) {
+                    if (isset($definition['constant'])) {
+                        return [
+                            $fqcn,
+                            array_keys($detail_tables),
+                            $enum_column,
+                            (int) $id,
+                            $definition['constant'],
+                        ];
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 }

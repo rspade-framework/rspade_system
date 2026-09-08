@@ -5,13 +5,13 @@
  * use snake_case (underscore_wherever_possible).
  */
 
-namespace App\RSpade\Tests\Preview\Php;
+namespace Rsx\Tests;
 
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Post-migration state assertions for the template-app import_sample_documents migration
+ * Post-migration state assertions for this application's import_sample_documents migration
  * (rsx/resource/migrations). Because the migration COMMITS imported attachment rows into the
  * baseline, this class requires a pristine migrated test DB (no surrounding transaction) so it
  * observes exactly what the migration produced.
@@ -21,7 +21,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * honest expectation here is the unattached branch - but the assertion is written against the
  * ACTUAL client-existence condition so it stays correct if a seeded baseline ever adds clients.
  */
-class Preview_Sample_Import_Test extends Rsx_Test_Abstract
+class Sample_Document_Import_Test extends Rsx_Test_Abstract
 {
     protected static $requires_db_reset = true;
     protected static $use_database_transactions = false;
@@ -44,8 +44,8 @@ class Preview_Sample_Import_Test extends Rsx_Test_Abstract
 
     public static function test_client_linkage_matches_client_existence()
     {
-        // Resolve the same "first client" the migration used, without a hard dependency on the
-        // app's Client_Model class name in this framework test - read the clients table directly.
+        // Resolve the same "first client" the migration used, from the table the migration
+        // itself reads.
         $has_clients_table = static::__clients_table_exists();
         $first_client_row = $has_clients_table
             ? \Illuminate\Support\Facades\DB::selectOne('SELECT id FROM clients ORDER BY id LIMIT 1')

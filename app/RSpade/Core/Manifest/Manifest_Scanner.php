@@ -9,14 +9,18 @@ use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
- * _Manifest_Scanner_Helper - File discovery, change detection, extraction
+ * Manifest_Scanner - phases 1 and 2 of the build.
  *
- * This helper class contains function implementations for Manifest.
- * Functions in this class are called via delegation from Manifest.php.
+ * Directory discovery, per-file change detection, the token parse that produces every file
+ * record, the Php_Fixer run with its class-structure delta, and the PHP reflection extract
+ * (with its derived-cache restore path).
  *
- * @internal Do not use directly - use Manifest:: methods instead.
+ * This is the only class that reads a scanned source file to produce its manifest record;
+ * the code-quality pass reads sources through Manifest_Rule_Driver's Source_Cache instead.
+ *
+ * @internal Reached through the Manifest facade.
  */
-class _Manifest_Scanner_Helper
+class Manifest_Scanner
 {
     /**
      * Derived-cache namespace for the PHP reflection extracts, keyed by the manifest's own
@@ -320,7 +324,7 @@ class _Manifest_Scanner_Helper
     * /Ide and friends are never scanned into the manifest, so nothing else knows their class
     * names - and the autoloader still has to resolve them by simple name. The callers hand it
     * only those subtrees and memoize the result on their stat fingerprint
-    * (_Manifest_Builder_Helper::_unindexed_framework_classes); it is not a general "find the
+    * (Manifest_Indexer::_unindexed_framework_classes); it is not a general "find the
     * classes" facility and must never be pointed at a tree the index already covers.
     */
     public static function _scan_directory_for_classes(string $directory): array
@@ -1195,7 +1199,7 @@ class _Manifest_Scanner_Helper
                 return;
             }
 
-            if (!str_starts_with($file_path, 'rsx/') && !str_starts_with($file_path, 'app/RSpade/')) {
+            if (!Rsx_Paths::is_application($file_path) && !Rsx_Paths::is_framework($file_path)) {
                 return;
             }
 

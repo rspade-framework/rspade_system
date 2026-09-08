@@ -1,0 +1,145 @@
+MANIFEST SUPPORT MODULE SIGNATURE - process() TAKES THE CHANGED AND REMOVED SETS
+Date: 2026-09-08
+
+IF YOU DO NOTHING: an application manifest support module registered in
+    config('rsx.manifest_support') fatals at boot with PHP's signature-compatibility
+    error - "Declaration of My_ManifestSupport::process(array &$manifest_data): void
+    must be compatible with App\RSpade\Core\Manifest\ManifestSupport_Abstract::process(
+    array &$manifest_data, array $changed_files, array $removed_files): void" - and
+    because it is raised at COMPILE time, before any code runs, every request and every
+    artisan command in your application dies there until the signature is fixed.
+
+SUMMARY
+    ManifestSupport_Abstract::process() gained two parameters:
+
+        // BEFORE
+        public static function process(array &$manifest_data): void
+
+        // AFTER
+        public static function process(
+            array &$manifest_data,
+            array $changed_files,
+            array $removed_files
+        ): void
+
+    Adding the two parameters is the whole of the MANDATORY work; a module that ignores
+    them behaves exactly as it did. The OPTIONAL half - and the reason the parameters
+    exist - is the incremental contract described below, which is what makes a rebuild
+    proportional to what you edited rather than to the size of your tree.
+
+    This affects only an application that WROTE a support module. The starter template
+    ships none, so a fork that never added one to config('rsx.manifest_support') has
+    nothing to do. Check with:
+
+        grep -n "manifest_support" -A 20 rsx/resource/config/rsx.php
+
+THE CHANGE
+    Every support module used to be handed the whole manifest and nothing else, so the
+    only thing it could do was rebuild its section from scratch - twelve full passes over
+    the file map on every build, whether one file changed or none. The build now carries
+    the two sets that describe what it actually did, and hands them to every module:
+
+        $changed_files   every path whose record was RE-PARSED this build, accumulated
+                         across build restarts (a superset, never a subset)
+        $removed_files   every path that left the tree this build
+
+    A module's section is CARRIED FORWARD from the previous build (the list is
+    Manifest::MODULE_OWNED_SECTIONS), which is what makes the two sets usable: the
+    section arrives populated, so the job is a DIFF rather than a rebuild.
+
+THE FIX
+    In /system/: the abstract declares the two parameters, all sixteen framework modules
+    take them and diff against them, and the build ksorts every module-owned section once
+    after the last module runs (several modules write the same section, and an incremental
+    update APPENDS to a carried-forward array - without the sort, two builds of an
+    identical tree could disagree about their own build key).
+
+    You receive that automatically via the submodule. Nothing there is yours to copy.
+
+ACTION REQUIRED
+
+    1. FIND YOUR MODULES.
+    -------------------------------------------------------------------------
+    grep -rn "extends ManifestSupport_Abstract" rsx/
+
+    Also read config('rsx.manifest_support') in rsx/resource/config/rsx.php - the
+    application list is deep-merged AFTER the framework list, so every entry there is
+    yours.
+
+    2. ADD THE TWO PARAMETERS. This is mandatory and sufficient.
+    -------------------------------------------------------------------------
+    -    public static function process(array &$manifest_data): void
+    -    {
+    +    public static function process(
+    +        array &$manifest_data,
+    +        array $changed_files,
+    +        array $removed_files
+    +    ): void {
+
+    A module that ignores both parameters is CORRECT and keeps working. It is simply
+    slower than it needs to be, and on a large tree that cost is paid on every save.
+
+    3. OPTIONAL, AND RECOMMENDED: adopt the diff contract.
+    -------------------------------------------------------------------------
+    Two steps, in this order:
+
+        1. drop every entry your section derived from a changed or removed file;
+        2. re-derive the entries the changed files declare now.
+
+    dirty_set() on the base class builds the hash set to test rows against (a hash set,
+    not in_array(), because a cold build's changed set is the whole tree):
+
+        public static function process(
+            array &$manifest_data,
+            array $changed_files,
+            array $removed_files
+        ): void {
+            $dirty = static::dirty_set($changed_files, $removed_files);
+            $index = $manifest_data['data']['my_index'] ?? [];
+
+            foreach (array_keys($index) as $file) {
+                if (isset($dirty[$file])) {
+                    unset($index[$file]);
+                }
+            }
+
+            foreach (Manifest::by_attribute('My_Attribute') as $declaration) {
+                if (isset($dirty[$declaration['file']])) {
+                    $index[$declaration['file']] = $declaration['instances'];
+                }
+            }
+
+            $manifest_data['data']['my_index'] = $index;
+        }
+
+    On a COLD build both sets name the whole tree, so the diff IS the full build and
+    there is no second code path to write or to test.
+
+    NEVER SCAN `files`. If your section genuinely cannot be derived from the changed set,
+    rebuild it from php_classes, js_classes or attribute_index - and say so in the
+    module's docblock, the way the three framework modules that do (Externals,
+    Task_Command, Bundle_Alias) each state their reason.
+
+    4. RECORD WHICH FILE EACH ENTRY CAME FROM.
+    -------------------------------------------------------------------------
+    A diff is only possible if an entry can be traced back to the file that declared it.
+    If your section's rows do not carry their source path, add it now - that is the one
+    structural change the contract asks for, and the framework modules each solved it the
+    same way (the row's own `file`, or a fingerprint of the inputs that produced it).
+
+VERIFICATION
+    php artisan rsx:manifest:build --clean     # a cold build must succeed
+    php artisan rsx:manifest:build             # then an incremental one
+
+    Then prove the diff is honest, which is the property the contract exists for: an
+    INCREMENTAL index must be byte-identical to a COLD one over the same tree. Touch one
+    file your module cares about, rebuild incrementally, and compare your section against
+    a build done after rsx:clean. If they differ, the module is dropping or duplicating
+    entries - almost always because step 1 missed a row whose source file changed.
+
+    The framework holds itself to exactly that assertion in
+    system/app/RSpade/tests/manifest/php/Manifest_Incremental_Modules_Test.php, which is
+    worth reading as the worked example.
+
+    Full contract: php artisan rsx:man manifest_build, section THE INCREMENTAL MODULE
+    CONTRACT; and rsx:man config_rsx, MANIFEST AND BUNDLE PIPELINE.

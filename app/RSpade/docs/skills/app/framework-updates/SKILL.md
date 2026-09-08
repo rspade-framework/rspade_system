@@ -18,7 +18,7 @@ php artisan rsx:framework:status   # installed release + is an update available?
 
 No owned zones, no protected sub-paths, no merge, nothing preserved. The update runs `git reset --hard` inside the submodule, `git clean -fdx` to remove untracked files, and checks out the upstream tip. Local changes there are discarded without being reported, because there is nothing worth reporting: the tree is a checkout of somebody else's repository, and a modification to it is drift, not work.
 
-**Customize the framework with a class override in `rsx/`** - copy the class into `rsx/` under the same name (`rsx:man class_override`). That is the supported path, it survives every update, and it is the reason none of this needs a merge.
+**Customize the framework with a class override in `rsx/`** - a class of the same simple name (`rsx:man class_override`): a core MODEL is EXTENDED (`class X_Model extends X_Model_Abstract`, declaring only what changes), every other framework class is COPIED. That is the supported path, it survives every update, and it is the reason none of this needs a merge.
 
 **Set a 10-minute (600000ms) command timeout.** The pull fetches the distribution and runs the whole rebuild chain; a 2-minute tool default is not enough, and killing it mid-run leaves a partial update. This is a tool-call budget, not a timeout in code - the framework's no-timeout mandate is untouched.
 

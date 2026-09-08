@@ -107,8 +107,7 @@ to the panel through `Rsx::Route('_Sys_Dashboard_Action')` guarded by
 and both are manifest-build fatals. NAME-RESERVED-02 fires when application code
 under `rsx/` names a `_`-prefixed class, component, `@rsx_id` or static method
 that the MANIFEST knows is declared under `app/RSpade/` - so it covers this whole
-tree plus the framework's other `_`-prefixed classes (`_Manifest_*_Helper` and
-friends), and it covers a framework `_`/`__`-prefixed STATIC on an
+tree plus every other `_`-prefixed framework class, and it covers a framework `_`/`__`-prefixed STATIC on an
 ordinarily-named class (`Ajax::_is_internal_call()`, `Rsx._escape_html(...)`).
 The two sanctioned carriers stay legal because they are STRINGS and the rule
 never reads a string literal. Details: `rsx:man sys_panel`,

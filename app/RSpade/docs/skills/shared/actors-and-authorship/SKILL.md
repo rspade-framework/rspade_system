@@ -131,6 +131,6 @@ public function get_view_profile_url(): ?string
 
 A manifest-build FATAL: every class the stamp can name must extend the actor layer, and every concrete actor must still resolve `SoftDeletes`.
 
-**The case it exists for**: you class-override one of the three framework actors (a same-named class in `rsx/models/` replacing the framework file) and forget to extend the same actor abstract. The stamp would keep writing that class name into audit columns, and every authorship display would die at read time - far from the change that caused it.
+**The case it exists for**: you override one of the three framework actors (a same-named class in `rsx/models/`) and extend the wrong base. Each of the three is a split model - `class User_Model extends User_Model_Abstract` is the whole override, and that base already extends the right actor abstract; extending `Rsx_Model_Abstract` or a hand-picked ancestor instead drops the actor layer. The stamp would keep writing that class name into audit columns, and every authorship display would die at read time - far from the change that caused it.
 
 Details: `php artisan rsx:man actors`, `php artisan rsx:man model_normalization`.

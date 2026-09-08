@@ -1,9 +1,13 @@
 # Test Catalog: errors (Error_Screens)
 
+The "deep page the caller wanted" is `php/Error_Screens_Route_Fixture_Controller.php`
+(`/test-errors/record/:id`): the intended URL only survives into `?redirect=` when it is
+routable and carries no leading underscore, and every framework route is `/_`-prefixed.
+
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | ERR-01 | Anonymous denial goes to login, not a 403 | php | `unauthorized()` with no session | 302, Location contains `/login` | implemented | 2026-08-07 |
-| ERR-02 | The intended URL is threaded for the return trip | php | `unauthorized()` on `/clients/view/5` | Location carries `redirect=` with the target | implemented | 2026-08-07 |
+| ERR-02 | The intended URL is threaded for the return trip | php | `unauthorized()` on the concern's routed fixture URL | Location carries `redirect=` with the target | implemented | 2026-09-08 |
 | ERR-03 | Authenticated denial is a themed 403 | php | `unauthorized()` acting as a user | 403, body contains "Access Denied" | implemented | 2026-08-07 |
 | ERR-04 | An explicit realm wins over ambient detection | php | `unauthorized(..., REALM_PORTAL)` | 302 to the portal login route | implemented | 2026-08-07 |
 | ERR-05 | not_found renders the themed body and status | php | `not_found()` | 404, body contains "Page Not Found" | implemented | 2026-08-07 |

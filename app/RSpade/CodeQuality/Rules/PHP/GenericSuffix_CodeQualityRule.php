@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 class GenericSuffix_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -38,8 +39,8 @@ class GenericSuffix_CodeQualityRule extends CodeQualityRule_Abstract
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         // Skip SchemaQuality and CodeQuality directories - they have their own naming conventions
-        if (str_contains($file_path, 'app/RSpade/SchemaQuality/') ||
-            str_contains($file_path, 'app/RSpade/CodeQuality/')) {
+        if (Rsx_Paths::under_framework($file_path, 'SchemaQuality/')
+            || Rsx_Paths::under_framework($file_path, 'CodeQuality/')) {
             return;
         }
 

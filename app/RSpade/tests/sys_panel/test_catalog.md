@@ -2,7 +2,7 @@
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
-| RP-SPA-01 | Every panel screen is a SPA route on `_Sys_Spa_Controller`, gated `is_sysadmin`, served by its own action | php | Persisted route index | seven patterns, `type=spa`, `surface_gates(surface)`/`auth_action` contain `is_sysadmin` | implemented | 2026-09-07 |
+| RP-SPA-01 | Every panel screen is a SPA route on `_Sys_Spa_Controller`, gated `is_sysadmin`, served by its own action | php | Persisted route index | seven patterns, `type=spa`, `surface_gates(surface)` and `surface_gates(target)` contain `is_sysadmin` | implemented | 2026-09-07 |
 | RP-SPA-02 | The panel has EXACTLY seven screens - an eighth cannot arrive unnoticed | php | Persisted route index | the pattern set equals the catalog's | implemented | 2026-09-07 |
 | RP-SPA-03 | Every panel action declares `_Sys_Layout` | php | Action file metadata | `@layout` == `['_Sys_Layout']` | implemented | 2026-09-07 |
 | RP-ROUTE-01 | `/_sys/logout` is a GET route on `_Sys_Controller`, gated `is_sysadmin` | php | Persisted route index | `type=standard`, methods `['GET']` | implemented | 2026-09-07 |
@@ -25,7 +25,7 @@
 | RP-UI-02 | The sidebar's active item follows SPA navigation without a reload | playwright | `/_sys` -> `/_sys/users` | `.active` moves, no full page load | not implemented | 2026-09-07 |
 | RP-UI-03 | A denied screen's nav entry does not render (nav honesty) | playwright | a screen whose gate denies | the link is absent | not implemented | 2026-09-07 |
 | RP-PUB-01 | The panel's INDEX ACTION (not its bootstrap controller) is the configured always-published target, and it resolves in the manifest | php | `config('rsx.always_published_routes')` + `routes_by_target` | `_Sys_Dashboard_Action` present with patterns; `_Sys_Spa_Controller::index` has none | implemented | 2026-09-07 |
-| RP-PUB-02 | A compiled application bundle carries the published route table with the pattern resolved FROM THE MANIFEST, and no panel code | php | in-process `BundleCompiler::compile('Frontend_Bundle')` | generated JS contains `Rsx._define_published_spa_routes` + the target + each manifest pattern and `Manifest._define_published_subclass_index`; no `_Sys_Layout` | implemented | 2026-09-08 |
+| RP-PUB-02 | A compiled application bundle carries the published route table with the pattern resolved FROM THE MANIFEST, and no panel code | php | in-process `BundleCompiler::compile()` of the first application module bundle the manifest declares | generated JS contains `Rsx._define_published_spa_routes` + the target + each manifest pattern and `Manifest._define_published_subclass_index`; no `_Sys_Layout` | implemented | 2026-09-08 |
 | RP-PUB-03 | A configured target with no routes FAILS THE COMPILE rather than silently vanishing | php | `_collect_always_published_routes` with a bogus target | RuntimeException | implemented | 2026-09-07 |
 | RP-PUB-04 | `auth_routes_published` is always present and carries explicit denials: 1 signed in, 0 anonymous | php | `export_published_route_grants('staff')` before/after `__acting_as_user(1)` | key present both times; 0 then 1 | implemented | 2026-09-07 |
 | RP-PUB-05 | The map is realm-scoped - a staff target is never answered for in the portal realm | php | `export_published_route_grants('portal')` | key absent | implemented | 2026-09-07 |

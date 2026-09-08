@@ -5,6 +5,7 @@ namespace App\RSpade\CodeQuality\Rules\Convention;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * CONV-BUNDLE-02 - what an application bundle's include list may name.
@@ -33,7 +34,7 @@ class BundleIncludePath_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * The framework application tree an rsx/ bundle may never include, manifest-relative.
      */
-    private const FRAMEWORK_APP_TREE = 'app/RSpade/Sys';
+    private const FRAMEWORK_APP_TREE = Rsx_Paths::FRAMEWORK_PREFIX . 'Sys';
 
     public function get_id(): string
     {

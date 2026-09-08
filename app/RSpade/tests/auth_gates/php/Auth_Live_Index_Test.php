@@ -156,9 +156,14 @@ class Auth_Live_Index_Test extends Rsx_Test_Abstract
     {
         $surfaces = Auth_Gates::get_surfaces();
 
+        // Framework-declared surfaces only, one per PHP kind: this concern's own routed
+        // fixture, the panel's #[SPA] bootstrap controller, the ORM ajax endpoint and a
+        // framework model's fetch(). An application declares none of these under a name
+        // this test could predict.
         $expected = [
-            'Login_Controller::index' => ['route', 'staff'],
-            'Frontend_Spa_Controller::index' => ['spa', 'staff'],
+            'Auth_Gates_Seam_Fixture_Controller::open' => ['route', 'staff'],
+            '_Sys_Spa_Controller::index' => ['spa', 'staff'],
+            '_Sys_Dashboard_Action' => ['js_action', 'staff'],
             'Orm_Controller::fetch' => ['ajax', 'any'],
             'User_Model::fetch' => ['model_fetch', 'staff'],
         ];

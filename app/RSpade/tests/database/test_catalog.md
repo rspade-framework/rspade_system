@@ -118,13 +118,13 @@ terminates at the first ancestor with no manifest entry.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| db-rel-01 | the parent-declared audit relations reach a template model | `Client_Model::get_relationships()` | contains created_by, updated_by, deleted_by | implemented |
-| db-rel-02 | own-file relations survive the union | same | contains billing_contact, contacts, owner | implemented |
-| db-rel-03 | the premise: those names are NOT in the model's own manifest entry | `php_get_metadata_by_class('Client_Model')` | audit names absent from public_instance_methods | implemented |
+| db-rel-01 | the audit relations declared on `Rsx_Model_Abstract` reach a core model | `File_Attachment_Model::get_relationships()` | contains created_by, updated_by, deleted_by | implemented |
+| db-rel-02 | the model's own relations - declared on its abstract base - survive the union | same | contains file_storage, site, fileable | implemented |
+| db-rel-03 | the premise: NONE of those names are in the concrete's own entry, and the audit names are not on the abstract base either | `php_get_metadata_by_class('File_Attachment_Model')` and `..._Abstract` | concrete declares none; the abstract declares file_storage but no audit relation | implemented |
 | db-rel-04 | the union is de-duplicated | same | count === count(array_unique) | implemented |
-| db-rel-05 | a sibling model resolves its OWN set (the memo is per called class) | `Contact_Model::get_relationships()` | has client + created_by, lacks billing_contact | implemented |
-| db-rel-06 | a framework-core model inherits them too | `File_Attachment_Model::get_relationships()` | file_storage + the three audit relations | implemented |
-| db-rel-07 | the walk terminates outside the manifest | climb Client_Model's extends_fqcn | last visible ancestor's parent is Eloquent's Model | implemented |
+| db-rel-05 | a sibling model resolves its OWN set (the memo is per called class) | `User_Model::get_relationships()` | has login_user + created_by, lacks file_storage | implemented |
+| db-rel-06 | (folded into db-rel-01/02: the subject is now a core model throughout) | - | - | retired |
+| db-rel-07 | the walk terminates outside the manifest | climb File_Attachment_Model's extends_fqcn | at least 2 visible ancestors; the last one's parent is Eloquent's Model | implemented |
 
 
 ## Field_Length_Test (php, no DB writes) - the ONE column-length definition
@@ -135,10 +135,10 @@ rows are the round trip - the stub, as an artifact on disk, cannot disagree with
 
 | ID | Purpose | Input | Expected | Status | Last updated |
 |----|---------|-------|----------|--------|--------------|
-| db-fl-01 | a varchar/char column answers its length | `Client_Model::field_length('name')` / `'zip'` | 255 / 20 | implemented | 2026-09-07 |
+| db-fl-01 | a varchar/char column answers its length | `Login_User_Model::field_length('email')` / `User_Model::field_length('first_name')` | 255 / 100 | implemented | 2026-09-08 |
 | db-fl-02 | every other type answers null - a real answer, not a failure | bigint, datetime, text | null for each | implemented | 2026-09-07 |
 | db-fl-03 | an unknown column throws, naming the model and the column | `'nope_not_a_column'` | RuntimeException containing both | implemented | 2026-09-07 |
-| db-fl-04 | a CTI base model answers for a DETAIL column it does not physically have | `Party_Model::field_length('first_name')` / `'legal_name'` | 255 each, and neither is in `getColumns()` | implemented | 2026-09-07 |
+| db-fl-04 | a CTI base model answers for a DETAIL column it does not physically have | the first merged detail column the manifest reports for any model (`source_table` != base table) | the manifest's length, and the column is not in `getColumns()` | implemented (skips where the application declares no CTI model) | 2026-09-08 |
 | db-fl-05 | `Manifest::php_model_columns()` declines a non-model class rather than inventing a map | `'Rsx_Test_Abstract'` | null | implemented | 2026-09-07 |
 | db-fl-06 | every length baked into every generated stub equals the model's answer | all stubs in `storage/rsx-build/js-model-stubs/` | equal for every column | implemented | 2026-09-07 |
 | db-fl-07 | no publishable column with a length is missing from its stub | same | present in the stub's table | implemented | 2026-09-07 |
@@ -158,17 +158,17 @@ answers are.
 
 | ID | Purpose | Input | Expected | Status | Last updated |
 |----|---------|-------|----------|--------|--------------|
-| db-ar-01 | a datetime attribute is an ISO-8601 UTC string, never a Carbon | `Client_Model::find()->created_at` | matches `YYYY-MM-DDTHH:MM:SS.sssZ`, not a Carbon | implemented | 2026-09-07 |
-| db-ar-02 | a DATE column keeps its calendar spelling | `Project_Model->start_date` | `'2026-01-15'` as a string | implemented | 2026-09-07 |
-| db-ar-03 | a TINYINT(1) column is a real bool, not 1/0 | `portal_enabled` / `newsletter_opt_in` | `=== true` / `=== false` | implemented | 2026-09-07 |
+| db-ar-01 | a datetime attribute is an ISO-8601 UTC string, never a Carbon | `User_Model::find(1)->created_at` | matches `YYYY-MM-DDTHH:MM:SS.sssZ`, not a Carbon | implemented | 2026-09-08 |
+| db-ar-02 | a DATE column keeps its calendar spelling | the first DATE column the manifest reports for any model, set on a bare instance | `'2026-01-15'` as a string | implemented (skips where the application declares no DATE column) | 2026-09-08 |
+| db-ar-03 | a TINYINT(1) column is a real bool, not 1/0 | `users.is_enabled` / `is_api_access_enabled`, written and refetched | `=== true` / `=== false` | implemented | 2026-09-08 |
 | db-ar-04 | a type-ref column exposes the simple class name while storing the integer | `created_by_type` | `'User_Model'`, raw value numeric | implemented | 2026-09-07 |
-| db-ar-05 | two model classes on different tables never share a cast map (the memo is keyed per class+table) | Client vs Project casts | each table's own columns only; shared column types agree | implemented | 2026-09-07 |
+| db-ar-05 | two model classes on different tables never share a cast map (the memo is keyed per class+table) | `User_Model` vs `Login_User_Model` casts | each table's own columns only; shared column types agree | implemented | 2026-09-08 |
 | db-ar-06 | `mergeCasts()` stays on its instance and does not leak to a freshly fetched sibling - the reason `parent::getCasts()` is NOT memoized | mergeCasts on one instance | that instance `'string'`, sibling `'boolean'` and still a real bool | implemented | 2026-09-07 |
 | db-ar-07 | enum magic answers label, constant and a CUSTOM property for the current value | `status_id__label` / `__constant` / `__badge`, `priority__label` | Prospect / STATUS_PROSPECT / bg-info / High | implemented | 2026-09-07 |
 | db-ar-08 | the map is per class but the ANSWER is per record | change `status_id` in place | label and badge follow the new value | implemented | 2026-09-07 |
 | db-ar-09 | `isset()` finds a matching magic key (the `__isset` fast path), so `??` reaches `__get` | `isset($m->status_id__label)` | true; `??` yields the label; false for an undeclared property and for an unknown name | implemented | 2026-09-07 |
 | db-ar-10 | the static lookups answer through an instance too | `$m->status_id__enum_ids` / `__enum_labels` | `[1,2,3,4]`; `[1 => 'Active']` | implemented | 2026-09-07 |
-| db-ar-11 | `Model::field__enum*()` static form still works, the memoized sort is stable, and a sibling class has its own map | `Project_Model::status__enum*()`, `Client_Model::status_id__enum_ids()` | full metadata, declared ordering, per-class ids | implemented | 2026-09-07 |
+| db-ar-11 | `Model::field__enum*()` static form still works, the memoized sort is stable, and a sibling class has its own map | `Attribute_Read_Enum_Fixture_Model::priority_id__enum*()`, `System_Column_Fixture_Model::state_id__enum_ids()` | full metadata, declared ordering, per-class ids | implemented | 2026-09-08 |
 | db-ar-12 | a `_`-prefixed SYSTEM column contains no `__`, takes the fast path's short exit and still reads back correctly - while enum magic on the same model keeps working | `System_Column_Fixture_Model->_flag` | value read, `isset()` true, `state_id__label`/`__tone` still answer, `_flag` absent from `toArray()` | implemented | 2026-09-07 |
 
 Note for future authors: db-ar-12 owns the only `_`-prefixed column in this tree. It lives on
@@ -176,3 +176,12 @@ a fixture table `Model_Attribute_Read_Test` creates in `setup()` and drops in `t
 (both run outside the per-test transaction), because no shipped model declares one yet. If a
 framework feature ever adds a system column to a real table, this row can move onto it and the
 fixture can go.
+
+Note on SUBJECTS (portability): a SCHEMA-DERIVED answer - a cast, a column length - is read out
+of the manifest's column map, which is built from the live schema at MANIFEST-BUILD time. A
+fixture table this concern creates at TEST time can therefore never carry one, so every
+schema-derived row above is driven against a framework model on a framework table (`users`,
+`login_users`, `_file_attachments`) or against a subject DERIVED from the manifest and skipped
+when the application has none. ENUM resolution is declared in PHP and needs no schema at all,
+so the enum rows are driven against the two fixture models - which is also the only way to
+prove the per-class memos are not shared.

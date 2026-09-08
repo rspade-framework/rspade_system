@@ -70,6 +70,15 @@ class ModelEnums_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Check for public static $enums property
         if (!preg_match('/public\s+static\s+\$enums\s*=\s*(\[.*?\])\s*;/s', $contents, $match)) {
+            // THE FILE IS THE FAST PATH, NOT THE ANSWER. An override of a split framework
+            // model declares only what it changes - the enums, like the table, live on the
+            // base it extends - so an $enums this file does not declare is not an $enums the
+            // model lacks. Rsx_Model_Abstract's own default declaration does not count: it is
+            // what every model inherits, and crediting it would retire the rule.
+            if ($this->lineage_declares_property($class_name, 'enums', 'Rsx_Model_Abstract')) {
+                return;
+            }
+
             // Find class definition line
             $class_line = 1;
             foreach ($lines as $i => $line) {

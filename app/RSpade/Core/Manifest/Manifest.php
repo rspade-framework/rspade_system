@@ -16,14 +16,9 @@ use App\RSpade\Core\Kernels\ManifestKernel;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest_Build;
-use App\RSpade\Core\Manifest\_Manifest_Builder_Helper;
-use App\RSpade\Core\Manifest\_Manifest_Cache_Helper;
-use App\RSpade\Core\Manifest\_Manifest_Database_Helper;
-use App\RSpade\Core\Manifest\_Manifest_JS_Reflection_Helper;
-use App\RSpade\Core\Manifest\_Manifest_PHP_Reflection_Helper;
-use App\RSpade\Core\Manifest\_Manifest_Quality_Helper;
-use App\RSpade\Core\Manifest\_Manifest_Reflection_Helper;
-use App\RSpade\Core\Manifest\_Manifest_Scanner_Helper;
+use App\RSpade\Core\Manifest\Manifest_Indexer;
+use App\RSpade\Core\Manifest\Manifest_Scanner;
+use App\RSpade\Core\Manifest\Manifest_Store;
 use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Rsx;
 
@@ -333,7 +328,7 @@ class Manifest
     */
     public static function _load_cold_files(): void
     {
-        _Manifest_Cache_Helper::_load_cold_files();
+        Manifest_Store::_load_cold_files();
     }
 
     /**
@@ -452,15 +447,35 @@ class Manifest
     */
     public static function php_find_class(string $class_name): string
     {
-        return _Manifest_PHP_Reflection_Helper::php_find_class($class_name);
+        self::init();
+
+        if (!isset(self::$data['data']['php_classes'][$class_name])) {
+            throw new \RuntimeException("PHP class not found in manifest: {$class_name}");
+        }
+
+        return self::$data['data']['php_classes'][$class_name]['file'];
     }
 
     /**
-    * Find a PHP class by fully qualified name
+    * Find a PHP class by fully qualified name.
+    *
+    * RSX enforces unique SIMPLE class names, so an FQCN's last segment is its key in the
+    * class map and the lookup is O(1). This used to be a linear scan of every indexed file
+    * comparing `fqcn` - on the request path, behind twelve call sites, several of them
+    * per-model and per-render.
     */
     public static function find_php_fqcn(string $fqcn): string
     {
-        return _Manifest_PHP_Reflection_Helper::find_php_fqcn($fqcn);
+        self::init();
+
+        $simple = self::_normalize_class_name($fqcn);
+        $record = self::$data['data']['php_classes'][$simple] ?? null;
+
+        if ($record !== null && ($record['fqcn'] ?? null) === ltrim($fqcn, '\\')) {
+            return $record['file'];
+        }
+
+        throw new \RuntimeException("PHP class with FQCN not found in manifest: {$fqcn}");
     }
 
     /**
@@ -469,7 +484,9 @@ class Manifest
     */
     public static function php_get_metadata_by_class(string $class_name): array
     {
-        return _Manifest_PHP_Reflection_Helper::php_get_metadata_by_class($class_name);
+        $file = self::php_find_class($class_name);
+
+        return self::get_file($file);
     }
 
     /**
@@ -478,22 +495,30 @@ class Manifest
     */
     public static function php_get_metadata_by_fqcn(string $fqcn): array
     {
-        return _Manifest_PHP_Reflection_Helper::php_get_metadata_by_fqcn($fqcn);
+        $file = self::find_php_fqcn($fqcn);
+
+        return self::get_file($file);
     }
 
     /**
     * Merged column map for a model class, or null when the class is not an indexed model.
     *
-    * O(1) class-keyed. Column entries carry the FULL metadata (type, max_length, nullable,
-    * ...), unlike db_get_table_columns() which flattens each column to its type string, and
-    * a base model's Class-Table-Inheritance detail columns are already merged in.
+    * O(1) class-keyed - the same array the JS stub generator consumes, so Class-Table
+    * Inheritance is already spanned (Model_ManifestSupport::__merge_detail_columns() merges a
+    * base model's detail-table columns into its map before this is ever read). Column entries
+    * carry the FULL metadata (type, max_length, nullable, ...), unlike db_get_table_columns()
+    * which flattens each column to its type string.
     *
     * @param string $class_name Class name (FQCN or simple - normalized either way)
     * @return array|null column_name => metadata array, or null if not an indexed model
     */
     public static function php_model_columns(string $class_name): ?array
     {
-        return _Manifest_PHP_Reflection_Helper::php_model_columns($class_name);
+        self::init();
+
+        $class_name = self::_normalize_class_name($class_name);
+
+        return self::$data['data']['models'][$class_name]['columns'] ?? null;
     }
 
     /**
@@ -501,15 +526,34 @@ class Manifest
     */
     public static function js_find_class(string $class_name): string
     {
-        return _Manifest_JS_Reflection_Helper::js_find_class($class_name);
+        self::init();
+
+        if (!isset(self::$data['data']['js_classes'][$class_name])) {
+            throw new \RuntimeException("JavaScript class not found in manifest: {$class_name}");
+        }
+
+        return self::$data['data']['js_classes'][$class_name]['file'];
     }
 
     /**
-    * Find a view by ID
+    * The path of a Blade view, by its @rsx_id.
+    *
+    * One lookup in `blade_views`. It used to scan every indexed file for a matching `id`, on
+    * every hop of every layout chain of every rendered page, and to raise the DUPLICATE-ID
+    * error at render time - which is a build-time fact, and is now a build failure naming
+    * both files (Manifest_Indexer::_build_blade_view_index()).
     */
     public static function find_view(string $id): string
     {
-        return _Manifest_Reflection_Helper::find_view($id);
+        self::init();
+
+        $path = self::$data['data']['blade_views'][$id] ?? null;
+
+        if ($path === null) {
+            throw new \RuntimeException("View not found in manifest: {$id}");
+        }
+
+        return $path;
     }
 
     /**
@@ -517,7 +561,8 @@ class Manifest
     */
     public static function find_view_by_rsx_id(string $id): string
     {
-        return _Manifest_Reflection_Helper::find_view_by_rsx_id($id);
+        // This method now properly checks for duplicates
+        return self::find_view($id);
     }
 
     /**
@@ -535,28 +580,89 @@ class Manifest
     */
     public static function get_path_by_filename(string $filename): string
     {
-        return _Manifest_Reflection_Helper::get_path_by_filename($filename);
+        $files = self::get_all();
+
+        $matches = [];
+
+        foreach ($files as $path => $metadata) {
+            // Only consider files in /rsx directory
+            if (!Rsx_Paths::is_application($path)) {
+                continue;
+            }
+
+            // Extract just the filename from the path
+            $file_basename = basename($path);
+
+            if ($file_basename === $filename) {
+                $matches[] = $path;
+            }
+        }
+
+        if (empty($matches)) {
+            throw new \RuntimeException(
+                "Fatal: File not found in manifest: {$filename}\n" .
+'This method only searches files in the /rsx directory.'
+            );
+        }
+
+        if (count($matches) > 1) {
+            throw new \RuntimeException(
+                "Fatal: Multiple files with name '{$filename}' found in manifest:\n" .
+'  - ' . implode("\n  - ", $matches) . "\n" .
+'This method requires unique filenames.'
+            );
+        }
+
+        return $matches[0];
     }
 
     /**
     * Get all classes extending a parent (filters out abstract classes by default)
-    * Returns array of class metadata indexed by class name
+    * Returns FULL file metadata indexed by class name - so it loads the cold half of the
+    * index. Callers that only need names or the structural fields want
+    * php_get_subclasses_of() and php_class_metadata() instead.
     */
     public static function php_get_extending(string $parentclass): array
     {
-        return _Manifest_PHP_Reflection_Helper::php_get_extending($parentclass);
+        // Get concrete subclasses only (abstract filtered out by default)
+        $subclasses = self::php_get_subclasses_of($parentclass, true);
+
+        $classpile = [];
+        foreach ($subclasses as $classname) {
+            $record = self::$data['data']['php_classes'][$classname] ?? null;
+
+            if ($record !== null) {
+                $classpile[$classname] = self::get_file($record['file']);
+            }
+        }
+
+        return $classpile;
     }
 
     /**
-    * The HOT CLASS RECORDS of every class extending a parent, keyed by class name:
-    * ['file' => ..., 'fqcn' => ..., 'extends' => ?string, 'abstract' => bool].
+    * The HOT CLASS RECORDS of every class extending a parent, keyed by class name.
     *
-    * php_get_extending()'s cheap sibling. Use it whenever the method map is not what you
-    * want - it answers from the hot index and never loads the cold half.
+    * php_get_extending()'s cheap sibling: same set, but each value is
+    * ['file', 'fqcn', 'extends', 'abstract'] rather than the class's whole file record. Use
+    * it wherever the answer is "which classes, and where do they live" - the request-path
+    * `Main_Abstract` and `Portal_Main_Abstract` lookups are the archetype - and reserve
+    * php_get_extending() for callers that genuinely want the method map.
+    *
+    * @return array<string, array>
     */
     public static function php_class_records_extending(string $parentclass, bool $concrete_only = true): array
     {
-        return _Manifest_PHP_Reflection_Helper::php_class_records_extending($parentclass, $concrete_only);
+        $records = [];
+
+        foreach (self::php_get_subclasses_of($parentclass, $concrete_only) as $class) {
+            $record = self::$data['data']['php_classes'][$class] ?? null;
+
+            if ($record !== null) {
+                $records[$class] = $record;
+            }
+        }
+
+        return $records;
     }
 
     /**
@@ -565,7 +671,19 @@ class Manifest
     */
     public static function js_get_extending(string $parentclass): array
     {
-        return _Manifest_JS_Reflection_Helper::js_get_extending($parentclass);
+        // Get all subclasses (JavaScript has no abstract concept)
+        $subclasses = self::js_get_subclasses_of($parentclass);
+
+        $classpile = [];
+        foreach ($subclasses as $classname) {
+            $record = self::$data['data']['js_classes'][$classname] ?? null;
+
+            if ($record !== null) {
+                $classpile[$classname] = self::get_file($record['file']);
+            }
+        }
+
+        return $classpile;
     }
 
     /**
@@ -577,7 +695,36 @@ class Manifest
     */
     public static function php_is_subclass_of(string $subclass, string $superclass): bool
     {
-        return _Manifest_PHP_Reflection_Helper::php_is_subclass_of($subclass, $superclass);
+        self::init();
+
+        $subclass = self::_normalize_class_name($subclass);
+        $superclass = self::_normalize_class_name($superclass);
+
+        $current_class = $subclass;
+        $visited = []; // Prevent infinite loops in case of circular inheritance
+
+        while ($current_class) {
+            if (isset($visited[$current_class])) {
+                return false;
+            }
+
+            $visited[$current_class] = true;
+
+            $record = self::$data['data']['php_classes'][$current_class] ?? null;
+
+            if ($record === null || empty($record['extends'])) {
+                return false;
+            }
+
+            if ($record['extends'] === $superclass) {
+                return true;
+            }
+
+            // Move up the chain to the parent class
+            $current_class = $record['extends'];
+        }
+
+        return false;
     }
 
     /**
@@ -588,7 +735,11 @@ class Manifest
     */
     public static function php_is_abstract(string $class_name): bool
     {
-        return _Manifest_PHP_Reflection_Helper::php_is_abstract($class_name);
+        self::init();
+
+        $record = self::$data['data']['php_classes'][self::_normalize_class_name($class_name)] ?? null;
+
+        return (bool) ($record['abstract'] ?? false);
     }
 
     /**
@@ -602,7 +753,30 @@ class Manifest
     */
     public static function php_get_lineage(string $class_name): array
     {
-        return _Manifest_PHP_Reflection_Helper::php_get_lineage($class_name);
+        self::init();
+
+        $lineage = [];
+        $current_class = self::_normalize_class_name($class_name);
+        $visited = [];
+
+        while ($current_class) {
+            if (isset($visited[$current_class])) {
+                break;
+            }
+
+            $visited[$current_class] = true;
+
+            $record = self::$data['data']['php_classes'][$current_class] ?? null;
+
+            if ($record === null || empty($record['extends'])) {
+                break;
+            }
+
+            $lineage[] = $record['extends'];
+            $current_class = $record['extends'];
+        }
+
+        return $lineage;
     }
 
     /**
@@ -617,7 +791,7 @@ class Manifest
     */
     public static function is_php_model_class(string $class_name): bool
     {
-        return _Manifest_PHP_Reflection_Helper::is_php_model_class($class_name);
+        return isset(self::$data['data']['models'][$class_name]);
     }
 
     /**
@@ -629,7 +803,53 @@ class Manifest
     */
     public static function js_is_subclass_of(string $subclass, string $superclass): bool
     {
-        return _Manifest_JS_Reflection_Helper::js_is_subclass_of($subclass, $superclass);
+        // Strip namespace if FQCN was passed (contains backslash)
+        if (strpos($subclass, '\\') !== false) {
+            // Get the class name after the last backslash
+            $parts = explode('\\', $subclass);
+            $subclass = end($parts);
+        }
+
+        if (strpos($superclass, '\\') !== false) {
+            // Get the class name after the last backslash
+            $parts = explode('\\', $superclass);
+            $superclass = end($parts);
+        }
+
+        self::init();
+
+        $current_class = $subclass;
+        $visited = []; // Prevent infinite loops in case of circular inheritance
+
+        while ($current_class) {
+            if (isset($visited[$current_class])) {
+                return false;
+            }
+
+            $visited[$current_class] = true;
+
+            // HACK #1 - JS Model shortcut: When checking against Rsx_Js_Model, if we encounter
+            // a PHP model class name (like "Project_Model"), we know it's a model that will have
+            // a generated Base_ stub extending Rsx_Js_Model. Return true immediately.
+            if ($superclass === 'Rsx_Js_Model' && self::is_php_model_class($current_class)) {
+                return true;
+            }
+
+            $record = self::$data['data']['js_classes'][$current_class] ?? null;
+
+            if ($record === null || empty($record['extends'])) {
+                return false;
+            }
+
+            if ($record['extends'] === $superclass) {
+                return true;
+            }
+
+            // Move up the chain to the parent class
+            $current_class = $record['extends'];
+        }
+
+        return false;
     }
 
     /**
@@ -642,7 +862,36 @@ class Manifest
     */
     public static function js_get_lineage(string $class_name): array
     {
-        return _Manifest_JS_Reflection_Helper::js_get_lineage($class_name);
+        // Strip namespace if FQCN was passed
+        if (strpos($class_name, '\\') !== false) {
+            $parts = explode('\\', $class_name);
+            $class_name = end($parts);
+        }
+
+        self::init();
+
+        $lineage = [];
+        $current_class = $class_name;
+        $visited = []; // Prevent infinite loops
+
+        while ($current_class) {
+            if (isset($visited[$current_class])) {
+                break;
+            }
+
+            $visited[$current_class] = true;
+
+            $record = self::$data['data']['js_classes'][$current_class] ?? null;
+
+            if ($record === null || empty($record['extends'])) {
+                break;
+            }
+
+            $lineage[] = $record['extends'];
+            $current_class = $record['extends'];
+        }
+
+        return $lineage;
     }
 
     /**
@@ -654,7 +903,44 @@ class Manifest
     */
     public static function php_get_subclasses_of(string $class_name, bool $concrete_only = true): array
     {
-        return _Manifest_PHP_Reflection_Helper::php_get_subclasses_of($class_name, $concrete_only);
+        self::init();
+
+        $class_name = self::_normalize_class_name($class_name);
+
+        $subclasses = self::$data['data']['php_subclass_index'][$class_name] ?? [];
+
+        // If not filtering for concrete classes, return all subclasses
+        if (!$concrete_only) {
+            return $subclasses;
+        }
+
+        // Filter out abstract classes
+        $concrete_subclasses = [];
+        foreach ($subclasses as $subclass) {
+            $record = self::$data['data']['php_classes'][$subclass] ?? null;
+
+            if ($record === null) {
+                shouldnt_happen(
+                    "Fatal: PHP class '{$subclass}' found in subclass index but not in php_classes.\n" .
+"This indicates a major data integrity issue with the manifest.\n" .
+'Try running: php artisan rsx:manifest:build --clean'
+                );
+            }
+
+            if (!isset($record['abstract'])) {
+                shouldnt_happen(
+                    "Fatal: Abstract property missing for PHP class '{$subclass}' in manifest data.\n" .
+"This indicates a major data integrity issue with the manifest.\n" .
+'Try running: php artisan rsx:manifest:build --clean'
+                );
+            }
+
+            if (!$record['abstract']) {
+                $concrete_subclasses[] = $subclass;
+            }
+        }
+
+        return $concrete_subclasses;
     }
 
     /**
@@ -665,34 +951,82 @@ class Manifest
     */
     public static function js_get_subclasses_of(string $class_name): array
     {
-        return _Manifest_JS_Reflection_Helper::js_get_subclasses_of($class_name);
+        // Return empty array if class not in subclass_index
+        if (!isset(self::$data['data']['js_subclass_index'][$class_name])) {
+            return [];
+        }
+
+        return self::$data['data']['js_subclass_index'][$class_name];
     }
 
     /**
-    * Get all classes with a specific attribute
+    * Get all classes with a specific attribute.
+    *
+    * The shape callers have always seen (file / class / fqcn / type / method / instances),
+    * assembled from `by_attribute()` plus the class map. It used to walk every file and every
+    * method map in the index.
     */
     public static function get_with_attribute(string $attribute_class): array
     {
-        return _Manifest_Reflection_Helper::get_with_attribute($attribute_class);
+        $results = [];
+
+        foreach (self::by_attribute($attribute_class) as $row) {
+            $record = $row['class'] !== null
+                ? (self::$data['data']['php_classes'][$row['class']] ?? null)
+                : null;
+
+            $result = [
+                'file' => $row['file'],
+                'class' => $row['class'],
+                'fqcn' => $record['fqcn'] ?? null,
+                'type' => $row['member'] === null ? 'class' : 'method',
+                'instances' => $row['instances'],
+            ];
+
+            if ($row['member'] !== null) {
+                $result['method'] = $row['member'];
+            }
+
+            $results[] = $result;
+        }
+
+        // Sort alphabetically by class name to ensure deterministic behavior and prevent race condition bugs
+        usort($results, function ($a, $b) {
+            return strcmp($a['class'] ?? '', $b['class'] ?? '');
+        });
+
+        return $results;
     }
 
     /**
-    * Every class and member declaration carrying an attribute, as REFERENCES into the index:
-    * ['file' => ..., 'class' => ?string, 'member' => ?string, 'instances' => [...]].
+    * Every class and member declaration carrying an attribute, as REFERENCES.
     *
-    * The one answer to "who declares #[X]". Reads `attribute_index`, touches no file record.
+    * Rows are ['file' => ..., 'class' => ?string, 'member' => ?string, 'instances' => [...]],
+    * straight out of `attribute_index` - no file record is touched, so a caller asking about
+    * `#[Emitter]` or `#[Schedule]` does not load the cold half of the index to learn where
+    * they are. The name is matched by its SIMPLE spelling, which is how RSX writes attributes
+    * everywhere else; a namespaced argument is reduced to it.
+    *
+    * @return array<int, array{file: string, class: ?string, member: ?string, instances: array}>
     */
     public static function by_attribute(string $attribute_name): array
     {
-        return _Manifest_Reflection_Helper::by_attribute($attribute_name);
+        self::init();
+
+        $simple = self::_normalize_class_name($attribute_name);
+
+        return self::$data['data']['attribute_index'][$simple] ?? [];
     }
 
     /**
-    * Whether a Blade view id is indexed - the non-throwing half of find_view().
+    * Whether a Blade view id is indexed. The non-throwing half of find_view(), for callers
+    * that are ASKING rather than resolving.
     */
     public static function view_exists(string $id): bool
     {
-        return _Manifest_Reflection_Helper::view_exists($id);
+        self::init();
+
+        return isset(self::$data['data']['blade_views'][$id]);
     }
 
     /**
@@ -706,7 +1040,9 @@ class Manifest
     */
     public static function php_class_metadata(string $simple_name): ?array
     {
-        return _Manifest_PHP_Reflection_Helper::php_class_metadata($simple_name);
+        self::init();
+
+        return self::$data['data']['php_classes'][$simple_name] ?? null;
     }
 
     /**
@@ -714,7 +1050,9 @@ class Manifest
     */
     public static function model_for_table(string $table): ?string
     {
-        return _Manifest_PHP_Reflection_Helper::model_for_table($table);
+        self::init();
+
+        return self::$data['data']['models_by_table'][$table] ?? null;
     }
 
     /**
@@ -732,7 +1070,9 @@ class Manifest
     */
     public static function get_routes(): array
     {
-        return _Manifest_Reflection_Helper::get_routes();
+        self::init();
+
+        return self::$data['data']['routes'] ?? [];
     }
 
     /**
@@ -1231,7 +1571,7 @@ class Manifest
         static::$_has_init = false;
         static::$_has_manifest_ready = false;
 
-        foreach ([static::_get_cache_file_path(), _Manifest_Cache_Helper::_get_cold_file_path()] as $file) {
+        foreach ([static::_get_cache_file_path(), Manifest_Store::_get_cold_file_path()] as $file) {
             if (file_exists($file)) {
                 unlink($file);
             }
@@ -1253,7 +1593,7 @@ class Manifest
      */
     public static function _unlink_cache(): void
     {
-        _Manifest_Cache_Helper::_unlink_cache();
+        Manifest_Store::_unlink_cache();
     }
 
     /**
@@ -1344,16 +1684,22 @@ class Manifest
      * comparison and storage. FQCNs are only needed at actual class loading time.
      *
      * Examples:
-     *   \Rsx\Lib\DataGrid → DataGrid
-     *   Rsx\Lib\DataGrid → DataGrid
-     *   DataGrid → DataGrid
+     *   \Rsx\Lib\DataGrid -> DataGrid
+     *   Rsx\Lib\DataGrid -> DataGrid
+     *   DataGrid -> DataGrid
      *
      * @param string $class_name Class name in any format (with or without namespace)
      * @return string Simple class name without namespace
      */
     public static function _normalize_class_name(string $class_name): string
     {
-        return _Manifest_PHP_Reflection_Helper::_normalize_class_name($class_name);
+        // Strip leading backslash
+        $class_name = ltrim($class_name, '\\');
+
+        // Extract just the class name (last part after final backslash)
+        $parts = explode('\\', $class_name);
+
+        return end($parts);
     }
 
     /**
@@ -1597,7 +1943,7 @@ class Manifest
             // moved a namespace changes the shape the build leaves behind, and recording
             // the PRE-fix shape guaranteed the next build saw a "structure change" it had
             // already applied - a second full pass, every time, for nothing.
-            _Manifest_Scanner_Helper::_store_class_structure();
+            Manifest_Scanner::_store_class_structure();
         }
 
         // ==================================================================================
@@ -1918,14 +2264,82 @@ class Manifest
     * Classes are loaded in dependency order (parents first).
     * Used by stub generators and reflection extraction.
     *
+    * The hierarchy is walked through the CLASS MAP - simple name to record, one lookup per
+    * hop. It used to be a nested linear scan of every indexed file per hop, per class.
+    *
     * @param string $fqcn Fully qualified class name to load
-    * @param array $manifest_data The manifest data array
+    * @param array $manifest_data The manifest data array (unused; the class map is the source)
     * @return void
     * @throws \RuntimeException if class or parent cannot be loaded
     */
     public static function _load_class_hierarchy(string $fqcn, array $manifest_data): void
     {
-        _Manifest_PHP_Reflection_Helper::_load_class_hierarchy($fqcn, $manifest_data);
+        // Already loaded? Nothing to do
+        if (class_exists($fqcn, false) || interface_exists($fqcn, false) || trait_exists($fqcn, false)) {
+            return;
+        }
+
+        $classes = $manifest_data['data']['php_classes'] ?? self::$data['data']['php_classes'] ?? [];
+
+        // Build list of classes to load in hierarchy order (parents first)
+        $hierarchy = [];
+        $current_fqcn = $fqcn;
+        $visited = [];
+
+        while ($current_fqcn) {
+            if (isset($visited[$current_fqcn])) {
+                break;
+            }
+
+            $visited[$current_fqcn] = true;
+
+            $simple = self::_normalize_class_name($current_fqcn);
+            $record = $classes[$simple] ?? null;
+
+            if ($record === null || ($record['fqcn'] ?? null) !== ltrim($current_fqcn, '\\')) {
+                // Not an indexed class. A built-in or vendor class simply autoloads.
+                if (class_exists($current_fqcn, true) ||
+                interface_exists($current_fqcn, true) ||
+                trait_exists($current_fqcn, true)) {
+                    break;
+                }
+
+                shouldnt_happen("Parent class {$current_fqcn} not found in manifest or autoloader for {$fqcn}");
+            }
+
+            array_unshift($hierarchy, ['fqcn' => $current_fqcn, 'file' => $record['file']]);
+
+            if (empty($record['extends'])) {
+                break;
+            }
+
+            $parent = $classes[self::_normalize_class_name($record['extends'])] ?? null;
+            $current_fqcn = $parent['fqcn'] ?? null;
+        }
+
+        // Load classes in order (parents first)
+        foreach ($hierarchy as $class_info) {
+            if (!class_exists($class_info['fqcn'], false) &&
+            !interface_exists($class_info['fqcn'], false) &&
+            !trait_exists($class_info['fqcn'], false)) {
+                $full_path = base_path($class_info['file']);
+                if (!file_exists($full_path)) {
+                    shouldnt_happen("Class file not found: {$full_path} for {$class_info['fqcn']}");
+                }
+
+                // This includes the file.
+                // A side effect of this include is this line also lints the file.  Past this point, we can assume all php
+                // files (well, class files) have valid syntax.
+                include_once $full_path;
+
+                // Verify the class loaded successfully
+                if (!class_exists($class_info['fqcn'], false) &&
+                !interface_exists($class_info['fqcn'], false) &&
+                !trait_exists($class_info['fqcn'], false)) {
+                    shouldnt_happen("Failed to load class {$class_info['fqcn']} from {$full_path}");
+                }
+            }
+        }
     }
 
     /**
@@ -1945,7 +2359,7 @@ class Manifest
     {
         static::$_manifest_is_bad = true;
 
-        _Manifest_Cache_Helper::_write_bad_flag();
+        Manifest_Store::_write_bad_flag();
     }
 
     // ------------------------------------------------------------------------
@@ -1965,7 +2379,7 @@ class Manifest
     */
     public static function _get_kernel(): ManifestKernel
     {
-        return _Manifest_Cache_Helper::_get_kernel();
+        return Manifest_Store::_get_kernel();
     }
 
     /**
@@ -1973,7 +2387,7 @@ class Manifest
     */
     public static function _get_cache_file_path(): string
     {
-        return _Manifest_Cache_Helper::_get_cache_file_path();
+        return Manifest_Store::_get_cache_file_path();
     }
 
     /**
@@ -2014,7 +2428,7 @@ class Manifest
     // move to lower soon
     public static function _validate_cached_data()
     {
-        return _Manifest_Cache_Helper::_validate_cached_data();
+        return Manifest_Store::_validate_cached_data();
     }
 
     /**
@@ -2028,7 +2442,7 @@ class Manifest
     */
     public static function _check_unique_base_class_names(array $dirty_files = []): void
     {
-        _Manifest_Quality_Helper::_check_unique_base_class_names($dirty_files);
+        Manifest_Indexer::_check_unique_base_class_names($dirty_files);
     }
 
     /**
@@ -2036,11 +2450,11 @@ class Manifest
     * (blocking composer dump-autoload) when the class-override rename/restore pass has
     * left an entry pointing at a renamed/removed file. Runs in the rebuild pipeline
     * immediately after the override pass settles. See
-    * _Manifest_Quality_Helper::_validate_composer_classmap.
+    * Manifest_Indexer::_validate_composer_classmap.
     */
     public static function _validate_composer_classmap(): void
     {
-        _Manifest_Quality_Helper::_validate_composer_classmap();
+        Manifest_Indexer::_validate_composer_classmap();
     }
 
     /**
@@ -2052,7 +2466,7 @@ class Manifest
     */
     public static function _restore_orphaned_upstream_files(): void
     {
-        _Manifest_Scanner_Helper::_restore_orphaned_upstream_files();
+        Manifest_Scanner::_restore_orphaned_upstream_files();
     }
 
     /**
@@ -2075,7 +2489,7 @@ class Manifest
     */
     public static function _collate_files_by_classes()
     {
-        return _Manifest_Builder_Helper::_collate_files_by_classes();
+        return Manifest_Indexer::_collate_files_by_classes();
     }
 
     /**
@@ -2098,7 +2512,7 @@ class Manifest
      */
     public static function _build_event_handler_index()
     {
-        return _Manifest_Builder_Helper::_build_event_handler_index();
+        return Manifest_Indexer::_build_event_handler_index();
     }
 
     /**
@@ -2112,22 +2526,22 @@ class Manifest
      */
     public static function _build_classless_php_files_index()
     {
-        return _Manifest_Builder_Helper::_build_classless_php_files_index();
+        return Manifest_Indexer::_build_classless_php_files_index();
     }
 
     public static function _build_blade_view_index()
     {
-        return _Manifest_Builder_Helper::_build_blade_view_index();
+        return Manifest_Indexer::_build_blade_view_index();
     }
 
     public static function _build_attribute_index()
     {
-        return _Manifest_Builder_Helper::_build_attribute_index();
+        return Manifest_Indexer::_build_attribute_index();
     }
 
     public static function _build_models_by_table_index()
     {
-        return _Manifest_Builder_Helper::_build_models_by_table_index();
+        return Manifest_Indexer::_build_models_by_table_index();
     }
 
     /**
@@ -2141,7 +2555,7 @@ class Manifest
     */
     public static function _load_changed_php_files(array $changed_files): void
     {
-        _Manifest_Scanner_Helper::_load_changed_php_files($changed_files);
+        Manifest_Scanner::_load_changed_php_files($changed_files);
     }
 
     /**
@@ -2150,7 +2564,7 @@ class Manifest
     */
     public static function _extract_reflection_for_changed_files(array $changed_files): void
     {
-        _Manifest_Scanner_Helper::_extract_reflection_for_changed_files($changed_files);
+        Manifest_Scanner::_extract_reflection_for_changed_files($changed_files);
     }
 
     /**
@@ -2191,12 +2605,12 @@ class Manifest
     */
     public static function _run_php_fixer(array $changed_files): array
     {
-        return _Manifest_Scanner_Helper::_run_php_fixer($changed_files);
+        return Manifest_Scanner::_run_php_fixer($changed_files);
     }
 
     public static function _load_php_files_in_dependency_order(): void
     {
-        _Manifest_Scanner_Helper::_load_php_files_in_dependency_order();
+        Manifest_Scanner::_load_php_files_in_dependency_order();
     }
 
     // /**
@@ -2234,7 +2648,7 @@ class Manifest
     */
     public static function _build_autoloader_class_map(): array
     {
-        return _Manifest_Builder_Helper::_build_autoloader_class_map();
+        return Manifest_Indexer::_build_autoloader_class_map();
     }
 
     /**
@@ -2244,12 +2658,12 @@ class Manifest
     */
     public static function _extract_classes_from_php_file(string $path): array
     {
-        return _Manifest_Scanner_Helper::_extract_classes_from_php_file($path);
+        return Manifest_Scanner::_extract_classes_from_php_file($path);
     }
 
     public static function _scan_directory_for_classes(string $directory): array
     {
-        return _Manifest_Scanner_Helper::_scan_directory_for_classes($directory);
+        return Manifest_Scanner::_scan_directory_for_classes($directory);
     }
 
     /**
@@ -2258,7 +2672,7 @@ class Manifest
     */
     public static function _process_file(string $file_path): array
     {
-        return _Manifest_Scanner_Helper::_process_file($file_path);
+        return Manifest_Scanner::_process_file($file_path);
     }
 
     /**
@@ -2267,7 +2681,7 @@ class Manifest
     */
     public static function _extract_reflection_data(string $file_path, string $full_class_name, array &$data): void
     {
-        _Manifest_Scanner_Helper::_extract_reflection_data($file_path, $full_class_name, $data);
+        Manifest_Scanner::_extract_reflection_data($file_path, $full_class_name, $data);
     }
 
     /**
@@ -2277,7 +2691,7 @@ class Manifest
     */
     public static function _extract_view_info(string $file_path, array &$data): void
     {
-        _Manifest_Scanner_Helper::_extract_view_info($file_path, $data);
+        Manifest_Scanner::_extract_view_info($file_path, $data);
     }
 
     /**
@@ -2285,7 +2699,7 @@ class Manifest
     */
     public static function _has_changed(string $file): bool
     {
-        return _Manifest_Scanner_Helper::_has_changed($file);
+        return Manifest_Scanner::_has_changed($file);
     }
 
     /**
@@ -2293,7 +2707,7 @@ class Manifest
     */
     public static function _get_rsx_files(): array
     {
-        return _Manifest_Scanner_Helper::_get_rsx_files();
+        return Manifest_Scanner::_get_rsx_files();
     }
 
     /**
@@ -2304,7 +2718,7 @@ class Manifest
     */
     public static function scan_directories(): array
     {
-        return _Manifest_Scanner_Helper::_scan_directories();
+        return Manifest_Scanner::_scan_directories();
     }
 
     /**
@@ -2312,7 +2726,7 @@ class Manifest
     */
     public static function _load_cached_data()
     {
-        return _Manifest_Cache_Helper::_load_cached_data();
+        return Manifest_Store::_load_cached_data();
     }
 
     /**
@@ -2320,7 +2734,7 @@ class Manifest
     */
     public static function _validate_manifest_data(): void
     {
-        _Manifest_Cache_Helper::_validate_manifest_data();
+        Manifest_Store::_validate_manifest_data();
     }
 
     /**
@@ -2330,7 +2744,34 @@ class Manifest
     */
     public static function _is_controller_class(array $metadata): bool
     {
-        return _Manifest_Reflection_Helper::_is_controller_class($metadata);
+        $extends = $metadata['extends'] ?? '';
+
+        if ($extends === 'Rsx_Controller_Abstract') {
+            return true;
+        }
+
+        // Check parent hierarchy
+        $current_class = $extends;
+        $max_depth = 10;
+
+        while ($current_class && $max_depth-- > 0) {
+            try {
+                $parent_metadata = self::php_get_metadata_by_class($current_class);
+                if (($parent_metadata['extends'] ?? '') === 'Rsx_Controller_Abstract') {
+                    return true;
+                }
+                $current_class = $parent_metadata['extends'] ?? '';
+            } catch (\RuntimeException $e) {
+                // Check FQCN match
+                if ($current_class === 'Rsx_Controller_Abstract' ||
+                $current_class === 'App\\RSpade\\Core\\Controller\\Rsx_Controller_Abstract') {
+                    return true;
+                }
+                break;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -2338,7 +2779,7 @@ class Manifest
     */
     public static function _generate_vscode_stubs(): void
     {
-        _Manifest_Quality_Helper::_generate_vscode_stubs();
+        Manifest_Indexer::_generate_vscode_stubs();
     }
 
     /**
@@ -2346,7 +2787,7 @@ class Manifest
     */
     public static function _save(): void
     {
-        _Manifest_Cache_Helper::_save();
+        Manifest_Store::_save();
     }
 
     /**
@@ -2362,7 +2803,7 @@ class Manifest
     */
     public static function _run_manifest_time_code_quality_checks(array $changed_files = []): void
     {
-        _Manifest_Quality_Helper::_run_manifest_time_code_quality_checks($changed_files);
+        Manifest_Indexer::_run_manifest_time_code_quality_checks($changed_files);
     }
 
     /**
@@ -2373,7 +2814,34 @@ class Manifest
      */
     public static function _is_migration_context(): bool
     {
-        return _Manifest_Database_Helper::_is_migration_context();
+        // Check if running from CLI
+        if (php_sapi_name() !== 'cli') {
+            return false;
+        }
+
+        // Get the artisan command being run
+        $argv = $_SERVER['argv'] ?? [];
+        if (count($argv) < 2) {
+            return false;
+        }
+
+        // Commands that should skip code quality checks
+        $migration_commands = [
+            'migrate',
+            'migrate:fresh',
+            'migrate:install',
+            'migrate:refresh',
+            'migrate:reset',
+            'migrate:status',
+            'migrate:normalize_schema',
+            'make:migration',
+            'make:migration:safe',
+            'db:seed',
+            'db:wipe',
+        ];
+
+        $command = $argv[1] ?? '';
+        return in_array($command, $migration_commands, true);
     }
 
     /**
@@ -2388,7 +2856,30 @@ class Manifest
      */
     public static function _verify_database_provisioned(): void
     {
-        _Manifest_Database_Helper::_verify_database_provisioned();
+        $migrations_table = config('database.migrations', 'migrations');
+
+        // Check if migrations table exists
+        if (!\Illuminate\Support\Facades\Schema::hasTable($migrations_table)) {
+            throw new \RuntimeException(
+                "Database not provisioned - migrations table '{$migrations_table}' does not exist.\n\n" .
+                "Run migrations before continuing:\n" .
+                "    php artisan migrate\n\n" .
+                "If this is a fresh installation, you may also need to:\n" .
+                "    1. Create the database\n" .
+                "    2. Configure .env with correct DB_* settings\n" .
+                "    3. Run: php artisan migrate"
+            );
+        }
+
+        // Check if at least one migration has been applied
+        $result = \Illuminate\Support\Facades\DB::select("SELECT COUNT(*) as cnt FROM `{$migrations_table}`");
+        if ($result[0]->cnt === 0) {
+            throw new \RuntimeException(
+                "Database not provisioned - no migrations have been applied.\n\n" .
+                "Run migrations before continuing:\n" .
+                "    php artisan migrate"
+            );
+        }
     }
 
     /**
@@ -2401,7 +2892,20 @@ class Manifest
      */
     public static function db_get_tables(): array
     {
-        return _Manifest_Database_Helper::db_get_tables();
+        self::init();
+
+        if (!isset(self::$data['data']['models'])) {
+            return [];
+        }
+
+        $tables = [];
+        foreach (self::$data['data']['models'] as $model_data) {
+            if (isset($model_data['table'])) {
+                $tables[] = $model_data['table'];
+            }
+        }
+
+        return array_values(array_unique($tables));
     }
 
     /**
@@ -2416,7 +2920,23 @@ class Manifest
      */
     public static function db_get_table_columns(string $table): array
     {
-        return _Manifest_Database_Helper::db_get_table_columns($table);
+        self::init();
+
+        // One lookup through models_by_table, rather than a linear walk of the model
+        // registry per call.
+        $model = self::model_for_table($table);
+
+        if ($model === null) {
+            return [];
+        }
+
+        $result = [];
+
+        foreach (self::$data['data']['models'][$model]['columns'] ?? [] as $column_name => $column_data) {
+            $result[$column_name] = $column_data['type'] ?? 'unknown';
+        }
+
+        return $result;
     }
 
     /**
@@ -2430,6 +2950,10 @@ class Manifest
      */
     public static function db_get_columns_by_type(string $table, string $type): array
     {
-        return _Manifest_Database_Helper::db_get_columns_by_type($table, $type);
+        $columns = self::db_get_table_columns($table);
+
+        return array_keys(array_filter($columns, function ($col_type) use ($type) {
+            return $col_type === $type;
+        }));
     }
 }

@@ -4,8 +4,8 @@
 // reorder the class-decorator application, the title system would silently fall back to
 // "(title not set)" with no build signal.
 @route("/fixture/title")
-@layout("Frontend_Spa_Layout")
-@spa("Frontend_Spa_Controller::index")
+@layout("Fixture_Spa_Layout")
+@spa("Fixture_Spa_Controller::index")
 @title("Fixture Title")
 class Fixture_Title_Action extends Spa_Action {
 

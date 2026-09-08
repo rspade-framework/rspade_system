@@ -21,7 +21,7 @@
 | AG-LIVE-04 | Most-derived-wins against real code | php | Persisted manifest | portal `is_logged_in` resolves to `Rsx\Portal_Permission` | implemented | 2026-08-07 |
 | AG-LIVE-05 | The engine reaches the live registry | php | No test index installed | `evaluate('public')` true in both realms | implemented | 2026-08-07 |
 | AG-LIVE-06 | A real declaration's class+method gates merge in the persisted index | php | `Auth_Gates_Surface_Fixture` | `['is_logged_in','public']` and `['is_logged_in']` | implemented | 2026-08-07 |
-| AG-LIVE-07 | Real surfaces of each PHP kind are indexed with the right realm | php | Persisted manifest | route/spa staff, ajax any, model fetch staff | implemented | 2026-08-07 |
+| AG-LIVE-07 | Real surfaces of each kind are indexed with the right realm | php | Persisted manifest, framework-declared surfaces only (this concern's routed fixture, the panel's #[SPA] controller and its index action, `Orm_Controller::fetch`, `User_Model::fetch`) | route/spa/js_action staff, ajax any, model fetch staff | implemented | 2026-09-08 |
 | AG-LIVE-08 | Route rows and the surface index agree on every gate list | php | Every `type=standard` route row | `route['auth']` equals the surface's `auth` | implemented | 2026-08-07 |
 | AG-ROOT-01 | `is_sysadmin` is in the staff registry, resolving to `Permission_Abstract` | php | Live registry | present, class + method match | implemented | 2026-09-07 |
 | AG-ROOT-02 | `is_sysadmin` is staff-only - the control panel is not a portal surface | php | Persisted manifest | in `checks.staff`, absent from `checks.portal` | implemented | 2026-09-07 |
@@ -51,10 +51,10 @@
 | AG-SEAM-09 | Ajax browser entry denies with the coded unauthorized error | php | `handle_browser_request` on a denied endpoint | `_success` false, `error_code` unauthorized | implemented | 2026-08-07 |
 | AG-SEAM-10 | Ajax browser entry runs the body when the gates pass | php | Same, granting gate | `_success` true | implemented | 2026-08-07 |
 | AG-SEAM-11 | An unknown check name DENIES at a seam and logs one warning | php | Endpoint gated on a name defined in no realm | coded unauthorized + a warning naming surface, check and realm | implemented | 2026-08-07 |
-| AG-SEAM-12 | ORM fetch denial is indistinguishable from a missing row | php | Denied fetch vs an absent id | identical code + message ("Record not found") | implemented | 2026-08-07 |
+| AG-SEAM-12 | ORM fetch denial is indistinguishable from a missing row | php | Denied `User_Model::fetch` vs an absent id | identical code + message ("Record not found") | implemented | 2026-09-08 |
 | AG-SEAM-13 | ORM fetch denial honors or_null | php | Denied fetch with `or_null` | null (what an absent record gives) | implemented | 2026-08-07 |
 | AG-SEAM-14 | A passing ORM gate reaches the model | php | `User_Model::fetch` with a granting gate | the record | implemented | 2026-08-07 |
-| AG-SEAM-15 | A relationship is gated on its own list, before the relation runs | php | fetch open, relationship closed | generic not-found | implemented | 2026-08-07 |
+| AG-SEAM-15 | A relationship is gated on its own list, before the relation runs | php | `Auth_Gates_Seam_Fixture_Model::children` - fetch open, relationship closed | generic not-found | implemented | 2026-09-08 |
 | AG-SEAM-16 | Every `#[Api_Endpoint]` row carries a gate list | php | Persisted manifest api rows | every row has `auth` | implemented | 2026-08-07 |
 | AG-SEAM-17 | API dispatch denies with a 403 error shape | http | Gated API endpoint, valid bearer key | 403 `{"error":{"code":"forbidden",...}}` + a 403 log row | verified by live probe; automatable once a permanently gated API endpoint exists (W5/W6) | 2026-08-07 |
 | AG-SEAM-18 | An empty gate list passes at a seam (transition contract) | php | `gates_pass_at_seam([], realm)` | true in both realms | implemented | 2026-08-07 |

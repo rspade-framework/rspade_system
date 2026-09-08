@@ -173,10 +173,11 @@ class Portal_Spa_ManifestSupport extends ManifestSupport_Abstract
                 'require' => [],
                 'js_action_class' => $class_name,
                 'pattern' => $route_pattern,
-                // The gates enforced at dispatch are the BOOTSTRAP CONTROLLER's.
+                // The gates enforced at dispatch are the BOOTSTRAP CONTROLLER's. The
+                // ACTION's own gates are auth.surfaces[$class_name], reached through
+                // 'target' - never copied onto the row.
                 'surface' => Manifest::_normalize_class_name($php_controller_fqcn) . '::' . $php_controller_method,
                 'target' => $class_name,
-                'auth_action' => $route_info['auth'],
             ];
         }
     }

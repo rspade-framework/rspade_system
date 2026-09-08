@@ -315,6 +315,13 @@ ACTION REQUIRED
        Both list every public/protected member the archived upstream declares and
        your copy does not. Run them after the pull and work the list.
 
+       READ core_model_base_concrete_split_09_09.txt BEFORE DOING THIS BY HAND. That
+       change makes every core model an abstract base plus an empty shell, and an
+       override EXTENDS the base instead of copying it - so rewriting your override
+       that way brings the members listed above in by inheritance, and there is
+       nothing here left to copy. A clone of File_Attachment_Model does not build at
+       all after it. Do that rewrite; this list is then what it saves you.
+
        PROPAGATION IS HIGHLY RECOMMENDED, NOT OPTIONAL - and while you are in there,
        ask whether the override still needs to exist. An override earns its keep
        when it changes behavior; if yours exists only to ATTACH something (a

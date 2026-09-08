@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\Common;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * Rule to detect .old. files that should not be committed
@@ -112,8 +113,8 @@ class OldFiles_CodeQualityRule extends CodeQualityRule_Abstract
         // Extract allowed RSpade subdirectories
         $allowed_subdirs = [];
         foreach ($scan_directories as $scan_dir) {
-            if (str_starts_with($scan_dir, 'app/RSpade/')) {
-                $subdir = substr($scan_dir, strlen('app/RSpade/'));
+            if (Rsx_Paths::is_framework($scan_dir)) {
+                $subdir = Rsx_Paths::framework_subpath($scan_dir);
                 if ($subdir) {
                     $allowed_subdirs[] = $subdir;
                 }

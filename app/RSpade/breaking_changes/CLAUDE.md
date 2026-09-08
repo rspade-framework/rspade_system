@@ -58,15 +58,24 @@ application may be holding a FROZEN COPY of.
 LIKELY to class-override - ships a document whenever it ADDS OR ALTERS MEMBERS the
 override holder should propagate into their copy.**
 
-A class override in RSpade is a copy-and-replace, not a subclass (`rsx:man
-class_override`): the manifest serves the app's file and archives the framework's beside
-it as `.php.upstream`. So every improvement to that class reaches the holder's DISK and
-none of their users. The framework already NOTICES this - `CLASS-OVERRIDE-DRIFT-01`
-(`rsx:check`, high) and the `rsx:health` "Class Override Drift" row list every
-public/protected member the archived upstream declares and the override lacks. **The
-document is not the detector; it is the explanation.** The lint names the members, and
-only the document says WHAT they are for, WHY the copy needs them, and what breaks
-silently without them.
+An override of a NON-MODEL framework class is a copy-and-replace, not a subclass
+(`rsx:man class_override`): the manifest serves the app's file and archives the
+framework's beside it as `.php.upstream`. So every improvement to that class reaches the
+holder's DISK and none of their users. The framework already NOTICES this -
+`CLASS-OVERRIDE-DRIFT-01` (`rsx:check`, high) and the `rsx:health` "Class Override Drift"
+row list every public/protected member the archived upstream declares and the override
+lacks. **The document is not the detector; it is the explanation.** The lint names the
+members, and only the document says WHAT they are for, WHY the copy needs them, and what
+breaks silently without them.
+
+**A CORE MODEL is the other shape, and it narrows this trigger rather than removing it.**
+Every framework model is an abstract base carrying its whole implementation plus an empty
+shell, and an override EXTENDS the base (`class X_Model extends X_Model_Abstract`) - so it
+inherits every member the framework adds, has no drift surface, and is named by neither
+reporter. What still reaches it is a change the override must state FOR ITSELF: a member
+it redeclares whose contract moved, a `#[Replaceable]` seam whose meaning changed, or a
+base member it is now expected to chain into. Ask that question rather than the re-clone
+question when the changed class is a model.
 
 Propagation is **HIGHLY RECOMMENDED, not optional** - the holder may decide their
 override should keep its old behavior, but that has to be a decision, not a thing that
@@ -103,6 +112,9 @@ Such a document is Category 2, and its ACTION REQUIRED section names the members
 literally - `protected $appends`, `getIsDocumentAttribute()`, `should_show_text_preview()` -
 points at the framework file by path, and names the symptoms of skipping it. The worked
 example in this directory is `attachment_model_text_preview_09_08.txt`.
+`core_model_base_concrete_split_09_09.txt` is the companion example: the change that made
+every core model a base plus a shell, and the rewrite it asks of an existing model
+override.
 
 ### `IF YOU DO NOTHING:` is MANDATORY in every document
 
@@ -144,7 +156,7 @@ The line's presence is mechanical; its HONESTY is yours.
 | A deleted or re-signatured PUBLIC API | **Yes** (Cat. 2) | Call sites must be found and converted. |
 | A data migration leaving rows needing a human decision | **Yes** | Only they know what those rows meant. |
 | A REQUESTED FEATURE whose implementation includes a template app UI | **Yes** (Cat. 3) | The feature is not usable in their app until it is ported. |
-| `File_Attachment_Model` gains members (`$appends`, accessors, a predicate) | **Yes** (Cat. 2) | Likely-overridden class: list the members to re-clone. |
+| `File_Attachment_Model` gains members (`$appends`, accessors, a predicate) | **Yes** (Cat. 2) | Likely-overridden class: name the members and what the override must state itself. |
 | An internal nobody plausibly overrides changes (manifest scanner, build helper) | **No** | Black box, and possibility is not likelihood. |
 
 A borderline case is decided by writing the `IF YOU DO NOTHING:` line first. If the line is

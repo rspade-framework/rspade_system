@@ -106,7 +106,8 @@ class Api_Openapi_Test extends Rsx_Test_Abstract
     {
         $doc = Api_Openapi::document();
 
-        // The template app ships /api/v1/clients/:id; find its projected form.
+        // The framework ships /api/v1/files/:key; find the projected form of a
+        // :token pattern (any endpoint that declares one).
         $found = false;
         foreach (array_keys($doc['paths']) as $url) {
             if (str_contains($url, '{') && str_contains($url, '}')) {

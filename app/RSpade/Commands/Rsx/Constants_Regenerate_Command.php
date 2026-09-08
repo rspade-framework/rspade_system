@@ -128,8 +128,11 @@ class Constants_Regenerate_Command extends Command
                 continue;
             }
 
-            $class_name = class_basename($full_class_name);
-            $file_path = base_path($file_rel);
+            // The codegen's regions live in the class that DECLARES the model - which, for a
+            // split core model, is the abstract base beside the shell, not the shell itself.
+            // Resolving it here is what keeps a regeneration from inserting a second copy of
+            // the docblock and the enum constants into a file that declares nothing.
+            [$class_name, $file_path] = $this->resolve_declaring_file($full_class_name);
 
             // A model whose table is not in the current schema (a test-fixture model whose
             // tables exist only during a test run, or a model whose migration has not been
@@ -179,6 +182,48 @@ class Constants_Regenerate_Command extends Command
         }
 
         return 0;
+    }
+
+    /**
+     * Where a model's auto-generated regions belong: the nearest class in its ancestry that
+     * DECLARES the model itself.
+     *
+     * A core model is an abstract base carrying every member plus a shell that declares
+     * nothing, and an application's override is a class extending that base. In both shapes
+     * `$table` and `$enums` - the two inputs this command reads - are declared one or more
+     * links up, and the docblock and the enum constants it emits describe THAT class. Writing
+     * them into the shell instead would put a second set of constants in the tree and leave
+     * the real ones to drift.
+     *
+     * `$table` is the anchor: every model declares it, and it is what decides which table the
+     * docblock documents. `$enums` is consulted only when a model somehow declares enums
+     * further down than its table. A model that declares neither is documented in its own
+     * file, which is the pre-split shape and still correct.
+     *
+     * @return array{0:string,1:string} [class basename, absolute file path]
+     */
+    protected function resolve_declaring_file(string $full_class_name): array
+    {
+        $reflector = new ReflectionClass($full_class_name);
+        $declaring = $reflector;
+
+        foreach (['table', 'enums'] as $property) {
+            if (!$reflector->hasProperty($property)) {
+                continue;
+            }
+
+            $declaring = $reflector->getProperty($property)->getDeclaringClass();
+            break;
+        }
+
+        $file = $declaring->getFileName();
+
+        if ($file === false) {
+            $file = $reflector->getFileName();
+            $declaring = $reflector;
+        }
+
+        return [$declaring->getShortName(), $file];
     }
 
     /**

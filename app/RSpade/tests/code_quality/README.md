@@ -107,7 +107,7 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   path, by reserved `_`-prefixed bundle class, or in `include_routes`. The rule reads
   `define()` rather than parsing the array literal (the same seam CONV-BUNDLE-04
   uses), so the fixtures are REAL bundle classes and the `rsx/` file path is
-  synthetic. The clean row is Frontend_Bundle-shaped - `rsx/` paths, an app bundle
+  synthetic. The clean row is shaped like an ordinary application module bundle - `rsx/` paths, an app bundle
   class, npm-backed aliases and `__DIR__` - because a rule that flagged an ordinary
   include list would be worse than no rule; it carries a rationale'd
   `@CONV-BUNDLE-04-EXCEPTION`, since that rule judges by the file's own location and
@@ -178,13 +178,13 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   covered - a reserved `_`-name declared in `rsx/` (PHP class, jqhtml `<Define:>`, Blade
   `@rsx_id`) and a BARE name declared under `app/RSpade/Sys/` - along with the two negatives
   that keep the rule honest: an ordinary application name, and framework code outside the Sys
-  tree (where `_Manifest_*_Helper` has always been legal). The rule keys on the path prefix,
+  tree, where a `_`-prefixed framework class has always been legal. The rule keys on the path prefix,
   so the fixtures are synthetic and judge spelling alone.
 
 - **NAME-RESERVED-02 (implemented):** `Name_Reserved_Reference_Rule_Test` drives the
   rule's public `check()` over synthetic fixtures. The fixtures name REAL framework
   symbols (`_Sys_Controller`, `_Sys_Spa_Controller`, `_Sys_Bundle`, `_Sys_Layout`,
-  `_Sys_Sidebar_Nav`, `_Sys_Section`, `_Apidocs_App`, `_Manifest_Cache_Helper`,
+  `_Sys_Sidebar_Nav`, `_Sys_Section`, `_Apidocs_App`, `Manifest_Store`,
   `Ajax::_is_internal_call`, `Rsx_Api_Docs::__restrict_groups`, `Rsx._escape_html`)
   rather than invented ones - an invented name would pass for the wrong reason and
   prove nothing. Coverage: every PHP naming form (extends, new, instanceof,
@@ -220,6 +220,23 @@ whose detection logic is subtle enough to warrant a pinned unit test.
   `clear` emptying disk and memory, and an unrecognized `version` being discarded
   rather than migrated. Every row runs against a throwaway ledger file
   (`_use_path_for_tests`), so the box's own memo is never touched.
+
+## Structural tests in this concern
+
+Two of the classes here are not rule tests at all: they are STRUCTURAL sweeps that ask one
+question about a directory and answer it with a manifest read or a grep, in the shape the
+concern already keeps.
+
+- `Rule_Private_Cache_Test` - no code-quality rule invents a cache of its own, reads,
+  tokenizes or parses a file, or declares a static property.
+- `Framework_Test_Portability_Test` - no framework test (and no framework CORE file)
+  depends on the application it is installed in: resolved type references, quoted class
+  names, and role / permission constants. The suite SHIPS, so this is what keeps it
+  runnable downstream. Its docblock states what is NOT guarded - table names, URL paths
+  and bundle names, none of which has an index to resolve against.
+
+Both are tests rather than rules deliberately: a rule pays on every check of every file to
+answer a question about a handful of directories.
 
 ## Notes
 

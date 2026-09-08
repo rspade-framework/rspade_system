@@ -34,6 +34,18 @@ contract that the prelaunch checklist audits.
   `Login_Redirect::consume()` (the one-sanitizer generalization)
 - `app/RSpade/Commands/Rsx/Prod_Enable_Command.php` - prints the prelaunch hint
 
+## Test fixtures
+
+- `php/Login_Redirect_Route_Fixture_Controller.php` - three routable GET surfaces
+  (`/test-login-redirect/page`, `/test-login-redirect/other`,
+  `/test-login-redirect/item/:id`). The routability gate rejects every `/_`-prefixed
+  path, and every framework route is `/_`-prefixed, so the accept half of the matrix
+  can only be driven against routes this concern registers. They carry no underscore
+  ON PURPOSE, and are indexed only while the suite is running.
+- `php/Login_Redirect_Portal_Route_Fixture_Controller.php` - the portal twins, declared
+  with `#[Portal_Route]` in portal-namespace terms, because in portal context the gate
+  resolves against the PORTAL route table.
+
 ## Man page(s)
 
 - `man/login_redirect.txt`

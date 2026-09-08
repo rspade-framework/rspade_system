@@ -324,9 +324,15 @@ function handle_format_service($data) {
  * Supports all the types from the VS Code definition provider
  */
 /**
- * Absolute path of a manifest-relative file. The manifest addresses framework
- * files from system/, the IDE from the project root - normalize_ide_path() is the
- * one place that difference is spelled out, so this reuses it.
+ * Absolute path of a MANIFEST-RELATIVE file, and the only correct way to open one here.
+ *
+ * The manifest keys everything from `base_path()`, which is `<project>/system`; this bridge
+ * runs from the project root. So `app/RSpade/Core/Rsx.php` is at `system/app/RSpade/...` on
+ * disk, and `rsx/...` is already right (the project mount). Joining a manifest key onto
+ * IDE_BASE_PATH directly therefore MISSED every framework file - `file_exists()` said no,
+ * and the caller fell through to its "line 1" answer, so go-to-definition on any framework
+ * class landed at the top of the file instead of the member. A path the IDE SENT is
+ * project-relative already and must NOT come through here.
  */
 function ide_absolute_path($relative_path) {
     return IDE_BASE_PATH . '/' . normalize_ide_path($relative_path);
@@ -444,7 +450,7 @@ function handle_definition_service($data) {
             // Search for method in jqhtml component JavaScript class
             foreach ($manifest['jqhtml']['components'] ?? [] as $component_name => $component) {
                 if ($component_name === $identifier && isset($component['js_file'])) {
-                    $js_file = IDE_BASE_PATH . '/' . $component['js_file'];
+                    $js_file = ide_absolute_path($component['js_file']);
                     $line = 1;
 
                     // Try to find the method line number
@@ -886,7 +892,7 @@ function try_resolve_php_class($identifier, $method_name, $find_php_class) {
 
     $file_path = $class_data['file'];
     $line_number = 1;
-    $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+    $absolute_path = ide_absolute_path($file_path);
 
     if (file_exists($absolute_path)) {
         $content = file_get_contents($absolute_path);
@@ -968,7 +974,7 @@ function try_resolve_js_class($identifier, $method_name, $files) {
     foreach ($files as $file_path => $file_data) {
         // Only check .js files (not .jqhtml)
         if (str_ends_with($file_path, '.js') && !str_ends_with($file_path, '.jqhtml')) {
-            $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+            $absolute_path = ide_absolute_path($file_path);
 
             if (file_exists($absolute_path)) {
                 $content = file_get_contents($absolute_path);
@@ -1025,7 +1031,7 @@ function try_resolve_jqhtml_class($identifier, $method_name, $files) {
     $file_path = $js_classes[$identifier]['file'];
 
     // Find the line number
-    $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+    $absolute_path = ide_absolute_path($file_path);
     $line_number = 1;
 
     if (file_exists($absolute_path)) {
@@ -1061,7 +1067,7 @@ function try_resolve_view($identifier, $find_view) {
 
     $file_path = $view_data['file'];
     $line_number = 1;
-    $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+    $absolute_path = ide_absolute_path($file_path);
 
     if (file_exists($absolute_path)) {
         $content = file_get_contents($absolute_path);
@@ -1107,7 +1113,7 @@ function try_resolve_bundle_alias($identifier, $find_php_class, array $bundle_al
 
     $file_path = $class_data['file'];
     $line_number = 1;
-    $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+    $absolute_path = ide_absolute_path($file_path);
 
     if (file_exists($absolute_path)) {
         $content = file_get_contents($absolute_path);
@@ -1143,7 +1149,7 @@ function try_resolve_jqhtml_template($identifier, $files, $camel_to_snake, $snak
 
             if ($basename === $component_snake || $snake_to_pascal($basename) === $identifier) {
                 $line_number = 1;
-                $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+                $absolute_path = ide_absolute_path($file_path);
 
                 if (file_exists($absolute_path)) {
                     $content = file_get_contents($absolute_path);
@@ -1178,7 +1184,7 @@ function try_resolve_jqhtml_method($identifier, $method_name, $files) {
 
     foreach ($files as $file_path => $file_data) {
         if (str_ends_with($file_path, '.js')) {
-            $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+            $absolute_path = ide_absolute_path($file_path);
 
             if (file_exists($absolute_path)) {
                 $content = file_get_contents($absolute_path);
@@ -1441,7 +1447,7 @@ function handle_resolve_class_service($data) {
             if ($is_model) {
                 $file_path = $model_data['file'];
                 $line_number = 1;
-                $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+                $absolute_path = ide_absolute_path($file_path);
 
                 // Try to find the fetch method line number if it exists
                 if (file_exists($absolute_path)) {
@@ -1516,7 +1522,7 @@ function handle_js_lineage_service($data) {
 
     // Helper to find extends clause in JS file
     $find_extends = function($file_path) {
-        $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+        $absolute_path = ide_absolute_path($file_path);
         if (file_exists($absolute_path)) {
             $content = file_get_contents($absolute_path);
             if (preg_match('/class\s+\w+\s+extends\s+([A-Za-z_][A-Za-z0-9_]*)/', $content, $matches)) {
@@ -1532,7 +1538,7 @@ function handle_js_lineage_service($data) {
 
         foreach ($files as $file_path => $file_data) {
             if (str_ends_with($file_path, '.js')) {
-                $absolute_path = IDE_BASE_PATH . '/' . $file_path;
+                $absolute_path = ide_absolute_path($file_path);
 
                 if (file_exists($absolute_path)) {
                     $content = file_get_contents($absolute_path);

@@ -1803,7 +1803,7 @@ class BundleCompiler
         // Analyze each file for class information
         foreach ($js_files as $file) {
             // Check if this is a compiled jqhtml file
-            if (str_contains($file, '/derived/' . \App\RSpade\Integrations\Jqhtml\Jqhtml_BundleProcessor::COMPILED_NAMESPACE . '/')) {
+            if (\App\RSpade\Integrations\Jqhtml\Jqhtml_BundleProcessor::is_compiled_output($file)) {
                 $jqhtml_compiled_files[] = $file;
                 continue;
             }

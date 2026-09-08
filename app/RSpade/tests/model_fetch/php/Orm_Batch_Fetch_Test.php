@@ -12,11 +12,11 @@ use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Database\Orm_Controller;
 use App\RSpade\Core\Database\Orm_Fetch_Preload;
-use App\RSpade\Core\Models\Login_User_Model;
-use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
-use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Tests\ModelFetch\Php\Model_Fetch_Child_Fixture_Model;
+use App\RSpade\Tests\ModelFetch\Php\Model_Fetch_Fixture_Tables;
+use App\RSpade\Tests\ModelFetch\Php\Model_Fetch_Parent_Fixture_Model;
 
 /**
  * The ORM batch fetch endpoint: its wire contract, its refusals, and the IN-clause
@@ -30,10 +30,32 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * refusal, gate denial). Batch-level problems - a malformed request, an unknown model -
  * are still coded errors, because they are about the REQUEST, not about a record.
  *
+ * Everything it drives is the framework's own: the concern's fixture models on the
+ * concern's own tables (created in setup(), dropped in teardown()), and the baseline user
+ * the runner seeds. No application model, table or route is named anywhere.
+ *
  * Behavior of record: php artisan rsx:man model_fetch
  */
 class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
 {
+    /**
+     * The identity these tests act as. Every model fetch surface is gated on is_logged_in,
+     * so a test that signs in as nobody gets an empty records map - the DENIAL answer -
+     * and proves nothing about the batch. The runner seeds this account.
+     */
+    private const USER_ID = 1;
+
+    public static function setup(): void
+    {
+        Model_Fetch_Fixture_Tables::create();
+    }
+
+    public static function teardown(): void
+    {
+        Model_Fetch_Fixture_Tables::drop();
+        static::__reset_session();
+    }
+
     // =========================================================================
     // REQUEST VALIDATION
     // =========================================================================
@@ -57,9 +79,9 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
     public static function test_missing_or_empty_ids_is_a_validation_error()
     {
         $shapes = [
-            'absent' => ['model' => 'Task_Model'],
-            'empty' => ['model' => 'Task_Model', 'ids' => []],
-            'scalar' => ['model' => 'Task_Model', 'ids' => 7],
+            'absent' => ['model' => self::MODEL],
+            'empty' => ['model' => self::MODEL, 'ids' => []],
+            'scalar' => ['model' => self::MODEL, 'ids' => 7],
         ];
 
         foreach ($shapes as $label => $params) {
@@ -79,7 +101,7 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
     {
         $result = Orm_Controller::fetch(
             static::__ajax_request(),
-            ['model' => 'Task_Model', 'ids' => [1, 'not-an-id']]
+            ['model' => self::MODEL, 'ids' => [1, 'not-an-id']]
         );
 
         static::__assert_instance_of(Rsx_Response_Abstract::class, $result);
@@ -102,7 +124,7 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
 
         $result = Orm_Controller::fetch(
             static::__ajax_request(),
-            ['model' => 'Task_Model', 'ids' => $ids]
+            ['model' => self::MODEL, 'ids' => $ids]
         );
 
         static::__assert_instance_of(Rsx_Response_Abstract::class, $result);
@@ -117,6 +139,8 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
      */
     public static function test_cap_counts_distinct_ids()
     {
+        static::__sign_in();
+
         $cap = (int) config('rsx.model_fetch.batch_max_ids');
 
         // cap + 1 entries, but only 2 distinct ids.
@@ -127,11 +151,13 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
 
         $result = Orm_Controller::fetch(
             static::__ajax_request(),
-            ['model' => 'Task_Model', 'ids' => $ids]
+            ['model' => self::MODEL, 'ids' => $ids]
         );
 
         static::__assert_true(is_array($result), 'a duplicate-heavy request stays under the cap');
         static::__assert_array_has_key('records', $result);
+
+        static::__reset_session();
     }
 
     /**
@@ -160,11 +186,11 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
      */
     public static function test_mixed_batch_returns_exactly_the_resolved_ids()
     {
-        $ids = static::__make_tasks(2);
+        $ids = static::__make_parents(2);
 
         $result = Orm_Controller::fetch(
             static::__ajax_request(),
-            ['model' => 'Task_Model', 'ids' => [$ids[0], 999999999, $ids[1]]]
+            ['model' => self::MODEL, 'ids' => [$ids[0], 999999999, $ids[1]]]
         );
 
         // PHP coerces a numeric-string array key back to int, so the keys read as ints
@@ -193,7 +219,7 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
 
         $result = Orm_Controller::fetch(
             static::__ajax_request(),
-            ['model' => 'Task_Model', 'ids' => [999999998, 999999999]]
+            ['model' => self::MODEL, 'ids' => [999999998, 999999999]]
         );
 
         static::__assert_equals([], $result['records']);
@@ -208,17 +234,10 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
      */
     public static function test_array_return_without_model_marker_throws()
     {
-        $user_id = static::__first_user_id();
-        if ($user_id === null) {
-            static::__skip('no User_Model record in the test database');
-
-            return;
-        }
-
         // The fixture surface is gated on is_logged_in; a denial would return an empty
         // map instead of reaching the model at all. Gates evaluate live, so signing in
         // is the whole setup.
-        static::__acting_as_user($user_id);
+        static::__sign_in();
 
         $exception = static::__assert_throws(
             \RuntimeException::class,
@@ -242,31 +261,32 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
     /**
      * N ids cost ONE query against the model's table, not N.
      *
-     * Counted precisely: every statement issued against `tasks` during the call. The
-     * preload's `whereIn` is the one allowed; a per-id `where id = ?` lookup would push
-     * the count up by one per id, which is exactly the regression this guards. Queries
-     * against OTHER tables (whatever the model's fetch body augments with) are not this
-     * test's business and are not counted.
+     * Counted precisely: every statement issued against the fixture's own table during the
+     * call. The preload's `whereIn` is the one allowed; a per-id `where id = ?` lookup
+     * would push the count up by one per id, which is exactly the regression this guards.
+     * Queries against OTHER tables (whatever the model's fetch body augments with) are not
+     * this test's business and are not counted.
      */
     public static function test_batch_preloads_all_ids_in_one_query()
     {
-        $ids = static::__make_tasks(3);
+        $ids = static::__make_parents(3);
 
         $queries = static::__capture_queries(function () use ($ids) {
             return Orm_Controller::fetch(
                 static::__ajax_request(),
-                ['model' => 'Task_Model', 'ids' => $ids]
+                ['model' => self::MODEL, 'ids' => $ids]
             );
         });
 
-        $task_queries = static::__queries_against('tasks', $queries);
+        $parent_queries = static::__queries_against(self::PARENT_TABLE, $queries);
 
         static::__assert_count(
             1,
-            $task_queries,
-            'expected exactly one tasks query for ' . count($ids) . ' ids, got: ' . implode(' | ', $task_queries)
+            $parent_queries,
+            'expected exactly one ' . self::PARENT_TABLE . ' query for ' . count($ids)
+            . ' ids, got: ' . implode(' | ', $parent_queries)
         );
-        static::__assert_contains(' in (', $task_queries[0]);
+        static::__assert_contains(' in (', $parent_queries[0]);
 
         static::__reset_session();
     }
@@ -275,38 +295,38 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
      * The plural relationship branch preloads too: its related ids go through the same
      * one-query-then-fetch-each path, and the per-id lookups are eliminated.
      *
-     * Two statements against `contacts` is the whole cost of the branch, whatever the
+     * Two statements against the child table is the whole cost of the branch, whatever the
      * related-record count: the id pluck, then the IN-clause preload. Every subsequent
-     * Contact_Model::fetch() is served from it - which holds only because that fetch body
-     * looks the record up under the model's DEFAULT scopes (MODEL-FETCH-TRASHED-01). A
-     * scope-stripped body misses the preload and puts one `where id = ?` per record back.
+     * child fetch() is served from it - which holds only because that fetch body looks the
+     * record up under the model's DEFAULT scopes (MODEL-FETCH-TRASHED-01). A scope-stripped
+     * body misses the preload and puts one `where id = ?` per record back.
      */
     public static function test_relationship_plural_branch_preloads_related_ids()
     {
-        $client_id = static::__make_client_with_contacts(2);
+        $parent_id = static::__make_parent_with_children(2);
 
-        $queries = static::__capture_queries(function () use ($client_id) {
+        $queries = static::__capture_queries(function () use ($parent_id) {
             return Orm_Controller::fetch_relationship(static::__ajax_request(), [
-                'model' => 'Client_Model',
-                'id' => $client_id,
-                'relationship' => 'contacts',
+                'model' => self::MODEL,
+                'id' => $parent_id,
+                'relationship' => 'children',
             ]);
         });
 
-        $contact_queries = static::__queries_against('contacts', $queries);
+        $child_queries = static::__queries_against(self::CHILD_TABLE, $queries);
 
         $preloads = 0;
-        foreach ($contact_queries as $sql) {
+        foreach ($child_queries as $sql) {
             if (str_contains($sql, ' in (')) {
                 $preloads++;
             }
         }
 
-        static::__assert_equals(1, $preloads, 'expected one contacts IN-clause preload');
+        static::__assert_equals(1, $preloads, 'expected one ' . self::CHILD_TABLE . ' IN-clause preload');
         static::__assert_count(
             2,
-            $contact_queries,
-            'expected the id pluck plus the preload and nothing per record, got: ' . implode(' | ', $contact_queries)
+            $child_queries,
+            'expected the id pluck plus the preload and nothing per record, got: ' . implode(' | ', $child_queries)
         );
 
         static::__reset_session();
@@ -318,11 +338,13 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
      */
     public static function test_preload_is_cleared_after_the_endpoint_returns()
     {
-        $ids = static::__make_tasks(1);
+        $ids = static::__make_parents(1);
 
-        Orm_Controller::fetch(static::__ajax_request(), ['model' => 'Task_Model', 'ids' => $ids]);
+        Orm_Controller::fetch(static::__ajax_request(), ['model' => self::MODEL, 'ids' => $ids]);
 
-        static::__assert_null(Orm_Fetch_Preload::get(static::__task_class(), $ids[0]));
+        static::__assert_null(
+            Orm_Fetch_Preload::get(Model_Fetch_Parent_Fixture_Model::class, $ids[0])
+        );
 
         static::__reset_session();
     }
@@ -330,6 +352,15 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
     // =========================================================================
     // HELPERS
     // =========================================================================
+
+    /**
+     * The fixture model the batch is driven against, by the simple name the wire carries.
+     */
+    private const MODEL = 'Model_Fetch_Parent_Fixture_Model';
+
+    private const PARENT_TABLE = 'model_fetch_parent_fixtures';
+
+    private const CHILD_TABLE = 'model_fetch_child_fixtures';
 
     /**
      * A request object for the ORM endpoints (which read nothing off it).
@@ -340,131 +371,54 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The tenant these tests act as. Its rows are created per test and rolled back with
-     * the test's transaction, so the endpoint's answers depend on nothing but this test.
-     */
-    private const SITE_ID = 1;
-
-    /**
-     * Sign in as the seeded user and act as the fixture tenant.
+     * Sign in as the seeded baseline user.
      *
-     * Every model fetch surface in the template app is gated on is_logged_in, so a test
-     * that only set a site would get an empty records map (the denial answer) and prove
-     * nothing. The gate engine memoizes per request and a test process is many
-     * "requests", so the identity change has to invalidate that snapshot the way a
-     * request boundary does.
+     * The gate engine memoizes per request and a test process is many "requests", so the
+     * identity change has to invalidate that snapshot the way a request boundary does -
+     * which is what __acting_as_user() does.
      */
     private static function __sign_in(): void
     {
-        $user_id = static::__first_user_id();
-
-        if ($user_id === null) {
-            throw new \RuntimeException('the test database has no User_Model record to sign in as');
-        }
-
-        static::__acting_as_user($user_id);
-        Session::set_site_id(self::SITE_ID);
+        static::__acting_as_user(self::USER_ID);
     }
 
     /**
-     * Create N tasks in the test tenant and return their ids, signed in.
+     * Create N parent fixture rows and return their ids, signed in.
      *
      * @return array
      */
-    private static function __make_tasks(int $count): array
+    private static function __make_parents(int $count): array
     {
         static::__sign_in();
 
         $ids = [];
 
         for ($i = 1; $i <= $count; $i++) {
-            $task = new Task_Model();
-            $task->site_id = self::SITE_ID;
-            $task->title = "Model fetch batch fixture {$i}";
-            $task->save();
+            $parent = new Model_Fetch_Parent_Fixture_Model();
+            $parent->title = "Model fetch batch fixture {$i}";
+            $parent->save();
 
-            $ids[] = (int) $task->id;
+            $ids[] = (int) $parent->id;
         }
 
         return $ids;
     }
 
     /**
-     * Create a client with N contacts in the test tenant and return the client id.
+     * Create one parent with N children and return the parent id.
      */
-    private static function __make_client_with_contacts(int $contact_count): int
+    private static function __make_parent_with_children(int $child_count): int
     {
-        static::__sign_in();
+        $parent_id = static::__make_parents(1)[0];
 
-        $client = new Client_Model();
-        $client->site_id = self::SITE_ID;
-        $client->name = 'Model fetch batch fixture client';
-        $client->save();
-
-        for ($i = 1; $i <= $contact_count; $i++) {
-            $contact = new Contact_Model();
-            $contact->site_id = self::SITE_ID;
-            $contact->client_id = $client->id;
-            $contact->first_name = 'Fixture';
-            $contact->last_name = "Contact {$i}";
-            $contact->save();
+        for ($i = 1; $i <= $child_count; $i++) {
+            $child = new Model_Fetch_Child_Fixture_Model();
+            $child->parent_fixture_id = $parent_id;
+            $child->title = "Model fetch batch fixture child {$i}";
+            $child->save();
         }
 
-        return (int) $client->id;
-    }
-
-    /**
-     * The Task_Model FQCN, resolved from an instance.
-     *
-     * Template-app models are not `use`d here (their namespace is manifest-generated and
-     * a hardcoded \Rsx\ FQCN is forbidden), so `Task_Model::class` inside this namespace
-     * would resolve to a nonexistent local name. The autoloader resolves the STATIC CALL
-     * `Task_Model::find()` by simple name; only the ::class constant needs this.
-     */
-    private static function __task_class(): string
-    {
-        return get_class(new Task_Model());
-    }
-
-    /**
-     * The lowest User_Model id in the test database, or null when there is none.
-     */
-    private static function __first_user_id(): ?int
-    {
-        $user = User_Model::without_site_scope(function () {
-            return User_Model::orderBy('id')->first();
-        });
-
-        if ($user) {
-            return (int) $user->id;
-        }
-
-        // The migrated baseline ships NO user since the admin seed became conditional on
-        // credentials being configured (first-run setup, 2026-08-19) - a fresh install has
-        // nobody until the first-user screen runs. A test that needs an identity to sign in
-        // as therefore provides its own. This class is transactional, so the row rolls back.
-        static::__acting_as_site(self::SITE_ID);
-
-        // A login identity is what is_logged_in() checks; a User_Model with no
-        // login_user_id is a membership with nobody behind it and the gate denies.
-        $login_user = new Login_User_Model();
-        $login_user->email = 'batch_fetch_' . uniqid() . '@example.com';
-        $login_user->password = Login_User_Model::hash_password('secret-password');
-        $login_user->is_activated = true;
-        $login_user->is_verified = true;
-        $login_user->status_id = Login_User_Model::STATUS_ACTIVE;
-        $login_user->save();
-
-        $user = new User_Model();
-        $user->site_id = self::SITE_ID;
-        $user->login_user_id = (int) $login_user->id;
-        $user->first_name = 'Batch';
-        $user->last_name = 'Fetcher';
-        $user->role_id = User_Model::ROLE_USER;
-        $user->is_enabled = true;
-        $user->save();
-
-        return (int) $user->id;
+        return $parent_id;
     }
 
     /**

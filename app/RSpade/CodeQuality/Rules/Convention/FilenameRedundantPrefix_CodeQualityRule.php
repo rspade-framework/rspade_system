@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\Convention;
 
 use App\Constants;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * FilenameRedundantPrefix_CodeQualityRule - Enforces optimal filename clarity
@@ -93,8 +94,8 @@ class FilenameRedundantPrefix_CodeQualityRule extends CodeQualityRule_Abstract
     {
         // Only check files in ./rsx or ./app/RSpade
         $relative_path = str_replace(base_path() . '/', '', $file_path);
-        $is_rsx = str_starts_with($relative_path, 'rsx/');
-        $is_rspade = str_starts_with($relative_path, 'app/RSpade/');
+        $is_rsx = Rsx_Paths::is_application($relative_path);
+        $is_rspade = Rsx_Paths::is_framework($relative_path);
 
         if (!$is_rsx && !$is_rspade) {
             return;

@@ -750,18 +750,26 @@ SUBSYSTEM PRIMERS
     and the RSX loader never gets its turn. It is scoped to one file and one
     warning - not a fallback.
 
-    CLASS OVERRIDES. Copy a framework class into rsx/ under the same class
-    name. Copy-and-replace, never extends - extending the class you are
-    overriding is a hard build error. During phase 2 the framework twin is
-    renamed to <file>.php.upstream, dropped from the index, and the build
-    restarts. Every archive prints a line naming the class and both paths, so
-    a class can never leave the build silently. If your rsx/ copy disappears,
-    the .upstream file is renamed back. Two refusals exist and each prints
-    its own line: the rsx/ twin is not actually on disk (a stale index
-    entry - dropped, build restarts, nothing renamed), and the manifest is
-    already poisoned (its file list is not evidence). The second refusal
-    exists because a poisoned index once archived brand-new framework classes
-    as twins of deleted rsx/ copies.
+    CLASS OVERRIDES. Declare a class of the same simple name in rsx/. A core
+    MODEL is a base plus an empty shell, and the override EXTENDS the base
+    (class X_Model extends X_Model_Abstract) declaring only what it changes;
+    every other framework class is COPIED. Extending the class you are
+    overriding is a hard build error in both shapes. During phase 2 the
+    framework twin is renamed to <file>.php.upstream, dropped from the index,
+    and the build restarts. Every archive prints a line naming the class and
+    both paths, so a class can never leave the build silently. If your rsx/
+    copy disappears, the .upstream file is renamed back.
+
+    Four refusals exist. Two are FATAL and name the offending file: the rsx/
+    class extends the class it replaces, and an override of a SPLIT model
+    that does not extend that model's base (a copy of the framework file is a
+    second implementation of a class the framework keeps developing - the
+    exact failure the split ends). Two are informational and each prints its
+    own line: the rsx/ twin is not actually on disk (a stale index entry -
+    dropped, build restarts, nothing renamed), and the manifest is already
+    poisoned (its file list is not evidence). That last one exists because a
+    poisoned index once archived brand-new framework classes as twins of
+    deleted rsx/ copies.
 
     The .upstream churn lives inside system/, so a framework pull discards it
     and the next build recreates it. It is always-local state; it is never
@@ -827,8 +835,9 @@ SUBSYSTEM PRIMERS
       NOT ON YOUR DISK: manifest_api, manifest_build (stripped at publish -
       this primer is their downstream replacement).
       Colocated: Core/Manifest/CLAUDE.md.
-      Source: Core/Manifest/ (Manifest.php plus the _Manifest_*_Helper
-      classes and Modules/), Core/Autoloader.php,
+      Source: Core/Manifest/ (Manifest.php - the facade and every read
+      accessor - plus Manifest_Build, Manifest_Scanner, Manifest_Indexer,
+      Manifest_Store and Modules/), Core/Autoloader.php,
       Core/Integration_Service_Provider_Abstract.php,
       config/rsx.php (manifest, manifest_modules, manifest_support).
 
@@ -2211,7 +2220,7 @@ SUBSYSTEM PRIMERS
       Rules/CodeQualityRule_Abstract, Support/RuleDiscovery,
       Support/FileSanitizer, Support/ViolationCollector, RuntimeChecks/),
       Commands/Rsx/Rsx_Check_Command.php,
-      Core/Manifest/_Manifest_Quality_Helper.php.
+      Core/Manifest/Manifest_Indexer.php.
 
   13. CONFIG, ENV AND MODES
     CONFIG IS TWO TIERS, DEEP-MERGED at provider registration: the framework

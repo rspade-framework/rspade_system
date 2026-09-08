@@ -2,8 +2,6 @@
 
 namespace App\RSpade\CodeQuality\Rules\Manifest;
 
-use PhpParser\Node;
-use PhpParser\NodeFinder;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -25,12 +23,13 @@ use App\RSpade\Core\Manifest\Manifest;
  * methods (owner decision 1). Overrides that legitimately fully replace opt out
  * with #[Replaceable] on the parent method.
  *
- * Detection is AST-based (nikic/php-parser), never a regex over raw source, so a
- * comment or string literal mentioning parent::method() cannot spoof it. The
- * manifest is used ONLY for lineage (php_get_lineage) and ancestor file lookup
- * (php_find_class); per-method modifiers (abstract/attributes) are read
- * authoritatively from the rule's own AST parse of each file, because the manifest
- * method maps lack the abstract flag and omit protected methods.
+ * Detection is AST-derived (nikic/php-parser), never a regex over raw source, so a
+ * comment or string literal mentioning parent::method() cannot spoof it - the parse
+ * happens once, inside Source_Cache::declared_members(), and this rule reads the
+ * summary it produces. The manifest is used ONLY for lineage (php_get_lineage) and
+ * ancestor file lookup (php_find_class); per-method modifiers (abstract/attributes)
+ * come from that summary rather than the manifest's method maps, which lack the
+ * abstract flag and omit protected methods.
  */
 class ParentCallChain_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -180,30 +179,36 @@ class ParentCallChain_CodeQualityRule extends CodeQualityRule_Abstract
      * tests build it from synthetic fixture files so lineage resolution, nearest-
      * declarer anchoring, abstract/#[Replaceable] exemption, and parent-call
      * detection are all exercised over real AST without touching the manifest.
+     *
+     * EVERY STRUCTURAL FACT COMES FROM Source_Cache::declared_members(). The rule holds no
+     * AST: the child's parent-calls and its exception markers are fields of the summary, and
+     * an ancestor is asked once for its whole member list rather than once per method. The
+     * summary outlives the AST it was built from, which is what stops four ancestry rules
+     * re-parsing the same seven hundred files one after another.
      */
     private function evaluate_class_methods(string $child_file, string $child_class, array $ancestry): void
     {
-        $child_node = $this->find_class_node($child_file, $child_class);
-        if ($child_node === null) {
-            // Cannot locate/parse the child class - nothing to enumerate.
+        $child = $this->source()->declared_members($child_file, $child_class);
+
+        if (empty($child['methods'])) {
             return;
         }
 
         $contents = $this->source()->content($child_file);
-        $lines = $contents === false ? [] : explode("\n", $contents);
-        $marker = '@' . self::RULE_ID . '-EXCEPTION';
+        $lines = $contents === '' ? [] : explode("\n", $contents);
 
-        foreach ($child_node->getMethods() as $child_method) {
+        foreach ($child['methods'] as $method_key => $child_method) {
             // Abstract / bodiless declarations cannot call parent - not an override
             // in the calling sense.
-            if ($child_method->stmts === null) {
+            if (!$child_method['has_body']) {
                 continue;
             }
 
-            $method_name = $child_method->name->toString();
+            $method_name = $child_method['name'];
 
             // Find the nearest ancestor that DECLARES this method.
-            $declarer = $this->find_nearest_declarer($ancestry, $method_name);
+            $declarer = $this->find_nearest_declarer($ancestry, $method_key);
+
             if ($declarer === null) {
                 // Fresh method, or overrides a vendor method the manifest cannot
                 // see - no chaining obligation.
@@ -211,28 +216,30 @@ class ParentCallChain_CodeQualityRule extends CodeQualityRule_Abstract
             }
 
             // Exempt: the nearest declarer is abstract (cannot call it).
-            if ($declarer['method']->isAbstract()) {
+            if ($declarer['method']['abstract']) {
                 continue;
             }
 
             // Exempt: the nearest declarer opted out via #[Replaceable].
-            if ($this->method_is_replaceable($declarer['method'])) {
+            if (isset($declarer['method']['attributes']['replaceable'])) {
                 continue;
             }
 
-            // Obligation stands: the child body must call parent::<method>().
-            if ($this->method_body_calls_parent($child_method, $method_name)) {
+            // Obligation stands: the child body must call parent::<method>(). A dynamic
+            // parent::{$x}() is recorded as '*' and counts as satisfied - the parent IS
+            // invoked and the name is unprovable, so failing open is correct.
+            if (isset($child_method['parent_calls'][$method_key]) || isset($child_method['parent_calls']['*'])) {
                 continue;
             }
 
             // Documented-unsupported edge syntaxes (callable-array,
             // call_user_func('parent::x'), explicit parent-classname) escape via
             // @PHP-PARENT-CHAIN-01-EXCEPTION.
-            if ($this->method_has_exception($child_method, $lines, $marker)) {
+            if (isset($child_method['exceptions'][self::RULE_ID])) {
                 continue;
             }
 
-            $line = $child_method->getStartLine();
+            $line = $child_method['line'];
             $ancestor_class = $declarer['class'];
             $code_snippet = ($line > 0 && isset($lines[$line - 1])) ? trim($lines[$line - 1]) : '';
 
@@ -256,132 +263,22 @@ class ParentCallChain_CodeQualityRule extends CodeQualityRule_Abstract
 
     /**
      * Walk the nearest -> root ancestry and return the first ancestor that declares
-     * $method_name, as ['class' => simpleName, 'method' => ClassMethod]. Returns
-     * null when no ancestry class declares it.
+     * $method_key (a LOWERCASED method name), as ['class' => simpleName, 'method' => the
+     * member summary]. Null when no ancestry class declares it.
      *
-     * An unparseable/unlocatable ancestor file is skipped (we cannot confirm a
-     * declaration there); climbing continues to the next ancestor.
+     * An unparseable/unlocatable ancestor file summarizes to no members, so it is skipped
+     * exactly as before - we cannot confirm a declaration there - and climbing continues.
      */
-    private function find_nearest_declarer(array $ancestry, string $method_name): ?array
+    private function find_nearest_declarer(array $ancestry, string $method_key): ?array
     {
         foreach ($ancestry as $ancestor) {
-            $ancestor_node = $this->find_class_node($ancestor['file'], $ancestor['class']);
-            if ($ancestor_node === null) {
-                continue;
-            }
+            $members = $this->source()->declared_members($ancestor['file'], $ancestor['class']);
 
-            $method = $ancestor_node->getMethod($method_name);
-            if ($method !== null) {
-                return ['class' => $ancestor['class'], 'method' => $method];
+            if (isset($members['methods'][$method_key])) {
+                return ['class' => $ancestor['class'], 'method' => $members['methods'][$method_key]];
             }
         }
 
         return null;
     }
-
-    /**
-     * Structurally determine whether $method's body calls parent::<method_name>().
-     *
-     * Recurses into closures/arrow-fns (NodeFinder walks the whole subtree). Keeps
-     * same-name equality (owner decision 6): parent::otherMethod() does NOT satisfy.
-     * A dynamic-name call parent::{$x}() COUNTS as satisfied - the parent IS
-     * invoked and the name is unprovable, so failing open is correct.
-     */
-    private function method_body_calls_parent(Node\Stmt\ClassMethod $method, string $method_name): bool
-    {
-        if ($method->stmts === null) {
-            return false;
-        }
-
-        $node_finder = new NodeFinder();
-        $static_calls = $node_finder->findInstanceOf($method->stmts, Node\Expr\StaticCall::class);
-
-        foreach ($static_calls as $call) {
-            if (!($call->class instanceof Node\Name)) {
-                continue;
-            }
-            if (strcasecmp($call->class->toString(), 'parent') !== 0) {
-                continue;
-            }
-
-            if ($call->name instanceof Node\Identifier) {
-                if (strcasecmp($call->name->toString(), $method_name) === 0) {
-                    return true;
-                }
-                // parent::someOtherMethod() - not this method's chain.
-                continue;
-            }
-
-            // parent::{$dynamic}() - the parent is invoked; count as satisfied.
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Whether a method node carries the #[Replaceable] marker attribute. Read by
-     * name from the AST attribute groups (the attribute class is never defined -
-     * framework marker-attribute convention).
-     */
-    private function method_is_replaceable(Node\Stmt\ClassMethod $method): bool
-    {
-        foreach ($method->attrGroups as $group) {
-            foreach ($group->attrs as $attr) {
-                $parts = explode('\\', $attr->name->toString());
-                $simple = end($parts);
-                if (strcasecmp($simple, 'Replaceable') === 0) {
-                    return true;
-                }
-            }
-        }
-
-        return false;
-    }
-
-    /**
-     * Per-method exception detection for @PHP-PARENT-CHAIN-01-EXCEPTION. Recognizes
-     * the marker in the method's attached comments/docblock, on the method's
-     * declaration line, or on the line immediately preceding it. (Whole-file
-     * exceptions are handled generically by CodeQualityChecker before the rule
-     * ever runs.)
-     */
-    private function method_has_exception(Node\Stmt\ClassMethod $method, array $lines, string $marker): bool
-    {
-        foreach ($method->getComments() as $comment) {
-            if (str_contains($comment->getText(), $marker)) {
-                return true;
-            }
-        }
-
-        $start_line = $method->getStartLine();
-        $index = $start_line - 1;
-
-        if ($index >= 0 && isset($lines[$index]) && str_contains($lines[$index], $marker)) {
-            return true;
-        }
-        if ($index - 1 >= 0 && isset($lines[$index - 1]) && str_contains($lines[$index - 1], $marker)) {
-            return true;
-        }
-
-        return false;
-    }
-
-    /**
-     * Locate the ClassLike node named $class_name inside $abs_file. Prefers a
-     * case-insensitive name match; parses (and caches) the file via nikic/php-parser.
-     * Returns null when the file is missing/unparseable or the class is absent
-     * (a missing/unparseable ancestor simply is not treated as a declarer).
-     */
-    private function find_class_node(string $abs_file, string $class_name): ?Node\Stmt\ClassLike
-    {
-        // THE DRIVER OWNS PARSING, and it owns this lookup too: the node is memoized
-        // beside the file's AST and evicted with it. Four rules each ran a full
-        // NodeFinder traversal per ASK, and PHP-PARENT-CHAIN-01 asks once per ancestor
-        // per method.
-        $node = $this->source()->class_node($abs_file, $class_name);
-
-        return $node instanceof Node\Stmt\ClassLike ? $node : null;
-    }
-
 }

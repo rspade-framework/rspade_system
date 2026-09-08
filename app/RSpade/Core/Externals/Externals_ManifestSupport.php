@@ -46,7 +46,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  */
 class Externals_ManifestSupport extends ManifestSupport_Abstract
 {
-    /** Manifest file kind produced by _Manifest_Scanner_Helper::_process_file(). */
+    /** Manifest file kind produced by Manifest_Scanner::_process_file(). */
     public const FILE_EXTENSION = 'externals.php';
 
     /** The only keys a spec may carry. */

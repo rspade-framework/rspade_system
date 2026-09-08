@@ -35,7 +35,10 @@ class Dev_Auth_Token_Test extends Rsx_Test_Abstract
     // Filesystem + config behavior only - no database.
     protected static $use_database_transactions = false;
 
-    private const URL = '/contacts';
+    // Any URL string: the credential is an HMAC over the payload, so the value is opaque
+    // to Dev_Auth_Token and never has to resolve to a route. A framework path is used so
+    // the class names no application surface.
+    private const URL = '/_sys';
     private const USER_ID = 1;
 
     /** Absolute bridge dirs created during the run, cleaned up in teardown. */
@@ -296,8 +299,8 @@ class Dev_Auth_Token_Test extends Rsx_Test_Abstract
         // minter (system/bin/dev-auth.js) reproduces this string, so a change here
         // silently breaks every standalone Playwright test until it is changed there too.
         self::__assert_equals(
-            '{"url":"\\/contacts","user_id":1,"portal":false,"exp":1757203200}',
-            Dev_Auth_Token::payload('/contacts', 1, false, 1757203200)
+            '{"url":"\\/_sys","user_id":1,"portal":false,"exp":1757203200}',
+            Dev_Auth_Token::payload('/_sys', 1, false, 1757203200)
         );
     }
 

@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Integrations\Jqhtml;
 
+use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\Core\Manifest\ManifestModule_Abstract;
 
 /**
@@ -93,20 +94,17 @@ class Jqhtml_ManifestModule extends ManifestModule_Abstract
     }
     
     /**
-     * Remove comments from JQHTML content
+     * Blank the comments in JQHTML content.
+     *
+     * One implementation, in FileSanitizer, and line-preserving: the bodies become spaces,
+     * so every offset this module then computes still addresses the original template.
      *
      * @param string $content Template content
-     * @return string Content with comments removed
+     * @return string Content with comment bodies blanked
      */
     protected function remove_comments(string $content): string
     {
-        // Remove <%-- --%> style comments
-        $content = preg_replace('/<%--.*?--%>/s', '', $content);
-
-        // Remove <!-- --> style comments
-        $content = preg_replace('/<!--.*?-->/s', '', $content);
-
-        return $content;
+        return FileSanitizer::blank_template_comments($content);
     }
 
     /**

@@ -8,7 +8,10 @@
 namespace App\RSpade\Tests\Database\Php;
 
 use RuntimeException;
+use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -20,6 +23,11 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * every generated stub and proves the two can never disagree - including the one place they
  * deliberately differ, the leading-underscore system-column filter that lives in the
  * generator because it is about what may be PUBLISHED, not about what a length is.
+ *
+ * The named columns are framework columns on framework tables - users, login_users and
+ * _file_attachments - so the class states nothing an installed application may have dropped.
+ * The class-table-inheritance case is the exception: the framework declares no CTI model, so
+ * that test asks the MANIFEST for one and skips in an application that has none.
  */
 class Field_Length_Test extends Rsx_Test_Abstract
 {
@@ -28,27 +36,30 @@ class Field_Length_Test extends Rsx_Test_Abstract
 
     public static function test_a_varchar_column_answers_its_length()
     {
-        static::__assert_equals(255, Client_Model::field_length('name'), 'clients.name is varchar(255)');
-        static::__assert_equals(20, Client_Model::field_length('zip'), 'clients.zip is varchar(20)');
+        static::__assert_equals(255, Login_User_Model::field_length('email'), 'login_users.email is varchar(255)');
+        static::__assert_equals(100, User_Model::field_length('first_name'), 'users.first_name is varchar(100)');
     }
 
     public static function test_a_non_character_column_answers_null()
     {
-        static::__assert_null(Client_Model::field_length('id'), 'a bigint has no character limit');
-        static::__assert_null(Client_Model::field_length('created_at'), 'a datetime has no character limit');
-        static::__assert_null(Party_Model::field_length('notes'), 'a text column has no character limit');
+        static::__assert_null(User_Model::field_length('id'), 'a bigint has no character limit');
+        static::__assert_null(User_Model::field_length('created_at'), 'a datetime has no character limit');
+        static::__assert_null(
+            File_Attachment_Model::field_length('fileable_meta'),
+            'a text column has no character limit'
+        );
     }
 
     public static function test_an_unknown_column_throws_naming_the_class_and_the_column()
     {
         $exception = static::__assert_throws(
             RuntimeException::class,
-            fn () => Client_Model::field_length('nope_not_a_column'),
+            fn () => User_Model::field_length('nope_not_a_column'),
             'nope_not_a_column'
         );
 
         static::__assert_contains(
-            'Client_Model',
+            'User_Model',
             $exception->getMessage(),
             'the message names the model, not just the column'
         );
@@ -56,16 +67,35 @@ class Field_Length_Test extends Rsx_Test_Abstract
 
     public static function test_a_cti_base_model_answers_for_a_detail_column()
     {
-        // first_name lives on party_person_details, never on parties - the manifest merges a
-        // base model's detail columns into its map, so the base model answers for them.
-        static::__assert_equals(255, Party_Model::field_length('first_name'), 'a PERSON detail column');
-        static::__assert_equals(255, Party_Model::field_length('legal_name'), 'a COMPANY detail column');
+        // A CTI detail column lives on the detail table, never on the base table - the
+        // manifest merges a base model's detail columns into its map (tagging each with its
+        // source_table), so the base model answers for them.
+        //
+        // The framework declares no CTI model of its own, and the concern's CTI fixtures
+        // create their tables at TEST time, long after the manifest read the schema. So the
+        // subject is whatever CTI base this application declares; an application with none
+        // cannot express the case at all and skips.
+        $detail = static::__a_merged_detail_column();
+
+        if ($detail === null) {
+            static::__skip('this application declares no class-table-inheritance model, so no base model has merged detail columns');
+
+            return;
+        }
+
+        [$model_class, $fqcn, $column, $length] = $detail;
+
+        static::__assert_equals(
+            $length,
+            $fqcn::field_length($column),
+            "{$model_class}.{$column} is a detail column and the base model answers for it"
+        );
 
         // The premise: the physical base table does not carry it (getColumns() reads the
         // live schema, not the manifest's merged map).
         static::__assert_false(
-            in_array('first_name', Party_Model::getColumns(), true),
-            'first_name is not a physical column of the parties table'
+            in_array($column, $fqcn::getColumns(), true),
+            "{$column} is not a physical column of the base table"
         );
     }
 
@@ -159,6 +189,50 @@ class Field_Length_Test extends Rsx_Test_Abstract
         // Recorded, not asserted: no model in this tree declares a system column today, so
         // the loop above is a latch that arms the moment one appears.
         static::__assert_greater_than(-1, $system_columns_seen, 'system columns examined: ' . $system_columns_seen);
+    }
+
+    /**
+     * The first merged CTI detail column this application declares, as
+     * [model_class, fqcn, column, max_length] - or null when no model has one.
+     *
+     * A detail column is recognised by its source_table tag: the manifest records which
+     * physical table each column came from, and a base model's map carries columns from its
+     * detail tables. Deterministic (both loops are over sorted manifest indexes) so the
+     * subject does not change between runs.
+     *
+     * @return array{0: string, 1: string, 2: string, 3: ?int}|null
+     */
+    private static function __a_merged_detail_column(): ?array
+    {
+        $models = Manifest::$data['data']['models'] ?? [];
+        ksort($models);
+
+        foreach ($models as $model_class => $model) {
+            $base_table = $model['table'] ?? null;
+            $fqcn = $model['fqcn'] ?? null;
+
+            if ($base_table === null || $fqcn === null) {
+                continue;
+            }
+
+            foreach (Manifest::php_model_columns($model_class) ?? [] as $column => $meta) {
+                $source_table = $meta['source_table'] ?? $base_table;
+
+                if ($source_table === $base_table) {
+                    continue;
+                }
+
+                // A varchar detail column, so the assertion is about a real LENGTH rather
+                // than about null - the interesting half of field_length().
+                if (($meta['max_length'] ?? null) === null) {
+                    continue;
+                }
+
+                return [$model_class, $fqcn, $column, (int) $meta['max_length']];
+            }
+        }
+
+        return null;
     }
 
     /**

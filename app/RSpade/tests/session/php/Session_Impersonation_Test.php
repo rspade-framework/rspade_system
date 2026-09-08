@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Session\Php;
 
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Permission\Permission_Abstract;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -34,7 +35,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * test resets the session first via __start_clean().
  *
  * DB-backed methods create real Login_User_Model/User_Model rows so get_user()
- * (and the Permission facade that delegates to it) resolve the effective identity.
+ * (and the permission facade that delegates to it) resolve the effective identity.
  * Runs in the default per-test transaction (rolled back afterward).
  */
 class Session_Impersonation_Test extends Rsx_Test_Abstract
@@ -282,11 +283,13 @@ class Session_Impersonation_Test extends Rsx_Test_Abstract
         Session::set_login_user_id($admin_login->id);
         Session::begin_impersonation($target_login->id);
 
-        // Permission facade delegates to Session::get_user(), which reads the live
-        // (impersonated) identity - so it must report the TARGET, not the admin.
-        $permission_user = Permission::get_user();
-        static::__assert_not_null($permission_user, 'Permission facade resolves a user under impersonation');
-        static::__assert_equals($target_user->id, $permission_user->id, 'Permission facade reflects the impersonated target identity');
+        // The permission facade delegates to Session::get_user(), which reads the live
+        // (impersonated) identity - so it must report the TARGET, not the admin. The
+        // framework BASE is the subject: the facade an application declares inherits this
+        // method from it, and what impersonation moves is what the base reads.
+        $permission_user = Permission_Abstract::get_user();
+        static::__assert_not_null($permission_user, 'the permission facade resolves a user under impersonation');
+        static::__assert_equals($target_user->id, $permission_user->id, 'the permission facade reflects the impersonated target identity');
     }
 
     // =====================================================================

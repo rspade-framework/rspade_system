@@ -5,41 +5,49 @@ Implemented tests live in `php/Login_Redirect_Test.php` (staff-context validator
 wiring calls) and `php/Login_Redirect_Portal_Test.php` (portal-context behavior,
 prefix + domain modes, cross-context isolation, config override). No database.
 
+ROUTABLE TARGETS ARE THIS CONCERN'S OWN. The validator's last gate is route
+registration and it rejects every `/_`-prefixed path, which is every route the framework
+declares - so `php/Login_Redirect_Route_Fixture_Controller.php` registers the three
+routes the accept half is driven against (`/test-login-redirect/page`, `.../other` and
+`.../item/:id`), and `php/Login_Redirect_Portal_Route_Fixture_Controller.php` registers
+the portal twins (`#[Portal_Route]`, resolved against the PORTAL table). All indexed only
+while the suite runs.
+
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
-| LR-01 | Accepts a plain local path | php | `/dashboard` | `['redirect'=>'/dashboard']` | implemented | 2026-07-23 |
-| LR-02 | Preserves the query string verbatim | php | `/frontend/settings/profile_edit?tab=history&x=1` | value unchanged | implemented | 2026-08-03 |
+| LR-01 | Accepts a plain local path | php | the fixture page path | `['redirect'=>'<path>']` | implemented | 2026-09-08 |
+| LR-02 | Preserves the query string verbatim | php | fixture page path + `?tab=history&x=1` | value unchanged | implemented | 2026-09-08 |
 | LR-03 | Rejects protocol-relative | php | `//evil.example` | `[]` | implemented | 2026-07-23 |
 | LR-04 | Rejects absolute URL | php | `https://evil.example` | `[]` | implemented | 2026-07-23 |
 | LR-05 | Rejects javascript: scheme | php | `javascript:alert(1)` | `[]` | implemented | 2026-07-23 |
 | LR-06 | Rejects other scheme | php | `ftp://host/x` | `[]` | implemented | 2026-07-23 |
 | LR-07 | Rejects backslash | php | `/path\to\evil` | `[]` | implemented | 2026-07-23 |
 | LR-08 | Rejects control chars/newlines | php | `/foo\nbar` | `[]` | implemented | 2026-07-23 |
-| LR-09 | Rejects fragment (whole value) | php | `/dashboard#section` | `[]` | implemented | 2026-07-23 |
+| LR-09 | Rejects fragment (whole value) | php | fixture page path + `#section` | `[]` | implemented | 2026-09-08 |
 | LR-10 | Rejects login-flow prefix | php | `/login` | `[]` | implemented | 2026-07-23 |
 | LR-11 | Rejects login-flow subpath | php | `/login/2fa` | `[]` | implemented | 2026-07-23 |
 | LR-12 | Rejects logout prefix | php | `/logout` | `[]` | implemented | 2026-07-23 |
 | LR-13 | Rejects over-length (>2000) | php | 2002-char path | `[]` | implemented | 2026-07-23 |
 | LR-14 | Rejects empty string | php | `''` | `[]` | implemented | 2026-07-23 |
 | LR-15 | Rejects absent param | php | (no redirect) | `[]` | implemented | 2026-07-23 |
-| LR-16 | consume() returns a valid target | php | `/dashboard`, default `/home` | `/dashboard` | implemented | 2026-07-23 |
+| LR-16 | consume() returns a valid target | php | fixture page path, default `/home` | the fixture page path | implemented | 2026-09-08 |
 | LR-17 | consume() returns default on hostile | php | `//evil.example`, default `/home` | `/home` | implemented | 2026-07-23 |
 | LR-18 | consume() returns default when absent | php | (none), default `/home` | `/home` | implemented | 2026-07-23 |
 | LR-19 | hidden_input() empty when absent | php | (none) | `''` | implemented | 2026-07-23 |
-| LR-20 | hidden_input() renders a valid value | php | `/dashboard` | `<input ... value="/dashboard">` | implemented | 2026-07-23 |
+| LR-20 | hidden_input() renders a valid value | php | fixture page path | `<input ... value="<path>">` | implemented | 2026-09-08 |
 | LR-21 | hidden_input() escapes the value | php | `/frontend/settings/profile_edit?q=a&b="x"<y>` | `&quot;`/`&amp;`/`&lt;`, no attribute break-out | implemented | 2026-08-03 |
 | LR-22 | capture() returns a GET page target | php | GET `/frontend/settings/profile_edit` | `['redirect'=>'/frontend/settings/profile_edit']` | implemented | 2026-08-03 |
 | LR-23 | capture() preserves query | php | GET `/frontend/settings/profile_edit?tab=x&y=2` | value w/ query | implemented | 2026-08-03 |
 | LR-24 | capture() ignores POST | php | POST `/settings/onedrive` | `[]` | implemented | 2026-07-23 |
 | LR-25 | capture() ignores XHR | php | GET + `X-Requested-With` | `[]` | implemented | 2026-07-23 |
 | LR-26 | capture() ignores Ajax-endpoint path | php | GET `/_ajax/Foo/bar` | `[]` | implemented | 2026-07-23 |
-| LR-27 | capture() ignores API path | php | GET `/api/v1/contacts` | `[]` | implemented | 2026-07-23 |
+| LR-27 | capture() ignores API path | php | GET `/api/v1/me` | `[]` | implemented | 2026-09-08 |
 | LR-28 | capture() ignores login route | php | GET `/login` | `[]` | implemented | 2026-07-23 |
 | LR-29 | JS mirror rides the compiled Core bundle | asset | rendered page JS | `class Login_Redirect` present | deferred (verified manually at CR time; no house JS-unit channel for Core/Js) | 2026-07-23 |
-| LR-30 | Logout honors a valid `?redirect=` over HTTP | http | GET `/logout?redirect=/dashboard` | 302 to `/dashboard` | deferred (live-server; validator equivalence covered by LR-16/17) | 2026-07-23 |
+| LR-30 | Logout honors a valid `?redirect=` over HTTP | http | GET `/logout?redirect=<a routable page>` | 302 to that page | deferred (live-server; the test trees are not indexed for an ordinary web request, so the fixture routes are not reachable over HTTP - validator equivalence covered by LR-16/17) | 2026-09-08 |
 | LR-31 | Logout degrades a hostile `?redirect=` over HTTP | http | GET `/logout?redirect=https://evil.example` | 302 to login default | deferred (live-server) | 2026-07-23 |
 | LR-32 | Validator rejects Ajax-endpoint path via params() (closed asymmetry) | php | `/_ajax/Foo_Controller/bar` | `[]` | implemented | 2026-07-23 |
-| LR-33 | Validator rejects API path via params() (closed asymmetry) | php | `/api/v1/contacts` | `[]` | implemented | 2026-07-23 |
+| LR-33 | Validator rejects API path via params() (closed asymmetry) | php | `/api/v1/me` | `[]` | implemented | 2026-09-08 |
 | LR-34 | capture() returns a prefix-mode portal page target | php | portal ctx, GET `/_portal/workspace/5` | `['redirect'=>'/_portal/workspace/5']` | implemented | 2026-07-23 |
 | LR-35 | capture() excludes the portal login route | php | portal ctx, GET `/_portal/login` | `[]` | implemented | 2026-07-23 |
 | LR-36 | params() accepts a prefix-mode portal page | php | portal ctx, `/_portal/workspace/5` | value | implemented | 2026-07-23 |
@@ -62,18 +70,18 @@ prefix + domain modes, cross-context isolation, config override). No database.
 | LR-53 | Bare root WITH a query kept via params() | php | staff ctx, `/?tab=activity` | `['redirect'=>'/?tab=activity']` | implemented | 2026-08-03 |
 | LR-54 | capture() drops the no-op bare root (no query) | php | GET `/` | `[]` | implemented | 2026-08-03 |
 | LR-55 | capture() keeps the bare root WITH a query | php | GET `/?tab=activity` | `['redirect'=>'/?tab=activity']` | implemented | 2026-08-03 |
-| LR-56 | Routability gate: a registered SPA target is kept | php | staff ctx, `/dashboard` | value | implemented | 2026-08-03 |
-| LR-57 | Routability gate: a registered SPA :id route is kept | php | staff ctx, `/tasks/edit/5` | value | implemented | 2026-08-03 |
-| LR-58 | Routability gate: a registered server-rendered (Blade) GET route is kept | php | staff ctx, `/signup` | value | implemented | 2026-08-03 |
+| LR-56 | Routability gate: a registered target with no URL params is kept | php | staff ctx, the fixture page path | value | implemented | 2026-09-08 |
+| LR-57 | Routability gate: a registered `:id` route is kept | php | staff ctx, `/test-login-redirect/item/5` | value | implemented | 2026-09-08 |
+| LR-58 | Routability gate: a SECOND registered pattern resolves on its own merits | php | staff ctx, the fixture's other page path | value | implemented | 2026-09-08 |
 | LR-59 | Routability gate: an unroutable target dropped via params() | php | staff ctx, `/does-not-exist-xyz` | `[]` | implemented | 2026-08-03 |
-| LR-60 | Routability gate: an undeclared record-style route dropped (NOT a 404 probe) | php | staff ctx, `/clients/5` | `[]` | implemented | 2026-08-03 |
+| LR-60 | Routability gate: a NEAR MISS of a registered pattern dropped (NOT a 404 probe) | php | staff ctx, `/test-login-redirect/item/5/extra` | `[]` | implemented | 2026-09-08 |
 | LR-61 | capture() drops an unroutable target (parity with params) | php | GET `/does-not-exist-xyz` | `[]` | implemented | 2026-08-03 |
 | LR-62 | No-op portal root dropped via params() | php | portal ctx, `/_portal` | `[]` | implemented | 2026-08-03 |
 | LR-63 | No-op portal root (trailing slash) dropped via params() | php | portal ctx, `/_portal/` | `[]` | implemented | 2026-08-03 |
 | LR-64 | capture() drops the no-op portal root | php | portal ctx, GET `/_portal` | `[]` | implemented | 2026-08-03 |
 | LR-65 | Portal root WITH a query kept via params() | php | portal ctx, `/_portal?tab=activity` | `['redirect'=>'/_portal?tab=activity']` | implemented | 2026-08-03 |
-| LR-66 | Routability gate resolves against the PORTAL table (registered target kept) | php | portal ctx, `/_portal/dashboard` | value | implemented | 2026-08-03 |
-| LR-67 | Routability gate: an unroutable portal-prefix target dropped | php | portal ctx, an under-prefix path with no registered portal route | `[]` | deferred (template app registers a portal `/*` catch-all - Portal_Spa_Controller - so every under-prefix path resolves; the portal rejection branch is un-triggerable here. Staff-side rejection proven by LR-59; portal ACCEPT branch by LR-66) | 2026-08-03 |
+| LR-66 | Routability gate resolves against the PORTAL table (registered target kept) | php | portal ctx, the portal fixture page under the prefix | value | implemented | 2026-09-08 |
+| LR-67 | Routability gate: an unroutable portal-prefix target dropped | php | portal ctx, an under-prefix path with no registered portal route | `[]` | deferred (this template registers a portal `/*` catch-all - Portal_Spa_Controller - so every under-prefix path resolves and the portal rejection branch is un-triggerable HERE, though an application without one would trigger it. Staff-side rejection proven by LR-59; portal ACCEPT branch by LR-66) | 2026-09-08 |
 
 ## Notes
 

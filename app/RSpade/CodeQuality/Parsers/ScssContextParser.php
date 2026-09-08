@@ -2,6 +2,8 @@
 
 namespace App\RSpade\CodeQuality\Parsers;
 
+use App\RSpade\CodeQuality\Support\FileSanitizer;
+
 /**
  * Lightweight SCSS context parser for code quality rules
  *
@@ -76,8 +78,7 @@ class ScssContextParser
             }
 
             // Remove inline comments for processing
-            $clean_line = preg_replace('/\/\/.*$/', '', $line);
-            $clean_line = preg_replace('/\/\*.*?\*\//', '', $clean_line);
+            $clean_line = FileSanitizer::blank_scss_comments($line);
             $trimmed_clean = trim($clean_line);
 
             // Count braces before processing

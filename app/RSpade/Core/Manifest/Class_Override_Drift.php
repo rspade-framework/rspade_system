@@ -42,6 +42,14 @@ use App\RSpade\Core\Manifest\Manifest;
  * It is never a regex over the source: a regex cannot tell a declaration from a call, a
  * comment or a string.
  *
+ * A SPLIT FRAMEWORK CLASS HAS NO DRIFT SURFACE AND IS SKIPPED. When the archived file
+ * declares nothing but `class X extends X_Abstract`, every member lives on the base, and an
+ * override that extends that same base inherits all of them - including the ones the
+ * framework adds tomorrow. There is no frozen copy to measure, so the pair reports nothing
+ * rather than naming the base's members as absent from a class that has them. An override of
+ * a split class that does NOT extend the base never reaches here: the manifest's override
+ * pass refuses it by name. A clone of a NON-split class is compared in full, as ever.
+ *
  * PRIVATE MEMBERS ARE OUT OF SCOPE, deliberately. Framework code cannot call a private
  * member of another class, so a private that only exists upstream cannot break a caller.
  * A `use Some_Trait;` adoption IS in scope: dropping one silently drops every member the
@@ -126,6 +134,27 @@ class Class_Override_Drift
     {
         $upstream_source = @file_get_contents($upstream_path);
         $override_source = @file_get_contents($override_path);
+
+        // A SPLIT FRAMEWORK CLASS IS NOT A CLONE, AND HAS NO DRIFT SURFACE. When the
+        // archived file declares nothing but `class X extends X_Abstract`, every member
+        // lives on the base - and an override that extends that same base INHERITS every
+        // one of them, including the ones the framework adds tomorrow. There is no frozen
+        // copy here and nothing to compare: reporting the base's members as "missing" from
+        // an override that inherits them would be pure noise on the one pattern this
+        // framework asks applications to use.
+        //
+        // An override of a split class that does NOT extend the base never reaches here -
+        // the manifest's override pass refuses it outright.
+        if ($upstream_source !== false && $override_source !== false) {
+            $upstream_parent = static::declared_parent($upstream_source, $class_name);
+
+            if (
+                $upstream_parent === $class_name . '_Abstract'
+                && static::declared_parent($override_source, $class_name) === $upstream_parent
+            ) {
+                return ['missing' => [], 'added' => []];
+            }
+        }
 
         $upstream_members = $upstream_source === false
             ? []
@@ -316,6 +345,63 @@ class Class_Override_Drift
     }
 
     /**
+     * The SIMPLE name of the class the named class extends, or null when it extends nothing.
+     *
+     * Token-based, like every other reader here: a mention of the parent in a comment, a
+     * string or a `::class` reference can never be mistaken for the declaration. A qualified
+     * parent (`\App\...\Foo`) is reduced to `Foo`, which is what the manifest indexes and
+     * what an override in another namespace writes.
+     *
+     * @param string $source     File contents.
+     * @param string $class_name The simple class name to read.
+     */
+    public static function declared_parent(string $source, string $class_name): ?string
+    {
+        $tokens = \PhpToken::tokenize($source);
+        $count = count($tokens);
+
+        for ($i = 0; $i < $count; $i++) {
+            if ($tokens[$i]->id !== T_CLASS) {
+                continue;
+            }
+
+            $previous = static::__previous_meaningful($tokens, $i);
+            if ($previous !== null && $tokens[$previous]->is(T_DOUBLE_COLON)) {
+                continue;
+            }
+
+            if (static::__following_name($tokens, $count, $i) !== $class_name) {
+                continue;
+            }
+
+            for ($j = $i; $j < $count; $j++) {
+                if ($tokens[$j]->text === '{') {
+                    return null;
+                }
+
+                if ($tokens[$j]->id !== T_EXTENDS) {
+                    continue;
+                }
+
+                $parent = static::__following_type_name($tokens, $count, $j);
+
+                if ($parent === null) {
+                    return null;
+                }
+
+                $parent = ltrim($parent, '\\');
+                $parts = explode('\\', $parent);
+
+                return end($parts);
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    /**
      * The 1-based line the named class or trait is DECLARED on, or 0 when the file declares
      * no such thing. Token-based, so a mention in a comment, a string or a `::class`
      * reference can never be mistaken for the declaration.
@@ -404,6 +490,32 @@ class Class_Override_Drift
             }
 
             if ($token->is(T_STRING)) {
+                return $token->text;
+            }
+
+            return null;
+        }
+
+        return null;
+    }
+
+    /**
+     * The next TYPE name after $index - a bare identifier or a namespaced one, which PHP
+     * tokenizes as a single T_NAME_QUALIFIED / T_NAME_FULLY_QUALIFIED token rather than the
+     * T_STRING `__following_name()` reads. Null when the next meaningful token is not a name.
+     *
+     * @param array<int, \PhpToken> $tokens
+     */
+    private static function __following_type_name(array $tokens, int $count, int $index): ?string
+    {
+        for ($i = $index + 1; $i < $count; $i++) {
+            $token = $tokens[$i];
+
+            if ($token->is(T_WHITESPACE) || $token->is(T_COMMENT) || $token->is(T_DOC_COMMENT)) {
+                continue;
+            }
+
+            if ($token->is(T_STRING) || $token->is(T_NAME_QUALIFIED) || $token->is(T_NAME_FULLY_QUALIFIED)) {
                 return $token->text;
             }
 

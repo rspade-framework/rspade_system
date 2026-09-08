@@ -87,14 +87,14 @@ class Orm_Model_Serialization_Test extends Rsx_Test_Abstract
         );
         static::__assert_false($facts['cloned_is_array'], 'Round-tripped model must not be an array');
         static::__assert_equals(42, $facts['cloned_id'], 'Round-tripped model must expose its id');
-        static::__assert_equals('Rollout', $facts['cloned_title'], 'Round-tripped model must expose its fields');
+        static::__assert_equals('Child Record', $facts['cloned_title'], 'Round-tripped model must expose its fields');
         static::__assert_equals(
             'object',
             $facts['cloned_nested_type'],
             'A nested model field must round-trip as an object'
         );
         static::__assert_equals(
-            'Acme',
+            'Parent Record',
             $facts['cloned_nested_name'],
             'A nested model field must expose its own fields'
         );

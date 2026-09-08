@@ -6,7 +6,7 @@ TEST_NAME="API Read-Only Keys"
 # HTTP integration test - runs against the LIVE dev server + dev database (rspade).
 # The read_only gate sits inside the dispatcher between bearer authentication and the scope
 # check, so it is only observable over real HTTP. This test mints three keys - a read-only
-# unrestricted one, a read-only one scoped away from clients, and an ordinary read+write one
+# unrestricted one, a read-only one scoped away from /api/v1/me, and an ordinary read+write one
 # - and proves the four things that make the flag a guarantee rather than a label:
 #
 #   1. a read-only key GETs normally;
@@ -58,7 +58,7 @@ fail() {
 # Setup
 # ---------------------------------------------------------------------------
 echo "[SETUP] Verifying dev server..." >&2
-if ! curl -s -o /dev/null --connect-timeout 3 "$BASE/api/v1/contacts"; then
+if ! curl -s -o /dev/null --connect-timeout 3 "$BASE/api/v1/me"; then
     echo "SKIP: $TEST_NAME - dev server not reachable on $BASE"
     exit 0
 fi
@@ -81,7 +81,7 @@ $read_only = App\RSpade\Core\Api\Api_Key_Model::generate(
     1, 'HTTP read-only test key (temporary)', 'live', null, null, null, true
 );
 $read_only_scoped = App\RSpade\Core\Api\Api_Key_Model::generate(
-    1, 'HTTP read-only scoped test key (temporary)', 'live', null, null, "/api/v1/contacts/*", true
+    1, 'HTTP read-only scoped test key (temporary)', 'live', null, null, "/api/v1/files/*", true
 );
 $read_write = App\RSpade\Core\Api\Api_Key_Model::generate(1, 'HTTP read-write test key (temporary)');
 echo implode('|', [
@@ -114,9 +114,9 @@ echo "[SETUP] Minted keys $RO_KEY_ID, $RO_SCOPED_KEY_ID and $RW_KEY_ID" >&2
 # ---------------------------------------------------------------------------
 echo "[TEST] 1. Read-only key -> GET 200..." >&2
 status=$(curl -s -o /tmp/api_read_only_body.txt -w '%{http_code}' \
-    -H "Authorization: Bearer $RO_KEY" "$BASE/api/v1/clients")
+    -H "Authorization: Bearer $RO_KEY" "$BASE/api/v1/me")
 [ "$status" = "200" ] || fail "read-only GET expected 200, got $status"
-grep -q '"items"' /tmp/api_read_only_body.txt || fail "200 body missing items key"
+grep -q '"user_id"' /tmp/api_read_only_body.txt || fail "200 body missing user_id key"
 echo "[TEST] 1. OK" >&2
 
 # ---------------------------------------------------------------------------
@@ -126,7 +126,7 @@ echo "[TEST] 1. OK" >&2
 echo "[TEST] 2. Read-only key -> POST 403 read_only_key..." >&2
 status=$(curl -s -o /tmp/api_read_only_body.txt -w '%{http_code}' -X POST \
     -H "Authorization: Bearer $RO_KEY" \
-    -H 'Content-Type: application/json' --data '{}' "$BASE/api/v1/clients/create")
+    -H 'Content-Type: application/json' --data '{}' "$BASE/api/v1/files")
 [ "$status" = "403" ] || fail "read-only POST expected 403, got $status"
 grep -q '"read_only_key"' /tmp/api_read_only_body.txt \
     || fail "403 body missing read_only_key code"
@@ -150,28 +150,28 @@ echo "[TEST] 3. OK" >&2
 
 # ---------------------------------------------------------------------------
 # Test 4: ORDER - read_only is decided BEFORE the scopes
-# The scoped read-only key reaches /api/v1/contacts and nothing else:
+# The scoped read-only key reaches /api/v1/files and nothing else:
 #   - an out-of-scope GET is insufficient_scope (the verb was fine, the path was not);
 #   - an IN-SCOPE POST is read_only_key (the path was fine, the verb was not).
 # Those two answers together are the proof of the ordering.
 # ---------------------------------------------------------------------------
 echo "[TEST] 4. read_only is decided before the scopes..." >&2
 status=$(curl -s -o /tmp/api_read_only_body.txt -w '%{http_code}' \
-    -H "Authorization: Bearer $RO_SCOPED_KEY" "$BASE/api/v1/clients")
+    -H "Authorization: Bearer $RO_SCOPED_KEY" "$BASE/api/v1/me")
 [ "$status" = "403" ] || fail "out-of-scope GET expected 403, got $status"
 grep -q '"insufficient_scope"' /tmp/api_read_only_body.txt \
     || fail "an out-of-scope GET must be refused by the SCOPE check, not the read-only gate"
 
 status=$(curl -s -o /tmp/api_read_only_body.txt -w '%{http_code}' -X POST \
     -H "Authorization: Bearer $RO_SCOPED_KEY" \
-    -H 'Content-Type: application/json' --data '{}' "$BASE/api/v1/contacts/create")
+    -H 'Content-Type: application/json' --data '{}' "$BASE/api/v1/files")
 [ "$status" = "403" ] || fail "in-scope POST expected 403, got $status"
 grep -q '"read_only_key"' /tmp/api_read_only_body.txt \
     || fail "an in-scope POST must be refused by the read-only gate, not the scope check"
 
 status=$(curl -s -o /dev/null -w '%{http_code}' \
-    -H "Authorization: Bearer $RO_SCOPED_KEY" "$BASE/api/v1/contacts")
-[ "$status" = "200" ] || fail "an in-scope GET expected 200, got $status"
+    -H "Authorization: Bearer $RO_SCOPED_KEY" "$BASE/api/v1/files/no_such_attachment_key")
+[ "$status" = "404" ] || fail "an in-scope GET expected the endpoint's own 404, got $status"
 echo "[TEST] 4. OK" >&2
 
 # ---------------------------------------------------------------------------
@@ -182,7 +182,7 @@ echo "[TEST] 4. OK" >&2
 echo "[TEST] 5. A read+write key is unaffected..." >&2
 status=$(curl -s -o /tmp/api_read_only_body.txt -w '%{http_code}' -X POST \
     -H "Authorization: Bearer $RW_KEY" \
-    -H 'Content-Type: application/json' --data '{}' "$BASE/api/v1/clients/create")
+    -H 'Content-Type: application/json' --data '{}' "$BASE/api/v1/files")
 [ "$status" != "403" ] || fail "a read+write key must not be refused (got 403)"
 grep -q '"read_only_key"' /tmp/api_read_only_body.txt \
     && fail "a read+write key was refused by the read-only gate"

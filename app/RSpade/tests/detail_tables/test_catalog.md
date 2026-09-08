@@ -13,7 +13,7 @@ manifest-build time): app suite `Party_Test`, plus `rsx:debug` eval / stub inspe
 | DT-04 | FK column derivation + explicit override | php | implemented | Detail_Table_Helper_Test |
 | DT-05 | Emitted DDL composes with SqlQueryTransformer | php | implemented | Detail_Table_Helper_Test |
 | DT-06 | Detail model parent_key() derivation + for_parent() | php | implemented | Detail_Read/Write_Test (fixtures) |
-| DT-10 | Resolver: value->class, accessor name, absent type, value->accessor | php | implemented | Detail_Resolver_Test |
+| DT-10 | Resolver: value->class, accessor name, absent type, value->accessor | php | implemented | Detail_Resolver_Test (a synthetic map in names belonging to nothing - the resolver reads a map, never a class) |
 | DT-11 | DETAIL-01 validates the map (parent_model points back, one discriminator) | cli | implemented | rsx:check (fixtures + Party) |
 | DT-20 | toArray() embeds active detail under __details; absent type embeds nothing | php | implemented | Detail_Read_Test |
 | DT-21 | Wrong-type accessor throws (PHP) | php | implemented | Detail_Read/Write_Test |

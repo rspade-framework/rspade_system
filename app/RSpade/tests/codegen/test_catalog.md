@@ -83,3 +83,10 @@ autocomplete, and nothing telling a reader the property exists. Fixtures: Append
 | CODEGEN-APPENDS-NOT-A-COLUMN | a derived property never becomes a field_length entry - it has no column behind it | php | Appends_Fixture_Model | field_length() still emitted; the name is in no length map | implemented | 2026-09-08 |
 | CODEGEN-APPENDS-NONE | a model declaring no $appends gains no lines - the feature is opt-in by declaration | php | No_Appends_Fixture_Model | no @property anywhere in the stub | implemented | 2026-09-08 |
 | CODEGEN-APPENDS-REAL | the framework model that uses the pattern gets all four names declared | php | File_Attachment_Model | is_image / is_video / is_document / can_open_inline declared | implemented | 2026-09-08 |
+| CODEGEN-SPLIT-REFLECTS-BASE | a SPLIT model's stub is generated for the concrete and declares the members its abstract base holds | php | Split_Fixture_Model (empty shell) + Split_Fixture_Model_Abstract ($appends + constants) | base_display_id declared, SPLIT_FIXTURE_STATE_OPEN present, field_length() emitted | implemented | 2026-09-08 |
+| CODEGEN-SPLIT-STALENESS-KEY | the staleness key that decides whether to rewrite a stub covers the whole LINEAGE, stopping before Rsx_Model_Abstract - a key over the concrete alone cannot move when the base moves | php | Model_Lineage_Fingerprint over Split_Fixture_Model | concrete AND abstract in the file list, Rsx_Model_Abstract absent, a different lineage gives a different hash | implemented | 2026-09-08 |
+
+CODEGEN-SPLIT-* pin B-109's codegen half. A core model carries its members on an abstract base
+and ships a three-line concrete an application replaces, so everything the build derives from a
+model is a function of the whole lineage. Fixtures: Split_Fixture_Model_Abstract (the base, with
+an appended property and two constants) and Split_Fixture_Model (the shell).

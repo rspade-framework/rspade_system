@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Core\Auth;
 
+use App\RSpade\Core\Database\Model_Fetch_Lineage;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
 
@@ -196,6 +197,7 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
         }
 
         static::_collect_php_surfaces($files, $surfaces, $violations, $dirty);
+        static::_collect_inherited_model_fetch_surfaces($files, $surfaces);
         static::_collect_js_action_surfaces($surfaces, $dirty);
 
         ksort($surfaces);
@@ -1031,6 +1033,241 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
                 $class_name
             );
         }
+    }
+
+    /**
+     * Record the model-fetch surfaces a CONCRETE model inherits rather than declares.
+     *
+     * WHY THE PER-FILE PASS IS NOT ENOUGH. A surface is indexed under the class that will be
+     * DISPATCHED - `User_Model::fetch` - and the per-file pass can only see what a file
+     * declares. A core model declares its members on an abstract base and ships a three-line
+     * concrete an application replaces; an application's own override declares only what it
+     * changes. In both shapes the per-file pass records `User_Model_Abstract::fetch`, which
+     * nothing dispatches, and `User_Model::fetch` exists nowhere - so the ORM endpoint
+     * refuses a model whose fetch() is right there and running.
+     *
+     * So every concrete model is asked once per build whether the lineage declares
+     * `fetch()`, `portal_fetch()` or a fetchable relationship it does not declare itself, and
+     * the surface is recorded under the concrete's name with the gates of the DECLARING
+     * method, merged with the concrete's own class-level #[Auth]. Gates only ever narrow, so
+     * a concrete that restricts its class narrows what it inherited.
+     *
+     * NOT INCREMENTAL, deliberately: the answer depends on files the concrete's own record
+     * does not name, so a dirty-set gate would leave the surface stale whenever the base
+     * moved alone. The set is every concrete model in the tree - tens of classes - and the
+     * pass is a map lookup per class.
+     *
+     * A surface the per-file pass already recorded is left exactly as it is: a concrete that
+     * declares fetch() itself has already said everything about it.
+     *
+     * @param array $files $manifest_data['data']['files']
+     */
+    private static function _collect_inherited_model_fetch_surfaces(array $files, array &$surfaces): void
+    {
+        // class simple name => file record, each carrying its own path. The lineage climb
+        // reads this and nothing else: the index being assembled is the only correct answer
+        // at this moment in the build.
+        $records_by_class = [];
+
+        foreach ($files as $file => $metadata) {
+            if (($metadata['extension'] ?? '') !== 'php') {
+                continue;
+            }
+
+            $class = $metadata['class'] ?? null;
+
+            if ($class === null || $class === '') {
+                continue;
+            }
+
+            $records_by_class[$class] = $metadata + ['file' => $file];
+        }
+
+        foreach ($records_by_class as $class => $metadata) {
+            if (!empty($metadata['abstract'])) {
+                continue;
+            }
+
+            if (!static::_class_is_model($records_by_class, $class)) {
+                continue;
+            }
+
+            $class_attributes = $metadata['attributes'] ?? null;
+
+            foreach ([self::REALM_STAFF => 'fetch', self::REALM_PORTAL => 'portal_fetch'] as $realm => $method_name) {
+                $target = $class . '::' . $method_name;
+
+                if (isset($surfaces[$target])) {
+                    continue;
+                }
+
+                $declaration = Model_Fetch_Lineage::declaration_in(
+                    $records_by_class,
+                    $class,
+                    $method_name,
+                    'Ajax_Endpoint_Model_Fetch',
+                    'public_static_methods'
+                );
+
+                if ($declaration === null || $declaration['class'] === $class) {
+                    continue;
+                }
+
+                $location = "{$target} inherited from {$declaration['class']} in {$declaration['file']}";
+
+                static::_record_surface(
+                    $surfaces,
+                    $target,
+                    'model_fetch',
+                    $realm,
+                    static::_merge_inherited_gates(
+                        $class_attributes,
+                        $records_by_class[$declaration['class']]['attributes'] ?? null,
+                        $declaration['method']['attributes'] ?? null,
+                        $location
+                    ),
+                    $declaration['file'],
+                    $target
+                );
+            }
+
+            // Fetchable relationships, by name, from every ancestor that declares one. The
+            // names come from the lineage records themselves - there is no other list.
+            foreach (static::_inherited_fetchable_relationships($records_by_class, $class) as $method_name => $declaration) {
+                $target = $class . '::' . $method_name;
+
+                if (isset($surfaces[$target])) {
+                    continue;
+                }
+
+                $location = "{$target} inherited from {$declaration['class']} in {$declaration['file']}";
+
+                static::_record_surface(
+                    $surfaces,
+                    $target,
+                    'model_relationship',
+                    self::REALM_ANY,
+                    static::_merge_inherited_gates(
+                        $class_attributes,
+                        $records_by_class[$declaration['class']]['attributes'] ?? null,
+                        $declaration['method']['attributes'] ?? null,
+                        $location
+                    ),
+                    $declaration['file'],
+                    $target
+                );
+            }
+        }
+    }
+
+    /**
+     * The gate list of a surface a class INHERITS: the gates of the class the member is
+     * dispatched on, the gates of the class that DECLARES it, and the member's own - in that
+     * order, duplicates removed.
+     *
+     * The declaring class matters because a core model carries its members on an abstract
+     * base, and the class-level #[Auth] that guards them is declared THERE. Reading only the
+     * concrete's attributes would drop that gate the moment a model was split, and the
+     * surface would fail closed-by-default validation while its gate sat one link up. Gates
+     * only ever narrow, so unioning the two class levels can never open anything.
+     *
+     * @return array<int, string>
+     */
+    private static function _merge_inherited_gates(
+        ?array $concrete_attributes,
+        ?array $declaring_attributes,
+        ?array $member_attributes,
+        string $location
+    ): array {
+        $names = array_merge(
+            static::extract_auth_arguments($concrete_attributes, $location),
+            static::extract_auth_arguments($declaring_attributes, $location),
+            static::extract_auth_arguments($member_attributes, $location)
+        );
+
+        $merged = [];
+
+        foreach ($names as $name) {
+            if (!in_array($name, $merged, true)) {
+                $merged[] = $name;
+            }
+        }
+
+        return $merged;
+    }
+
+    /**
+     * Every fetchable relationship name reachable from this class's ancestry, mapped to its
+     * NEAREST declaration. The class's own declarations are excluded - the per-file pass
+     * owns those.
+     *
+     * @param array<string, array> $records_by_class
+     * @return array<string, array{class: string, file: string, method: array}>
+     */
+    private static function _inherited_fetchable_relationships(array $records_by_class, string $class): array
+    {
+        $found = [];
+        $seen = [];
+        $current = $records_by_class[$class]['extends'] ?? null;
+
+        while ($current !== null && $current !== '' && !isset($seen[$current])) {
+            $seen[$current] = true;
+
+            $record = $records_by_class[$current] ?? null;
+
+            if ($record === null) {
+                break;
+            }
+
+            foreach (($record['public_instance_methods'] ?? []) as $method_name => $method_data) {
+                if (isset($found[$method_name])) {
+                    continue;
+                }
+
+                if (!isset($method_data['attributes']['Ajax_Endpoint_Model_Fetch'])) {
+                    continue;
+                }
+
+                $found[$method_name] = [
+                    'class' => $current,
+                    'file' => $record['file'] ?? '',
+                    'method' => $method_data,
+                ];
+            }
+
+            $current = $record['extends'] ?? null;
+        }
+
+        // A name the class redeclares is the class's own, whatever an ancestor said.
+        foreach (array_keys($records_by_class[$class]['public_instance_methods'] ?? []) as $own) {
+            unset($found[$own]);
+        }
+
+        return $found;
+    }
+
+    /**
+     * Does this class's `extends` chain reach Rsx_Model_Abstract, reading the build's own
+     * records? (php_subclass_index answers the same question, but a support module must not
+     * read a derived section back out of the index it is still writing.)
+     *
+     * @param array<string, array> $records_by_class
+     */
+    private static function _class_is_model(array $records_by_class, string $class): bool
+    {
+        $seen = [];
+        $current = $records_by_class[$class]['extends'] ?? null;
+
+        while ($current !== null && $current !== '' && !isset($seen[$current])) {
+            if ($current === 'Rsx_Model_Abstract') {
+                return true;
+            }
+
+            $seen[$current] = true;
+            $current = $records_by_class[$current]['extends'] ?? null;
+        }
+
+        return false;
     }
 
     /**

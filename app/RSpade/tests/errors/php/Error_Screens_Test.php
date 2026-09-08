@@ -18,12 +18,18 @@ use App\RSpade\Core\Exceptions\Web_Exception_Handler;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Tests\Errors\Php\Error_Screens_Route_Fixture_Controller;
 
 /**
  * Error_Screens - the three server-rendered terminal outcomes, and the split that
  * decides between a login redirect and a 403.
  *
  * Behavior of record: php artisan rsx:man auth_gates (ERROR SCREENS).
+ *
+ * The "deep page the caller wanted" is this concern's own routed fixture: the intended
+ * URL only survives into ?redirect= when it is routable and carries no leading
+ * underscore, and every framework route is '/_'-prefixed. See
+ * Error_Screens_Route_Fixture_Controller.
  */
 class Error_Screens_Test extends Rsx_Test_Abstract
 {
@@ -39,7 +45,7 @@ class Error_Screens_Test extends Rsx_Test_Abstract
     {
         static::__reset_session();
 
-        $response = Error_Screens::unauthorized(Request::create('/clients/view/5', 'GET'));
+        $response = Error_Screens::unauthorized(Request::create(Error_Screens_Route_Fixture_Controller::DEEP_URL, 'GET'));
 
         static::__assert_equals(302, $response->getStatusCode());
         static::__assert_contains('/login', $response->headers->get('Location'));
@@ -53,10 +59,13 @@ class Error_Screens_Test extends Rsx_Test_Abstract
     {
         static::__reset_session();
 
-        $response = Error_Screens::unauthorized(Request::create('/clients/view/5', 'GET'));
+        $response = Error_Screens::unauthorized(Request::create(Error_Screens_Route_Fixture_Controller::DEEP_URL, 'GET'));
 
         static::__assert_contains('redirect=', $response->headers->get('Location'));
-        static::__assert_contains('clients', $response->headers->get('Location'));
+        static::__assert_contains(
+            Error_Screens_Route_Fixture_Controller::DEEP_URL_MARKER,
+            $response->headers->get('Location')
+        );
     }
 
     /**
@@ -74,7 +83,7 @@ class Error_Screens_Test extends Rsx_Test_Abstract
 
         static::__acting_as_user($user_id);
 
-        $response = Error_Screens::unauthorized(Request::create('/clients/view/5', 'GET'));
+        $response = Error_Screens::unauthorized(Request::create(Error_Screens_Route_Fixture_Controller::DEEP_URL, 'GET'));
 
         static::__assert_equals(403, $response->getStatusCode());
         static::__assert_contains('Access Denied', $response->getContent());
@@ -93,7 +102,7 @@ class Error_Screens_Test extends Rsx_Test_Abstract
         static::__reset_session();
 
         $response = Error_Screens::unauthorized(
-            Request::create('/dashboard', 'GET'),
+            Request::create(Error_Screens_Route_Fixture_Controller::DEEP_URL, 'GET'),
             Auth_Gates::REALM_PORTAL
         );
 
@@ -259,7 +268,7 @@ class Error_Screens_Test extends Rsx_Test_Abstract
 
         $response = $handler->handle(
             new HttpException(403, 'denied'),
-            Request::create('/clients/view/5', 'GET')
+            Request::create(Error_Screens_Route_Fixture_Controller::DEEP_URL, 'GET')
         );
 
         static::__assert_not_empty($response);

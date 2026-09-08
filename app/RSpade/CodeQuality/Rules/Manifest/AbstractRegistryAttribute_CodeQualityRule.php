@@ -29,6 +29,13 @@ use App\RSpade\Core\Manifest\Manifest;
  * check registry does an explicit lineage union), #[Replaceable], #[Instantiatable],
  * #[Monoprogenic], #[Sealed].
  *
+ * Two exemptions for the same reason, both on an abstract MODEL: #[Ajax_Endpoint_Model_Fetch]
+ * on a method, and #[Auth] - beside that method or on the class itself. That registry is a
+ * lineage union too -
+ * Model_Fetch_Lineage takes the nearest declaration and the auth index records the surface
+ * under the CONCRETE model that gets dispatched - and it is how a core model carries fetch()
+ * on its base while shipping a three-line concrete an application replaces.
+ *
  * Detection is a pure compiled-manifest walk - the abstract flag and the attribute names
  * are already indexed. No AST parsing is needed or done.
  *
@@ -170,7 +177,8 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
                 base_path($rel_path),
                 $file_metadata['class'],
                 $file_metadata['attributes'] ?? [],
-                $this->merge_method_maps($file_metadata)
+                $this->merge_method_maps($file_metadata),
+                Manifest::php_is_subclass_of($file_metadata['class'], 'Rsx_Model_Abstract')
             );
         }
     }
@@ -190,7 +198,8 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
         string $file,
         string $class_name,
         array $class_attributes,
-        array $methods
+        array $methods,
+        bool $is_model = false
     ): void {
         $contents = $this->source()->content($file);
         $lines = $contents === false ? [] : explode("\n", $contents);
@@ -199,6 +208,15 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
 
         foreach (self::FORBIDDEN_ON_ABSTRACT as $attribute_name) {
             if (!isset($class_attributes[$attribute_name])) {
+                continue;
+            }
+            // THE MODEL-FETCH EXEMPTION, class level. On a MODEL, #[Auth] registers nothing
+            // by itself: it is the class half of the gate list of that model's fetch and
+            // relationship surfaces, and the auth index reads it off the class that DECLARES
+            // the member, not off the class the attribute happens to sit on. On a split
+            // model's base that is precisely where the gate belongs - the three-line concrete
+            // is what an application replaces, and a gate written there would vanish with it.
+            if ($is_model && $attribute_name === 'Auth') {
                 continue;
             }
             if ($this->has_exception_marker($lines, $class_line)) {
@@ -211,8 +229,22 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
         foreach ($methods as $method_name => $method_data) {
             $line = (int) ($method_data['line'] ?? 0);
 
+            // THE MODEL-FETCH EXEMPTION. An abstract MODEL's fetch surface is legitimate
+            // and is consumed through a lineage walk, exactly like #[Relationship] and
+            // #[Auth_Check]: Model_Fetch_Lineage takes the nearest declaration and the auth
+            // index records the surface under the CONCRETE that will be dispatched. That is
+            // the whole point of a base/concrete model split - the base carries fetch(), the
+            // three-line concrete is what an application replaces. The #[Auth] beside it is
+            // exempt for the same reason: it is the gate list of that same surface, and a
+            // fetch surface with no gate is refused by the closed-by-default pass.
+            $model_fetch_member = $is_model
+                && isset($method_data['attributes']['Ajax_Endpoint_Model_Fetch']);
+
             foreach (self::FORBIDDEN_ON_ABSTRACT as $attribute_name) {
                 if (!isset($method_data['attributes'][$attribute_name])) {
+                    continue;
+                }
+                if ($model_fetch_member && ($attribute_name === 'Ajax_Endpoint_Model_Fetch' || $attribute_name === 'Auth')) {
                     continue;
                 }
                 if ($this->has_exception_marker($lines, $line)) {

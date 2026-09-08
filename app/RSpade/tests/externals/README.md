@@ -73,7 +73,7 @@ pointing at a `/_vendor/` name PHP will never serve.
 |------|------|
 | `Core/Externals/Externals_ManifestSupport.php` | Discovery, validation, consolidation |
 | `Core/Externals/Rsx_Externals.php` | Read model / resolver |
-| `Core/Manifest/_Manifest_Scanner_Helper.php` | The `externals.php` compound file kind |
+| `Core/Manifest/Manifest_Scanner.php` | The `externals.php` compound file kind |
 | `Core/Js/turnstile.externals.php` | The framework's own declaration (worked example) |
 | `config/rsx.php` | `manifest_support` registration |
 | `Commands/Rsx/Prod_Build_Command.php` | The build's mirror step (a wrapper over `Cdn_Cache::mirror_externals()`) |

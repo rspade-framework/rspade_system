@@ -192,39 +192,44 @@ a seed in a session value and creates no row, and the script deliberately stops 
 | tfa-http-02 | totp_begin is refused AT THE GATE, not by the facade | anonymous POST | _success false, error_code 'unauthorized'; the facade's own message never appears | implemented |
 | tfa-http-03 | totp_begin ACCEPTS a signed-in caller - the other side of the split | login + csrf + POST | _success true, payload carries qr_svg | implemented |
 
-## Login_Verify_Endpoint_Test (php, default isolation) - the APPLICATION's verification endpoint
+## The verification endpoint (php) - MOVED TO THE APPLICATION SUITE
 
 `Rsx_Two_Factor::verify_challenge()` is deliberately not a framework endpoint: where a signed-in
 user lands is application logic, so the app owns the endpoint and `<Two_Factor_Challenge>` is
-pointed at it with `$controller` / `$method`. The template app's
-`Rsx\App\Login\Login_Controller::verify_2fa` is therefore the only worked example of that
-contract, and this class pins it. Endpoints are called as STATIC METHODS - what the dispatcher
-does once the gate has passed - so the Ajax envelope is not applied and the assertions are on the
-raw return.
+pointed at it with `$controller` / `$method`. Its tests therefore live with the endpoint, in
+`rsx/tests/Two_Factor_Login_Verify_Test.php` - the framework suite is an integrity audit of an
+INSTALLED application and cannot assume any application endpoint exists. The rows are kept here
+because the CONTRACT they pin is the framework component's: one argument shape in, {redirect}
+out, and every failure a user-safe ERROR_VALIDATION.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| tfa-app-01 | a live code signs the pending identity in and answers the ONE key the component follows | pending challenge + unspent code | {redirect} non-empty, signed in as the pending identity, pending value spent | implemented |
-| tfa-app-02 | one enabled membership sets the site and lands on the dashboard | single site user row | redirect equals Rsx::Route('Dashboard_Index_Action') | implemented |
-| tfa-app-03 | no membership anywhere lands on the unauthorized screen, which owns the logout | no users row | redirect equals Rsx::Route('Site_Unauthorized_Controller') | implemented |
-| tfa-app-04 | THE INVITE SURVIVES THE CHALLENGE - it rides the session because the component posts only {code} | parked invite code + live code | redirect is the accept-invite URL with the code; the parked value is consumed | implemented |
-| tfa-app-05 | a wrong code is a user-safe ERROR_VALIDATION, nobody is signed in, and the challenge stays retryable | '000000' | Error_Response, ERROR_VALIDATION, non-empty reason, not logged in, pending intact | implemented |
-| tfa-app-06 | blank is a value: an empty answer is refused the same way | [] | ERROR_VALIDATION, not logged in | implemented |
-| tfa-app-07 | an expired/absent window is a sentence on the screen, never a 500 | anonymous session | ERROR_VALIDATION, non-empty reason, not logged in | implemented |
+| tfa-app-01 | a live code signs the pending identity in and answers the ONE key the component follows | pending challenge + unspent code | {redirect} non-empty, signed in as the pending identity, pending value spent | implemented (app suite - `rsx/tests/Two_Factor_Login_Verify_Test.php`) |
+| tfa-app-02 | one enabled membership sets the site and lands on the dashboard | single site user row | redirect equals Rsx::Route('Dashboard_Index_Action') | implemented (app suite - `rsx/tests/Two_Factor_Login_Verify_Test.php`) |
+| tfa-app-03 | no membership anywhere lands on the unauthorized screen, which owns the logout | no users row | redirect equals Rsx::Route('Site_Unauthorized_Controller') | implemented (app suite - `rsx/tests/Two_Factor_Login_Verify_Test.php`) |
+| tfa-app-04 | THE INVITE SURVIVES THE CHALLENGE - it rides the session because the component posts only {code} | parked invite code + live code | redirect is the accept-invite URL with the code; the parked value is consumed | implemented (app suite - `rsx/tests/Two_Factor_Login_Verify_Test.php`) |
+| tfa-app-05 | a wrong code is a user-safe ERROR_VALIDATION, nobody is signed in, and the challenge stays retryable | '000000' | Error_Response, ERROR_VALIDATION, non-empty reason, not logged in, pending intact | implemented (app suite - `rsx/tests/Two_Factor_Login_Verify_Test.php`) |
+| tfa-app-06 | blank is a value: an empty answer is refused the same way | [] | ERROR_VALIDATION, not logged in | implemented (app suite - `rsx/tests/Two_Factor_Login_Verify_Test.php`) |
+| tfa-app-07 | an expired/absent window is a sentence on the screen, never a 500 | anonymous session | ERROR_VALIDATION, non-empty reason, not logged in | implemented (app suite - `rsx/tests/Two_Factor_Login_Verify_Test.php`) |
 
 ## two_factor_login_flow.sh (http) - the two-stage login end to end
 
 The only tier that can see either half of what it pins: the CLI login branch returns before the
-last_login stamp, and CLI has no client IP for the throttle to refuse. It drives the template
-app's real login form and real verification endpoint with curl. It WRITES - it enrolls a factor
-on the dev default identity and removes it again - and it spends the per-IP budget for
+last_login stamp, and CLI has no client IP for the throttle to refuse. It drives the
+application's real login form and real verification endpoint with curl. It WRITES - it enrolls a
+factor on the dev default identity and removes it again - and it spends the per-IP budget for
 127.0.0.1, which its exit trap resets unconditionally.
+
+Because every surface below `verify_challenge()` belongs to the application, the script PROBES
+`_ajax/Login_Controller/verify_2fa` first and SKIPS when no such endpoint is declared. That is
+the whole reason it may stay in the framework tree: what it pins is a framework property, and
+the only path to it is application code.
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| tfa-http-04 | a correct password stops at the challenge instead of entering the app | POST /login with a live factor enrolled | 302 to /login/verify; /dashboard still refuses the half-authenticated session | implemented |
+| tfa-http-04 | a correct password stops at the challenge instead of entering the app | POST /login with a live factor enrolled | 302 to /login/verify; the application's landing page still refuses the half-authenticated session | implemented |
 | tfa-http-05 | the challenge screen renders and carries a CSRF token | GET /login/verify | 200 hosting `<Two_Factor_Challenge>`, window.rsxapp.csrf present | implemented |
-| tfa-chal-18 | a live code completes the login, stamps last_login, and writes exactly ONE success row | POST verify_2fa with a live code | {redirect}, /dashboard 200, last_login changed, success rows +1 | implemented |
+| tfa-chal-18 | a live code completes the login, stamps last_login, and writes exactly ONE success row | POST verify_2fa with a live code | {redirect}, the landing page 200, last_login changed, success rows +1 | implemented |
 | tfa-chal-19 | the ambient throttle refuses a locked-out client, as itself and never as a wrong code | wrong codes until the budget is spent | a refusal saying "too fast" before the 25th attempt; no wrong code ever succeeds | implemented |
 
 ## Deferred / planned

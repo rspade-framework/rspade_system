@@ -10,6 +10,7 @@ namespace App\RSpade\Tests\LoginRedirect\Php;
 use Illuminate\Http\Request;
 use App\RSpade\Core\Login\Login_Redirect;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Tests\LoginRedirect\Php\Login_Redirect_Route_Fixture_Controller;
 
 /**
  * Login_Redirect - the single intended-URL redirect sanitizer + the four wiring
@@ -23,10 +24,25 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * hostile ?redirect= value, since capture() derives a clean path from the request
  * URI and cannot itself express those shapes. capture() is exercised for its
  * request classification (method / XHR / framework / API / login-flow).
+ *
+ * ROUTABLE TARGETS COME FROM THIS CONCERN'S OWN #[Route] FIXTURES. The validator's
+ * last gate is route REGISTRATION, and it rejects every '/_'-prefixed path - which is
+ * every route the framework itself declares - so the accept half of the matrix can only
+ * be driven against routes this concern registers. See
+ * Login_Redirect_Route_Fixture_Controller.
  */
 class Login_Redirect_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
+
+    /** A plain routable page registered by this concern's route fixture. */
+    private const PAGE = Login_Redirect_Route_Fixture_Controller::PAGE;
+
+    /** A second plain routable page registered by the same fixture. */
+    private const OTHER_PAGE = Login_Redirect_Route_Fixture_Controller::OTHER_PAGE;
+
+    /** A URL matching the fixture's :id pattern. */
+    private const ITEM = '/test-login-redirect/item/5';
 
     /**
      * Bind an ambient GET request carrying the given raw redirect value (null =
@@ -54,16 +70,16 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
 
     public static function test_accepts_plain_local_path()
     {
-        static::__bind_redirect('/dashboard');
-        static::__assert_equals(['redirect' => '/dashboard'], Login_Redirect::params());
+        static::__bind_redirect(self::PAGE);
+        static::__assert_equals(['redirect' => self::PAGE], Login_Redirect::params());
     }
 
     public static function test_accepts_path_with_query_preserved_verbatim()
     {
         // A registered route (routability gate) whose query is preserved verbatim.
-        static::__bind_redirect('/frontend/settings/profile_edit?tab=history&x=1');
+        static::__bind_redirect(self::PAGE . '?tab=history&x=1');
         static::__assert_equals(
-            ['redirect' => '/frontend/settings/profile_edit?tab=history&x=1'],
+            ['redirect' => self::PAGE . '?tab=history&x=1'],
             Login_Redirect::params()
         );
     }
@@ -110,7 +126,7 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
 
     public static function test_rejects_fragment()
     {
-        static::__bind_redirect('/dashboard#section');
+        static::__bind_redirect(self::PAGE . '#section');
         static::__assert_empty(Login_Redirect::params());
     }
 
@@ -152,7 +168,7 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
 
     public static function test_rejects_api_path_via_params()
     {
-        static::__bind_redirect('/api/v1/contacts');
+        static::__bind_redirect('/api/v1/me');
         static::__assert_empty(Login_Redirect::params());
     }
 
@@ -174,8 +190,8 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
 
     public static function test_consume_returns_valid_target()
     {
-        static::__bind_redirect('/dashboard');
-        static::__assert_equals('/dashboard', Login_Redirect::consume('/home'));
+        static::__bind_redirect(self::PAGE);
+        static::__assert_equals(self::PAGE, Login_Redirect::consume('/home'));
     }
 
     public static function test_consume_returns_default_on_hostile()
@@ -202,9 +218,9 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
 
     public static function test_hidden_input_renders_valid_value()
     {
-        static::__bind_redirect('/dashboard');
+        static::__bind_redirect(self::PAGE);
         static::__assert_equals(
-            '<input type="hidden" name="redirect" value="/dashboard">',
+            '<input type="hidden" name="redirect" value="' . self::PAGE . '">',
             Login_Redirect::hidden_input()
         );
     }
@@ -212,13 +228,13 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
     public static function test_hidden_input_escapes_value()
     {
         // A valid, ROUTABLE local path whose query carries HTML-significant chars.
-        static::__bind_redirect('/frontend/settings/profile_edit?q=a&b="x"<y>');
+        static::__bind_redirect(self::PAGE . '?q=a&b="x"<y>');
         $html = Login_Redirect::hidden_input();
 
         static::__assert_true(str_contains($html, '&quot;'), 'double quotes escaped');
         static::__assert_true(str_contains($html, '&amp;'), 'ampersand escaped');
         static::__assert_true(str_contains($html, '&lt;'), 'less-than escaped');
-        static::__assert_false(str_contains($html, 'value="/frontend/settings/profile_edit?q=a&b="x"'), 'raw quotes do not break out of the attribute');
+        static::__assert_false(str_contains($html, 'value="' . self::PAGE . '?q=a&b="x"'), 'raw quotes do not break out of the attribute');
     }
 
     // =====================================================================
@@ -227,28 +243,28 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
 
     public static function test_capture_get_page_returns_target()
     {
-        $request = Request::create('/frontend/settings/profile_edit', 'GET');
-        static::__assert_equals(['redirect' => '/frontend/settings/profile_edit'], Login_Redirect::capture($request));
+        $request = Request::create(self::PAGE, 'GET');
+        static::__assert_equals(['redirect' => self::PAGE], Login_Redirect::capture($request));
     }
 
     public static function test_capture_preserves_query_string()
     {
-        $request = Request::create('/frontend/settings/profile_edit?tab=x&y=2', 'GET');
+        $request = Request::create(self::PAGE . '?tab=x&y=2', 'GET');
         static::__assert_equals(
-            ['redirect' => '/frontend/settings/profile_edit?tab=x&y=2'],
+            ['redirect' => self::PAGE . '?tab=x&y=2'],
             Login_Redirect::capture($request)
         );
     }
 
     public static function test_capture_ignores_post()
     {
-        $request = Request::create('/settings/onedrive', 'POST');
+        $request = Request::create(self::PAGE, 'POST');
         static::__assert_empty(Login_Redirect::capture($request));
     }
 
     public static function test_capture_ignores_xhr()
     {
-        $request = Request::create('/settings/onedrive', 'GET', [], [], [], ['HTTP_X_REQUESTED_WITH' => 'XMLHttpRequest']);
+        $request = Request::create(self::PAGE, 'GET', [], [], [], ['HTTP_X_REQUESTED_WITH' => 'XMLHttpRequest']);
         static::__assert_empty(Login_Redirect::capture($request));
     }
 
@@ -260,7 +276,7 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
 
     public static function test_capture_ignores_api_path()
     {
-        $request = Request::create('/api/v1/contacts', 'GET');
+        $request = Request::create('/api/v1/me', 'GET');
         static::__assert_empty(Login_Redirect::capture($request));
     }
 
@@ -314,25 +330,26 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
     // (params) and captured values alike.
     // =====================================================================
 
-    public static function test_accepts_routable_spa_target()
+    public static function test_accepts_routable_target()
     {
-        // A registered SPA action route.
-        static::__bind_redirect('/dashboard');
-        static::__assert_equals(['redirect' => '/dashboard'], Login_Redirect::params());
+        // A registered route with no URL parameters.
+        static::__bind_redirect(self::PAGE);
+        static::__assert_equals(['redirect' => self::PAGE], Login_Redirect::params());
     }
 
-    public static function test_accepts_routable_spa_id_route()
+    public static function test_accepts_routable_id_route()
     {
-        // A registered SPA route carrying a :id URL parameter.
-        static::__bind_redirect('/tasks/edit/5');
-        static::__assert_equals(['redirect' => '/tasks/edit/5'], Login_Redirect::params());
+        // A registered route carrying a :id URL parameter, matched with a value.
+        static::__bind_redirect(self::ITEM);
+        static::__assert_equals(['redirect' => self::ITEM], Login_Redirect::params());
     }
 
-    public static function test_accepts_routable_blade_target()
+    public static function test_accepts_a_second_registered_target()
     {
-        // A registered server-rendered (non-SPA, non-login) GET route.
-        static::__bind_redirect('/signup');
-        static::__assert_equals(['redirect' => '/signup'], Login_Redirect::params());
+        // A different registered pattern resolves on its own merits - the gate reads the
+        // route table, never a list of blessed paths.
+        static::__bind_redirect(self::OTHER_PAGE);
+        static::__assert_equals(['redirect' => self::OTHER_PAGE], Login_Redirect::params());
     }
 
     public static function test_rejects_unroutable_target_via_params()
@@ -342,12 +359,12 @@ class Login_Redirect_Test extends Rsx_Test_Abstract
         static::__assert_empty(Login_Redirect::params());
     }
 
-    public static function test_rejects_unroutable_undeclared_route_via_params()
+    public static function test_rejects_a_near_miss_of_a_registered_pattern_via_params()
     {
-        // /clients/5 has no registered route in this template; the gate checks
-        // route registration, so it is dropped (this is NOT a record-existence
-        // probe - it never asks whether client 5 exists).
-        static::__bind_redirect('/clients/5');
+        // One segment past the registered :id pattern: structurally plausible, matched by
+        // no pattern, so it is dropped. The gate checks route REGISTRATION - it never asks
+        // whether the record behind the id exists.
+        static::__bind_redirect(self::ITEM . '/extra');
         static::__assert_empty(Login_Redirect::params());
     }
 

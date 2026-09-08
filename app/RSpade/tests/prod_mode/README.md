@@ -25,7 +25,7 @@ Batch 1 (determinism core):
   - `_rsx_file_hash_content_based($file_path)` - prod/debug content path.
   - `_rsx_content_hash($relative_path, $content)` - the pure hashing core.
   - `_rsx_relative_build_path($path)` - two-mount-convergent relative path.
-- `app/RSpade/Core/Manifest/_Manifest_Cache_Helper.php`
+- `app/RSpade/Core/Manifest/Manifest_Store.php`
   - `_compute_hash($manifest_body)` - the build key: sorted per-file hashes + the derived sections.
   - `_save()` - writes the two index halves; no `generated` timestamp in any mode.
 

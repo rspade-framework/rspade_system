@@ -194,13 +194,21 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function evaluate_file(string $abs_file, string $class_name): void
     {
-        $class_node = $this->find_class_node($abs_file, $class_name);
-        if ($class_node === null) {
+        $contents = $this->source()->content($abs_file);
+        if ($contents === '') {
             return;
         }
 
-        $contents = $this->source()->content($abs_file);
-        if ($contents === false) {
+        // THE CHEAP QUESTION FIRST. This rule is about morph CALLS, and a file that does not
+        // contain the substring "morph" at all cannot make one - so it never needs an AST.
+        // The read is already paid for (the whole-file exception check below needs it), and
+        // the parse it avoids is the rule's entire cost on the vast majority of the tree.
+        if (!str_contains($contents, 'morph')) {
+            return;
+        }
+
+        $class_node = $this->find_class_node($abs_file, $class_name);
+        if ($class_node === null) {
             return;
         }
 
@@ -413,18 +421,21 @@ class MorphStringPattern_CodeQualityRule extends CodeQualityRule_Abstract
 
         if ($result === null) {
             foreach ($this->lineage_with_self($class_name) as $ancestor) {
-                $node = $this->find_class_node($ancestor['file'], $ancestor['class']);
-                if ($node === null) {
+                // The property's LITERAL default is a field of the member summary, so an
+                // ancestor is summarized once for the whole pass rather than re-parsed here.
+                $properties = $this->source()->declared_members($ancestor['file'], $ancestor['class'])['properties'];
+
+                if (!isset($properties['type_ref_columns'])) {
+                    // Not located, or located without the property - keep climbing.
                     continue;
                 }
 
-                $declared = $this->read_type_ref_property($node);
-                if ($declared !== null) {
+                $declared = $properties['type_ref_columns']['default'];
+
+                if (is_array($declared)) {
                     $result = $declared;
                     break;
                 }
-
-                // Located, but does not declare the property - keep climbing.
             }
         }
 

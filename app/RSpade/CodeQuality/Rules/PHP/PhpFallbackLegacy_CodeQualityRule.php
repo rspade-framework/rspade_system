@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\CodeQuality\Support\FileSanitizer;
 
 class PhpFallbackLegacy_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -101,8 +102,7 @@ class PhpFallbackLegacy_CodeQualityRule extends CodeQualityRule_Abstract
             // But NOT: $this->document_fallback_loader() (fallback in middle)
             if (!$is_line_comment) {
                 // Remove inline comments before checking
-                $code_part = preg_replace('/\/\/.*$/', '', $line);
-                $code_part = preg_replace('/\/\*.*?\*\//', '', $code_part);
+                $code_part = FileSanitizer::blank_php_comments($line);
 
                 // Check if function starting or ending with "fallback" exists in non-comment part
                 if (preg_match('/\b(fallback\w*|\w+fallback)\s*\(/i', $code_part)) {

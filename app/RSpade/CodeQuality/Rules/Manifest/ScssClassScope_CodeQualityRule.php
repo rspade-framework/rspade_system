@@ -3,7 +3,9 @@
 namespace App\RSpade\CodeQuality\Rules\Manifest;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * ScssClassScope_CodeQualityRule - Enforces SCSS class scoping convention
@@ -201,8 +203,8 @@ class ScssClassScope_CodeQualityRule extends CodeQualityRule_Abstract
             }
 
             // Determine which validation to apply based on path
-            $is_rsx_app = str_starts_with($file, 'rsx/app/');
-            $is_theme_component = str_starts_with($file, 'rsx/theme/components/');
+            $is_rsx_app = Rsx_Paths::under_application($file, 'app/');
+            $is_theme_component = Rsx_Paths::under_application($file, 'theme/components/');
 
             // Skip files outside our enforcement paths
             if (!$is_rsx_app && !$is_theme_component) {
@@ -477,7 +479,7 @@ class ScssClassScope_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Strip comments to avoid false positives
-        $contents = $this->strip_scss_comments($contents);
+        $contents = FileSanitizer::blank_scss_comments($contents);
 
         // Find the wrapper class block and extract its contents
         $wrapper_content = $this->extract_wrapper_block_content($contents, $wrapper_class);
@@ -524,20 +526,6 @@ class ScssClassScope_CodeQualityRule extends CodeQualityRule_Abstract
                 'high'
             );
         }
-    }
-
-    /**
-     * Strip SCSS comments from content
-     */
-    private function strip_scss_comments(string $contents): string
-    {
-        // Remove single-line comments
-        $contents = preg_replace('/\/\/.*$/m', '', $contents);
-
-        // Remove multi-line comments
-        $contents = preg_replace('/\/\*.*?\*\//s', '', $contents);
-
-        return $contents;
     }
 
     /**

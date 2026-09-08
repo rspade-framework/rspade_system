@@ -18,12 +18,26 @@ use App\RSpade\Integrations\Jqhtml\Jqhtml_Exception_ViewException;
 class Jqhtml_BundleProcessor extends BundleProcessor_Abstract
 {
     /**
-     * Derived-cache namespace for the bundle-ready compiled template (the parser's output
-     * wrapped in its provenance comment). Its sibling namespace `jqhtml-parsed` holds the
-     * parser's RAW output, cached by JqhtmlWebpackCompiler one layer down. See
+     * Variant prefix for the bundle-ready compiled template (the parser's output wrapped in
+     * its provenance comment). The parser's RAW output rides in the SAME namespace
+     * (JqhtmlWebpackCompiler::CACHE_NAMESPACE) under PARSED_VARIANT, one layer down. See
      * App\RSpade\Core\Cache\File_Content_Cache.
      */
-    public const COMPILED_NAMESPACE = 'jqhtml-compiled';
+    public const COMPILED_VARIANT = '_compiled';
+
+    /**
+     * Is $path one of THIS processor's outputs - a bundle-ready compiled template?
+     *
+     * The jqhtml derived cache is ONE namespace holding two layers, told apart by the
+     * variant, so "is this a bundle input" is a namespace test AND a variant test. It lives
+     * here rather than at the call site because the answer is this class's business: it is
+     * the layer that writes the file.
+     */
+    public static function is_compiled_output(string $path): bool
+    {
+        return str_contains($path, '/derived/' . JqhtmlWebpackCompiler::CACHE_NAMESPACE . '/')
+            && str_contains(basename($path), self::COMPILED_VARIANT);
+    }
 
     /**
      * Compiler instance
@@ -91,11 +105,11 @@ class Jqhtml_BundleProcessor extends BundleProcessor_Abstract
             // The parser's VERSION is the variant, for the same reason it is part of
             // compile_file()'s key: a cached compile is the PARSER'S output, and neither the
             // template's path nor its content moves when @jqhtml/parser is upgraded.
-            $variant = '_pv' . JqhtmlWebpackCompiler::_parser_version();
-            $temp_file = File_Content_Cache::path(self::COMPILED_NAMESPACE, $path, $variant, 'js');
+            $variant = self::COMPILED_VARIANT . '_pv' . JqhtmlWebpackCompiler::_parser_version();
+            $temp_file = File_Content_Cache::path(JqhtmlWebpackCompiler::CACHE_NAMESPACE, $path, $variant, 'js');
 
             // Check if we need to compile
-            $needs_compile = File_Content_Cache::get(self::COMPILED_NAMESPACE, $path, $variant, 'js', true) === null;
+            $needs_compile = File_Content_Cache::get(JqhtmlWebpackCompiler::CACHE_NAMESPACE, $path, $variant, 'js', true) === null;
 
             if ($needs_compile) {
                 console_debug('JQHTML', "Compiling: {$path}");
@@ -120,7 +134,7 @@ class Jqhtml_BundleProcessor extends BundleProcessor_Abstract
 
                     // Write to the derived cache (atomic; this is also the bundle input)
                     $temp_file = File_Content_Cache::put(
-                        self::COMPILED_NAMESPACE,
+                        JqhtmlWebpackCompiler::CACHE_NAMESPACE,
                         $path,
                         $variant,
                         'js',

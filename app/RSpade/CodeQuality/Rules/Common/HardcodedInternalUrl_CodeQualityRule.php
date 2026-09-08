@@ -10,6 +10,7 @@ namespace App\RSpade\CodeQuality\Rules\Common;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * URL-HARDCODE-01 - an internal path in an href must be produced by a Route() helper.
@@ -604,7 +605,7 @@ class HardcodedInternalUrl_CodeQualityRule extends CodeQualityRule_Abstract
     {
         $normalized = str_replace('\\', '/', $file_path);
 
-        return str_contains($normalized, '/rsx/portal/') || str_starts_with($normalized, 'rsx/portal/');
+        return Rsx_Paths::under_application($normalized, 'portal/');
     }
 
     protected static function _file_kind(string $file_path): string

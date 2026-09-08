@@ -6,11 +6,11 @@
 
 namespace App\RSpade\Tests\ProdMode\Php;
 
-use App\RSpade\Core\Manifest\_Manifest_Cache_Helper;
+use App\RSpade\Core\Manifest\Manifest_Store;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Determinism units for the manifest build key (_Manifest_Cache_Helper::_compute_hash).
+ * Determinism units for the manifest build key (Manifest_Store::_compute_hash).
  *
  * The build key must be identical for two byte-identical checkouts at different absolute
  * paths. A file contributes its PATH and its sha1 and NOTHING ELSE, so mtime, size and any
@@ -77,8 +77,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['files']['rsx/models/beta_model.php']['mtime'] = 888888;
 
         static::__assert_equals(
-            _Manifest_Cache_Helper::_compute_hash($a),
-            _Manifest_Cache_Helper::_compute_hash($b),
+            Manifest_Store::_compute_hash($a),
+            Manifest_Store::_compute_hash($b),
             'mtime mutation must not change the build key'
         );
     }
@@ -90,8 +90,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['files']['rsx/models/alpha_model.php']['size'] = 424242;
 
         static::__assert_equals(
-            _Manifest_Cache_Helper::_compute_hash($a),
-            _Manifest_Cache_Helper::_compute_hash($b),
+            Manifest_Store::_compute_hash($a),
+            Manifest_Store::_compute_hash($b),
             'size mutation must not change the build key'
         );
     }
@@ -107,8 +107,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['files']['rsx/models/alpha_model.php']['hash'] = 'cccc3333';
 
         static::__assert_not_equals(
-            _Manifest_Cache_Helper::_compute_hash($a),
-            _Manifest_Cache_Helper::_compute_hash($b),
+            Manifest_Store::_compute_hash($a),
+            Manifest_Store::_compute_hash($b),
             'a per-file sha1 change must change the build key'
         );
     }
@@ -129,8 +129,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
             = '/somewhere/else/entirely/vendor/some/trait/SoftDeletes.php';
 
         static::__assert_equals(
-            _Manifest_Cache_Helper::_compute_hash($a),
-            _Manifest_Cache_Helper::_compute_hash($b),
+            Manifest_Store::_compute_hash($a),
+            Manifest_Store::_compute_hash($b),
             'an absolute path inside a file record must not change the build key'
         );
     }
@@ -146,8 +146,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['models'] = ['Alpha_Model' => ['file' => 'rsx/models/alpha_model.php']];
 
         static::__assert_equals(
-            _Manifest_Cache_Helper::_compute_hash($a),
-            _Manifest_Cache_Helper::_compute_hash($b),
+            Manifest_Store::_compute_hash($a),
+            Manifest_Store::_compute_hash($b),
             'an absolute base_path() prefix in a derived section is reduced before hashing'
         );
     }
@@ -155,7 +155,7 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
     public static function test_hash_does_not_mutate_input()
     {
         $body = self::_fixture();
-        _Manifest_Cache_Helper::_compute_hash($body);
+        Manifest_Store::_compute_hash($body);
 
         // The live manifest body must keep mtime/size (dev change-detection needs them).
         static::__assert_equals(1000, $body['files']['rsx/models/alpha_model.php']['mtime'], 'input must not be mutated');
@@ -169,8 +169,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['php_classes']['Gamma_Model'] = ['file' => 'rsx/models/gamma_model.php'];
 
         static::__assert_not_equals(
-            _Manifest_Cache_Helper::_compute_hash($a),
-            _Manifest_Cache_Helper::_compute_hash($b),
+            Manifest_Store::_compute_hash($a),
+            Manifest_Store::_compute_hash($b),
             'a derived-section change must change the build key'
         );
     }
@@ -188,8 +188,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
         $b['files'] = array_reverse($b['files'], true);
 
         static::__assert_equals(
-            _Manifest_Cache_Helper::_compute_hash($a),
-            _Manifest_Cache_Helper::_compute_hash($b),
+            Manifest_Store::_compute_hash($a),
+            Manifest_Store::_compute_hash($b),
             'file insertion order must not affect the build key'
         );
     }

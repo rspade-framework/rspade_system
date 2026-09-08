@@ -345,8 +345,10 @@ THE QUEUE AND ITS STATUSES
     way to answer "what did we almost send them" six months later.
 
     Email_Queue_Model::fetch() is an #[Ajax_Endpoint_Model_Fetch] (login-gated) loading one
-    record for a developer-facing email log. The model is framework core; an app overrides
-    it with the class-override pattern, never by subclassing.
+    record for a developer-facing email log. The model is framework core and SPLIT: an app
+    overrides it by declaring `class Email_Queue_Model extends Email_Queue_Model_Abstract`
+    in rsx/models/, carrying only what it changes (rsx:man class_override). fetch() is
+    #[Replaceable] there, so a redeclared one needs no parent:: call.
 
 THE DRAIN AND THE FAILURE POLICY
 

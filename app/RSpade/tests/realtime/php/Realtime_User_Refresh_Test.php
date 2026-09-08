@@ -83,6 +83,46 @@ class Realtime_User_Refresh_Test extends Rsx_Test_Abstract
         return array_values(array_map('intval', User_Model::role_id__enum_ids()));
     }
 
+    /**
+     * The permission ids this application's roles grant, deduplicated, in enum order.
+     *
+     * Permissions are APPLICATION vocabulary - an application's User_Model declares its
+     * own set and no PERM_ constant is portable - so the ids are read out of
+     * $enums['role_id'][n]['permissions'] at runtime. Which permission a row names is
+     * irrelevant here: the subject is the refresh push on an ACL row CHANGE.
+     *
+     * @return array<int, int>
+     */
+    private static function __permission_ids(): array
+    {
+        $ids = [];
+
+        foreach (User_Model::role_id__enum() as $role) {
+            foreach (($role['permissions'] ?? []) as $permission) {
+                $ids[(int) $permission] = true;
+            }
+        }
+
+        return array_keys($ids);
+    }
+
+    /**
+     * One permission id, by position, clamped to what this application declares. Every
+     * test below establishes its own precondition (granting before it removes, removing
+     * before it asserts the absent case), so reusing one id is safe when an application
+     * declares only one.
+     */
+    private static function __permission(int $index): int
+    {
+        $ids = static::__permission_ids();
+
+        if (empty($ids)) {
+            static::__skip('User_Model declares no role permissions, so ACL rows cannot be exercised in this application.');
+        }
+
+        return $ids[min($index, count($ids) - 1)];
+    }
+
     private static function __user(): User_Model
     {
         return User_Model::withTrashed()->find(self::$user_id);
@@ -194,7 +234,7 @@ class Realtime_User_Refresh_Test extends Rsx_Test_Abstract
     public static function test_acl_grant_pushes()
     {
         static::__begin();
-        User_Permission_Model::grant(self::$user_id, User_Model::PERM_API_ACCESS);
+        User_Permission_Model::grant(self::$user_id, static::__permission(0));
 
         static::__assert_single_user_refresh('acl grant');
     }
@@ -202,7 +242,7 @@ class Realtime_User_Refresh_Test extends Rsx_Test_Abstract
     public static function test_acl_deny_pushes()
     {
         static::__begin();
-        User_Permission_Model::deny(self::$user_id, User_Model::PERM_API_ACCESS);
+        User_Permission_Model::deny(self::$user_id, static::__permission(0));
 
         static::__assert_single_user_refresh('acl deny');
     }
@@ -210,10 +250,10 @@ class Realtime_User_Refresh_Test extends Rsx_Test_Abstract
     public static function test_acl_remove_existing_pushes()
     {
         // Setup a row to remove (before capture).
-        User_Permission_Model::grant(self::$user_id, User_Model::PERM_DATA_EXPORT);
+        User_Permission_Model::grant(self::$user_id, static::__permission(1));
 
         static::__begin();
-        $removed = User_Permission_Model::remove(self::$user_id, User_Model::PERM_DATA_EXPORT);
+        $removed = User_Permission_Model::remove(self::$user_id, static::__permission(1));
 
         static::__assert_true($removed, 'a real row was removed');
         static::__assert_single_user_refresh('acl remove (existing)');
@@ -222,10 +262,10 @@ class Realtime_User_Refresh_Test extends Rsx_Test_Abstract
     public static function test_acl_remove_absent_is_silent()
     {
         // Ensure no row exists (before capture).
-        User_Permission_Model::remove(self::$user_id, User_Model::PERM_VIEW_USER_ACTIVITY);
+        User_Permission_Model::remove(self::$user_id, static::__permission(2));
 
         static::__begin();
-        $removed = User_Permission_Model::remove(self::$user_id, User_Model::PERM_VIEW_USER_ACTIVITY);
+        $removed = User_Permission_Model::remove(self::$user_id, static::__permission(2));
 
         static::__assert_false($removed, 'nothing was removed');
         static::__assert_count(0, Realtime_Emissions::_testing_captured_control(), 'a no-op remove pushes nothing');

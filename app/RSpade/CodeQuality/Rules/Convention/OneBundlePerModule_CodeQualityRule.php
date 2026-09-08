@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\Convention;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 class OneBundlePerModule_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -62,12 +63,12 @@ class OneBundlePerModule_CodeQualityRule extends CodeQualityRule_Abstract
         $dir_path = dirname($relative_path);
 
         // Skip if bundle is directly in rsx/app (they can have multiple)
-        if ($dir_path === 'rsx/app') {
+        if ($dir_path === Rsx_Paths::APPLICATION_PREFIX . 'app') {
             return;
         }
 
         // Skip if not in rsx/app
-        if (!str_starts_with($dir_path, 'rsx/app/')) {
+        if (!Rsx_Paths::under_application($dir_path, 'app/')) {
             return;
         }
 
