@@ -1,6 +1,6 @@
 ---
 name: document-preview
-description: "Previewing, rendering and searching inside documents in RSX - the ONE background render worker (Document_Render_Service) that produces a PDF rendition and extracts text in a single pass, the render_status_id state machine on the blob (NOT_REQUIRED/PENDING/RENDERED/FAILED), the <Document_Preview> component with its \"Preparing preview...\" state and preview_loaded/page_changed events, its extracted-text sibling <Document_Text_Preview> with its \"(Extracting Text...)\" and \"(Document Text Unavailable)\" notices, the server-side viewer registry and how to override it, the three document.* resolve chains (extract_text, preview_rendition, thumbnail_render), EXTRACTED/FAILED/UNSUPPORTED extraction statuses, search_text() with mandatory site scoping, and rsx:documents:status/failed/rerender plus rsx:search:reindex triage. Use when showing a PDF or Office document in a page, searching inside uploaded files, plugging in a custom viewer or converter, or debugging a document that shows a placeholder icon, a preview stuck on \"Preparing preview...\", a text panel stuck on \"(Extracting Text...)\", or missing extracted text."
+description: "Previewing, rendering and searching inside documents in RSX - the ONE background render worker (Document_Render_Service) that produces a PDF rendition and extracts text in a single pass, the render_status_id state machine on the blob (NOT_REQUIRED/PENDING/RENDERED/FAILED), the <Document_Preview> component with its \"Preparing preview...\" state and preview_loaded/page_changed events, its extracted-text sibling <Document_Text_Preview> with its \"(Extracting Text...)\" and \"(Document Text Unavailable)\" notices, the server-side viewer registry (Pdf_Viewer / Image_Viewer / Text_Viewer / Icon_Viewer) and how to override it, should_show_text_preview() and can_open_inline() as the two presentation questions an attachment answers, the three document.* resolve chains (extract_text, preview_rendition, thumbnail_render), EXTRACTED/FAILED/UNSUPPORTED extraction statuses, search_text() with mandatory site scoping, and rsx:documents:status/failed/rerender plus rsx:search:reindex triage. Use when showing a PDF or Office document in a page, searching inside uploaded files, plugging in a custom viewer or converter, showing a .txt / .csv / .log as itself, deciding whether to show extracted text beside a preview or offer an \"Open in Browser\" link, or debugging a document that shows a placeholder icon, a preview stuck on \"Preparing preview...\", a text panel stuck on \"(Extracting Text...)\", or missing extracted text."
 ---
 
 # Document preview and search
@@ -115,8 +115,13 @@ Behind it is `File_Preview_Controller::get_extracted_text`, returning `{status, 
 ```php
 'application/pdf'  => 'Pdf_Viewer',          // + Office mimes (via a PDF rendition)
 'image/*'          => 'Image_Viewer',
+'text/*'           => 'Text_Viewer',         // the file's own characters
 '*'                => 'Icon_Viewer',
 ```
+
+**`Text_Viewer` reads the EXTRACTION, not the inline URL** — and that is the design point, not an implementation detail. The text pipeline has already decoded the file's charset and capped the content at `rsx.search.max_text_bytes`; fetching the raw bytes would hand the browser an undecoded string of unknown encoding and unbounded length, and would need its own realtime wiring to notice the pipeline finishing. Reading the extraction gets a decoded, bounded string and the PENDING -> EXTRACTED swap for free. The cost is honest and on screen: a just-uploaded file shows `(Extracting Text...)` for a second or two. `(This file is empty)` is a **distinct** state from `(Text Unavailable)` — an empty file is a fact about the file, not a fault in the preview.
+
+Because it has a viewer, **`text/*` classifies as `FILE_TYPE_DOCUMENT`** (`FILE_TYPE_TEXT` survives as an enum value nothing assigns).
 
 Register your own in `rsx/resource/config/rsx.php` under the same key:
 
@@ -126,9 +131,17 @@ Register your own in `rsx/resource/config/rsx.php` under the same key:
 ] + config('rsx.preview.viewers')],
 ```
 
-The three built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{url, extension, file_name, page, fit}`. So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `preview_loaded`/`page_changed`.
+The four built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{url, extension, file_name, page, fit}`. So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `preview_loaded`/`page_changed`.
 
 **PDF renditions**: `/_preview/pdf/:key` serves the PDF pdf.js actually loads, and it is **serve-only — it never converts**. A PDF blob is served as-is; a mime listed in `rsx.preview.convertible` is served from the cached rendition at `storage/rsx-renditions/{blob-hash}.pdf` (LRU-swept to `rsx.preview.quota_max_bytes`) **but only when the blob is RENDERED** — otherwise it 404s naming the render state. Anything else is 415. A RENDERED blob whose rendition was LRU-evicted re-queues itself and 404s for that one request, rather than showing an error over a cache eviction. The route is **dual-gated** (`file.thumbnail.authorize` AND `file.download.authorize`), so your file-access hooks apply to previews exactly as they do to downloads. pdf.js itself is lazy-served from `/_preview/pdfjs.mjs` (+ `pdf_worker.mjs`) out of the committed `node_modules` and is **never bundled**.
+
+## Showing extracted text BESIDE a preview
+
+Ask the attachment, never the extraction status: **`$attachment->should_show_text_preview()`**, carried on both `get_preview_info()` and `get_extracted_text()` (the second so a caller already holding the text needs no second round trip). It is false when there is no extracted text, when the preview ALREADY IS the text (`text/*` — a pane beside it repeats every character), and when the extraction is not legible to a human (a spreadsheet flattens to an undelimited run of cell values). The last two are mime globs in `config('rsx.preview.text_preview_suppressed')`.
+
+**It is advice about display, never authorization** — extraction still runs for every one of these, the text stays searchable, and `get_extracted_text()` returns it whatever the flag says.
+
+**`$attachment->can_open_inline()`** is the neighbouring question an "Open in Browser" link asks, and it is NOT the same one: it reads `config('rsx.preview.browser_inline')` — what a BROWSER can display in a tab of its own — so it disagrees with the viewer registry on purpose (a `.docx` previews here because the worker converts it, and downloads in a browser tab). It cannot come from `file_type_id` either, since `text/*`, Word and Excel are all `FILE_TYPE_DOCUMENT` and disagree. It ships to JS as a derived property alongside `is_image` / `is_video` / `is_document` (`rsx:man model`, DERIVED PROPERTIES).
 
 ---
 

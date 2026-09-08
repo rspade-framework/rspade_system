@@ -2,9 +2,9 @@
 Document_Preview
 
 Renders a real, in-browser preview of a file attachment by resolving a viewer component from the
-server (File_Preview_Controller::get_preview_info) and dispatching to it. The framework ships three
-viewers (Pdf_Viewer, Image_Viewer, Icon_Viewer); an app may register additional viewers in
-config('rsx.preview.viewers'), which are instantiated dynamically in on_ready.
+server (File_Preview_Controller::get_preview_info) and dispatching to it. The framework ships four
+viewers (Pdf_Viewer, Image_Viewer, Text_Viewer, Icon_Viewer); an app may register additional viewers
+in config('rsx.preview.viewers'), which are instantiated dynamically in on_ready.
 
 A convertible document (Word, Excel, PowerPoint, ...) has no PDF rendition until the background
 render worker has produced one, so this component also owns the WAITING states: it subscribes to
@@ -96,6 +96,11 @@ Public methods (delegate to the active viewer; no-op before it is ready):
                 <Icon_Viewer $sid="viewer" $url=this.data.info.urls.icon $extension=this.data.info.extension $file_name=this.data.info.file_name />
             <% } else if (_v === 'Image_Viewer') { %>
                 <Image_Viewer $sid="viewer" $url=this.data.info.urls.inline />
+            <% } else if (_v === 'Text_Viewer') { %>
+                <%-- Takes $attachment_id, not a url: it reads the file through the text
+                     pipeline (decoded and length-capped) rather than fetching raw bytes of
+                     unknown charset, and owns the extraction waiting state itself. --%>
+                <Text_Viewer $sid="viewer" $attachment_id=this.args.attachment_id $file_name=this.data.info.file_name />
             <% } else if (_v === 'Icon_Viewer') { %>
                 <Icon_Viewer $sid="viewer" $url=this.data.info.urls.icon $extension=this.data.info.extension $file_name=this.data.info.file_name />
             <% } else { %>

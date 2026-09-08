@@ -33,11 +33,11 @@ class Make_Migration_With_Whitelist_Command extends Command
      */
     public function handle()
     {
-        // Determine migration path based on framework developer flag
+        // The ONE resolution of where this migration is going. Everything downstream - the
+        // announcement, the created-file lookup and the whitelist entry - reads this value, so
+        // the entry can never be recorded beside a directory the file did not land in.
+        $migration_path = $this->getMigrationPath();
         $is_framework_dev = config('rsx.code_quality.is_framework_developer', false);
-        $migration_path = $is_framework_dev
-            ? database_path('migrations')
-            : base_path('rsx/resource/migrations');
 
         // Ensure target directory exists
         if (!is_dir($migration_path)) {
@@ -62,8 +62,11 @@ class Make_Migration_With_Whitelist_Command extends Command
         if ($this->option('realpath')) $options['--realpath'] = true;
         if ($this->option('fullpath')) $options['--fullpath'] = true;
 
-        // Show where migration will be created
-        $location_type = $is_framework_dev ? 'framework' : 'application';
+        // Show where migration will be created. An explicit --path names the tree directly, so
+        // the framework-developer flag says nothing about it in that case.
+        $location_type = $this->option('path')
+            ? 'requested'
+            : ($is_framework_dev ? 'framework' : 'application');
         $this->info("Creating {$location_type} migration in: {$migration_path}");
 
         // Call the real make:migration command
@@ -72,15 +75,13 @@ class Make_Migration_With_Whitelist_Command extends Command
         if ($result === 0) {
             // Get the migration file that was just created
             $name = trim($this->argument('name'));
-            $migrationPath = $this->getMigrationPath();
-            
             // Find the newly created migration file
-            $files = glob($migrationPath . '/*_' . Str::snake($name) . '.php');
-            
+            $files = glob($migration_path . '/*_' . Str::snake($name) . '.php');
+
             if (!empty($files)) {
                 $migrationFile = basename(end($files));
-                $this->addToWhitelist($migrationFile);
-                $this->info("[OK] Migration added to whitelist: {$migrationFile}");
+                $this->addToWhitelist($migration_path, $migrationFile);
+                $this->info("[OK] Migration added to whitelist: {$migration_path}/.migration_whitelist");
             }
         }
         
@@ -88,15 +89,20 @@ class Make_Migration_With_Whitelist_Command extends Command
     }
     
     /**
-     * Add a migration to the whitelist
+     * Add a migration to the whitelist that authorizes the directory it was written into.
+     *
+     * THE ENTRY GOES BESIDE THE FILE. Every migration directory carries its own
+     * .migration_whitelist and the migrator reads the one next to each file, so an entry
+     * recorded in a different tree authorizes nothing and dirties a tree the migration does
+     * not live in - which is what happened when this method re-derived the location from the
+     * framework-developer flag while the file followed --path.
+     *
+     * @param string $migration_path Absolute directory the migration file was written into.
+     * @param string $filename Basename of the migration file.
      */
-    protected function addToWhitelist(string $filename): void
+    protected function addToWhitelist(string $migration_path, string $filename): void
     {
-        // Get correct whitelist path based on framework developer flag
-        $is_framework_dev = config('rsx.code_quality.is_framework_developer', false);
-        $whitelistPath = $is_framework_dev
-            ? database_path('migrations/.migration_whitelist')
-            : base_path('rsx/resource/migrations/.migration_whitelist');
+        $whitelistPath = rtrim($migration_path, '/') . '/.migration_whitelist';
 
         // Ensure whitelist file exists
         if (!file_exists($whitelistPath)) {
@@ -122,12 +128,18 @@ class Make_Migration_With_Whitelist_Command extends Command
     }
     
     /**
-     * Get migration path
+     * The absolute directory this migration is written into: an explicit --path (resolved the
+     * way Laravel's own make:migration resolves it - against base_path(), or verbatim under
+     * --realpath), otherwise the framework or application migration tree.
+     *
+     * @return string
      */
     protected function getMigrationPath()
     {
         if ($this->option('path')) {
-            return base_path($this->option('path'));
+            return $this->option('realpath')
+                ? $this->option('path')
+                : base_path($this->option('path'));
         }
 
         // Return path based on framework developer flag

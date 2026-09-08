@@ -32,3 +32,21 @@
 | DOCUMENTS-CLI-RERENDER-ATTACHMENT | --attachment re-queues the deduplicated blob behind an attachment | cli | RENDERED blob, --attachment=ID | `[OK] Re-queued 1 document(s)`, blob PENDING, rendition deleted | implemented | 2026-08-22 |
 | DOCUMENTS-CLI-STATUS | the status screen names every render and extraction state, zero rows included | cli | rsx:documents:status | every enum label, the is_indexed=0 queue row, the rendition-cache section, the worker-schedule line; exit 0 | implemented | 2026-08-22 |
 | DOCUMENTS-CLI-FAILED | the failure list is empty-clean, names the document, quotes the reason, and truncates honestly | cli | no failures; then one seeded FAILED blob; then two with --limit=1 | `[OK] No failed documents.`; the file name + reason + the rerender remedy; `2 failed document(s)` with `showing 1 of 2` | implemented | 2026-08-22 |
+
+## Text_Preview_And_Derived_Properties_Test (php)
+
+text/* previews as ITSELF, and the attachment answers its own presentation questions. Four
+independent properties: the viewer registry resolves text/* to Text_Viewer; text/* classifies as
+FILE_TYPE_DOCUMENT (FILE_TYPE_TEXT surviving as a value nothing assigns); should_show_text_preview()
+answers the "is a text pane worth the space" question once; and is_image / is_video / is_document /
+can_open_inline ride toArray() as derived properties, the last of which cannot come from
+file_type_id at all.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DOCUMENTS-TEXTVIEW-RESOLVE | text/plain and text/csv resolve to Text_Viewer, above the terminal '*' and below the document patterns | php | viewer_for_mime() over five mimes | Text_Viewer / Pdf_Viewer / Image_Viewer / Icon_Viewer as registered | implemented | 2026-09-08 |
+| DOCUMENTS-TEXTVIEW-CLASSIFY | text/* buckets as FILE_TYPE_DOCUMENT; FILE_TYPE_TEXT is still a declared constant and enum row | php | determine_file_type() over four mimes + the enum map | 6 for text/* and pdf, 1 for image, constant 5 present | implemented | 2026-09-08 |
+| DOCUMENTS-TEXTVIEW-SUPPRESS | should_show_text_preview(): true for docx and pdf, false for xlsx and txt, false with no extraction | php | four attachments stamped EXTRACTED, then one FAILED | true/true/false/false, then false | implemented | 2026-09-08 |
+| DOCUMENTS-TEXTVIEW-PAYLOAD | both get_preview_info() and get_extracted_text() carry the flag, and the text is returned regardless | php | an EXTRACTED .txt | flag false on both payloads; status available; text non-empty | implemented | 2026-09-08 |
+| DOCUMENTS-TEXTVIEW-INLINE | can_open_inline() is answered from the mime, not file_type_id - the .txt and the .docx are the same bucket and disagree | php | txt / pdf / real png / docx / xlsx | true/true/true/false/false; both txt and docx are FILE_TYPE_DOCUMENT | implemented | 2026-09-08 |
+| DOCUMENTS-TEXTVIEW-APPENDS | toArray() carries all four derived keys and each equals its delegating method; fetch() carries them with no hand-added key | php | a real PNG and a .docx | four keys present, values match the predicates, fetch() agrees | implemented | 2026-09-08 |

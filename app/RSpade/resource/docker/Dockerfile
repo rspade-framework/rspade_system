@@ -273,6 +273,108 @@ RUN apt-get update && apt-get install -y \
         fzf jq man-db gh \
     && rm -rf /var/lib/apt/lists/*
 
+# -----------------------------------------------------------------------------
+# Docker-in-docker: this image runs its own Docker Engine
+# -----------------------------------------------------------------------------
+#
+# WHY. `php artisan rsx:test` runs every invocation in sibling containers when
+# its gate passes - one execution path for a single class and for the whole
+# suite (`rsx:man testing`). The daemon those containers are started against is
+# the one installed here, inside this container. Development target only: the
+# production image runs an application, not a test suite.
+#
+# HALF THE JOB IS ON THE HOST. Installing the engine is not enough - the
+# container also has to be STARTED with the capabilities and confinement dockerd
+# and runc need (--cap-add=CAP_NET_ADMIN --cap-add=CAP_SYS_ADMIN, apparmor and
+# seccomp unconfined, and the rest of the list in `rsx:man testing`). Without
+# them the daemon installs perfectly and refuses to start; the launcher below
+# says so in one line and the test runner falls back to a sequential run.
+#
+# runc is PINNED, one variable, and the pin re-applies on every build of this
+# image - which is what keeps a containerd.io upgrade from silently restoring a
+# binary that cannot start a nested container. Rationale beside the pin itself.
+ARG RUNC_PINNED_VERSION=1.3.2
+
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y iptables uidmap; \
+    . /etc/os-release; \
+    install -m 0755 -d /etc/apt/keyrings; \
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+        | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
+    chmod a+r /etc/apt/keyrings/docker.gpg; \
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu ${VERSION_CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list; \
+    apt-get update; \
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin; \
+    rm -rf /var/lib/apt/lists/*
+
+# The .deb enables a systemd unit and a socket-activation unit. There is neither
+# systemd nor socket activation in this container - dockerd is a supervisor
+# program like every other service here - so make sure nothing else ever tries to
+# start a second one.
+RUN systemctl disable docker.service docker.socket 2>/dev/null || true; \
+    rm -f /etc/systemd/system/multi-user.target.wants/docker.service \
+          /etc/systemd/system/sockets.target.wants/docker.socket
+
+# --- the runc pin ------------------------------------------------------------
+#
+# runc 1.3.3 and newer cannot start a container while running INSIDE one. Every
+# `docker run` dies in container init with
+#
+#   open sysctl net.ipv4.ip_unprivileged_port_start file: reopen fd 8: permission denied
+#
+# and dockerd sets that sysctl on every container it starts, so this is not an
+# edge case - only --network=host, which creates no network namespace and so
+# writes no net sysctl, gets through. Bisected against docker 29.x on kernel 6.8:
+# 1.3.0 / 1.3.1 / 1.3.2 work, 1.3.3 / 1.4.0 / 1.4.3 fail, 8 of 8 runs each way.
+# It is not a permissions problem: it reproduces with the outer container
+# --privileged, and the same write succeeds by hand from a shell in the
+# container. Non-nested containers on the same host with the same runc are fine.
+#
+# So the packaged binary is replaced with the newest version that works nested.
+# Delete this block to retest when the upstream regression is fixed.
+#
+# THE DOWNLOAD AND THE CHECKSUM ARE BOTH FATAL. A build that quietly kept the
+# packaged runc would produce an image whose every `docker run` fails in init -
+# a failure that looks like anything except a build that did not do what it said.
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    base="https://github.com/opencontainers/runc/releases/download/v${RUNC_PINNED_VERSION}"; \
+    curl -fsSL -o /tmp/runc "$base/runc.${arch}"; \
+    curl -fsSL -o /tmp/runc.sha256sum "$base/runc.sha256sum"; \
+    cd /tmp; \
+    expected="$(grep " runc\.${arch}$" runc.sha256sum | awk '{ print $1 }')"; \
+    [ -n "$expected" ]; \
+    echo "$expected  runc" | sha256sum -c -; \
+    install -m 0755 /tmp/runc "$(command -v runc || echo /usr/bin/runc)"; \
+    rm -f /tmp/runc /tmp/runc.sha256sum; \
+    runc --version
+
+# Address-space separation from the HOST's docker.
+#
+# The host engine owns 172.17.0.0/16 and this container's own eth0 lives on it.
+# An inner daemon defaulting to 172.17 would bring up a bridge that shadows the
+# route to this container's own gateway and kill its outbound networking the
+# moment docker0 appeared. The inner engine gets its own private ranges instead.
+RUN mkdir -p /etc/docker /var/lib/docker \
+    && printf '%s\n' \
+        '{' \
+        '    "bip": "10.210.0.1/24",' \
+        '    "default-address-pools": [' \
+        '        { "base": "10.211.0.0/16", "size": 24 }' \
+        '    ],' \
+        '    "log-driver": "json-file",' \
+        '    "log-opts": { "max-size": "10m", "max-file": "3" }' \
+        '}' \
+        > /etc/docker/daemon.json \
+    && chmod 644 /etc/docker/daemon.json
+
+COPY dockerd-run.sh /usr/local/bin/rspade-dockerd-run
+COPY supervisor/conf.d/dockerd.conf /etc/supervisor/conf.d/dockerd.conf
+RUN chmod 755 /usr/local/bin/rspade-dockerd-run \
+    && chmod 644 /etc/supervisor/conf.d/dockerd.conf
+
 COPY mysql/mysqld.cnf   /etc/mysql/mysql.conf.d/mysqld.cnf
 COPY mysql/provision.sql /opt/rspade/provision.sql
 RUN chmod 644 /etc/mysql/mysql.conf.d/mysqld.cnf /opt/rspade/provision.sql

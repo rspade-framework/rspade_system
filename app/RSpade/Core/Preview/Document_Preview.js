@@ -9,7 +9,7 @@
  * swaps out of "Preparing preview..." when the background render worker finishes.
  */
 class Document_Preview extends Component {
-    static BUILTIN_VIEWERS = ['Pdf_Viewer', 'Image_Viewer', 'Icon_Viewer'];
+    static BUILTIN_VIEWERS = ['Pdf_Viewer', 'Image_Viewer', 'Text_Viewer', 'Icon_Viewer'];
 
     on_create() {
         this.data.info = null;

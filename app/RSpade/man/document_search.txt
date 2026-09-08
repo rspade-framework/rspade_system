@@ -390,19 +390,46 @@ DOCUMENT_PREVIEW COMPONENT
 
     Viewer registry. get_preview_info() resolves the viewer by mime via
     config('rsx.preview.viewers') (an ordered fnmatch map of mime glob -> viewer
-    component simple name; first match wins). The framework ships three viewers and a
+    component simple name; first match wins). The framework ships four viewers and a
     terminal '*' entry so every mime resolves:
 
         Pdf_Viewer     PDFs and (via rendition) convertible Office docs. Lazy-loads
                        pdf.js and paginates on a canvas.
         Image_Viewer   image/*  (natural-dimension preview).
+        Text_Viewer    text/*   (the file's own characters in a scrolling monospace
+                       frame). IT READS THE EXTRACTION, not the inline URL: the text
+                       pipeline has already decoded the file's charset and capped it at
+                       rsx.search.max_text_bytes, where raw bytes would arrive undecoded
+                       and unbounded and would need their own realtime wiring to notice
+                       the pipeline finishing. The cost is stated in the UI - a
+                       just-uploaded file shows "(Extracting Text...)" for a second or
+                       two, and "(This file is empty)" is a distinct state from
+                       "(Text Unavailable)" because an empty file is a fact about the
+                       file, not a fault in the preview.
         Icon_Viewer    terminal - the generic extension icon for anything else.
+
+    A text/* attachment therefore classifies as FILE_TYPE_DOCUMENT: it is previewable in
+    exactly the way a PDF is. FILE_TYPE_TEXT remains a declared enum value that nothing
+    assigns.
 
     An app adds or overrides viewers by merging config('rsx.preview.viewers') in
     rsx/resource/config/rsx.php. A built-in viewer is rendered directly by the
     Document_Preview template; an APP-registered viewer name is instantiated
     dynamically into the host element in on_ready with {url, extension, file_name,
     page, fit}.
+
+SHOULD_SHOW_TEXT_PREVIEW
+    A host that shows extracted text BESIDE a document (a Preview/Text switch, a
+    two-column split) asks $attachment->should_show_text_preview(), never the extraction
+    status. Three ways the answer is no: there is no extracted text (pending, FAILED or
+    UNSUPPORTED); the preview ALREADY IS the text (a text/* file renders through
+    Text_Viewer, so a pane beside it repeats every character); or the extraction is not
+    legible to a human (a spreadsheet). The last two are mime globs in
+    config('rsx.preview.text_preview_suppressed').
+
+    It is returned by BOTH get_preview_info() and get_extracted_text() - the second so a
+    caller already holding the text needs no second round trip - and it never gates the
+    text itself, which is returned whatever the flag says.
 
 DOCUMENT_TEXT_PREVIEW COMPONENT
     <Document_Text_Preview> renders the EXTRACTED TEXT of an attachment - the sibling
@@ -531,6 +558,25 @@ CONFIGURATION
         convertible            array   Mimes the rendition endpoint converts to PDF via
                                        headless LibreOffice (fnmatch globs). Only
                                        converted when rsx.libreoffice.enabled; else 415.
+        browser_inline         array   Mimes a BROWSER can display in a tab of its own
+                                       given Content-Disposition: inline (fnmatch globs),
+                                       read by File_Attachment_Model::can_open_inline().
+                                       THE TEST IS THE BROWSER'S NATIVE ABILITY, NOT
+                                       OURS: a .docx is previewable here (the worker
+                                       converts it) and is deliberately absent, so this
+                                       list and 'viewers' are expected to disagree. Nor
+                                       can it be derived from file_type_id - text/*,
+                                       Word and Excel are all DOCUMENT and disagree.
+        text_preview_suppressed array  Mimes whose EXTRACTED TEXT is not worth showing
+                                       beside their preview (fnmatch globs), read by
+                                       File_Attachment_Model::should_show_text_preview().
+                                       text/* is REDUNDANT (the preview IS the text) and
+                                       a spreadsheet is NOT LEGIBLE (an undelimited run
+                                       of cell values with no rows or headings).
+                                       Extraction still runs for every one of these and
+                                       the text stays searchable and is still returned:
+                                       the flag is advice about display, never
+                                       authorization.
         quota_max_bytes        int     LRU cap on storage/rsx-renditions. Default 200 MB.
 
     REMOVED 2026-08-22 - delete any override you carry: rsx.search.timeout,

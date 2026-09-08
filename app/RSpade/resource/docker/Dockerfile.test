@@ -1,5 +1,22 @@
 # =============================================================================
-# RSpade PARALLEL TEST image
+# RSpade PARALLEL TEST image - THE TEMPLATE
+#
+# THIS FILE IS NOT BUILT DIRECTLY. `system/bin/rsx-testd` reads it, substitutes
+# the two @RSX_GENERATED_*@ markers below, and writes the result into the run
+# directory as `Dockerfile.test.generated` - the file `docker build -f` is
+# actually pointed at. Everything else here, comments included, is copied
+# through verbatim, so this file remains the place the build is explained and
+# edited. The generated copy lives under storage/, which is already outside git
+# and outside the build context, and the newest few survive for a post-mortem
+# beside the worker logs.
+#
+# WHY GENERATED. The COPY block has to be an ORDERED LIST of the project's real
+# top-level entries, cheapest-changing first, so that editing one busy tree does
+# not invalidate the copy of every quiet one. That listing is a fact about the
+# checkout (and about the .dockerignore the runner generates for the same build),
+# not something a static file can state - and the LAST two entries are ordered by
+# environment: a framework developer edits `system/app/RSpade` most, a downstream
+# developer edits `rsx/`, and whichever is busier belongs last.
 #
 # One container = one complete, isolated RSpade environment (its own mysqld,
 # redis, rsx-lockd, filesystem and flag files), so N of them run the framework
@@ -15,28 +32,129 @@
 # THE DATADIR-TEMPLATE HOOK. The dev image ships a tarball of a pristine MySQL
 # data directory and its entrypoint unpacks it into /var/lib/mysql whenever the
 # `mysql` system schema is absent. This build runs the whole provisioning
-# sequence once, then REPLACES that tarball with the resulting - fully migrated,
+# sequence, then REPLACES that tarball with the resulting - fully migrated,
 # baseline-seeded - data directory. A test container is then run with
 # `--tmpfs /var/lib/mysql`, so the entrypoint fills a RAM datadir from the baked
-# template in about a second and every in-container database reset is a restore
-# from RAM rather than a re-migration.
+# template in well under a second and every in-container database reset is a
+# restore from RAM rather than a re-migration.
 #
 # THE BUILD CONTEXT IS THE PROJECT ROOT, filtered by a .dockerignore the test
-# runner generates for the run (.git, storage/, and every local-only path the
-# checkout excludes). The code is COPIED IN, never mounted: storage/, the flock
-# directory and the build output must be per-container and writable.
-#
-#   docker build -f system/app/RSpade/resource/docker/Dockerfile.test \
-#                -t rspade-test:latest .
+# runner generates for the run (.git anywhere, storage/, and every local-only
+# path the checkout excludes). The code is COPIED IN, never mounted: storage/,
+# the flock directory and the build output must be per-container and writable.
 #
 # =============================================================================
 
 FROM rspade/rspade-server-dev:latest
 
-COPY . /var/www/html
+# -----------------------------------------------------------------------------
+# LAYER 0 - the CURRENT entrypoint, over the one baked into the dev image.
+#
+# The dev image is built rarely and deliberately; the checkout moves every day.
+# Its /usr/local/bin/rspade-entrypoint is therefore whatever the entrypoint
+# looked like when somebody last ran build.sh, and a test image whose code is
+# today's running an entrypoint from months ago is exactly the skew the stale
+# dev-image refusal in the orchestrator exists to prevent - it just cannot see
+# this one, because the entrypoint carries no version to compare.
+#
+# It cost a whole run to learn: this build started writing the datadir template
+# as plain .tar, the checkout's entrypoint reads either spelling, and the image
+# in the daemon still only knew .tgz - so all eight containers died on
+# "the image's template is missing" before a single test ran.
+#
+# FIRST, because the layer below runs the entrypoint before any code exists.
+# -----------------------------------------------------------------------------
+COPY system/app/RSpade/resource/docker/entrypoint.sh /usr/local/bin/rspade-entrypoint
+RUN chmod 755 /usr/local/bin/rspade-entrypoint
 
 # -----------------------------------------------------------------------------
-# One RUN layer, on purpose.
+# LAYER 1 - the shipped database snapshot, BEFORE any line of code.
+#
+# Its cache key is those two archives plus layer 0 and the dev image, and
+# NOTHING ELSE - so it survives every source edit but the entrypoint's, and is
+# rebuilt only when the snapshot itself moves. What it bakes is the expensive half of "a database exists at all":
+# mysqld's first start, `mysql/provision.sql` (the `rspade` user and both
+# databases), the streamed restore of the shipped schema cache into `rspade`,
+# and the blob store that ships with it.
+#
+# The COPY is generated because the archives are optional: an application with no
+# `rsx/resource/db/schema_cache.sql.gz` gets no COPY at all, this layer creates
+# the empty databases only, and the migrate in layer 3 builds the schema from
+# zero exactly as it always did.
+#
+# THE ENTRYPOINT IS THE MYSQL BOOTSTRAP, here as everywhere else. There is no
+# second implementation of "start the services and provision the databases": it
+# unpacks the stock datadir template, starts supervisor, waits for redis and
+# mysql, runs `mysql/provision.sql` when `USE rspade` fails, then runs this
+# command and stops supervisor again. There is no checkout in the image yet, and
+# that is a case the entrypoint already handles - it says so and skips the
+# framework-shaped steps, which is precisely the behaviour wanted here.
+# -----------------------------------------------------------------------------
+@RSX_GENERATED_SNAPSHOT_COPY@
+RUN bash -c 'set -e; \
+    \
+    # This is a test container, not a development one. /.rspade_container_dev \
+    # gates the development-mode migrate DATADIR SNAPSHOT, which stops mysqld \
+    # through supervisorctl and copies /var/lib/mysql - meaningless during an \
+    # image build and actively harmful inside a throwaway container. Removed in \
+    # THIS layer so the removal is cached with it. \
+    rm -f /.rspade_container_dev; \
+    \
+    # No background task processor. rsx:task:process running once a minute \
+    # would race the tests, which drive the task system explicitly. \
+    rm -f /etc/supervisor/conf.d/tasks.conf; \
+    \
+    # NO NESTED DOCKER INSIDE A TEST CONTAINER. The dev image runs its own \
+    # docker engine because that is what dispatches these very containers; a \
+    # worker has nothing to dispatch, is started without the capabilities \
+    # dockerd needs, and its launcher would therefore exit straight away - \
+    # leaving a program that is not RUNNING for the CMD's readiness wrapper to \
+    # wait on. Removed here, cached with this layer, like tasks.conf above. \
+    rm -f /etc/supervisor/conf.d/dockerd.conf; \
+    \
+    bash /usr/local/bin/rspade-entrypoint bash -c "set -e; \
+        if [ -f /opt/rspade/schema_cache.sql.gz ]; then \
+            echo \"[build] restoring the shipped schema cache into rspade\"; \
+            zcat /opt/rspade/schema_cache.sql.gz | mysql -uroot rspade; \
+        fi; \
+        if [ -f /opt/rspade/uploads_cache.tar.gz ]; then \
+            echo \"[build] restoring the shipped blob store\"; \
+            mkdir -p /var/www/html/storage/uploads; \
+            tar -xzf /opt/rspade/uploads_cache.tar.gz -C /var/www/html/storage/uploads; \
+        fi"; \
+    \
+    # ONLY rspade is restored, deliberately - never rspade_test. \
+    # `Rsx_Test_Command::prepare_test_database()` treats a test database that \
+    # already has rows in the migrations table as an EXISTING schema and applies \
+    # the pending migrations to it, and `ensure_baseline_cache()` then DROPS and \
+    # re-creates it anyway to build the pristine dump every in-container reset \
+    # restores from. Pre-restoring it therefore buys nothing and costs one extra \
+    # migration run. Layer 2 leaves it empty, which is the fast path. \
+    \
+    # WAIT FOR mysqld TO BE GONE before archiving - see layer 3, same rule and \
+    # the same reason. \
+    while pgrep -x mysqld > /dev/null 2>&1; do sleep 1; done; \
+    \
+    # GZIPPED here, uncompressed there. This intermediate template is written \
+    # once and read exactly once (by layer 3), so compression is pure win: 8 MB \
+    # in the image instead of 220 MB. The FINAL template in layer 3 is the one \
+    # every container unpacks, and it is plain tar. \
+    tar -C /var/lib/mysql -czf /opt/rspade/mysql-datadir-template.tgz .; \
+    chmod 644 /opt/rspade/mysql-datadir-template.tgz; \
+    rm -rf /var/lib/mysql/*'
+
+# -----------------------------------------------------------------------------
+# LAYER 2 - the code, in ascending order of how often it changes.
+#
+# Generated from the checkout's real directory listing, honouring the same
+# .dockerignore this build uses. A symlink is RECREATED rather than copied:
+# `COPY system/rsx ...` DEREFERENCES the link and would bake a second 150 MB
+# copy of the application tree where a six-byte link belongs.
+# -----------------------------------------------------------------------------
+@RSX_GENERATED_CODE_COPY@
+
+# -----------------------------------------------------------------------------
+# LAYER 3 - provision, migrate, warm, archive. One RUN layer, on purpose.
 #
 # The layer that ends by archiving /var/lib/mysql must also be the layer that
 # shut mysqld down - a data directory captured while the server is running (or
@@ -47,16 +165,6 @@ COPY . /var/www/html
 # -----------------------------------------------------------------------------
 RUN bash -c 'set -e; \
     cd /var/www/html; \
-    \
-    # This is a test container, not a development one. /.rspade_container_dev \
-    # gates the development-mode migrate DATADIR SNAPSHOT, which stops mysqld \
-    # through supervisorctl and copies /var/lib/mysql - meaningless during an \
-    # image build and actively harmful inside a throwaway container. \
-    rm -f /.rspade_container_dev; \
-    \
-    # No background task processor. rsx:task:process running once a minute \
-    # would race the tests, which drive the task system explicitly. \
-    rm -f /etc/supervisor/conf.d/tasks.conf; \
     \
     # NOTHING FROM THE HOST .env EVER REACHES THIS IMAGE. The build context \
     # excludes it, and this removes it as well - a build run with a stale or \
@@ -118,16 +226,17 @@ RUN bash -c 'set -e; \
     # keeps every fixture that hashes one from dominating the run. \
     env_set BCRYPT_ROUNDS 4; \
     \
-    # The entrypoint IS the provisioning helper: unpack the stock template, \
-    # start supervisor, wait for redis and mysql, run mysql/provision.sql when \
-    # `USE rspade` fails, migrate the development database, then run this CMD \
-    # and stop supervisor again. The CMD provisions rspade_test - migrated, \
-    # baseline user, and the cache dump an in-container reset restores from - \
-    # and then warms the manifest, so no container has to rebuild it. \
+    # The entrypoint IS the provisioning helper: unpack layer 1 template (the \
+    # databases already exist and `rspade` already holds the shipped snapshot, so \
+    # mysql/provision.sql is skipped and `migrate` applies only the migrations \
+    # NEWER than the snapshot), start supervisor, wait for redis and mysql, then \
+    # run this CMD and stop supervisor again. The CMD provisions rspade_test - \
+    # migrated, baseline user, and the cache dump an in-container reset restores \
+    # from - and then warms the manifest, so no container has to rebuild it. \
     # \
     # THE MANIFEST BUILD IS LAST, AND IT IS --clean, FOR ONE REASON. The model \
     # index (and with it every auto-detected datetime/date/boolean CAST) is \
-    # built by introspecting the DEFAULT connection's tables. Provisioning \
+    # built by introspecting the DEFAULT connection tables. Provisioning \
     # drops and re-migrates rspade_test in a subprocess whose default database \
     # IS rspade_test, so a manifest built during or before that step indexes an \
     # empty database and bakes a model index with NO columns - which silently \
@@ -145,16 +254,11 @@ RUN bash -c 'set -e; \
     # rebuild before its first test. \
     bash /usr/local/bin/rspade-entrypoint bash -c "set -e; \
         php system/artisan rsx:test --framework --_provision-only; \
-        php system/artisan rsx:manifest:build --clean --_test-run; \
-        php system/artisan rsx:bundle:compile"; \
+        php system/artisan rsx:manifest:build --clean --_test-run"; \
     \
-    # AND THE BUNDLES, because a container never serves a web request. Bundles compile \
-    # just-in-time on the first request for a page, so on a developer box the compiled \
-    # output is simply always there - and a container that only ever runs artisan has \
-    # none of it. Four asset tests read the compiled bundle JS and SKIP themselves when it \
-    # is absent, which is honest but is three fewer assertions than the sequential run \
-    # makes. Compiling here is the same JIT compile the first page view would have done, \
-    # taken once at build time instead of never. \
+    # NO BUNDLE COMPILE. Bundles compile just-in-time on demand, most tests never touch \
+    # one, and the few asset tests that read compiled output skip themselves honestly when \
+    # it is absent. Baking it cost every incremental image build 18 s for nothing. \
     \
     # WAIT FOR mysqld TO BE GONE before archiving. The entrypoint has already \
     # asked supervisor to stop and waited for it; this is the direct proof, and \
@@ -163,10 +267,15 @@ RUN bash -c 'set -e; \
     # flushing, and how long that takes is the databases business. \
     while pgrep -x mysqld > /dev/null 2>&1; do sleep 1; done; \
     \
-    # The migrated datadir REPLACES the stock template. Same path, same reader: \
-    # the entrypoint unpacks it into the tmpfs on every container start. \
-    tar -C /var/lib/mysql -czf /opt/rspade/mysql-datadir-template.tgz .; \
-    chmod 644 /opt/rspade/mysql-datadir-template.tgz; \
+    # The migrated datadir REPLACES the template, UNCOMPRESSED. Compressing it \
+    # costs about two seconds here and two more in EVERY container start, to save \
+    # a couple of hundred megabytes of layer that the exporter compresses again \
+    # anyway; measured on this box, gzip write + read is 3.9s against 0.7s plain. \
+    # The .tgz from layer 1 is removed so exactly one template exists, and the \
+    # entrypoint reader accepts either extension. \
+    tar -C /var/lib/mysql -cf /opt/rspade/mysql-datadir-template.tar .; \
+    chmod 644 /opt/rspade/mysql-datadir-template.tar; \
+    rm -f /opt/rspade/mysql-datadir-template.tgz; \
     rm -rf /var/lib/mysql/*'
 
 # -----------------------------------------------------------------------------

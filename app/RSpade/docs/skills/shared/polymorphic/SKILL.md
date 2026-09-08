@@ -103,7 +103,7 @@ $contact_id = $type_ref_id('Contact_Model', 'contacts');
 DB::statement("UPDATE activities SET eventable_type = {$contact_id} WHERE eventable_type = 'Contact_Model'");
 ```
 
-Everywhere OUTSIDE a migration, `Type_Ref_Registry::class_to_id()` remains the API.
+Everywhere OUTSIDE a migration, `Type_Ref_Registry::class_to_id()` remains the API. Every registry lookup (`class_to_id`, `find_id_by_class_name`, `has_class`, `class_resolves`) accepts the short name OR the fully qualified one `Model::class` evaluates to; the row stores the short name either way, because a model's namespace is not part of its identity.
 
 ---
 

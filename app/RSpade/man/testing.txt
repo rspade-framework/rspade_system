@@ -371,47 +371,136 @@ RUNNING AND NARROWING A RUN
     prints "No tests were run." and exits 0 - so check the summary line, not
     just the exit code, when a selector is involved.
 
-    THE FULL FRAMEWORK SUITE RUNS IN PARALLEL DOCKER CONTAINERS, automatically,
-    on a docker-capable development box. rsx:test --framework with no
-    narrowing selector builds a test image and runs the suite across several
-    sibling containers, each a complete isolated environment with its own
-    database; the output and the exit code are identical to a single-process
-    run, because both print through the same printer. --sequential forces the
-    single-process runner anywhere. One test run per box at a time: a second
-    rsx:test waits for the first to finish, whichever path either takes.
-
-    ANY SUBSET ALWAYS RUNS IN THIS PROCESS - a named class, a --filter, a
-    --group, the application suite, or any box that is not a docker-capable
-    RSpade development container. The one behavioural difference worth knowing:
-    class run order is deterministic (by class name) only in the single-process
-    runner; the parallel one hands classes to whichever container is free. The
-    mechanics of the parallel path - the images, the work queue, worker logs and
-    how to debug one - live beside the code in system/bin/rsx-testd/CLAUDE.md.
+    EVERY RUN GOES TO DOCKER CONTAINERS WHEN THE BOX CAN - see DOCKER-ACCELERATED
+    TESTING below. --sequential forces the single-process runner anywhere. One
+    test run per box at a time: a second rsx:test waits for the first to finish,
+    whichever path either takes.
 
     DOWNSTREAM, THE FRAMEWORK SUITE IS AN INTEGRITY AUDIT. The suite ships
     with every release so an administrator can verify that the installed
     framework and its environment (PHP extensions, services, database,
-    Redis) behave as the maintainer's do: rsx:test --framework, sequential,
-    long. It is rarely needed - after provisioning a new host, before a
+    Redis) behave as the maintainer's do: rsx:test --framework, long, and
+    sequential unless that box's container can run nested docker (below). It
+    is rarely needed - after provisioning a new host, before a
     launch, when an environment is suspect - and it is never part of
     development or of drafting a framework change request. Tests that
     exercise the reference application's own models can fail on an
     application that has removed those template modules; read such a
     failure as "not applicable here", not as a framework defect.
 
-    THE FULL RUN IS CACHED BY BUILD KEY. A full framework run records its
-    verdict - every class's results and the exit code, pass or fail - under
-    the manifest build key (php artisan rsx:manifest:get_build_key, the hash
-    of every scanned source file) joined to a fingerprint of the names, sizes
-    and mtimes of every file under system/bin, system/node_modules and the
-    docker resource directory - the tooling a verdict also depends on. Running the full suite again with nothing
-    changed prints "Returning cached test results for build <key> from <file>"
-    and replays that verdict through the same printer, with the same exit
-    code, instead of running for minutes to re-prove it. Any edit to a
-    scanned file changes the key and the next run is live; deleting
-    storage/rsx-tmp/test-results/framework_<key>.json forces one. Subsets are
-    never cached. While a live run is in progress one line per finished class
-    streams as it completes; the full report follows at the end.
+DOCKER-ACCELERATED TESTING
+
+    EVERY INVOCATION IS DISPATCHED TO SIBLING DOCKER CONTAINERS when the gate
+    below passes: either suite, any selector, one class or the whole suite. The
+    runner builds a test image, serves a work queue over a unix socket, and
+    starts N containers that pull whole classes from it - N never larger than
+    the number of classes selected, so a single class is a single container.
+    Each container is a complete isolated environment: its own mysqld on a RAM
+    datadir, its own redis, its own rsx-lockd, its own filesystem and flag
+    files. The output and the exit code are identical to a single-process run,
+    because both print through the same printer.
+
+    ONE CLASS IN ONE CONTAINER IS NOT PARALLELISM, IT IS CONSISTENCY. A subset
+    that ran somewhere else would be a subset with its own semantics - its own
+    database, its own services, its own failure modes - and a green subset would
+    then say nothing about the suite it belongs to.
+
+    THE GATE ASKS ABOUT THE BOX AND NOTHING ELSE. Four checks, evaluated once
+    per invocation, in order:
+
+        1. this is an RSpade development container (/.rspade_container_dev);
+        2. the docker daemon answers (docker info);
+        3. the shipped development image is BUILT, every invocation, with
+           system/app/RSpade/resource/docker/build.sh dev - a cached docker build,
+           instant when nothing changed and never a manual step - and is then
+           version-matched against the checkout's Dockerfile;
+        4. a trivial container actually RUNS from it
+           (docker run --rm <dev-image> true). This is the check the first three
+           cannot make: nested docker breaks in runc, in the cgroup mount and in
+           the network namespace, and a daemon that answers proves none of them.
+
+    ANY CHECK THAT FAILS PRINTS ONE LINE NAMING IT AND THE RUN CONTINUES
+    SEQUENTIALLY, in this process, against this box's test database. That is
+    never an error: a box without nested docker still runs its tests, and the
+    line names rsx:man testing rather than offering advice.
+
+        Docker test mode off: the docker daemon does not answer (docker info);
+        running sequentially (rsx:man testing).
+
+    --sequential IS THE EXPLICIT ESCAPE HATCH. It forces the single-process
+    runner ahead of every check and prints nothing, because nothing failed.
+
+    ONE BEHAVIOURAL DIFFERENCE WORTH KNOWING: class run order is deterministic
+    (by class name) only in the single-process runner. The containers are fed
+    longest-first and each class goes to whichever container is free, so a class
+    can be preceded by a class it has never followed before.
+
+    A RUN'S VERDICT IS CACHED BY CODE STATE AND BY WHAT IT RAN. A docker run
+    records its verdict - every class's results and the exit code, pass or fail -
+    under the manifest build key (php artisan rsx:manifest:get_build_key, the
+    hash of every scanned source file) joined to a fingerprint of the names,
+    sizes and mtimes of every file under system/bin, system/node_modules and the
+    docker resource directory (the tooling a verdict also depends on), AND under
+    a hash of the SELECTOR: the suite plus the normalised list of classes that
+    ran. Repeating the same run with nothing changed prints "Returning cached
+    test results for build <key> ..." and replays that verdict through the same
+    printer, with the same exit code, instead of running again. A SUBSET'S
+    VERDICT REPLAYS ONLY FOR THAT SAME SUBSET and can never stand in for the
+    suite. Any edit to a scanned file changes the build key and the next run is
+    live; deleting
+    storage/rsx-tmp/test-results/<suite>_<key>_<selector>.json forces one.
+    While a live run is in progress one line per finished class streams as it
+    completes; the full report follows at the end.
+
+    THE HOST-SIDE REQUIREMENT. The development container runs its own Docker
+    Engine (the image installs it; supervisor's dockerd program starts it), and
+    that daemon needs capabilities and confinement the container must be STARTED
+    with. Without them the daemon refuses to start, says so in one line, and
+    every run is sequential. The flags:
+
+        --cap-drop=ALL
+        --cap-add=CAP_DAC_OVERRIDE --cap-add=CAP_CHOWN --cap-add=CAP_FOWNER
+        --cap-add=CAP_SETGID --cap-add=CAP_SETUID --cap-add=CAP_KILL
+        --cap-add=CAP_NET_ADMIN --cap-add=CAP_SYS_ADMIN --cap-add=CAP_NET_RAW
+        --cap-add=CAP_NET_BIND_SERVICE --cap-add=CAP_SYS_CHROOT --cap-add=CAP_SYS_RESOURCE
+        --cap-add=CAP_MKNOD --cap-add=CAP_SETFCAP --cap-add=CAP_SETPCAP
+        --cap-add=CAP_AUDIT_WRITE --cap-add=CAP_FSETID
+        --security-opt apparmor=unconfined
+        --security-opt seccomp=unconfined
+
+    The same thing in docker-compose.yml:
+
+        cap_drop:
+          - ALL
+        cap_add:
+          - CAP_DAC_OVERRIDE
+          - CAP_CHOWN
+          - CAP_FOWNER
+          - CAP_SETGID
+          - CAP_SETUID
+          - CAP_KILL
+          - CAP_NET_ADMIN
+          - CAP_SYS_ADMIN
+          - CAP_NET_RAW
+          - CAP_NET_BIND_SERVICE
+          - CAP_SYS_CHROOT
+          - CAP_SYS_RESOURCE
+          - CAP_MKNOD
+          - CAP_SETFCAP
+          - CAP_SETPCAP
+          - CAP_AUDIT_WRITE
+          - CAP_FSETID
+        security_opt:
+          - apparmor:unconfined
+          - seccomp:unconfined
+
+    CAP_NET_ADMIN and CAP_SYS_ADMIN are the two the daemon cannot start without
+    (the NAT chain and the bind-mounts runc performs); the rest of the list is
+    what the container needs to be a normal RSpade container at the same time.
+
+    The mechanics of the parallel path - the two images, the work queue, the
+    worker logs and how to get a shell in one - live beside the code in
+    system/bin/rsx-testd/CLAUDE.md.
 
 PER-TEST STATE RESET
 

@@ -69,3 +69,17 @@ command and HTTP request died at boot - including the build that would have undo
 derives that set from disk (`Pre_Autoload_Reachability`: the two config lists the register phase iterates,
 closed transitively over every `App\RSpade\` name those files contain) and suppresses deletions inside it.
 Deliberately one-directional, like guard 2: rewrites and additions still run.
+
+## Model_Stub_Appends_Test (php)
+
+The generated Base_*_Model.js DECLARES a model's derived properties ($appends). Without it a
+derived property arrives on the fetched record with no declared surface on the stub at all - no
+autocomplete, and nothing telling a reader the property exists. Fixtures: Appends_Fixture_Model
+(two appended names, no table) and No_Appends_Fixture_Model (the negative case).
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| CODEGEN-APPENDS-DECLARED | each $appends entry is named as a JSDoc @property in the class docblock, in declaration order | php | Appends_Fixture_Model | both @property lines, display_id before is_flagged, @Instantiatable intact | implemented | 2026-09-08 |
+| CODEGEN-APPENDS-NOT-A-COLUMN | a derived property never becomes a field_length entry - it has no column behind it | php | Appends_Fixture_Model | field_length() still emitted; the name is in no length map | implemented | 2026-09-08 |
+| CODEGEN-APPENDS-NONE | a model declaring no $appends gains no lines - the feature is opt-in by declaration | php | No_Appends_Fixture_Model | no @property anywhere in the stub | implemented | 2026-09-08 |
+| CODEGEN-APPENDS-REAL | the framework model that uses the pattern gets all four names declared | php | File_Attachment_Model | is_image / is_video / is_document / can_open_inline declared | implemented | 2026-09-08 |

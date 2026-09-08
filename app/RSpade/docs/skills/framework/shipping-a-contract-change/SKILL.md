@@ -62,7 +62,14 @@ Is the obligation RECURRING (must be re-checked by every app, forever)?
 └─ no - it is ONE-TIME, triggered by this change
     └─ must a downstream developer CHANGE CODE THEY WROTE? (the three tests below)
         ├─ yes -> a breaking_changes document, carrying its IF YOU DO NOTHING line
-        └─ no  -> NOTHING. Do not write a document.
+        └─ no
+            └─ did a class an app is LIKELY to CLASS-OVERRIDE gain or alter members?
+               (the fourth trigger below - File_Attachment_Model, File_Storage_Model,
+                User_Model, Login_User_Model, Site_Model, Portal_User_Model, and any
+                class the reference app itself overrides)
+                ├─ yes -> a breaking_changes document (Category 2) listing the members
+                │         to re-clone into their frozen copy
+                └─ no  -> NOTHING. Do not write a document.
 ```
 
 A downstream app also keeps its OWN pre-launch items in `rsx/resource/audits/prelaunch_checklist.md`; framework-required audits never go there.
@@ -82,6 +89,23 @@ Three tests, in order. Any single "no" ends it:
 3. **The library API test (the jQuery standard).** Does the CALL SHAPE of a function or class DESIGNED FOR APPLICATION USE actually change? jQuery publishes no migration note for rewriting its internal selector engine; it publishes one when `$.fn.foo(a, b)` becomes `$.fn.foo({a, b})`. Same bar here.
 
 **A document reporting work the framework already did is noise, and noise trains developers to ignore the whole directory** - so the cost of a needless document is paid by the next one, the one that actually matters.
+
+**The fourth trigger - a LIKELY-OVERRIDDEN core class.** The three tests ask whether the framework changed something an application CALLS. This one asks whether it changed something an application is holding a FROZEN COPY of, and it stands BESIDE the three: it can require a document they alone would not.
+
+> A change to a framework-provided model - or any other core class an application is LIKELY to class-override - ships a document whenever it ADDS OR ALTERS MEMBERS the override holder should propagate into their copy.
+
+A class override here is copy-and-replace, not a subclass (`rsx:man class_override`): the manifest serves the app's file and archives ours as `.php.upstream`, so the improvement reaches their disk and none of their users. `CLASS-OVERRIDE-DRIFT-01` (`rsx:check`, high) and the `rsx:health` "Class Override Drift" row already NAME the missing members - **the document is not the detector, it is the explanation**: what the members are for, why the copy needs them, and what breaks silently without them. Propagation is **highly recommended, not optional**; the holder may decide their override keeps its old behavior, but that must be a decision rather than something that happened to them.
+
+The likely-overridden set, named so the trigger is mechanical:
+
+    File_Attachment_Model    File_Storage_Model    User_Model
+    Login_User_Model         Site_Model            Portal_User_Model
+
+plus any framework class the reference app itself overrides - any `rsx/` file whose class also exists under `system/app/RSpade/Core`, i.e. one carrying a `.php.upstream` sidecar. **The template overrides none of them today** (the seams - `Staff_Authorizable`, `Portal_Authorizable`, `fetch()`, `#[OnEvent]` - are the sanctioned way to attach policy, and beat a clone); when it starts, that class joins the set and the charter's list is updated with it.
+
+**The counter-example is the limit.** A change to an internal nobody plausibly overrides - the manifest scanner, a build helper, the bundle compiler - still gets NO document. **Likelihood of override is the test, not possibility**: somebody who cloned the manifest scanner has diverged past what a document repairs; somebody who cloned `File_Attachment_Model` to attach one visibility rule is an ordinary developer following a documented pattern, and is who this is for.
+
+Such a document is Category 2, its ACTION REQUIRED names the members literally (`protected $appends`, `getIsDocumentAttribute()`, `should_show_text_preview()`), points at the framework file by path, and names the symptoms of skipping it. Worked example: `breaking_changes/attachment_model_text_preview_09_08.txt`.
 
 ### `IF YOU DO NOTHING:` is mandatory
 
@@ -116,6 +140,9 @@ Worked examples:
 | A deleted or re-signatured API that call sites depend on | **Yes** | Call sites must be FOUND and converted; a production path nobody exercises locally fatals otherwise. |
 | A data migration leaving rows that need a human decision | **Yes** | Only the developer knows what those rows were meant to mean. |
 | A REQUESTED FEATURE whose implementation includes a template app UI | **Yes** (Category 3) | The engine arrives; the interface does not. Unusable in their app until ported. |
+| `File_Attachment_Model` gains members (`$appends`, accessors, a new predicate) | **Yes** (Category 2) | Fourth trigger - a likely-overridden class. List the members to re-clone. |
+| A likely-overridden model's INTERNAL body changes, declaring nothing new | **No** | Nothing for the copy to gain; the drift lint has nothing to report. |
+| An internal nobody plausibly overrides changes (manifest scanner, build helper) | **No** | Black box - test 2. Possibility of override is not likelihood. |
 
 **Format, naming and the three category structures are defined by the charter** - `system/app/RSpade/breaking_changes/CLAUDE.md`. Read it before writing; do not invent a shape. In short: `{feature}_{MM}_{DD}.txt`; **Category 1** = `/rsx/` template diff with exact copy-paste code (only when the fork BREAKS without it); **Category 2** = a PUBLIC API call-shape change whose body is **ACTION REQUIRED** (what downstream must audit in their OWN code), never a description of the core fix; **Category 3** = an owner-requested feature whose implementation includes a template UI - the engine ships automatically and the interface does not, so the document maps the reference implementation under `system/app/RSpade/resource/reference_app/` and asks the operator to port it into their own app's equivalent surface, on their own navigation and permission model. **Show the code** for 1 and 2 - a document a developer has to diff against is a document that failed. For 3, show the MAP, not a blind diff.
 

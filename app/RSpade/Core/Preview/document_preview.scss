@@ -1,3 +1,9 @@
+// A FRAMEWORK STYLESHEET REFERENCES NO CSS CUSTOM PROPERTY IT DOES NOT DEFINE. This component
+// is styled inside applications whose themes it cannot see, and an undefined var() invalidates
+// the WHOLE declaration silently - a `var(--bs-*)` colour paints nothing in any host that does
+// not bundle Bootstrap. There is no framework-tier token file to draw from, so colour is
+// INHERITED and surfaces are transparent: the page provides the text colour it already uses for
+// everything else, and that is correct in every host, dark mode included.
 .Document_Preview {
     display: block;
     width: 100%;
@@ -42,7 +48,8 @@
         margin-top: 16px;
         font-size: 15px;
         font-weight: 600;
-        color: var(--bs-secondary-color);
+        color: inherit;
+        opacity: 0.7;
     }
 
     &__state-name,

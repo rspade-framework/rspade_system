@@ -28,28 +28,30 @@ use Symfony\Component\Process\Process;
 /**
  * The RSX test runner.
  *
- * ONE process runs the suite by default: every selected class in this PHP process, in name
- * order, against the test database. That is the path every subset takes - a --group, a
- * --filter, a named class - and it is the path every environment takes that is not a
- * docker-capable RSpade development container.
+ * EVERY INVOCATION RUNS IN DOCKER CONTAINERS WHEN THE GATE PASSES - both suites, any
+ * selector, one class or the whole run. The run is handed to the node orchestrator
+ * (system/bin/rsx-testd/orchestrator.js): it builds the test image, serves a unix-socket
+ * work queue, and starts N sibling containers that each run THIS SAME COMMAND in worker
+ * mode, N never exceeding the number of classes selected. A container is a complete
+ * isolated environment - its own mysqld on a RAM datadir, its own redis, its own rsx-lockd,
+ * its own filesystem and flag files - so the isolation hazards of an in-process parallel
+ * runner (shared database, shared locks, the box-global maintenance flag) do not exist by
+ * construction. A single class in a single container is not parallelism, it is CONSISTENCY:
+ * one execution path, one set of semantics to debug.
  *
- * THE FULL FRAMEWORK SUITE ON A DEV BOX RUNS IN PARALLEL DOCKER CONTAINERS. When this is a
- * development container, the docker daemon answers, --framework was asked for with no
- * narrowing selector, and --sequential was not passed, the run is handed to the node
- * orchestrator (system/bin/rsx-testd/orchestrator.js): it builds the test image, serves a
- * unix-socket work queue, and starts N sibling containers that each run THIS SAME COMMAND in
- * worker mode. A container is a complete isolated environment - its own mysqld on a RAM
- * datadir, its own redis, its own rsx-lockd, its own filesystem and flag files - so the
- * isolation hazards of an in-process parallel runner (shared database, shared locks, the
- * box-global maintenance flag) do not exist by construction.
+ * THE GATE IS ABOUT THE BOX, NOT THE INVOCATION - docker_mode_gate_passes(): a development
+ * container, a daemon that answers, the dev image BUILT (every time, from cache - never a
+ * manual step), and a trivial container that actually runs. Any of those failing prints
+ * ONE line and the run continues SEQUENTIALLY in this process: every selected class here,
+ * in name order, against this box's test database. --sequential forces that path anywhere.
  *
  * PHP owns discovery, the singleton flock, running tests and the printed output; node owns
  * the docker lifecycle and the queue. Nothing is implemented twice: the worker sends the
  * same per-class record the sequential loop would have printed, and merge_and_report()
  * prints it through the SAME helpers the sequential loop prints through.
  *
- * --sequential forces the single-process path anywhere. --workers overrides the container
- * count. Mechanics of the docker side: system/bin/rsx-testd/CLAUDE.md.
+ * --workers overrides the container count. Mechanics of the docker side:
+ * system/bin/rsx-testd/CLAUDE.md; the operator's view: rsx:man testing.
  */
 class Rsx_Test_Command extends FrameworkDeveloperCommand
 {
@@ -99,12 +101,15 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     const ORCHESTRATOR_TAIL_LINES = 20;
 
     /**
-     * Where a full-suite run records its outcome, keyed by the manifest build key
-     * (storage/<dir>/framework_<build_key>.json). The key is the hash of every scanned
-     * source file, so an identical key means identical code: the recorded outcome IS the
-     * outcome that code would produce again, pass or fail, and a second full run under the
-     * same key replays the record instead of spending minutes re-proving it. Any edit to a
-     * scanned file changes the key and the next run is live. rsx:clean wipes rsx-tmp.
+     * Where a docker run records its outcome, keyed by the code state AND by what was run
+     * (storage/<dir>/<suite>_<build_key>_<selector_key>.json). The build key is the hash of
+     * every scanned source file plus the environment fingerprint, so an identical key means
+     * identical code: the recorded outcome IS the outcome that code would produce again,
+     * pass or fail, and a second run under the same key replays the record instead of
+     * re-proving it. The selector key is the suite plus the normalised class list, so a
+     * SUBSET's verdict replays only for that same subset and can never stand in for the
+     * suite. Any edit to a scanned file changes the build key and the next run is live.
+     * rsx:clean wipes rsx-tmp.
      */
     const RESULTS_CACHE_DIR = 'rsx-tmp/test-results';
 
@@ -253,17 +258,30 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             return 0;
         }
 
-        // DOCKER MODE. The full framework suite on a docker-capable development box runs as
-        // N sibling containers instead of one process. It is decided BEFORE the test database
-        // is touched: every test runs inside a container against that container's own
-        // database, so provisioning this box's test database would be pure cost.
-        if ($this->docker_mode_gate_passes($specific_tests, $filters, $groups, $framework_only)) {
+        // DOCKER MODE. EVERY invocation goes to the containers when the gate passes: both
+        // suites, any selector, one class or the whole run. ONE execution path is the whole
+        // point - a subset that runs somewhere else is a subset with its own semantics to
+        // debug, and a single class in a single container is still the same semantics as
+        // the suite. It is decided BEFORE the test database is touched: every test runs
+        // inside a container against that container's own database, so provisioning this
+        // box's would be pure cost.
+        //
+        // The set of classes this invocation will actually run - every class-level selector
+        // (framework partition, --group, specific-class args, --filter, abstract skip)
+        // already applied, in stable name order. The docker path and the sequential loop
+        // iterate THIS SAME set, so which classes run is decided in exactly one place.
+        $selected = null;
+        if ($this->docker_mode_gate_passes()) {
             $selected = $this->discover_selected_classes($specific_tests, $filters, $groups, $framework_only);
             if ($selected === null) {
                 return 0;
             }
 
-            return $this->run_docker($selected, $filters);
+            // Nothing selected is not something to spend an image build and a container on;
+            // the sequential tail below says which suite came up empty and ends the run.
+            if (!empty($selected)) {
+                return $this->run_docker($selected, $filters, $framework_only);
+            }
         }
 
         // Swap to the test database for the whole run (airtight - dev DB never
@@ -272,14 +290,11 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             return 1;
         }
 
-        // The set of classes this invocation will actually run - every class-level
-        // selector (framework partition, --group, specific-class args, --filter,
-        // abstract skip) already applied, in stable name order. The docker path and the
-        // sequential loop iterate THIS SAME set, so which classes run is decided in
-        // exactly one place.
-        $selected = $this->discover_selected_classes($specific_tests, $filters, $groups, $framework_only);
         if ($selected === null) {
-            return 0;
+            $selected = $this->discover_selected_classes($specific_tests, $filters, $groups, $framework_only);
+            if ($selected === null) {
+                return 0;
+            }
         }
 
         // An application that ships no tests is not an error, and neither is one that keeps
@@ -1224,46 +1239,119 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     }
 
     /**
-     * The gate for the docker parallel runner. TRUE only when every condition holds; any
-     * "no" falls the whole invocation back to the single-process path, unchanged.
+     * THE GATE. Does this invocation run in docker containers? It asks about the BOX and
+     * about nothing else - not the suite, not the selector, not how many classes there are.
+     * Every invocation the gate passes for is dispatched, because one execution path is the
+     * whole point of having one.
      *
-     *   - --framework with NO narrowing selector (the WHOLE framework suite - a subset is
-     *     never worth an image build and N container boots, and the containers only carry
-     *     the framework's own environment),
-     *   - not --sequential,
-     *   - an RSpade DEVELOPMENT container (/.rspade_container_dev) - the only place the
-     *     nested docker daemon and the shipped dev image exist,
-     *   - a docker daemon that answers.
+     * Four checks, evaluated once per invocation, in this order:
      *
-     * @param array $specific_tests
-     * @param array $filters
-     * @param array $groups
-     * @param bool $framework_only
+     *   1. an RSpade DEVELOPMENT container (/.rspade_container_dev) - the only place the
+     *      nested docker daemon and the shipped dev image exist,
+     *   2. a docker daemon that answers (`docker info`),
+     *   3. the shipped dev image BUILT, every invocation, by the shipped build.sh - a cached
+     *      docker build, instant when nothing changed, and the only guarantee that the
+     *      image matches the checkout,
+     *   4. a trivial container that actually RUNS from it. This is the check the first
+     *      three cannot make: runc, the cgroup mount and the network namespace are what
+     *      break under nested docker, and a socket that answers proves none of them.
+     *
+     * Any check that fails prints ONE line naming it and the run continues SEQUENTIALLY.
+     * That is never an error - a box without nested docker still runs its tests.
+     *
+     * --sequential is the EXPLICIT escape hatch and is not a gate check: it is the operator
+     * saying so, and it prints nothing.
+     *
      * @return bool
      */
-    protected function docker_mode_gate_passes(
-        array $specific_tests,
-        array $filters,
-        array $groups,
-        bool $framework_only
-    ): bool {
-        if (!$framework_only) {
-            return false;
-        }
-
+    protected function docker_mode_gate_passes(): bool
+    {
         if ($this->option('sequential')) {
             return false;
         }
 
-        if ($specific_tests || $filters || $groups) {
+        $reason = self::evaluate_docker_gate($this->docker_gate_probes());
+
+        if ($reason !== null) {
+            $this->line('Docker test mode off: ' . $reason . '; running sequentially (rsx:man testing).');
+            $this->newLine();
+
             return false;
         }
 
-        if (!Rsx::is_rspade_dev_container()) {
-            return false;
+        return true;
+    }
+
+    /**
+     * The shipped command that builds the development image. Run by the gate on EVERY
+     * invocation: docker builds it from cache, so an unchanged image costs nothing and a
+     * changed Dockerfile is picked up without anybody remembering to rebuild.
+     */
+    const DEV_IMAGE_BUILD_COMMAND = 'bash system/app/RSpade/resource/docker/build.sh dev';
+
+    /**
+     * The gate's decision, separated from the probes it asks. Returns NULL when docker mode
+     * is on, or the ONE line naming the check that closed it.
+     *
+     * THE DEV IMAGE IS BUILT EVERY TIME, never checked-then-maybe-built. The build is a
+     * cached docker build, instant when nothing under resource/docker changed, and it is the
+     * only way the image is ever guaranteed to match the checkout: a "present and
+     * version-matched" probe can pass on an image whose entrypoint or supervisor confs are a
+     * release old. Building is the check. It is never a manual step (owner ruling 2026-09-08).
+     *
+     * The probes are injected so the decision table can be asserted without a docker daemon
+     * being present, absent, stale or slow (tests/test_runner/php/Docker_Dispatch_Test.php).
+     *
+     * @param array<string,callable> $probes dev_container, docker_info, build_dev_image,
+     *                                       dev_image ('ok'|'missing'|'stale'), trivial_run
+     * @return string|null
+     */
+    public static function evaluate_docker_gate(array $probes): ?string
+    {
+        if (!$probes['dev_container']()) {
+            return 'this is not an RSpade development container (/.rspade_container_dev)';
         }
 
-        return $this->docker_is_usable();
+        if (!$probes['docker_info']()) {
+            return 'the docker daemon does not answer (docker info)';
+        }
+
+        if (!$probes['build_dev_image']()) {
+            return 'the development image ' . self::DEV_IMAGE . ' could not be built (' . self::DEV_IMAGE_BUILD_COMMAND . ')';
+        }
+
+        // After a successful build the image must be the one the checkout declares; a
+        // mismatch here means build.sh tagged something else, which is a defect to see.
+        $state = (string) $probes['dev_image']();
+        if ($state !== 'ok') {
+            return 'the development image ' . self::DEV_IMAGE . ' is ' . $state . ' after building it';
+        }
+
+        if (!$probes['trivial_run']()) {
+            return 'the docker daemon cannot RUN a container here (docker run --rm ' . self::DEV_IMAGE . ' true)';
+        }
+
+        return null;
+    }
+
+    /**
+     * The real probes the gate asks on this box.
+     *
+     * @return array<string,callable>
+     */
+    protected function docker_gate_probes(): array
+    {
+        return [
+            'dev_container' => fn (): bool => Rsx::is_rspade_dev_container(),
+            'docker_info' => fn (): bool => $this->docker_is_usable(),
+            'dev_image' => fn (): string => $this->dev_image_state(),
+            'build_dev_image' => function (): bool {
+                $this->line('Building test runner docker images');
+
+                return $this->build_dev_image();
+            },
+            'trivial_run' => fn (): bool => $this->dev_image_runs_a_container(),
+        ];
     }
 
     /**
@@ -1279,6 +1367,120 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $output = [];
         $exit_code = 0;
         exec_safe('docker info > /dev/null 2>&1', $output, $exit_code);
+
+        return $exit_code === 0;
+    }
+
+    /**
+     * 'ok', 'missing' or 'stale' for the shipped development image the test image is FROM.
+     *
+     * STALENESS IS A REFUSAL, not a nicety. A test image built on top of a stale base builds
+     * SUCCESSFULLY and every container then runs a PHP the framework is not written for. So
+     * the image's own PHP major.minor is probed (with the ENTRYPOINT REPLACED, so the answer
+     * is the only output - the dev entrypoint narrates a whole environment bring-up) and
+     * compared against the PHP_VERSION the shipped Dockerfile declares TODAY.
+     *
+     * @return string
+     */
+    protected function dev_image_state(): string
+    {
+        $output = [];
+        $exit_code = 0;
+        exec_safe('docker image inspect ' . escapeshellarg(self::DEV_IMAGE) . ' > /dev/null 2>&1', $output, $exit_code);
+        if ($exit_code !== 0) {
+            return 'missing';
+        }
+
+        $expected = self::dev_dockerfile_php_version();
+
+        $output = [];
+        $exit_code = 0;
+        exec_safe(
+            'docker run --rm --entrypoint php ' . escapeshellarg(self::DEV_IMAGE)
+            . ' -r ' . escapeshellarg('echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;') . ' 2>/dev/null',
+            $output,
+            $exit_code
+        );
+
+        if ($exit_code !== 0 || trim(implode('', $output)) !== $expected) {
+            return 'stale';
+        }
+
+        return 'ok';
+    }
+
+    /**
+     * The PHP major.minor the shipped development Dockerfile installs. It declares it once
+     * as PHP_VERSION and spells every package as php${PHP_VERSION}; a literal php<X.Y> is
+     * read too, so this keeps answering if that ever changes. ONE declaration, read from the
+     * file - never pinned a second time here.
+     *
+     * @return string
+     */
+    protected static function dev_dockerfile_php_version(): string
+    {
+        $path = base_path('app/RSpade/resource/docker/Dockerfile');
+        $contents = is_file($path) ? (string) file_get_contents($path) : '';
+
+        if (preg_match('/PHP_VERSION\s*=\s*"?(\d+\.\d+)/', $contents, $m)) {
+            return $m[1];
+        }
+
+        if (preg_match('/\bphp(\d+\.\d+)\b/', $contents, $m)) {
+            return $m[1];
+        }
+
+        shouldnt_happen('Could not read PHP_VERSION out of the shipped development Dockerfile: ' . $path);
+    }
+
+    /**
+     * Build the shipped development image, streaming the build log. Minutes long, and the
+     * gate has already said so. Its failure is not fatal to the run: the gate reports it as
+     * one line and the suite runs sequentially.
+     *
+     * @return bool
+     */
+    protected function build_dev_image(): bool
+    {
+        $script = base_path('app/RSpade/resource/docker/build.sh');
+
+        $process = new Process(['bash', $script, 'dev']);
+        // NO TIMEOUT (framework mandate): an image build takes as long as it takes.
+        $process->setTimeout(null);
+        $process->setWorkingDirectory(base_path());
+
+        // SILENT ON SUCCESS. The one line the operator sees is "Building test runner docker
+        // images", printed once by the caller for both images; a build that worked has
+        // nothing to add. A build that failed prints what it said, whole.
+        $process->run();
+
+        if ($process->getExitCode() !== 0) {
+            $this->line(rtrim($process->getOutput() . $process->getErrorOutput()));
+
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * Does a trivial container actually RUN from the dev image? This is the check `docker
+     * info` cannot make: nested docker breaks in runc, in the cgroup mount and in the
+     * network namespace, all of which are exercised by starting one container and none of
+     * which are exercised by talking to the socket. The entrypoint is replaced for the same
+     * reason the PHP probe replaces it - a bring-up narration is not an answer.
+     *
+     * @return bool
+     */
+    protected function dev_image_runs_a_container(): bool
+    {
+        $output = [];
+        $exit_code = 0;
+        exec_safe(
+            'docker run --rm --entrypoint true ' . escapeshellarg(self::DEV_IMAGE) . ' > /dev/null 2>&1',
+            $output,
+            $exit_code
+        );
 
         return $exit_code === 0;
     }
@@ -1343,21 +1545,29 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * @param array $selected select_test_classes() output
      * @param array $filters --filter set (applied per-method when merging, exactly as the
      *                        sequential loop does at print time)
+     * @param bool $framework_only Which suite was selected - it rides to the worker so a
+     *                             container's own header names the suite it is running
      * @return int Exit code (0 all passed, 1 any failure or an infrastructure failure)
      */
-    protected function run_docker(array $selected, array $filters): int
+    protected function run_docker(array $selected, array $filters, bool $framework_only): int
     {
-        // RESULT CACHE. The build key names the code state; a record under it is this
-        // exact code's verdict. A hit replays through the one printer, so the output is the
+        $suite = $framework_only ? 'framework' : 'application';
+
+        // RESULT CACHE. The build key names the code state and the selector names WHAT was
+        // run; a record under both is this exact code's verdict for this exact set of
+        // classes, so a subset verdict replays only for the same subset and never stands in
+        // for the whole suite. A hit replays through the one printer, so the output is the
         // live run's output, and the exit code is the live run's exit code.
         $build_key = self::current_build_key();
-        $cache_path = self::results_cache_path($build_key);
-        $cached = self::read_cached_results($cache_path, $build_key);
+        $selector_key = self::selector_key($suite, $selected);
+        $cache_path = self::results_cache_path($suite, $build_key, $selector_key);
+        $cached = self::read_cached_results($cache_path, $build_key, $selector_key);
         if ($cached !== null) {
             $this->info('Returning cached test results for build ' . $build_key . ' (manifest build key + environment fingerprint) from ' . $cache_path);
-            $this->line('  recorded ' . $cached['recorded_at'] . ' by run ' . $cached['run_dir']
+            $this->line('  ' . count($selected) . ' ' . $suite . ' class(es), recorded ' . $cached['recorded_at']
+                . ' by run ' . $cached['run_dir']
                 . '; no scanned file, script, node package or docker file has changed since. Edit one, or delete the'
-                . ' cache file, to run the suite again.');
+                . ' cache file, to run them again.');
             $this->newLine();
 
             return $this->report_records($cached['by_class'], $selected, $filters);
@@ -1404,6 +1614,16 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             '--dev-image=' . self::DEV_IMAGE,
             // The docker BUILD CONTEXT is the project root, one level above base_path().
             '--project-root=' . dirname(base_path()),
+            // Which of the two busy trees the generated Dockerfile copies LAST. A framework
+            // developer edits system/app/RSpade all day and rsx/ rarely; a downstream
+            // developer does the exact opposite, and the busiest tree belongs last so the
+            // fewest layers are invalidated by an edit. The box knows; node does not.
+            '--framework-developer=' . (config('rsx.code_quality.is_framework_developer', false) ? 'true' : 'false'),
+            // Which suite the containers are running. Nothing about the work depends on it
+            // (a worker runs whatever class the queue hands it), but a worker log that says
+            // it is running the framework suite while it runs the application one is a log
+            // that lies.
+            '--suite=' . $suite,
         ]);
 
         $process = new Process($command);
@@ -1443,7 +1663,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
 
         // Pass or fail, the verdict for this code state is recorded; an infrastructure
         // failure never reaches here, so a missing record always means "not yet run".
-        self::write_cached_results($cache_path, $build_key, $run_dir, $by_class, $exit_code);
+        self::write_cached_results($cache_path, $build_key, $selector_key, $run_dir, $by_class, $exit_code);
 
         return $exit_code;
     }
@@ -1488,14 +1708,41 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     }
 
     /**
-     * Where the full-suite verdict for a build key is recorded.
+     * A fingerprint of WHAT was run: the suite plus the resolved class list, normalised
+     * (sorted, deduplicated) so that the same set selected two different ways - a --group
+     * and the class names it expands to - is one key.
      *
-     * @param string $build_key
+     * The class LIST is the selector, not the flags that produced it: the flags are an
+     * instruction for choosing classes and the list is the choice. A --filter is absent on
+     * purpose - it narrows METHODS at print time, out of a record that holds every method's
+     * result, so two runs of one class under different filters share a verdict correctly.
+     *
+     * @param string $suite 'framework' or 'application'
+     * @param array $selected select_test_classes() output
      * @return string
      */
-    protected static function results_cache_path(string $build_key): string
+    protected static function selector_key(string $suite, array $selected): string
     {
-        return storage_path(self::RESULTS_CACHE_DIR . '/framework_' . $build_key . '.json');
+        $names = [];
+        foreach ($selected as $sel) {
+            $names[$sel['fqcn']] = true;
+        }
+        ksort($names);
+
+        return substr(sha1($suite . "\n" . implode("\n", array_keys($names))), 0, 16);
+    }
+
+    /**
+     * Where the verdict for one (suite, code state, class set) is recorded.
+     *
+     * @param string $suite
+     * @param string $build_key
+     * @param string $selector_key
+     * @return string
+     */
+    protected static function results_cache_path(string $suite, string $build_key, string $selector_key): string
+    {
+        return storage_path(self::RESULTS_CACHE_DIR . '/' . $suite . '_' . $build_key . '_' . $selector_key . '.json');
     }
 
     /**
@@ -1505,16 +1752,24 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      *
      * @param string $cache_path
      * @param string $build_key
-     * @return array|null {build_key, recorded_at, run_dir, exit_code, by_class}
+     * @param string $selector_key
+     * @return array|null {build_key, selector_key, recorded_at, run_dir, exit_code, by_class}
      */
-    protected static function read_cached_results(string $cache_path, string $build_key): ?array
+    protected static function read_cached_results(string $cache_path, string $build_key, string $selector_key): ?array
     {
         if (!is_file($cache_path)) {
             return null;
         }
 
         $data = json_decode((string) file_get_contents($cache_path), true);
-        if (!is_array($data) || ($data['build_key'] ?? null) !== $build_key || !isset($data['by_class'], $data['exit_code'])) {
+        if (!is_array($data) || !isset($data['by_class'], $data['exit_code'])) {
+            return null;
+        }
+
+        // Both halves are re-checked even though the FILENAME carries both: a record is only
+        // ever a verdict for the code state AND the class set it was recorded for, and a file
+        // that arrived by any other route than this writer is not that verdict.
+        if (($data['build_key'] ?? null) !== $build_key || ($data['selector_key'] ?? null) !== $selector_key) {
             return null;
         }
 
@@ -1526,17 +1781,19 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      *
      * @param string $cache_path
      * @param string $build_key
+     * @param string $selector_key Which suite and which classes this verdict is for
      * @param string $run_dir     The live run's directory (worker logs live there)
      * @param array  $by_class    fqcn => the per-class record merge reads
      * @param int    $exit_code   What the run exited with (0 all passed, 1 any failure)
      * @return void
      */
-    protected static function write_cached_results(string $cache_path, string $build_key, string $run_dir, array $by_class, int $exit_code): void
+    protected static function write_cached_results(string $cache_path, string $build_key, string $selector_key, string $run_dir, array $by_class, int $exit_code): void
     {
         ensure_directory(dirname($cache_path));
 
         file_put_contents($cache_path, json_encode([
             'build_key' => $build_key,
+            'selector_key' => $selector_key,
             'recorded_at' => Rsx_Time::now_iso(),
             'run_dir' => $run_dir,
             'exit_code' => $exit_code,

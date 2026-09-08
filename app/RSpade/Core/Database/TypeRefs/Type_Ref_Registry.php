@@ -75,6 +75,7 @@ class Type_Ref_Registry
     public static function class_to_id(string $class_name): int
     {
         static::_ensure_loaded();
+        $class_name = static::_normalize_class_name($class_name);
 
         // Check if already in map
         if (isset(static::$map_class_to_id[$class_name])) {
@@ -140,7 +141,7 @@ class Type_Ref_Registry
     {
         static::_ensure_loaded();
 
-        return static::$map_class_to_id[$class_name] ?? null;
+        return static::$map_class_to_id[static::_normalize_class_name($class_name)] ?? null;
     }
 
     /**
@@ -152,7 +153,7 @@ class Type_Ref_Registry
     public static function has_class(string $class_name): bool
     {
         static::_ensure_loaded();
-        return isset(static::$map_class_to_id[$class_name]);
+        return isset(static::$map_class_to_id[static::_normalize_class_name($class_name)]);
     }
 
     /**
@@ -292,7 +293,7 @@ class Type_Ref_Registry
      */
     public static function class_resolves(string $class_name): bool
     {
-        return static::_class_resolves($class_name);
+        return static::_class_resolves(static::_normalize_class_name($class_name));
     }
 
     /**
@@ -457,6 +458,31 @@ class Type_Ref_Registry
      * @param string $class_name Simple class name (e.g., "Contact_Model")
      * @return string|null FQCN or null if not found in manifest
      */
+    /**
+     * Accept either spelling of a model and answer with the one the registry uses.
+     *
+     * A type ref identifies a model by its SHORT name - the stored rows carry no namespace at
+     * all, because in RSpade a model's identity is its class name and where it happens to live
+     * is not part of that. But `Model::class` is the natural way to name a class in PHP, it is
+     * what an IDE completes and a rename refactor follows, and it evaluates to the FULLY
+     * QUALIFIED name. Refusing it made the correct-looking spelling the broken one.
+     *
+     * So both are accepted here and normalized to the short name. `Manifest::_normalize_class_name()`
+     * is the framework's existing answer to this exact question (it strips a leading backslash
+     * and takes the last segment); this is that rule reaching the type-ref surface, not a
+     * second implementation of it.
+     *
+     * A name with no backslash is returned untouched, so the common path costs one str_contains.
+     */
+    protected static function _normalize_class_name(string $class_name): string
+    {
+        if (!str_contains($class_name, '\\')) {
+            return $class_name;
+        }
+
+        return Manifest::_normalize_class_name($class_name);
+    }
+
     protected static function _resolve_fqcn(string $class_name): ?string
     {
         try {

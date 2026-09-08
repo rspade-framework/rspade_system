@@ -45,3 +45,6 @@
 
 Lint coverage for POLY-01 (the manifest-fatal string-morph rule) lives in the
 `code_quality` concern: `Morph_String_Pattern_Rule_Test`.
+| POLY-SPELL-01 | Every registry lookup (`class_to_id`, `find_id_by_class_name`, `has_class`, `class_resolves`) accepts the short name, `Model::class`, a leading backslash and a former namespace, and answers the same id; `id_to_class` answers the short name | php | four spellings of `Site_Model` | one id | implemented | 2026-09-08 |
+| POLY-SPELL-02 | No stored `_type_refs` row carries a namespace | php | `_type_refs` scan | 0 rows with a backslash | implemented | 2026-09-08 |
+| POLY-SPELL-03 | A genuinely unknown class is refused whatever the spelling | php | a namespaced nonexistent name | throws | implemented | 2026-09-08 |

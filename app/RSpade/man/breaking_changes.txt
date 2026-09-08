@@ -23,7 +23,7 @@ DESCRIPTION
     or `git log -- system/`.
 
     A breaking-changes document is published ONLY when YOU must change code YOU
-    WROTE. Three kinds qualify:
+    WROTE. Four kinds qualify:
 
         1. `/rsx/` template diffs - but only where your fork BREAKS or loses a
            documented capability without the change. Your `/rsx/` diverging from
@@ -47,6 +47,24 @@ DESCRIPTION
            and asks you to port it onto your application's own navigation,
            permissions and design system. It is a map and an offer, not a diff
            to paste blindly.
+
+        4. A change to a framework class you are LIKELY to have CLASS-OVERRIDDEN
+           - a framework model in particular - that adds or alters members your
+           copy should have. An override is a copy-and-replace, not a subclass
+           (`rsx:man class_override`): your file is served and ours is archived
+           beside it as `.php.upstream`, so the improvement reaches your disk and
+           none of your users, with nothing thrown to tell you.
+
+           `rsx:check` (CLASS-OVERRIDE-DRIFT-01) and the `rsx:health` "Class
+           Override Drift" row NAME the members you are missing. The document is
+           what tells you what they are for, why your copy needs them, and what
+           breaks silently if you skip them. Propagating them is HIGHLY
+           RECOMMENDED, not mandatory - you may decide your override should keep
+           its own behavior, but make that a decision rather than an accident.
+           It is also the moment to ask whether the override still needs to
+           exist: if it is there only to ATTACH policy, the seams
+           (`Staff_Authorizable`, `portal_can_read()`, `fetch()`, `#[OnEvent]`)
+           keep receiving framework changes and a clone does not.
 
     Each is a dated plain-text document in the framework's
     `app/RSpade/breaking_changes/` directory, telling you exactly what to check,

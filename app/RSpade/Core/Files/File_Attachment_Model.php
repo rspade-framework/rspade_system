@@ -35,8 +35,8 @@ use App\RSpade\Core\Time\Rsx_Time;
  * 2 = animated_image (gif, webp with animation)
  * 3 = video (mp4, webm, avi, etc.)
  * 4 = archive (zip, tar, rar, etc.)
- * 5 = text (txt, md, etc.)
- * 6 = document (pdf, doc, xls, etc.)
+ * 5 = text - a valid enum value that nothing assigns: text/* classifies as document
+ * 6 = document (pdf, doc, xls, txt, md, etc.)
  * 7 = other (anything else)
  *
  * The framework will add more sophisticated enum support later, but this
@@ -129,6 +129,27 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
      * an app states a real policy by overriding the pair, which beats the trait.
      */
     use Staff_Authorizable;
+
+    /**
+     * DERIVED PROPERTIES - computed here, serialized into toArray() and therefore present on the
+     * JS record after Model.fetch(), with no column behind any of them.
+     *
+     * THIS IS WHY THEY ARE DECLARED RATHER THAN COPIED. Recomputing "is this an image" at each
+     * call site is how the answers drift: "is this a document" is file_type_id ==
+     * FILE_TYPE_DOCUMENT here, and a page's JavaScript that spells it `!is_image && !is_video`
+     * silently counts archives and unknown files as documents. A derived property has ONE
+     * definition, in the model, and every reader gets that one.
+     *
+     * Laravel applies $appends inside parent::toArray(), which Rsx_Model_Abstract::toArray()
+     * calls first, so these ride the standard fetch() payload for free, and the JS model stub
+     * generator declares each name on Base_File_Attachment_Model as a read-only derived property.
+     *
+     * Each accessor delegates to the public predicate of the same name; the method is the
+     * definition and the property is only its serialization, so the two can never disagree.
+     *
+     * @var array
+     */
+    protected $appends = ['is_image', 'is_video', 'is_document', 'can_open_inline'];
 
     /**
      * Enum field definitions
@@ -453,6 +474,46 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
     }
 
     /**
+     * Should a reader be shown this file's EXTRACTED TEXT beside its preview?
+     *
+     * Extraction is not the question - that runs for everything it can, and the text stays
+     * searchable either way. This asks the narrower presentation question: is putting that
+     * text on screen, next to the document, worth the space?
+     *
+     * Three ways the answer is no:
+     *   - there is no extracted text yet (or extraction failed / is unsupported): nothing to show;
+     *   - the preview ALREADY IS the text (a .txt renders through Text_Viewer), so a text pane
+     *     beside it would show the same characters twice;
+     *   - the extraction is not legible to a human - a spreadsheet flattens to an undelimited
+     *     run of cell values with no rows, columns or headings.
+     *
+     * The last two are declared as mime globs in config('rsx.preview.text_preview_suppressed'),
+     * so an app narrows or widens the list without touching this method.
+     *
+     * ADVICE ABOUT DISPLAY, NEVER AUTHORIZATION: get_extracted_text() returns the text whatever
+     * this answers, because a caller may legitimately want it for something other than a text
+     * pane (a copy button, a search excerpt).
+     *
+     * @return bool
+     */
+    public function should_show_text_preview(): bool
+    {
+        if ((int) $this->get_extraction_status() !== Search_Index_Model::STATUS_EXTRACTED) {
+            return false;
+        }
+
+        $mime = $this->pipeline_mime();
+
+        foreach (config('rsx.preview.text_preview_suppressed', []) as $pattern) {
+            if (fnmatch($pattern, $mime)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
      * Check if this is an image file
      *
      * @return bool
@@ -480,6 +541,75 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
     public function is_document()
     {
         return $this->file_type_id == self::FILE_TYPE_DOCUMENT;
+    }
+
+    /**
+     * Accessor for the appended `is_image` property. Delegates - never re-tests.
+     *
+     * @return bool
+     */
+    public function getIsImageAttribute(): bool
+    {
+        return $this->is_image();
+    }
+
+    /**
+     * Accessor for the appended `is_video` property. Delegates - never re-tests.
+     *
+     * @return bool
+     */
+    public function getIsVideoAttribute(): bool
+    {
+        return $this->is_video();
+    }
+
+    /**
+     * Accessor for the appended `is_document` property. Delegates - never re-tests.
+     *
+     * @return bool
+     */
+    public function getIsDocumentAttribute(): bool
+    {
+        return $this->is_document();
+    }
+
+    /**
+     * Accessor for the appended `can_open_inline` property. Delegates - never re-tests.
+     *
+     * @return bool
+     */
+    public function getCanOpenInlineAttribute(): bool
+    {
+        return $this->can_open_inline();
+    }
+
+    /**
+     * Can a BROWSER display these bytes in a tab of its own, served inline?
+     *
+     * This is the question behind an "Open in Browser" affordance, and it is NOT the same
+     * question as "does this application have a preview for it". A .docx has a preview here -
+     * the render worker converts it to a PDF - but its own bytes in a browser tab produce a
+     * download prompt. So this consults the browser-native list in
+     * config('rsx.preview.browser_inline') rather than the viewer registry, and the two are
+     * expected to disagree.
+     *
+     * It cannot be answered from file_type_id either: text/* classifies as FILE_TYPE_DOCUMENT
+     * alongside Word and Excel, and those three do not agree about inline display. The pipeline
+     * mime is the only input fine-grained enough.
+     *
+     * @return bool
+     */
+    public function can_open_inline(): bool
+    {
+        $mime = $this->pipeline_mime();
+
+        foreach (config('rsx.preview.browser_inline', []) as $pattern) {
+            if (fnmatch($pattern, $mime)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -1543,9 +1673,14 @@ class File_Attachment_Model extends Rsx_Site_Model_Abstract
             return 4; // archive
         }
 
-        // Text files
+        // Text files are DOCUMENTS. They are previewable in their own right - Text_Viewer
+        // renders them as themselves - so classifying them apart from Word/PDF made every
+        // "is this previewable / is this a document" question answer wrongly for them, and
+        // put them on the generic-icon path. FILE_TYPE_TEXT remains a valid enum value for
+        // rows written before this ruling; nothing assigns it any more, and the migration
+        // reclassify_text_attachments_as_documents moves the existing rows across.
         if (strpos($mime_type, 'text/') === 0) {
-            return 5; // text
+            return 6; // document
         }
 
         // Documents (PDF, Office files)

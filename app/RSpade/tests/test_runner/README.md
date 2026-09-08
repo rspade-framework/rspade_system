@@ -26,7 +26,8 @@ the docker image build itself (asserted by running the suite, not by a unit test
 | `bin/rsx-testd/lib/queue_server.js` | the unix-socket work queue, the holder map, and the live per-class line printed as each result arrives |
 | `bin/rsx-testd/lib/protocol.js` | frame encode/decode and `MAX_FRAME_BYTES` |
 | `bin/rsx-testd/lib/docker.js` | the docker CLI wrappers |
-| `app/RSpade/resource/docker/Dockerfile.test` | the test image: a migrated database baked into the datadir template |
+| `bin/rsx-testd/lib/dockerfile.js` | the Dockerfile GENERATOR: the ordered COPY block, the optional snapshot COPY, and the symlink recreation |
+| `app/RSpade/resource/docker/Dockerfile.test` | the TEMPLATE the generator fills: three layers ending in a migrated database baked into the datadir template |
 | `app/RSpade/resource/docker/rsx-test-worker-run.sh` | the worker CMD: waits for the container's whole service roster before any test runs |
 
 ## Man pages

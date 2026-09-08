@@ -136,6 +136,69 @@ Exclude sensitive fields from toArray() and Ajax responses:
 
 Fields in $neverExport are automatically removed before JavaScript export.
 
+DERIVED PROPERTIES ($appends)
+
+A computed value that must reach JavaScript is DECLARED, not hand-copied onto a
+payload. The declaration is Laravel's $appends plus an accessor per name, and the
+accessor DELEGATES to the public method that defines the value:
+
+    COST. An accessor runs on every serialization - a single fetch, a batch
+    fetch, any toArray() over a list. One that reads other rows is therefore
+    paid once per record; keep such derivations to what a single-record view
+    needs, and let a list select the columns it wants rather than serialize.
+
+    protected $appends = ['party_id_formatted'];
+
+    public function party_id_formatted()
+    {
+        return '#PA' . str_pad($this->id, 3, '0', STR_PAD_LEFT);
+    }
+
+    public function getPartyIdFormattedAttribute(): string
+    {
+        return $this->party_id_formatted();
+    }
+
+The method is the definition; the property is only its serialization. Delegating is
+what keeps the two from drifting - never re-implement the computation in the accessor.
+
+The accessor is one of the two Laravel spellings the naming rule exempts
+(get{Property}Attribute / set{Property}Attribute); everything else stays
+underscore_case.
+
+WHERE THE VALUE SHOWS UP. Eloquent applies $appends inside parent::toArray(), which
+Rsx_Model_Abstract::toArray() calls first, so an appended value rides EVERY payload the
+model produces: fetch(), portal_fetch(), an embedded relationship, a list. That is the
+difference that matters. A key hand-added inside fetch():
+
+    $data = $party->toArray();
+    $data['party_id_formatted'] = $party->party_id_formatted();   // NOT the route
+
+lands on that ONE payload and on none of the others, has to be repeated in the portal
+twin, and nothing notices when a sibling model forgets it.
+
+WHAT THE JS SIDE GETS. The model stub generator reads $appends and declares each name on
+Base_<Model>_Model.js as a JSDoc @property - a documented, read-only surface an editor
+completes and a reader of the stub can see:
+
+     * @property {*} party_id_formatted - derived (appended by the PHP model); read-only
+
+It is declared as documentation rather than as a real class member on purpose: the ORM
+ASSIGNS a fetched record's fields onto the instance, and a class-level getter would
+shadow that assignment. A derived property is not a column, so field_length() answers
+null for it exactly as it does for any non-varchar, and it gets no enum treatment.
+
+Adding or removing a name changes the stub, so $appends is part of the model metadata
+hash that decides when a stub is regenerated.
+
+NAMING. The property name is the method name - no aliasing, at any layer (see NEVER
+EXPORT FIELDS above and the no-field-aliasing convention): one string in PHP, JSON and
+JavaScript, so grep finds every usage.
+
+WORKED EXAMPLES. system/app/RSpade/resource/reference_app/models/party_model.php
+(party_id_formatted) and App\RSpade\Core\Files\File_Attachment_Model
+(is_image / is_video / is_document / can_open_inline).
+
 UTILITY METHODS
 
 Static Methods:

@@ -176,17 +176,22 @@ php artisan rsx:test --framework --fresh      # force a full test-DB rebuild fir
 # Playwright tests are run by the Playwright tooling (see man custom_playwright_tests_spa).
 ```
 
-The FULL framework suite (`--framework` with no narrowing selector) runs in parallel
-docker containers automatically on a docker-capable development box, with identical
-output and exit code; `--sequential` forces the single-process runner anywhere. Any
-subset - a class, `--filter`, `--group` - always runs in this process. Mechanics:
-`system/bin/rsx-testd/CLAUDE.md`.
+**EVERY invocation runs in sibling docker containers when the gate passes** - either suite,
+any selector, one class included (one class is one container: the point is one execution
+path, not speed). Output and exit code are identical to a single-process run. **The gate
+asks about the BOX, never about the invocation**: a development container
+(`/.rspade_container_dev`), `docker info`, the dev image BUILT (every invocation, from cache,
+never a manual step) and version-matched, and a trivial container that actually runs. Any check
+failing prints ONE line and the run continues sequentially in this process - never an error.
+`--sequential` forces that path anywhere. Mechanics: `system/bin/rsx-testd/CLAUDE.md`; the
+gate and the host capabilities the nested daemon needs: `rsx:man testing`.
 
-**A full docker run is cached by manifest build key plus an environment fingerprint**
-(`storage/rsx-tmp/test-results/framework_<key>.json`; the fingerprint covers `system/bin`,
-`node_modules` and the docker resource dir): a second full run with no
-scanned file changed replays the recorded verdict, pass or fail, and says so. Mechanics:
-`system/bin/rsx-testd/CLAUDE.md`.
+**A docker run is cached by manifest build key + environment fingerprint + selector**
+(`storage/rsx-tmp/test-results/<suite>_<key>_<selector>.json`; the fingerprint covers
+`system/bin`, `node_modules` and the docker resource dir, the selector the suite and the
+normalised class list): a repeat of the SAME run with no scanned file changed replays the
+recorded verdict, pass or fail, and says so - and a subset's verdict is never replayed for
+the suite. Mechanics: `system/bin/rsx-testd/CLAUDE.md`.
 
 **The test trees are in the manifest only while `rsx:test` is running.** `app/RSpade/tests`,
 `app/RSpade/temp` and `rsx/tests` are appended to the scan list by

@@ -108,3 +108,15 @@ two invocation suppressors; no container, no DB, no process.
 | TRTR-11 | apply() is a no-op when the run renamed nothing | php | no observations | empty | implemented | 2026-09-01 |
 | TRTR-12 | The statement macro every migration passes through hands the SQL to the observer | php | register_query_transformer() source | `Type_Ref_Table_Rename::observe(` present | implemented | 2026-09-01 |
 | TRTR-13 | execute_migrations() resets at the start and applies the renames in the same run | php | method source | reset() + apply_type_ref_table_renames() present | implemented | 2026-09-01 |
+
+## Make_Migration_Whitelist_Location_Test (php)
+
+`make:migration:safe` records its whitelist entry BESIDE THE FILE IT AUTHORIZES. Every migration
+directory carries its own `.migration_whitelist` and the migrator reads the one next to each file,
+so the entry has to follow `--path`. A downstream field report measured the split: the file landed
+under `system/` and the entry in the application tree, where it authorized nothing and dirtied a
+tree the migration does not live in.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MIGRATE-WHITELIST-PATH | the entry lands in the directory --path names, and no other whitelist is touched | php | a real mint into a scratch dir under app/RSpade/temp | file + .migration_whitelist in that dir, entry names the file, app whitelist byte-identical | implemented | 2026-09-08 |

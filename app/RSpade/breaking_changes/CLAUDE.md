@@ -8,6 +8,10 @@ already did for them.
 
 Apply these three tests, in order. Any single "no" ends it - write no document.
 
+Then check the FOURTH TRIGGER below. It stands beside the three rather than inside them:
+it can require a document the three alone would not, because it asks about a copy of the
+framework the application is holding rather than about a call the application makes.
+
 ### Test 1 - the untouched fork
 
 **Take a developer who checked out the template app months ago and has never overridden a
@@ -43,6 +47,62 @@ application code CALLS and therefore depends on.
 
 Renamed internals, new daemons, faster builds, deleted private helpers, stricter lint rules,
 new optional features - none of these change a call shape an app wrote against.
+
+### The fourth trigger - a change to a LIKELY-OVERRIDDEN core class
+
+The three tests above ask whether the framework changed something an application CALLS.
+This trigger asks the other question: whether the framework changed something an
+application may be holding a FROZEN COPY of.
+
+**A change to a framework-provided model - or any other core class an application is
+LIKELY to class-override - ships a document whenever it ADDS OR ALTERS MEMBERS the
+override holder should propagate into their copy.**
+
+A class override in RSpade is a copy-and-replace, not a subclass (`rsx:man
+class_override`): the manifest serves the app's file and archives the framework's beside
+it as `.php.upstream`. So every improvement to that class reaches the holder's DISK and
+none of their users. The framework already NOTICES this - `CLASS-OVERRIDE-DRIFT-01`
+(`rsx:check`, high) and the `rsx:health` "Class Override Drift" row list every
+public/protected member the archived upstream declares and the override lacks. **The
+document is not the detector; it is the explanation.** The lint names the members, and
+only the document says WHAT they are for, WHY the copy needs them, and what breaks
+silently without them.
+
+Propagation is **HIGHLY RECOMMENDED, not optional** - the holder may decide their
+override should keep its old behavior, but that has to be a decision, not a thing that
+happened to them.
+
+**The likely-overridden set**, named so the trigger is mechanical rather than a judgment
+call each time:
+
+    File_Attachment_Model      File_Storage_Model
+    User_Model                 Login_User_Model
+    Site_Model                 Portal_User_Model
+
+plus **any framework class the reference app itself overrides** - any file in `rsx/`
+whose class also exists under `system/app/RSpade/Core`, which is exactly the set that
+carries a `.php.upstream` sidecar in a working tree. Check it rather than assuming - a
+`.php.upstream` sidecar anywhere under `system/app/RSpade/` is an override in force, and
+comparing the class names in `rsx/models/` against those under `system/app/RSpade/Core/`
+answers the same question on a clean tree.
+
+The template overrides NONE of them today (the seams - `Staff_Authorizable`,
+`Portal_Authorizable`, `fetch()`, `#[OnEvent]` - are the sanctioned way to attach
+policy, and they beat a clone). When it starts overriding one, that class joins the set
+and this paragraph is updated with it.
+
+**The counter-example is the whole limit of this trigger.** A change to an internal
+nobody plausibly overrides - the manifest scanner, a build helper, the bundle compiler,
+a dispatch step - gets NO document, exactly as Test 2 says. **Likelihood of override is
+the test, not possibility.** Somebody who cloned the manifest scanner has diverged from
+the framework in a way no document can repair; somebody who cloned
+`File_Attachment_Model` to attach one visibility rule is an ordinary developer following
+a documented pattern, and they are who this is for.
+
+Such a document is Category 2, and its ACTION REQUIRED section names the members
+literally - `protected $appends`, `getIsDocumentAttribute()`, `should_show_text_preview()` -
+points at the framework file by path, and names the symptoms of skipping it. The worked
+example in this directory is `attachment_model_text_preview_09_08.txt`.
 
 ### `IF YOU DO NOTHING:` is MANDATORY in every document
 
@@ -84,6 +144,8 @@ The line's presence is mechanical; its HONESTY is yours.
 | A deleted or re-signatured PUBLIC API | **Yes** (Cat. 2) | Call sites must be found and converted. |
 | A data migration leaving rows needing a human decision | **Yes** | Only they know what those rows meant. |
 | A REQUESTED FEATURE whose implementation includes a template app UI | **Yes** (Cat. 3) | The feature is not usable in their app until it is ported. |
+| `File_Attachment_Model` gains members (`$appends`, accessors, a predicate) | **Yes** (Cat. 2) | Likely-overridden class: list the members to re-clone. |
+| An internal nobody plausibly overrides changes (manifest scanner, build helper) | **No** | Black box, and possibility is not likelihood. |
 
 A borderline case is decided by writing the `IF YOU DO NOTHING:` line first. If the line is
 honest and concrete and about THEIR code, write the document; if writing it is a struggle,
@@ -153,6 +215,10 @@ or re-verify.
 
 An internal change with no call-shape consequence is not Category 2, however large. See
 Test 2.
+
+A change to a LIKELY-OVERRIDDEN core class is also Category 2, by the fourth trigger
+above, even when no call shape moved: the members are new, and the holder of a frozen
+copy has to put them there by hand.
 
 ### Category 3: a requested feature that includes a template implementation
 

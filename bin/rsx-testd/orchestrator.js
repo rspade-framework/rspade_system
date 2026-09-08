@@ -9,18 +9,20 @@
  *
  *     node system/bin/rsx-testd/orchestrator.js \
  *          --run-dir=<abs> --workers=N --image=rspade-test:latest \
- *          --dev-image=rspade/rspade-server-dev:latest --project-root=<abs>
+ *          --dev-image=rspade/rspade-server-dev:latest --project-root=<abs> \
+ *          --framework-developer=true|false --suite=framework|application
  *
- * The sequence: sweep leftover containers -> verify the dev image the test image is FROM ->
- * generate the build-context filter -> build the test image -> serve the work queue on a
- * unix socket -> start N containers that pull whole classes from it -> wait for every one of
- * them -> prune. Mechanics, in full: CLAUDE.md in this directory.
+ * The sequence: sweep leftover containers -> generate the build-context filter and the
+ * Dockerfile -> build the test image (the dev image it is FROM was verified, and built if
+ * need be, by the gate that decided to spawn this process) -> serve the
+ * work queue on a unix socket -> start N containers that pull whole classes from it -> wait
+ * for every one of them -> prune. Mechanics, in full: CLAUDE.md in this directory.
  *
  * EXIT CODE = "DID I PRODUCE results.jsonl". Zero whenever the run reached the point of
  * having a results file, INCLUDING a run in which a container died: a dead worker is a TEST
  * outcome, and PHP turns every class with no record into a FAIL naming it. Non-zero means
- * there is nothing to report at all - docker unusable, the sweep gave up, the dev image
- * missing or stale, the build failed, a container that could not be spawned.
+ * there is nothing to report at all - docker unusable, the sweep gave up, the build failed,
+ * a container that could not be spawned.
  *
  * @FILENAME-CONVENTION-EXCEPTION - Node.js daemon entry point
  */
@@ -30,6 +32,7 @@ const path = require('path');
 const { execFile } = require('child_process');
 
 const docker = require('./lib/docker.js');
+const dockerfile = require('./lib/dockerfile.js');
 const { Queue_Server } = require('./lib/queue_server.js');
 
 // The label every container this daemon starts carries, and the ONLY handle the zombie
@@ -100,7 +103,9 @@ function parse_argv(argv) {
         options[arg.slice(2, eq)] = arg.slice(eq + 1);
     }
 
-    for (const required of ['run-dir', 'workers', 'image', 'dev-image', 'project-root']) {
+    for (const required of [
+        'run-dir', 'workers', 'image', 'dev-image', 'project-root', 'framework-developer', 'suite',
+    ]) {
         if (!options[required]) {
             throw new Fatal('missing required argument --' + required + '=');
         }
@@ -112,6 +117,14 @@ function parse_argv(argv) {
         image: options.image,
         dev_image: options['dev-image'],
         project_root: options['project-root'],
+        // Decides which of the two busy trees is copied LAST, so that the one being edited
+        // invalidates the fewest layers. PHP reads it from
+        // config('rsx.code_quality.is_framework_developer') - the box knows, this does not.
+        framework_developer: options['framework-developer'] === 'true',
+        // 'framework' or 'application'. Passed straight to the worker so its own header
+        // names the suite it is running; nothing about the WORK depends on it, because a
+        // worker runs whatever class the queue hands it.
+        suite: options.suite,
     };
 }
 
@@ -173,69 +186,13 @@ async function sweep_wait_until_empty(include_stopped, deadline) {
 // =============================================================================
 
 /**
- * The test image is FROM the shipped development image, and this daemon never builds that
- * one - `bash system/app/RSpade/resource/docker/build.sh dev` does.
- *
- * A STALE DEV IMAGE IS WORSE THAN A MISSING ONE: a build on top of it succeeds and every
- * container then runs a PHP the framework is not written for, which surfaces as a scatter
- * of unrelated test failures nobody attributes to the image. So presence is only half the
- * check - the image's own PHP major.minor must match what the dev Dockerfile installs
- * TODAY, read out of that Dockerfile rather than pinned in a second place here.
+ * THE DEV IMAGE IS NOT CHECKED HERE. Building it is the THIRD CHECK of the gate in
+ * Rsx_Test_Command (every invocation, from cache; then version-matched), and
+ * the gate is what decided this process runs at all. Checking it a second time would be a
+ * second implementation of one rule - the defect this split exists to prevent. A hand
+ * invocation of this orchestrator against an absent base image fails loudly in `docker
+ * build` on the FROM line, which is the honest answer to running it out of order.
  */
-async function ensure_dev_image(dev_image, project_root) {
-    const build_hint = 'bash system/app/RSpade/resource/docker/build.sh dev';
-
-    if (!(await docker.image_exists(dev_image))) {
-        throw new Fatal(
-            'the development image ' + dev_image + ' is not present. Build it with: ' + build_hint
-        );
-    }
-
-    const expected = read_dockerfile_php_version(project_root);
-
-    const probe = await docker.run_capture(dev_image, 'php', [
-        '-r', 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;',
-    ]);
-
-    const actual = probe.stdout.trim();
-
-    if (probe.code !== 0 || actual !== expected) {
-        throw new Fatal(
-            'the development image ' + dev_image + ' is stale: it runs PHP "'
-            + (actual === '' ? '(no answer)' : actual) + '" but the shipped Dockerfile installs PHP '
-            + expected + '. Rebuild it with: ' + build_hint
-        );
-    }
-
-    log('dev image ' + dev_image + ' ok (PHP ' + actual + ')');
-}
-
-/**
- * The PHP major.minor the shipped dev Dockerfile installs. It declares it once as
- * PHP_VERSION and spells every package as php${PHP_VERSION}; a literal php<X.Y> is
- * accepted too, so this keeps reading the right answer if that ever changes.
- */
-function read_dockerfile_php_version(project_root) {
-    const dockerfile = path.join(project_root, 'system/app/RSpade/resource/docker/Dockerfile');
-
-    if (!fs.existsSync(dockerfile)) {
-        throw new Fatal('the shipped development Dockerfile is missing: ' + dockerfile);
-    }
-
-    const contents = fs.readFileSync(dockerfile, 'utf8');
-
-    const declared = contents.match(/PHP_VERSION\s*=\s*"?(\d+\.\d+)/);
-    if (declared) {
-        return declared[1];
-    }
-
-    const literal = contents.match(/\bphp(\d+\.\d+)\b/);
-    if (literal) {
-        return literal[1];
-    }
-
-    throw new Fatal('could not read the PHP version out of ' + dockerfile);
-}
 
 // =============================================================================
 // 3. THE GENERATED .dockerignore
@@ -254,7 +211,14 @@ function read_dockerfile_php_version(project_root) {
 function write_dockerignore(project_root) {
     const target = path.join(project_root, '.dockerignore');
 
-    const lines = ['.git', 'storage/', '/.env'];
+    // `**/.git` rather than `.git`: a bare pattern matches the ROOT one only, and the
+    // application tree carries its own repository - over a hundred megabytes of history that
+    // means nothing in an image and that changes with every commit, invalidating the very
+    // COPY layer the ordered block exists to keep warm.
+    // `/.dockerignore` excludes THIS file from the image. Docker keeps it out of the
+    // context on its own, but the generated Dockerfile enumerates the checkout's real
+    // top-level entries and would otherwise emit a COPY for a file that is not there.
+    const lines = ['**/.git', 'storage/', '/.env', '/.dockerignore'];
 
     const exclude_file = path.join(project_root, '.git/info/exclude');
     if (fs.existsSync(exclude_file)) {
@@ -308,22 +272,33 @@ function ensure_dockerignore_excluded(project_root) {
 // 4. THE BUILD
 // =============================================================================
 
-async function build_test_image(image, project_root) {
-    const dockerfile = path.join(project_root, 'system/app/RSpade/resource/docker/Dockerfile.test');
-    if (!fs.existsSync(dockerfile)) {
-        throw new Fatal('the test Dockerfile is missing: ' + dockerfile);
+async function build_test_image(options) {
+    const { image, project_root } = options;
+
+    // GENERATED per build, into the run directory: the ordered COPY block is a fact about
+    // this checkout and this .dockerignore, and the LAST two layers are ordered by which
+    // tree this box edits. The run directory is already outside git and outside the build
+    // context, and the newest few survive beside the worker logs for a post-mortem of
+    // exactly what was built.
+    let generated;
+    try {
+        generated = dockerfile.generate(
+            project_root,
+            path.join(options.run_dir, 'Dockerfile.test.generated'),
+            options.framework_developer
+        );
+    } catch (err) {
+        throw new Fatal('could not generate the test Dockerfile: ' + err.message);
     }
 
-    log('building ' + image);
-
-    const started = Date.now();
-    const code = await docker.build(dockerfile, image, project_root);
+    // Quiet: the build log lands beside the run and is printed only when the build failed.
+    const build_log = path.join(options.run_dir, 'image-build.log');
+    const code = await docker.build(generated, image, project_root, build_log);
 
     if (code !== 0) {
-        throw new Fatal('the test image build failed (see the build output above)');
+        process.stderr.write(fs.readFileSync(build_log, 'utf8'));
+        throw new Fatal('the test image build failed (log: ' + build_log + ')');
     }
-
-    log('build finished in ' + Math.round((Date.now() - started) / 1000) + 's');
 
     await tag_revision(image, project_root);
 }
@@ -405,7 +380,8 @@ async function run_workers(options, queue, run_id) {
             // worker, because the entrypoint only ever waited for redis and mysql.
             'bash', '/usr/local/bin/rsx-test-worker-run',
             String(n),
-            '/rsx-test-ipc/orchestrator.sock'
+            '/rsx-test-ipc/orchestrator.sock',
+            options.suite
         );
 
         let child;
@@ -541,12 +517,11 @@ async function main() {
     }
 
     await sweep_zombies();
-    await ensure_dev_image(options.dev_image, options.project_root);
 
     ensure_dockerignore_excluded(options.project_root);
     write_dockerignore(options.project_root);
     try {
-        await build_test_image(options.image, options.project_root);
+        await build_test_image(options);
     } finally {
         remove_dockerignore(options.project_root);
     }

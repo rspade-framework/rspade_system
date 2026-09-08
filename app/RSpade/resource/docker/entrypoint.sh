@@ -395,11 +395,26 @@ done
 # treating that as an initialised database would fail much later and much worse.
 if [ "$TARGET" = "dev" ]; then
     if [ ! -d /var/lib/mysql/mysql ]; then
-        template="/opt/rspade/mysql-datadir-template.tgz"
+        # TWO SPELLINGS, ONE TEMPLATE. The dev image ships a gzipped pristine
+        # datadir - written once at image build, read once on a first boot, so
+        # compressing it is free. The PARALLEL TEST image replaces it with a
+        # fully migrated one that is unpacked on EVERY container start, where
+        # gzip costs about two seconds of every worker's boot for a couple of
+        # hundred megabytes of layer the exporter compresses anyway - so that one
+        # is plain tar. `.tar` wins when both are present; the test image removes
+        # the `.tgz` so they never are.
+        template=""
+        for candidate in /opt/rspade/mysql-datadir-template.tar \
+                         /opt/rspade/mysql-datadir-template.tgz; do
+            if [ -f "$candidate" ]; then
+                template="$candidate"
+                break
+            fi
+        done
 
-        if [ ! -f "$template" ]; then
+        if [ -z "$template" ]; then
             die "The MySQL data directory at /var/lib/mysql is not initialised, and
-   the image's template ($template) is missing.
+   the image's template (/opt/rspade/mysql-datadir-template.tar or .tgz) is missing.
 
    This image was not built correctly. Rebuild it:
        bash system/app/RSpade/resource/docker/build.sh"
@@ -407,7 +422,9 @@ if [ "$TARGET" = "dev" ]; then
 
         say "First run: initialising the database in storage/mysql_data..."
         mkdir -p /var/lib/mysql
-        tar -xzf "$template" -C /var/lib/mysql \
+        # -xf, not -xzf: tar detects the compression itself, so one reader serves
+        # both spellings above.
+        tar -xf "$template" -C /var/lib/mysql \
             || die "Could not unpack the MySQL data directory template."
     fi
 

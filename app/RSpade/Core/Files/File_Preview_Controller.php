@@ -453,6 +453,12 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             // File_Storage_Model::RENDER_STATUS_* on this attachment's blob, or null when there is
             // no resident blob at all (an external attachment never materialized).
             'render_status_id' => $render_status,
+            // Whether a host should ALSO show this file's extracted text beside the preview.
+            // False for a file whose preview already IS its text (text/*) and for a spreadsheet,
+            // whose extraction is search fodder rather than something a person can read. A host
+            // that offers a text pane reads this instead of testing the extraction status itself,
+            // which is what kept .txt files showing the same characters twice.
+            'should_show_text_preview' => $attachment->should_show_text_preview(),
             'urls' => [
                 'rendition' => $rendition_url,
                 'inline' => $attachment->get_url(),
@@ -529,20 +535,27 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // A degraded upload has no readable content at all - answer error without consulting the
         // index, which for unparseable bytes would report a text-free extraction as 'available'.
         if ($attachment->preview_unavailable) {
-            return ['status' => 'error', 'text' => null];
+            return ['status' => 'error', 'text' => null, 'should_show_text_preview' => false];
         }
 
         $status_id = $attachment->get_extraction_status();
+
+        // Carried on this payload as well as get_preview_info's so a caller that has ALREADY
+        // fetched the text does not need a second round trip to learn whether to display it.
+        // It is advice about presentation, never authorization: the text itself is returned
+        // whatever this says, because a caller may legitimately want it for something other
+        // than a text pane (a copy button, a search excerpt).
+        $should_show = $attachment->should_show_text_preview();
 
         // get_extracted_text() is called ONLY on the EXTRACTED branch: it routes through
         // resolve_storage(), which materializes external bytes, and there is nothing to read in
         // any other state. Text may be up to config('rsx.search.max_text_bytes') and is NOT
         // truncated here - the component decides how to present it.
         return match ($status_id) {
-            Search_Index_Model::STATUS_EXTRACTED => ['status' => 'available', 'text' => (string) $attachment->get_extracted_text()],
-            Search_Index_Model::STATUS_FAILED => ['status' => 'error', 'text' => null],
-            Search_Index_Model::STATUS_UNSUPPORTED => ['status' => 'unsupported', 'text' => null],
-            default => ['status' => 'pending', 'text' => null],
+            Search_Index_Model::STATUS_EXTRACTED => ['status' => 'available', 'text' => (string) $attachment->get_extracted_text(), 'should_show_text_preview' => $should_show],
+            Search_Index_Model::STATUS_FAILED => ['status' => 'error', 'text' => null, 'should_show_text_preview' => $should_show],
+            Search_Index_Model::STATUS_UNSUPPORTED => ['status' => 'unsupported', 'text' => null, 'should_show_text_preview' => $should_show],
+            default => ['status' => 'pending', 'text' => null, 'should_show_text_preview' => $should_show],
         };
     }
 

@@ -12,6 +12,7 @@
  * orchestrator.js, which is owner-sanctioned and justified beside its constant.
  */
 
+const fs = require('fs');
 const { execFile, spawn } = require('child_process');
 
 // docker's own output is the only thing that flows through these buffers - a `ps -aq` list
@@ -40,17 +41,21 @@ function docker_capture(args) {
 }
 
 /**
- * Run one docker command with its output streamed to this process's stdout/stderr - used
- * for the image build, which the developer watches live.
+ * Run one docker command with its output written to a LOG FILE, not the terminal - used
+ * for the image build. SILENT ON SUCCESS: the operator sees one line for both images
+ * ("Building test runner docker images", printed by PHP) and then the tests; the build
+ * narration is kept beside the run for a post-mortem and printed only when the build failed.
  *
  * @param {Array<string>} args
+ * @param {string} log_path
  * @return {Promise<number>} exit code
  */
-function docker_stream(args) {
+function docker_to_file(args, log_path) {
     return new Promise((resolve, reject) => {
-        const child = spawn('docker', args, { stdio: ['ignore', 'inherit', 'inherit'] });
-        child.on('error', reject);
-        child.on('close', (code) => resolve(code === null ? 1 : code));
+        const out = fs.openSync(log_path, 'w');
+        const child = spawn('docker', args, { stdio: ['ignore', out, out] });
+        child.on('error', (err) => { fs.closeSync(out); reject(err); });
+        child.on('close', (code) => { fs.closeSync(out); resolve(code === null ? 1 : code); });
     });
 }
 
@@ -125,8 +130,8 @@ function run_capture(image, entrypoint, command_args) {
  * @param {string} context absolute path
  * @return {Promise<number>} exit code
  */
-function build(dockerfile, tag, context) {
-    return docker_stream(['build', '-f', dockerfile, '-t', tag, context]);
+function build(dockerfile, tag, context, log_path) {
+    return docker_to_file(['build', '-f', dockerfile, '-t', tag, context], log_path);
 }
 
 /** Add a second tag to an existing image. */
@@ -188,7 +193,7 @@ function spawn_container(args, log_fd) {
 
 module.exports = {
     docker_capture,
-    docker_stream,
+    docker_to_file,
     info,
     ps_ids,
     kill_containers,

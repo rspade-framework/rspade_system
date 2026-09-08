@@ -51,10 +51,32 @@ All under supervisor; `supervisorctl status` lists them.
 | `realtime` | WebSocket relay behind `/ws` |
 | `rsx-lockd` | cluster lock daemon — load-bearing, see its config |
 | `tasks` | **the cron replacement**: ticks `rsx:task:process` once a minute |
+| `dockerd` | dev target only — the container's own Docker Engine, for the test runner |
 
 That last one matters. The framework's documented driver for all background and
 scheduled work is a single crontab line, and a container has no crontab. Without
 it, `Task::dispatch()` succeeds and nothing ever runs it — silently.
+
+## Docker-in-docker (dev target)
+
+The development image installs Docker Engine and runs it as the `dockerd`
+supervisor program, because `php artisan rsx:test` runs every invocation in
+sibling containers when it can. Three things are worth knowing:
+
+- **runc is PINNED** to a version that can start a container while running inside
+  one, in a single build ARG with the reasoning beside it. The download and its
+  checksum are both fatal to the build: an image that silently kept the packaged
+  binary would fail every `docker run` deep inside container init.
+- **The inner engine gets its own address space** (`bip 10.210.0.1/24`, pools
+  `10.211.0.0/16`), never the outer `172.17` bridge — whose route to this
+  container's own gateway an inner `docker0` would otherwise shadow.
+- **Half the job is on the host.** The container has to be STARTED with the
+  capabilities and confinement dockerd and runc need — at minimum
+  `--cap-add=CAP_NET_ADMIN --cap-add=CAP_SYS_ADMIN` plus
+  `--security-opt apparmor=unconfined --security-opt seccomp=unconfined`. Without
+  them the daemon says so in one line and exits without restarting, and the test
+  runner runs sequentially. The full flag list and its `docker-compose.yml`
+  equivalent are in `rsx:man testing`.
 
 ## Two things that look wrong and are not
 

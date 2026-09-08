@@ -535,12 +535,28 @@ FILE TYPE DETECTION
         FILE_TYPE_ANIMATED_IMAGE (2)
         FILE_TYPE_VIDEO          (3)
         FILE_TYPE_ARCHIVE        (4)
-        FILE_TYPE_TEXT           (5)
-        FILE_TYPE_DOCUMENT       (6)
+        FILE_TYPE_TEXT           (5)  declared, and assigned by nothing
+        FILE_TYPE_DOCUMENT       (6)  including text/* - see below
         FILE_TYPE_OTHER          (7)
 
         $file->is_image();   $file->is_video();   $file->is_document();
         echo $file->file_type_id__label;   // "Document"
+
+    text/* is a DOCUMENT
+        A text file previews as itself through Text_Viewer (rsx:man
+        document_search, VIEWER REGISTRY), so it is previewable in exactly the
+        way a PDF is and classifying it apart from Word/PDF answered every
+        "is this a document / is this previewable" question wrongly for it.
+        FILE_TYPE_TEXT remains a valid enum value that nothing assigns.
+
+    Derived properties on the attachment payload
+        is_image / is_video / is_document / can_open_inline are declared in
+        $appends, so they ride toArray() and reach the JS record on every
+        payload (rsx:man model, DERIVED PROPERTIES). can_open_inline asks
+        whether a BROWSER can display these bytes in a tab of its own - it
+        reads config('rsx.preview.browser_inline') and CANNOT be derived from
+        file_type_id, since text/*, Word and Excel are all DOCUMENT and
+        disagree about inline display.
 
     Pipeline mime (extension-first for documents)
         file_type_id and thumbnail/extraction routing are decided on the

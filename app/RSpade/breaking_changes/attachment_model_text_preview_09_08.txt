@@ -1,0 +1,400 @@
+FILE_ATTACHMENT_MODEL - TEXT FILES ARE DOCUMENTS, AND FOUR DERIVED PROPERTIES ARE DECLARED
+Date: 2026-09-08
+
+IF YOU DO NOTHING: a branch on File_Attachment_Model::FILE_TYPE_TEXT (or on
+    file_type_id == 5) silently stops matching every text file uploaded from now on;
+    a fetch() or payload builder of yours that hand-adds is_image, is_video,
+    is_document or can_open_inline now writes a key the record already carries; and
+    an rsx/models/file_attachment_model.php class override serves text files as a
+    generic extension icon forever, because your frozen copy still classifies them
+    as FILE_TYPE_TEXT and lacks the four derived properties JavaScript now reads.
+
+SUMMARY
+    Three contract changes land together on the attachment API.
+
+    1. text/* CLASSIFIES AS FILE_TYPE_DOCUMENT. A text file previews as itself now -
+       there is a Text_Viewer - so it is a document in exactly the way a PDF is.
+       Nothing assigns FILE_TYPE_TEXT any more. The constant remains declared.
+
+    2. is_image, is_video, is_document and can_open_inline are DECLARED DERIVED
+       PROPERTIES on File_Attachment_Model - $appends plus a getXAttribute()
+       accessor delegating to the public predicate of the same name. They ride every
+       payload the model produces. Hand-adding them is now duplication.
+
+    3. $appends IS THE BLESSED ROUTE for any computed value that must reach
+       JavaScript, in your models too. The JS stub generator declares each appended
+       name on Base_<Model>_Model.js.
+
+    ACTION IS REQUIRED IF your app branches on FILE_TYPE_TEXT or on file_type_id
+    == 5; hand-adds any of the four names to a payload; hand-adds its own computed
+    keys inside a fetch() body; or CLASS-OVERRIDES File_Attachment_Model, which is
+    the case that breaks silently and is treated at length in ACTION REQUIRED 3.
+
+    The converted template is the worked example and it ships with your release:
+    system/app/RSpade/resource/reference_app/ - every file named below can be
+    opened in full rather than reconstructed from this document.
+
+THE CHANGE
+
+    Classification
+        File_Attachment_Model::determine_file_type() returns FILE_TYPE_DOCUMENT (6)
+        for every text/* mime. It returned FILE_TYPE_TEXT (5).
+
+        FILE_TYPE_TEXT REMAINS A DECLARED CONSTANT and a valid enum value. Retiring
+        it outright is a separate decision, not taken here: downstream code may
+        reference the name, and an enum value is not removed by a migration that
+        only moves rows off it.
+
+        A framework migration reclassifies the existing rows, matching on the STORED
+        MIME (mime_type LIKE 'text/%') rather than on file_type_id = 5 alone - so a
+        row that some earlier release classified 5 for another reason is left alone.
+        It applies with `php artisan migrate`; there is nothing to copy.
+
+    Text preview
+        Text_Viewer (jqhtml + js + scss) is registered in rsx.preview.viewers for
+        'text/*', ABOVE the terminal '*' whose Icon_Viewer used to answer for text
+        files, and below the more specific document patterns so it shadows none of
+        them. It renders the EXTRACTED text, not the raw bytes: the pipeline has
+        already decoded the charset and capped the length, and a just-uploaded file
+        shows "(Extracting Text...)" for a second or two before it lands.
+
+        File_Attachment_Model::should_show_text_preview() answers the narrower
+        presentation question - is putting the extracted text on screen BESIDE the
+        preview worth the space. It is false when there is no extracted text, when
+        the preview already IS the text (a .txt through Text_Viewer would show the
+        same characters twice), and when the extraction is not legible to a human (a
+        spreadsheet flattens to an undelimited run of cell values). The last two are
+        mime globs in the new config('rsx.preview.text_preview_suppressed').
+
+        It is ADVICE ABOUT DISPLAY, NEVER AUTHORIZATION: get_extracted_text()
+        returns the text whatever it answers, and extraction and full-text search
+        are unaffected for every file type.
+
+        Both File_Preview_Controller::get_preview_info() and ::get_extracted_text()
+        now carry should_show_text_preview in their response. Purely additive.
+
+    Derived properties on the attachment
+        protected $appends = ['is_image', 'is_video', 'is_document',
+        'can_open_inline'];
+
+        Each name has a getXAttribute() accessor that DELEGATES to the public
+        predicate of the same name (getIsDocumentAttribute() -> is_document()), so
+        the method stays the definition and the property is only its serialization.
+        Eloquent applies $appends inside parent::toArray(), which
+        Rsx_Model_Abstract::toArray() calls first, so the values ride fetch(),
+        portal_fetch(), an embedded relationship and a list alike.
+
+        can_open_inline() is new. It answers "can a BROWSER display these bytes in a
+        tab of its own, served inline" - the question behind an "Open in Browser"
+        affordance - and it is NOT the same question as "does this application have
+        a preview for it". A .docx HAS a preview here, because the render worker
+        converts it, but its own bytes in a browser tab produce a download prompt.
+        So it consults the new config('rsx.preview.browser_inline') mime list, and
+        that list is EXPECTED to disagree with the viewer registry.
+
+        It also cannot be derived from file_type_id, which is worth stating because
+        after change 1 it looks like it should be: FILE_TYPE_DOCUMENT now spans PDF,
+        text, Word and Excel, and those disagree about inline display.
+
+    The JS stub generator
+        Model_Stub_ManifestSupport reads $appends off any model and emits each name
+        into Base_<Model>_Model.js as a JSDoc @property in the class docblock -
+        documentation, deliberately not a real class member, because the ORM ASSIGNS
+        a fetched record's fields onto the instance and a class-level getter would
+        shadow that assignment. $appends joins the model metadata hash, so adding or
+        removing a name regenerates the stub.
+
+        A derived property is not a column: field_length() answers null for it, and
+        it gets no enum treatment.
+
+ACTION REQUIRED
+
+    1. AUDIT EVERY FILE_TYPE_TEXT BRANCH AND REPOINT IT.
+
+       Find them:
+
+           grep -rn "FILE_TYPE_TEXT" rsx/
+           grep -rn "file_type_id" rsx/
+
+       A branch on FILE_TYPE_TEXT still COMPILES and still runs - the constant is
+       there - and simply never matches a newly uploaded text file. Nothing throws.
+       That is why this is an audit and not a build failure.
+
+       Decide per site what the branch MEANT:
+
+       BEFORE - a "which icon / which panel" switch that meant "is this previewable
+       as a document":
+
+           if ($attachment->file_type_id == File_Attachment_Model::FILE_TYPE_TEXT) {
+               return 'text';
+           }
+           if ($attachment->file_type_id == File_Attachment_Model::FILE_TYPE_DOCUMENT) {
+               return 'document';
+           }
+
+       AFTER - the two are one answer now, and the model already carries it:
+
+           if ($attachment->is_document()) {
+               return 'document';
+           }
+
+       BEFORE - a branch that genuinely meant "these bytes are plain text", which
+       file_type_id never answered precisely anyway (it lumps .txt with .csv and
+       .md, and after this change with .pdf and .docx):
+
+           if ($attachment->file_type_id == File_Attachment_Model::FILE_TYPE_TEXT) {
+               $body = $attachment->get_extracted_text();
+           }
+
+       AFTER - ask the mime, which is the input fine-grained enough to answer:
+
+           if (str_starts_with((string) $attachment->mime_type, 'text/')) {
+               $body = $attachment->get_extracted_text();
+           }
+
+       A stored QUERY has the same problem and no compiler to help it:
+
+           Model::where('file_type_id', File_Attachment_Model::FILE_TYPE_TEXT)
+
+       returns the pre-migration rows only, and the migration has already moved
+       them, so it now returns nothing. Repoint it at FILE_TYPE_DOCUMENT, or at the
+       mime, per what it meant.
+
+    2. DELETE HAND-ADDED COMPUTED KEYS THAT THE RECORD NOW CARRIES.
+
+       Find them:
+
+           grep -rn "is_image\|is_video\|is_document\|can_open_inline" rsx/
+
+       BEFORE - a payload builder duplicating what the model derives:
+
+           $data = $attachment->toArray();
+           $data['is_image'] = $attachment->is_image();
+           $data['is_document'] = !$attachment->is_image() && !$attachment->is_video();
+
+           return $data;
+
+       AFTER:
+
+           return $attachment->toArray();
+
+       The second line of that BEFORE is the reason this change exists: "is this a
+       document" spelled as `!is_image && !is_video` silently counts archives and
+       unknown files as documents, and disagrees with the model that defines it. A
+       derived property has ONE definition and every reader gets that one.
+
+       The same applies to a JAVASCRIPT recomputation:
+
+           const is_document = !record.is_image && !record.is_video;   // delete this
+           const is_document = record.is_document;                     // read the record
+
+       THEN DO THE SAME FOR YOUR OWN MODELS. A computed value that must reach
+       JavaScript is declared, not hand-copied onto one payload:
+
+           // rsx/models/party_model.php - BEFORE
+           #[Ajax_Endpoint_Model_Fetch]
+           public static function fetch($id)
+           {
+               $party = static::find($id);
+
+               if (!$party) {
+                   return false;
+               }
+
+               $data = $party->toArray();
+               $data['party_id_formatted'] = $party->party_id_formatted();
+
+               return $data;
+           }
+
+           // AFTER - declared once, on every payload
+           protected $appends = ['party_id_formatted'];
+
+           public function party_id_formatted()
+           {
+               return '#PA' . str_pad($this->id, 3, '0', STR_PAD_LEFT);
+           }
+
+           public function getPartyIdFormattedAttribute(): string
+           {
+               return $this->party_id_formatted();
+           }
+
+           #[Ajax_Endpoint_Model_Fetch]
+           public static function fetch($id)
+           {
+               $party = static::find($id);
+
+               if (!$party) {
+                   return false;
+               }
+
+               return $party->toArray();
+           }
+
+       The accessor DELEGATES - never re-implement the computation in it, or the two
+       spellings will drift, which is the whole failure this change is about. The
+       property name is the method name: no aliasing, at any layer, so grep finds
+       every usage.
+
+       A key hand-added inside fetch() lands on that ONE payload: not on
+       portal_fetch(), not on an embedded relationship, not on a list. Nothing
+       notices when a sibling model forgets it.
+
+       The worked examples in your release:
+
+           system/app/RSpade/resource/reference_app/models/party_model.php
+           system/app/RSpade/resource/reference_app/models/client_model.php
+           system/app/RSpade/resource/reference_app/models/contact_model.php
+           system/app/RSpade/resource/reference_app/models/project_model.php
+           system/app/RSpade/resource/reference_app/models/action_log_model.php
+           system/app/RSpade/resource/reference_app/models/notification_model.php
+           system/app/RSpade/resource/reference_app/models/announcement_model.php
+           system/app/RSpade/resource/reference_app/models/user_group_model.php
+
+       Every fetch() body in that tree is now security plus a bare toArray().
+
+       ONE CAVEAT WORTH KEEPING. An appended value is computed on EVERY
+       serialization, so a derivation that reads a row (a count, a lookup) is paid
+       per record in a list. Declare it anyway - one definition is the point - and
+       say so in its docblock; a caller that needs a wide list without it selects
+       the columns it wants rather than serializing. A value that resolves a
+       PER-VIEWER answer (an authorship widget's gated profile URL) is the one that
+       stays out of $appends: a list payload must not ask that per row. The
+       reference app's client_model.php shows both halves of that split.
+
+    3. IF YOU CLASS-OVERRIDE File_Attachment_Model, RE-CLONE THE NEW MEMBERS.
+
+       This is the case that breaks silently and completely.
+
+           ls rsx/models/file_attachment_model.php
+
+       If that file exists, you hold a FROZEN COPY of a class that kept moving. The
+       manifest serves YOUR copy and archives the framework's beside it as
+       .php.upstream, so everything in this document that lives in the model reached
+       your disk and reaches none of your users.
+
+       What your copy is missing, by name:
+
+           protected $appends = ['is_image', 'is_video', 'is_document',
+                                 'can_open_inline'];
+           public function getIsImageAttribute(): bool
+           public function getIsVideoAttribute(): bool
+           public function getIsDocumentAttribute(): bool
+           public function getCanOpenInlineAttribute(): bool
+           public function can_open_inline(): bool
+           public function should_show_text_preview(): bool
+
+       plus the text/* branch inside:
+
+           public static function determine_file_type($mime_type)
+
+       Copy them from the framework's own file, which is on your disk in full:
+
+           system/app/RSpade/Core/Files/File_Attachment_Model.php
+
+       (and, while your override is in place, also as
+       system/app/RSpade/Core/Files/File_Attachment_Model.php.upstream - the archived
+       copy of what you replaced).
+
+       The symptoms of skipping this are worth naming, because none of them is an
+       error message: text files keep previewing as a generic extension icon,
+       because your determine_file_type() still returns 5 and the viewer chain never
+       reaches Text_Viewer; every JS reader of record.is_document / record.is_image /
+       record.can_open_inline gets undefined, because your copy declares no
+       $appends and the stub declares no property; an "Open in Browser" affordance
+       built against can_open_inline never appears; and a host that shows extracted
+       text beside a preview fatals on the missing should_show_text_preview().
+
+       THE FRAMEWORK TELLS YOU WHICH MEMBERS, TOO. This is exactly what the drift
+       reporting is for, and it names them mechanically:
+
+           php artisan rsx:check          # CLASS-OVERRIDE-DRIFT-01, high
+           php artisan rsx:health         # the "Class Override Drift" row
+
+       Both list every public/protected member the archived upstream declares and
+       your copy does not. Run them after the pull and work the list.
+
+       PROPAGATION IS HIGHLY RECOMMENDED, NOT OPTIONAL - and while you are in there,
+       ask whether the override still needs to exist. An override earns its keep
+       when it changes behavior; if yours exists only to ATTACH something (a
+       visibility rule, a policy hook), the seams beat a clone: can_view() /
+       scope_can_view() through Staff_Authorizable, portal_can_read(), a fetch()
+       gate, an #[OnEvent] handler. A seam keeps receiving framework changes; a
+       clone stops receiving them the day you make it.
+
+    4. Text_Viewer NEEDS NOTHING FROM YOU - unless you replaced the registry.
+
+       rsx.preview.viewers merges PER KEY (array_merge_deep over a string-keyed
+       map), so the framework's new 'text/*' => 'Text_Viewer' entry reaches your
+       install even if your rsx/resource/config/rsx.php declares viewers of its own.
+       There is no wholesale replacement to worry about.
+
+       The ONE way to lose it is to declare the same key yourself:
+
+           grep -n "text/\*" rsx/resource/config/rsx.php
+
+       An entry of your own under 'text/*' replaces the framework's IN PLACE, and
+       your viewer keeps answering for text files. That may well be what you want -
+       just know it is a decision you already made, not a merge failure.
+
+       Two new keys arrive with defaults and need no action:
+       rsx.preview.browser_inline (what can_open_inline() consults) and
+       rsx.preview.text_preview_suppressed (what should_show_text_preview()
+       consults). Narrow or widen either in your own config; both merge the same
+       per-key way.
+
+VERIFICATION
+
+    1. php artisan migrate
+
+       Then confirm no text row is left on the old classification:
+
+           php artisan db:query "SELECT COUNT(*) c FROM _file_attachments
+               WHERE mime_type LIKE 'text/%' AND file_type_id = 5"
+
+       Expect 0.
+
+    2. No stale branches remain:
+
+           grep -rn "FILE_TYPE_TEXT" rsx/
+
+       Every surviving hit should be a deliberate reference to the pre-migration
+       rows, not a classification test on new uploads.
+
+    3. php artisan rsx:check is clean. If you class-override
+       File_Attachment_Model, this is where CLASS-OVERRIDE-DRIFT-01 names anything
+       you missed in ACTION REQUIRED 3; php artisan rsx:health must show the "Class
+       Override Drift" row without a WARN for that file.
+
+    4. Upload a .txt and a .xlsx, then open each one's preview:
+
+           - the .txt renders its CONTENT in the preview frame (Text_Viewer), not an
+             extension icon; a beat earlier it shows "(Extracting Text...)"
+           - the .txt reports should_show_text_preview false - the preview already
+             IS the text, so no second pane
+           - the .xlsx reports should_show_text_preview false as well, for the other
+             reason: its extraction is a run of cell values
+           - a .docx and a PDF report it true
+
+    5. From a page, confirm the derived properties arrive on the record:
+
+           php artisan rsx:debug / --user=1 --eval="const a = await \
+               File_Attachment_Model.fetch(<id>); return JSON.stringify({ \
+               is_image: a.is_image, is_video: a.is_video, \
+               is_document: a.is_document, can_open_inline: a.can_open_inline});"
+
+       All four must be booleans. An `undefined` means the model your install is
+       serving does not declare $appends - see ACTION REQUIRED 3.
+
+    6. For each of your own models you converted in ACTION REQUIRED 2, fetch a
+       record from a page and confirm the appended name is present, then confirm the
+       page that renders it still shows the same value it did before.
+
+SEE ALSO
+    php artisan rsx:man model              DERIVED PROPERTIES ($appends)
+    php artisan rsx:man file_upload        the attachment contract and file types
+    php artisan rsx:man documents          the render pipeline and its triage commands
+    php artisan rsx:man document_search    extraction, Document_Preview and its siblings
+    php artisan rsx:man class_override     the drift rule and the override discipline
+    Skills: rspade:file-attachments, rspade:document-preview, rspade:model-fetch

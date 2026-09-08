@@ -393,6 +393,14 @@ QUERY BUILDER INTEGRATION
         model and cannot be resolved here (convert explicitly with
         Type_Ref_Registry::class_to_id()).
 
+        CLASS NAME SPELLING. Every registry lookup - class_to_id(),
+        find_id_by_class_name(), has_class(), class_resolves() - accepts the
+        short class name or the fully qualified one Model::class evaluates to
+        (a leading backslash included) and normalizes it to the short name,
+        which is what the row stores. A name written against a namespace the
+        model has since left therefore still resolves. id_to_class() answers
+        with the short name.
+
         A value that is neither null nor an integer and does not resolve in
         the registry THROWS, naming the model, column and value - it is never
         bound as a string (MySQL would coerce it to 0 against the BIGINT

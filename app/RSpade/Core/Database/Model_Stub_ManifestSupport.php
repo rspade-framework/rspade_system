@@ -233,6 +233,10 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             $model_metadata['enums'] = $fqcn::$enums ?? [];
         }
 
+        // Derived properties (PHP $appends). Adding or removing one changes the stub's declared
+        // surface, so it has to move the metadata hash or the stub is never regenerated.
+        $model_metadata['appends'] = static::_get_model_appends($fqcn);
+
         // Realtime emission flag — flipping $realtime must regenerate the stub so the
         // baked-in `static __REALTIME` line appears/disappears (see _generate_model_stub_content).
         $model_metadata['realtime'] = property_exists($fqcn, 'realtime') && $fqcn::$realtime === true;
@@ -255,6 +259,31 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         }
 
         return $model_metadata;
+    }
+
+    /**
+     * The model's DERIVED PROPERTY names - Laravel's $appends.
+     *
+     * A computed value that must reach JavaScript is declared as $appends plus a
+     * getXAttribute() accessor delegating to the public method that defines it; Eloquent
+     * serializes it inside parent::toArray(), which Rsx_Model_Abstract::toArray() calls first,
+     * so it rides the ordinary fetch() payload. Read from the class's DEFAULT property values -
+     * $appends is protected, and the declaration is what the stub documents, not whatever an
+     * instance may have been told at runtime.
+     *
+     * @param string $fqcn Fully qualified model class name.
+     * @return string[] Declared appended property names, in declaration order.
+     */
+    private static function _get_model_appends(string $fqcn): array
+    {
+        $defaults = (new \ReflectionClass($fqcn))->getDefaultProperties();
+        $appends = $defaults['appends'] ?? [];
+
+        if (!is_array($appends)) {
+            return [];
+        }
+
+        return array_values(array_filter($appends, 'is_string'));
     }
 
     /**
@@ -335,10 +364,25 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             $non_enum_constants[$const_name] = $const->getValue();
         }
 
+        // DERIVED PROPERTIES - the model's $appends. These reach the JS record through
+        // toArray() with no column behind them, so nothing else in this generator knows about
+        // them: they are absent from $columns, so field_length() answers null for each exactly
+        // as it does for any non-varchar, and they get no enum treatment.
+        //
+        // DECLARED AS @property AND NOT AS A REAL MEMBER, deliberately. The ORM assigns a
+        // fetched record's fields onto the instance; a class-level getter would shadow that
+        // assignment and a getter-only property would throw on it. A JSDoc @property is the
+        // declaration an editor reads for autocomplete and a human reads to learn the property
+        // exists, without putting anything in the assignment's way.
+        $appends = static::_get_model_appends($fqcn);
+
         // Start building the stub content
         $content = "/**\n";
         $content .= " * Auto-generated JavaScript stub for {$class_name}\n";
         $content .= " * DO NOT EDIT - This file is automatically regenerated\n";
+        foreach ($appends as $append) {
+            $content .= " * @property {*} {$append} - derived (appended by the PHP model); read-only\n";
+        }
         $content .= " * @Instantiatable\n";
         $content .= " */\n";
 

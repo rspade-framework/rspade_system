@@ -1190,6 +1190,12 @@ return [
 
             'image/*' => 'Image_Viewer',
 
+            // Plain text renders as ITSELF, in a scrolling text frame - it needs no
+            // conversion and gains nothing from one. Sits below the document patterns above
+            // (text/* must not shadow a more specific entry) and above the terminal '*',
+            // whose Icon_Viewer would otherwise answer for them.
+            'text/*' => 'Text_Viewer',
+
             '*' => 'Icon_Viewer',
         ],
 
@@ -1200,6 +1206,46 @@ return [
             'application/vnd.openxmlformats-officedocument.*',
             'application/vnd.oasis.opendocument.*',
             'application/rtf',
+        ],
+
+        // Mimes a BROWSER can display in a tab of its own, given Content-Disposition: inline
+        // (fnmatch globs). Read by File_Attachment_Model::can_open_inline, which is what an
+        // "Open in Browser" affordance keys off.
+        //
+        // THE TEST IS THE BROWSER'S NATIVE ABILITY, NOT OURS. A .docx is previewable in this
+        // application - the render worker converts it to a PDF - but handing its bytes to a
+        // browser tab produces a download prompt, not a document, so it is deliberately absent
+        // here. This list and rsx.preview.viewers answer two different questions and are
+        // expected to disagree.
+        //
+        // Nor can it be derived from file_type_id: text/* classifies as DOCUMENT alongside
+        // Word and Excel (2026-09-08), and those three disagree about inline display.
+        'browser_inline' => [
+            'application/pdf',
+            'image/*',
+            'text/*',
+            'video/*',
+            'audio/*',
+        ],
+
+        // Mimes whose EXTRACTED TEXT is not worth showing beside their preview (fnmatch
+        // globs), read by File_Attachment_Model::should_show_text_preview(). Extraction
+        // still runs for every one of these - the text remains fully searchable; this list
+        // only says "do not put it on screen next to the document", for two distinct
+        // reasons:
+        //
+        //   text/*        REDUNDANT. The preview IS the text (Text_Viewer renders the file
+        //                 itself), so a text pane beside it shows the same characters twice.
+        //   spreadsheets  NOT LEGIBLE. A sheet extracts to an undelimited run of cell
+        //                 values with no rows, columns or headings - genuinely useful to
+        //                 full-text search and meaningless to a reader.
+        //
+        // An app narrows or widens this in rsx/resource/config/rsx.php.
+        'text_preview_suppressed' => [
+            'text/*',
+            'application/vnd.ms-excel',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.*',
+            'application/vnd.oasis.opendocument.spreadsheet',
         ],
 
         'quota_max_bytes' => 200 * 1024 * 1024,  // 200MB (enforced via scheduled LRU cleanup)

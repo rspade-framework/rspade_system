@@ -2,7 +2,7 @@
 #
 # The CMD of a parallel-test worker container.
 #
-#     rsx-test-worker-run <worker-id> <orchestrator-socket>
+#     rsx-test-worker-run <worker-id> <orchestrator-socket> [framework|application]
 #
 # WHY THIS EXISTS. The container entrypoint starts supervisor and then waits for
 # exactly two things - redis and mysql - because those are the two the entrypoint
@@ -35,6 +35,12 @@ set -u
 
 WORKER_ID="${1:?rsx-test-worker-run needs a worker id}"
 WORKER_SOCKET="${2:?rsx-test-worker-run needs an orchestrator socket path}"
+
+# Which suite the orchestrator dispatched. It changes nothing about the work - a
+# worker runs whatever class the queue hands it - but it is what makes this
+# container's own header name the suite it is running rather than always saying
+# "framework". Defaulted so a hand invocation still works.
+WORKER_SUITE="${3:-framework}"
 
 SUPERVISOR_CONF=/etc/supervisor/supervisord.conf
 PROJECT_ROOT=/var/www/html
@@ -182,6 +188,9 @@ wait_for_lockd
 
 cd "$PROJECT_ROOT" || fail "cannot enter $PROJECT_ROOT"
 
-exec php artisan rsx:test --framework \
+SUITE_FLAG=()
+[ "$WORKER_SUITE" = "framework" ] && SUITE_FLAG=(--framework)
+
+exec php artisan rsx:test "${SUITE_FLAG[@]}" \
     --_worker-id="$WORKER_ID" \
     --_worker-socket="$WORKER_SOCKET"

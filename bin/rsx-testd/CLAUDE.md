@@ -15,10 +15,11 @@ non-obvious ordering rule a change here must not break.
 | Side | Owns |
 |---|---|
 | PHP (`app/RSpade/Commands/Rsx/Rsx_Test_Command.php`) | discovery (`select_test_classes`), the singleton flock, queue ordering (`order_classes_longest_first`), RUNNING the tests (`$class::run()` inside a container), and the printed output (`print_class_results` / `print_summary` / `merge_and_report`) |
-| Node (this directory) | the docker lifecycle - sweep, dev-image check, build-context filter, build, the queue RPC, N containers, `results.jsonl`, prune |
+| Node (this directory) | the docker lifecycle - sweep, dev-image check, build-context filter, the GENERATED Dockerfile, build, the queue RPC, N containers, `results.jsonl`, prune |
 
 PHP fills the run directory (`classes.json`, an `ipc/` directory) and spawns
-`node orchestrator.js --run-dir= --workers= --image= --dev-image= --project-root=` through
+`node orchestrator.js --run-dir= --workers= --image= --dev-image= --project-root=
+--framework-developer= --suite=` through
 `RsxLocks::command_without_inherited_locks()` and a Symfony `Process` with `setTimeout(null)`,
 streaming its output live and keeping the last 20 lines to repeat under a failure message.
 The worker inside a container sends back the SAME per-class record the sequential loop would
@@ -26,20 +27,41 @@ have printed, so the two paths print through one printer and cannot drift.
 
 ## The gate - when any of this happens at all
 
-`Rsx_Test_Command::docker_mode_gate_passes()` is TRUE only when ALL of:
+`Rsx_Test_Command::docker_mode_gate_passes()` OWNS the decision, and it asks about the BOX
+and nothing else. There is no suite, no selector and no class count in it: **EVERY
+invocation a passing box makes is dispatched here** - both suites, one class or the whole
+run - because a subset that ran somewhere else would be a subset with its own semantics.
+A single class gets a single container (`worker_count()` never exceeds the class count),
+and that is consistency, not parallelism.
 
-- `--framework` was asked for, AND
-- no narrowing selector - no class argument, no `--filter`, no `--group` (a subset never
-  earns an image build and N container boots), AND
-- `--sequential` was NOT passed, AND
-- this is an RSpade DEVELOPMENT container (`/.rspade_container_dev`, the only place the
-  nested docker daemon and the shipped dev image exist), AND
-- `docker info` exits 0 (the whole probe: absent binary, dead daemon, no socket access).
+Four checks, evaluated once, in order:
 
-Every other invocation - the application suite, any subset, any non-dev-container box - runs
-the unchanged single-process sequential path IN THIS process. The gate is checked BEFORE the
-test database is touched: in docker mode every test runs against a container's own database,
-so provisioning this box's would be pure cost.
+1. an RSpade DEVELOPMENT container (`/.rspade_container_dev`) - the only place the nested
+   docker daemon and the shipped dev image exist;
+2. `docker info` exits 0 (the whole probe: absent binary, dead daemon, no socket access);
+3. the shipped dev image is BUILT, every invocation, with
+   `bash system/app/RSpade/resource/docker/build.sh dev` - a cached docker build, instant when
+   nothing under `resource/docker` changed, never a manual step - and is then
+   PHP-version-matched against the checkout's Dockerfile;
+4. `docker run --rm --entrypoint true <dev-image>` succeeds. This is the check the first
+   three cannot make: nested docker breaks in runc, in the cgroup mount and in the network
+   namespace, and a socket that answers proves none of them. Discovering it after an image
+   build would cost minutes to reach an infrastructure failure.
+
+**Any check failing prints ONE line naming it and the run continues SEQUENTIALLY** in the
+PHP process - never an error, never a second line of advice beyond `rsx:man testing`.
+`--sequential` short-circuits ahead of every check and prints nothing: it is the operator
+saying so, not a check that failed.
+
+**THE GATE LIVES IN PHP, AND SO DOES THE DEV-IMAGE CHECK.** This daemon does not verify the
+image it builds FROM: the gate that decided to spawn it did, one invocation ago, and a
+second implementation of one rule is the defect this split exists to prevent. The
+decision itself is `Rsx_Test_Command::evaluate_docker_gate()`, a pure function over five
+injected probes, so the whole table is asserted in
+`tests/test_runner/php/Docker_Dispatch_Test.php` with no daemon involved.
+
+The gate is checked BEFORE the test database is touched: in docker mode every test runs
+against a container's own database, so provisioning this box's would be pure cost.
 
 **Class order is deterministic only in sequential mode** (name order). Docker mode seeds the
 queue longest-first and hands each class to whichever container is free, so a class can be
@@ -51,8 +73,11 @@ exposed one real stale-cache bug the sequential order was hiding by luck
 
 **`rspade/rspade-server-dev:latest`** is the SHIPPED development image
 (`system/app/RSpade/resource/docker/Dockerfile`, built by
-`bash system/app/RSpade/resource/docker/build.sh dev`). This daemon NEVER builds it - it is
-somebody's deliberate, minutes-long build - it only checks it.
+`bash system/app/RSpade/resource/docker/build.sh dev`). This daemon neither builds nor
+checks it: the GATE builds it on every invocation, before this process exists. That image is also
+where the nested docker daemon these containers are started against comes from - it installs
+Docker Engine, pins runc, and runs `dockerd` as a supervisor program
+(`resource/docker/dockerd-run.sh`, `supervisor/conf.d/dockerd.conf`).
 
 **`rspade-test:latest`** is `FROM` that image, built here from `Dockerfile.test`. It is FROM
 it because that image already IS the runtime the framework is written for: supervisor,
@@ -64,13 +89,14 @@ into the datadir template.
 whatever PHP this dev container happens to run.** That is arguably the right target, but an
 assumption about the host's PHP version will surface as test failures.
 
-**`ensure_dev_image()` refuses a STALE dev image, not just a missing one.** A build on top of
-a stale base SUCCEEDS and every container then runs a PHP the framework is not written for,
-which reads as a scatter of unrelated test failures nobody attributes to the image. So the
-image's own `PHP_MAJOR_VERSION.PHP_MINOR_VERSION` is probed (with the entrypoint REPLACED, so
-the answer is the only output) and compared against the `PHP_VERSION=` the shipped dev
-Dockerfile declares TODAY - read out of that file rather than pinned a second time here.
-Either failure is fatal and names `bash system/app/RSpade/resource/docker/build.sh dev`.
+**A STALE dev image is refused, not just a missing one - by the GATE, in PHP.** A build on
+top of a stale base SUCCEEDS and every container then runs a PHP the framework is not
+written for, which reads as a scatter of unrelated test failures nobody attributes to the
+image. So the image's own `PHP_MAJOR_VERSION.PHP_MINOR_VERSION` is probed (with the
+entrypoint REPLACED, so the answer is the only output) and compared against the
+`PHP_VERSION=` the shipped dev Dockerfile declares TODAY - read out of that file rather than
+pinned a second time anywhere, and checked AFTER the build; a mismatch closes the gate with
+one line.
 
 ## The datadir-template hook
 
@@ -78,8 +104,14 @@ The dev image ships `/opt/rspade/mysql-datadir-template.tgz`, a tarball of a pri
 data directory, and its entrypoint unpacks it into `/var/lib/mysql` **only when
 `/var/lib/mysql/mysql` (the system schema) is absent**. That absence test is the hook:
 
-- `Dockerfile.test` runs the whole provisioning sequence once and REPLACES that tarball with
-  the resulting fully-migrated, baseline-seeded datadir, then `rm -rf /var/lib/mysql/*`;
+- the test build REPLACES that tarball twice - layer 1 with a provisioned-and-snapshot-restored
+  datadir (`.tgz`, written once and read once by layer 2, so compression is free), layer 3 with
+  the fully-migrated, baseline-seeded one, `rm -rf /var/lib/mysql/*` after each;
+- **the final template is PLAIN `.tar`**, at `/opt/rspade/mysql-datadir-template.tar`, and the
+  `.tgz` is removed so exactly one exists. Every container start unpacks it, and gzip costs
+  ~2 s to write plus ~2 s per unpack against ~0.4 s and ~0.3 s plain (measured on this box:
+  a 220 MB datadir, 7.7 MB gzipped). The entrypoint prefers `.tar`, falls back to `.tgz`, and
+  extracts with `tar -xf` - which detects the compression itself, so one reader serves both;
 - every container is run with `--tmpfs /var/lib/mysql:size=2g`, so `/var/lib/mysql/mysql` is
   absent at boot, the entrypoint fills a RAM datadir from the baked template in about a
   second, and an in-container reset between classes is a restore from RAM.
@@ -87,23 +119,83 @@ data directory, and its entrypoint unpacks it into `/var/lib/mysql` **only when
 Nothing was added to the entrypoint to make this work. The template path and its one
 condition were already the contract.
 
+## The generated Dockerfile
+
+**`system/app/RSpade/resource/docker/Dockerfile.test` is a TEMPLATE and is never built
+directly.** `lib/dockerfile.js` reads it, substitutes two `@RSX_GENERATED_*@` markers, and
+writes `<run_dir>/Dockerfile.test.generated`, which is what `docker build -f` is pointed at.
+The run directory is already outside git and outside the build context, and the newest three
+survive beside the worker logs - so the exact Dockerfile a run built is available for a
+post-mortem and nothing has to be cleaned up in a `finally`.
+
+The template holds the prose, the `FROM` and both provisioning `RUN` layers verbatim. What is
+generated is only what a static file cannot state:
+
+- **the snapshot COPY** - `rsx/resource/db/schema_cache.sql.gz` and `uploads_cache.tar.gz`
+  are OPTIONAL, and an application that ships neither gets no COPY and an empty-schema layer 1;
+- **the ordered code COPY block** - one COPY per real top-level entry of the checkout,
+  cheapest-changing first, honouring the same `.dockerignore` the run generated. A single
+  `COPY . /var/www/html` is invalidated by ANY file, so every one-character edit re-transferred
+  and re-exported the whole context.
+
+**The last two layers swap by environment.** The busiest tree goes LAST, because everything
+after it rebuilds with it: a framework developer edits `system/app/RSpade` all day and `rsx/`
+rarely, a downstream developer the reverse. PHP reads
+`config('rsx.code_quality.is_framework_developer')` and passes `--framework-developer=`.
+
+**A symlink is RECREATED, never COPYed.** `COPY system/rsx /var/www/html/system/rsx`
+DEREFERENCES the link and bakes a second 150 MB copy of the application tree where a six-byte
+link belongs (verified against BuildKit, 2026-09-08). Every symlinked entry - `system/rsx`,
+`system/.env`, `system/storage` - is emitted as one `ln -sfn` in a trailing RUN.
+
+**The generator must agree with the filter.** It reads the generated `.dockerignore` and skips
+what that excludes: a COPY of an excluded entry is not a smaller image, it is a build that
+fails with *"no source files were specified"*.
+
 ## The build sequence, and its two ordering traps
 
-`Dockerfile.test` is `COPY . /var/www/html` plus ONE `RUN` layer, on purpose (see the
-clean-shutdown rule below). In order:
+FOUR layers, in this order. In full, with the reasoning, in the template's own comments.
 
-1. `rm -f /.rspade_container_dev`. That flag gates the development-mode migrate DATADIR
-   SNAPSHOT, which stops mysqld through supervisorctl and copies `/var/lib/mysql` -
-   meaningless during an image build and actively harmful inside a throwaway container.
-2. `rm -f /etc/supervisor/conf.d/tasks.conf`. No background `rsx:task:process` loop racing
-   the tests, which drive the task system explicitly. Everything else stays: mysql, redis,
-   rsx-lockd, php-fpm, nginx, mail-catcher, fpc-proxy.
-3. `rm -f .env`, then `php system/bootstrap/rsx_env_heal.php` builds one from `.env.dist`
+**Layer 0 - the CURRENT entrypoint, over the one baked into the dev image.** The dev image is
+built rarely and deliberately; the checkout moves every day, so its
+`/usr/local/bin/rspade-entrypoint` is whatever the entrypoint looked like when somebody last
+ran `build.sh` - the same staleness the PHP-version refusal above guards against, except the
+entrypoint carries no version to compare. It cost a whole run: the build started writing the
+datadir template as plain `.tar`, the checkout's entrypoint reads either spelling, and the
+image in the daemon still only knew `.tgz`, so all eight containers died on *"the image's
+template is missing"* before a single test ran. FIRST, because layer 1 runs the entrypoint
+before any code exists.
+
+**Layer 1 - the shipped snapshot, before any line of code.** Its cache key is
+`schema_cache.sql.gz` + `uploads_cache.tar.gz` + `entrypoint.sh` + the dev image and NOTHING
+ELSE, so it survives every source edit but those. It removes `/.rspade_container_dev` (that flag gates the development-mode
+migrate DATADIR SNAPSHOT, which stops mysqld through supervisorctl and copies `/var/lib/mysql`
+- meaningless during a build and actively harmful in a throwaway container) and
+`/etc/supervisor/conf.d/tasks.conf` (no background `rsx:task:process` racing tests that drive
+the task system explicitly; everything else stays - mysql, redis, rsx-lockd, php-fpm, nginx,
+mail-catcher, fpc-proxy). Then it runs the ENTRYPOINT with no checkout present at all - a case
+the entrypoint already handles, saying so and skipping the framework-shaped steps - which
+unpacks the stock datadir, starts supervisor and runs `mysql/provision.sql`; streams
+`schema_cache.sql.gz` into `rspade` and unpacks `uploads_cache.tar.gz` into the blob store;
+stops, waits for mysqld to be gone, and re-tars the datadir.
+
+**ONLY `rspade` is restored - never `rspade_test`, and that is deliberate.**
+`prepare_test_database()` reads a test database with rows in the migrations table as an
+EXISTING schema and applies the pending migrations to it, and `ensure_baseline_cache()` then
+DROPs and re-creates it anyway to build the pristine dump every in-container reset restores
+from. Pre-restoring it buys nothing and costs one extra migration run. Left empty, layer 3
+takes the single-`sync_test_schema()` fast path.
+
+**Layer 2 - the code**, generated as above.
+
+**Layer 3 - provision, migrate, warm, archive**, one RUN because of the clean-shutdown rule:
+
+1. `rm -f .env`, then `php system/bootstrap/rsx_env_heal.php` builds one from `.env.dist`
    and mints an `APP_KEY` (it runs pre-boot: no autoloader, no config, no database).
    **NOTHING FROM THE HOST `.env` EVER REACHES THE IMAGE** - the build-context filter
    excludes it AND the file is removed, so even a stale filter cannot point a container at
    the developer's database, mail transport or secrets.
-4. The container's own keys are then set with a bash replace-or-append (`sed` would need a
+2. The container's own keys are then set with a bash replace-or-append (`sed` would need a
    delimiter no value can contain, and an `APP_URL` has slashes): `APP_URL=http://$HOSTNAME`
    (the LITERAL unquoted token - `Rsx_App_Url` resolves it with `gethostname()` at boot, so
    one image serves every worker under its own name), `RSX_MODE=development`,
@@ -117,17 +209,17 @@ clean-shutdown rule below). In order:
    the queue inside a container while the mail tests - written against the catcher, asserting
    its aiosmtpd greeting - expected delivery. A test container mirrors the developer box, not
    a third configuration that exists nowhere else.
-5. The provisioning itself runs THROUGH the entrypoint, which is already the in-container
-   helper: `bash /usr/local/bin/rspade-entrypoint bash -c "..."` unpacks the stock template,
-   starts supervisor, waits for redis and mysql, runs `mysql/provision.sql` when `USE rspade`
-   fails, migrates the development database, runs the command, then stops supervisor.
-   The command is, IN THIS ORDER:
+3. The provisioning itself runs THROUGH the entrypoint, which is already the in-container
+   helper: `bash /usr/local/bin/rspade-entrypoint bash -c "..."` unpacks LAYER 1's template
+   (so the databases already exist, `mysql/provision.sql` is skipped, and `rspade` already
+   holds the shipped snapshot), starts supervisor, waits for redis and mysql, migrates the
+   development database - **applying only the migrations NEWER than the snapshot** - runs the
+   command, then stops supervisor. The command is, IN THIS ORDER:
    1. `php system/artisan rsx:test --framework --_provision-only` -
       `prepare_test_database()` + `ensure_baseline_cache()`: `rspade_test` migrated, the
       baseline user seeded, and the migration-hash dump under `storage/db_backups` that an
       in-container reset restores from. It runs no tests.
    2. `php system/artisan rsx:manifest:build --clean --_test-run`.
-   3. `php system/artisan rsx:bundle:compile`.
 
 **THE BAKED MANIFEST IS A TEST MANIFEST, and `--_test-run` is what makes it one.** The test
 trees (`app/RSpade/tests`, `app/RSpade/temp`, `rsx/tests`) are indexed only under that flag;
@@ -147,16 +239,16 @@ MySQL raw. Building last puts the default connection back on the fully migrated 
 incremental build would keep the empty index.
 
 **ORDER TRAP 2 - wait for mysqld to be GONE before archiving.** The layer that tars
-`/var/lib/mysql` must also be the layer that shut mysqld down, hence one `RUN`: a datadir
-captured while the server is running (or across two layers) forces InnoDB crash recovery in
-EVERY container started from it. The entrypoint has already asked supervisor to stop; the
-`while pgrep -x mysqld; do sleep 1; done` is the direct proof. No deadline - mysqld exits
-when it has finished flushing.
+`/var/lib/mysql` must also be the layer that shut mysqld down, hence one `RUN` per
+provisioning layer: a datadir captured while the server is running (or across two layers)
+forces InnoDB crash recovery in EVERY container started from it. The entrypoint has already
+asked supervisor to stop; the `while pgrep -x mysqld; do sleep 1; done` is the direct proof.
+No deadline - mysqld exits when it has finished flushing. **This applies to layer 1 as much as
+to layer 3**: two mysqld starts, one per layer, each ending in a clean shutdown.
 
-`rsx:bundle:compile` is in the list because a container never serves a web request. Bundles
-compile just-in-time on the first page view, so a container that only runs artisan has none
-of the compiled output and four asset tests honestly SKIP themselves. Compiling at build time
-is the same JIT compile, taken once instead of never.
+No bundle compile: bundles compile just-in-time on demand, most tests never touch one, and
+the asset tests that read compiled output skip themselves honestly when it is absent (owner
+ruling 2026-09-08 - it cost every incremental image build 18 s).
 
 Last, and after the provisioning layer on purpose (editing it is then a one-second rebuild of
 one tiny layer), the CMD wrapper is copied to `/usr/local/bin/rsx-test-worker-run`.
@@ -167,8 +259,13 @@ source with no `.git`, and getting only `:latest` is correct, not an error).
 ## The generated `.dockerignore`
 
 The build context is the project root, so it needs a filter, and the filter is GENERATED for
-the build and removed in a `finally` - **never tracked**. It contains `.git`, `storage/`,
-`/.env`, plus every non-comment line of `.git/info/exclude`.
+the build and removed in a `finally` - **never tracked**. It contains `**/.git`, `storage/`,
+`/.env`, `/.dockerignore`, plus every non-comment line of `.git/info/exclude`.
+
+`**/.git` rather than a bare `.git`: the bare pattern matches the ROOT repository only, and the
+application tree carries its own - over a hundred megabytes of history that means nothing in an
+image and that changes with every commit, invalidating the very COPY layer the ordered block
+exists to keep warm. `/.dockerignore` keeps the generated filter itself out of the enumeration.
 
 Two of those are obvious (`.git` is enormous and meaningless in an image; `storage/` must be
 per-container, not the developer box's). The third is why it cannot be a committed file:
@@ -188,7 +285,7 @@ docker run --rm --name rsx-test-w<N> --hostname rsx-test-w<N>.dev.local \
   -v <run_dir>/ipc:/rsx-test-ipc \
   [-v /root/.cache/ms-playwright:/root/.cache/ms-playwright:ro] \
   rspade-test:latest \
-  bash /usr/local/bin/rsx-test-worker-run <N> /rsx-test-ipc/orchestrator.sock
+  bash /usr/local/bin/rsx-test-worker-run <N> /rsx-test-ipc/orchestrator.sock <suite>
 ```
 
 Started in the FOREGROUND as a child process (never `-d`), combined output to
@@ -208,6 +305,10 @@ Started in the FOREGROUND as a child process (never `-d`), combined output to
   container is short a browser in precisely the way the host is.
 - **No codebase mount.** The tree is baked, so `storage/`, the flock directory and the build
   output are per-container and writable.
+
+**The third CMD argument is the SUITE** (`framework` or `application`), so a worker's own
+header names what it is running. Nothing about the work depends on it - a worker runs
+whatever class the queue hands it.
 
 **The CMD is a readiness wrapper, not `php artisan` directly.**
 `resource/docker/rsx-test-worker-run.sh` polls `supervisorctl status` until every program is
@@ -278,9 +379,16 @@ build, the sweep or a single container; if a record exists under it, PHP prints
 the live run's. Pass or fail is recorded alike: the verdict belongs to the code, and the
 code has not changed. Only an INFRASTRUCTURE failure (node exit non-zero) records nothing.
 
+**The record is keyed by the SELECTOR too** - `<suite>_<build_key>_<selector_key>.json`,
+where the selector key hashes the suite plus the normalised (sorted, deduplicated) class
+list. Subsets are cached like everything else, and a subset's verdict replays only for that
+same subset: it can never stand in for the suite. The `--filter` set is deliberately NOT in
+the key - it narrows METHODS at print time, out of a record that holds every method's
+result, so the same class under two filters shares one verdict correctly.
+
 Invalidation is the key itself: edit any scanned file and the next run is live. To force a
 live run without editing anything, delete the record. `rsx:clean` wipes `rsx-tmp/`, so it
-wipes the cache too. Subsets never consult it - they never reach docker mode.
+wipes the cache too.
 
 While a live run is in progress the queue server prints one line per finished class as the
 result arrives (`worker 3: Foo_Test 12/12 passed (4.1s)`, `... 3 FAILED`, or `ERROR: ...`);
@@ -295,7 +403,7 @@ before it finished)". **A dead worker is a TEST outcome, never a silent drop and
 infrastructure abort.** Which is why the exit-code contract is "did I produce
 `results.jsonl`": 0 whenever the run reached a results file, INCLUDING a run with a dead
 container; non-zero only when there is nothing to report at all (docker unusable, the sweep
-gave up, the dev image missing or stale, the build failed, a container that could not be
+gave up, a dev or test image build failed, a container that could not be
 spawned). PHP treats a non-zero exit as an infrastructure failure and never reaches the merge.
 
 On the worker side every queue RPC failure is fatal by design: a worker that cannot reach the
@@ -372,6 +480,21 @@ Measured on this box, whole framework suite:
 | docker, image layers cached | ~90 s |
 | `--sequential` | ~752 s |
 
+Image build, measured 2026-09-08 - before and after the layer split
+(`docs.dev/test_portability/01_image_build_timing.md` carries the step-by-step breakdown):
+
+| Build | Before | After |
+|---|---|---|
+| cold (nothing cached but the dev base image) | 182 s | 192 s |
+| rebuild after a one-line edit under `system/app/RSpade` | 182 s | 135 s (58 of 64 layers cached) |
+| rebuild after a one-line edit under `rsx/` | 182 s | 132 s (57 of 64 layers cached) |
+
+A COLD build is ~10 s slower - the price of a second mysqld start/stop cycle and one more
+archive - and every INCREMENTAL build is ~50 s faster. **The floor is layer 3**: provisioning,
+the `--clean` manifest build and the bundle compile are ~100 s that any source change has to
+pay, so the two edit rows are within noise of each other and the busiest-tree ordering shows up
+as which COPY layers are re-transferred, not as a different wall time.
+
 ## Debugging a worker
 
 - **`<run_dir>/worker-<N>.log`** is that container's combined stdout/stderr - the entrypoint
@@ -404,4 +527,7 @@ Measured on this box, whole framework suite:
 7. **The generated `.dockerignore` is never tracked, and its local-only entries are never
    printed.**
 8. **The manifest build stays last and stays `--clean`** (order trap 1).
+9. **`Dockerfile.test` is a template, not a build input.** Anything the generator has to know
+   about the checkout is read from the checkout, never restated in a second list.
+10. **A symlink is recreated, never COPYed** - COPY dereferences it.
 9. **ASCII only** - `[OK]` / `[ERROR]`, no emoji, no box drawing.

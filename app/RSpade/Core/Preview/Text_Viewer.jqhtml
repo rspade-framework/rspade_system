@@ -1,0 +1,74 @@
+<%--
+Text_Viewer
+
+Displays a plain-text attachment AS ITSELF - the file's own characters in a scrolling frame -
+rather than a generic extension icon. Registered for `text/*` in
+config('rsx.preview.viewers').
+
+WHY THE EXTRACTION AND NOT THE RAW BYTES. The text pipeline has already read this file, decoded
+whatever encoding it arrived in, and capped it at config('rsx.search.max_text_bytes'). Fetching
+the inline URL instead would hand the browser undecoded bytes of unknown charset and an unbounded
+length, and would need its own realtime wiring to notice the pipeline finishing. Reading the
+extraction gets a decoded, bounded string and the swap for free. The cost is honest and stated in
+the waiting state: a just-uploaded file shows "(Extracting Text...)" for the second or two before
+the worker reaches it.
+
+Extraction runs a moment AFTER the upload, so this viewer owns a WAITING state: it subscribes to
+its attachment id in on_create() and swaps to the text when the worker's frame arrives - no
+reload, no polling. Same shape as its sibling <Document_Text_Preview>, which renders the extracted
+text of a file whose PICTURE is the preview; this one renders a file whose text IS the preview.
+
+States, in the order the template tests them:
+  error_data set        the endpoint refused, or the attachment is gone   -> (Text Unavailable)
+  info === null         the first load has not answered yet               -> (Loading...)
+  status 'pending'      no index row yet - extraction is queued           -> (Extracting Text...)
+  status 'error'        extraction failed (terminal) or a degraded upload -> (Text Unavailable)
+  status 'unsupported'  nothing extractable                              -> (Text Unavailable)
+  status 'available'
+    with empty text     the file is genuinely empty                       -> (This file is empty)
+    with text           the text, newlines and space runs preserved (long lines soft-wrap)
+
+Args (the viewer contract Document_Preview passes to every dynamic viewer):
+  $attachment_id (required) - the File_Attachment_Model id to read. Throws if absent.
+  $file_name     (optional) - shown in no state; accepted so the contract matches its siblings.
+
+Events OUT: 'preview_loaded' {pages:1}. Single "page"; set_page is a no-op.
+
+TYPOGRAPHY IS MONOSPACE, DELIBERATELY, and this is where it differs from Document_Text_Preview.
+That component inherits the host's font by contract, because it presents PROSE extracted from a
+document. This one presents a FILE - logs, CSV, config, code - where a monospace column
+matters, so the frame fixes a monospace family rather than inheriting one. It still SOFT-WRAPS a
+long line rather than clipping it, exactly as Document_Text_Preview does.
+--%>
+<Define:Text_Viewer tag="div">
+    <% if (!this.args.attachment_id) { throw new Error('Text_Viewer requires $attachment_id'); } %>
+    <%
+        const _info = this.data.error_data ? { status: 'error', text: null } : this.data.info;
+        const _available = _info && _info.status === 'available' && _info.text !== null;
+        const _has_text = _available && _info.text !== '';
+    %>
+    <div class="Text_Viewer__frame">
+        <% if (!_info) { %>
+            <div class="Text_Viewer__notice">(Loading...)</div>
+        <% } else if (_info.status === 'pending') { %>
+            <%-- The realtime subscription in on_create brings us back here the moment the
+                 worker finishes the extraction pass. --%>
+            <div class="Text_Viewer__notice">(Extracting Text...)</div>
+        <% } else if (_available && !_has_text) { %>
+            <%-- Distinguished from the failure notice below ON PURPOSE: an empty file is a
+                 fact about the file, not a fault in the preview, and telling the reader
+                 "unavailable" would send them looking for a problem that does not exist. --%>
+            <div class="Text_Viewer__notice">(This file is empty)</div>
+        <% } else if (!_has_text) { %>
+            <%-- error / unsupported. Both are the same answer to the reader: there is no text
+                 to show. The operator distinguishes them with rsx:search:reindex --status. --%>
+            <div class="Text_Viewer__notice">(Text Unavailable)</div>
+        <% } else { %>
+            <%-- Escaped interpolation, NOT htmlbr(): the frame is white-space:pre-wrap, so the
+                 newlines already render as line breaks and htmlbr() would add a <br> BESIDE each
+                 surviving one and double-space the whole file. pre-wrap also preserves the runs
+                 of spaces that carry column alignment, which nl2br cannot express. --%>
+            <div class="Text_Viewer__text"><%= this.data.info.text %></div>
+        <% } %>
+    </div>
+</Define:Text_Viewer>
