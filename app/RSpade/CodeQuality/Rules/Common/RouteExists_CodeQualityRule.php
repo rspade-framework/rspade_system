@@ -129,7 +129,7 @@ class RouteExists_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Get original file content for extracting actual controller/method names
         // (The $contents parameter may be sanitized with strings replaced by spaces)
-        $original_contents = file_get_contents($file_path);
+        $original_contents = $this->source()->content($file_path);
 
         // Pattern to match Rsx::Route and Rsx.Route calls (NOT plain Route())
         // Matches both single and double parameter versions:

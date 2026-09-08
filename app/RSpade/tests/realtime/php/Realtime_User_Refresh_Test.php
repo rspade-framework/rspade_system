@@ -53,7 +53,7 @@ class Realtime_User_Refresh_Test extends Rsx_Test_Abstract
         $user->email = 'rt-refresh-' . uniqid() . '@example.test';
         $user->first_name = 'RT';
         $user->last_name = 'User';
-        $user->role_id = User_Model::ROLE_USER;
+        $user->role_id = self::__role_ids()[0];
         $user->is_enabled = true;
         $user->save();
         self::$user_id = $user->id;
@@ -70,6 +70,17 @@ class Realtime_User_Refresh_Test extends Rsx_Test_Abstract
         Realtime_Emissions::_testing_reset();
         Realtime_Emissions::_testing_set_web_context(null);
         Realtime_Emissions::_testing_start_control_capture();
+    }
+
+    /**
+     * The role ids this application declares, in enum order. Roles are decorative here -
+     * the subject is the refresh push on a role_id CHANGE - so any two distinct ids do.
+     *
+     * @return array<int, int>
+     */
+    private static function __role_ids(): array
+    {
+        return array_values(array_map('intval', User_Model::role_id__enum_ids()));
     }
 
     private static function __user(): User_Model
@@ -112,12 +123,17 @@ class Realtime_User_Refresh_Test extends Rsx_Test_Abstract
 
     public static function test_role_id_change_pushes()
     {
+        $roles = self::__role_ids();
+        if (count($roles) < 2) {
+            static::__skip('User_Model declares fewer than two roles, so a role_id change cannot be made.');
+        }
+
         $user = static::__user();
-        $user->role_id = User_Model::ROLE_USER;
+        $user->role_id = $roles[0];
         $user->save();
 
         static::__begin();
-        $user->role_id = User_Model::ROLE_MANAGER;
+        $user->role_id = $roles[1];
         $user->save();
 
         static::__assert_single_user_refresh('role_id change');

@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Core\PHP;
 
+use App\RSpade\Core\Naming\Rsx_Paths;
+
 /**
  * Filename_ShortName - Single source of truth for the RSX "short filename" algorithm.
  *
@@ -115,12 +117,11 @@ class Filename_ShortName
     }
 
     /**
-     * Framework code (app/RSpade) never gets a short name. Checked with and without a
-     * leading slash so relative directory paths (e.g. "app/RSpade/...") are covered too.
+     * Framework code (app/RSpade) never gets a short name.
      */
     private static function _is_framework_path(string $dir_path): bool
     {
-        return str_contains($dir_path, '/app/RSpade') || str_contains($dir_path, 'app/RSpade');
+        return Rsx_Paths::is_framework($dir_path);
     }
 
     /**

@@ -54,6 +54,9 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
     // FQCN of the base every API controller must extend.
     private const BASE_CONTROLLER_FQCN = 'App\\RSpade\\Core\\Api\\Rsx_Api_Controller_Abstract';
 
+    /** The same class by simple name - what php_subclass_index is keyed by. */
+    private const BASE_CONTROLLER_CLASS = 'Rsx_Api_Controller_Abstract';
+
     // Allowed HTTP verbs and #[Api_Param] types for v1.
     private const ALLOWED_METHODS = ['GET', 'POST'];
     private const ALLOWED_PARAM_TYPES = ['string', 'int', 'float', 'bool', 'file'];
@@ -88,185 +91,217 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
         return 'API Endpoints';
     }
 
-    public static function process(array &$manifest_data): void
+    /**
+     * Rebuild the API catalog for the CHANGED controller files only.
+     *
+     * INCREMENTAL. Every catalog row has a matching `routes` row of type `api` carrying the
+     * declaring file, so that row is the ownership record: the dirty files' patterns are
+     * dropped from both tables and re-derived from the dirty files' own attributes.
+     *
+     * Docblocks (description, response example, the API-GET-PURE-01 body scan) are read
+     * through the BUILD's Source_Cache, so a file the fixer or the quality driver already
+     * read this build is not read from disk again.
+     */
+    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
         if (!isset($manifest_data['data']['api_endpoints'])) {
             $manifest_data['data']['api_endpoints'] = [];
         }
 
-        $files = $manifest_data['data']['files'];
+        $dirty = static::dirty_set($changed_files, $removed_files);
 
-        // Index every file's metadata by FQCN so the extends chain can be walked here,
-        // without calling Manifest:: query APIs (the manifest is not finalized mid-build).
-        $fqcn_index = [];
-        foreach ($files as $metadata) {
-            if (isset($metadata['fqcn'])) {
-                $fqcn_index[$metadata['fqcn']] = $metadata;
+        foreach ($manifest_data['data']['routes'] ?? [] as $pattern => $row) {
+            if (($row['type'] ?? null) !== 'api') {
+                continue;
+            }
+
+            if (isset($dirty[$row['file'] ?? ''])) {
+                unset($manifest_data['data']['routes'][$pattern], $manifest_data['data']['api_endpoints'][$pattern]);
             }
         }
 
-        foreach ($files as $file => $metadata) {
-            if (!isset($metadata['public_static_methods'])) {
+        // A catalog row with no route row left is stale by construction.
+        foreach ($manifest_data['data']['api_endpoints'] as $pattern => $unused) {
+            if (!isset($manifest_data['data']['routes'][$pattern])) {
+                unset($manifest_data['data']['api_endpoints'][$pattern]);
+            }
+        }
+
+        $files = $manifest_data['data']['files'];
+
+        foreach (array_keys($dirty) as $file) {
+            $metadata = $files[$file] ?? null;
+
+            if ($metadata === null || !isset($metadata['public_static_methods'])) {
                 continue;
             }
 
             foreach ($metadata['public_static_methods'] as $method_name => $method_data) {
-                if (!isset($method_data['attributes'])) {
-                    continue;
-                }
-
-                foreach ($method_data['attributes'] as $attr_name => $attr_instances) {
+                foreach (($method_data['attributes'] ?? []) as $attr_name => $attr_instances) {
                     if (!str_ends_with($attr_name, '\\Api_Endpoint') && $attr_name !== 'Api_Endpoint') {
                         continue;
                     }
 
-                    $fqcn = $metadata['fqcn'] ?? $metadata['class'] ?? '(unknown)';
-                    $location = "{$fqcn}::{$method_name} in {$file}";
-
-                    // The declaring class must extend the API base controller.
-                    if (!static::_extends_base_controller($metadata, $fqcn_index)) {
-                        throw new \RuntimeException(
-                            "Invalid #[Api_Endpoint]: {$location}\n" .
-                            "  Declaring class must extend " . self::BASE_CONTROLLER_FQCN . "."
-                        );
-                    }
-
-                    // No other route/dispatch attribute may share the method.
-                    foreach (self::CONFLICTING_ATTRIBUTES as $conflict) {
-                        if (static::_method_has_attribute($method_data, $conflict)) {
-                            throw new \RuntimeException(
-                                "Invalid #[Api_Endpoint]: {$location}\n" .
-                                "  A method carrying #[Api_Endpoint] must not also carry #[{$conflict}]."
-                            );
-                        }
-                    }
-
-                    foreach ($attr_instances as $route_args) {
-                        $pattern = $route_args[0] ?? ($route_args['pattern'] ?? null);
-                        $methods = $route_args[1] ?? ($route_args['methods'] ?? ['GET']);
-                        $name = $route_args[2] ?? ($route_args['name'] ?? null);
-
-                        if (!$pattern) {
-                            throw new \RuntimeException(
-                                "Invalid #[Api_Endpoint]: {$location}\n" .
-                                "  A route pattern is required."
-                            );
-                        }
-
-                        if ($pattern[0] !== '/') {
-                            $pattern = '/' . $pattern;
-                        }
-
-                        // Pattern must start with /api/vN/ and carry a segment after the version.
-                        if (!preg_match('#^/api/v[0-9]+/#', $pattern)) {
-                            throw new \RuntimeException(
-                                "Invalid #[Api_Endpoint] pattern '{$pattern}': {$location}\n" .
-                                "  Pattern must match /api/vN/<segment> (e.g. /api/v1/contacts)."
-                            );
-                        }
-
-                        // Verbs must be a non-empty subset of {GET, POST}.
-                        $methods = array_map('strtoupper', (array) $methods);
-                        if (empty($methods)) {
-                            throw new \RuntimeException(
-                                "Invalid #[Api_Endpoint] methods for '{$pattern}': {$location}\n" .
-                                "  At least one HTTP verb is required."
-                            );
-                        }
-                        foreach ($methods as $verb) {
-                            if (!in_array($verb, self::ALLOWED_METHODS, true)) {
-                                throw new \RuntimeException(
-                                    "Invalid #[Api_Endpoint] method '{$verb}' for '{$pattern}': {$location}\n" .
-                                    "  Only GET and POST are permitted."
-                                );
-                            }
-                        }
-
-                        // Normalize and validate #[Api_Param] declarations for this method.
-                        $api_params = static::_parse_api_params($method_data, $pattern, $location, $methods);
-
-                        // Read the docblock directly from source (the manifest does not store docblocks).
-                        $docblock = static::_read_method_docblock(base_path($file), $method_name);
-
-                        // API-GET-PURE-01 - a GET endpoint may not mutate.
-                        if ($methods === ['GET']) {
-                            static::_assert_get_handler_is_pure(base_path($file), $method_name, $docblock, $location);
-                        }
-
-                        // Duplicate route detection (pattern must be unique across all route types).
-                        if (isset($manifest_data['data']['routes'][$pattern])) {
-                            $existing = $manifest_data['data']['routes'][$pattern];
-                            throw new \RuntimeException(
-                                "Duplicate route definition: {$pattern}\n" .
-                                "  Already defined: {$existing['class']}::{$existing['method']} in {$existing['file']}\n" .
-                                "  Conflicting: {$location}"
-                            );
-                        }
-
-                        $description = static::_parse_description($docblock);
-                        $is_hidden = str_contains($docblock, '@api-hidden');
-                        $response_example = static::_parse_response_example($docblock);
-
-                        $version = static::parse_version($pattern);
-                        $path_key = static::path_key($pattern);
-
-                        // Declarative auth gates: class-level #[Auth] then the
-                        // method's own (additive). #[Auth] is deliberately NOT in
-                        // CONFLICTING_ATTRIBUTES - it is required company, not a
-                        // competing dispatch attribute.
-                        $auth_gates = Auth_ManifestSupport::merge_gate_lists(
-                            $metadata['attributes'] ?? null,
-                            $method_data['attributes'] ?? null,
-                            $location
-                        );
-
-                        // Route entry consumed by the dispatcher and the runtime param validator.
-                        $route_data = [
-                            'methods' => $methods,
-                            'type' => 'api',
-                            'class' => $metadata['fqcn'] ?? $metadata['class'],
-                            'method' => $method_name,
-                            'name' => $name,
-                            'file' => $file,
-                            'require' => [],
-                            'pattern' => $pattern,
-                            'api_params' => $api_params,
-                            'version' => $version,
-                            'path_key' => $path_key,
-                            'response_example' => $response_example,
-                            'auth' => $auth_gates,
-                        ];
-
-                        $manifest_data['data']['routes'][$pattern] = $route_data;
-
-                        // Store by target for URL generation.
-                        $target = ($metadata['class'] ?? '') . '::' . $method_name;
-                        if (!isset($manifest_data['data']['routes_by_target'][$target])) {
-                            $manifest_data['data']['routes_by_target'][$target] = [];
-                        }
-                        $manifest_data['data']['routes_by_target'][$target][] = $route_data;
-
-                        // Catalog entry consumed by Api_Catalog for documentation.
-                        $manifest_data['data']['api_endpoints'][$pattern] = [
-                            'pattern' => $pattern,
-                            'methods' => $methods,
-                            'class' => $metadata['class'] ?? null,
-                            'fqcn' => $metadata['fqcn'] ?? null,
-                            'method' => $method_name,
-                            'description' => $description,
-                            'api_params' => $api_params,
-                            'version' => $version,
-                            'path_key' => $path_key,
-                            'response_example' => $response_example,
-                            'hidden' => $is_hidden,
-                            'file' => $file,
-                        ];
-                    }
+                    static::_record_endpoint($manifest_data, $file, $metadata, $method_name, $method_data, $attr_instances);
                 }
             }
         }
 
         ksort($manifest_data['data']['api_endpoints']);
+    }
+
+    /**
+     * Validate and store every row one #[Api_Endpoint] method declares.
+     */
+    private static function _record_endpoint(
+        array &$manifest_data,
+        string $file,
+        array $metadata,
+        string $method_name,
+        array $method_data,
+        array $attr_instances
+    ): void {
+        $fqcn = $metadata['fqcn'] ?? $metadata['class'] ?? '(unknown)';
+        $location = "{$fqcn}::{$method_name} in {$file}";
+
+        // The declaring class must extend the API base controller. The subclass index has
+        // already walked every chain, so this is one lookup instead of a per-file walk over
+        // a by-FQCN copy of the whole file map.
+        $descendants = $manifest_data['data']['php_subclass_index'][self::BASE_CONTROLLER_CLASS] ?? [];
+
+        if (!in_array($metadata['class'] ?? '', $descendants, true)) {
+            throw new \RuntimeException(
+                "Invalid #[Api_Endpoint]: {$location}\n" .
+                "  Declaring class must extend " . self::BASE_CONTROLLER_FQCN . "."
+            );
+        }
+
+        // No other route/dispatch attribute may share the method.
+        foreach (self::CONFLICTING_ATTRIBUTES as $conflict) {
+            if (static::_method_has_attribute($method_data, $conflict)) {
+                throw new \RuntimeException(
+                    "Invalid #[Api_Endpoint]: {$location}\n" .
+                    "  A method carrying #[Api_Endpoint] must not also carry #[{$conflict}]."
+                );
+            }
+        }
+
+        foreach ($attr_instances as $route_args) {
+            $pattern = $route_args[0] ?? ($route_args['pattern'] ?? null);
+            $methods = $route_args[1] ?? ($route_args['methods'] ?? ['GET']);
+            $name = $route_args[2] ?? ($route_args['name'] ?? null);
+
+            if (!$pattern) {
+                throw new \RuntimeException(
+                    "Invalid #[Api_Endpoint]: {$location}\n" .
+                    "  A route pattern is required."
+                );
+            }
+
+            if ($pattern[0] !== '/') {
+                $pattern = '/' . $pattern;
+            }
+
+            // Pattern must start with /api/vN/ and carry a segment after the version.
+            if (!preg_match('#^/api/v[0-9]+/#', $pattern)) {
+                throw new \RuntimeException(
+                    "Invalid #[Api_Endpoint] pattern '{$pattern}': {$location}\n" .
+                    "  Pattern must match /api/vN/<segment> (e.g. /api/v1/contacts)."
+                );
+            }
+
+            // Verbs must be a non-empty subset of {GET, POST}.
+            $methods = array_map('strtoupper', (array) $methods);
+            if (empty($methods)) {
+                throw new \RuntimeException(
+                    "Invalid #[Api_Endpoint] methods for '{$pattern}': {$location}\n" .
+                    "  At least one HTTP verb is required."
+                );
+            }
+            foreach ($methods as $verb) {
+                if (!in_array($verb, self::ALLOWED_METHODS, true)) {
+                    throw new \RuntimeException(
+                        "Invalid #[Api_Endpoint] method '{$verb}' for '{$pattern}': {$location}\n" .
+                        "  Only GET and POST are permitted."
+                    );
+                }
+            }
+
+            // Normalize and validate #[Api_Param] declarations for this method.
+            $api_params = static::_parse_api_params($method_data, $pattern, $location, $methods);
+
+            // Read the docblock directly from source (the manifest does not store docblocks).
+            $docblock = static::_read_method_docblock(base_path($file), $method_name);
+
+            // API-GET-PURE-01 - a GET endpoint may not mutate.
+            if ($methods === ['GET']) {
+                static::_assert_get_handler_is_pure(base_path($file), $method_name, $docblock, $location);
+            }
+
+            // Duplicate route detection (pattern must be unique across all route types).
+            if (isset($manifest_data['data']['routes'][$pattern])) {
+                $existing = $manifest_data['data']['routes'][$pattern];
+                throw new \RuntimeException(
+                    "Duplicate route definition: {$pattern}\n" .
+                    "  Already defined: {$existing['class']}::{$existing['method']} in {$existing['file']}\n" .
+                    "  Conflicting: {$location}"
+                );
+            }
+
+            $description = static::_parse_description($docblock);
+            $is_hidden = str_contains($docblock, '@api-hidden');
+            $response_example = static::_parse_response_example($docblock);
+
+            $version = static::parse_version($pattern);
+            $path_key = static::path_key($pattern);
+
+            // Declarative auth gates: class-level #[Auth] then the
+            // method's own (additive). #[Auth] is deliberately NOT in
+            // CONFLICTING_ATTRIBUTES - it is required company, not a
+            // competing dispatch attribute.
+            // Validated here, stored once in auth.surfaces. The row names its
+            // surface instead of carrying a second copy of the gate list.
+            Auth_ManifestSupport::merge_gate_lists(
+                $metadata['attributes'] ?? null,
+                $method_data['attributes'] ?? null,
+                $location
+            );
+
+            $target = ($metadata['class'] ?? '') . '::' . $method_name;
+
+            // Route entry consumed by the dispatcher. The param declarations,
+            // the version, the path key and the response example live ONCE, on
+            // the api_endpoints row below - the dispatcher reads api_params from
+            // there (api_endpoints is in the hot index, like routes).
+            $manifest_data['data']['routes'][$pattern] = [
+                'methods' => $methods,
+                'type' => 'api',
+                'class' => $metadata['fqcn'] ?? $metadata['class'],
+                'method' => $method_name,
+                'name' => $name,
+                'file' => $file,
+                'pattern' => $pattern,
+                'surface' => $target,
+                'target' => $target,
+            ];
+
+            // Catalog entry consumed by Api_Catalog for documentation.
+            $manifest_data['data']['api_endpoints'][$pattern] = [
+                'pattern' => $pattern,
+                'methods' => $methods,
+                'class' => $metadata['class'] ?? null,
+                'fqcn' => $metadata['fqcn'] ?? null,
+                'method' => $method_name,
+                // Docblock-derived: the file record does not hold either of
+                // these, so they are the catalog's own contribution.
+                'description' => $description,
+                'response_example' => $response_example,
+                'api_params' => $api_params,
+                'version' => $version,
+                'path_key' => $path_key,
+                'hidden' => $is_hidden,
+            ];
+        }
     }
 
     /**
@@ -290,29 +325,6 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
     public static function path_key(string $pattern): string
     {
         return preg_replace('#^/api/v[0-9]+#', '', $pattern);
-    }
-
-    /**
-     * Walk the extends chain via extends_fqcn to determine whether the declaring class
-     * extends the API base controller. Abstract intermediates are permitted.
-     */
-    private static function _extends_base_controller(array $metadata, array $fqcn_index): bool
-    {
-        $current = $metadata['extends_fqcn'] ?? null;
-        $guard = 0;
-
-        while ($current && $guard++ < 50) {
-            if ($current === self::BASE_CONTROLLER_FQCN) {
-                return true;
-            }
-            $parent = $fqcn_index[$current] ?? null;
-            if (!$parent) {
-                return false;
-            }
-            $current = $parent['extends_fqcn'] ?? null;
-        }
-
-        return false;
     }
 
     /**
@@ -654,7 +666,7 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
             return '';
         }
 
-        $tokens = @token_get_all(file_get_contents($file_path));
+        $tokens = @token_get_all(\App\RSpade\Core\Manifest\Manifest::build()->source_cache()->content($file_path));
         if (!is_array($tokens)) {
             return '';
         }
@@ -741,7 +753,7 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
             return '';
         }
 
-        $source = file_get_contents($file_path);
+        $source = \App\RSpade\Core\Manifest\Manifest::build()->source_cache()->content($file_path);
         $lines = explode("\n", $source);
 
         // Find the line declaring "function {method_name}".

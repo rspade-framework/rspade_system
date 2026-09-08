@@ -96,7 +96,7 @@ class RsxFqcnUsage_CodeQualityRule extends CodeQualityRule_Abstract
                     // Get the code snippet if we can access the file
                     $code_snippet = '';
                     if (file_exists($file_path)) {
-                        $file_contents = file_get_contents($file_path);
+                        $file_contents = $this->source()->content($file_path);
                         $lines = explode("\n", $file_contents);
                         if ($line > 0 && $line <= count($lines)) {
                             $code_snippet = trim($lines[$line - 1]);

@@ -517,7 +517,7 @@ class FilenameClassMatch_CodeQualityRule extends CodeQualityRule_Abstract
     private function should_auto_rename_or_throw_violation(string $file, string $suggested_filename, bool $is_rsx): bool
     {
         // Check if file has @FILENAME-CONVENTION-EXCEPTION marker
-        $file_contents = file_get_contents(base_path($file));
+        $file_contents = $this->source()->content(base_path($file));
         if (str_contains($file_contents, '@FILENAME-CONVENTION-EXCEPTION')) {
             return true; // Skip this file entirely (no violation, no rename)
         }
@@ -541,7 +541,9 @@ class FilenameClassMatch_CodeQualityRule extends CodeQualityRule_Abstract
         console_debug('MANIFEST', "Auto-renamed: {$file} -> {$target_path}");
 
         // Signal manifest to restart
-        \App\RSpade\Core\Manifest\Manifest::flag_needs_restart();
+        \App\RSpade\Core\Manifest\Manifest::flag_needs_restart(
+            'FILENAME-CLASS-01 auto-renamed ' . $file . ' to ' . $target_path
+        );
 
         return true; // File was renamed, no violation needed
     }

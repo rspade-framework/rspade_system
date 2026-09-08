@@ -18,24 +18,23 @@ use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
  *     let email = await Rsx_Formdata_Generator_Controller.email();
  *
  * AUTHORIZATION: the class gate is 'public' and the real policy stays in pre_dispatch,
- * because that policy is "CLI caller OR (logged in AND ROLE_DEVELOPER)" - a composite
- * that the two built-in checks cannot express. It needs a named check of its own (a
- * developer-tools gate, which must live on the APP's Permission class since
- * ROLE_DEVELOPER is an application constant). Declaring 'is_logged_in' here instead
- * would silently break the CLI path, which the gate seam evaluates first.
+ * because that policy is "CLI caller OR is_sysadmin" - a composite the built-in checks
+ * cannot express, and declaring 'is_sysadmin' as the class gate instead would break the
+ * CLI path, which the gate seam evaluates first. The web half is the framework's own
+ * administrator gate, so this controller references no application vocabulary.
  */
 #[Auth('public')]
 class Rsx_Formdata_Generator_Controller extends Rsx_Controller_Abstract
 {
     /**
-     * Authorization: requires developer role or CLI access
+     * Authorization: CLI access, or a signed-in administrator over the web.
      *
      * This is a dev tool that generates test data. Access is restricted to:
      * 1. CLI users (artisan commands, tests)
-     * 2. Authenticated users with ROLE_DEVELOPER
+     * 2. Web callers passing the framework's is_sysadmin check
      *
-     * See the class docblock: this stays inline until a developer-tools auth check
-     * exists to express it declaratively.
+     * See the class docblock: this stays inline because the two halves are a composite
+     * no single named check expresses.
      */
     public static function pre_dispatch(Request $request, array $params = [])
     {
@@ -49,9 +48,9 @@ class Rsx_Formdata_Generator_Controller extends Rsx_Controller_Abstract
             return response_unauthorized();
         }
 
-        // Require developer role
-        if (!Permission::has_role(\User_Model::ROLE_DEVELOPER)) {
-            return response_unauthorized('Developer access required');
+        // Require the framework's administrator gate
+        if (!Permission::is_sysadmin()) {
+            return response_unauthorized('Administrator access required');
         }
 
         return null;

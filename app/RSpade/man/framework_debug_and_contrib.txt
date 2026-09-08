@@ -782,7 +782,8 @@ SUBSYSTEM PRIMERS
     rebuild happens on the poison flag, a missing cache, or --clean. Force
     one after editing the manifest itself or the bundle compiler.
 
-    THE CACHE. storage/rsx-build/manifest_data.php - a var_export()ed array
+    THE CACHE. storage/rsx-build/manifest_index.php (plus manifest_files.php
+    for the metadata a request never reads) - a compact PHP-literal array
     loaded with include, under the PROJECT's storage directory, one level
     above the Laravel base path, never derived from base_path(). Siblings in
     the same directory are the generated JS stubs, the compiled bundles and

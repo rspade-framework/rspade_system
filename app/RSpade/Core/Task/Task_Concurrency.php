@@ -220,16 +220,15 @@ class Task_Concurrency
      */
     private static function _method_attributes(string $class, string $method): array
     {
-        $manifest = Manifest::get_all();
+        $record = Manifest::php_class_metadata(Manifest::_normalize_class_name($class));
 
-        foreach ($manifest as $info) {
-            if (!isset($info['fqcn']) || $info['fqcn'] !== $class) {
-                continue;
-            }
-            return $info['public_static_methods'][$method]['attributes'] ?? [];
+        if ($record === null || ($record['fqcn'] ?? null) !== ltrim($class, '\\')) {
+            return [];
         }
 
-        return [];
+        // A task service's file record is in the HOT half of the index for exactly this
+        // read. This was a linear scan of every indexed file, per task dispatch.
+        return Manifest::get_file($record['file'])['public_static_methods'][$method]['attributes'] ?? [];
     }
 
     private static function _has_attribute(array $attributes, string $name): bool

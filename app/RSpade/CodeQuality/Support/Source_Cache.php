@@ -1,0 +1,323 @@
+<?php
+
+namespace App\RSpade\CodeQuality\Support;
+
+use PhpParser\Error as PhpParser_Error;
+use PhpParser\ParserFactory;
+
+/**
+ * The ONE place a build reads, tokenizes or parses a source file.
+ *
+ * WHY THIS EXISTS. Every rule that needed a token stream or an AST used to make its own,
+ * and hold it in a static array for the life of the process. A cold build of 1,417 files
+ * ended up with 2,093 nikic parses (~3.6 per PHP file), 470 MB of retained `PhpToken`
+ * streams and ~400 MB of retained AST - 1.12 GB of a 1,237 MB peak, all of it inside the
+ * manifest-time code-quality pass, and all of it proportional to FILES PARSED rather than
+ * to the index the build is producing.
+ *
+ * THE BUDGET this class implements (owner ruling): peak memory is proportional to the
+ * index plus a constant bounded by the LARGEST SINGLE FILE, never proportional to the
+ * number of files parsed. So the cache is an LRU with a hard entry bound: a build may
+ * parse ten thousand files and still hold at most `$capacity` of them at once. Nothing
+ * here is static - the instance belongs to the build, and `release()` empties it.
+ *
+ * WHAT IT MEMOIZES, per path:
+ *   - content()  the raw bytes;
+ *   - tokens()   `PhpToken::tokenize()` output;
+ *   - ast()      one nikic parse, using ONE parser instance for the whole build.
+ *
+ * Each is lazy and independent: asking for an AST does not materialize a token stream.
+ * A path that cannot be read is memoized as empty/null, so a missing file costs one stat
+ * and not one per asker.
+ *
+ * KEYING. The manifest file hash is the honest key when the caller has metadata - a
+ * rule's answer is about the file's BYTES, and the hash is what says the bytes changed.
+ * `content($path, $hash)` accepts it; without one the path is the key and the entry lives
+ * only as long as this instance (a build never reads a file it is also rewriting without
+ * calling `forget()` in between - `Php_Fixer` does exactly that after every write).
+ *
+ * FAILURE POSTURE. An unreadable file yields `''` / `[]` / `null` rather than throwing:
+ * a build routinely names files that vanished between the scan and the check, and every
+ * caller here is a checker that has something to say about a file that IS there. A
+ * SYNTAX error likewise yields a null AST - the lint stage is what reports syntax, and a
+ * rule must not turn an unparseable file into its own kind of failure.
+ *
+ * See: rsx:man code_quality.
+ */
+#[Instantiatable]
+class Source_Cache
+{
+    /** Default number of files held at once. Bounded, not tuned: see the budget above. */
+    public const DEFAULT_CAPACITY = 64;
+
+    /** Maximum entries per bucket. */
+    private int $capacity;
+
+    /** [key => string] raw file contents, most-recently-used last. */
+    private array $content = [];
+
+    /** [key => array<string,?object>] class nodes found in a file's AST, by class name. */
+    private array $class_nodes = [];
+
+    /** [key => array] PhpToken streams, most-recently-used last. */
+    private array $tokens = [];
+
+    /** [key => array|null] nikic statement arrays (null = unparseable), MRU last. */
+    private array $ast = [];
+
+    /** The one nikic parser for this instance's lifetime. */
+    private ?object $parser = null;
+
+    /** Counters, for the build's own reporting: how many times each bucket did real work. */
+    private array $work = ['content' => 0, 'tokens' => 0, 'ast' => 0];
+
+    public function __construct(int $capacity = self::DEFAULT_CAPACITY)
+    {
+        if ($capacity < 1) {
+            shouldnt_happen('Source_Cache capacity must be at least 1, got ' . $capacity);
+        }
+
+        $this->capacity = $capacity;
+    }
+
+    /**
+     * The raw bytes of $path ('' when it cannot be read).
+     *
+     * $hash is the manifest's file hash when the caller has one; it makes the entry
+     * survive a path being asked for under two spellings and, more importantly, makes the
+     * key say what the entry is actually about.
+     */
+    public function content(string $path, string $hash = ''): string
+    {
+        $key = $this->__key($path, $hash);
+
+        if (array_key_exists($key, $this->content)) {
+            return $this->__touch($this->content, $key);
+        }
+
+        $value = '';
+
+        if (is_file($path) && is_readable($path)) {
+            $read = file_get_contents($path);
+            $value = $read === false ? '' : $read;
+        }
+
+        $this->work['content']++;
+
+        return $this->__store($this->content, $key, $value);
+    }
+
+    /**
+     * `PhpToken::tokenize()` over $path ([] when the file cannot be read).
+     */
+    public function tokens(string $path, string $hash = ''): array
+    {
+        $key = $this->__key($path, $hash);
+
+        if (array_key_exists($key, $this->tokens)) {
+            return $this->__touch($this->tokens, $key);
+        }
+
+        $source = $this->content($path, $hash);
+        $value = $source === '' ? [] : \PhpToken::tokenize($source);
+
+        $this->work['tokens']++;
+
+        return $this->__store($this->tokens, $key, $value);
+    }
+
+    /**
+     * The nikic statement array for $path, or null when the file cannot be read or does
+     * not parse.
+     */
+    public function ast(string $path, string $hash = ''): ?array
+    {
+        $key = $this->__key($path, $hash);
+
+        if (array_key_exists($key, $this->ast)) {
+            return $this->__touch($this->ast, $key);
+        }
+
+        $source = $this->content($path, $hash);
+        $value = null;
+
+        if ($source !== '') {
+            try {
+                $value = $this->__parser()->parse($source);
+            } catch (PhpParser_Error $error) {
+                $value = null;
+            }
+        }
+
+        $this->work['ast']++;
+
+        $this->__store($this->ast, $key, $value);
+
+        // The class-node map is a satellite of the AST bucket: whatever the store just
+        // evicted must lose its class nodes too, or the satellite would outlive the bound.
+        $this->class_nodes = array_intersect_key($this->class_nodes, $this->ast);
+
+        return $value;
+    }
+
+    /**
+     * The nikic ClassLike node named $class_name inside $path, or null when the file does
+     * not parse or does not declare it.
+     *
+     * FOUR CROSS-FILE RULES wrote this lookup privately (PHP-PARENT-CHAIN-01, SEALED-01,
+     * REVISION-01, POLY-01), and each one ran a full `NodeFinder` traversal of the file's
+     * AST every time it asked. PHP-PARENT-CHAIN-01 asks once per ANCESTOR per METHOD, so a
+     * twenty-method class four levels deep cost eighty whole-AST traversals to answer five
+     * distinct questions: 3.9 s of a 14.4 s cold build, and the single largest item in it.
+     *
+     * The answer is memoized beside the AST it came from and evicted with the file, so it
+     * obeys the same bound as everything else here.
+     */
+    public function class_node(string $path, string $class_name, string $hash = ''): ?object
+    {
+        $key = $this->__key($path, $hash);
+        $lower = strtolower($class_name);
+
+        if (isset($this->class_nodes[$key]) && array_key_exists($lower, $this->class_nodes[$key])) {
+            return $this->class_nodes[$key][$lower];
+        }
+
+        $ast = $this->ast($path, $hash);
+        $found = null;
+
+        if ($ast !== null) {
+            foreach ((new \PhpParser\NodeFinder())->findInstanceOf($ast, \PhpParser\Node\Stmt\ClassLike::class) as $class_like) {
+                if ($class_like->name !== null && strcasecmp($class_like->name->toString(), $class_name) === 0) {
+                    $found = $class_like;
+
+                    break;
+                }
+            }
+        }
+
+        // The AST bucket decides residency; this map only rides along with it, so an entry
+        // the LRU has already evicted is not resurrected here.
+        if (array_key_exists($key, $this->ast)) {
+            $this->class_nodes[$key][$lower] = $found;
+        }
+
+        return $found;
+    }
+
+    /**
+     * `PhpToken::tokenize()` over a string the caller already holds - the object shape, for
+     * a caller checking CONTENT it was handed rather than a file on disk (a rule fixture the
+     * test never wrote to that path).
+     *
+     * NOT memoized, for the same reason token_array() is not.
+     */
+    public function php_tokens_of(string $code): array
+    {
+        return $code === '' ? [] : \PhpToken::tokenize($code);
+    }
+
+    /**
+     * `token_get_all()` over a string the caller already holds - a synthesized fragment, or
+     * a file's content it was handed.
+     *
+     * The OTHER token shape, and deliberately a separate method: `tokens()` yields PhpToken
+     * OBJECTS and this yields the array-and-scalar shape, and a walker written for one does
+     * not read the other. NOT memoized - the caller made these bytes, so nobody else can ask
+     * for them, and a memo keyed on content would just be a second copy of the fragment.
+     */
+    public function token_array(string $code): array
+    {
+        return $code === '' ? [] : token_get_all($code);
+    }
+
+    /**
+     * Drop everything remembered about $path. Called after a write to it.
+     */
+    public function forget(string $path, string $hash = ''): void
+    {
+        $key = $this->__key($path, $hash);
+
+        unset($this->content[$key], $this->tokens[$key], $this->ast[$key], $this->class_nodes[$key]);
+
+        // A path written under one hash is also the path spelled with no hash.
+        if ($hash !== '') {
+            unset($this->content[$path], $this->tokens[$path], $this->ast[$path], $this->class_nodes[$path]);
+        }
+    }
+
+    /**
+     * Empty every bucket and drop the parser. The end of the pass that owns this instance.
+     */
+    public function release(): void
+    {
+        $this->content = [];
+        $this->tokens = [];
+        $this->ast = [];
+        $this->class_nodes = [];
+        $this->parser = null;
+    }
+
+    /**
+     * How many times each bucket did real work (reads, tokenizations, parses).
+     *
+     * @return array{content:int,tokens:int,ast:int}
+     */
+    public function work_counts(): array
+    {
+        return $this->work;
+    }
+
+    /**
+     * How many entries each bucket is holding right now.
+     */
+    public function resident_counts(): array
+    {
+        return [
+            'content' => count($this->content),
+            'tokens' => count($this->tokens),
+            'ast' => count($this->ast),
+        ];
+    }
+
+    private function __key(string $path, string $hash): string
+    {
+        return $hash === '' ? $path : $hash;
+    }
+
+    private function __parser(): object
+    {
+        if ($this->parser === null) {
+            $this->parser = (new ParserFactory())->createForNewestSupportedVersion();
+        }
+
+        return $this->parser;
+    }
+
+    /**
+     * Move $key to the most-recently-used end and return its value.
+     */
+    private function __touch(array &$bucket, string $key)
+    {
+        $value = $bucket[$key];
+        unset($bucket[$key]);
+        $bucket[$key] = $value;
+
+        return $value;
+    }
+
+    /**
+     * Store $value under $key and evict the least-recently-used entry while the bucket is
+     * over capacity. PHP arrays preserve insertion order, so the first key is the LRU one.
+     */
+    private function __store(array &$bucket, string $key, $value)
+    {
+        $bucket[$key] = $value;
+
+        while (count($bucket) > $this->capacity) {
+            $oldest = array_key_first($bucket);
+            unset($bucket[$oldest]);
+        }
+
+        return $value;
+    }
+}

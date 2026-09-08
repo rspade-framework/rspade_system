@@ -90,7 +90,7 @@ class FieldAliasing_CodeQualityRule extends CodeQualityRule_Abstract
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         // Read original file content for exception checking
-        $original_contents = file_get_contents($file_path);
+        $original_contents = $this->source()->content($file_path);
 
         // Skip if file-level exception comment is present
         if (strpos($original_contents, '@' . $this->get_id() . '-EXCEPTION') !== false) {

@@ -84,6 +84,30 @@ class Actor_Model_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * The least privileged role this application declares - the one granting the fewest
+     * permissions (tie: the highest id). Derived from User_Model's own $enums so the
+     * class names no role constant, and used for the throwaway staff user whose point is
+     * that it fails the gates on the user-management screen.
+     */
+    private static function __least_privileged_role(): int
+    {
+        $worst_id = null;
+        $worst_count = null;
+
+        foreach (User_Model::role_id__enum() as $role_id => $definition) {
+            $role_id = (int) $role_id;
+            $count = count($definition['permissions'] ?? []);
+
+            if ($worst_count === null || $count < $worst_count || ($count === $worst_count && $role_id > $worst_id)) {
+                $worst_id = $role_id;
+                $worst_count = $count;
+            }
+        }
+
+        return (int) $worst_id;
+    }
+
+    /**
      * A throwaway second staff user in the test site, with its own login identity.
      */
     private static function __make_staff_user(): User_Model
@@ -101,7 +125,7 @@ class Actor_Model_Test extends Rsx_Test_Abstract
         $user->login_user_id = (int) $login_user->id;
         $user->first_name = 'Actor';
         $user->last_name = 'Fixture';
-        $user->role_id = User_Model::ROLE_USER;
+        $user->role_id = self::__least_privileged_role();
         $user->is_enabled = true;
         $user->save();
 
@@ -305,7 +329,7 @@ class Actor_Model_Test extends Rsx_Test_Abstract
 
     public static function test_a_viewer_without_user_management_gets_no_link()
     {
-        // The same record, a different viewer: a ROLE_USER staff member fails the
+        // The same record, a different viewer: a staff member who fails the
         // can_manage_users gate on the user-management screen, so the link collapses to
         // null and the widget renders plain text. This is the whole point of resolving
         // through the destination's own gates rather than a hand-rolled check.
@@ -360,7 +384,7 @@ class Actor_Model_Test extends Rsx_Test_Abstract
         );
 
         Rsx_Portal::set_portal_request(false);
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
     }
 
     // =====================================================================

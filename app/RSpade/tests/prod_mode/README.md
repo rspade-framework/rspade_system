@@ -26,10 +26,8 @@ Batch 1 (determinism core):
   - `_rsx_content_hash($relative_path, $content)` - the pure hashing core.
   - `_rsx_relative_build_path($path)` - two-mount-convergent relative path.
 - `app/RSpade/Core/Manifest/_Manifest_Cache_Helper.php`
-  - `_compute_hash($manifest_body)` - the build key.
-  - `_normalize_for_hash($manifest_body)` - deterministic projection.
-  - `_strip_absolute_paths($value)` - recursive absolute-path reduction.
-  - `_save()` - drops the `generated` timestamp from strict-prod cache files.
+  - `_compute_hash($manifest_body)` - the build key: sorted per-file hashes + the derived sections.
+  - `_save()` - writes the two index halves; no `generated` timestamp in any mode.
 
 Consumers of the file hash (context): `BundleCompiler::_get_cache_key`,
 `Js_Parser`, `Js_Transformer`. Consumer of the manifest hash: the sibling

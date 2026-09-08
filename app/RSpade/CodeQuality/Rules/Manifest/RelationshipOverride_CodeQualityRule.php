@@ -68,11 +68,26 @@ class RelationshipOverride_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Cross-file rule: needs full manifest context (ancestor entries).
+     * CROSS-FILE: this rule judges the tree, not one file. The driver runs it once per
+     * pass, gated on the fingerprint of what depends_on() declares.
      */
-    public function is_incremental(): bool
+    public function kind(): string
     {
-        return false;
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * Every indexed PHP file and the lineage indexes.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return [
+            'files:*.php',
+            'php_classes',
+            'php_subclass_index',
+        ];
     }
 
     /**
@@ -157,7 +172,7 @@ class RelationshipOverride_CodeQualityRule extends CodeQualityRule_Abstract
         array $own_methods,
         array $ancestor_relationships
     ): void {
-        $contents = @file_get_contents($file);
+        $contents = $this->source()->content($file);
         $lines = $contents === false ? [] : explode("\n", $contents);
 
         foreach ($own_methods as $method_name => $method_data) {

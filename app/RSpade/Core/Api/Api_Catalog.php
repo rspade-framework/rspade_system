@@ -39,6 +39,22 @@ class Api_Catalog
     /**
      * Distinct version numbers present across all endpoints, sorted descending.
      */
+    /**
+     * The #[Api_Param] declarations for one endpoint pattern.
+     *
+     * The runtime validator's source. They are baked once, onto the catalog row, rather than
+     * onto both the catalog row and the route row - the two were byte-identical copies of the
+     * same local, and api_endpoints is in the hot index exactly like routes.
+     *
+     * @return array<int, array>
+     */
+    public static function params_for_pattern(string $pattern): array
+    {
+        Manifest::init();
+
+        return Manifest::$data['data']['api_endpoints'][$pattern]['api_params'] ?? [];
+    }
+
     public static function get_versions(): array
     {
         $versions = [];

@@ -176,42 +176,31 @@ abstract class Rsx_Bundle_Abstract
      */
     public static function get_resolved_definition(string $bundle_class): array
     {
-        // Get raw definition - verify class exists in Manifest
-        try {
-            // Check if this is a FQCN (contains backslash) or simple name
-            if (strpos($bundle_class, '\\') !== false) {
-                // It's a FQCN, use php_get_metadata_by_fqcn
-                $metadata = Manifest::php_get_metadata_by_fqcn($bundle_class);
-            } else {
-                // It's a simple name, use php_get_metadata_by_class
-                $metadata = Manifest::php_get_metadata_by_class($bundle_class);
-            }
-            if (!isset($metadata['extends']) || ($metadata['extends'] !== 'Rsx_Bundle_Abstract' && $metadata['extends'] !== 'RsxBundle')) {
-                // Check if it extends a class that extends Rsx_Bundle_Abstract
-                $extends_bundle = false;
-                $current_extends = $metadata['extends'] ?? null;
-                while ($current_extends && !$extends_bundle) {
-                    if ($current_extends === 'Rsx_Bundle_Abstract' || $current_extends === 'RsxBundle') {
-                        $extends_bundle = true;
-                    } else {
-                        try {
-                            $parent_metadata = Manifest::php_get_metadata_by_class($current_extends);
-                            $current_extends = $parent_metadata['extends'] ?? null;
-                        } catch (RuntimeException $e) {
-                            break;
-                        }
-                    }
-                }
-                if (!$extends_bundle) {
-                    throw new RuntimeException("Class {$bundle_class} must extend Rsx_Bundle_Abstract");
-                }
-            }
-        } catch (RuntimeException $e) {
-            if (str_contains($e->getMessage(), 'not found in manifest')) {
-                throw new RuntimeException("Bundle class not found: {$bundle_class}");
+        // Verify the class exists and reaches Rsx_Bundle_Abstract, through the HOT class
+        // record - a FQCN and a simple name are the same key, and the ancestry walk is one
+        // lookup per hop instead of a whole file record per hop.
+        $record = Manifest::php_class_metadata(Manifest::_normalize_class_name($bundle_class));
+
+        if ($record === null) {
+            throw new RuntimeException("Bundle class not found: {$bundle_class}");
+        }
+
+        $extends_bundle = false;
+        $current_extends = $record['extends'] ?? null;
+        $seen = [];
+
+        while ($current_extends !== null && !isset($seen[$current_extends])) {
+            if ($current_extends === 'Rsx_Bundle_Abstract' || $current_extends === 'RsxBundle') {
+                $extends_bundle = true;
+                break;
             }
 
-            throw $e;
+            $seen[$current_extends] = true;
+            $current_extends = Manifest::php_class_metadata($current_extends)['extends'] ?? null;
+        }
+
+        if (!$extends_bundle) {
+            throw new RuntimeException("Class {$bundle_class} must extend Rsx_Bundle_Abstract");
         }
 
         $definition = $bundle_class::define();
@@ -766,40 +755,21 @@ abstract class Rsx_Bundle_Abstract
      */
     protected static function __resolve_bundle_class(string $bundle): string
     {
-        // First try to find by exact class name in Manifest
-        try {
-            $metadata = Manifest::php_get_metadata_by_class($bundle);
+        // The class map, by simple name. RSX enforces unique simple names, so a namespaced
+        // spelling reduces to the same key - which is why the three "common namespace
+        // prefixes" the predecessor tried are one lookup now, not four scans.
+        $record = Manifest::php_class_metadata(Manifest::_normalize_class_name($bundle));
 
-            return $metadata['fqcn'];
-        } catch (RuntimeException $e) {
-            // Not found by simple name
+        if ($record !== null && !empty($record['fqcn'])) {
+            return $record['fqcn'];
         }
 
-        // Try with common namespace prefixes
-        $possible_names = [
-            $bundle,
-            "App\\Bundles\\{$bundle}",
-            "Rsx\\Bundles\\{$bundle}",
-        ];
-
-        foreach ($possible_names as $name) {
-            try {
-                $metadata = Manifest::php_get_metadata_by_fqcn($name);
-
-                return $metadata['fqcn'];
-            } catch (RuntimeException $e) {
-                // Try next
-            }
-        }
-
-        // Search manifest for any class ending with the bundle name that extends Rsx_Bundle_Abstract
-        $manifest_data = Manifest::get_all();
-        foreach ($manifest_data as $file_info) {
-            $class_name = $file_info['class'] ?? null;
-            if ($class_name &&
-                str_ends_with($class_name, $bundle) &&
-                Manifest::php_is_subclass_of($class_name, 'Rsx_Bundle_Abstract')) {
-                return $file_info['fqcn'];
+        // Then a SUFFIX match, against the bundle classes the subclass index already names
+        // rather than every indexed file in the tree. (A bundle may be referred to by the tail
+        // of its class name; this is the lookup that resolves that spelling.)
+        foreach (Manifest::php_class_records_extending('Rsx_Bundle_Abstract') as $class_name => $class_record) {
+            if (str_ends_with($class_name, $bundle) && !empty($class_record['fqcn'])) {
+                return $class_record['fqcn'];
             }
         }
 
@@ -920,10 +890,11 @@ abstract class Rsx_Bundle_Abstract
 
         // Only validate if we're in a route dispatch context (controller and action are set)
         if ($current_controller && $current_action && !$view_is_framework_owned) {
-            // Look up the controller file in the manifest
+            // Look up the controller file in the manifest. The hot class record IS the
+            // path - reading the whole file record here loaded the cold half of the index on
+            // every rendered page.
             try {
-                $controller_metadata = Manifest::php_get_metadata_by_class($current_controller);
-                $controller_file = $controller_metadata['file'] ?? null;
+                $controller_file = Manifest::php_class_metadata($current_controller)['file'] ?? null;
 
                 if ($controller_file) {
                     // Normalize controller path

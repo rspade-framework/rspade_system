@@ -645,10 +645,19 @@ FRAMEWORK EVENT CATALOG
             Fired from: Manifest::init(), only when this process (re)scanned the
                         manifest - an incremental update WITH changed files, or a
                         no-cache full build.
-            Data: {files: array} - a flat list of the relative paths that changed
-                  (new + modified combined). The scanner does not cheaply split
-                  added-vs-modified or track removals, so no such breakdown is
-                  provided. On a no-cache full build this is every scanned file.
+            Data: {files: array, removed: array}
+                  files    - a flat list of the relative paths that changed
+                             (new + modified combined). The scanner does not
+                             cheaply split added-vs-modified, so no such
+                             breakdown is provided. On a no-cache full build
+                             this is every scanned file.
+                  removed  - the relative paths that LEFT the tree in this
+                             build. Empty on a no-cache full build (nothing was
+                             carried forward to lose). A handler that
+                             regenerates a derived artifact wants `files`; one
+                             that prunes wants `removed`.
+                  Both are accumulated across build restarts, so each is a
+                  superset and never a subset of what one pass saw.
             Use for: cache invalidation keyed on changed files, dev tooling,
                      regenerating derived artifacts after a source change.
 
@@ -656,7 +665,7 @@ FRAMEWORK EVENT CATALOG
             Fired from: Manifest::init(), same condition as rsx.rebuilt,
                         immediately after it, when NOT in a production-like mode
                         (Rsx::is_production() is false).
-            Data: {files: array} - identical to rsx.rebuilt.
+            Data: identical to rsx.rebuilt.
             Use for: dev-only reactions to a source change (the common case:
                      "code just changed on this dev box").
 
@@ -666,7 +675,7 @@ FRAMEWORK EVENT CATALOG
                         (debug OR production; Rsx::is_production() is true). In
                         practice this fires once, inside the authorized
                         rsx:prod:build.
-            Data: {files: array} - identical to rsx.rebuilt.
+            Data: identical to rsx.rebuilt.
             Use for: deploy-time hooks that must run exactly once per sealed
                      build (warm caches, ping a deploy webhook, prime an index).
 
@@ -691,7 +700,7 @@ IMPLEMENTATION DETAILS
             - Priority from second parameter or 'priority' key
             - Class and method name for callable construction
 
-        Handlers are stored in manifest_data.php under 'event_handlers' key:
+        Handlers are stored in the manifest index under 'event_handlers':
 
             'event_handlers' => [
                 'file.upload.authorize' => [

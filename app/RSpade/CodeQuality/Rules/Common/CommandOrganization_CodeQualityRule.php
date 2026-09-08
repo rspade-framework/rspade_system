@@ -52,7 +52,7 @@ class CommandOrganization_CodeQualityRule extends CodeQualityRule_Abstract
         
         foreach ($files as $file) {
             $filename = basename($file);
-            $content = file_get_contents($file);
+            $content = $this->source()->content($file);
             
             // Check for rsx: commands
             if (preg_match('/\$signature\s*=\s*[\'"]rsx:/i', $content)) {

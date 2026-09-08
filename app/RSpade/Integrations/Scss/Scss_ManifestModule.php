@@ -137,7 +137,7 @@ class Scss_ManifestModule extends ManifestModule_Abstract
 
         // Check for single top-level class selector pattern for SCSS files
         if ($extension === 'scss') {
-            $this->detect_scss_id($clean_content, $metadata);
+            $this->detect_scss_id($clean_content, $metadata, $file_path);
         }
         
         // Check if it's a partial (starts with underscore)
@@ -221,7 +221,7 @@ class Scss_ManifestModule extends ManifestModule_Abstract
      * Additionally sets 'id' if the wrapper class matches a Blade view ID,
      * JS class extending Component, or jqhtml template in the manifest.
      */
-    protected function detect_scss_id(string $clean_content, array &$metadata): void
+    protected function detect_scss_id(string $clean_content, array &$metadata, string $file_path = ''): void
     {
         // Remove SCSS variable declarations ($var: value;) - these are allowed outside wrapper
         // This regex matches: $variable-name: any value until semicolon;
@@ -280,7 +280,21 @@ class Scss_ManifestModule extends ManifestModule_Abstract
         $found_match = false;
         $scss_id_already_exists = false;
 
-        foreach ($manifest_data as $file_data) {
+        // THIS FILE'S OWN PREVIOUS RECORD IS NOT "ANOTHER SCSS FILE".
+        //
+        // A rebuild carries the last build's file map forward, so on the SECOND build this
+        // stylesheet's own entry - carrying the id this method assigned last time - was
+        // matching the "another SCSS already claims this id" test and the id was silently
+        // dropped. The result was an index whose stylesheet records depended on how many
+        // times the tree had been rebuilt, which is exactly what
+        // Manifest_Incremental_Modules_Test refuses to allow.
+        $own_key = $file_path === '' ? null : str_replace(base_path() . '/', '', $file_path);
+
+        foreach ($manifest_data as $manifest_key => $file_data) {
+            if ($own_key !== null && $manifest_key === $own_key) {
+                continue;
+            }
+
             // Check if another SCSS file already has this ID
             if (isset($file_data['id']) && $file_data['id'] === $class_name &&
                 isset($file_data['extension']) && $file_data['extension'] === 'scss') {

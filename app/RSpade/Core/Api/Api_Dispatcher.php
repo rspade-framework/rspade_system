@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Symfony\Component\HttpFoundation\Response;
 use Throwable;
+use App\RSpade\Core\Api\Api_Catalog;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Param_Validator;
 use App\RSpade\Core\Api\Api_Request_Log_Model;
@@ -17,6 +18,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Dispatch\RouteResolver;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Session\Session;
 
 /**
  * Api_Dispatcher - request pipeline for external REST API endpoints (/api/vN/...).
@@ -138,6 +140,34 @@ class Api_Dispatcher
      * reachable, it gets a route.
      */
     public static function dispatch(string $url, string $method = 'GET', array $extra_params = [], ?Request $request = null): Response
+    {
+        try {
+            return self::__dispatch($url, $method, $extra_params, $request);
+        } finally {
+            // AN API IDENTITY BELONGS TO ONE DISPATCH, and this is where that dispatch ends.
+            //
+            // _set_api_identity() throws if it is called twice, which is the correct invariant
+            // WITHIN a request and says nothing about the next one. A web process gets away
+            // with never tearing the identity down because it dies at the end of the request;
+            // anything that dispatches more than once in a process - a test harness, a CLI
+            // tool, a batch runner - does not, and would otherwise have to reach for a
+            // framework internal to perform a boundary the dispatcher already owns.
+            //
+            // dispatch() is that boundary. It already declares one two lines into __dispatch()
+            // for revision history (Revision::_reset_request_state); the identity tier is the
+            // same kind of request-scoped state and is scoped here for the same reason.
+            //
+            // finally, not a trailing statement: an endpoint that throws must not leak its
+            // identity into whatever runs next.
+            Session::_reset_api_identity();
+        }
+    }
+
+    /**
+     * The dispatch body. Split out only so dispatch() can scope the API identity around it
+     * without indenting nine return paths.
+     */
+    private static function __dispatch(string $url, string $method, array $extra_params, ?Request $request): Response
     {
         self::$_is_api_dispatch = true;
         $start = hrtime(true);
@@ -370,10 +400,11 @@ class Api_Dispatcher
                     'class' => $route['class'],
                     'method' => $route['method'],
                     'params' => $params,
-                    'api_params' => $route['api_params'] ?? [],
-                    // Declarative gate list baked onto the row by the manifest
-                    // (class-level #[Auth] merged with the method's own).
-                    'auth' => $route['auth'] ?? [],
+                    // The param declarations live ONCE, on the api_endpoints row (which is
+                    // in the hot index, exactly like routes) rather than on both.
+                    'api_params' => Api_Catalog::params_for_pattern($pattern),
+                    // The gate list lives ONCE, in auth.surfaces; the row names its surface.
+                    'auth' => Auth_Gates::surface_gates($route['surface'] ?? ''),
                 ];
             }
         }

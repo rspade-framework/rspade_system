@@ -69,21 +69,35 @@ class Externals_ManifestSupport extends ManifestSupport_Abstract
         return 'External Resources';
     }
 
-    public static function process(array &$manifest_data): void
+    /**
+     * Rebuild the table from the DECLARATION FILES only.
+     *
+     * NOT incremental, and it says so: an identifier collision is a property of the WHOLE
+     * table, so a diff would have to re-check every surviving row against the new ones
+     * anyway. What changed is the input - `attribute_index` cannot answer "which files are
+     * `*.externals.php`", so the file map is filtered to that extension FIRST and the
+     * (a few) declaration files are what gets sorted and read. It used to `ksort` a
+     * by-value copy of the entire file map to read two files.
+     *
+     * The declaration files themselves are read through a mtime+size memo, so a rebuild
+     * where none of them changed re-reads nothing.
+     */
+    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
         $entries = [];
         $declared_in = [];
 
-        $files = $manifest_data['data']['files'] ?? [];
+        $declaration_files = [];
+        foreach ($manifest_data['data']['files'] ?? [] as $file => $metadata) {
+            if (($metadata['extension'] ?? null) === self::FILE_EXTENSION) {
+                $declaration_files[] = $file;
+            }
+        }
 
         // Sort by path so a collision error names the two files in a stable order.
-        ksort($files);
+        sort($declaration_files, SORT_STRING);
 
-        foreach ($files as $file => $metadata) {
-            if (($metadata['extension'] ?? null) !== self::FILE_EXTENSION) {
-                continue;
-            }
-
+        foreach ($declaration_files as $file) {
             $declarations = static::_read_declaration_file($file);
 
             foreach ($declarations as $identifier => $spec) {

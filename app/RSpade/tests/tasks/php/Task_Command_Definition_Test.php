@@ -40,6 +40,10 @@ class Task_Command_Definition_Test extends Rsx_Test_Abstract
             $attributes = ['Task' => [['a task']]] + $attributes;
         }
 
+        // The module reads the ATTRIBUTE INDEX, not the file map - a #[Command] name is
+        // unique tree-wide, and the index already lists every declaration. A real manifest
+        // always carries one (Phase 4 builds it before the modules run), so the synthetic
+        // shape carries one too.
         return [
             'data' => [
                 'files' => [
@@ -48,6 +52,16 @@ class Task_Command_Definition_Test extends Rsx_Test_Abstract
                         'fqcn' => 'Rsx\\Services\\Synthetic_Service',
                         'public_static_methods' => [
                             'do_work' => ['attributes' => $attributes],
+                        ],
+                    ],
+                ],
+                'attribute_index' => [
+                    'Command' => [
+                        [
+                            'file' => 'rsx/services/synthetic_service.php',
+                            'class' => 'Synthetic_Service',
+                            'member' => 'do_work',
+                            'instances' => $attributes['Command'],
                         ],
                     ],
                 ],
@@ -60,7 +74,7 @@ class Task_Command_Definition_Test extends Rsx_Test_Abstract
      */
     private static function __process(array $manifest): array
     {
-        Task_Command_ManifestSupport::process($manifest);
+        Task_Command_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
 
         return $manifest['data']['task_commands'];
     }
@@ -167,6 +181,12 @@ class Task_Command_Definition_Test extends Rsx_Test_Abstract
                     ],
                 ],
             ],
+        ];
+        $manifest['data']['attribute_index']['Command'][] = [
+            'file' => 'rsx/services/other_service.php',
+            'class' => 'Other_Service',
+            'member' => 'also_imports',
+            'instances' => [['myapp:import', 'Import again']],
         ];
 
         static::__assert_throws(

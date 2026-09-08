@@ -35,16 +35,21 @@ class Rsx_Lifecycle_Events_Test extends Rsx_Test_Abstract
     private static bool $__saved_rebuild_occurred = false;
     private static array $__saved_changed_files = [];
 
+    /** @var array<int,string> */
+    private static array $__saved_removed_files = [];
+
     public static function setup(): void
     {
         static::$__saved_rebuild_occurred = Manifest::$_rebuild_occurred;
         static::$__saved_changed_files = Manifest::$_changed_files;
+        static::$__saved_removed_files = Manifest::$_removed_files;
     }
 
     public static function teardown(): void
     {
         Manifest::$_rebuild_occurred = static::$__saved_rebuild_occurred;
         Manifest::$_changed_files = static::$__saved_changed_files;
+        Manifest::$_removed_files = static::$__saved_removed_files;
         Rsx_Lifecycle_Events_Fixture_Handler::$recording = false;
         Rsx_Lifecycle_Events_Fixture_Handler::reset();
     }
@@ -80,6 +85,7 @@ class Rsx_Lifecycle_Events_Test extends Rsx_Test_Abstract
         // Rebuild happened (dev mode - the test runner boots in development).
         Manifest::$_rebuild_occurred = true;
         Manifest::$_changed_files = ['rsx/models/example_model.php'];
+        Manifest::$_removed_files = ['rsx/models/gone_model.php'];
         Rsx_Lifecycle_Events_Fixture_Handler::reset();
         Rsx_Lifecycle_Events_Fixture_Handler::$recording = true;
 
@@ -99,6 +105,8 @@ class Rsx_Lifecycle_Events_Test extends Rsx_Test_Abstract
         // Payloads: the rebuilt* events carry the changed-file list; rsx.ready reports rebuilt=true.
         static::__assert_equals(['rsx/models/example_model.php'], $recorded[0]['data']['files'], 'rsx.rebuilt carries the changed file list');
         static::__assert_equals(['rsx/models/example_model.php'], $recorded[1]['data']['files'], 'the mode variant carries the same file list');
+        static::__assert_equals(['rsx/models/gone_model.php'], $recorded[0]['data']['removed'], 'rsx.rebuilt carries the removed file list');
+        static::__assert_equals(['rsx/models/gone_model.php'], $recorded[1]['data']['removed'], 'the mode variant carries the same removed list');
         static::__assert_true($recorded[2]['data']['rebuilt'], 'rsx.ready payload reports rebuilt=true after a rebuild');
     }
 }

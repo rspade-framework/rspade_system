@@ -342,9 +342,9 @@ class Portal_Dispatcher
                     'pattern' => $pattern,
                     'type' => $route_data['type'] ?? 'portal',
                     'require' => $route_data['require'] ?? [],
-                    // Declarative gate list baked onto the row by the manifest
-                    // (class-level #[Auth] merged with the method's own).
-                    'auth' => $route_data['auth'] ?? [],
+                    'surface' => $route_data['surface'] ?? null,
+                    // The gate list lives ONCE, in auth.surfaces; the row names its surface.
+                    'auth' => Auth_Gates::surface_gates($route_data['surface'] ?? ''),
                 ];
             }
         }
@@ -376,7 +376,7 @@ class Portal_Dispatcher
         $called = true;
 
         // Find classes extending Portal_Main_Abstract via manifest
-        $portal_main_classes = Manifest::php_get_extending('Portal_Main_Abstract');
+        $portal_main_classes = Manifest::php_class_records_extending('Portal_Main_Abstract');
 
         foreach ($portal_main_classes as $portal_main_class) {
             if (isset($portal_main_class['fqcn']) && $portal_main_class['fqcn']) {
@@ -399,7 +399,7 @@ class Portal_Dispatcher
     protected static function __call_portal_pre_dispatch(Request $request, array $params)
     {
         // Find classes extending Portal_Main_Abstract via manifest
-        $portal_main_classes = Manifest::php_get_extending('Portal_Main_Abstract');
+        $portal_main_classes = Manifest::php_class_records_extending('Portal_Main_Abstract');
 
         foreach ($portal_main_classes as $portal_main_class) {
             if (isset($portal_main_class['fqcn']) && $portal_main_class['fqcn']) {
@@ -427,7 +427,7 @@ class Portal_Dispatcher
     protected static function __call_portal_unhandled_route(Request $request, array $params)
     {
         // Find classes extending Portal_Main_Abstract via manifest
-        $portal_main_classes = Manifest::php_get_extending('Portal_Main_Abstract');
+        $portal_main_classes = Manifest::php_class_records_extending('Portal_Main_Abstract');
 
         foreach ($portal_main_classes as $portal_main_class) {
             if (isset($portal_main_class['fqcn']) && $portal_main_class['fqcn']) {

@@ -71,11 +71,27 @@ class ScssClassScope_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * This is a cross-file rule - needs full manifest context
+     * CROSS-FILE: this rule judges the tree, not one file. The driver runs it once per
+     * pass, gated on the fingerprint of what depends_on() declares.
      */
-    public function is_incremental(): bool
+    public function kind(): string
     {
-        return false;
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * Every stylesheet, plus the JS class graph that says which component a wrapper names.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return [
+            'files:*.scss',
+            'files:*.js',
+            'js_classes',
+            'js_subclass_index',
+        ];
     }
 
     /**
@@ -455,7 +471,7 @@ class ScssClassScope_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $contents = file_get_contents($full_path);
+        $contents = $this->source()->content($full_path);
         if ($contents === false) {
             return;
         }

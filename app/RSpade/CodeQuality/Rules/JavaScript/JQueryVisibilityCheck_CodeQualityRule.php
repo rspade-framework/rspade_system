@@ -49,7 +49,7 @@ class JQueryVisibilityCheck_CodeQualityRule extends CodeQualityRule_Abstract
         }
         
         // Get original content
-        $original_content = file_get_contents($file_path);
+        $original_content = $this->source()->content($file_path);
         $original_lines = explode("\n", $original_content);
         
         // Pattern to match .is(':visible') or .is(":visible")

@@ -12,7 +12,7 @@
 
 **The FULL framework suite runs in parallel docker containers automatically** on this dev box (any subset, or `--sequential`, runs in one process), and **its verdict is cached by manifest build key plus a fingerprint of `system/bin`, `node_modules` and the docker resource dir** - a second full run with no source change replays the recorded result and says so - mechanics: `/system/bin/rsx-testd/CLAUDE.md`.
 
-**Cadence**: the FULL framework suite is for the end of a major change or before a release. For ordinary development, running the group(s) of the affected subsection (`--group=<concern>`) is sufficient - the conduct fragment's rule.
+**Cadence**: the conduct fragment's rule. Per change: a smoke test (`rsx:debug`), no test run. The test you wrote or changed: run that class alone. The FULL framework suite (or the affected groups): ONCE, at the end of a major phase or before a release - never as per-edit housekeeping, never as "proof" for a patch you were handed.
 
 Full structure, conventions, and per-kind harness details: `/system/app/RSpade/tests/CLAUDE.md`.
 

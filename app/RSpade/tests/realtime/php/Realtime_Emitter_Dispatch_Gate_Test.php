@@ -55,7 +55,7 @@ class Realtime_Emitter_Dispatch_Gate_Test extends Rsx_Test_Abstract
         static::__redis()->sAdd('rsx_rt:subs', json_encode([
             'site_id' => 1,
             'topic' => 'Model_Changed_Topic',
-            'filter' => ['model' => 'Client_Model', 'id' => 9],
+            'filter' => ['model' => 'Absent_Fixture_Model', 'id' => 9],
         ]));
         Realtime::reset_registry_memo();
 

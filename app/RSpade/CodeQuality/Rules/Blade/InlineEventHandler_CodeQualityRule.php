@@ -107,7 +107,7 @@ class InlineEventHandler_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * Process file during manifest update to extract inline event handler violations
      */
-    public function on_manifest_file_update(string $file_path, string $contents, array $metadata = []): ?array
+    private function __find_violations(string $file_path, string $contents): ?array
     {
         // Skip layout files (may have specific use cases)
         if (str_contains($file_path, 'layout') || str_contains($file_path, 'Layout')) {
@@ -157,8 +157,10 @@ class InlineEventHandler_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Check for violations in code quality metadata
-        if (isset($metadata['code_quality_metadata']['BLADE-EVENT-01']['inline_event_violations'])) {
-            $violations = $metadata['code_quality_metadata']['BLADE-EVENT-01']['inline_event_violations'];
+        $found = $this->__find_violations($file_path, $contents);
+
+        if (isset($found['inline_event_violations'])) {
+            $violations = $found['inline_event_violations'];
 
             // Throw on first violation
             foreach ($violations as $violation) {

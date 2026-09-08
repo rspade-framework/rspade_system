@@ -47,7 +47,7 @@ class DocumentReady_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * Process file during manifest update to extract document ready violations
      */
-    public function on_manifest_file_update(string $file_path, string $contents, array $metadata = []): ?array
+    private function __find_violations(string $file_path, string $contents): ?array
     {
         // Only process .js files
         if (pathinfo($file_path, PATHINFO_EXTENSION) !== 'js') {
@@ -145,8 +145,10 @@ class DocumentReady_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Check for violations in code quality metadata
-        if (isset($metadata['code_quality_metadata']['JS-READY-01']['document_ready_violations'])) {
-            $violations = $metadata['code_quality_metadata']['JS-READY-01']['document_ready_violations'];
+        $found = $this->__find_violations($file_path, $contents);
+
+        if (isset($found['document_ready_violations'])) {
+            $violations = $found['document_ready_violations'];
 
             // Get appropriate suggestion based on code location
             $suggestion = InitializationSuggestions::get_suggestion($file_path);

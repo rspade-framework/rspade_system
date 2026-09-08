@@ -88,7 +88,7 @@ $invitation = Portal_Invitation_Model::find_by_code($params['code']);
 Portal_Session::set_site_id((int) $invitation->site_id);   // before any site-scoped query
 ```
 
-Rules: **request-scoped declaration only** - it creates nothing. Idempotent for the same id; **throws** on a different id or against a live session's site; a non-positive id throws. `get_site_id()` returns the session's site, else the declaration, else **throws** - **a portal that does not know its tenant must not pick one.** Login carries no site argument (`set_portal_user_id(?int)` uses the declared site). CLI/tests use the same call; `Portal_Session::reset()` clears it.
+Rules: **request-scoped declaration only** - it creates nothing. Idempotent for the same id; **throws** on a different id or against a live session's site; a non-positive id throws. `get_site_id()` returns the session's site, else the declaration, else **throws** - **a portal that does not know its tenant must not pick one.** Login carries no site argument (`set_portal_user_id(?int)` uses the declared site). CLI/tests use the same call; the test runner clears it after every test method (`Portal_Session::_testing_reset()` - the runner's call, never a test's).
 
 **Every framework site seam reads that declaration on a portal request** - `Rsx_Site_Model_Abstract::get_current_site_id()` (global scope, forced `site_id` on create, cross-site fatals, site write lock), plus `Rsx_Mail`, `Rsx_Sms`, `Rsx_Time` (the site-timezone tier; portal accounts have no personal zone), `Rsx_Settings`, `Rsx_Throttle`. **So portal code never hand-scopes a query** with `where('site_id', ...)`, and a staff `Session::set_site_id()` is the STAFF app's tenancy only.
 
@@ -111,7 +111,7 @@ Portal_Session::logout(): void
 Portal_Session::get_session_id(): int         // the browser's session id (SHARED with Session)
 Portal_Session::get_csrf_token(): ?string     // the browser's ONE token (SHARED)
 Portal_Session::verify_csrf_token(string): bool
-Portal_Session::reset(): void                 // CLI/test clean slate
+Portal_Session::_testing_reset(): void        // the RUNNER's per-test clean slate
 
 // device sessions ("your sessions" screen)
 Portal_Session::get_sessions_for_user(?int $id = null): array
@@ -311,8 +311,8 @@ In PHP tests (CLI), declare the site exactly as the app does:
 ```php
 Portal_Session::set_site_id(self::SITE_ID);
 Portal_Session::cli_set_portal_user_id($portal_user->id);   // 0 = signed out
-// ...
-Portal_Session::reset();                                    // clean slate
+// Both are cleared by the runner after every test method, so declare the site in
+// each test - setup() runs once per CLASS and its declaration does not survive.
 ```
 
 ---

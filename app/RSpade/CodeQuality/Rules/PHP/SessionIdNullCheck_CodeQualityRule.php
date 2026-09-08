@@ -2,10 +2,8 @@
 
 namespace App\RSpade\CodeQuality\Rules\PHP;
 
-use PhpParser\Error;
 use PhpParser\Node;
 use PhpParser\NodeFinder;
-use PhpParser\ParserFactory;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 
 /**
@@ -62,8 +60,6 @@ class SessionIdNullCheck_CodeQualityRule extends CodeQualityRule_Abstract
         '/Core/Portal/Portal_Session.php',
     ];
 
-    /** @var mixed Shared php-parser instance. */
-    protected static $parser = null;
 
     public function get_id(): string
     {
@@ -102,14 +98,6 @@ class SessionIdNullCheck_CodeQualityRule extends CodeQualityRule_Abstract
         return true;
     }
 
-    /**
-     * Per-file rule: everything it needs is in the file's own AST.
-     */
-    public function is_incremental(): bool
-    {
-        return true;
-    }
-
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         $normalized = str_replace('\\', '/', $file_path);
@@ -129,7 +117,7 @@ class SessionIdNullCheck_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Read the file from disk: the passed contents may be sanitized, and AST parsing
         // needs the real source.
-        $original = @file_get_contents($file_path);
+        $original = $this->source()->content($file_path);
         if ($original === false) {
             return;
         }
@@ -147,11 +135,7 @@ class SessionIdNullCheck_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        try {
-            $ast = $this->get_parser()->parse($original);
-        } catch (Error $error) {
-            return; // Unparseable - skip (a syntax error is reported by the linter).
-        }
+        $ast = $this->source()->ast($file_path);
 
         if (!$ast) {
             return;
@@ -590,17 +574,5 @@ class SessionIdNullCheck_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         return $names;
-    }
-
-    /**
-     * Get or create the shared php-parser instance.
-     */
-    private function get_parser()
-    {
-        if (static::$parser === null) {
-            static::$parser = (new ParserFactory())->createForNewestSupportedVersion();
-        }
-
-        return static::$parser;
     }
 }

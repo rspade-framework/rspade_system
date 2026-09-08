@@ -356,6 +356,51 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
+     * Return Session to virgin, pre-init state. THE per-test seam.
+     *
+     * A test runner is one process running many requests, which is the assumption Session is
+     * built to violate: an identity is established once per request and never torn down,
+     * because a web process dies at the end of the request. The runner has to perform that
+     * boundary itself, and this is the one call that does it.
+     *
+     * Everything cleared here is REQUEST-SCOPED PROCESS STATE, which a database transaction
+     * cannot roll back - the rollback undoes rows, not statics. Left standing, one test's
+     * identity is silently inherited by every test after it, in this class and every class
+     * that follows.
+     *
+     * Called by Rsx_Test_Abstract between test methods. Application code must never call it:
+     * outside a runner there is no such thing as "the request is over, start another", and a
+     * live request that tore its own identity down would simply be broken.
+     *
+     * @return void
+     */
+    public static function _testing_reset(): void
+    {
+        // Drops the CLI session ROW as well as the handle - a row minted inside a
+        // rolled-back test transaction no longer exists, and the static must not point at it.
+        self::_cli_end_session();
+
+        // The API identity tier, the loader flags and every resolved cache.
+        self::_reset_api_identity();
+
+        // Per-request overrides a test may have set on its way through. Narrow on purpose.
+        self::$_request_site_id_override = null;
+
+        // DELIBERATELY NOT CLEARED: $_cli_site_id / $_cli_login_user_id / $_cli_user_id.
+        //
+        // Those are the CLI identity DECLARATION - "act as this user on this site" - and the
+        // established contract is that they survive between tests in a class, because setup()
+        // runs once per CLASS and is where a suite declares them. Clearing them here reads
+        // like good hygiene and is not: every fixture written after the first test method
+        // silently lands on site_id 0, and the failure surfaces as a NOT NULL violation three
+        // layers away from the cause.
+        //
+        // The portal facade makes the opposite choice for its own declaration, and says so.
+        // The difference is deliberate: a portal site is declared per REQUEST by the
+        // application, a CLI identity is declared per SUITE by the test author.
+    }
+
+    /**
      * Check if running in CLI mode
      * @return bool
      */

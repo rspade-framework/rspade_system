@@ -340,9 +340,9 @@ PORTAL SESSIONS
       session, CLI MODE). set_site_id() still works - it
       is the same declaration minus a request, and it is how tests and
       portal-aware commands seed a site (there is no cli_set_site_id()). Having no
-      request boundary to protect, the CLI declaration may be re-declared;
-      Portal_Session::reset() clears it (plus cli_set_portal_user_id()) and is the
-      clean-slate call between tests.
+      request boundary to protect, the CLI declaration may be re-declared. The
+      runner clears it (plus cli_set_portal_user_id()) after every test method -
+      Portal_Session::_testing_reset(), the runner's call, never a test's.
 
 EXPERIENCE FORKS (which properties answer)
     Framework surfaces that serve BOTH experiences resolve the experience
@@ -904,7 +904,10 @@ TESTING
     In PHP tests (CLI), declare the site the same way the app does:
       Portal_Session::set_site_id(self::SITE_ID);
       Portal_Session::cli_set_portal_user_id($portal_user->id);   // or 0 = out
-      ... Portal_Session::reset();                                 // clean slate
+
+    Both declarations are cleared by the runner after every test method, so each
+    test declares its own site (a declaration in setup() does not survive - it
+    runs once per CLASS).
 
 ONBOARDING (SIGNUP MODEL)
     Portal accounts are created by INVITATION ONLY - this is the framework's

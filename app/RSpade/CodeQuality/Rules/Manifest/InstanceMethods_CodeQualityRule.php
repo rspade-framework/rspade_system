@@ -58,11 +58,27 @@ class InstanceMethods_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * This is a cross-file rule - needs full manifest context
+     * CROSS-FILE: this rule judges the tree, not one file. The driver runs it once per
+     * pass, gated on the fingerprint of what depends_on() declares.
      */
-    public function is_incremental(): bool
+    public function kind(): string
     {
-        return false;
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * Both class languages plus the model index: the rule compares instance-method surfaces.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return [
+            'files:*.php',
+            'files:*.js',
+            'php_classes',
+            'models',
+        ];
     }
 
     /**

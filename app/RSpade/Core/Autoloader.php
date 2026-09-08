@@ -173,10 +173,13 @@ class Autoloader
         // Extract simple class name (after last backslash)
         $simple_name = substr(strrchr($requested_class, '\\'), 1) ?: $requested_class;
 
-        // Try to find the simple class name in the manifest
-        try {
-            $metadata = Manifest::php_get_metadata_by_class($simple_name);
+        // Try to find the simple class name in the manifest. THE HOT CLASS RECORD, not the
+        // file record: autoloading needs the path and the FQCN and nothing else, and
+        // php_get_metadata_by_class() would pull the whole cold half of the index into the
+        // first class every request touches.
+        $metadata = Manifest::php_class_metadata($simple_name);
 
+        if ($metadata !== null) {
             // Load the file
             $file_path = str_replace('\\', '/', $metadata['file']);
             $absolute_path = base_path($file_path);
@@ -194,8 +197,6 @@ class Autoloader
 
                 return true;
             }
-        } catch (\RuntimeException $e) {
-            // Class not found in manifest by simple name
         }
 
         // Check for special case class patterns that need custom handling
@@ -229,32 +230,26 @@ class Autoloader
      */
     protected static function __load_rsx_namespaced_class($class)
     {
-        // First, try to find the class in the manifest by full class name
-        $manifest_data = Manifest::get_all();
+        // ONE LOOKUP. RSX enforces unique simple class names, so the last segment of the FQCN
+        // is its key in the class map, and the record's own fqcn confirms the match. This was
+        // a full linear scan of every indexed file - PER AUTOLOAD MISS, which is once per
+        // class the request touches.
+        $record = Manifest::php_class_metadata(Manifest::_normalize_class_name($class));
 
-        // Search through all PHP files in the manifest
-        foreach ($manifest_data as $file_path => $file_info) {
-            if (!isset($file_info['namespace']) || !isset($file_info['class'])) {
-                continue;
-            }
-
-            // Check if this is the class we're looking for
-            $full_class_name = $file_info['namespace'] . '\\' . $file_info['class'];
-            if ($full_class_name === $class) {
-                // Found it! Load the file (convert relative to absolute)
-                // Convert backslashes to forward slashes for path
-                $file_path = str_replace('\\', '/', $file_path);
-                $absolute_path = base_path($file_path);
-                if (file_exists($absolute_path)) {
-                    require_once $absolute_path;
-
-                    return true;
-                }
-            }
+        if ($record === null || ($record['fqcn'] ?? null) !== ltrim($class, '\\')) {
+            // Class not found in manifest - return false to let other autoloaders try
+            return false;
         }
 
-        // Class not found in manifest - return false to let other autoloaders try
-        return false;
+        $absolute_path = base_path(str_replace('\\', '/', $record['file']));
+
+        if (!file_exists($absolute_path)) {
+            return false;
+        }
+
+        require_once $absolute_path;
+
+        return true;
     }
 
     /**

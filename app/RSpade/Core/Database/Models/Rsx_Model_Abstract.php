@@ -1362,7 +1362,16 @@ EXAMPLE;
 
         $columns = $columns_by_class[$class_name];
 
-        if ($columns === null || !array_key_exists($column, $columns)) {
+        if ($columns === null) {
+            throw new RuntimeException(
+                "field_length(): {$class_name} has no columns in the manifest. The usual cause is an "
+                . "UNMIGRATED DATABASE: the manifest build skips a model whose table does not exist "
+                . "(it logs '[manifest] model {$class_name} skipped: table ... does not exist'). "
+                . 'Run `php artisan migrate`, then rebuild.'
+            );
+        }
+
+        if (!array_key_exists($column, $columns)) {
             throw new RuntimeException("field_length(): {$class_name} has no column '{$column}'");
         }
 

@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Tests\SysPanel\Php;
 
+use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -57,8 +58,9 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
 
             static::__assert_equals('spa', $row['type'], "{$pattern} must be a SPA route");
             static::__assert_equals($action_class, $row['js_action_class'], "{$pattern} serves the wrong action");
+            // The gate list lives once, in auth.surfaces; the row names its surface.
             static::__assert_true(
-                in_array('is_sysadmin', $row['auth'], true),
+                in_array('is_sysadmin', Auth_Gates::surface_gates($row['surface']), true),
                 "{$pattern} bootstrap is not gated on is_sysadmin"
             );
             static::__assert_true(
@@ -145,6 +147,6 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
         static::__assert_equals('App\\RSpade\\Sys\\App\\Sys\\_Sys_Controller', $row['class']);
         static::__assert_equals('logout', $row['method']);
         static::__assert_equals(['GET'], $row['methods']);
-        static::__assert_true(in_array('is_sysadmin', $row['auth'], true));
+        static::__assert_true(in_array('is_sysadmin', Auth_Gates::surface_gates($row['surface']), true));
     }
 }

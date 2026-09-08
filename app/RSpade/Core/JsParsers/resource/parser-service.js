@@ -391,20 +391,13 @@ function parseFileContent(content, filePath, jsonOutput) {
                         const methodInfo = {
                             // PHP-compatible fields
                             name: methodName,
-                            static: member.static,
                             visibility: visibility,
                             line: member.loc ? member.loc.start.line : null,
 
-                            // JavaScript-specific fields (keep existing)
-                            params: member.params.map(p => {
-                                if (t.isIdentifier(p)) return p.name;
-                                if (t.isRestElement(p) && t.isIdentifier(p.argument)) return '...' + p.argument.name;
-                                if (t.isObjectPattern(p)) return '{object}';
-                                if (t.isArrayPattern(p)) return '[array]';
-                                return p.type;
-                            }),
-
-                            // PHP-compatible parameters structure
+                            // PHP-compatible parameters structure. There is ONE parameter
+                            // list: the `params` bare-string twin this record used to carry
+                            // beside it had no reader in PHP, JS or node, and every JS method
+                            // record in the index paid for it.
                             parameters: member.params.map(p => {
                                 const paramInfo = {};
                                 if (t.isIdentifier(p)) {
@@ -421,12 +414,19 @@ function parseFileContent(content, filePath, jsonOutput) {
                                 return paramInfo;
                             }),
 
-                            async: member.async,
-                            generator: member.generator,
+                            // `async`, `generator` and `isDecoratorFunction` are gone: none
+                            // had a reader anywhere. Decorator functions are consumed through
+                            // result.functionsWithDecorators, which is what actually drives
+                            // them.
                             kind: member.kind,
-                            decorators: extractDecorators(member.decorators),
-                            isDecoratorFunction: hasDecoratorComment
+                            decorators: extractDecorators(member.decorators)
                         };
+
+                        // `static` is recorded only when TRUE - an omitted flag reads false,
+                        // and false was the majority of every JS method record in the index.
+                        if (member.static) {
+                            methodInfo.static = true;
+                        }
 
                         if (member.static) {
                             classInfo.public_static_methods[member.key.name] = methodInfo;
@@ -497,15 +497,6 @@ function parseFileContent(content, filePath, jsonOutput) {
 
                     result.functions[funcName] = {
                         name: funcName,
-                        params: path.node.params.map(p => {
-                            if (t.isIdentifier(p)) return p.name;
-                            if (t.isRestElement(p) && t.isIdentifier(p.argument)) return '...' + p.argument.name;
-                            if (t.isObjectPattern(p)) return '{object}';
-                            if (t.isArrayPattern(p)) return '[array]';
-                            return p.type;
-                        }),
-                        async: path.node.async,
-                        generator: path.node.generator,
                         decorators: decorators
                     };
                 }
@@ -528,15 +519,6 @@ function parseFileContent(content, filePath, jsonOutput) {
                                 // But we still track them as functions
                                 result.functions[varName] = {
                                     name: varName,
-                                    params: decl.init.params ? decl.init.params.map(p => {
-                                        if (t.isIdentifier(p)) return p.name;
-                                        if (t.isRestElement(p) && t.isIdentifier(p.argument)) return '...' + p.argument.name;
-                                        if (t.isObjectPattern(p)) return '{object}';
-                                        if (t.isArrayPattern(p)) return '[array]';
-                                        return p.type;
-                                    }) : [],
-                                    async: decl.init.async || false,
-                                    generator: decl.init.generator || false,
                                     decorators: null
                                 };
                             } else if (path.node.kind === 'const' && decl.init && isStaticValue(decl.init)) {

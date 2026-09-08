@@ -74,7 +74,7 @@ class RsxCommandsDeprecated_CodeQualityRule extends CodeQualityRule_Abstract
      */
     private function check_file_for_deprecated(string $file_path): void
     {
-        $contents = file_get_contents($file_path);
+        $contents = $this->source()->content($file_path);
         if ($contents === false) {
             return;
         }

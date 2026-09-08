@@ -20,9 +20,11 @@
 
 **NEVER mention manifest/bundle rebuilds to the user** - not as steps, not as pending, not in testing. Say "changes are live", never "rebuild the manifest".
 
-### Running the test suite
+### Running the test suite - the owner's cadence
 
-**DO NOT run `rsx:test` unless (1) explicitly asked, or (2) as the VERY LAST step of an epic** (5+ phases). It is slow and almost never earns its place as housekeeping after a small change; per-edit errors surface on their own. **EXCEPTION - tests you just wrote**, run WITHOUT asking (individually, or `--group=<concern>`). **You are still to test every feature you write** — the restriction targets the FULL suite, never the writing of tests.
+**Verification after a change is a SMOKE TEST, not a test run.** Render the page the change touches (`rsx:debug /path`, or `rsx:debug /` when nothing more specific applies): a 200 with no console errors proves the environment is functional, and a manifest-build failure or a code-quality violation surfaces there on its own. That is the whole per-change check. **Do not run `rsx:test` after a small change, do not run a group "to be safe", and never run permutations of groups and filters as evidence** - a minute of tests per edit, multiplied across an epic, is how a day disappears with nothing shipped.
+
+**The suite runs at exactly three moments**: (1) the test you JUST WROTE or JUST CHANGED, run by itself (the class name, or `--filter=`), without asking; (2) the end of a major phase or epic, ONCE, the full suite or the affected groups, and read the output then; (3) when the user asks. A patch handed to you to apply is verified by the smoke test and by the tests it touched - nothing more. **You are still to write a test for every feature you write** - the restriction targets RUNNING, never writing.
 
 ### Trust the code quality rules
 

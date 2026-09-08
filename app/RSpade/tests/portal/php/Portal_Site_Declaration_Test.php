@@ -41,12 +41,12 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
     public static function setup(): void
     {
         static::__acting_as_site(self::SITE_ID);
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
     }
 
     public static function teardown(): void
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         static::__reset_session();
     }
 
@@ -56,7 +56,7 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
 
     public static function test_a_declared_site_is_what_get_site_id_returns()
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         Portal_Session::set_site_id(self::OTHER_SITE_ID);
 
         static::__assert_equals(
@@ -68,7 +68,7 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
 
     public static function test_declaring_the_same_site_twice_is_idempotent()
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         Portal_Session::set_site_id(self::SITE_ID);
         Portal_Session::set_site_id(self::SITE_ID);
 
@@ -77,7 +77,7 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
 
     public static function test_the_declaration_makes_the_cli_facade_report_a_session()
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         static::__assert_false(
             Portal_Session::has_session(),
             'nothing declared, nothing logged in - the CLI facade holds no state'
@@ -94,7 +94,7 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
     public static function test_reset_clears_the_declaration_in_cli()
     {
         Portal_Session::set_site_id(self::SITE_ID);
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
 
         static::__assert_throws(\RuntimeException::class, function () {
             Portal_Session::get_site_id();
@@ -111,7 +111,7 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
      */
     public static function test_an_undeclared_site_throws_and_names_the_man_page()
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
 
         $thrown = null;
         try {
@@ -135,7 +135,7 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
 
     public static function test_get_site_falls_over_the_same_way_as_get_site_id()
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
 
         static::__assert_throws(\RuntimeException::class, function () {
             Portal_Session::get_site();
@@ -144,7 +144,7 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
 
     public static function test_a_non_positive_site_is_refused()
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
 
         static::__assert_throws(Rsx_Caller_Exception::class, function () {
             Portal_Session::set_site_id(0);
@@ -162,7 +162,7 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
      */
     public static function test_cli_may_redeclare_a_different_site()
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         Portal_Session::set_site_id(self::SITE_ID);
         Portal_Session::set_site_id(self::OTHER_SITE_ID);
 
@@ -179,7 +179,7 @@ class Portal_Site_Declaration_Test extends Rsx_Test_Abstract
 
     public static function test_declaring_a_site_mints_no_session_row()
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
 
         $before = (int) Session::query()->count();
 

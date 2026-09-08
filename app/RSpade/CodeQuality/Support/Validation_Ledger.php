@@ -22,7 +22,7 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  *     ['version' => 1, 'rules' => [ <rule id> => [ <file hash> => 1 ] ]]
  *
- * It is deliberately the same shape and the same mechanics as manifest_data.php: a
+ * It is deliberately the same shape and the same mechanics as the manifest index: a
  * var_export'd array included once per process (so OPcache serves it where OPcache is
  * on), written atomically through a temp file plus rename.
  *
@@ -51,9 +51,14 @@ use App\RSpade\Core\Manifest\Manifest;
 class Validation_Ledger
 {
     /** The on-disk shape's version. A mismatch discards the file rather than migrating it. */
-    private const VERSION = 1;
+    private const VERSION = 2;
 
-    /** Loaded ledger: ['version' => int, 'rules' => [rule_id => [hash => 1]]]. */
+    /**
+     * Loaded ledger:
+     *   ['version' => int,
+     *    'rules'   => [rule_id => [file hash => 1]],
+     *    'derived' => [rule_id => [slot => key]]]
+     */
     private static ?array $store = null;
 
     /** True when a pass has been recorded that is not on disk yet. */
@@ -141,6 +146,57 @@ class Validation_Ledger
                 static::$dirty = true;
             }
         }
+
+        foreach (array_keys(static::$store['derived']) as $existing) {
+            if ($existing !== $rule_id && str_starts_with($existing, $prefix)) {
+                unset(static::$store['derived'][$existing]);
+                static::$dirty = true;
+            }
+        }
+    }
+
+    /**
+     * Has this rule's DERIVED premise already passed, under this slot?
+     *
+     * A cross-file rule's verdict is not about one file's bytes: it is about a FINGERPRINT
+     * of everything the rule declared it reads. That key is not a manifest file hash, and
+     * filing it beside the file hashes meant `__prune_against_manifest()` deleted it on
+     * every single flush - "the manifest does not know this hash" was true of it by
+     * construction. The cross-file skip therefore never once fired across processes, and
+     * every rebuild that touched any file re-ran all seventeen cross-file rules: 8.5 s of
+     * the 9.0 s the test-tree transition cost.
+     *
+     * ONE SLOT PER KIND, not a growing set. A rule has exactly one current premise per
+     * slot, so remembering older ones would only accumulate verdicts about trees that no
+     * longer exist.
+     */
+    public static function has_passed_derived(string $rule_id, string $slot, string $key): bool
+    {
+        static::__load();
+
+        return ($the = static::$store['derived'][$rule_id][$slot] ?? null) !== null && $the === $key;
+    }
+
+    /**
+     * Record that this rule passed with this derived premise, in this slot.
+     */
+    public static function record_pass_derived(string $rule_id, string $slot, string $key): void
+    {
+        static::__load();
+
+        if ((static::$store['derived'][$rule_id][$slot] ?? null) === $key) {
+            return;
+        }
+
+        static::__retire_superseded_generations($rule_id);
+
+        static::$store['derived'][$rule_id][$slot] = $key;
+        static::$dirty = true;
+
+        if (!static::$shutdown_registered) {
+            static::$shutdown_registered = true;
+            register_shutdown_function([static::class, 'flush']);
+        }
     }
 
     /**
@@ -153,11 +209,12 @@ class Validation_Ledger
     {
         static::__load();
 
-        if (!isset(static::$store['rules'][$rule_id])) {
+        if (!isset(static::$store['rules'][$rule_id]) && !isset(static::$store['derived'][$rule_id])) {
             return;
         }
 
         unset(static::$store['rules'][$rule_id]);
+        unset(static::$store['derived'][$rule_id]);
         static::$dirty = true;
     }
 
@@ -236,7 +293,7 @@ class Validation_Ledger
      */
     public static function clear(): void
     {
-        static::$store = ['version' => self::VERSION, 'rules' => []];
+        static::$store = ['version' => self::VERSION, 'rules' => [], 'derived' => []];
         static::$recorded_here = [];
         static::$dirty = false;
 
@@ -288,7 +345,7 @@ class Validation_Ledger
             return;
         }
 
-        static::$store = ['version' => self::VERSION, 'rules' => []];
+        static::$store = ['version' => self::VERSION, 'rules' => [], 'derived' => []];
 
         $path = static::path();
 
@@ -304,7 +361,11 @@ class Validation_Ledger
             return;
         }
 
-        static::$store = ['version' => self::VERSION, 'rules' => (array) $loaded['rules']];
+        static::$store = [
+            'version' => self::VERSION,
+            'rules' => (array) $loaded['rules'],
+            'derived' => (array) ($loaded['derived'] ?? []),
+        ];
     }
 
     /**

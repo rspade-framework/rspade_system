@@ -54,27 +54,21 @@ class _Manifest_Database_Helper
     {
         Manifest::init();
 
-        if (!isset(Manifest::$data['data']['models'])) {
+        // One lookup through models_by_table, rather than a linear walk of the model
+        // registry per call.
+        $model = Manifest::model_for_table($table);
+
+        if ($model === null) {
             return [];
         }
 
-        // Find the model for this table
-        foreach (Manifest::$data['data']['models'] as $model_data) {
-            if (isset($model_data['table']) && $model_data['table'] === $table) {
-                if (!isset($model_data['columns'])) {
-                    return [];
-                }
+        $result = [];
 
-                $result = [];
-                foreach ($model_data['columns'] as $column_name => $column_data) {
-                    $result[$column_name] = $column_data['type'] ?? 'unknown';
-                }
-
-                return $result;
-            }
+        foreach (Manifest::$data['data']['models'][$model]['columns'] ?? [] as $column_name => $column_data) {
+            $result[$column_name] = $column_data['type'] ?? 'unknown';
         }
 
-        return [];
+        return $result;
     }
 
     /**

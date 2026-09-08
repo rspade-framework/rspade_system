@@ -295,6 +295,16 @@ AUTHENTICATION
     re-set. No API response ever carries Set-Cookie. Calling _set_api_identity()
     twice in one request is a bug and throws.
 
+    THE IDENTITY IS SCOPED TO THE DISPATCH. Api_Dispatcher::dispatch() clears it
+    in a finally, so it never outlives the request it authenticated - including a
+    request whose endpoint threw. A caller that dispatches repeatedly IN ONE
+    PROCESS - a test harness, a CLI tool, a batch runner - therefore needs no
+    reset call of its own between dispatches, and must not make one: the reset is
+    a framework internal, and an application reference to it is refused at
+    manifest build (NAME-RESERVED-02). One dispatch, one identity; the
+    "twice in one request" throw above is unaffected, because scoping says the
+    request ENDED, not that a second identity may be installed inside it.
+
     get_session_id() being 0 does NOT disable the file-attachment flow. The
     unattached-upload -> claim handshake never keyed on the session id:
     can_user_assign_this_file() asks exactly two questions - is this attachment

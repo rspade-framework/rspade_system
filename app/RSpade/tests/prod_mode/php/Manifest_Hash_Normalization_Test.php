@@ -10,17 +10,15 @@ use App\RSpade\Core\Manifest\_Manifest_Cache_Helper;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Determinism units for the manifest build-key normalization
- * (_Manifest_Cache_Helper::_normalize_for_hash / _compute_hash).
+ * Determinism units for the manifest build key (_Manifest_Cache_Helper::_compute_hash).
  *
- * The build key must be identical for two byte-identical checkouts at different
- * absolute paths. That means the hashed projection of the manifest body must be
- * blind to local disk state (per-file mtime/size) and to absolute-path prefixes
- * embedded in reflected metadata, while still reacting to real semantic changes
- * (a file's sha1 moving).
+ * The build key must be identical for two byte-identical checkouts at different absolute
+ * paths. A file contributes its PATH and its sha1 and NOTHING ELSE, so mtime, size and any
+ * absolute path embedded in a reflected method record cannot reach the key by construction -
+ * where the predecessor had to strip them out of a deep copy of the whole manifest body.
+ * The per-file lines are sorted, so readdir order cannot reach it either.
  *
- * These build a small fake manifest body and drive the normalization directly.
- * Pure logic, no DB.
+ * These build a small fake manifest body and drive the hash directly. Pure logic, no DB.
  */
 class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
 {
@@ -61,8 +59,8 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
                 ],
             ],
             'php_classes' => [
-                'Alpha_Model' => 'rsx/models/alpha_model.php',
-                'Beta_Model' => 'rsx/models/beta_model.php',
+                'Alpha_Model' => ['file' => 'rsx/models/alpha_model.php'],
+                'Beta_Model' => ['file' => 'rsx/models/beta_model.php'],
             ],
         ];
     }
@@ -116,40 +114,65 @@ class Manifest_Hash_Normalization_Test extends Rsx_Test_Abstract
     }
 
     // -------------------------------------------------------------------------
-    // Absolute-path prefixes are stripped -> checkout independence
+    // Absolute paths inside a file record cannot reach the key
     // -------------------------------------------------------------------------
 
-    public static function test_normalization_strips_absolute_paths()
+    public static function test_absolute_paths_in_a_file_record_do_not_reach_the_key()
     {
-        $normalized = _Manifest_Cache_Helper::_normalize_for_hash(self::_fixture());
-        $method_file = $normalized['files']['rsx/models/alpha_model.php']['public_static_methods']['fetch']['file'];
+        $a = self::_fixture();
+        $b = self::_fixture();
+
+        // Reflection reports an ABSOLUTE path for an inherited trait method, and that path
+        // differs between checkouts. A file contributes only its own sha1 now, so the value
+        // is structurally unable to move the key.
+        $b['files']['rsx/models/alpha_model.php']['public_static_methods']['fetch']['file']
+            = '/somewhere/else/entirely/vendor/some/trait/SoftDeletes.php';
 
         static::__assert_equals(
-            'vendor/some/trait/SoftDeletes.php',
-            $method_file,
-            'absolute base_path() prefix must be stripped from embedded metadata paths'
+            _Manifest_Cache_Helper::_compute_hash($a),
+            _Manifest_Cache_Helper::_compute_hash($b),
+            'an absolute path inside a file record must not change the build key'
         );
     }
 
-    public static function test_normalization_removes_mtime_and_size()
+    public static function test_absolute_paths_in_a_derived_section_are_relativized()
     {
-        $normalized = _Manifest_Cache_Helper::_normalize_for_hash(self::_fixture());
-        $entry = $normalized['files']['rsx/models/alpha_model.php'];
+        $a = self::_fixture();
+        $b = self::_fixture();
 
-        static::__assert_false(isset($entry['mtime']), 'mtime must be absent from the normalized projection');
-        static::__assert_false(isset($entry['size']), 'size must be absent from the normalized projection');
-        static::__assert_true(isset($entry['hash']), 'sha1 must be retained in the normalized projection');
-        static::__assert_equals('Alpha_Model', $entry['class'], 'semantic metadata must be retained');
+        // A DERIVED section does reach the key - reduced to project-relative form first, so
+        // the same checkout at a different absolute path still keys the same.
+        $a['models'] = ['Alpha_Model' => ['file' => base_path() . '/rsx/models/alpha_model.php']];
+        $b['models'] = ['Alpha_Model' => ['file' => 'rsx/models/alpha_model.php']];
+
+        static::__assert_equals(
+            _Manifest_Cache_Helper::_compute_hash($a),
+            _Manifest_Cache_Helper::_compute_hash($b),
+            'an absolute base_path() prefix in a derived section is reduced before hashing'
+        );
     }
 
-    public static function test_normalization_does_not_mutate_input()
+    public static function test_hash_does_not_mutate_input()
     {
         $body = self::_fixture();
-        _Manifest_Cache_Helper::_normalize_for_hash($body);
+        _Manifest_Cache_Helper::_compute_hash($body);
 
         // The live manifest body must keep mtime/size (dev change-detection needs them).
         static::__assert_equals(1000, $body['files']['rsx/models/alpha_model.php']['mtime'], 'input must not be mutated');
         static::__assert_equals(200, $body['files']['rsx/models/alpha_model.php']['size'], 'input must not be mutated');
+    }
+
+    public static function test_a_derived_section_change_moves_the_key()
+    {
+        $a = self::_fixture();
+        $b = self::_fixture();
+        $b['php_classes']['Gamma_Model'] = ['file' => 'rsx/models/gamma_model.php'];
+
+        static::__assert_not_equals(
+            _Manifest_Cache_Helper::_compute_hash($a),
+            _Manifest_Cache_Helper::_compute_hash($b),
+            'a derived-section change must change the build key'
+        );
     }
 
     // -------------------------------------------------------------------------

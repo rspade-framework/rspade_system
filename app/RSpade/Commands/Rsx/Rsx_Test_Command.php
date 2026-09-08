@@ -15,13 +15,14 @@ use App\RSpade\Core\Manifest\Manifest;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Env\Rsx_Initial_User;
-use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use ReflectionClass;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Time\Rsx_Time;
+use App\RSpade\Core\Support\Rsx_Fingerprint;
 use Symfony\Component\Process\Process;
 
 /**
@@ -279,6 +280,13 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $selected = $this->discover_selected_classes($specific_tests, $filters, $groups, $framework_only);
         if ($selected === null) {
             return 0;
+        }
+
+        // An application that ships no tests is not an error, and neither is one that keeps
+        // its suites somewhere the runner does not partition as application code. Say which
+        // suite came up empty; the run still ends 0.
+        if (empty($selected) && !$framework_only && !$specific_tests && !$filters && !$groups) {
+            $this->warn('No application tests found (rsx/tests holds no test classes).');
         }
 
         $totals = self::__empty_totals();
@@ -868,9 +876,10 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * user.initial.created handlers an application registers have run against the
      * baseline exactly as they will have run on a real install.
      *
-     * The role is the highest one there is (ROLE_DEVELOPER), because a baseline identity
-     * that fails an auth gate would make every gated surface untestable by default; a
-     * test that needs a WEAKER identity creates its own.
+     * The role is the most privileged one this application declares, derived from
+     * User_Model::$enums at runtime by Rsx_Test_Abstract::most_privileged_role_id(),
+     * because a baseline identity that fails an auth gate would make every gated surface
+     * untestable by default; a test that needs a WEAKER identity creates its own.
      *
      * Idempotent: a baseline that already carries the user (restored from the dump cache,
      * or created by the initial-user migration when credentials are configured) is left
@@ -910,7 +919,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         Rsx_Initial_User::create(self::BASELINE_USER_EMAIL, self::BASELINE_USER_PASSWORD, [
             'connection' => $connection_name,
             'site_id' => self::BASELINE_SITE_ID,
-            'role_id' => User_Model::ROLE_DEVELOPER,
+            'role_id' => Rsx_Test_Abstract::most_privileged_role_id(),
             'first_name' => 'Test',
             'last_name' => 'User',
             'source' => Rsx_Initial_User::SOURCE_TEST_BASELINE,
@@ -982,20 +991,14 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     {
         $version = DB::connection('mysql')->selectOne('SELECT VERSION() AS v')->v;
 
-        $entries = [];
-        foreach (MigrationPaths::get_all_migration_files() as $file) {
-            $entries[] = relative_path($file) . ':' . md5_file($file);
-        }
-        sort($entries);
-
-        array_unshift(
-            $entries,
+        // The migration-file half is the shared fingerprint (Rsx_Fingerprint::migration_files);
+        // the database version and the shipped schema cache are this command's own additions.
+        return md5(implode("\n", [
             'cache_version:' . self::CACHE_VERSION,
             'mysql:' . $version,
-            'schema_cache:' . $this->schema_cache_fingerprint()
-        );
-
-        return md5(implode("\n", $entries));
+            'schema_cache:' . $this->schema_cache_fingerprint(),
+            'migrations:' . Rsx_Fingerprint::migration_files(),
+        ]));
     }
 
     /**
@@ -1481,37 +1484,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             $dirs[] = base_path($dir);
         }
 
-        return self::fingerprint_directories($dirs);
-    }
-
-    /**
-     * Hash the relative name, size and mtime of every regular file under the given
-     * directories, in a deterministic order. Content is never read: the walk has to stay
-     * cheap over node_modules, and a size+mtime change is what an install or an edit leaves.
-     *
-     * @param string[] $directories Absolute paths; a missing directory contributes nothing
-     * @return string sha1
-     */
-    protected static function fingerprint_directories(array $directories): string
-    {
-        $rows = [];
-        foreach ($directories as $directory) {
-            if (!is_dir($directory)) {
-                continue;
-            }
-            $iterator = new \RecursiveIteratorIterator(
-                new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS)
-            );
-            foreach ($iterator as $file) {
-                if (!$file->isFile()) {
-                    continue;
-                }
-                $rows[] = substr($file->getPathname(), strlen($directory) + 1) . '|' . $file->getSize() . '|' . $file->getMTime();
-            }
-        }
-        sort($rows, SORT_STRING);
-
-        return sha1(implode("\n", $rows));
+        return Rsx_Fingerprint::directories($dirs);
     }
 
     /**

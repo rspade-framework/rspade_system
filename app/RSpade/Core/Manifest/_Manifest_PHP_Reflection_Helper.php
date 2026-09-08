@@ -10,10 +10,30 @@ use App\RSpade\Core\Manifest\Manifest;
  * This helper class contains function implementations for Manifest.
  * Functions in this class are called via delegation from Manifest.php.
  *
+ * EVERY STRUCTURAL QUESTION IS ANSWERED FROM THE HOT CLASS RECORD.
+ * `php_classes[$simple_name]` carries `file`, `fqcn`, `extends` and `abstract`, so
+ * inheritance, abstractness and lineage never touch the `files` map - which since the index
+ * split lives in the cold half and would drag 7.6 MB of build metadata into a request to
+ * answer "does this class extend that one".
+ *
  * @internal Do not use directly - use Manifest:: methods instead.
  */
 class _Manifest_PHP_Reflection_Helper
 {
+    /**
+    * The hot class record for a simple class name, or null.
+    *
+    * ['file' => ..., 'fqcn' => ..., 'extends' => ?string, 'abstract' => bool]
+    *
+    * @return array|null
+    */
+    public static function php_class_metadata(string $simple_name): ?array
+    {
+        Manifest::init();
+
+        return Manifest::$data['data']['php_classes'][$simple_name] ?? null;
+    }
+
     /**
     * Find a PHP class by name
     */
@@ -25,20 +45,26 @@ class _Manifest_PHP_Reflection_Helper
             throw new \RuntimeException("PHP class not found in manifest: {$class_name}");
         }
 
-        return Manifest::$data['data']['php_classes'][$class_name];
+        return Manifest::$data['data']['php_classes'][$class_name]['file'];
     }
 
     /**
-    * Find a PHP class by fully qualified name
+    * Find a PHP class by fully qualified name.
+    *
+    * RSX enforces unique SIMPLE class names, so an FQCN's last segment is its key in the
+    * class map and the lookup is O(1). This used to be a linear scan of every indexed file
+    * comparing `fqcn` - on the request path, behind twelve call sites, several of them
+    * per-model and per-render.
     */
     public static function find_php_fqcn(string $fqcn): string
     {
-        $files = Manifest::get_all();
+        Manifest::init();
 
-        foreach ($files as $file => $metadata) {
-            if (isset($metadata['fqcn']) && $metadata['fqcn'] === $fqcn) {
-                return $file;
-            }
+        $simple = self::_normalize_class_name($fqcn);
+        $record = Manifest::$data['data']['php_classes'][$simple] ?? null;
+
+        if ($record !== null && ($record['fqcn'] ?? null) === ltrim($fqcn, '\\')) {
+            return $record['file'];
         }
 
         throw new \RuntimeException("PHP class with FQCN not found in manifest: {$fqcn}");
@@ -68,7 +94,9 @@ class _Manifest_PHP_Reflection_Helper
 
     /**
     * Get all classes extending a parent (filters out abstract classes by default)
-    * Returns array of class metadata indexed by class name
+    * Returns FULL file metadata indexed by class name - so it loads the cold half of the
+    * index. Callers that only need names or the structural fields want
+    * php_get_subclasses_of() and php_class_metadata() instead.
     */
     public static function php_get_extending(string $parentclass): array
     {
@@ -77,14 +105,40 @@ class _Manifest_PHP_Reflection_Helper
 
         $classpile = [];
         foreach ($subclasses as $classname) {
-            // Get the file path from php_classes index, then get metadata from files
-            if (isset(Manifest::$data['data']['php_classes'][$classname])) {
-                $file_path = Manifest::$data['data']['php_classes'][$classname];
-                $classpile[$classname] = Manifest::$data['data']['files'][$file_path];
+            $record = Manifest::$data['data']['php_classes'][$classname] ?? null;
+
+            if ($record !== null) {
+                $classpile[$classname] = Manifest::get_file($record['file']);
             }
         }
 
         return $classpile;
+    }
+
+    /**
+    * The HOT CLASS RECORDS of every class extending a parent, keyed by class name.
+    *
+    * php_get_extending()'s cheap sibling: same set, but each value is
+    * ['file', 'fqcn', 'extends', 'abstract'] rather than the class's whole file record. Use
+    * it wherever the answer is "which classes, and where do they live" - the request-path
+    * `Main_Abstract` and `Portal_Main_Abstract` lookups are the archetype - and reserve
+    * php_get_extending() for callers that genuinely want the method map.
+    *
+    * @return array<string, array>
+    */
+    public static function php_class_records_extending(string $parentclass, bool $concrete_only = true): array
+    {
+        $records = [];
+
+        foreach (self::php_get_subclasses_of($parentclass, $concrete_only) as $class) {
+            $record = Manifest::$data['data']['php_classes'][$class] ?? null;
+
+            if ($record !== null) {
+                $records[$class] = $record;
+            }
+        }
+
+        return $records;
     }
 
     /**
@@ -96,52 +150,33 @@ class _Manifest_PHP_Reflection_Helper
     */
     public static function php_is_subclass_of(string $subclass, string $superclass): bool
     {
-        // Strip namespace if FQCN was passed (contains backslash)
-        if (strpos($subclass, '\\') !== false) {
-            // Get the class name after the last backslash
-            $parts = explode('\\', $subclass);
-            $subclass = end($parts);
-        }
+        Manifest::init();
 
-        if (strpos($superclass, '\\') !== false) {
-            // Get the class name after the last backslash
-            $parts = explode('\\', $superclass);
-            $superclass = end($parts);
-        }
+        $subclass = self::_normalize_class_name($subclass);
+        $superclass = self::_normalize_class_name($superclass);
 
-        $files = Manifest::get_all();
         $current_class = $subclass;
         $visited = []; // Prevent infinite loops in case of circular inheritance
 
         while ($current_class) {
-            // Prevent infinite loops
-            if (in_array($current_class, $visited)) {
+            if (isset($visited[$current_class])) {
                 return false;
             }
 
-            $visited[] = $current_class;
+            $visited[$current_class] = true;
 
-            // Find the current class in the manifest
-            if (!isset(Manifest::$data['data']['php_classes'][$current_class])) {
+            $record = Manifest::$data['data']['php_classes'][$current_class] ?? null;
+
+            if ($record === null || empty($record['extends'])) {
                 return false;
             }
 
-            // Get file metadata
-            $file_path = Manifest::$data['data']['php_classes'][$current_class];
-            $metadata = Manifest::$data['data']['files'][$file_path];
-
-            if (empty($metadata['extends'])) {
-                return false;
-            }
-
-            if ($metadata['extends'] == $superclass) {
+            if ($record['extends'] === $superclass) {
                 return true;
             }
 
-            // TODO: Maybe use native reflection if base class does not exist in the manifest past this point>
-
             // Move up the chain to the parent class
-            $current_class = $metadata['extends'];
+            $current_class = $record['extends'];
         }
 
         return false;
@@ -155,25 +190,11 @@ class _Manifest_PHP_Reflection_Helper
     */
     public static function php_is_abstract(string $class_name): bool
     {
-        // Ensure manifest is loaded
         Manifest::init();
 
-        // Strip namespace if FQCN was passed
-        if (strpos($class_name, '\\') !== false) {
-            $parts = explode('\\', $class_name);
-            $class_name = end($parts);
-        }
+        $record = Manifest::$data['data']['php_classes'][self::_normalize_class_name($class_name)] ?? null;
 
-        // Return false if class not in manifest
-        if (!isset(Manifest::$data['data']['php_classes'][$class_name])) {
-            return false;
-        }
-
-        // Get file metadata and check the abstract property
-        $file_path = Manifest::$data['data']['php_classes'][$class_name];
-        $metadata = Manifest::$data['data']['files'][$file_path];
-
-        return $metadata['abstract'] ?? false;
+        return (bool) ($record['abstract'] ?? false);
     }
 
     /**
@@ -187,50 +208,27 @@ class _Manifest_PHP_Reflection_Helper
     */
     public static function php_get_lineage(string $class_name): array
     {
-        // Ensure manifest is loaded
         Manifest::init();
 
-        // Strip namespace if FQCN was passed
-        if (strpos($class_name, '\\') !== false) {
-            $parts = explode('\\', $class_name);
-            $class_name = end($parts);
-        }
-
         $lineage = [];
-        $current_class = $class_name;
-        $visited = []; // Prevent infinite loops
+        $current_class = self::_normalize_class_name($class_name);
+        $visited = [];
 
         while ($current_class) {
-            // Prevent infinite loops in circular inheritance
-            if (in_array($current_class, $visited)) {
+            if (isset($visited[$current_class])) {
                 break;
             }
 
-            $visited[] = $current_class;
+            $visited[$current_class] = true;
 
-            // Find current class in manifest
-            if (!isset(Manifest::$data['data']['php_classes'][$current_class])) {
+            $record = Manifest::$data['data']['php_classes'][$current_class] ?? null;
+
+            if ($record === null || empty($record['extends'])) {
                 break;
             }
 
-            $file_path = Manifest::$data['data']['php_classes'][$current_class];
-            $metadata = Manifest::$data['data']['files'][$file_path];
-
-            if (!$metadata) {
-                break;
-            }
-
-            $extends = $metadata['extends'] ?? null;
-
-            if (!$extends) {
-                break;
-            }
-
-            // Add parent to lineage (simple name)
-            $lineage[] = $extends;
-
-            // Move up the chain
-            $current_class = $extends;
+            $lineage[] = $record['extends'];
+            $current_class = $record['extends'];
         }
 
         return $lineage;
@@ -245,18 +243,11 @@ class _Manifest_PHP_Reflection_Helper
     */
     public static function php_get_subclasses_of(string $class_name, bool $concrete_only = true): array
     {
-        // Strip namespace if FQCN was passed
-        if (strpos($class_name, '\\') !== false) {
-            $parts = explode('\\', $class_name);
-            $class_name = end($parts);
-        }
+        Manifest::init();
 
-        // Return empty array if class not in subclass_index
-        if (!isset(Manifest::$data['data']['php_subclass_index'][$class_name])) {
-            return [];
-        }
+        $class_name = self::_normalize_class_name($class_name);
 
-        $subclasses = Manifest::$data['data']['php_subclass_index'][$class_name];
+        $subclasses = Manifest::$data['data']['php_subclass_index'][$class_name] ?? [];
 
         // If not filtering for concrete classes, return all subclasses
         if (!$concrete_only) {
@@ -266,8 +257,9 @@ class _Manifest_PHP_Reflection_Helper
         // Filter out abstract classes
         $concrete_subclasses = [];
         foreach ($subclasses as $subclass) {
-            // Get file path and metadata
-            if (!isset(Manifest::$data['data']['php_classes'][$subclass])) {
+            $record = Manifest::$data['data']['php_classes'][$subclass] ?? null;
+
+            if ($record === null) {
                 shouldnt_happen(
                     "Fatal: PHP class '{$subclass}' found in subclass index but not in php_classes.\n" .
 "This indicates a major data integrity issue with the manifest.\n" .
@@ -275,11 +267,7 @@ class _Manifest_PHP_Reflection_Helper
                 );
             }
 
-            $file_path = Manifest::$data['data']['php_classes'][$subclass];
-            $metadata = Manifest::$data['data']['files'][$file_path];
-
-            // Check if abstract property exists in manifest data
-            if (!isset($metadata['abstract'])) {
+            if (!isset($record['abstract'])) {
                 shouldnt_happen(
                     "Fatal: Abstract property missing for PHP class '{$subclass}' in manifest data.\n" .
 "This indicates a major data integrity issue with the manifest.\n" .
@@ -287,8 +275,7 @@ class _Manifest_PHP_Reflection_Helper
                 );
             }
 
-            // Include only non-abstract classes
-            if (!$metadata['abstract']) {
+            if (!$record['abstract']) {
                 $concrete_subclasses[] = $subclass;
             }
         }
@@ -333,6 +320,16 @@ class _Manifest_PHP_Reflection_Helper
     }
 
     /**
+    * The model class that owns a table, or null.
+    */
+    public static function model_for_table(string $table): ?string
+    {
+        Manifest::init();
+
+        return Manifest::$data['data']['models_by_table'][$table] ?? null;
+    }
+
+    /**
      * Normalize class name to simple name (strip namespace qualifiers)
      *
      * Since RSX enforces unique simple class names across the codebase,
@@ -340,9 +337,9 @@ class _Manifest_PHP_Reflection_Helper
      * comparison and storage. FQCNs are only needed at actual class loading time.
      *
      * Examples:
-     *   \Rsx\Lib\DataGrid → DataGrid
-     *   Rsx\Lib\DataGrid → DataGrid
-     *   DataGrid → DataGrid
+     *   \Rsx\Lib\DataGrid -> DataGrid
+     *   Rsx\Lib\DataGrid -> DataGrid
+     *   DataGrid -> DataGrid
      *
      * @param string $class_name Class name in any format (with or without namespace)
      * @return string Simple class name without namespace
@@ -366,8 +363,11 @@ class _Manifest_PHP_Reflection_Helper
     * Classes are loaded in dependency order (parents first).
     * Used by stub generators and reflection extraction.
     *
+    * The hierarchy is walked through the CLASS MAP - simple name to record, one lookup per
+    * hop. It used to be a nested linear scan of every indexed file per hop, per class.
+    *
     * @param string $fqcn Fully qualified class name to load
-    * @param array $manifest_data The manifest data array
+    * @param array $manifest_data The manifest data array (unused; the class map is the source)
     * @return void
     * @throws \RuntimeException if class or parent cannot be loaded
     */
@@ -378,58 +378,42 @@ class _Manifest_PHP_Reflection_Helper
             return;
         }
 
-        // Build list of classes to load in hierarchy order
+        $classes = $manifest_data['data']['php_classes'] ?? Manifest::$data['data']['php_classes'] ?? [];
+
+        // Build list of classes to load in hierarchy order (parents first)
         $hierarchy = [];
         $current_fqcn = $fqcn;
+        $visited = [];
 
         while ($current_fqcn) {
-            // Find this class in the manifest
-            $found = false;
-            foreach ($manifest_data['data']['files'] as $file_path => $metadata) {
-                if (isset($metadata['fqcn']) && $metadata['fqcn'] === $current_fqcn) {
-                    // Add to front of hierarchy (parents first)
-                    array_unshift($hierarchy, [
-                        'fqcn' => $current_fqcn,
-                        'file' => $file_path,
-                        'extends' => $metadata['extends'] ?? null,
-                    ]);
-                    $found = true;
-
-                    // Move to parent class
-                    // extends is always stored as simple class name (normalized by parser)
-                    if (isset($metadata['extends'])) {
-                        $parent_simple_name = Manifest::_normalize_class_name($metadata['extends']);
-
-                        // Look for this class by simple name in manifest
-                        // Only check PHP files (those with fqcn key)
-                        $parent_fqcn = null;
-                        foreach ($manifest_data['data']['files'] as $parent_file => $parent_meta) {
-                            if (isset($parent_meta['class']) && $parent_meta['class'] === $parent_simple_name && isset($parent_meta['fqcn'])) {
-                                $parent_fqcn = $parent_meta['fqcn'];
-                                break;
-                            }
-                        }
-                        $current_fqcn = $parent_fqcn;
-                    } else {
-                        $current_fqcn = null;
-                    }
-                    break;
-                }
+            if (isset($visited[$current_fqcn])) {
+                break;
             }
 
-            if (!$found && $current_fqcn) {
-                // Check if it's a built-in or framework class that can be autoloaded
-                // Try to autoload it
+            $visited[$current_fqcn] = true;
+
+            $simple = Manifest::_normalize_class_name($current_fqcn);
+            $record = $classes[$simple] ?? null;
+
+            if ($record === null || ($record['fqcn'] ?? null) !== ltrim($current_fqcn, '\\')) {
+                // Not an indexed class. A built-in or vendor class simply autoloads.
                 if (class_exists($current_fqcn, true) ||
                 interface_exists($current_fqcn, true) ||
                 trait_exists($current_fqcn, true)) {
-                    // Framework or built-in class, stop here
                     break;
                 }
 
-                // If still not found, it's a fatal error
                 shouldnt_happen("Parent class {$current_fqcn} not found in manifest or autoloader for {$fqcn}");
             }
+
+            array_unshift($hierarchy, ['fqcn' => $current_fqcn, 'file' => $record['file']]);
+
+            if (empty($record['extends'])) {
+                break;
+            }
+
+            $parent = $classes[Manifest::_normalize_class_name($record['extends'])] ?? null;
+            $current_fqcn = $parent['fqcn'] ?? null;
         }
 
         // Load classes in order (parents first)

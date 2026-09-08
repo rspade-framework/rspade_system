@@ -44,7 +44,7 @@ class UnusedRsxUseStatement_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Read the actual file contents (not sanitized version)
-        $actual_contents = file_get_contents($file_path);
+        $actual_contents = $this->source()->content($file_path);
         if ($actual_contents === false) {
             return;
         }

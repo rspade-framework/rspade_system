@@ -366,7 +366,11 @@ class Session_Id_Null_Check_Rule_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(self::RULE_ID, $rule->get_id(), 'rule id');
         static::__assert_true($rule->is_called_during_manifest_scan(), 'the rule runs during the manifest scan');
-        static::__assert_true($rule->is_incremental(), 'the rule is per-file');
+        static::__assert_equals(
+            \App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract::KIND_PER_FILE,
+            $rule->kind(),
+            'the rule is per-file'
+        );
         static::__assert_equals('critical', $rule->get_default_severity(), 'violations are critical');
 
         // A critical violation raised during the manifest scan is what aborts the build

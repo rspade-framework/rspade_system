@@ -63,8 +63,27 @@ class Manifest_Dump_Command extends Command
             return Command::SUCCESS;
         }
         
-        // Get full manifest structure for dumping
+        // Get full manifest structure for dumping. The index is TWO files - the hot one a
+        // request loads and the cold one carrying the file metadata it never reads - and a
+        // DUMP means the whole thing, so the cold half is merged first.
+        Manifest::get_all();
         $data = Manifest::get_full_manifest();
+
+        // Say which half each record came from: the split is the first thing a reader of a
+        // dump needs to know about the shape in front of them.
+        $hot_paths = [];
+
+        foreach ((include storage_path(Manifest::CACHE_FILE))['data']['files'] as $path => $ignored) {
+            $hot_paths[$path] = true;
+        }
+
+        $data['index'] = [
+            'hot_file' => 'storage/' . Manifest::CACHE_FILE,
+            'cold_file' => 'storage/' . Manifest::COLD_FILE,
+            'files_total' => count($data['data']['files'] ?? []),
+            'files_hot' => count($hot_paths),
+            'files_cold' => count($data['data']['files'] ?? []) - count($hot_paths),
+        ];
 
         // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
         $data = $this->hide_framework_application($data);
@@ -124,8 +143,8 @@ class Manifest_Dump_Command extends Command
         
         // Return with same structure
         return [
-            'generated' => $data['generated'] ?? date('Y-m-d H:i:s'),
             'hash' => $data['hash'] ?? '',
+            'index' => $data['index'] ?? [],
             'data' => ['files' => $filtered_files]
         ];
     }
@@ -151,8 +170,8 @@ class Manifest_Dump_Command extends Command
         
         // Return with same structure
         return [
-            'generated' => $data['generated'] ?? date('Y-m-d H:i:s'),
             'hash' => $data['hash'] ?? '',
+            'index' => $data['index'] ?? [],
             'data' => ['files' => $filtered_files]
         ];
     }

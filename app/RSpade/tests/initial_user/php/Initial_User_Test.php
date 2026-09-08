@@ -22,10 +22,10 @@ use App\RSpade\Tests\InitialUser\Php\Initial_User_Fixture_Handler;
  * fresh install is in. The FK graph is ON DELETE CASCADE all the way down from both
  * tables, so deleting the two rows takes the dependents with it.
  *
- * test_baseline_carries_the_handler_rows is the one test that asserts against the
- * committed baseline rather than a state it built: it proves the event really fired
- * during provisioning, which is what lets an application's handler rows be assumed by
- * every other test in the suite.
+ * The event is proved to fire through Initial_User_Fixture_Handler, a handler declared
+ * in this concern's own tree. What an APPLICATION's handlers then do with the founder is
+ * that application's contract, tested in its own suite (rsx/tests) - this class names no
+ * application handler, table or role.
  */
 class Initial_User_Test extends Rsx_Test_Abstract
 {
@@ -170,64 +170,6 @@ class Initial_User_Test extends Rsx_Test_Abstract
         );
     }
 
-    public static function test_application_handlers_run_on_creation()
-    {
-        static::__clear_initial_user();
-
-        $user = Rsx_Initial_User::create('handled@rspade.test', 'a-password-nobody-uses', [
-            'site_id' => 1,
-            'source' => Rsx_Initial_User::SOURCE_MANUAL,
-        ]);
-
-        // The reference application's own handler (/rsx/handlers/Initial_User_Handlers.php)
-        // makes the founder a root admin and puts them in the Administrators group. That it
-        // ran here is the proof that a handler in /rsx/handlers/ is discovered and fired.
-        $stored = static::__row('SELECT role_id FROM users WHERE id = ?', [$user->id]);
-        static::__assert_equals(
-            User_Model::ROLE_ROOT_ADMIN,
-            (int) $stored->role_id,
-            'the application handler assigned the founder its top role'
-        );
-
-        // Newest first: the committed baseline carries an Administrators group of its own
-        // (the same handler ran when the runner seeded it), and the one this test is about
-        // is the one just created.
-        $group = static::__row(
-            'SELECT id FROM user_groups WHERE site_id = 1 AND name = ? AND deleted_at IS NULL'
-            . ' ORDER BY id DESC LIMIT 1',
-            ['Administrators']
-        );
-
-        static::__assert_not_empty($group, 'the application handler created the Administrators group');
-        static::__assert_not_empty(
-            static::__row(
-                'SELECT id FROM user_group_members WHERE user_group_id = ? AND user_id = ?',
-                [$group->id, $user->id]
-            ),
-            'the founder is a member of that group'
-        );
-    }
-
-    public static function test_baseline_carries_the_handler_rows()
-    {
-        // Committed state, not built by this test: the runner seeded the baseline account
-        // through Rsx_Initial_User, so the event fired during provisioning and the
-        // application's handler rows are part of every test's starting database.
-        $group = static::__row(
-            'SELECT id FROM user_groups WHERE name = ? AND deleted_at IS NULL ORDER BY id LIMIT 1',
-            ['Administrators']
-        );
-
-        static::__assert_not_empty($group, 'the test baseline carries the Administrators group');
-        static::__assert_not_empty(
-            static::__row(
-                'SELECT id FROM user_group_members WHERE user_group_id = ? AND user_id = ?',
-                [$group->id, Rsx_Initial_User::INITIAL_USER_ID]
-            ),
-            'the baseline user is a member of it'
-        );
-    }
-
     public static function test_env_seed_is_a_no_op_once_an_account_exists()
     {
         // The post-migrate step's first question, and the one that makes running it at the
@@ -266,18 +208,21 @@ class Initial_User_Test extends Rsx_Test_Abstract
     {
         static::__clear_initial_user();
 
+        // An arbitrary role out of this application's own enum - the point is that the
+        // CALLER chose it, not which one it is, so no role constant is named.
+        $role_id = (int) User_Model::role_id__enum_ids()[0];
+
         $user = Rsx_Initial_User::create('roled@rspade.test', 'a-password-nobody-uses', [
             'site_id' => 1,
-            'role_id' => User_Model::ROLE_DEVELOPER,
+            'role_id' => $role_id,
             'source' => Rsx_Initial_User::SOURCE_TEST_BASELINE,
         ]);
 
-        // The reference handler only fills a role in when the caller left it unset - which
-        // is what makes the test baseline (ROLE_DEVELOPER, outranking ROLE_ROOT_ADMIN)
-        // survive its own creation.
+        // A handler may fill a role in when the caller left it unset; an explicit one is
+        // never overruled, which is what makes the test baseline survive its own creation.
         $stored = static::__row('SELECT role_id FROM users WHERE id = ?', [$user->id]);
         static::__assert_equals(
-            User_Model::ROLE_DEVELOPER,
+            $role_id,
             (int) $stored->role_id,
             'an explicitly chosen role is not overruled by a handler'
         );

@@ -91,32 +91,25 @@ class Portal_Session
     }
 
     /**
-     * End the portal identity on this browser's session.
+     * Return the portal facade to virgin state between tests. THE per-test seam.
      *
-     * CLEARS THE PORTAL PROPERTIES; the row and the cookie survive, because they are
-     * the browser's session and may carry a staff login. The site DECLARATION also
-     * survives in web mode: it belongs to the request (the application declared it at
-     * the top of this one), not to the session row, and a request that ends a portal
-     * identity still has work to do afterwards - a flash alert, a redirect - that
-     * needs a site. In CLI the declaration IS the whole state, so a reset clears it;
-     * that is what returns the facade to virgin state between tests.
+     * Clears the process-global CLI state - the declared site, the portal user, the
+     * impersonator - plus the resolved caches. All of it is STATIC, so the per-test database
+     * transaction does not touch it: a site declared by one test would otherwise be borrowed
+     * by every test after it, in this class and in every class that follows. (setup() runs
+     * once per CLASS and therefore does NOT survive this, so each test declares its own site.)
+     *
+     * Called by Rsx_Test_Abstract between test methods, and never by application code. Ending
+     * a portal identity on a live request is `Session::_clear_portal_properties()`, which is
+     * what the logout paths use.
      *
      * @return void
      */
-    public static function reset(): void
+    public static function _testing_reset(): void
     {
-        if (self::__is_cli()) {
-            self::$_declared_site_id = null;
-            self::$_cli_portal_user_id = null;
-            self::$_cli_impersonator_user_id = null;
-            self::$_site = null;
-            self::$_portal_user = null;
-
-            return;
-        }
-
-        Session::_clear_portal_properties();
-
+        self::$_declared_site_id = null;
+        self::$_cli_portal_user_id = null;
+        self::$_cli_impersonator_user_id = null;
         self::$_site = null;
         self::$_portal_user = null;
     }

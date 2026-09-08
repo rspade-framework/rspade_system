@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Core\PHP;
 
+use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 use RuntimeException;
 
 /**
@@ -41,7 +43,7 @@ use RuntimeException;
  *     }
  *
  *     // Parse tokens for accurate replacement
- *     $tokens = token_get_all($content);
+ *     $tokens = self::__tokens($content);
  *
  *     // Find patterns to fix
  *     // Build modifications array with positions
@@ -87,6 +89,144 @@ class Php_Fixer
      * same process silently decided the answer for every later caller - including tests.
      */
     private static ?bool $__class_index_healthy = null;
+
+    /**
+     * THE RUN'S CLASS INDEX - built ONCE per _run_php_fixer(), read by every file.
+     *
+     * `fix()` used to walk the whole manifest file map five separate times PER FILE: to find
+     * an import's correct FQCN (once per use statement), to rebuild the "valid rsx classes"
+     * set, to match every referenced simple name to a file (nested - ~42M iterations on a
+     * full pass), to count framework classes for the deletion guard, and to walk a model's
+     * ancestry. Every one of those is a lookup in one of the maps below.
+     *
+     *   simple_to_fqcn      simple class name => the FQCN the manifest says it has
+     *   simple_to_path      simple class name => the file that declares it
+     *   extends             simple class name => its parent's simple name
+     *   rsx_classes         set of class names declared under rsx/
+     *   overridden          set of class names declared under rsx/ that ALSO have a
+     *                       framework declaration (.php or an already-archived
+     *                       .php.upstream) - i.e. the class overrides
+     *   framework_classes   how many app/RSpade/ classes the index carries (guard 2)
+     *
+     * @var array{simple_to_fqcn:array,simple_to_path:array,extends:array,rsx_classes:array,overridden:array,framework_classes:int}|null
+     */
+    private static ?array $__index = null;
+
+    /**
+     * Memo for guard 1 - "does a file defining this name live in an UNSCANNED framework
+     * subtree" - one answer per name per run. It is a recursive directory walk, and it used
+     * to run again for every unresolved import in every file.
+     *
+     * @var array<string,bool>
+     */
+    private static array $__outside_index_memo = [];
+
+    /**
+     * Build the run's class index. Called once by _run_php_fixer() before the file loop.
+     *
+     * WHERE B-108 IS DECIDED. When a simple name is declared BOTH under rsx/ and under
+     * app/RSpade/, the rsx/ one wins - deterministically, not by hash order. That pair is
+     * exactly a class override in the moment before the override pass archives the framework
+     * copy, so the rsx/ answer is the one that will still be true a few lines later. The
+     * fixer used to return whichever entry the file map happened to reach first.
+     */
+    public static function begin_run(array &$step_2_manifest_data): void
+    {
+        $simple_to_fqcn = [];
+        $simple_to_path = [];
+        $extends = [];
+        $rsx_classes = [];
+        $framework_declared = [];
+        $framework_classes = 0;
+
+        foreach ($step_2_manifest_data['data']['files'] ?? [] as $manifest_file => $metadata) {
+            $class = $metadata['class'] ?? null;
+
+            if ($class === null || $class === '') {
+                continue;
+            }
+
+            $is_rsx = Rsx_Paths::is_application($manifest_file);
+            $is_framework = Rsx_Paths::is_framework($manifest_file);
+
+            if (!$is_rsx && !$is_framework) {
+                continue;
+            }
+
+            // An ARCHIVED framework twin still counts as a framework declaration - that is
+            // what makes an override recognisable on the second and every later build.
+            $extension = $metadata['extension'] ?? null;
+
+            if ($is_framework && $extension === 'php.upstream') {
+                $framework_declared[$class] = true;
+
+                continue;
+            }
+
+            if (!str_ends_with($manifest_file, '.php')) {
+                continue;
+            }
+
+            if ($is_framework) {
+                $framework_declared[$class] = true;
+                $framework_classes++;
+            }
+
+            // rsx/ WINS, in either iteration order: an rsx/ declaration always overwrites,
+            // and a framework declaration never overwrites one rsx/ already made. That pair
+            // is a class override in the moment before the override pass archives the
+            // framework copy, so the rsx/ answer is the one that stays true.
+            if ($is_rsx) {
+                $rsx_classes[$class] = true;
+            } elseif (isset($rsx_classes[$class])) {
+                continue;
+            }
+
+            $simple_to_fqcn[$class] = Rsx_Namespace::from_path($manifest_file) . '\\' . $class;
+            $simple_to_path[$class] = $manifest_file;
+            $extends[$class] = $metadata['extends'] ?? null;
+        }
+
+        $overridden = [];
+        foreach (array_keys($rsx_classes) as $class) {
+            if (isset($framework_declared[$class])) {
+                $overridden[$class] = true;
+            }
+        }
+
+        self::$__index = [
+            'simple_to_fqcn' => $simple_to_fqcn,
+            'simple_to_path' => $simple_to_path,
+            'extends' => $extends,
+            'rsx_classes' => $rsx_classes,
+            'overridden' => $overridden,
+            'framework_classes' => $framework_classes,
+        ];
+
+        self::$__outside_index_memo = [];
+        self::$__class_index_healthy = null;
+    }
+
+    /** Nothing about one run outlives that run. */
+    public static function end_run(): void
+    {
+        self::$__index = null;
+        self::$__outside_index_memo = [];
+        self::$__class_index_healthy = null;
+    }
+
+    /**
+     * The run's index, built on demand for a caller that reached fix() without begin_run()
+     * (a test driving one file).
+     */
+    private static function __index(array &$step_2_manifest_data): array
+    {
+        if (self::$__index === null) {
+            self::begin_run($step_2_manifest_data);
+        }
+
+        return self::$__index;
+    }
 
     /**
      * Fix a PHP file by applying automatic improvements
@@ -138,7 +278,53 @@ class Php_Fixer
      * @param array $step_2_manifest_data Manifest state during Phase 2 (passed by reference)
      * @return bool True if file was modified, false otherwise
      */
+    /**
+     * ONE token stream at a time, reused across the fixer's passes.
+     *
+     * `fix()` runs six or more passes over one file, and every one of them used to call
+     * `token_get_all()` again on content that had not changed - 6 to 9 tokenizations per
+     * file per build. This memo holds exactly ONE stream (the one for the content the fixer
+     * is currently working on): a pass that did not mutate the content gets the previous
+     * pass's stream, and the first pass AFTER a mutation tokenizes once and evicts the old
+     * one. Bounded by the largest single file, by construction.
+     *
+     * @var array{0:string,1:array}|null [content hash, tokens]
+     */
+    private static ?array $__token_memo = null;
+
+    /**
+     * The token stream for $content, tokenizing only when $content is not the one already
+     * remembered.
+     */
+    private static function __tokens(string $content): array
+    {
+        $key = md5($content);
+
+        if (self::$__token_memo !== null && self::$__token_memo[0] === $key) {
+            return self::$__token_memo[1];
+        }
+
+        $tokens = token_get_all($content);
+
+        self::$__token_memo = [$key, $tokens];
+
+        return $tokens;
+    }
+
     public static function fix(string $file_path, array &$step_2_manifest_data): bool
+    {
+        try {
+            return self::__fix($file_path, $step_2_manifest_data);
+        } finally {
+            // Nothing about one file outlives that file.
+            self::$__token_memo = null;
+        }
+    }
+
+    /**
+     * fix(), inside the token-memo lifetime.
+     */
+    private static function __fix(string $file_path, array &$step_2_manifest_data): bool
     {
         // Never process ourselves to avoid infinite recursion or self-modification
         if (str_ends_with($file_path, 'Php_Fixer.php')) {
@@ -156,8 +342,8 @@ class Php_Fixer
         }
 
         // Determine if this is a framework file (app/RSpade/) vs user file (rsx/)
-        $is_rsx_file = str_starts_with($file_path, 'rsx/');
-        $is_framework_file = str_starts_with($file_path, 'app/RSpade/');
+        $is_rsx_file = Rsx_Paths::is_application($file_path);
+        $is_framework_file = Rsx_Paths::is_framework($file_path);
         $is_framework_developer = config('rsx.code_quality.is_framework_developer', false);
 
         // Skip files not in rsx/ or app/RSpade/
@@ -173,7 +359,8 @@ class Php_Fixer
         $use_statements_only = !$is_framework_developer && $is_framework_file;
 
         $absolute_path = base_path($file_path);
-        $original_content = file_get_contents($absolute_path);
+        $source = Manifest::build()->source_cache();
+        $original_content = $source->content($absolute_path);
 
         // Skip empty files
         if (trim($original_content) === '') {
@@ -181,7 +368,7 @@ class Php_Fixer
         }
 
         // Quick check if file has a class - use token parsing
-        $tokens = token_get_all($original_content);
+        $tokens = self::__tokens($original_content);
         $has_class = false;
         foreach ($tokens as $token) {
             if (is_array($token) && $token[0] === T_CLASS) {
@@ -216,6 +403,10 @@ class Php_Fixer
                 throw new RuntimeException("Php_Fixer produced empty output for file: {$file_path}. This should never happen.");
             }
             file_put_contents_safe($absolute_path, $modified_content);
+
+            // The bytes on disk are no longer the bytes the cache remembers.
+            $source->forget($absolute_path);
+
             return true;
         }
 
@@ -233,8 +424,8 @@ class Php_Fixer
     private static function __fix_namespace(string $file_path, string $content, array &$step_2_manifest_data): string
     {
         // Determine which directory this file is in
-        $is_rsx_file = str_starts_with($file_path, 'rsx/');
-        $is_rspade_file = str_starts_with($file_path, 'app/RSpade/');
+        $is_rsx_file = Rsx_Paths::is_application($file_path);
+        $is_rspade_file = Rsx_Paths::is_framework($file_path);
 
         // Only process rsx/ or app/RSpade/ files
         if (!$is_rsx_file && !$is_rspade_file) {
@@ -242,11 +433,11 @@ class Php_Fixer
         }
 
         // Calculate expected namespace from path
-        $expected_namespace = self::__calculate_namespace_from_path($file_path);
+        $expected_namespace = Rsx_Namespace::from_path($file_path);
 
         // Extract current namespace from file
-        $tokens = token_get_all($content);
-        $current_namespace = self::__extract_namespace_from_tokens($tokens);
+        $tokens = self::__tokens($content);
+        $current_namespace = Rsx_Namespace::from_tokens($tokens);
 
         // If namespaces match, nothing to do
         if ($current_namespace === $expected_namespace) {
@@ -266,110 +457,7 @@ class Php_Fixer
         return self::__replace_namespace_in_content($content, $tokens, $expected_namespace);
     }
 
-    /**
-     * Calculate expected namespace from file path using Laravel conventions
-     *
-     * @param string $file_path Relative path from base_path()
-     * @return string Expected namespace
-     */
-    private static function __calculate_namespace_from_path(string $file_path): string
-    {
-        // Remove .php extension
-        $path_without_ext = substr($file_path, 0, -4);
 
-        // Split into parts
-        $parts = explode('/', $path_without_ext);
-
-        // Handle rsx/ files
-        if ($parts[0] === 'rsx') {
-            array_shift($parts); // Remove 'rsx'
-            array_pop($parts);   // Remove filename
-
-            // Capitalize each part (PascalCase conversion)
-            $namespace_parts = [];
-            foreach ($parts as $part) {
-                // Convert snake_case or kebab-case to PascalCase
-                $words = explode(' ', str_replace(['_', '-'], ' ', $part));
-                $capitalized = '';
-                foreach ($words as $word) {
-                    $capitalized .= ucfirst($word);
-                }
-                $namespace_parts[] = $capitalized;
-            }
-
-            $namespace = 'Rsx';
-            if (!empty($namespace_parts)) {
-                $namespace .= '\\' . implode('\\', $namespace_parts);
-            }
-
-            return $namespace;
-        }
-
-        // Handle app/RSpade files (and other app/* files)
-        if ($parts[0] === 'app') {
-            array_shift($parts); // Remove 'app'
-            array_pop($parts);   // Remove filename
-
-            // Capitalize each part
-            $namespace_parts = [];
-            foreach ($parts as $part) {
-                $words = explode(' ', str_replace(['_', '-'], ' ', $part));
-                $capitalized = '';
-                foreach ($words as $word) {
-                    $capitalized .= ucfirst($word);
-                }
-                $namespace_parts[] = $capitalized;
-            }
-
-            $namespace = 'App';
-            if (!empty($namespace_parts)) {
-                $namespace .= '\\' . implode('\\', $namespace_parts);
-            }
-
-            return $namespace;
-        }
-
-        // Should never reach here - __fix_namespace() only calls this for rsx/ or app/ files
-        shouldnt_happen("__calculate_namespace_from_path() called with unexpected file path: {$file_path}");
-    }
-
-    /**
-     * Extract namespace from tokens
-     *
-     * @param array $tokens Token array from token_get_all()
-     * @return string|null Current namespace or null if none
-     */
-    private static function __extract_namespace_from_tokens(array $tokens): ?string
-    {
-        for ($i = 0; $i < count($tokens); $i++) {
-            if (is_array($tokens[$i]) && $tokens[$i][0] === T_NAMESPACE) {
-                $namespace = '';
-                $i++; // Move past T_NAMESPACE
-
-                while ($i < count($tokens) && $tokens[$i] !== ';') {
-                    if (is_array($tokens[$i])) {
-                        // Handle PHP 8's T_NAME_QUALIFIED token
-                        if (defined('T_NAME_QUALIFIED') && $tokens[$i][0] === T_NAME_QUALIFIED) {
-                            $namespace .= $tokens[$i][1];
-                        }
-                        // Handle PHP 8's T_NAME_FULLY_QUALIFIED token
-                        elseif (defined('T_NAME_FULLY_QUALIFIED') && $tokens[$i][0] === T_NAME_FULLY_QUALIFIED) {
-                            $namespace .= $tokens[$i][1];
-                        }
-                        // Handle older PHP versions
-                        elseif ($tokens[$i][0] === T_STRING || $tokens[$i][0] === T_NS_SEPARATOR) {
-                            $namespace .= $tokens[$i][1];
-                        }
-                    }
-                    $i++;
-                }
-
-                return trim($namespace);
-            }
-        }
-
-        return null;
-    }
 
     /**
      * Replace or add namespace in file content
@@ -454,15 +542,15 @@ class Php_Fixer
     private static function __fix_use_statements(string $file_path, string $content, array &$step_2_manifest_data): string
     {
         // Only process files in rsx/ or app/RSpade/
-        $is_rsx_file = str_starts_with($file_path, 'rsx/');
-        $is_rspade_file = str_starts_with($file_path, 'app/RSpade/');
+        $is_rsx_file = Rsx_Paths::is_application($file_path);
+        $is_rspade_file = Rsx_Paths::is_framework($file_path);
 
         if (!$is_rsx_file && !$is_rspade_file) {
             return $content;
         }
 
         // Parse tokens once for all operations
-        $tokens = token_get_all($content);
+        $tokens = self::__tokens($content);
 
         // Extract existing non-Rsx\ use statement simple names BEFORE removing Rsx\ statements
         $existing_non_rsx_simple_names = self::__extract_existing_non_rsx_use_simple_names($tokens, $file_path, $step_2_manifest_data);
@@ -477,7 +565,7 @@ class Php_Fixer
 
         //Step 3: Add use statements for Rsx\ classes
         // Re-parse tokens after content modification
-        $tokens = token_get_all($content);
+        $tokens = self::__tokens($content);
 
         // Find all simple class names used in the file
         $referenced_classes = self::__find_referenced_simple_classes($tokens);
@@ -514,13 +602,27 @@ class Php_Fixer
         // Find which of these classes exist in manifest
         $rsx_classes_to_import = self::__match_classes_files($referenced_classes, $step_2_manifest_data);
 
-        // CRITICAL: Framework files in app/RSpade/ must NEVER import Rsx\ classes
-        // In production, Rsx\ class paths are unpredictable (user-defined structure)
-        // The autoloader will find them without explicit use statements
+        // Framework files in app/RSpade/ do not import Rsx\ classes: in a downstream app the
+        // Rsx\ namespace tree is the developer's own structure and the autoloader resolves
+        // it by simple name at runtime.
+        //
+        // THE ONE EXCEPTION IS A CLASS OVERRIDE, and it is the exception the delete pass
+        // agrees with (B-108). When a framework class has been re-declared under rsx/, the
+        // framework's own copy is archived and the bare name no longer resolves at COMPILE
+        // time - which is what an inherited type hint needs. So an override's import is
+        // added here, exactly as __decide_use_statement_action() now rewrites rather than
+        // deletes one. Without both halves the two passes fight: one writes the import, the
+        // other strips it, every build.
         if ($is_rspade_file) {
-            $rsx_classes_to_import = array_filter($rsx_classes_to_import, function($fqcn) {
-                return !str_starts_with($fqcn, 'Rsx\\');
-            });
+            $overridden = self::__index($step_2_manifest_data)['overridden'];
+
+            $rsx_classes_to_import = array_filter(
+                $rsx_classes_to_import,
+                function ($fqcn, $simple_name) use ($overridden) {
+                    return !str_starts_with($fqcn, 'Rsx\\') || isset($overridden[$simple_name]);
+                },
+                ARRAY_FILTER_USE_BOTH
+            );
         }
 
         // Add use statements for found classes (excluding conflicts with existing non-Rsx\ use statements)
@@ -541,6 +643,100 @@ class Php_Fixer
     }
 
     /**
+     * EVERY `use` STATEMENT IN THE FILE HEADER, walked once, in one place.
+     *
+     * Three passes over a file's imports each wrote this loop out longhand - collect the
+     * simple names that survive, rewrite the header removing or redirecting, rebuild the
+     * header adding new ones - and the three had already drifted: only the first stopped
+     * collecting at `as`, so the other two read `use Illuminate\Routing\Controller as
+     * BaseController;` as the FQCN `Illuminate\Routing\ControllerBaseController` and the
+     * rebuild would have emitted that as a real import.
+     *
+     * Each entry is
+     *
+     *     ['start' => int, 'end' => int, 'fqcn' => string, 'alias' => bool, 'raw' => string]
+     *
+     * where `start`/`end` bracket the statement INCLUDING its `;` (so a caller can copy it
+     * through verbatim), `fqcn` is the imported name with any alias stripped, and `raw` is
+     * the statement exactly as written - which is the only form that survives an alias.
+     *
+     * The walk stops at the class declaration: a `use` inside a class body is a TRAIT
+     * adoption and has nothing to do with imports.
+     *
+     * @return array<int,array{start:int,end:int,fqcn:string,alias:bool,raw:string}>
+     */
+    private static function __use_statements(array $tokens): array
+    {
+        $found = [];
+        $count = count($tokens);
+
+        for ($i = 0; $i < $count; $i++) {
+            $token = $tokens[$i];
+
+            if (is_array($token) && $token[0] === T_CLASS) {
+                break;
+            }
+
+            if (!is_array($token) || $token[0] !== T_USE) {
+                continue;
+            }
+
+            $start = $i;
+            $fqcn = '';
+            $alias = false;
+            $i++;
+
+            while ($i < $count && $tokens[$i] !== ';') {
+                if (is_array($tokens[$i])) {
+                    if ($tokens[$i][0] === T_AS) {
+                        $alias = true;
+
+                        while ($i < $count && $tokens[$i] !== ';') {
+                            $i++;
+                        }
+
+                        break;
+                    }
+
+                    if ($tokens[$i][0] === T_STRING
+                        || $tokens[$i][0] === T_NS_SEPARATOR
+                        || (defined('T_NAME_QUALIFIED') && $tokens[$i][0] === T_NAME_QUALIFIED)
+                        || (defined('T_NAME_FULLY_QUALIFIED') && $tokens[$i][0] === T_NAME_FULLY_QUALIFIED)) {
+                        $fqcn .= $tokens[$i][1];
+                    }
+                }
+
+                $i++;
+            }
+
+            $found[] = [
+                'start' => $start,
+                'end' => $i,
+                'fqcn' => trim($fqcn),
+                'alias' => $alias,
+                'raw' => self::__token_text($tokens, $start, $i),
+            ];
+        }
+
+        return $found;
+    }
+
+    /**
+     * The literal source between two token indexes, inclusive.
+     */
+    private static function __token_text(array $tokens, int $from, int $to): string
+    {
+        $text = '';
+        $count = count($tokens);
+
+        for ($i = $from; $i <= $to && $i < $count; $i++) {
+            $text .= is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i];
+        }
+
+        return $text;
+    }
+
+    /**
      * Extract simple class names from existing use statements that won't be removed
      *
      * @param array $tokens Parsed tokens
@@ -551,79 +747,38 @@ class Php_Fixer
     private static function __extract_existing_non_rsx_use_simple_names(array $tokens, string $file_path, array &$step_2_manifest_data): array
     {
         $simple_names = [];
-        $i = 0;
 
-        while ($i < count($tokens)) {
-            $token = $tokens[$i];
+        foreach (self::__use_statements($tokens) as $use) {
+            $use_fqcn = $use['fqcn'];
 
-            // Stop at class declaration
-            if (is_array($token) && $token[0] === T_CLASS) {
-                break;
+            // CRITICAL CHECK: Disallow 'as' aliases for Rsx\ or App\RSpade\ classes
+            if ($use['alias'] && (str_starts_with($use_fqcn, 'Rsx\\') || str_starts_with($use_fqcn, 'App\\RSpade\\'))) {
+                throw new RuntimeException(
+                    "FATAL: 'use' statement with 'as' alias detected in {$file_path}:\n" .
+                    "    use {$use_fqcn} as ...\n\n" .
+                    "RSX/RSpade classes CANNOT use 'as' aliases in use statements.\n\n" .
+                    "Rationale:\n" .
+                    "- Aliases make code less clear about which specific classes are involved\n" .
+                    "- Aliases break RSX reflection-based code execution patterns\n" .
+                    "- Aliases prevent framework introspection and auto-discovery\n\n" .
+                    "Solution: Remove the 'as' keyword and use the class's actual name.\n" .
+                    "If there's a naming conflict, the framework will handle it automatically."
+                );
             }
 
-            // Check for use statements
-            if (is_array($token) && $token[0] === T_USE) {
-                $i++; // Move past T_USE
+            // Check if this use statement will be kept (not removed/redirected)
+            $action = self::__should_remove_use_statement($use_fqcn, $file_path, $step_2_manifest_data);
 
-                // Collect the use statement FQCN and check for 'as' keyword
-                $use_fqcn = '';
-                $has_as_alias = false;
-                while ($i < count($tokens) && $tokens[$i] !== ';') {
-                    if (is_array($tokens[$i])) {
-                        // Check for 'as' keyword - stop collecting FQCN at this point
-                        if ($tokens[$i][0] === T_AS) {
-                            $has_as_alias = true;
-                            // Skip to semicolon without collecting more
-                            while ($i < count($tokens) && $tokens[$i] !== ';') {
-                                $i++;
-                            }
-                            break;
-                        }
-
-                        if (defined('T_NAME_QUALIFIED') && $tokens[$i][0] === T_NAME_QUALIFIED) {
-                            $use_fqcn .= $tokens[$i][1];
-                        } elseif (defined('T_NAME_FULLY_QUALIFIED') && $tokens[$i][0] === T_NAME_FULLY_QUALIFIED) {
-                            $use_fqcn .= $tokens[$i][1];
-                        } elseif ($tokens[$i][0] === T_STRING || $tokens[$i][0] === T_NS_SEPARATOR) {
-                            $use_fqcn .= $tokens[$i][1];
-                        }
-                    }
-                    $i++;
-                }
-
-                $use_fqcn = trim($use_fqcn);
-
-                // CRITICAL CHECK: Disallow 'as' aliases for Rsx\ or App\RSpade\ classes
-                if ($has_as_alias && (str_starts_with($use_fqcn, 'Rsx\\') || str_starts_with($use_fqcn, 'App\\RSpade\\'))) {
-                    throw new RuntimeException(
-                        "FATAL: 'use' statement with 'as' alias detected in {$file_path}:\n" .
-                        "    use {$use_fqcn} as ...\n\n" .
-                        "RSX/RSpade classes CANNOT use 'as' aliases in use statements.\n\n" .
-                        "Rationale:\n" .
-                        "- Aliases make code less clear about which specific classes are involved\n" .
-                        "- Aliases break RSX reflection-based code execution patterns\n" .
-                        "- Aliases prevent framework introspection and auto-discovery\n\n" .
-                        "Solution: Remove the 'as' keyword and use the class's actual name.\n" .
-                        "If there's a naming conflict, the framework will handle it automatically."
-                    );
-                }
-
-                // Check if this use statement will be kept (not removed/redirected)
-                $action = self::__should_remove_use_statement($use_fqcn, $file_path, $step_2_manifest_data);
-
-                if ($action === false) {
-                    // Keeping as-is - extract simple name
-                    $simple_name = substr(strrchr($use_fqcn, '\\'), 1) ?: $use_fqcn;
-                    $simple_names[$simple_name] = true;
-                } elseif (is_string($action)) {
-                    // Redirecting to new FQCN - extract simple name from new FQCN
-                    $simple_name = substr(strrchr($action, '\\'), 1) ?: $action;
-                    $simple_names[$simple_name] = true;
-                }
-                // If $action === true, it's being removed, don't add to simple_names
+            if ($action === false) {
+                // Keeping as-is - extract simple name
+                $simple_name = substr(strrchr($use_fqcn, '\\'), 1) ?: $use_fqcn;
+                $simple_names[$simple_name] = true;
+            } elseif (is_string($action)) {
+                // Redirecting to new FQCN - extract simple name from new FQCN
+                $simple_name = substr(strrchr($action, '\\'), 1) ?: $action;
+                $simple_names[$simple_name] = true;
             }
-
-            $i++;
+            // If $action === true, it's being removed, don't add to simple_names
         }
 
         return array_keys($simple_names);
@@ -675,17 +830,12 @@ class Php_Fixer
             return self::$__class_index_healthy;
         }
 
-        $framework_classes = 0;
-        foreach ($step_2_manifest_data['data']['files'] ?? [] as $manifest_file => $metadata) {
-            if (str_starts_with($manifest_file, 'app/RSpade/') && isset($metadata['class'])) {
-                $framework_classes++;
+        $framework_classes = self::__index($step_2_manifest_data)['framework_classes'];
 
-                if ($framework_classes >= self::MIN_FRAMEWORK_CLASSES_FOR_DELETION) {
-                    self::$__class_index_healthy = true;
+        if ($framework_classes >= self::MIN_FRAMEWORK_CLASSES_FOR_DELETION) {
+            self::$__class_index_healthy = true;
 
-                    return true;
-                }
-            }
+            return true;
         }
 
         self::$__class_index_healthy = false;
@@ -722,6 +872,22 @@ class Php_Fixer
         if ($simple_name === '' || !preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $simple_name)) {
             return false;
         }
+
+        // ONE recursive walk per NAME per run. The answer is a property of the tree, not of
+        // the file being fixed, and this used to re-walk every unscanned framework subtree
+        // for every unresolved import in every file.
+        if (array_key_exists($simple_name, self::$__outside_index_memo)) {
+            return self::$__outside_index_memo[$simple_name];
+        }
+
+        self::$__outside_index_memo[$simple_name] = self::__scan_for_class_file_outside_the_index($simple_name);
+
+        return self::$__outside_index_memo[$simple_name];
+    }
+
+    /** The uncached walk behind __class_file_exists_outside_the_index(). */
+    private static function __scan_for_class_file_outside_the_index(string $simple_name): bool
+    {
 
         $scanned = \App\RSpade\Core\Manifest\Manifest::scan_directories();
         $framework_root = base_path('app/RSpade');
@@ -812,7 +978,7 @@ class Php_Fixer
         }
 
         // Remove "Route" explicitly - refers to Laravel Route:: helper which conflicts with our #[Route] attribute
-        if ($use_fqcn == 'Route' && (str_starts_with($file_path, 'rsx/') || str_starts_with($file_path, 'app/RSpade/'))) {
+        if ($use_fqcn == 'Route' && (Rsx_Paths::is_application($file_path) || Rsx_Paths::is_framework($file_path))) {
             return true;
         }
 
@@ -821,7 +987,7 @@ class Php_Fixer
         if (strpos($use_fqcn, '\\') === false) {
             $helper_file = dirname(base_path()) . '/._rsx_helper.php';
             if (file_exists($helper_file)) {
-                $helper_content = file_get_contents($helper_file);
+                $helper_content = Manifest::build()->source_cache()->content($helper_file);
                 // Look for class declaration pattern: "    class ClassName {\n"
                 $pattern = '/^\s+class\s+' . preg_quote($use_fqcn, '/') . '\s+\{/m';
                 if (preg_match($pattern, $helper_content)) {
@@ -834,29 +1000,25 @@ class Php_Fixer
         $correct_fqcn = self::__find_class_fqcn_in_manifest($simple_name, $step_2_manifest_data);
 
         if ($correct_fqcn !== null) {
-            // Class exists in manifest - check if use statement is correct
+            // THE MANIFEST KNOWS THIS NAME, SO THE IMPORT IS NEVER DELETED (backlog B-108).
+            //
+            // It used to be, in framework-developer mode, on the reasoning that the RSX
+            // autoloader finds an Rsx\ class without an import. It does - at RUNTIME. What
+            // it cannot do is satisfy PHP's COMPILE-TIME signature-compatibility check,
+            // which does not autoload: a framework file that type-hints an overridden class
+            // in an inherited signature resolves the bare name into its OWN namespace and
+            // the process dies at boot, unrecoverably, before any build can undo the edit.
+            // Observed 2026-09-07 by cloning Core/Files/File_Attachment_Model.php into
+            // rsx/models/: ~50 imports were dropped instead of rewritten.
+            //
+            // So the answer is the same in every mode: point the import at the FQCN the
+            // manifest records, which for an overridden class is the rsx/ one (see
+            // begin_run() - rsx/ wins deterministically, not by hash order).
             if ($use_fqcn === $correct_fqcn) {
-                // Already pointing to correct FQCN
-                $is_framework_developer = config('rsx.code_quality.is_framework_developer', false);
-
-                // In framework developer mode, remove Rsx\ use statements (autoloader finds them)
-                if ($is_framework_developer && str_starts_with($use_fqcn, 'Rsx\\')) {
-                    return true;
-                }
-
-                return false; // Keep as-is
-            } else {
-                // Use statement points to wrong FQCN
-                $is_framework_developer = config('rsx.code_quality.is_framework_developer', false);
-
-                if ($is_framework_developer && str_starts_with($correct_fqcn, 'Rsx\\')) {
-                    // Framework developer mode: remove, autoloader will find Rsx\ classes
-                    return true;
-                }
-
-                // Update to correct FQCN
-                return $correct_fqcn;
+                return false; // Already correct - keep as-is
             }
+
+            return $correct_fqcn;
         }
 
         // A Rsx\ or App\RSpade\ import the manifest cannot resolve. Historically this was an
@@ -900,25 +1062,7 @@ class Php_Fixer
      */
     private static function __find_class_fqcn_in_manifest(string $simple_name, array &$step_2_manifest_data): ?string
     {
-        foreach ($step_2_manifest_data['data']['files'] ?? [] as $manifest_file => $metadata) {
-            // Only check PHP files (not JS classes with same name)
-            if (!str_ends_with($manifest_file, '.php')) {
-                continue;
-            }
-
-            // Only check files in rsx/ or app/RSpade/
-            if (!str_starts_with($manifest_file, 'rsx/') && !str_starts_with($manifest_file, 'app/RSpade/')) {
-                continue;
-            }
-
-            // Check if this file defines the class we're looking for
-            if (isset($metadata['class']) && $metadata['class'] === $simple_name) {
-                // Generate FQCN from file path
-                return self::__calculate_namespace_from_path($manifest_file) . '\\' . $simple_name;
-            }
-        }
-
-        return null;
+        return self::__index($step_2_manifest_data)['simple_to_fqcn'][$simple_name] ?? null;
     }
 
     /**
@@ -932,77 +1076,42 @@ class Php_Fixer
      */
     private static function __remove_rsx_use_statements(string $content, array $tokens, string $file_path, array &$step_2_manifest_data): string
     {
+        // The header's imports, located ONCE by the shared walker; everything outside them
+        // is copied through byte for byte.
+        $decisions = [];
+
+        foreach (self::__use_statements($tokens) as $use) {
+            $decisions[$use['start']] = $use;
+        }
+
+        if (empty($decisions)) {
+            return $content;
+        }
+
         $output = '';
-        $i = 0;
+        $count = count($tokens);
 
-        while ($i < count($tokens)) {
-            $token = $tokens[$i];
+        for ($i = 0; $i < $count; $i++) {
+            if (!isset($decisions[$i])) {
+                $output .= is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i];
 
-            // Stop processing when we hit the class declaration
-            if (is_array($token) && $token[0] === T_CLASS) {
-                // Add the rest of the file unchanged
-                while ($i < count($tokens)) {
-                    if (is_array($tokens[$i])) {
-                        $output .= $tokens[$i][1];
-                    } else {
-                        $output .= $tokens[$i];
-                    }
-                    $i++;
-                }
-                break;
+                continue;
             }
 
-            // Check for use statements
-            if (is_array($token) && $token[0] === T_USE) {
-                $use_start = $i;
-                $use_statement = '';
-                $i++; // Move past T_USE
+            $use = $decisions[$i];
+            $action = self::__should_remove_use_statement($use['fqcn'], $file_path, $step_2_manifest_data);
 
-                // Collect the use statement to check if it's Rsx\
-                while ($i < count($tokens) && $tokens[$i] !== ';') {
-                    if (is_array($tokens[$i])) {
-                        if (defined('T_NAME_QUALIFIED') && $tokens[$i][0] === T_NAME_QUALIFIED) {
-                            $use_statement .= $tokens[$i][1];
-                        } elseif (defined('T_NAME_FULLY_QUALIFIED') && $tokens[$i][0] === T_NAME_FULLY_QUALIFIED) {
-                            $use_statement .= $tokens[$i][1];
-                        } elseif ($tokens[$i][0] === T_STRING || $tokens[$i][0] === T_NS_SEPARATOR) {
-                            $use_statement .= $tokens[$i][1];
-                        }
-                    }
-                    $i++;
-                }
-
-                $use_statement = trim($use_statement);
-
-                // Check what action to take on this use statement
-                $action = self::__should_remove_use_statement($use_statement, $file_path, $step_2_manifest_data);
-
-                if ($action === false) {
-                    // Keep it - go back and add the original use statement
-                    for ($j = $use_start; $j <= $i; $j++) {
-                        if ($j < count($tokens)) {
-                            if (is_array($tokens[$j])) {
-                                $output .= $tokens[$j][1];
-                            } else {
-                                $output .= $tokens[$j];
-                            }
-                        }
-                    }
-                } elseif (is_string($action)) {
-                    // Redirect - output a new use statement with the correct FQCN
-                    $output .= "use {$action};";
-                }
-                // If $action === true, skip it entirely (don't add to output)
-            } else {
-                // Add token to output
-                if (is_array($token)) {
-                    $output .= $token[1];
-                } else {
-                    $output .= $token;
-                }
+            if ($action === false) {
+                // Keep it, exactly as written - which is the only spelling that survives an
+                // `as` alias.
+                $output .= $use['raw'];
+            } elseif (is_string($action)) {
+                // Redirect - output a new use statement with the correct FQCN
+                $output .= "use {$action};";
             }
+            // If $action === true, skip it entirely (don't add to output)
 
-            $i++;
+            $i = $use['end'];
         }
 
         return $output;
@@ -1023,17 +1132,9 @@ class Php_Fixer
      */
     private static function __replace_rsx_fqcn_with_simple_names(string $content, array &$step_2_manifest_data): string
     {
-        // Build a set of all valid Rsx\ class names in manifest
-        $valid_rsx_classes = [];
-        foreach ($step_2_manifest_data['data']['files'] ?? [] as $manifest_file => $metadata) {
-            if (isset($metadata['class']) && !empty($metadata['class'])) {
-                // Check if this file is an Rsx\ class (in rsx/ directory)
-                if (str_starts_with($manifest_file, 'rsx/')) {
-                    $simple_name = $metadata['class'];
-                    $valid_rsx_classes[$simple_name] = true;
-                }
-            }
-        }
+        // Every class declared under rsx/ - one of the run's index maps, not a fresh pass
+        // over the whole file map per file.
+        $valid_rsx_classes = self::__index($step_2_manifest_data)['rsx_classes'];
 
         // Keep replacing until no more changes (handles cascading replacements)
         $max_iterations = 100; // Prevent infinite loops
@@ -1044,7 +1145,7 @@ class Php_Fixer
             $original_content = $content;
 
             // Parse tokens fresh each iteration
-            $tokens = token_get_all($content);
+            $tokens = self::__tokens($content);
             $modifications = [];
 
             for ($i = 0; $i < count($tokens); $i++) {
@@ -1459,27 +1560,14 @@ class Php_Fixer
      */
     private static function __match_classes_files(array $class_names, array &$step_2_manifest_data): array
     {
+        $simple_to_fqcn = self::__index($step_2_manifest_data)['simple_to_fqcn'];
         $matched_classes = [];
 
         foreach ($class_names as $simple_name) {
-            foreach ($step_2_manifest_data['data']['files'] ?? [] as $file_path => $metadata) {
-                // Only check PHP files in rsx/ or app/RSpade/ with classes
-                if ((str_starts_with($file_path, 'rsx/') || str_starts_with($file_path, 'app/RSpade/')) &&
-                    str_ends_with($file_path, '.php') &&
-                    isset($metadata['class']) &&
-                    $metadata['class'] === $simple_name) {
-                    // Generate FQCN from file path (not from manifest)
-                    $fqcn = self::__calculate_namespace_from_path($file_path) . '\\' . $simple_name;
-                    $matched_classes[$simple_name] = $fqcn;
-                    break; // Found it, move to next class
-                }
+            if (isset($simple_to_fqcn[$simple_name])) {
+                $matched_classes[$simple_name] = $simple_to_fqcn[$simple_name];
             }
         }
-
-        // if (in_array('Rsx_Bundle_Abstract', $class_names)) {
-        //     var_dump($matched_classes);
-        //     die('Yeah');
-        // }
 
         return $matched_classes;
     }
@@ -1503,45 +1591,25 @@ class Php_Fixer
             }
         }
 
-        // Parse tokens to extract existing preserved use statements
-        $tokens = token_get_all($content);
+        // The header's existing imports, through the shared walker. An ALIASED import is
+        // carried through as its own source text: this pass rebuilds the header from
+        // `use <fqcn>;` strings, and the alias is not expressible that way.
+        $tokens = self::__tokens($content);
         $preserved_use_statements = [];
+        $preserved_verbatim = [];
 
-        $i = 0;
-        while ($i < count($tokens)) {
-            $token = $tokens[$i];
-
-            // Stop at class declaration
-            if (is_array($token) && $token[0] === T_CLASS) {
-                break;
+        foreach (self::__use_statements($tokens) as $use) {
+            if ($use['fqcn'] === '') {
+                continue;
             }
 
-            // Find use statements
-            if (is_array($token) && $token[0] === T_USE) {
-                $i++; // Move past T_USE
-                $use_statement = '';
+            if ($use['alias']) {
+                $preserved_verbatim[] = rtrim($use['raw']);
 
-                // Collect the use statement
-                while ($i < count($tokens) && $tokens[$i] !== ';') {
-                    if (is_array($tokens[$i])) {
-                        if (defined('T_NAME_QUALIFIED') && $tokens[$i][0] === T_NAME_QUALIFIED) {
-                            $use_statement .= $tokens[$i][1];
-                        } elseif (defined('T_NAME_FULLY_QUALIFIED') && $tokens[$i][0] === T_NAME_FULLY_QUALIFIED) {
-                            $use_statement .= $tokens[$i][1];
-                        } elseif ($tokens[$i][0] === T_STRING || $tokens[$i][0] === T_NS_SEPARATOR) {
-                            $use_statement .= $tokens[$i][1];
-                        }
-                    }
-                    $i++;
-                }
-
-                $use_statement = trim($use_statement);
-                if ($use_statement) {
-                    $preserved_use_statements[] = $use_statement;
-                }
+                continue;
             }
 
-            $i++;
+            $preserved_use_statements[] = $use['fqcn'];
         }
 
         // Combine preserved and auto-generated use statements (deduplicate)
@@ -1570,8 +1638,12 @@ class Php_Fixer
         sort($rspade_classes);
         sort($rsx_classes);
 
-        // Build use statements: others, then App\RSpade, then Rsx
+        // Build use statements: aliased imports verbatim, then others, then App\RSpade,
+        // then Rsx
         $use_statements = '';
+        foreach ($preserved_verbatim as $statement) {
+            $use_statements .= $statement . "\n";
+        }
         foreach ($other_classes as $fqcn) {
             $use_statements .= "use {$fqcn};\n";
         }
@@ -1583,7 +1655,7 @@ class Php_Fixer
         }
 
         // Parse tokens to rebuild file: namespace, then all use statements, then rest
-        $tokens = token_get_all($content);
+        $tokens = self::__tokens($content);
         $output = '';
         $namespace_found = false;
         $use_statements_added = false;
@@ -1717,7 +1789,7 @@ class Php_Fixer
     private static function __fix_model_relationships(string $file_path, string $content, array &$step_2_manifest_data): string
     {
         // Only process rsx/ files
-        if (!str_starts_with($file_path, 'rsx/')) {
+        if (!Rsx_Paths::is_application($file_path)) {
             return $content;
         }
 
@@ -1767,21 +1839,15 @@ class Php_Fixer
                 return true;
             }
 
-            // Find the parent class in manifest
-            $parent_found = false;
-            foreach ($step_2_manifest_data['data']['files'] ?? [] as $other_file => $other_metadata) {
-                if (($other_metadata['class'] ?? null) === $parent_class) {
-                    // Move up to this class's parent
-                    $parent_class = $other_metadata['extends'] ?? null;
-                    $parent_found = true;
-                    break;
-                }
-            }
+            // Move up to this class's parent - one lookup in the run's index. This used to
+            // be a full pass over the file map per ANCESTOR per model file.
+            $extends_map = self::__index($step_2_manifest_data)['extends'];
 
-            // If we can't find the parent in manifest, stop
-            if (!$parent_found) {
+            if (!array_key_exists($parent_class, $extends_map)) {
                 break;
             }
+
+            $parent_class = $extends_map[$parent_class];
 
             $depth++;
         }
@@ -1813,7 +1879,7 @@ class Php_Fixer
         ];
 
         // Parse tokens for accurate processing
-        $tokens = token_get_all($content);
+        $tokens = self::__tokens($content);
         $modifications = [];
 
         // Track state
@@ -2319,7 +2385,7 @@ class Php_Fixer
             return $content;
         }
 
-        $tokens = token_get_all($content);
+        $tokens = self::__tokens($content);
         $modifications = [];
 
         for ($i = 0; $i < count($tokens); $i++) {

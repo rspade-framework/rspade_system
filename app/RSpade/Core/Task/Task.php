@@ -44,62 +44,14 @@ class Task
      */
     public static function internal($rsx_service, $rsx_task, $params = [], $console_sink = null)
     {
-        // Get manifest to find service
-        $manifest = Manifest::get_all();
-        $service_class = null;
-        $file_info = null;
-
-        // Search for service class in manifest
-        foreach ($manifest as $file_path => $info) {
-            // Skip non-PHP files or files without classes
-            if (!isset($info['class']) || !isset($info['fqcn'])) {
-                continue;
-            }
-
-            // Check if class name matches exactly (without namespace)
-            $class_basename = basename(str_replace('\\', '/', $info['fqcn']));
-
-            if ($class_basename === $rsx_service) {
-                $service_class = $info['fqcn'];
-                $file_info = $info;
-                break;
-            }
-        }
-
-        if (!$service_class) {
-            throw new Exception("Service class not found: {$rsx_service}");
-        }
+        // ONE LOOKUP in the class map, then the #[Task] check through _find_task_class() -
+        // which is the same question, asked once, in one place. Both used to be a linear
+        // scan of every indexed file, per dispatch.
+        $service_class = static::_find_task_class($rsx_service, $rsx_task);
 
         // Check if class exists
         if (!class_exists($service_class)) {
             throw new Exception("Service class does not exist: {$service_class}");
-        }
-
-        // Check if it's a subclass of Rsx_Service_Abstract
-        if (!Manifest::php_is_subclass_of($service_class, Rsx_Service_Abstract::class)) {
-            throw new Exception("Service {$service_class} must extend Rsx_Service_Abstract");
-        }
-
-        // Check if method exists and has Task attribute
-        if (!isset($file_info['public_static_methods'][$rsx_task])) {
-            throw new Exception("Task {$rsx_task} not found in service {$service_class}");
-        }
-
-        $method_info = $file_info['public_static_methods'][$rsx_task];
-        $has_task = false;
-
-        // Check for Task attribute in method metadata
-        if (isset($method_info['attributes'])) {
-            foreach ($method_info['attributes'] as $attr_name => $attr_instances) {
-                if ($attr_name === 'Task' || str_ends_with($attr_name, '\\Task')) {
-                    $has_task = true;
-                    break;
-                }
-            }
-        }
-
-        if (!$has_task) {
-            throw new Exception("Method {$rsx_task} in service {$service_class} must have #[Task] attribute");
         }
 
         // Create task instance for immediate execution
@@ -272,44 +224,35 @@ class Task
      */
     public static function get_scheduled_tasks(): array
     {
-        $manifest = Manifest::get_all();
         $scheduled_tasks = [];
 
-        foreach ($manifest as $file_path => $info) {
-            // Skip non-PHP files or files without classes
-            if (!isset($info['class']) || !isset($info['fqcn'])) {
+        // The attribute index answers "who declares #[Schedule]" directly, arguments
+        // included. This used to be a full sweep of every indexed file's method map, once
+        // per scheduler tick.
+        foreach (Manifest::by_attribute('Schedule') as $row) {
+            if ($row['member'] === null || $row['class'] === null) {
                 continue;
             }
 
-            // Check if it's a service class
-            if (!isset($info['public_static_methods'])) {
+            $fqcn = Manifest::php_class_metadata($row['class'])['fqcn'] ?? null;
+
+            if ($fqcn === null) {
                 continue;
             }
 
-            foreach ($info['public_static_methods'] as $method_name => $method_info) {
-                // Check for Schedule attribute
-                if (!isset($method_info['attributes'])) {
+            foreach ($row['instances'] as $attr_instance) {
+                $cron_expression = $attr_instance[0] ?? null;
+
+                if (!$cron_expression) {
                     continue;
                 }
 
-                foreach ($method_info['attributes'] as $attr_name => $attr_instances) {
-                    if ($attr_name === 'Schedule' || str_ends_with($attr_name, '\\Schedule')) {
-                        // Found a scheduled task
-                        foreach ($attr_instances as $attr_instance) {
-                            $cron_expression = $attr_instance[0] ?? null;
-                            $queue = $attr_instance[1] ?? 'scheduled';
-
-                            if ($cron_expression) {
-                                $scheduled_tasks[] = [
-                                    'class' => $info['fqcn'],
-                                    'method' => $method_name,
-                                    'cron_expression' => $cron_expression,
-                                    'queue' => $queue,
-                                ];
-                            }
-                        }
-                    }
-                }
+                $scheduled_tasks[] = [
+                    'class' => $fqcn,
+                    'method' => $row['member'],
+                    'cron_expression' => $cron_expression,
+                    'queue' => $attr_instance[1] ?? 'scheduled',
+                ];
             }
         }
 
@@ -354,39 +297,29 @@ class Task
      */
     private static function _find_task_class(string $rsx_service, string $rsx_task): string
     {
-        $manifest = Manifest::get_all();
+        $record = Manifest::php_class_metadata($rsx_service);
+        $service_class = $record['fqcn'] ?? null;
 
-        foreach ($manifest as $info) {
-            if (!isset($info['fqcn'])) {
-                continue;
-            }
-
-            $class_basename = basename(str_replace('\\', '/', $info['fqcn']));
-            if ($class_basename !== $rsx_service) {
-                continue;
-            }
-
-            $service_class = $info['fqcn'];
-
-            if (!Manifest::php_is_subclass_of($service_class, Rsx_Service_Abstract::class)) {
-                throw new Exception("Service {$service_class} must extend Rsx_Service_Abstract");
-            }
-
-            $method_info = $info['public_static_methods'][$rsx_task] ?? null;
-            $has_task = false;
-            foreach ($method_info['attributes'] ?? [] as $attr_name => $attr_instances) {
-                if ($attr_name === 'Task' || str_ends_with($attr_name, '\\Task')) {
-                    $has_task = true;
-                    break;
-                }
-            }
-            if (!$has_task) {
-                throw new Exception("Method {$rsx_task} in {$service_class} must have #[Task]");
-            }
-
-            return $service_class;
+        if ($service_class === null) {
+            throw new Exception("Service class not found: {$rsx_service}");
         }
 
-        throw new Exception("Service class not found: {$rsx_service}");
+        if (!Manifest::php_is_subclass_of($service_class, Rsx_Service_Abstract::class)) {
+            throw new Exception("Service {$service_class} must extend Rsx_Service_Abstract");
+        }
+
+        // A service's file record is in the HOT half of the index precisely because of this
+        // read - #[Task], #[Exclusive] and #[Debounce] are consulted on every dispatch.
+        $method_info = Manifest::get_file($record['file'])['public_static_methods'][$rsx_task] ?? null;
+
+        if ($method_info === null) {
+            throw new Exception("Task {$rsx_task} not found in service {$service_class}");
+        }
+
+        if (!isset($method_info['attributes']['Task'])) {
+            throw new Exception("Method {$rsx_task} in {$service_class} must have #[Task]");
+        }
+
+        return $service_class;
     }
 }

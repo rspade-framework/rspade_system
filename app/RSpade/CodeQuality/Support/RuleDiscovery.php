@@ -5,13 +5,24 @@ namespace App\RSpade\CodeQuality\Support;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
 
 /**
- * Shared rule discovery logic for CodeQualityChecker and Manifest
+ * THE ONE discovery of code-quality rules, for the manifest-time driver and for rsx:check
+ * alike.
  *
- * This allows both systems to discover and instantiate rules without
- * requiring the CodeQuality directory to be part of the manifest scan.
+ * The CodeQuality tree is deliberately outside the manifest scan, so rules are found on
+ * disk rather than through the index. The walk is a RecursiveIteratorIterator and not a
+ * glob: `glob('Rules/**' . '/*.php')` has no `**` in PHP and matched exactly one directory
+ * level by accident, so a rule filed two levels deep was silently never discovered and
+ * never ran.
+ *
+ * The FILE LIST is memoized for the process (the directory does not change under a running
+ * build); rule OBJECTS are not, because each carries the collector of the pass that made
+ * it.
  */
 class RuleDiscovery
 {
+    /** [fqcn => absolute file path], memoized for the process. */
+    private static ?array $rule_files = null;
+
     /**
      * Discover and load all code quality rules
      *
@@ -24,54 +35,8 @@ class RuleDiscovery
     public static function discover_rules(ViolationCollector $collector, array $config = [], bool $only_manifest_scan = false, bool $exclude_manifest_scan = false): array
     {
         $rules = [];
-        $rules_dir = base_path('app/RSpade/CodeQuality/Rules');
 
-        // Scan Rules directory for rule classes
-        $rule_files = glob($rules_dir . '/**/*.php', GLOB_BRACE);
-
-        foreach ($rule_files as $file_path) {
-            // Skip abstract rule base class itself
-            if (str_ends_with($file_path, 'CodeQualityRule_Abstract.php')) {
-                continue;
-            }
-
-            // Extract class metadata without loading the file
-            $metadata = static::extract_class_metadata($file_path);
-
-            if (!isset($metadata['class'])) {
-                continue;
-            }
-
-            // Build FQCN
-            $fqcn = $metadata['fqcn'] ?? null;
-            if (!$fqcn) {
-                continue;
-            }
-
-            // Check if it extends CodeQualityRule_Abstract
-            if (!isset($metadata['extends']) || $metadata['extends'] !== 'CodeQualityRule_Abstract') {
-                continue;
-            }
-
-            // Load the file
-            require_once $file_path;
-
-            // Check if class exists (sanity check)
-            if (!class_exists($fqcn)) {
-                // Try with full namespace if it's not found
-                // This handles cases where the class is in a subdirectory
-                $relative_path = str_replace(base_path() . '/', '', $file_path);
-                $relative_path = str_replace('.php', '', $relative_path);
-                $relative_path = str_replace('/', '\\', $relative_path);
-                $fqcn = '\\' . ucfirst($relative_path);
-
-                if (!class_exists($fqcn)) {
-                    shouldnt_happen(
-                        "CodeQuality rule class '{$fqcn}' found in file '{$file_path}' but class_exists() failed after require_once"
-                    );
-                }
-            }
-
+        foreach (static::rule_files() as $fqcn => $file_path) {
             // Instantiate the rule
             $rule = new $fqcn($collector, $config);
 
@@ -95,6 +60,84 @@ class RuleDiscovery
         }
 
         return $rules;
+    }
+
+    /**
+     * [fqcn => absolute path] for every discovered rule class, memoized for the process.
+     *
+     * @return array<string,string>
+     */
+    public static function rule_files(): array
+    {
+        if (static::$rule_files !== null) {
+            return static::$rule_files;
+        }
+
+        $rules_dir = base_path('app/RSpade/CodeQuality/Rules');
+
+        $found = [];
+
+        $iterator = new \RecursiveIteratorIterator(
+            new \RecursiveDirectoryIterator($rules_dir, \FilesystemIterator::SKIP_DOTS)
+        );
+
+        foreach ($iterator as $entry) {
+            if (!$entry->isFile() || $entry->getExtension() !== 'php') {
+                continue;
+            }
+
+            $file_path = $entry->getPathname();
+
+            // The base class itself is the contract, not a rule.
+            if (str_ends_with($file_path, 'CodeQualityRule_Abstract.php')) {
+                continue;
+            }
+
+            $metadata = static::extract_class_metadata($file_path);
+
+            $fqcn = $metadata['fqcn'] ?? null;
+
+            if (!isset($metadata['class']) || !$fqcn) {
+                continue;
+            }
+
+            if (($metadata['extends'] ?? '') !== 'CodeQualityRule_Abstract') {
+                continue;
+            }
+
+            require_once $file_path;
+
+            if (!class_exists($fqcn)) {
+                shouldnt_happen(
+                    "CodeQuality rule class '{$fqcn}' found in file '{$file_path}' but class_exists() failed after require_once"
+                );
+            }
+
+            $found[$fqcn] = $file_path;
+        }
+
+        ksort($found);
+
+        static::$rule_files = $found;
+
+        return static::$rule_files;
+    }
+
+    /**
+     * The file a discovered rule class lives in, for fingerprinting.
+     */
+    public static function file_for(string $fqcn): ?string
+    {
+        return static::rule_files()[$fqcn] ?? null;
+    }
+
+    /**
+     * Forget the memoized file list. The test seam for a fixture rule written to disk
+     * after this process already looked.
+     */
+    public static function _forget_for_tests(): void
+    {
+        static::$rule_files = null;
     }
 
     /**

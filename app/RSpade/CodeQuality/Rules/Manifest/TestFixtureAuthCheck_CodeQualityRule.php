@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\Manifest;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * TEST-AUTH-01 - a test fixture may only name auth checks the framework itself provides.
@@ -66,14 +67,6 @@ class TestFixtureAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Per-file: a declaration's vocabulary is decided by its own text alone.
-     */
-    public function is_incremental(): bool
-    {
-        return true;
-    }
-
-    /**
      * Manifest-time, because the manifest build is the thing that breaks.
      */
     public function is_called_during_manifest_scan(): bool
@@ -113,9 +106,7 @@ class TestFixtureAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
             return false;
         }
 
-        return str_contains($normalized, 'app/RSpade/')
-            || str_starts_with($normalized, 'rsx/')
-            || str_contains($normalized, '/rsx/');
+        return Rsx_Paths::is_framework($normalized) || Rsx_Paths::is_application($normalized);
     }
 
     /**
@@ -130,7 +121,7 @@ class TestFixtureAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
      */
     private function __php_declarations(string $contents): array
     {
-        $tokens = \PhpToken::tokenize($contents);
+        $tokens = $this->source()->php_tokens_of($contents);
         $names = [];
         $count = count($tokens);
 

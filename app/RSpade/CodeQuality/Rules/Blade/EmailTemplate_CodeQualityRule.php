@@ -101,7 +101,7 @@ class EmailTemplate_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Work from the ORIGINAL bytes where they are readable: the checker may hand a
         // sanitized copy, and this rule's subject is the interpolation expressions.
-        $original = is_readable($file_path) ? file_get_contents($file_path) : $contents;
+        $original = is_readable($file_path) ? $this->source()->content($file_path) : $contents;
 
         // Blade comments are documentation, not markup. A footer example showing
         // `{{ $sent_at }}` is not a message anybody receives.

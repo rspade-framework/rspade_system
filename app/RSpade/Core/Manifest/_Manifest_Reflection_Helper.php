@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Manifest;
 
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * _Manifest_Reflection_Helper - View, attribute, and route resolution
@@ -15,36 +16,35 @@ use App\RSpade\Core\Manifest\Manifest;
 class _Manifest_Reflection_Helper
 {
     /**
-    * Find a view by ID
+    * The path of a Blade view, by its @rsx_id.
+    *
+    * One lookup in `blade_views`. It used to scan every indexed file for a matching `id`, on
+    * every hop of every layout chain of every rendered page, and to raise the DUPLICATE-ID
+    * error at render time - which is a build-time fact, and is now a build failure naming
+    * both files (_Manifest_Builder_Helper::_build_blade_view_index()).
     */
     public static function find_view(string $id): string
     {
-        $files = Manifest::get_all();
-        $matches = [];
+        Manifest::init();
 
-        // Find all files with matching ID (only check Blade views)
-        foreach ($files as $file => $metadata) {
-            if (isset($metadata['id']) && $metadata['id'] === $id && str_ends_with($file, '.blade.php')) {
-                $matches[] = $file;
-            }
-        }
+        $path = Manifest::$data['data']['blade_views'][$id] ?? null;
 
-        // Check results
-        if (count($matches) === 0) {
+        if ($path === null) {
             throw new \RuntimeException("View not found in manifest: {$id}");
         }
 
-        if (count($matches) > 1) {
-            $file_list = implode("\n  - ", $matches);
+        return $path;
+    }
 
-            throw new \RuntimeException(
-                "Duplicate view ID detected: {$id}\n" .
-"Found in multiple files:\n  - {$file_list}\n" .
-'View IDs must be unique across all Blade files.'
-            );
-        }
+    /**
+    * Whether a Blade view id is indexed. The non-throwing half of find_view(), for callers
+    * that are ASKING rather than resolving.
+    */
+    public static function view_exists(string $id): bool
+    {
+        Manifest::init();
 
-        return $matches[0];
+        return isset(Manifest::$data['data']['blade_views'][$id]);
     }
 
     /**
@@ -72,11 +72,12 @@ class _Manifest_Reflection_Helper
     public static function get_path_by_filename(string $filename): string
     {
         $files = Manifest::get_all();
+
         $matches = [];
 
         foreach ($files as $path => $metadata) {
             // Only consider files in /rsx directory
-            if (!str_starts_with($path, 'rsx/')) {
+            if (!Rsx_Paths::is_application($path)) {
                 continue;
             }
 
@@ -107,56 +108,54 @@ class _Manifest_Reflection_Helper
     }
 
     /**
-    * Get all classes with a specific attribute
+    * Every class and member declaration carrying an attribute, as REFERENCES.
+    *
+    * Rows are ['file' => ..., 'class' => ?string, 'member' => ?string, 'instances' => [...]],
+    * straight out of `attribute_index` - no file record is touched, so a caller asking about
+    * `#[Emitter]` or `#[Schedule]` does not load the cold half of the index to learn where
+    * they are. The name is matched by its SIMPLE spelling, which is how RSX writes attributes
+    * everywhere else; a namespaced argument is reduced to it.
+    *
+    * @return array<int, array{file: string, class: ?string, member: ?string, instances: array}>
+    */
+    public static function by_attribute(string $attribute_name): array
+    {
+        Manifest::init();
+
+        $simple = Manifest::_normalize_class_name($attribute_name);
+
+        return Manifest::$data['data']['attribute_index'][$simple] ?? [];
+    }
+
+    /**
+    * Get all classes with a specific attribute.
+    *
+    * The shape callers have always seen (file / class / fqcn / type / method / instances),
+    * assembled from `by_attribute()` plus the class map. It used to walk every file and every
+    * method map in the index.
     */
     public static function get_with_attribute(string $attribute_class): array
     {
-        $files = Manifest::get_all();
         $results = [];
 
-        foreach ($files as $file => $metadata) {
-            // Check class attributes
-            if (isset($metadata['attributes'][$attribute_class])) {
-                $results[] = [
-                    'file' => $file,
-                    'class' => $metadata['class'] ?? null,
-                    'fqcn' => $metadata['fqcn'] ?? null,
-                    'type' => 'class',
-                    'instances' => $metadata['attributes'][$attribute_class],
-                ];
+        foreach (self::by_attribute($attribute_class) as $row) {
+            $record = $row['class'] !== null
+                ? (Manifest::$data['data']['php_classes'][$row['class']] ?? null)
+                : null;
+
+            $result = [
+                'file' => $row['file'],
+                'class' => $row['class'],
+                'fqcn' => $record['fqcn'] ?? null,
+                'type' => $row['member'] === null ? 'class' : 'method',
+                'instances' => $row['instances'],
+            ];
+
+            if ($row['member'] !== null) {
+                $result['method'] = $row['member'];
             }
 
-            // Check public static method attributes (PHP files)
-            if (isset($metadata['public_static_methods'])) {
-                foreach ($metadata['public_static_methods'] as $method_name => $method_data) {
-                    if (isset($method_data['attributes'][$attribute_class])) {
-                        $results[] = [
-                            'file' => $file,
-                            'class' => $metadata['class'] ?? null,
-                            'fqcn' => $metadata['fqcn'] ?? null,
-                            'method' => $method_name,
-                            'type' => 'method',
-                            'instances' => $method_data['attributes'][$attribute_class],
-                        ];
-                    }
-                }
-            }
-
-            // Check regular method attributes (JS files may have these)
-            if (isset($metadata['methods'])) {
-                foreach ($metadata['methods'] as $method_name => $method_data) {
-                    if (isset($method_data['attributes'][$attribute_class])) {
-                        $results[] = [
-                            'file' => $file,
-                            'class' => $metadata['class'] ?? null,
-                            'fqcn' => $metadata['fqcn'] ?? null,
-                            'method' => $method_name,
-                            'type' => 'method',
-                            'instances' => $method_data['attributes'][$attribute_class],
-                        ];
-                    }
-                }
-            }
+            $results[] = $result;
         }
 
         // Sort alphabetically by class name to ensure deterministic behavior and prevent race condition bugs

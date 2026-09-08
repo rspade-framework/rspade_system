@@ -739,21 +739,14 @@ class BundleCompiler
             return;
         }
 
-        // Try to find class by simple name in manifest
+        // Try to find class by simple name in manifest - one class-map lookup, not a scan.
         if (is_string($item) && strpos($item, '/') === false && strpos($item, '.') === false) {
-            try {
-                $manifest = Manifest::get_all();
-                foreach ($manifest as $file_info) {
-                    if (isset($file_info['class']) && $file_info['class'] === $item) {
-                        if (isset($file_info['fqcn']) && class_exists($file_info['fqcn'])) {
-                            $this->_resolve_bundle($file_info['fqcn']);
+            $record = Manifest::php_class_metadata($item);
 
-                            return;
-                        }
-                    }
-                }
-            } catch (Exception $e) {
-                // Fall through to file/directory handling
+            if ($record !== null && !empty($record['fqcn']) && class_exists($record['fqcn'])) {
+                $this->_resolve_bundle($record['fqcn']);
+
+                return;
             }
         }
 
@@ -929,6 +922,15 @@ class BundleCompiler
         // across two byte-identical checkouts. Explicit file includes are added via
         // _add_file() elsewhere and keep their authored order (e.g. SCSS variable
         // files included before component SCSS); only the SCANNED set is sorted here.
+        // path => fqcn for every indexed asset bundle, from the subclass index.
+        $asset_bundles_by_path = [];
+
+        foreach (Manifest::php_class_records_extending('Rsx_Asset_Bundle_Abstract') as $record) {
+            if (!empty($record['fqcn'])) {
+                $asset_bundles_by_path[$record['file']] = $record['fqcn'];
+            }
+        }
+
         $scanned_files = [];
         foreach ($iterator as $file) {
             if ($file->isFile()) {
@@ -941,27 +943,26 @@ class BundleCompiler
             {
                 $extension = strtolower(pathinfo($filepath, PATHINFO_EXTENSION));
 
-                // For PHP files, check if it's an asset bundle via manifest
+                // For PHP files, check if it's an asset bundle via manifest.
+                //
+                // The QUESTION is inverted: instead of pulling a file record per PHP file and
+                // asking whether its class is an asset bundle, ask the subclass index once
+                // for every asset bundle there is and match by path. Same answer, one lookup
+                // per directory instead of one file record (and one inheritance walk) per
+                // file - and the file record it used to pull lives in the cold half of the
+                // index, so this was loading 7.6 MB of build metadata to scan a directory.
                 if ($extension === 'php') {
                     $relative_path = str_replace(base_path() . '/', '', $filepath);
+                    $fqcn = $asset_bundles_by_path[$relative_path] ?? null;
 
-                    // Get file metadata from manifest to check if it's an asset bundle
-                    try {
-                        $file_meta = Manifest::get_file($relative_path);
-                        $class_name = $file_meta['class'] ?? null;
-
-                        // Use manifest to check if this PHP class is an asset bundle
-                        if ($class_name && Manifest::php_is_subclass_of($class_name, 'Rsx_Asset_Bundle_Abstract')) {
-                            $fqcn = $file_meta['fqcn'] ?? null;
-                            if ($fqcn && !isset($this->resolved_includes[$fqcn])) {
-                                $discovered_bundles[] = $fqcn;
-                                console_debug('BUNDLE', "Auto-discovered asset bundle: {$fqcn}");
-                            }
-                            // Don't add bundle file itself to file list - we'll process it as a bundle
-                            continue;
+                    if ($fqcn !== null) {
+                        if (!isset($this->resolved_includes[$fqcn])) {
+                            $discovered_bundles[] = $fqcn;
+                            console_debug('BUNDLE', "Auto-discovered asset bundle: {$fqcn}");
                         }
-                    } catch (RuntimeException $e) {
-                        // File not in manifest, just add it normally
+
+                        // Don't add bundle file itself to file list - we'll process it as a bundle
+                        continue;
                     }
                 }
 
@@ -3035,6 +3036,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
 
         // Generate JavaScript code for manifest
         $js_items = [];
+        $registered_class_names = [];
         foreach ($class_definitions as $class_def) {
             $class_name = $class_def['name'];
             $extends_class = $class_def['extends'];
@@ -3059,6 +3061,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
 
             // Generate the array entry
             $js_items[] = '[' . implode(', ', $parts) . ']';
+            $registered_class_names[] = $class_name;
         }
 
         // Build the JavaScript code
@@ -3067,6 +3070,38 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         $js_code .= "Manifest._define([\n";
         $js_code .= '    ' . implode(",\n    ", $js_items) . "\n";
         $js_code .= "]);\n\n";
+
+        // THE SUBCLASS INDEX, RESTRICTED TO THIS BUNDLE'S OWN CLASSES.
+        //
+        // Manifest.get_extending() used to scan the whole registry and walk each class's
+        // inheritance chain; the manifest already holds the answer as js_subclass_index, so
+        // it is published here, beside the registration it describes.
+        //
+        // Only names this bundle REGISTERS are emitted. A name it does not carry could not
+        // be resolved to a class object anyway, and emitting one would put another module's
+        // class names into this file - which for the framework's own /_sys panel would break
+        // the rule that an application bundle contains nothing of it (CONV-BUNDLE-02).
+        $registered = array_flip($registered_class_names);
+        $subclass_index = [];
+
+        foreach (Manifest::get_full_manifest()['data']['js_subclass_index'] ?? [] as $parent => $descendants) {
+            $present = array_values(array_filter(
+                $descendants,
+                static fn ($name) => isset($registered[$name])
+            ));
+
+            if ($present !== []) {
+                sort($present, SORT_STRING);
+                $subclass_index[$parent] = $present;
+            }
+        }
+
+        if ($subclass_index !== []) {
+            ksort($subclass_index);
+            $js_code .= "// JS class subclass index (Manifest.get_extending)\n";
+            $js_code .= 'Manifest._define_published_subclass_index('
+                . json_encode($subclass_index, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . ");\n\n";
+        }
 
         // Write to temporary file
         return $this->_write_temp_file($js_code, 'js');

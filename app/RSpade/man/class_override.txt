@@ -284,6 +284,24 @@ the composer layer's transient miss harmless.
     manifest's Php_Fixer additionally rewrites `use` statements to point at the
     rsx/ location before the rename happens, so imports never dangle.
 
+    IT REWRITES, IN EVERY MODE, AND NEVER DELETES (backlog B-108, fixed
+    2026-09-08). While the fixer runs, BOTH copies of the class are still in the
+    file map - the archive happens later in the same build - and the rsx/ entry
+    wins DETERMINISTICALLY, not by hash order. An import naming the framework
+    FQCN is repointed at the rsx/ FQCN; an import that already names it is left
+    alone. Framework-developer mode is not an exception: it used to DELETE the
+    import instead, on the reasoning that the autoloader finds the class without
+    one. It does - at RUNTIME. What it cannot do is satisfy PHP's compile-time
+    signature-compatibility check, which does not autoload, so a framework file
+    that TYPE-HINTS an overridden class in an inherited signature died at boot
+    with "Could not check compatibility between ...", unrecoverably: no build
+    could run to undo the edit.
+
+    A framework file therefore MAY carry an `Rsx\` import, but only for a name
+    that overrides a framework class. The re-add pass allows exactly that set,
+    so the delete pass and the re-add pass agree and neither undoes the other on
+    the next build.
+
 2. COMPOSER CLASSMAP + THE REBUILD VALIDATOR/DUMP
 
     Composer's committed classmap (vendor/composer/autoload_classmap.php) is a

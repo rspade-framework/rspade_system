@@ -2,10 +2,8 @@
 
 namespace App\RSpade\CodeQuality\Rules\Models;
 
-use PhpParser\Error;
 use PhpParser\Node;
 use PhpParser\NodeFinder;
-use PhpParser\ParserFactory;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -26,7 +24,6 @@ use App\RSpade\Core\Manifest\Manifest;
  */
 class ModelFetchTrashed_CodeQualityRule extends CodeQualityRule_Abstract
 {
-    protected static $parser = null;
 
     /**
      * The ORM fetch surfaces: the staff/API one and the portal one.
@@ -63,15 +60,6 @@ class ModelFetchTrashed_CodeQualityRule extends CodeQualityRule_Abstract
         return false; // Only run during rsx:check.
     }
 
-    protected function get_parser()
-    {
-        if (static::$parser === null) {
-            static::$parser = (new ParserFactory())->createForNewestSupportedVersion();
-        }
-
-        return static::$parser;
-    }
-
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         if (!str_ends_with($file_path, '.php')) {
@@ -95,16 +83,12 @@ class ModelFetchTrashed_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Parse the ORIGINAL file: the sanitized contents the checker passes has comments
         // stripped, and the exception markers are comments.
-        $original = file_get_contents($file_path);
+        $original = $this->source()->content($file_path);
         if ($original === false) {
             return;
         }
 
-        try {
-            $ast = $this->get_parser()->parse($original);
-        } catch (Error $error) {
-            return; // Unparseable - the syntax linter reports it.
-        }
+        $ast = $this->source()->ast($file_path);
 
         if (!$ast) {
             return;

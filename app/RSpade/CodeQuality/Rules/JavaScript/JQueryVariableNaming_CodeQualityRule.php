@@ -96,7 +96,7 @@ class JQueryVariableNaming_CodeQualityRule extends CodeQualityRule_Abstract
         }
         
         // Get both original and sanitized content
-        $original_content = file_get_contents($file_path);
+        $original_content = $this->source()->content($file_path);
         $original_lines = explode("\n", $original_content);
         
         // Get sanitized content with comments removed

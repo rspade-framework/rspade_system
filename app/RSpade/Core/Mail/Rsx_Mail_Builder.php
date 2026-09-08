@@ -389,19 +389,16 @@ class Rsx_Mail_Builder
     /**
      * Whether a blade with this @rsx_id is in the manifest.
      *
-     * Asked of the manifest DATA rather than by calling find_view() and catching: that
-     * function throws for "not found" and for "declared twice", and swallowing the
-     * second one would hide a real build problem behind a silently missing text part.
+     * Manifest::view_exists() is the non-throwing half of find_view(), which is the right
+     * shape here: find_view() throws for "not found" AND for "declared twice", and swallowing
+     * the second would hide a real build problem behind a silently missing text part. It
+     * cannot arise any more - a duplicate @rsx_id is now a manifest-build failure naming both
+     * files - and this is a lookup in `blade_views` rather than a scan of every indexed file
+     * per rendered email part.
      */
     private static function _view_exists(string $id): bool
     {
-        foreach (Manifest::get_all() as $file => $metadata) {
-            if (($metadata['id'] ?? null) === $id && str_ends_with($file, '.blade.php')) {
-                return true;
-            }
-        }
-
-        return false;
+        return Manifest::view_exists($id);
     }
 
     // =========================================================================

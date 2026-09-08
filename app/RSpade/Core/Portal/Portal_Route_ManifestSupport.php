@@ -34,119 +34,121 @@ class Portal_Route_ManifestSupport extends ManifestSupport_Abstract
     }
 
     /**
-     * Process the manifest and build portal routes index
+     * Rebuild the `portal` route rows for the CHANGED controller files only.
+     *
+     * INCREMENTAL, the same shape as Route_ManifestSupport: a row is owned by its `file`,
+     * so dropping the dirty files' rows and re-deriving from those files' own attributes is
+     * the exact diff. Nothing scans the file map.
      *
      * @param array &$manifest_data Reference to the manifest data array
      * @return void
      */
-    public static function process(array &$manifest_data): void
+    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
-        // Initialize portal routes structures
         if (!isset($manifest_data['data']['portal_routes'])) {
             $manifest_data['data']['portal_routes'] = [];
         }
-        if (!isset($manifest_data['data']['portal_routes_by_target'])) {
-            $manifest_data['data']['portal_routes_by_target'] = [];
-        }
 
-        // Look for Portal_Route attributes
-        $files = $manifest_data['data']['files'];
-        $portal_route_classes = [];
+        $dirty = static::dirty_set($changed_files, $removed_files);
 
-        foreach ($files as $file => $metadata) {
-            // Check public static method attributes for Portal_Route
-            if (isset($metadata['public_static_methods'])) {
-                foreach ($metadata['public_static_methods'] as $method_name => $method_data) {
-                    if (isset($method_data['attributes'])) {
-                        foreach ($method_data['attributes'] as $attr_name => $attr_instances) {
-                            // Check if this is a Portal_Route attribute
-                            if (str_ends_with($attr_name, '\\Portal_Route') || $attr_name === 'Portal_Route') {
-                                $portal_route_classes[] = [
-                                    'file' => $file,
-                                    'class' => $metadata['class'] ?? null,
-                                    'fqcn' => $metadata['fqcn'] ?? null,
-                                    'method' => $method_name,
-                                    'type' => 'method',
-                                    'instances' => $attr_instances,
-                                ];
-                            }
-                        }
-                    }
-                }
+        foreach ($manifest_data['data']['portal_routes'] as $pattern => $row) {
+            if (($row['type'] ?? null) === 'portal' && isset($dirty[$row['file'] ?? ''])) {
+                unset($manifest_data['data']['portal_routes'][$pattern]);
             }
         }
 
-        foreach ($portal_route_classes as $item) {
-            if ($item['type'] === 'method') {
-                foreach ($item['instances'] as $route_args) {
-                    $pattern = $route_args[0] ?? ($route_args['pattern'] ?? null);
-                    $methods = $route_args[1] ?? ($route_args['methods'] ?? ['GET']);
-                    $name = $route_args[2] ?? ($route_args['name'] ?? null);
+        $files = $manifest_data['data']['files'];
 
-                    if ($pattern) {
-                        // Ensure pattern starts with /
-                        if ($pattern[0] !== '/') {
-                            $pattern = '/' . $pattern;
-                        }
+        foreach (array_keys($dirty) as $file) {
+            $metadata = $files[$file] ?? null;
 
-                        // Type is always 'portal' for routes with #[Portal_Route] attribute
-                        $type = 'portal';
+            if ($metadata === null || !isset($metadata['public_static_methods'])) {
+                continue;
+            }
 
-                        // Extract Auth attributes for this method (portal-specific auth would use Portal_Auth or similar)
-                        $require_attrs = [];
-                        $file_metadata = $files[$item['file']] ?? null;
-                        if ($file_metadata && isset($file_metadata['public_static_methods'][$item['method']]['attributes']['Portal_Auth'])) {
-                            $require_attrs = $file_metadata['public_static_methods'][$item['method']]['attributes']['Portal_Auth'];
-                        }
-
-                        // Declarative auth gates, resolved against the PORTAL check
-                        // registry: class-level #[Auth] then the method's own.
-                        $auth_gates = Auth_ManifestSupport::merge_gate_lists(
-                            $file_metadata['attributes'] ?? null,
-                            $file_metadata['public_static_methods'][$item['method']]['attributes'] ?? null,
-                            "{$item['fqcn']}::{$item['method']} in {$item['file']}"
-                        );
-
-                        // Check for duplicate portal route definition
-                        if (isset($manifest_data['data']['portal_routes'][$pattern])) {
-                            $existing = $manifest_data['data']['portal_routes'][$pattern];
-                            $existing_location = "{$existing['class']}::{$existing['method']} in {$existing['file']}";
-
-                            throw new \RuntimeException(
-                                "Duplicate portal route definition: {$pattern}\n" .
-                                "  Already defined: {$existing_location}\n" .
-                                "  Conflicting: {$item['fqcn']}::{$item['method']} in {$item['file']}"
-                            );
-                        }
-
-                        // Store route with flat structure (for portal dispatcher)
-                        $route_data = [
-                            'methods' => array_map('strtoupper', (array) $methods),
-                            'type' => $type,
-                            'class' => $item['fqcn'] ?? $item['class'],
-                            'method' => $item['method'],
-                            'name' => $name,
-                            'file' => $item['file'],
-                            'require' => $require_attrs,
-                            'pattern' => $pattern,
-                            'auth' => $auth_gates,
-                        ];
-
-                        $manifest_data['data']['portal_routes'][$pattern] = $route_data;
-
-                        // Also store by target for URL generation
-                        $target = $item['class'] . '::' . $item['method'];
-                        if (!isset($manifest_data['data']['portal_routes_by_target'][$target])) {
-                            $manifest_data['data']['portal_routes_by_target'][$target] = [];
-                        }
-                        $manifest_data['data']['portal_routes_by_target'][$target][] = $route_data;
+            foreach ($metadata['public_static_methods'] as $method_name => $method_data) {
+                foreach (($method_data['attributes'] ?? []) as $attr_name => $attr_instances) {
+                    if (!str_ends_with($attr_name, '\\Portal_Route') && $attr_name !== 'Portal_Route') {
+                        continue;
                     }
+
+                    static::_record_portal_route_rows($manifest_data, $files, $file, $metadata, $method_name, $attr_instances);
                 }
             }
         }
 
         // Sort routes alphabetically by path
         ksort($manifest_data['data']['portal_routes']);
-        ksort($manifest_data['data']['portal_routes_by_target']);
+    }
+
+    /**
+     * Store every row one #[Portal_Route]-annotated method declares.
+     */
+    private static function _record_portal_route_rows(
+        array &$manifest_data,
+        array $files,
+        string $file,
+        array $metadata,
+        string $method_name,
+        array $attr_instances
+    ): void {
+        $class = $metadata['class'] ?? null;
+        $fqcn = $metadata['fqcn'] ?? null;
+
+        foreach ($attr_instances as $route_args) {
+            $pattern = $route_args[0] ?? ($route_args['pattern'] ?? null);
+            $methods = $route_args[1] ?? ($route_args['methods'] ?? ['GET']);
+            $name = $route_args[2] ?? ($route_args['name'] ?? null);
+
+            if (!$pattern) {
+                continue;
+            }
+
+            if ($pattern[0] !== '/') {
+                $pattern = '/' . $pattern;
+            }
+
+            // Extract Auth attributes for this method (portal-specific auth would use Portal_Auth or similar)
+            $require_attrs = [];
+            $file_metadata = $files[$file] ?? null;
+            if ($file_metadata && isset($file_metadata['public_static_methods'][$method_name]['attributes']['Portal_Auth'])) {
+                $require_attrs = $file_metadata['public_static_methods'][$method_name]['attributes']['Portal_Auth'];
+            }
+
+            // Declarative auth gates, resolved against the PORTAL check
+            // registry: class-level #[Auth] then the method's own.
+            Auth_ManifestSupport::merge_gate_lists(
+                $file_metadata['attributes'] ?? null,
+                $file_metadata['public_static_methods'][$method_name]['attributes'] ?? null,
+                "{$fqcn}::{$method_name} in {$file}"
+            );
+
+            // Check for duplicate portal route definition
+            if (isset($manifest_data['data']['portal_routes'][$pattern])) {
+                $existing = $manifest_data['data']['portal_routes'][$pattern];
+                $existing_location = "{$existing['class']}::{$existing['method']} in {$existing['file']}";
+
+                throw new \RuntimeException(
+                    "Duplicate portal route definition: {$pattern}\n" .
+                    "  Already defined: {$existing_location}\n" .
+                    "  Conflicting: {$fqcn}::{$method_name} in {$file}"
+                );
+            }
+
+            // Store route with flat structure (for portal dispatcher)
+            $manifest_data['data']['portal_routes'][$pattern] = [
+                'methods' => array_map('strtoupper', (array) $methods),
+                'type' => 'portal',
+                'class' => $fqcn ?? $class,
+                'method' => $method_name,
+                'name' => $name,
+                'file' => $file,
+                'require' => $require_attrs,
+                'pattern' => $pattern,
+                // The gate list lives once, in auth.surfaces, keyed by this.
+                'surface' => $class . '::' . $method_name,
+                'target' => $class . '::' . $method_name,
+            ];
+        }
     }
 }

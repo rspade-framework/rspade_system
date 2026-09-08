@@ -32,7 +32,8 @@ class Prod_Export_Command extends Command
      */
     private const SEALED_BUILD_FILES = [
         'rsx-build/build_key',
-        'rsx-build/manifest_data.php',
+        'rsx-build/manifest_index.php',
+        'rsx-build/manifest_files.php',
         'rsx-build/prod_seal.json',
     ];
     private const SEALED_BUILD_DIRS = [

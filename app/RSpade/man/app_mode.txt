@@ -167,14 +167,15 @@ THE SEAL FILE
             "assets": [
                 { "file": "build_key", "sha256": "..." },
                 { "file": "bundles/Frontend__app.<hash>.js", "sha256": "..." },
-                { "file": "manifest_data.php", "sha256": "..." }
+                { "file": "manifest_index.php", "sha256": "..." }
                 // ... every file under bundles/ ...
             ]
         }
 
     Asset paths are recorded relative to the build root, so the seal is
     self-contained and location-independent. The assets list covers
-    manifest_data.php, the build_key file, and every file under bundles/.
+    manifest_index.php, manifest_files.php, the build_key file, and every
+    file under bundles/.
 
     is_sealed() is true ONLY when a seal file exists AND the current RSX_MODE
     is a prod mode. That double condition means a leftover seal in a
@@ -255,7 +256,7 @@ DETERMINISM CONTRACT
        the cache file (dev change-detection needs them) but are OUT of the
        hashed projection. The prod cache file also drops the "generated"
        timestamp and its comment (that timestamp moved to the seal). So the
-       manifest_data.php produced by two identical checkouts is byte-stable,
+       the manifest index produced by two identical checkouts is byte-stable,
        and build_key (the manifest hash) is content-derived.
 
     3. Bundle filenames are {Bundle}__{app|vendor}.{hash8}.{ext}, where the
@@ -314,7 +315,7 @@ WHAT THE GUARDS DO NOT COVER
     or process that goes around the framework:
 
         - Raw filesystem meddling: `rm -rf storage/rsx-build`, editing a
-          bundle file by hand, `cp` over manifest_data.php. Nothing at the
+          bundle file by hand, `cp` over manifest_index.php. Nothing at the
           framework layer sees these.
         - Direct database writes (DB::table()->update(), raw SQL) or manual
           data changes.

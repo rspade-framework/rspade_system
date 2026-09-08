@@ -57,7 +57,7 @@ class JqhtmlHtmlComment_CodeQualityRule extends CodeQualityRule_Abstract
      * HTML comments inside jqhtml comments (<%-- ... --%>) are safe - they're
      * documentation/examples and will be stripped with the jqhtml comment.
      */
-    public function on_manifest_file_update(string $file_path, string $contents, array $metadata = []): ?array
+    private function __find_violations(string $file_path, string $contents): ?array
     {
         // Find the position of first <Define: tag
         $define_pos = strpos($contents, '<Define:');
@@ -107,11 +107,13 @@ class JqhtmlHtmlComment_CodeQualityRule extends CodeQualityRule_Abstract
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         // Check for violations in code quality metadata
-        if (!isset($metadata['code_quality_metadata']['JQHTML-COMMENT-01']['html_comment_violation'])) {
+        $found = $this->__find_violations($file_path, $contents);
+
+        if (!isset($found['html_comment_violation'])) {
             return;
         }
 
-        $violation = $metadata['code_quality_metadata']['JQHTML-COMMENT-01']['html_comment_violation'];
+        $violation = $found['html_comment_violation'];
 
         $error_message = "Code Quality Violation (JQHTML-COMMENT-01) - HTML Comment in Jqhtml File\n\n";
         $error_message .= "CRITICAL: HTML comments (<!-- -->) are NOT safe for docblocks in .jqhtml files.\n\n";

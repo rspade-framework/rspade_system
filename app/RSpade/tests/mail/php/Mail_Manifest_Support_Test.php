@@ -106,14 +106,34 @@ class Mail_Manifest_Support_Test extends Rsx_Test_Abstract
             ],
         ];
 
+        $blade_views = [];
+
         if ($with_view) {
             $files['rsx/emails/fixture.blade.php'] = [
+                'extension' => 'blade.php',
                 'type' => 'view',
                 'id' => $class,
             ];
+            $blade_views[$class] = 'rsx/emails/fixture.blade.php';
         }
 
-        return ['data' => ['files' => $files]];
+        // The module reads the DERIVED indexes a real manifest always carries by the time
+        // the support modules run: php_subclass_index answers "does this class descend from
+        // Rsx_Email_Abstract" without walking a chain per file, and blade_views answers
+        // "does a template declare this @rsx_id" without scanning for one.
+        $subclass_index = [];
+
+        if ($extends === 'Rsx_Email_Abstract') {
+            $subclass_index['Rsx_Email_Abstract'] = [$class];
+        }
+
+        return [
+            'data' => [
+                'files' => $files,
+                'php_subclass_index' => $subclass_index,
+                'blade_views' => $blade_views,
+            ],
+        ];
     }
 
     /**
@@ -121,7 +141,7 @@ class Mail_Manifest_Support_Test extends Rsx_Test_Abstract
      */
     private static function __process(array $manifest): array
     {
-        Email_ManifestSupport::process($manifest);
+        Email_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
 
         return $manifest['data']['emails'];
     }

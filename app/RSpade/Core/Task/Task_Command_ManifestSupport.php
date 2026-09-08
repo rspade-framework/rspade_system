@@ -55,45 +55,68 @@ class Task_Command_ManifestSupport extends ManifestSupport_Abstract
         return 'Task Commands';
     }
 
-    public static function process(array &$manifest_data): void
+    /**
+     * Rebuild the #[Command] table from `attribute_index`.
+     *
+     * NOT incremental by diff, and it does not need to be: a command NAME must be unique
+     * across the whole tree, so the table is a property of the whole declaration set, and
+     * the declaration set is exactly what `attribute_index['Command']` lists - a handful of
+     * rows. It used to walk every file and every method map to find them.
+     */
+    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
-        $manifest_data['data']['task_commands'] = [];
-
         $framework_commands = static::_scan_framework_command_names();
         $table = [];
 
-        foreach ($manifest_data['data']['files'] as $file => $metadata) {
-            foreach ($metadata['public_static_methods'] ?? [] as $method_name => $method_data) {
-                foreach ($method_data['attributes'] ?? [] as $attr_name => $attr_instances) {
-                    if ($attr_name !== 'Command' && !str_ends_with($attr_name, '\\Command')) {
-                        continue;
-                    }
+        $declarations = $manifest_data['data']['attribute_index']['Command'] ?? [];
+        $files = $manifest_data['data']['files'];
 
-                    $fqcn = $metadata['fqcn'] ?? $metadata['class'] ?? '(unknown)';
-                    $location = "{$fqcn}::{$method_name} in {$file}";
+        // The attribute index records a member once per METHOD BUCKET it appears in, and the
+        // scanner's public_static_methods map is filtered PUBLIC-or-STATIC, so one public
+        // method can be listed twice. A command name is unique by contract, so the second
+        // sighting would fail its own uniqueness check.
+        $seen = [];
 
-                    if (!static::_method_has_attribute($method_data, 'Task')) {
-                        throw new \RuntimeException(
-                            "Invalid #[Command]: {$location}\n" .
-                            "  #[Command] may only annotate a #[Task] method - there is nothing else for the\n" .
-                            "  command to run. Add #[Task('<description>')] or remove the #[Command]."
-                        );
-                    }
+        foreach ($declarations as $declaration) {
+            $file = $declaration['file'];
+            $method_name = $declaration['member'] ?? null;
 
-                    foreach ($attr_instances as $arguments) {
-                        $name = $arguments[0] ?? $arguments['name'] ?? null;
-                        $description = $arguments[1] ?? $arguments['description'] ?? null;
+            if ($method_name === null) {
+                continue;
+            }
 
-                        static::_validate_name($name, $location, $table, $framework_commands);
-                        static::_validate_description($description, $location);
+            if (isset($seen[$file . '::' . $method_name])) {
+                continue;
+            }
 
-                        $table[$name] = [
-                            'class' => $fqcn,
-                            'method' => $method_name,
-                            'description' => $description,
-                        ];
-                    }
-                }
+            $seen[$file . '::' . $method_name] = true;
+
+            $metadata = $files[$file] ?? [];
+            $method_data = $metadata['public_static_methods'][$method_name] ?? [];
+
+            $fqcn = $metadata['fqcn'] ?? $metadata['class'] ?? '(unknown)';
+            $location = "{$fqcn}::{$method_name} in {$file}";
+
+            if (!static::_method_has_attribute($method_data, 'Task')) {
+                throw new \RuntimeException(
+                    "Invalid #[Command]: {$location}\n" .
+                    "  #[Command] may only annotate a #[Task] method - there is nothing else for the\n" .
+                    "  command to run. Add #[Task('<description>')] or remove the #[Command]."
+                );
+            }
+
+            foreach (($declaration['instances'] ?? []) as $arguments) {
+                $name = $arguments[0] ?? $arguments['name'] ?? null;
+                $description = $arguments[1] ?? $arguments['description'] ?? null;
+
+                static::_validate_name($name, $location, $table, $framework_commands);
+                static::_validate_description($description, $location);
+
+                $table[$name] = [
+                    'class' => $fqcn,
+                    'method' => $method_name,
+                    'description' => $description,
+                ];
             }
         }
 

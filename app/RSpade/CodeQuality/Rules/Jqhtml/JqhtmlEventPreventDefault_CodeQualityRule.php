@@ -94,7 +94,7 @@ class JqhtmlEventPreventDefault_CodeQualityRule extends CodeQualityRule_Abstract
         $template_path = null;
         foreach ($possible_templates as $template_file) {
             if (file_exists($template_file)) {
-                $template_content = file_get_contents($template_file);
+                $template_content = $this->source()->content($template_file);
                 $template_path = $template_file;
                 break;
             }

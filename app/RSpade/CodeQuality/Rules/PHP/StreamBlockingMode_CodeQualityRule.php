@@ -70,7 +70,7 @@ class StreamBlockingMode_CodeQualityRule extends CodeQualityRule_Abstract
             return;  // No stream reads, skip
         }
 
-        $original_lines = explode("\n", file_get_contents($file_path));
+        $original_lines = explode("\n", $this->source()->content($file_path));
         $sanitized_lines = $sanitized_data['lines'];
 
         // VIOLATION 1: Missing stream_set_blocking()

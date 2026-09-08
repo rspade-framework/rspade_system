@@ -53,6 +53,13 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
                 'routes' => $seed_routes,
                 'routes_by_target' => [],
                 'api_endpoints' => [],
+                // The module asks the SUBCLASS INDEX whether the declaring class extends the
+                // API base - one lookup, against an index a real manifest always carries by
+                // the time the support modules run. It used to rebuild a by-FQCN copy of the
+                // whole file map and walk the chain itself.
+                'php_subclass_index' => $extends === self::BASE
+                    ? ['Rsx_Api_Controller_Abstract' => ['Foo_Api_Controller']]
+                    : [],
             ],
         ];
     }
@@ -65,7 +72,7 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
         static::__assert_throws(
             \RuntimeException::class,
             function () use ($manifest) {
-                Api_Endpoint_ManifestSupport::process($manifest);
+                Api_Endpoint_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
             },
             $needle
         );
@@ -81,19 +88,23 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
             'Api_Endpoint' => [[0 => '/api/v1/contacts', 1 => ['GET']]],
         ]);
 
-        Api_Endpoint_ManifestSupport::process($manifest);
+        Api_Endpoint_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
 
+        // The ROUTE row carries the routing facts. The version, the path key, the param
+        // declarations and the response example live ONCE, on the catalog row - they were
+        // byte-identical copies of the same local on both.
         $route = $manifest['data']['routes']['/api/v1/contacts'];
         static::__assert_equals('api', $route['type']);
-        static::__assert_equals(1, $route['version']);
-        static::__assert_equals('/contacts', $route['path_key']);
         static::__assert_equals(['GET'], $route['methods']);
-        static::__assert_array_has_key('api_params', $route);
+        static::__assert_equals('Foo_Api_Controller::list', $route['surface']);
+        static::__assert_false(array_key_exists('api_params', $route), 'the route row does not duplicate api_params');
+        static::__assert_false(array_key_exists('version', $route), 'the route row does not duplicate version');
 
         static::__assert_array_has_key('/api/v1/contacts', $manifest['data']['api_endpoints']);
         $catalog = $manifest['data']['api_endpoints']['/api/v1/contacts'];
         static::__assert_equals(1, $catalog['version']);
         static::__assert_equals('/contacts', $catalog['path_key']);
+        static::__assert_array_has_key('api_params', $catalog);
     }
 
     public static function test_valid_declaration_bakes_declared_params()
@@ -103,9 +114,11 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
             'Api_Param' => [['id', 'int', true]],
         ]);
 
-        Api_Endpoint_ManifestSupport::process($manifest);
+        Api_Endpoint_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
 
-        $params = $manifest['data']['routes']['/api/v1/contacts/:id']['api_params'];
+        // The declarations live on the CATALOG row; Api_Catalog::params_for_pattern() is
+        // what the runtime validator reads them through.
+        $params = $manifest['data']['api_endpoints']['/api/v1/contacts/:id']['api_params'];
         static::__assert_count(1, $params);
         static::__assert_equals('id', $params[0]['name']);
         static::__assert_equals('int', $params[0]['type']);
@@ -291,6 +304,7 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
                 'routes' => [],
                 'routes_by_target' => [],
                 'api_endpoints' => [],
+                'php_subclass_index' => ['Rsx_Api_Controller_Abstract' => ['Api_Get_Pure_Fixture']],
             ],
         ];
     }
@@ -315,7 +329,7 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
     {
         $manifest = static::__fixture_manifest('excepted_get');
 
-        Api_Endpoint_ManifestSupport::process($manifest);
+        Api_Endpoint_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
 
         static::__assert_array_has_key('/api/v1/fixture', $manifest['data']['routes']);
     }
@@ -332,7 +346,7 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
     {
         $manifest = static::__fixture_manifest('pure_get');
 
-        Api_Endpoint_ManifestSupport::process($manifest);
+        Api_Endpoint_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
 
         static::__assert_array_has_key('/api/v1/fixture', $manifest['data']['routes']);
     }
@@ -341,7 +355,7 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
     {
         $manifest = static::__fixture_manifest('mutating_get', ['POST']);
 
-        Api_Endpoint_ManifestSupport::process($manifest);
+        Api_Endpoint_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
 
         static::__assert_array_has_key('/api/v1/fixture', $manifest['data']['routes']);
     }

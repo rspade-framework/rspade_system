@@ -9,21 +9,59 @@ namespace App\RSpade\Core\PHP;
 
 use App\RSpade\CodeQuality\RuntimeChecks\ManifestErrors;
 use App\RSpade\Core\Debug\Rsx_File_Exception;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 class Php_Parser
 {
     /**
      * Parse a PHP file using token_get_all() to extract metadata
      *
+     * Took the whole manifest by reference and never once read it - a 45 MB array threaded
+     * through three call sites to be ignored.
+     *
      * @param string $file_path Absolute path to PHP file
-     * @param array $step_2_manifest_data Current state of manifest data for fix operations
      * @return array Metadata including class, namespace, methods, etc.
      */
-    public static function parse(string $file_path, array &$step_2_manifest_data): array
+    public static function parse(string $file_path): array
     {
         $content = file_get_contents($file_path);
 
         return self::_extract_php_metadata($file_path, $content);
+    }
+
+    /**
+     * THE TWO STRUCTURE VALIDATORS ARE OFF, ON PURPOSE. Set true to arm them.
+     *
+     * `__validate_class_file_structure()` and `__validate_classless_file_structure()` refuse
+     * global functions, global define()s and unapproved include paths in an rsx/ file, and
+     * their findings become CRITICAL violations (PhpFileStructure_CodeQualityRule), i.e. a
+     * manifest-build FATAL.
+     *
+     * They have never once run. The gate was `str_starts_with($file_path, 'rsx/')` while
+     * every caller passes an ABSOLUTE path, so it was false for every file in the tree since
+     * the day it was written. The path test is CORRECT now (__is_rsx_source_path), and this
+     * constant is what keeps the behaviour unchanged: arming a rule that has never executed
+     * is a POLICY decision, not a bug fix, and the reference app does trip it (see
+     * docs.dev/manifest_review/RESULTS.md, "dead validators" - the findings are recorded
+     * there, with no file changed and no severity touched).
+     */
+    private const VALIDATE_RSX_FILE_STRUCTURE = false;
+
+    /**
+     * Is this path an application source file (under rsx/)?
+     *
+     * ONE spelling, because the old one was wrong in a way nothing could see: the callers
+     * pass absolute paths, so a relative-prefix test was permanently false. Rsx_Paths is
+     * that one spelling now, for the whole framework - `/rsx/` as a WHOLE SEGMENT matches
+     * both the project path and the system/rsx symlink form, and matches no framework path.
+     */
+    private static function __is_rsx_source_path(string $file_path): bool
+    {
+        if (!self::VALIDATE_RSX_FILE_STRUCTURE) {
+            return false;
+        }
+
+        return Rsx_Paths::is_application($file_path);
     }
 
     /**
@@ -119,7 +157,7 @@ class Php_Parser
 
         $data = [];
         $tokens = token_get_all($content);
-        $is_rsx_file = str_starts_with($file_path, 'rsx/');
+        $is_rsx_file = self::__is_rsx_source_path($file_path);
 
         // Step 1: Parse basic structure from tokens
         $structure = self::__parse_basic_structure($tokens);
@@ -163,7 +201,63 @@ class Php_Parser
             $file_path
         );
 
+        // Step 6: the class-like names this file MENTIONS. Php_Fixer uses it to answer
+        // "which files can a change to class X have broken", which is what narrows a
+        // structural fixer pass from the whole tree to the files that reference the delta.
+        $referenced = self::__collect_referenced_simple_names($tokens);
+
+        if (!empty($referenced)) {
+            $data['referenced_simple_names'] = $referenced;
+        }
+
         return $data;
+    }
+
+    /**
+     * The class-like simple names a file mentions, as a sorted list.
+     *
+     * DELIBERATELY GENEROUS. It is consumed as "could a change to this class have affected
+     * this file", so a name wrongly included costs one extra file through Php_Fixer, and a
+     * name missed costs a stale import that nothing will ever come back and fix. So the test
+     * is structural rather than semantic: an identifier that starts with a capital and
+     * contains a lowercase letter is a class name by RSX convention
+     * (Like_This_With_Underscores), while a CONSTANT (UPPERCASE_WITH_UNDERSCORES) is not -
+     * and the last segment of every qualified name is taken the same way.
+     *
+     * @return array<int,string>
+     */
+    private static function __collect_referenced_simple_names(array $tokens): array
+    {
+        $names = [];
+
+        foreach ($tokens as $token) {
+            if (!is_array($token)) {
+                continue;
+            }
+
+            $type = $token[0];
+
+            if ($type === T_STRING) {
+                $candidate = $token[1];
+            } elseif ((defined('T_NAME_QUALIFIED') && $type === T_NAME_QUALIFIED)
+                || (defined('T_NAME_FULLY_QUALIFIED') && $type === T_NAME_FULLY_QUALIFIED)
+                || (defined('T_NAME_RELATIVE') && $type === T_NAME_RELATIVE)) {
+                $position = strrpos($token[1], '\\');
+                $candidate = $position === false ? $token[1] : substr($token[1], $position + 1);
+            } else {
+                continue;
+            }
+
+            if ($candidate === '' || !preg_match('/^[A-Z]/', $candidate) || !preg_match('/[a-z]/', $candidate)) {
+                continue;
+            }
+
+            $names[$candidate] = true;
+        }
+
+        ksort($names);
+
+        return array_keys($names);
     }
 
     /**
@@ -269,6 +363,26 @@ class Php_Parser
             'global_functions' => $global_functions,
             'global_constants' => $global_constants,
         ];
+    }
+
+    /**
+     * The namespace a token stream DECLARES, or null when it declares none.
+     *
+     * THE ONE TOKEN-LEVEL NAMESPACE WALKER. `Php_Fixer` carried a second one that differed
+     * only in stopping at `;` and never at `{`; it asks here now, through
+     * `Rsx_Namespace::from_tokens()`.
+     */
+    public static function namespace_from_tokens(array $tokens): ?string
+    {
+        foreach ($tokens as $index => $token) {
+            if (is_array($token) && $token[0] === T_NAMESPACE) {
+                $namespace = trim(self::__extract_namespace_from_tokens($tokens, $index));
+
+                return $namespace === '' ? null : $namespace;
+            }
+        }
+
+        return null;
     }
 
     /**

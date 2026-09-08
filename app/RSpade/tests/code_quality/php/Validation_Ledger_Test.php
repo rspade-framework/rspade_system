@@ -96,7 +96,10 @@ class Validation_Ledger_Test extends Rsx_Test_Abstract
 
             $written = include self::$fixture_path;
 
-            static::__assert_equals(1, $written['version'], 'the file declares its shape version');
+            // Shape 2 added the DERIVED bucket: a cross-file rule's premise is a fingerprint,
+            // not a file hash, and filing it beside the file hashes had the manifest prune
+            // delete it on every flush.
+            static::__assert_equals(2, $written['version'], 'the file declares its shape version');
             static::__assert_array_has_key(self::RULE, $written['rules']);
             static::__assert_array_has_key('hash-a', $written['rules'][self::RULE]);
 

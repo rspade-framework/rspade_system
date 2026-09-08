@@ -10,7 +10,7 @@ namespace App\RSpade\Tests\CodeQuality\Php;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * A CODE-QUALITY RULE MAY NOT INVENT A CACHE OF ITS OWN.
+ * A CODE-QUALITY RULE MAY NOT INVENT A CACHE OF ITS OWN, NOR READ, TOKENIZE OR PARSE A FILE.
  *
  * Every rule that did produced the same artifact: a directory of tiny per-source-file
  * documents whose overwhelming majority said "clean". JS-THIS-01 kept 275 of them, almost
@@ -27,8 +27,19 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *     `App\RSpade\Core\Cache\File_Content_Cache`, which owns
  *     `storage/rsx-tmp/derived/<namespace>/`.
  *
- * So this test greps every rule class under `CodeQuality/Rules/` for the four spellings a
- * private cache is written in. NOTHING IS WHITELISTED. A rule that genuinely needs a file on
+ * THE SECOND HALF IS PARSING. A rule that read its own file, tokenized it, or built its own
+ * nikic parser kept the result in a static array for the life of the process, and those
+ * arrays were 1.12 GB of a 1,237 MB cold build - memory proportional to FILES PARSED rather
+ * than to the index being produced. The driver
+ * (`App\RSpade\CodeQuality\Manifest_Rule_Driver`) now owns pass memory: it hands every
+ * rule ONE LRU-bounded `Source_Cache`, and `$this->source()->content()/tokens()/ast()` is
+ * how a rule reaches a file's bytes, tokens or AST.
+ *
+ * A STATIC PROPERTY is refused for the same reason: a rule instance dies with the pass, a
+ * static array does not.
+ *
+ * So this test greps every rule class under `CodeQuality/Rules/` for every spelling of both
+ * mistakes. NOTHING IS WHITELISTED. A rule that genuinely needs a file on
  * disk has a helper to reach it, and a rule that thinks it needs an exception is a rule that
  * has not been told about the helper.
  *
@@ -51,7 +62,26 @@ class Rule_Private_Cache_Test extends Rsx_Test_Abstract
         'ensure_directory',
         'mkdir',
         'file_put_contents',
+        'file_get_contents',
+        'token_get_all',
+        'PhpToken::tokenize',
+        'createForNewestSupportedVersion',
     ];
+
+    /**
+     * A rule may not construct a parser either. `new ParserFactory` is matched as a
+     * construction rather than as a call, so it needs its own spelling.
+     */
+    private const FORBIDDEN_CONSTRUCTIONS = [
+        'ParserFactory',
+    ];
+
+    /**
+     * A STATIC PROPERTY DECLARATION on a rule class, in any spelling. Function-level
+     * `static $x` inside a method body is a different thing and is untouched - the
+     * declaration is what outlives the pass.
+     */
+    private const STATIC_PROPERTY = '/^\s*(?:public|protected|private)\s+static\s+(?:\??(?:array|string|int|bool|float)\s+)?\$\w+/';
 
     /**
      * Every .php file under CodeQuality/Rules/.
@@ -102,6 +132,16 @@ class Rule_Private_Cache_Test extends Rsx_Test_Abstract
                 if (preg_match('/(?<![A-Za-z0-9_$>])' . preg_quote($spelling, '/') . '\s*\(/', $line)) {
                     $hits[] = $relative . ':' . ($index + 1) . '  ' . $spelling . '()';
                 }
+            }
+
+            foreach (self::FORBIDDEN_CONSTRUCTIONS as $spelling) {
+                if (preg_match('/\bnew\s+\\?' . preg_quote($spelling, '/') . '\b/', $line)) {
+                    $hits[] = $relative . ':' . ($index + 1) . '  new ' . $spelling;
+                }
+            }
+
+            if (preg_match(self::STATIC_PROPERTY, $line)) {
+                $hits[] = $relative . ':' . ($index + 1) . '  static property declaration';
             }
         }
 

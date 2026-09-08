@@ -156,7 +156,7 @@ class Realtime_Seed_Subscriptions_Test extends Rsx_Test_Abstract
 
         $result = Realtime_Emitter_Service::seed_subscriptions_engine([
             static::__entry('Realtime_Test_Private_Topic', ['id' => 1]),
-            static::__entry('Model_Changed_Topic', ['model' => 'Client_Model', 'id' => 3]),
+            static::__entry('Model_Changed_Topic', ['model' => 'Absent_Fixture_Model', 'id' => 3]),
         ]);
 
         static::__assert_equals(0, $result['entries'], 'neither entry is served by an emitter');

@@ -42,9 +42,27 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
         return 'high';
     }
 
-    public function is_incremental(): bool
+    /**
+     * CROSS-FILE: this rule judges the tree, not one file. The driver runs it once per
+     * pass, gated on the fingerprint of what depends_on() declares.
+     */
+    public function kind(): string
     {
-        return false;
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * Every indexed PHP file plus the task-command index.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return [
+            'files:*.php',
+            'php_classes',
+            'task_commands',
+        ];
     }
 
     public function check(string $file_path, string $contents, array $metadata = []): void
@@ -55,10 +73,9 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
         }
         $already_checked = true;
 
-        foreach (Manifest::get_all() as $info) {
+        foreach (Manifest::get_all() as $base_file => $info) {
             $methods = $info['public_static_methods'] ?? null;
-            $base_file = $info['file'] ?? null;
-            if (!$methods || !$base_file) {
+            if (!$methods) {
                 continue;
             }
 
@@ -139,6 +156,6 @@ class TaskConcurrencyAttributes_CodeQualityRule extends CodeQualityRule_Abstract
         $base_path = function_exists('base_path') ? base_path() : '/var/www/html';
         $full_path = str_starts_with($file_path, '/') ? $file_path : $base_path . '/' . $file_path;
 
-        return file_exists($full_path) ? explode("\n", file_get_contents($full_path)) : [];
+        return file_exists($full_path) ? explode("\n", $this->source()->content($full_path)) : [];
     }
 }

@@ -75,19 +75,15 @@ class ModelHelper
      */
     public static function get_columns_by_table(string $table_name): array
     {
-        $manifest = Manifest::get_full_manifest();
-        
-        if (!isset($manifest['data']['models'])) {
-            throw new \RuntimeException("No models found in manifest");
+        // One lookup through models_by_table, rather than a linear walk of the model
+        // registry per call.
+        $model = Manifest::model_for_table($table_name);
+
+        if ($model === null) {
+            throw new \RuntimeException("Table not found in manifest: {$table_name}");
         }
-        
-        foreach ($manifest['data']['models'] as $model_data) {
-            if (isset($model_data['table']) && $model_data['table'] === $table_name) {
-                return $model_data['columns'] ?? [];
-            }
-        }
-        
-        throw new \RuntimeException("Table not found in manifest: {$table_name}");
+
+        return Manifest::$data['data']['models'][$model]['columns'] ?? [];
     }
     
     /**

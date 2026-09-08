@@ -39,6 +39,9 @@ class Manifest_Show_Command extends FrameworkDeveloperCommand
     public function handle()
     {
         // Get manifest (will auto-build if needed)
+        // SHOW means the whole index, so the cold half is merged first (rsx:man
+        // manifest_build, Phase 7 - a request loads only the hot one).
+        Manifest::get_all();
         $manifest = Manifest::get_full_manifest();
         $data = $manifest['data'] ?? [];
         

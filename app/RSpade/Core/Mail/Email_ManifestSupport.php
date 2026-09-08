@@ -68,24 +68,48 @@ class Email_ManifestSupport extends ManifestSupport_Abstract
         return 'Emails';
     }
 
-    public static function process(array &$manifest_data): void
+    /**
+     * Update the email table from the CHANGED and REMOVED sets.
+     *
+     * INCREMENTAL for the class half: an entry is owned by its `file`, so the dirty files'
+     * entries are dropped and re-derived from those files' own records. The descendant set
+     * comes from `php_subclass_index`, so nothing walks an inheritance chain per file and
+     * nothing scans the file map.
+     *
+     * The TEMPLATE half is re-checked for every surviving entry, not only the dirty ones,
+     * because a template can be deleted without its email class changing at all - and the
+     * check is O(emails), not O(tree).
+     */
+    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
-        $manifest_data['data']['emails'] = [];
+        if (!isset($manifest_data['data']['emails'])) {
+            $manifest_data['data']['emails'] = [];
+        }
 
+        $table = $manifest_data['data']['emails'];
+        $dirty = static::dirty_set($changed_files, $removed_files);
         $files = $manifest_data['data']['files'];
-        $by_class = static::_index_classes($files);
-        $view_ids = static::_index_view_ids($files);
 
-        $table = [];
+        foreach ($table as $class => $entry) {
+            if (isset($dirty[$entry['file'] ?? ''])) {
+                unset($table[$class]);
+            }
+        }
 
-        foreach ($files as $file => $metadata) {
-            $class = $metadata['class'] ?? null;
+        // Every DESCENDANT of the root, one lookup - the index already walked the chains.
+        $descendants = array_flip($manifest_data['data']['php_subclass_index'][self::ROOT_CLASS] ?? []);
+        $view_ids = $manifest_data['data']['blade_views'] ?? [];
 
-            if ($class === null || $class === self::ROOT_CLASS) {
+        foreach (array_keys($dirty) as $file) {
+            $metadata = $files[$file] ?? null;
+
+            if ($metadata === null) {
                 continue;
             }
 
-            if (!static::_descends_from_root($class, $by_class)) {
+            $class = $metadata['class'] ?? null;
+
+            if ($class === null || $class === self::ROOT_CLASS || !isset($descendants[$class])) {
                 continue;
             }
 
@@ -101,7 +125,6 @@ class Email_ManifestSupport extends ManifestSupport_Abstract
 
             $category = static::_read_category($file, $metadata, $location);
             static::_require_sample($metadata, $location);
-            static::_require_view($class, $view_ids, $location);
 
             if (isset($table[$class])) {
                 throw new \RuntimeException(
@@ -120,80 +143,14 @@ class Email_ManifestSupport extends ManifestSupport_Abstract
             ];
         }
 
+        // A template can disappear without its class changing, so every entry is re-checked.
+        foreach ($table as $class => $entry) {
+            static::_require_view($class, $view_ids, "{$entry['class']} in {$entry['file']}");
+        }
+
         ksort($table);
 
         $manifest_data['data']['emails'] = $table;
-    }
-
-    /**
-     * class basename => file metadata, for walking inheritance chains.
-     *
-     * @param array $files
-     * @return array<string, array>
-     */
-    private static function _index_classes(array $files): array
-    {
-        $by_class = [];
-
-        foreach ($files as $metadata) {
-            if (!empty($metadata['class'])) {
-                $by_class[$metadata['class']] = $metadata;
-            }
-        }
-
-        return $by_class;
-    }
-
-    /**
-     * Every @rsx_id a blade template in this build declares => the blade's file.
-     *
-     * @param array $files
-     * @return array<string, string>
-     */
-    private static function _index_view_ids(array $files): array
-    {
-        $ids = [];
-
-        foreach ($files as $file => $metadata) {
-            if (($metadata['type'] ?? null) === 'view' && !empty($metadata['id'])) {
-                $ids[$metadata['id']] = $file;
-            }
-        }
-
-        return $ids;
-    }
-
-    /**
-     * Whether $class reaches Rsx_Email by following `extends`.
-     *
-     * @param string $class
-     * @param array<string, array> $by_class
-     * @return bool
-     */
-    private static function _descends_from_root(string $class, array $by_class): bool
-    {
-        $seen = [];
-        $current = $class;
-
-        while (true) {
-            if (isset($seen[$current])) {
-                return false;   // a cycle; the class-graph validator owns that complaint
-            }
-
-            $seen[$current] = true;
-
-            $parent = $by_class[$current]['extends'] ?? null;
-
-            if ($parent === null) {
-                return false;
-            }
-
-            if ($parent === self::ROOT_CLASS) {
-                return true;
-            }
-
-            $current = $parent;
-        }
     }
 
     /**

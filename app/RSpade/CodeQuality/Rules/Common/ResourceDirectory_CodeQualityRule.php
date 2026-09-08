@@ -10,7 +10,8 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
  */
 class ResourceDirectory_CodeQualityRule extends CodeQualityRule_Abstract
 {
-    protected static $checked_directories = [];
+    /** Directories already judged in this pass. Instance state: it dies with the pass. */
+    private array $checked_directories = [];
 
     public function get_id(): string
     {
@@ -70,10 +71,10 @@ class ResourceDirectory_CodeQualityRule extends CodeQualityRule_Abstract
             $dir_path = substr($file_path, 0, $offset + strlen('/resources'));
 
             // Only report once per directory
-            if (isset(static::$checked_directories[$dir_path])) {
+            if (isset($this->checked_directories[$dir_path])) {
                 return;
             }
-            static::$checked_directories[$dir_path] = true;
+            $this->checked_directories[$dir_path] = true;
 
             $this->add_violation(
                 $file_path,

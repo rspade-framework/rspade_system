@@ -93,9 +93,6 @@ class Dispatcher
         Manifest::init();
         console_debug('BENCHMARK', 'Manifest initialized');
 
-        // Validate Route attributes are not on classes (development mode only)
-        static::__validate_route_attributes();
-
         // Dev-mode tripwire: fail loud if a pasted/mismatched .env declares an
         // APP_URL host that differs from the host this request is actually browsed
         // under. Runs before the portal delegation so portal requests are covered
@@ -312,7 +309,7 @@ class Dispatcher
                 $params = array_merge(request()->all(), $extra_params);
 
                 // First try Main pre_dispatch
-                $main_classes = Manifest::php_get_extending('Main_Abstract');
+                $main_classes = Manifest::php_class_records_extending('Main_Abstract');
                 foreach ($main_classes as $main_class) {
                     if (isset($main_class['fqcn']) && $main_class['fqcn']) {
                         $main_class_name = $main_class['fqcn'];
@@ -367,31 +364,27 @@ class Dispatcher
         Debugger::console_debug('DISPATCH', 'Matched route to ' . $handler_class . '::' . $handler_method . ' params: ' . json_encode($params));
 
         // --- FPC Detection ---
-        // Check if route has #[FPC] attribute and conditions are met for caching
+        // #[FPC] is baked onto the route row by the manifest - it is a routing fact, decided
+        // once at build time. Reading it here used to pull the handler class's whole METHOD
+        // MAP into every matched request.
         $has_fpc = false;
-        try {
-            $fpc_metadata = Manifest::php_get_metadata_by_fqcn($handler_class);
-            $fpc_method_data = $fpc_metadata['public_static_methods'][$handler_method] ?? null;
 
-            if ($fpc_method_data && isset($fpc_method_data['attributes']['FPC'])) {
-                // FPC only active for unauthenticated GET requests without POST/FILE data
-                if ($route_method === 'GET' && empty($_POST) && empty($_FILES)) {
-                    \App\RSpade\Core\Session\Session::init();
+        if (!empty($route_match['fpc'])) {
+            // FPC only active for unauthenticated GET requests without POST/FILE data
+            if ($route_method === 'GET' && empty($_POST) && empty($_FILES)) {
+                \App\RSpade\Core\Session\Session::init();
 
-                    if (!\App\RSpade\Core\Session\Session::is_logged_in()) {
-                        $has_fpc = true;
+                if (!\App\RSpade\Core\Session\Session::is_logged_in()) {
+                    $has_fpc = true;
 
-                        // Blank all cookies except session to prevent tainted output
-                        foreach ($_COOKIE as $key => $value) {
-                            if ($key !== 'rsx') {
-                                unset($_COOKIE[$key]);
-                            }
+                    // Blank all cookies except session to prevent tainted output
+                    foreach ($_COOKIE as $key => $value) {
+                        if ($key !== 'rsx') {
+                            unset($_COOKIE[$key]);
                         }
                     }
                 }
             }
-        } catch (\Throwable $e) {
-            console_debug('FPC', 'Metadata lookup failed: ' . $e->getMessage());
         }
         // --- End FPC Detection ---
 
@@ -602,47 +595,16 @@ class Dispatcher
             $params = RouteResolver::match_with_query($url, $pattern);
 
             if ($params !== false) {
-                // Found a match - verify the method has the required attribute
-                $class_fqcn = $route['class'];
-                $method_name = $route['method'];
-
-                // Get method metadata from manifest
-                $class_metadata = Manifest::php_get_metadata_by_fqcn($class_fqcn);
-                $method_metadata = $class_metadata['public_static_methods'][$method_name] ?? null;
-
-                if (!$method_metadata) {
-                    throw new \RuntimeException(
-                        "Route method not found in manifest: {$class_fqcn}::{$method_name}\n" .
-                        "Pattern: {$pattern}"
-                    );
-                }
-
-                // Check for Route or SPA attribute
-                $attributes = $method_metadata['attributes'] ?? [];
-                $has_route = false;
-
-                foreach ($attributes as $attr_name => $attr_instances) {
-                    if (str_ends_with($attr_name, '\\Route') || $attr_name === 'Route' ||
-                        str_ends_with($attr_name, '\\SPA') || $attr_name === 'SPA') {
-                        $has_route = true;
-                        break;
-                    }
-                }
-
-                if (!$has_route) {
-                    // #[Api_Endpoint] routes are dispatched by Api_Dispatcher (branched
-                    // earlier on the /api/vN/ path); a type-'api' route reaching the main
-                    // dispatcher is a defect and fails loud here.
-                    throw new \RuntimeException(
-                        "Route method {$class_fqcn}::{$method_name} is missing required #[Route] or #[SPA] attribute.\n" .
-                        "Pattern: {$pattern}\n" .
-                        "File: {$route['file']}"
-                    );
-                }
-
-                // Return route with params. 'auth' is the declarative gate list the
-                // manifest baked onto the row (class-level #[Auth] merged with the
-                // method's own); the dispatcher evaluates it before pre_dispatch.
+                // NO RE-VERIFICATION OF THE ATTRIBUTE HERE. A row exists in `routes` because
+                // the manifest read #[Route] or #[SPA] off that method; re-proving it meant
+                // pulling the handler's whole METHOD MAP into every matched request, which is
+                // the single most expensive read on the dispatch path and, since the index
+                // split, would load the cold half of the index to answer a question the build
+                // already answered. A type-'api' row reaching here is caught by
+                // __validate_dispatchable_route_type() below.
+                //
+                // 'auth' is resolved from the surface the row names - the gate list lives once,
+                // in auth.surfaces - and the dispatcher evaluates it before pre_dispatch.
                 return [
                     'type' => $route['type'],
                     'pattern' => $pattern,
@@ -650,7 +612,9 @@ class Dispatcher
                     'method' => $route['method'],
                     'params' => $params,
                     'file' => $route['file'] ?? null,
-                    'auth' => $route['auth'] ?? [],
+                    'surface' => $route['surface'] ?? null,
+                    'fpc' => $route['fpc'] ?? false,
+                    'auth' => Auth_Gates::surface_gates($route['surface'] ?? ''),
                 ];
             }
         }
@@ -667,32 +631,13 @@ class Dispatcher
      */
     protected static function __load_handler_class($class_name)
     {
-        // Use Manifest to verify the class exists
-        // Check if this is already a FQCN (contains backslash)
-        if (strpos($class_name, '\\') !== false) {
-            // It's a FQCN, use php_get_metadata_by_fqcn
-            try {
-                $metadata = Manifest::php_get_metadata_by_fqcn($class_name);
-                $fqcn = $metadata['fqcn'];
-            } catch (RuntimeException $e) {
-                throw new Exception("Handler class not found in manifest: {$class_name}");
-            }
-        } else {
-            // It's a simple name, try different approaches
-            try {
-                $metadata = Manifest::php_get_metadata_by_class($class_name);
-                // Class exists in manifest, trigger autoloading by referencing the FQCN
-                $fqcn = $metadata['fqcn'];
-                // The autoloader will handle loading when we reference the class
-            } catch (RuntimeException $e) {
-                // Try with Rsx namespace prefix
-                try {
-                    $metadata = Manifest::php_get_metadata_by_class('Rsx\\' . $class_name);
-                    $fqcn = $metadata['fqcn'];
-                } catch (RuntimeException $e2) {
-                    throw new Exception("Handler class not found in manifest: {$class_name}");
-                }
-            }
+        // Verify the class is indexed - through the HOT class record, which carries the
+        // path and the FQCN and is the whole of what this needs. A FQCN and a simple name
+        // are the same key (RSX enforces unique simple names), so the three-way search this
+        // used to be is one lookup. Reading the FILE record here pulled the cold half
+        // of the index into every dispatched request.
+        if (Manifest::php_class_metadata(Manifest::_normalize_class_name($class_name)) === null) {
+            throw new Exception("Handler class not found in manifest: {$class_name}");
         }
     }
 
@@ -710,7 +655,7 @@ class Dispatcher
         $request = $request ?? request();
 
         // First, call pre_dispatch on Main classes (if any exist)
-        $main_classes = Manifest::php_get_extending('Main_Abstract');
+        $main_classes = Manifest::php_class_records_extending('Main_Abstract');
         foreach ($main_classes as $main_class) {
             if (isset($main_class['fqcn']) && $main_class['fqcn']) {
                 $main_class_name = $main_class['fqcn'];
@@ -1115,70 +1060,4 @@ class Dispatcher
         return static::$handler_priorities;
     }
 
-    /**
-     * Validate that Route attributes are not placed on classes
-     * Only runs in non-production mode
-     *
-     * @throws RuntimeException if Route attributes found on classes
-     */
-    protected static function __validate_route_attributes()
-    {
-        // Only validate in non-production mode
-        if (app()->environment('production')) {
-            return;
-        }
-
-        // Get all manifest entries
-        $manifest = Manifest::get_all();
-
-        $errors = [];
-
-        // Check each file for class-level Route attributes
-        foreach ($manifest as $file_path => $metadata) {
-            // Skip non-PHP files (controllers are PHP files)
-            if (!isset($metadata['type']) || ($metadata['type'] !== 'php' && $metadata['type'] !== 'controller')) {
-                continue;
-            }
-
-            // Check if this file has class-level attributes
-            // Attributes are stored with simple names (e.g., "Route" not "App\RSpade\Core\Attributes\Route")
-            if (isset($metadata['attributes']) && is_array($metadata['attributes']) && !empty($metadata['attributes'])) {
-                foreach ($metadata['attributes'] as $attr_name => $attr_data) {
-                    // Check for Route-related attributes (simple names)
-                    if ($attr_name === 'Route' || $attr_name === 'Get' || $attr_name === 'Post' ||
-                        $attr_name === 'Put' || $attr_name === 'Delete' || $attr_name === 'Patch') {
-                        $class_name = $metadata['class'] ?? 'Unknown';
-                        $errors[] = [
-                            'file' => $file_path,
-                            'class' => $class_name,
-                            'attribute' => $attr_name,
-                        ];
-                    }
-                }
-            }
-        }
-
-        // If errors found, throw fatal error with detailed message
-        if (!empty($errors)) {
-            $error_msg = "Route attributes should be assigned to static methods in a controller class, not as an attribute on the class itself.\n\n";
-            $error_msg .= "The following classes have Route attributes incorrectly placed on the class:\n\n";
-
-            foreach ($errors as $error) {
-                $error_msg .= "  File: {$error['file']}\n";
-                $error_msg .= "  Class: {$error['class']}\n";
-                $error_msg .= "  Attribute: #{$error['attribute']}\n\n";
-            }
-
-            $error_msg .= "To fix this, move the Route attribute to a static method within the class.\n";
-            $error_msg .= "Example:\n";
-            $error_msg .= "  class My_Controller extends Rsx_Controller_Abstract {\n";
-            $error_msg .= "      #[Route('/path', methods: ['GET'])]\n";
-            $error_msg .= "      public static function index(Request \$request, array \$params = []) {\n";
-            $error_msg .= "          // ...\n";
-            $error_msg .= "      }\n";
-            $error_msg .= "  }\n";
-
-            throw new RuntimeException($error_msg);
-        }
-    }
 }

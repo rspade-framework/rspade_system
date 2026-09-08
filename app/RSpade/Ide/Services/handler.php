@@ -20,6 +20,78 @@ define('IDE_BASE_PATH', realpath($system_path . '/..'));  // Project root
 define('IDE_SYSTEM_PATH', $system_path);                  // Framework root
 
 // Helper to get framework paths
+/**
+ * THE ONE MANIFEST LOADER FOR THIS BRIDGE.
+ *
+ * The index is two files. `manifest_index.php` is the hot half - the class maps, the auth
+ * check registry, the jqhtml components, the bundle aliases, and the `files` entries for
+ * models, task services and generated stubs. `manifest_files.php` is every other `files`
+ * entry, method maps intact.
+ *
+ * This bridge runs BEFORE the autoloader, so it cannot call Manifest::; it addresses the
+ * files by path against its own storage_path() shim. What it can do - and now does - is
+ * load each of them ONCE per request: there used to be eight independent `include`s of an
+ * 8.8 MB var_export, two of which could fire in a single request.
+ *
+ * $with_files merges the cold half. Only one thing in this bridge wants it: the per-method
+ * `line` fast path in try_resolve_php_class(), and even that falls back to a regex scan of
+ * the file when the metadata is absent.
+ *
+ * @param bool $with_files Merge the cold half of the files map
+ * @return array|null The manifest structure, or null when the index is not built
+ */
+function ide_manifest(bool $with_files = false): ?array
+{
+    static $manifest = null;
+    static $cold_merged = false;
+
+    if ($manifest === null) {
+        $index_file = storage_path('rsx-build/manifest_index.php');
+
+        if (!file_exists($index_file)) {
+            return null;
+        }
+
+        $manifest = include $index_file;
+
+        if (!is_array($manifest) || !isset($manifest['data'])) {
+            $manifest = null;
+
+            return null;
+        }
+    }
+
+    if ($with_files && !$cold_merged) {
+        $cold_merged = true;
+        $cold_file = storage_path('rsx-build/manifest_files.php');
+
+        if (file_exists($cold_file)) {
+            $cold = include $cold_file;
+
+            if (is_array($cold)) {
+                // The hot entries win: they are the same records.
+                $manifest['data']['files'] = ($manifest['data']['files'] ?? []) + $cold;
+            }
+        }
+    }
+
+    return $manifest;
+}
+
+/**
+ * The manifest body ($manifest['data']), or a 500 naming the build command.
+ */
+function ide_manifest_data_or_fail(bool $with_files = false): array
+{
+    $manifest = ide_manifest($with_files);
+
+    if ($manifest === null) {
+        error_response('Manifest not found - run php artisan rsx:manifest:build', 500);
+    }
+
+    return $manifest['data'];
+}
+
 function ide_framework_path($relative_path) {
     return IDE_SYSTEM_PATH . '/' . ltrim($relative_path, '/');
 }
@@ -315,16 +387,9 @@ function handle_definition_service($data) {
         error_response('No identifier provided');
     }
 
-    // Load manifest data
-    $manifest_file = storage_path('rsx-build/manifest_data.php');
-    if (!file_exists($manifest_file)) {
-        error_response('Manifest not found - run php artisan rsx:manifest:build', 500);
-    }
-
-    $manifest_raw = include $manifest_file;
-
-    // The manifest structure has the data under 'data' key
-    $manifest = $manifest_raw['data'] ?? $manifest_raw;
+    // The definition service resolves symbols down to a METHOD line, so it wants the cold
+    // half of the files map (the regex scan of the file answers it either way).
+    $manifest = ide_manifest_data_or_fail(true);
 
     // Search based on type
     $result = null;
@@ -349,11 +414,11 @@ function handle_definition_service($data) {
             break;
         case 'jqhtml_template':
             // Search for .jqhtml template files
-            foreach ($manifest['jqhtml']['components'] ?? [] as $component) {
-                if ($component['name'] === $identifier) {
+            foreach ($manifest['jqhtml']['components'] ?? [] as $component_name => $component) {
+                if ($component_name === $identifier) {
                     $result = [
                         'found' => true,
-                        'file' => $component['template_file'],
+                        'file' => $component['file'],
                         'line' => 1
                     ];
                     break;
@@ -363,8 +428,8 @@ function handle_definition_service($data) {
 
         case 'jqhtml_class':
             // Search for JavaScript class extending Component
-            foreach ($manifest['jqhtml']['components'] ?? [] as $component) {
-                if ($component['name'] === $identifier && isset($component['js_file'])) {
+            foreach ($manifest['jqhtml']['components'] ?? [] as $component_name => $component) {
+                if ($component_name === $identifier && isset($component['js_file'])) {
                     $result = [
                         'found' => true,
                         'file' => $component['js_file'],
@@ -377,8 +442,8 @@ function handle_definition_service($data) {
 
         case 'jqhtml_class_method':
             // Search for method in jqhtml component JavaScript class
-            foreach ($manifest['jqhtml']['components'] ?? [] as $component) {
-                if ($component['name'] === $identifier && isset($component['js_file'])) {
+            foreach ($manifest['jqhtml']['components'] ?? [] as $component_name => $component) {
+                if ($component_name === $identifier && isset($component['js_file'])) {
                     $js_file = IDE_BASE_PATH . '/' . $component['js_file'];
                     $line = 1;
 
@@ -444,13 +509,13 @@ function handle_definition_service($data) {
             // Blade view whose @rsx_id matches answers second.
             $locations = [];
 
-            foreach ($manifest['jqhtml']['components'] ?? [] as $component) {
-                if (($component['name'] ?? null) !== $identifier) {
+            foreach ($manifest['jqhtml']['components'] ?? [] as $component_name => $component) {
+                if ($component_name !== $identifier) {
                     continue;
                 }
 
-                if (!empty($component['template_file'])) {
-                    $locations[] = ['file' => $component['template_file'], 'line' => 1];
+                if (!empty($component['file'])) {
+                    $locations[] = ['file' => $component['file'], 'line' => 1];
                 }
                 if (!empty($component['js_file'])) {
                     $locations[] = ['file' => $component['js_file'], 'line' => $component['js_line'] ?? 1];
@@ -527,11 +592,11 @@ function handle_definition_service($data) {
             }
             // Try as jqhtml component
             if (!$result) {
-                foreach ($manifest['jqhtml']['components'] ?? [] as $component) {
-                    if ($component['name'] === $identifier) {
+                foreach ($manifest['jqhtml']['components'] ?? [] as $component_name => $component) {
+                    if ($component_name === $identifier) {
                         $result = [
                             'found' => true,
-                            'file' => $component['template_file'] ?? $component['js_file'],
+                            'file' => $component['file'] ?? $component['js_file'],
                             'line' => 1
                         ];
                         break;
@@ -573,17 +638,13 @@ function handle_complete_service($data) {
     $prefix = $data['prefix'] ?? '';
     $context = $data['context'] ?? null;
 
-    // Load manifest data
-    $manifest_file = storage_path('rsx-build/manifest_data.php');
-    if (!file_exists($manifest_file)) {
-        error_response('Manifest not found', 500);
-    }
-
-    $manifest = include $manifest_file;
+    // Completion reads only the class map, which is in the hot index.
+    $manifest_data = ide_manifest_data_or_fail();
     $suggestions = [];
 
-    // Search PHP classes. The built index is data.php_classes: class name => relative path.
-    foreach ($manifest['data']['php_classes'] ?? [] as $class_name => $class_path) {
+    // Search PHP classes. The built index is data.php_classes: class name => the hot class
+    // record ['file', 'fqcn', 'extends', 'abstract'].
+    foreach ($manifest_data['php_classes'] ?? [] as $class_name => $class_record) {
         // NAME-RESERVED-01: the framework's own application is not application vocabulary (rsx:man sys_panel).
         if (!ide_name_visible_to_developer($class_name)) { continue; }
 
@@ -591,7 +652,7 @@ function handle_complete_service($data) {
             $suggestions[] = [
                 'label' => $class_name,
                 'kind' => 'class',
-                'detail' => $class_path
+                'detail' => $class_record['file'] ?? ''
             ];
         }
     }
@@ -805,7 +866,8 @@ function ide_view_finder(array $files) {
     return function($view_name) use ($files) {
         foreach ($files as $file_path => $file_data) {
             if (isset($file_data['id']) && $file_data['id'] === $view_name) {
-                return $file_data;
+                // The path is the KEY - the index does not repeat it as a value.
+                return ['file' => $file_path] + $file_data;
             }
         }
         return null;
@@ -947,13 +1009,11 @@ function try_resolve_js_class($identifier, $method_name, $files) {
  */
 function try_resolve_jqhtml_class($identifier, $method_name, $files) {
     // Load manifest to get js_classes index
-    $manifest_file = storage_path('rsx-build/manifest_data.php');
-    if (!file_exists($manifest_file)) {
+    $manifest_data = ide_manifest(true)['data'] ?? null;
+
+    if ($manifest_data === null) {
         return null;
     }
-
-    $manifest_raw = include $manifest_file;
-    $manifest_data = $manifest_raw['data'] ?? $manifest_raw;
     $js_classes = $manifest_data['js_classes'] ?? [];
 
     // Check if this class exists in js_classes
@@ -962,7 +1022,7 @@ function try_resolve_jqhtml_class($identifier, $method_name, $files) {
     }
 
     // Get the file path
-    $file_path = $js_classes[$identifier];
+    $file_path = $js_classes[$identifier]['file'];
 
     // Find the line number
     $absolute_path = IDE_BASE_PATH . '/' . $file_path;
@@ -1271,13 +1331,7 @@ function handle_resolve_class_service($data) {
     }
 
     // Load manifest data
-    $manifest_file = storage_path('rsx-build/manifest_data.php');
-    if (!file_exists($manifest_file)) {
-        error_response('Manifest not found - run php artisan rsx:manifest:build', 500);
-    }
-
-    $manifest_raw = include $manifest_file;
-    $manifest_data = $manifest_raw['data'] ?? $manifest_raw;
+    $manifest_data = ide_manifest_data_or_fail(true);
     $files = $manifest_data['files'] ?? [];
 
     // The manifest finders are shared with the definition service (one lookup each).
@@ -1453,13 +1507,7 @@ function handle_js_lineage_service($data) {
     }
 
     // Load manifest data
-    $manifest_file = storage_path('rsx-build/manifest_data.php');
-    if (!file_exists($manifest_file)) {
-        error_response('Manifest not found - run php artisan rsx:manifest:build', 500);
-    }
-
-    $manifest_raw = include $manifest_file;
-    $manifest_data = $manifest_raw['data'] ?? $manifest_raw;
+    $manifest_data = ide_manifest_data_or_fail(true);
     $files = $manifest_data['files'] ?? [];
 
     // Find the JavaScript class and trace its lineage
@@ -1535,13 +1583,7 @@ function handle_js_is_subclass_of_service($data) {
     }
 
     // Load manifest
-    $manifest_file = storage_path('rsx-build/manifest_data.php');
-    if (!file_exists($manifest_file)) {
-        error_response('Manifest not found - run php artisan rsx:manifest:build', 500);
-    }
-
-    $manifest_raw = include $manifest_file;
-    $manifest_data = $manifest_raw['data'] ?? $manifest_raw;
+    $manifest_data = ide_manifest_data_or_fail(true);
     $js_classes = $manifest_data['js_classes'] ?? [];
     $files = $manifest_data['files'] ?? [];
 
@@ -1563,7 +1605,7 @@ function handle_js_is_subclass_of_service($data) {
         }
 
         // Get file metadata
-        $file_path = $js_classes[$current_class];
+        $file_path = $js_classes[$current_class]['file'];
         $metadata = $files[$file_path] ?? null;
 
         if (!$metadata || empty($metadata['extends'])) {
@@ -1604,13 +1646,7 @@ function handle_php_is_subclass_of_service($data) {
     }
 
     // Load manifest
-    $manifest_file = storage_path('rsx-build/manifest_data.php');
-    if (!file_exists($manifest_file)) {
-        error_response('Manifest not found - run php artisan rsx:manifest:build', 500);
-    }
-
-    $manifest_raw = include $manifest_file;
-    $manifest_data = $manifest_raw['data'] ?? $manifest_raw;
+    $manifest_data = ide_manifest_data_or_fail(true);
     $files = $manifest_data['files'] ?? [];
 
     // Implement same logic as Manifest::php_is_subclass_of
@@ -1676,13 +1712,7 @@ function handle_resolve_url_service($data) {
     }
 
     // Load manifest to get routes
-    $manifest_file = storage_path('rsx-build/manifest_data.php');
-    if (!file_exists($manifest_file)) {
-        error_response('Manifest not found - run php artisan rsx:manifest:build', 500);
-    }
-
-    $manifest_raw = include $manifest_file;
-    $manifest_data = $manifest_raw['data'] ?? $manifest_raw;
+    $manifest_data = ide_manifest_data_or_fail(true);
 
     // Get routes from manifest
     $routes = $manifest_data['php']['routes'] ?? [];

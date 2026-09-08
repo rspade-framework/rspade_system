@@ -93,7 +93,7 @@ the release which introduced the setting.
 
 Everything the extension resolves - classes, views, components, bundles, routes -
 is answered by the IDE bridge (`/_ide/service/resolve_class`), which reads
-`storage/rsx-build/manifest_data.php`. **There is no extension-side index**, so
+`storage/rsx-build/manifest_index.php` (plus `manifest_files.php` when a method-level lookup needs it). **There is no extension-side index**, so
 nothing here has its own idea of what is in the tree. One consequence worth
 knowing: the manifest never scans a directory named `resource/`
 (`manifest.excluded_dirs` in `system/config/rsx.php`), so the reference app

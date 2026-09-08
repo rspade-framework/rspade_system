@@ -49,6 +49,31 @@ require_once __DIR__ . '/../../helpers.php';
  * (Transaction_Rollback_Cache_Reset), and anything that must NOT be flushed is not cache and
  * does not live in database 0.
  *
+ * THE TWO FAMILIES, AND WHICH ONE A BUILD MAY USE.
+ *
+ *   BUILD-SCOPED (get/set/delete) folds Manifest::get_build_key() into the key, so a code
+ *   change invalidates the entry with nothing cleared. It is therefore UNUSABLE BEFORE THE
+ *   MANIFEST IS READY, and asking for it there is FATAL - by design, an owner ruling: a
+ *   silent no-op would let a future author believe a cache was working when every call was
+ *   a miss, and the resulting "why is the build slow" is unanswerable from the outside.
+ *
+ *   PERSISTENT (get_persistent/set_persistent/delete_persistent) folds NO build key - only
+ *   the (database, host) scope prefix - so it works mid-build, which is precisely what it
+ *   is for: THE EXPENSIVE BUILD-TIME DERIVATIONS, keyed on an EXPLICIT CONTENT HASH the
+ *   caller computes. The caller owns invalidation, and that is the point: the key states
+ *   exactly which inputs the answer depends on. Two examples in the tree:
+ *
+ *     Model_ManifestSupport         '<model file hash>__<hash of every migration file>'
+ *                                   - the column map, which is a function of the model file
+ *                                     and of the schema, and of nothing else
+ *     _Manifest_Builder_Helper      a stat fingerprint of the framework subtrees the
+ *                                   manifest never indexes - their class names
+ *
+ *   A persistent entry has no expiry by default and is never flushed by clear(); an entry
+ *   whose key can no longer be produced is simply never read again and is LRU-evicted. So a
+ *   persistent key MUST carry its inputs: a fixed key with changing inputs is a stale answer
+ *   forever.
+ *
  * THE _RVC_ KEY CONVENTION is INTERNAL ONLY - it is a cache-key convention, not a second API.
  * A key beginning with _RVC_ is stored in database 2 under the ordinary build-key and
  * database-scope prefix, so a code update still misses it cleanly and it is LRU-evicted like

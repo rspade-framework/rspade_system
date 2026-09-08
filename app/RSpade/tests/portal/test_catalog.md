@@ -4,20 +4,21 @@
 |----|--------------------------|------|-------|----------|--------|--------------|
 | PORTAL-AUTHZ-01 | own-record: a portal user may read only their own row | php | two portal users, login as A | A.portal_can_read true, B.portal_can_read false | implemented | 2026-06-23 |
 | PORTAL-AUTHZ-02 | portal_fetch gates on session + ownership | php | unauth then auth as A | false unauth; array for own; false for other | implemented | 2026-06-23 |
-| PORTAL-AUTHZ-03 | membership-scoped: access mirrors membership; non-member row denied | php | member of X only | access X true / Y false; membership row readable; Y project row denied | implemented | 2026-06-23 |
-| PORTAL-AUTHZ-04 | viewer vs collaborator roles + can_collaborate | php | viewer + collaborator on same client | viewer cannot collaborate; collaborator can | implemented | 2026-06-23 |
-| PORTAL-AUTHZ-05 | can_collaborate/client_role deny without membership | php | user, no membership | client_role null; can_collaborate false | implemented | 2026-06-23 |
-| PORTAL-AUTHZ-06 | accessible_client_ids returns only member clients | php | member of A,B not C | [A,B]; C excluded | implemented | 2026-06-23 |
-| PORTAL-AUTHZ-07 | shared-recipient: only linked contact may read | php | share to contact R | R reads; other contact denied; unlinked user denied | implemented | 2026-06-23 |
-| PORTAL-AUTHZ-08 | wrong-site membership is invisible -> denied | php | membership on site 1, login on other site | has_client_access false | implemented | 2026-06-23 |
+| PORTAL-AUTHZ-03 | membership-scoped: access mirrors membership; non-member row denied | php | member of X only | access X true / Y false; membership row readable; Y project row denied | implemented (application suite) | 2026-09-08 |
+| PORTAL-AUTHZ-04 | viewer vs collaborator roles + can_collaborate | php | viewer + collaborator on same client | viewer cannot collaborate; collaborator can | implemented (application suite) | 2026-09-08 |
+| PORTAL-AUTHZ-05 | can_collaborate/client_role deny without membership | php | user, no membership | client_role null; can_collaborate false | implemented (application suite) | 2026-09-08 |
+| PORTAL-AUTHZ-06 | accessible_client_ids returns only member clients | php | member of A,B not C | [A,B]; C excluded | implemented (application suite) | 2026-09-08 |
+| PORTAL-AUTHZ-07 | shared-recipient: only linked contact may read | php | share to contact R | R reads; other contact denied; unlinked user denied | implemented (application suite) | 2026-09-08 |
+| PORTAL-AUTHZ-08 | wrong-site membership is invisible -> denied | php | membership on site 1, login on other site | has_client_access false | implemented (application suite) | 2026-09-08 |
 | PORTAL-AUTHZ-09 | portal route gating is declarative: a gated route denies anonymous access, a `#[Auth('public')]` route serves it | php | portal login vs SPA route | login 200; spa 302 to portal login with capture | superseded by the auth-gates seam tests (Auth_Gates_Seam_Test) | 2026-08-07 |
 | PORTAL-AUTHZ-10 | RETIRED with PORTAL-AUTH-01 (2026-08-07) - an ungated portal surface now fails the MANIFEST BUILD; covered by `Auth_Validation_Test` in the `auth_gates` concern | php | - | - | retired | 2026-08-07 |
 | PORTAL-AUTHZ-11 | gate denies a protected route, allows an exempt one (HTTP) | http | curl /_portal/settings vs /_portal/login | 302->login vs 200 | deferred (verified manually via curl) | 2026-06-23 |
 
 Notes:
-- All `php` rows live in `php/Portal_Authorization_Test.php`.
-- The test self-provisions the client-portal schema in setup() - see
-  `issues_encountered.md` ISSUE-1.
+- PORTAL-AUTHZ-01 and -02 live in `php/Portal_Authorization_Test.php` (framework types
+  only). PORTAL-AUTHZ-03 through -08 assert the APPLICATION's own portal models and
+  permission facade, so they live in the application suite
+  (`rsx/tests/Portal_Client_Authorization_Test.php`).
 
 ## Portal_Session_Terminate_Ownership_Test (php) - terminate_session() ownership predicate
 

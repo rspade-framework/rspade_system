@@ -106,7 +106,7 @@ class ManifestModulePriority_CodeQualityRule extends CodeQualityRule_Abstract
                 continue; // Module might not exist (e.g., Jqhtml is optional)
             }
 
-            $contents = file_get_contents($path);
+            $contents = $this->source()->content($path);
             $priority = $this->extract_priority($contents);
 
             if ($priority === null) {

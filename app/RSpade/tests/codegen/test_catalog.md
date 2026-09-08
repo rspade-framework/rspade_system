@@ -25,6 +25,9 @@
 | CODEGEN-16 | Self-check aborts when a hand-written line is dropped (strict) | php | seam-broken candidate | RuntimeException | implemented | 2026-07-15 |
 | CODEGEN-17 | Self-check passes for identical hand-written content | php | no-op candidate | no throw | implemented | 2026-07-15 |
 | CODEGEN-20 | End-to-end command against template app leaves non-fence bytes unchanged | cli | run `rsx:constants:regenerate`, git diff | only auto-region lines change | deferred (writer verified manually; a DB-backed cli test would re-assert) | 2026-07-30 |
+| CODEGEN-30 | B-108: a framework file importing a class that rsx/ overrides gets the import REWRITTEN to the rsx/ FQCN, never dropped | php | synthetic file map with both twins + a consumer type-hinting the class | `use Rsx\Models\...;` present, framework FQCN gone | implemented (Php_Fixer_Class_Override_Import_Test) | 2026-09-08 |
+| CODEGEN-31 | B-108: an already-correct `Rsx\` import of an overridden class survives two fixer passes - the delete pass and the re-add pass agree | php | same map, import already correct | import unchanged after two passes | implemented (Php_Fixer_Class_Override_Import_Test) | 2026-09-08 |
+| CODEGEN-32 | B-108: resolution is deterministic - rsx/ wins whatever order the file map is iterated in | php | file map reversed | same rewrite | implemented (Php_Fixer_Class_Override_Import_Test) | 2026-09-08 |
 | CODEGEN-26 | Command output spans CTI detail columns `(detail: <table>)`, emits BEM/typed enum members, and DATE/DATETIME as `string` not Carbon | php | `build_metadata(Party_Model)` | detail lines + `type_id__label` + `string $created_at` present, no `\Carbon\Carbon` | implemented (Constants_Regenerate_Metadata_Test) | 2026-07-30 |
 
 Php_Fixer source safety (backlog B-68 + the relationship-attribute defect), via

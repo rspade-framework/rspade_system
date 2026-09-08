@@ -127,6 +127,16 @@ class Sys_Panel_Published_Route_Test extends Rsx_Test_Abstract
             str_contains($contents, '_Sys_Layout'),
             'panel code reached an application bundle - the published route is the ONLY thing that crosses'
         );
+
+        // The same boundary is why the published JS SUBCLASS INDEX is restricted to the
+        // classes this bundle registers: emitting the whole of js_subclass_index would put
+        // the panel's class names into every application bundle. It IS emitted (it is what
+        // makes Manifest.get_extending() a lookup rather than a scan) - just not that.
+        static::__assert_contains(
+            'Manifest._define_published_subclass_index(',
+            $contents,
+            'the bundle does not publish the JS subclass index - get_extending() falls back to a full scan'
+        );
     }
 
     /**

@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\Convention;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * CONV-BUNDLE-04 - a framework-owned bundle may not include anything from rsx/.
@@ -77,11 +78,26 @@ class FrameworkBundleAppInclude_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Cross-file: walks the manifest rather than the file it was handed.
+     * CROSS-FILE: this rule judges the tree, not one file. The driver runs it once per
+     * pass, gated on the fingerprint of what depends_on() declares.
      */
-    public function is_incremental(): bool
+    public function kind(): string
     {
-        return false;
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * Bundle classes and what they extend.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return [
+            'files:*.php',
+            'php_classes',
+            'php_subclass_index',
+        ];
     }
 
     /**
@@ -134,7 +150,7 @@ class FrameworkBundleAppInclude_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $contents = is_readable($file) ? file_get_contents($file) : '';
+        $contents = is_readable($file) ? $this->source()->content($file) : '';
         if ($contents !== '' && str_contains($contents, '@' . self::RULE_ID . '-EXCEPTION')) {
             return;
         }
@@ -296,6 +312,6 @@ class FrameworkBundleAppInclude_CodeQualityRule extends CodeQualityRule_Abstract
      */
     private function __is_framework_path(string $rel_path): bool
     {
-        return str_starts_with(str_replace('\\', '/', $rel_path), 'app/RSpade/');
+        return Rsx_Paths::is_framework(str_replace('\\', '/', $rel_path));
     }
 }

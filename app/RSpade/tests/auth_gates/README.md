@@ -26,9 +26,9 @@ their payload computation is proven here in php, and the browser half is verifie
 | `Core/Permission/Permission_Abstract.php` | Staff realm root. Built-ins `public()` / `closed()` / `is_logged_in()` / `is_sysadmin()` (the control panel's gate), plus `can_access()`. |
 | `Core/Portal/Portal_Permission_Abstract.php` | Portal realm root. Portal twins of the same three. |
 | `Core/Dispatch/Route_ManifestSupport.php` | `'auth'` on `#[Route]` rows. |
-| `Core/SPA/Spa_ManifestSupport.php` | `'auth'` (PHP bootstrap) + `'auth_action'` (`@auth`) on SPA rows. |
+| `Core/SPA/Spa_ManifestSupport.php` | `'surface'` (the PHP bootstrap's key in `auth.surfaces`) + `'auth_action'` (`@auth`) on SPA rows. |
 | `Core/Portal/Portal_Route_ManifestSupport.php` | `'auth'` on `#[Portal_Route]` rows. |
-| `Core/Portal/Portal_Spa_ManifestSupport.php` | `'auth'` + `'auth_action'` on portal SPA rows. |
+| `Core/Portal/Portal_Spa_ManifestSupport.php` | `'surface'` + `'auth_action'` on portal SPA rows. |
 | `Core/Api/Api_Endpoint_ManifestSupport.php` | `'auth'` on `#[Api_Endpoint]` rows. |
 | `Core/Dispatch/Dispatcher.php` | Route/SPA seam. Also owns the dev-auth identity (moved here from the app's `Main::pre_dispatch` so gates can see it). |
 | `Core/Portal/Portal_Dispatcher.php` | `#[Portal_Route]` seam; portal login redirect on denial. |

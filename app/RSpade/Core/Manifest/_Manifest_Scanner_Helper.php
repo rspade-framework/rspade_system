@@ -6,6 +6,7 @@ use App\RSpade\CodeQuality\RuntimeChecks\ManifestErrors;
 use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\ExtensionRegistry;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * _Manifest_Scanner_Helper - File discovery, change detection, extraction
@@ -23,6 +24,33 @@ class _Manifest_Scanner_Helper
      */
     public const REFLECTION_NAMESPACE = 'php-reflection';
 
+    /**
+    * The keys _extract_reflection_data() writes, and therefore the keys the derived
+    * reflection cache must carry. A key missing from this list is a key that silently
+    * disappears from every record restored from cache.
+    */
+    /**
+    * Payload version of the derived reflection cache.
+    *
+    * BUMP IT WHEN REFLECTION_CACHED_KEYS CHANGES. An entry written by an older version is
+    * treated as a miss and overwritten under the same key (the file's hash), so the fix is
+    * self-healing and leaves no orphan directory behind. v2 added `extends_fqcn`, which v1
+    * omitted.
+    */
+    public const REFLECTION_CACHE_VERSION = 2;
+
+    public const REFLECTION_CACHED_KEYS = [
+        'abstract',
+        'extends_fqcn',
+        'attributes',
+        'public_static_methods',
+        'public_instance_methods',
+        'properties',
+        'implements',
+        'traits',
+        'is_trait',
+    ];
+
     // Static properties are defined on Manifest class and accessed via Manifest::$property
 
     /**
@@ -34,33 +62,15 @@ class _Manifest_Scanner_Helper
     /**
      * The directories this build indexes.
      *
-     * config('rsx.manifest.scan_directories') is the whole answer for a served site. A TEST
-     * RUN adds the three test trees on top: a fixture is real indexed source - a route, an
-     * Ajax surface, an #[Auth] naming a check - and a served site must not carry one. The
-     * outage that set this rule was a fixture whose #[Auth] named a check only the reference
-     * application declares, which failed the manifest build of every install that scanned it.
-     *
-     * suite_is_running() reads the --_test-run internal flag that rsx:test declares on itself
-     * and Rsx_Artisan forwards to every child, so a docker worker, a --sequential run and a
-     * command a test spawns all see the fixtures. The web entrypoint carries no argv, so a
-     * served request never does - and the manifest's ordinary add/remove handles the
-     * transition in both directions, on the first request after a run.
+     * The list belongs to the BUILD (Manifest_Build), not to this helper: config is where a
+     * served site's answer comes from, and a test builds a fixture tree by handing the facade
+     * a build with different roots.
      *
      * @return array<int,string>
      */
     public static function _scan_directories(): array
     {
-        $scan_paths = config('rsx.manifest.scan_directories', ['rsx']);
-
-        if (\App\RSpade\Core\Testing\Rsx_Test_Abstract::suite_is_running()) {
-            foreach (self::TEST_SCAN_DIRECTORIES as $test_path) {
-                if (!in_array($test_path, $scan_paths, true)) {
-                    $scan_paths[] = $test_path;
-                }
-            }
-        }
-
-        return $scan_paths;
+        return Manifest::build()->scan_directories();
     }
 
     /**
@@ -76,21 +86,44 @@ class _Manifest_Scanner_Helper
         $scan_paths = static::_scan_directories();
         // rsx/tests lives INSIDE the rsx/ scan root, so leaving it out of the list is not
         // enough to keep it out of an ordinary build - it has to be skipped by path.
+        //
+        // A scan path INSIDE one of those trees un-suppresses it: naming
+        // `app/RSpade/temp/my_fixture_tree` as a root is a deliberate request to index
+        // exactly that subtree, and a blanket suppression of its parent would silently
+        // index nothing.
         $suppressed_trees = array_values(array_filter(
             self::TEST_SCAN_DIRECTORIES,
-            fn ($tree) => !in_array($tree, $scan_paths, true)
+            function ($tree) use ($scan_paths) {
+                $prefix = rtrim($tree, '/') . '/';
+
+                foreach ($scan_paths as $scan_path) {
+                    if ($scan_path === $tree || str_starts_with($scan_path, $prefix)) {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
         ));
         $files = [];
 
         foreach ($scan_paths as $scan_path) {
             $full_path = base_path($scan_path);
 
-            // Check if path exists - throw fatal error if not (except for app/RSpade/temp)
+            // Check if path exists - a missing root is fatal, except for the test trees.
             if (!file_exists($full_path)) {
-                // Special case: silently skip app/RSpade/temp if it doesn't exist. It is the
-                // framework developer's scratch tree and is legitimately absent; every other
-                // path in the list - the test trees a test run adds included - is a fatal.
-                if ($scan_path === 'app/RSpade/temp') {
+                // A TEST TREE IS OPTIONAL. The three entries of TEST_SCAN_DIRECTORIES are put
+                // on the list by the test RUN (Manifest_Build::from_config()), not by the
+                // operator, and every one of them is legitimately absent: app/RSpade/temp is
+                // the framework developer's scratch tree, and an application that keeps its
+                // suites beside the code it tests has no rsx/tests at all. A fatal here would
+                // mean such an application could not start rsx:test until it created an empty
+                // directory to satisfy a list it never wrote.
+                //
+                // Everything else in the list came from config('rsx.manifest.scan_directories')
+                // and stays a fatal: a served site's own root going missing is a broken
+                // install, and silence there is how a build indexes half an application.
+                if (in_array($scan_path, self::TEST_SCAN_DIRECTORIES, true)) {
                     continue;
                 }
 
@@ -213,7 +246,14 @@ class _Manifest_Scanner_Helper
             return Manifest::$_has_changed_cache[$file];
         }
 
-        if (!isset(Manifest::$data['data']['files'][$file])) {
+        // file_index is the WHOLE tree's [size, mtime] - the hot half of the index carries it
+        // for exactly this sweep, so change detection never loads the cold half. During a
+        // BUILD it is stale (the build is what writes it), so the live files map wins when it
+        // has the entry.
+        $live = Manifest::$data['data']['files'][$file] ?? null;
+        $indexed = Manifest::$data['data']['file_index'][$file] ?? null;
+
+        if ($live === null && $indexed === null) {
             // Only show the message once per page load
             if (!Manifest::$__shown_rescan_message) {
                 console_debug('MANIFEST', '* New file ' . $file . ' is triggering manifest rescan *');
@@ -224,7 +264,9 @@ class _Manifest_Scanner_Helper
             return true;
         }
 
-        $old = Manifest::$data['data']['files'][$file];
+        $old = $live !== null
+            ? ['size' => $live['size'] ?? null, 'mtime' => $live['mtime'] ?? null]
+            : ['size' => $indexed[0] ?? null, 'mtime' => $indexed[1] ?? null];
         $absolute_path = base_path($file);
 
         // Make sure file exists
@@ -242,7 +284,7 @@ class _Manifest_Scanner_Helper
         $current_size = filesize($absolute_path);
 
         // Stage 1: Size check (guard for incomplete manifest entries)
-        if (!isset($old['size']) || $old['size'] != $current_size) {
+        if ($old['size'] === null || $old['size'] != $current_size) {
             // Only show the message once per page load
             if (!Manifest::$__shown_rescan_message) {
                 console_debug('MANIFEST', '* File ' . $file . ' has changed size, triggering manifest rescan *');
@@ -255,7 +297,7 @@ class _Manifest_Scanner_Helper
 
         // Stage 2: mtime check (guard for incomplete manifest entries)
         $current_mtime = filemtime($absolute_path);
-        if (!isset($old['mtime']) || $old['mtime'] != $current_mtime) {
+        if ($old['mtime'] === null || $old['mtime'] != $current_mtime) {
             // Only show the message once per page load
             if (!Manifest::$__shown_rescan_message) {
                 console_debug('MANIFEST', '* File ' . $file . ' has changed mtime, triggering manifest rescan *');
@@ -272,9 +314,14 @@ class _Manifest_Scanner_Helper
     }
 
     /**
-    * Scan a directory for PHP classes, excluding vendor directories
-    * @param string $directory The directory to scan
-    * @return array Map of simple class names to FQCNs
+    * simple class name => FQCNs declared under a directory, by TOKEN PARSING every php file.
+    *
+    * IT EXISTS FOR THE UNINDEXED FRAMEWORK SUBTREES. app/RSpade/Commands, /Database, /Http,
+    * /Ide and friends are never scanned into the manifest, so nothing else knows their class
+    * names - and the autoloader still has to resolve them by simple name. The callers hand it
+    * only those subtrees and memoize the result on their stat fingerprint
+    * (_Manifest_Builder_Helper::_unindexed_framework_classes); it is not a general "find the
+    * classes" facility and must never be pointed at a tree the index already covers.
     */
     public static function _scan_directory_for_classes(string $directory): array
     {
@@ -295,48 +342,62 @@ class _Manifest_Scanner_Helper
                 continue;
             }
 
-            // Extract class information using token parsing
-            $content = file_get_contents($path);
-            $tokens = token_get_all($content);
-            $namespace = '';
-            $class_name = '';
-            $getting_namespace = false;
-            $getting_class = false;
+            foreach (static::_extract_classes_from_php_file($path) as $class_name => $fqcns) {
+                foreach ($fqcns as $fqcn) {
+                    $classes[$class_name][] = $fqcn;
+                }
+            }
+        }
 
-            foreach ($tokens as $i => $token) {
-                if (is_array($token)) {
-                    if ($token[0] === T_NAMESPACE) {
-                        $getting_namespace = true;
-                        $namespace = '';
-                    } elseif ($token[0] === T_CLASS || $token[0] === T_INTERFACE || $token[0] === T_TRAIT) {
-                        // Make sure this isn't an anonymous class
-                        $next_token_idx = $i + 1;
-                        while ($next_token_idx < count($tokens) && is_array($tokens[$next_token_idx]) && $tokens[$next_token_idx][0] === T_WHITESPACE) {
-                            $next_token_idx++;
-                        }
-                        if ($next_token_idx < count($tokens) && is_array($tokens[$next_token_idx]) && $tokens[$next_token_idx][0] === T_STRING) {
-                            $getting_class = true;
-                        }
-                    } elseif ($getting_namespace && ($token[0] === T_NAME_QUALIFIED || $token[0] === T_STRING || $token[0] === T_NS_SEPARATOR)) {
-                        $namespace .= $token[1];
-                    } elseif ($getting_class && $token[0] === T_STRING) {
-                        $class_name = $token[1];
-                        $getting_class = false;
+        return $classes;
+    }
 
-                        // We have both namespace and class name, add to map
-                        if ($class_name) {
-                            $fqcn = $namespace ? $namespace . '\\' . $class_name : $class_name;
-                            if (!isset($classes[$class_name])) {
-                                $classes[$class_name] = [];
-                            }
-                            $classes[$class_name][] = $fqcn;
-                        }
+    /**
+    * The single-file half of _scan_directory_for_classes(): class name => FQCNs declared in
+    * ONE php file, read with token_get_all().
+    */
+    public static function _extract_classes_from_php_file(string $path): array
+    {
+        $classes = [];
+
+        $content = file_get_contents($path);
+        $tokens = token_get_all($content);
+        $namespace = '';
+        $class_name = '';
+        $getting_namespace = false;
+        $getting_class = false;
+        $token_count = count($tokens);
+
+        foreach ($tokens as $i => $token) {
+            if (is_array($token)) {
+                if ($token[0] === T_NAMESPACE) {
+                    $getting_namespace = true;
+                    $namespace = '';
+                } elseif ($token[0] === T_CLASS || $token[0] === T_INTERFACE || $token[0] === T_TRAIT) {
+                    // Make sure this isn't an anonymous class
+                    $next_token_idx = $i + 1;
+                    while ($next_token_idx < $token_count && is_array($tokens[$next_token_idx]) && $tokens[$next_token_idx][0] === T_WHITESPACE) {
+                        $next_token_idx++;
                     }
-                } else {
-                    // Non-array token (like ; or {)
-                    if ($token === ';' || $token === '{') {
-                        $getting_namespace = false;
+                    if ($next_token_idx < $token_count && is_array($tokens[$next_token_idx]) && $tokens[$next_token_idx][0] === T_STRING) {
+                        $getting_class = true;
                     }
+                } elseif ($getting_namespace && ($token[0] === T_NAME_QUALIFIED || $token[0] === T_STRING || $token[0] === T_NS_SEPARATOR)) {
+                    $namespace .= $token[1];
+                } elseif ($getting_class && $token[0] === T_STRING) {
+                    $class_name = $token[1];
+                    $getting_class = false;
+
+                    // We have both namespace and class name, add to map
+                    if ($class_name) {
+                        $fqcn = $namespace ? $namespace . '\\' . $class_name : $class_name;
+                        $classes[$class_name][] = $fqcn;
+                    }
+                }
+            } else {
+                // Non-array token (like ; or {)
+                if ($token === ';' || $token === '{') {
+                    $getting_namespace = false;
                 }
             }
         }
@@ -367,7 +428,6 @@ class _Manifest_Scanner_Helper
         }
 
         $data = [
-            'file' => $file_path,  // Store relative path
             'hash' => sha1_file($absolute_path),
             'mtime' => $stat['mtime'],
             'size' => $stat['size'],
@@ -382,12 +442,13 @@ class _Manifest_Scanner_Helper
         // Add advanced extraction based on file type (pass absolute path)
         switch ($extension) {
             case 'php':
-                $php_metadata = \App\RSpade\Core\PHP\Php_Parser::parse($absolute_path, Manifest::$data);
+                $php_metadata = \App\RSpade\Core\PHP\Php_Parser::parse($absolute_path);
                 $data = array_merge($data, $php_metadata);
 
                 // Php_Parser::parse() may have modified the file via Php_Fixer in development mode
-                // Recalculate file stats to reflect any changes made during parsing
-                if (!app()->environment('production')) {
+                // Recalculate file stats to reflect any changes made during parsing.
+                // RSX_MODE is the one mode oracle - app()->environment() derives from it.
+                if (!\App\RSpade\Core\Rsx::is_production()) {
                     clearstatcache(true, $absolute_path);
                     $updated_stat = stat($absolute_path);
                     $data['hash'] = sha1_file($absolute_path);
@@ -400,7 +461,7 @@ class _Manifest_Scanner_Helper
                 // Parse upstream files to extract class metadata
                 // These are framework files that were renamed when an rsx/ override was created
                 // Php_Fixer only runs on extension 'php', so upstream files are safe
-                $php_metadata = \App\RSpade\Core\PHP\Php_Parser::parse($absolute_path, Manifest::$data);
+                $php_metadata = \App\RSpade\Core\PHP\Php_Parser::parse($absolute_path);
                 $data = array_merge($data, $php_metadata);
                 break;
 
@@ -598,9 +659,12 @@ class _Manifest_Scanner_Helper
                 continue;
             }
 
+            // `static` is recorded only when TRUE. An instance method's record used to
+            // carry `'static' => false` - a byte-for-byte constant on every public instance
+            // method in the index - and every reader already spells the test
+            // `!isset(...) || !...`, so an omitted flag reads false.
             $method_data = [
                 'name' => $method->getName(),
-                'static' => false,  // Always false for instance methods
                 'visibility' => 'public',  // Always public since we filtered for public
                 'line' => $method->getStartLine(),
             ];
@@ -672,11 +736,17 @@ class _Manifest_Scanner_Helper
         $properties = [];
         foreach ($reflection->getProperties() as $property) {
             if ($property->getDeclaringClass()->getName() === $full_class_name) {
-                $properties[] = [
+                $property_data = [
                     'name' => $property->getName(),
                     'visibility' => $property->isPublic() ? 'public' : ($property->isProtected() ? 'protected' : 'private'),
-                    'static' => $property->isStatic(),
                 ];
+
+                // Recorded only when true; static properties have their own index.
+                if ($property->isStatic()) {
+                    $property_data['static'] = true;
+                }
+
+                $properties[] = $property_data;
             }
         }
 
@@ -686,25 +756,38 @@ class _Manifest_Scanner_Helper
     }
 
     /**
-
-    /**
-    * Extract reflection data only for changed files
-    * Uses caching to avoid re-extracting unchanged files
+    * Extract reflection data for the CHANGED files, and for nobody else.
+    *
+    * THE UNCHANGED FILES ARE ALREADY DONE. Their records came out of the index this build
+    * loaded, reflection keys and all, and they were carried forward verbatim - so re-reading
+    * and json_decode()ing 1,000-odd derived JSON files to restore data that is already in
+    * memory was pure cost. The loop below iterates the changed set only, and ASSERTS the
+    * carried-forward invariant for everything else (see __assert_reflection_carried_forward).
+    *
+    * The derived JSON stays, because it is the SURVIVAL PATH: when the index is gone (a
+    * clean, a corrupt cache) every file is "changed" and the cache is what keeps a cold
+    * build from re-reflecting a tree that has not moved.
     */
     public static function _extract_reflection_for_changed_files(array $changed_files): void
     {
-        // Build a set of changed files for quick lookup
-        $changed_files_set = array_flip($changed_files);
+        foreach ($changed_files as $file) {
+            if (!isset(Manifest::$data['data']['files'][$file])) {
+                continue;
+            }
 
-        // Process ALL PHP files to restore cached data or extract new reflection
-        foreach (Manifest::$data['data']['files'] as $file => &$metadata) {
+            $metadata = &Manifest::$data['data']['files'][$file];
+
             // Skip non-PHP files
             if (!isset($metadata['extension']) || $metadata['extension'] !== 'php') {
+                unset($metadata);
+
                 continue;
             }
 
             // Skip files without classes
             if (!isset($metadata['fqcn'])) {
+                unset($metadata);
+
                 continue;
             }
 
@@ -716,36 +799,36 @@ class _Manifest_Scanner_Helper
             // why the *_for_hash twins exist at all.
             $cache_key = $metadata['hash'];
 
-            // Get absolute path - rsx/ files are in project root, not system/
-            if (str_starts_with($file, 'rsx/')) {
-                $absolute_path = rsxrealpath(base_path('../' . $file));
-            } else {
-                $absolute_path = rsxrealpath(base_path($file));
-            }
+            // Rsx_Paths::real() is the one spelling: it resolves the `system/rsx` symlink
+            // so the project mount and the symlink converge on the same derived-cache key.
+            $absolute_path = Rsx_Paths::real($file);
 
-            // Check if this file changed
-            $file_changed = isset($changed_files_set[$file]);
+            // The derived cache still answers for a file whose CONTENT the build has seen
+            // before - a cold build after a clean, a file reverted to a previous state.
+            $cached_json = File_Content_Cache::get_for_hash(
+                self::REFLECTION_NAMESPACE,
+                $cache_key,
+                '',
+                'json',
+                $absolute_path
+            );
 
-            // Try to use cached data if file hasn't changed. The mtime guard on top of the
-            // hash hit is kept exactly as it was.
-            if (!$file_changed) {
-                $cached_json = File_Content_Cache::get_for_hash(
-                    self::REFLECTION_NAMESPACE,
-                    $cache_key,
-                    '',
-                    'json',
-                    $absolute_path
-                );
+            if ($cached_json !== null) {
+                $cached_data = json_decode($cached_json, true);
 
-                if ($cached_json !== null) {
-                    $cached_data = json_decode($cached_json, true);
-                    if ($cached_data !== null) {
-                        // Merge cached reflection data into manifest without breaking the reference
-                        foreach ($cached_data as $key => $value) {
-                            $metadata[$key] = $value;
-                        }
-                        continue;
+                if (is_array($cached_data)
+                    && ($cached_data['__version'] ?? null) === self::REFLECTION_CACHE_VERSION) {
+                    unset($cached_data['__version']);
+
+                    // Merge cached reflection data into manifest without breaking the reference
+                    foreach ($cached_data as $key => $value) {
+                        $metadata[$key] = $value;
                     }
+
+                    static::__normalize_reflection_key_order($metadata);
+                    unset($metadata);
+
+                    continue;
                 }
             }
 
@@ -755,38 +838,105 @@ class _Manifest_Scanner_Helper
             // Extract reflection data (path already normalized with realpath above)
             Manifest::_extract_reflection_data($absolute_path, $fqcn, $metadata);
 
-            // Cache the reflection data
+            // Cache the reflection data.
+            //
+            // EVERY KEY _extract_reflection_data() WRITES, not a hand-picked subset. It used
+            // to omit `extends_fqcn`, and the omission was invisible because the cache was
+            // only consulted for files the build had NOT re-parsed: a cold build reflected
+            // everything, so the key was always present in the index that got saved, and only
+            // a warm restore lost it. The restore path is now the ordinary one, and two live
+            // consumers read that key - InstanceMethods_CodeQualityRule walks the ancestry
+            // through it, and Auth_ManifestSupport resolves realm membership through it - so
+            // the omission became a wrong answer instead of a latent one.
             $reflection_data = [];
-            // Add abstract property for correct subclass filtering
-            if (isset($metadata['abstract'])) {
-                $reflection_data['abstract'] = $metadata['abstract'];
-            }
-            if (isset($metadata['attributes'])) {
-                $reflection_data['attributes'] = $metadata['attributes'];
-            }
-            if (isset($metadata['public_static_methods'])) {
-                $reflection_data['public_static_methods'] = $metadata['public_static_methods'];
-            }
-            if (isset($metadata['public_instance_methods'])) {
-                $reflection_data['public_instance_methods'] = $metadata['public_instance_methods'];
-            }
-            if (isset($metadata['properties'])) {
-                $reflection_data['properties'] = $metadata['properties'];
-            }
-            if (isset($metadata['implements'])) {
-                $reflection_data['implements'] = $metadata['implements'];
-            }
-            if (isset($metadata['traits'])) {
-                $reflection_data['traits'] = $metadata['traits'];
+
+            foreach (self::REFLECTION_CACHED_KEYS as $reflection_key) {
+                if (array_key_exists($reflection_key, $metadata)) {
+                    $reflection_data[$reflection_key] = $metadata[$reflection_key];
+                }
             }
 
+            static::__normalize_reflection_key_order($metadata);
+
             if (!empty($reflection_data)) {
+                $reflection_data['__version'] = self::REFLECTION_CACHE_VERSION;
+
                 File_Content_Cache::put_for_hash(
                     self::REFLECTION_NAMESPACE,
                     $cache_key,
                     '',
                     'json',
                     json_encode($reflection_data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+                );
+            }
+
+            unset($metadata);
+        }
+
+        static::__assert_reflection_carried_forward($changed_files);
+    }
+
+    /**
+    * Put the reflection keys in one canonical order at the end of the record.
+    *
+    * A record's KEY ORDER is part of the index's bytes and therefore part of the build key.
+    * The two paths that produce reflection - fresh extraction and a restore from the derived
+    * cache - naturally write those keys in different orders, so two builds of an identical
+    * tree could disagree about their own hash purely on which path each file took.
+    */
+    private static function __normalize_reflection_key_order(array &$metadata): void
+    {
+        $reflection = [];
+
+        foreach (self::REFLECTION_CACHED_KEYS as $key) {
+            if (array_key_exists($key, $metadata)) {
+                $reflection[$key] = $metadata[$key];
+                unset($metadata[$key]);
+            }
+        }
+
+        foreach ($reflection as $key => $value) {
+            $metadata[$key] = $value;
+        }
+    }
+
+    /**
+    * The invariant the skip above rests on: a PHP class record this build did NOT re-parse
+    * still carries its reflection.
+    *
+    * `abstract` is the marker, because _extract_reflection_data() always writes it (true or
+    * false) for a class and nothing else does. A record without it is a record that was
+    * carried forward from an index written by a build that never reflected it - which would
+    * mean the skip is silently shipping a class with no attributes and no method map, and
+    * every attribute-driven index would quietly lose its rows.
+    *
+    * shouldnt_happen(), not a repair: repairing it here would hide the defect that produced
+    * it, and the index that produced it is on disk to be looked at.
+    */
+    private static function __assert_reflection_carried_forward(array $changed_files): void
+    {
+        $changed = array_flip($changed_files);
+
+        foreach (Manifest::$data['data']['files'] as $file => $metadata) {
+            if (isset($changed[$file])) {
+                continue;
+            }
+
+            if (($metadata['extension'] ?? null) !== 'php' || !isset($metadata['fqcn'])) {
+                continue;
+            }
+
+            // A trait's methods are indexed on the classes that use it; reflection returns
+            // before writing `abstract` for one.
+            if (!empty($metadata['is_trait'])) {
+                continue;
+            }
+
+            if (!array_key_exists('abstract', $metadata)) {
+                shouldnt_happen(
+                    "Manifest reflection invariant broken: {$file} was not re-parsed by this build "
+                    . 'and its record carries no reflection data. An unchanged file must arrive with '
+                    . 'the reflection the previous build wrote.'
                 );
             }
         }
@@ -997,153 +1147,212 @@ class _Manifest_Scanner_Helper
     * @deprecated Use _load_changed_php_files() for incremental builds
     */
     /**
-    * Run Php_Fixer on all PHP files in rsx/ and app/RSpade/
-    * Called before Phase 2 parsing to ensure all files are fixed
+    * Run Php_Fixer over the files that can actually need fixing.
     *
-    * SMART REBUILD STRATEGY:
-    * This method implements an intelligent rebuild strategy to avoid unnecessary file writes:
+    * TWO STRATEGIES, and the interesting one is the second.
     *
-    * 1. STRUCTURE HASH: Creates SHA1 hash of "ClassName:ParentClass" for ALL classes
-    *    - Detects when classes are added, removed, renamed, or inheritance changes
+    * STRUCTURE UNCHANGED - fix the files that changed on disk. No class arrived, left,
+    * moved or changed parent, so nothing else's imports can have gone wrong.
     *
-    * 2. FULL REBUILD TRIGGERS:
-    *    - New class added (may need new use statements elsewhere)
-    *    - Class renamed (all references need updating)
-    *    - Inheritance changed (may affect use statement resolution)
-    *    → When triggered: Fix ALL PHP files in rsx/ and app/RSpade/
+    * STRUCTURE CHANGED - fix the changed files PLUS the files that REFERENCE a class in the
+    * delta. It used to fix every PHP file in the tree, on the reasoning that a structural
+    * change cascades; it does, but only along references. The scanner records a
+    * `referenced_simple_names` list per PHP file for exactly this (a generous
+    * over-approximation - a name it wrongly includes costs one file re-fixed, a name it
+    * missed would cost a stale import), and the delta is computed from the STRUCTURE MAP
+    * the previous build stored, not from a bare hash that could only ever say "something".
     *
-    * 3. INCREMENTAL REBUILD:
-    *    - Structure hash unchanged (no new/renamed classes)
-    *    - Only fixes files that actually changed on disk
-    *    → More efficient, avoids touching unchanged files
+    * THE STRUCTURE MAP IS STORED BY THE CALLER, AFTER THE RE-PARSE. The fixer rewrites
+    * files, the caller re-parses what it rewrote, and only then is the structure the one
+    * this build actually leaves behind. Storing it here recorded the PRE-fix shape, so a
+    * genuine structural fix guaranteed a second full pass on the next build.
     *
-    * WHY THIS MATTERS:
-    * - use statement management depends on knowing all available classes
-    * - FQCN replacement needs to check class name uniqueness
-    * - When class structure changes, files referencing those classes need updating
-    * - When structure stable, only changed files need processing
-    *
-    * @param array $changed_files List of changed files from Phase 1
-    * @return array List of files that were modified by Php_Fixer
+    * @param array $changed_files Files re-parsed this build
+    * @return array The files Php_Fixer modified
     */
     public static function _run_php_fixer(array $changed_files): array
     {
         $modified_files = [];
 
-        // ==================================================================================
-        // STEP 1: BUILD CLASS STRUCTURE HASH
-        // ==================================================================================
-        // Create a fingerprint of ALL classes in the codebase.
-        // Format: "path/to/file.php" => "ClassName:ParentClass"
-        // This lets us detect when the class structure itself changes (not just file contents)
-        // ==================================================================================
+        $new_structure = static::_compute_class_structure();
+        $previous_structure = static::_load_class_structure();
 
-        $class_structure_hash_data = [];
+        $php_files_to_fix = [];
+        $queued = [];
 
-        foreach (Manifest::$data['data']['files'] as $file_path => $metadata) {
-            // Only process PHP files with classes
-            if (!isset($metadata['extension']) || $metadata['extension'] !== 'php') {
-                continue;
+        $queue = function (string $file_path) use (&$php_files_to_fix, &$queued): void {
+            if (isset($queued[$file_path])) {
+                return;
+            }
+
+            $metadata = Manifest::$data['data']['files'][$file_path] ?? null;
+
+            if ($metadata === null || ($metadata['extension'] ?? null) !== 'php') {
+                return;
             }
 
             if (!isset($metadata['class'])) {
-                continue;
+                return;
             }
 
-            // Build hash entry: filename => ClassName:ParentClass
-            $class_name = $metadata['class'];
-            $extends = $metadata['extends'] ?? '';
-            $class_structure_hash_data[$file_path] = $class_name . ':' . $extends;
+            if (!str_starts_with($file_path, 'rsx/') && !str_starts_with($file_path, 'app/RSpade/')) {
+                return;
+            }
+
+            $queued[$file_path] = true;
+            $php_files_to_fix[] = $file_path;
+        };
+
+        foreach ($changed_files as $file_path) {
+            $queue($file_path);
         }
 
-        // Calculate hash of class structure
-        $new_class_structure_hash = sha1(json_encode($class_structure_hash_data));
-
-        // ==================================================================================
-        // STEP 2: DECIDE REBUILD STRATEGY
-        // ==================================================================================
-        // Compare with previous hash to detect structural changes
-        // ==================================================================================
-
-        $previous_hash = Manifest::$data['data']['php_fixer_hash'] ?? null;
-        $structure_changed = ($previous_hash !== $new_class_structure_hash);
-
-        if ($structure_changed) {
-            // ==================================================================================
-            // FULL REBUILD: Class structure changed
-            // ==================================================================================
-            // When class structure changes, we MUST fix ALL files because:
-            // - New classes may be referenced in existing files → need new use statements
-            // - Renamed classes need all references updated
-            // - Inheritance changes may affect use statement resolution
-            // ==================================================================================
-            $php_files_to_fix = [];
-
-            foreach (Manifest::$data['data']['files'] as $file_path => $metadata) {
-                // Only process PHP files
-                if (!isset($metadata['extension']) || $metadata['extension'] !== 'php') {
-                    continue;
-                }
-
-                // Only process files in rsx/ or app/RSpade/
-                if (!str_starts_with($file_path, 'rsx/') && !str_starts_with($file_path, 'app/RSpade/')) {
-                    continue;
-                }
-
-                $php_files_to_fix[] = $file_path;
+        if ($previous_structure === null) {
+            // NO MEMORY AT ALL (a clean, a first build). Every file is a candidate, which is
+            // also what the changed set says on a cold build - this is the belt-and-braces
+            // half, for an index that carried files forward but lost the structure map.
+            foreach (array_keys(Manifest::$data['data']['files']) as $file_path) {
+                $queue($file_path);
             }
+        } elseif ($previous_structure !== $new_structure) {
+            $delta = static::_class_structure_delta($previous_structure, $new_structure);
 
-            // Run Php_Fixer on all files and collect modified ones
+            if (!empty($delta)) {
+                foreach (Manifest::$data['data']['files'] as $file_path => $metadata) {
+                    // A record with NO reference list predates the field (an index written
+                    // before this build's framework version). "I do not know what this file
+                    // references" has exactly one safe answer, and it is the old behaviour:
+                    // fix it. One rebuild re-parses it and the list is there from then on.
+                    if (!array_key_exists('referenced_simple_names', $metadata)) {
+                        if (($metadata['extension'] ?? null) === 'php') {
+                            $queue($file_path);
+                        }
+
+                        continue;
+                    }
+
+                    foreach ($metadata['referenced_simple_names'] as $name) {
+                        if (isset($delta[$name])) {
+                            $queue($file_path);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        \App\RSpade\Core\PHP\Php_Fixer::begin_run(Manifest::$data);
+
+        try {
             foreach ($php_files_to_fix as $file_path) {
                 if (\App\RSpade\Core\PHP\Php_Fixer::fix($file_path, Manifest::$data)) {
                     $modified_files[] = $file_path;
                 }
             }
-
-            // Store updated hash for next rebuild comparison
-            Manifest::$data['data']['php_fixer_hash'] = $new_class_structure_hash;
-        } else {
-            // ==================================================================================
-            // INCREMENTAL REBUILD: Class structure unchanged
-            // ==================================================================================
-            // Only fix files that actually changed on disk.
-            // Safe because:
-            // - No new classes = no new use statements needed elsewhere
-            // - No renamed classes = no references to update
-            // - No inheritance changes = use statement resolution unchanged
-            // Result: Much faster, avoids touching 99% of files on typical edits
-            // ==================================================================================
-            $php_files_to_fix = [];
-
-            foreach ($changed_files as $file_path) {
-                // Check if this is a PHP file with a class in the manifest
-                if (!isset(Manifest::$data['data']['files'][$file_path])) {
-                    continue;
-                }
-
-                $metadata = Manifest::$data['data']['files'][$file_path];
-
-                // Only process PHP files with classes
-                if (!isset($metadata['extension']) || $metadata['extension'] !== 'php') {
-                    continue;
-                }
-
-                if (!isset($metadata['class'])) {
-                    continue;
-                }
-
-                $php_files_to_fix[] = $file_path;
-            }
-
-            // Run Php_Fixer on changed files only and collect modified ones
-            foreach ($php_files_to_fix as $file_path) {
-                if (\App\RSpade\Core\PHP\Php_Fixer::fix($file_path, Manifest::$data)) {
-                    $modified_files[] = $file_path;
-                }
-            }
+        } finally {
+            \App\RSpade\Core\PHP\Php_Fixer::end_run();
         }
 
         return $modified_files;
+    }
+
+    /** Where the fixer's structure memory lives for THIS build. */
+    private static function _class_structure_path(): string
+    {
+        return Manifest::build()->storage_root() . '/' . Manifest::PHP_FIXER_STRUCTURE_FILE;
+    }
+
+    /**
+    * The structure map the PREVIOUS build left behind, or null when there is none.
+    */
+    public static function _load_class_structure(): ?array
+    {
+        $path = static::_class_structure_path();
+
+        if (!is_file($path)) {
+            return null;
+        }
+
+        $structure = include $path;
+
+        return is_array($structure) ? $structure : null;
+    }
+
+    /**
+    * Record the shape this build leaves behind. Called AFTER the fixer's rewrites have been
+    * re-parsed, so it describes the tree as it now is.
+    */
+    public static function _store_class_structure(): void
+    {
+        $path = static::_class_structure_path();
+        ensure_directory(dirname($path));
+
+        file_put_contents_safe(
+            $path,
+            "<?php\n// Php_Fixer class-structure memory - DO NOT EDIT\nreturn "
+            . var_export(static::_compute_class_structure(), true) . ";\n"
+        );
+    }
+
+    /**
+    * class name => "file|parent" for every indexed PHP class.
+    *
+    * The fixer's memory of the tree's SHAPE. A map rather than a hash, because "did the
+    * structure move" is a cheap comparison either way and "WHICH classes moved" is the
+    * question that narrows the pass.
+    *
+    * THE TEST TREES ARE NOT IN IT, and that is the point. A fixture is indexed only while
+    * the process is a test run, so 635 classes ARRIVE on entry to a run and LEAVE on the
+    * first served request after it - and a structure map that counted them called that a
+    * structural change in both directions, which re-fixed every file that referenced
+    * anything in the delta and cost ~9 s of an otherwise idle request. A fixture entering
+    * or leaving cannot change what application or framework code must import: nothing
+    * outside a test tree may reference a fixture. Fixtures themselves are fixed from the
+    * CHANGED set, under a test run, which is when they exist.
+    */
+    public static function _compute_class_structure(): array
+    {
+        $structure = [];
+
+        foreach (Manifest::$data['data']['files'] as $file_path => $metadata) {
+            if (($metadata['extension'] ?? null) !== 'php' || !isset($metadata['class'])) {
+                continue;
+            }
+
+            if (Rsx_Paths::is_test_tree($file_path)) {
+                continue;
+            }
+
+            $structure[$metadata['class']] = $file_path . '|' . ($metadata['extends'] ?? '');
+        }
+
+        ksort($structure);
+
+        return $structure;
+    }
+
+    /**
+    * The class names whose declaration ARRIVED, LEFT, MOVED or CHANGED PARENT.
+    *
+    * @return array<string,bool>
+    */
+    public static function _class_structure_delta(array $previous, array $current): array
+    {
+        $delta = [];
+
+        foreach ($current as $class => $signature) {
+            if (($previous[$class] ?? null) !== $signature) {
+                $delta[$class] = true;
+            }
+        }
+
+        foreach ($previous as $class => $signature) {
+            if (!isset($current[$class])) {
+                $delta[$class] = true;
+            }
+        }
+
+        return $delta;
     }
 
     /**
@@ -1155,24 +1364,28 @@ class _Manifest_Scanner_Helper
     */
     public static function _restore_orphaned_upstream_files(): void
     {
-        // Collect all PHP class names currently in the manifest
+        // ONE pass, two answers: the active class names, and the .upstream entries. The
+        // second loop used to walk the whole index again looking for the handful of archived
+        // files it is actually about.
         $active_php_classes = [];
+        $upstream_entries = [];
+
         foreach (Manifest::$data['data']['files'] as $file => $metadata) {
-            if (isset($metadata['extension']) && $metadata['extension'] === 'php' &&
-                isset($metadata['class']) && !empty($metadata['class'])) {
+            $extension = $metadata['extension'] ?? null;
+
+            if ($extension === 'php' && !empty($metadata['class'])) {
                 $active_php_classes[$metadata['class']] = $file;
+
+                continue;
+            }
+
+            if ($extension === 'php.upstream' && !empty($metadata['class'])) {
+                $upstream_entries[$file] = $metadata;
             }
         }
 
         // Check each .upstream file
-        foreach (Manifest::$data['data']['files'] as $file => $metadata) {
-            if (!isset($metadata['extension']) || $metadata['extension'] !== 'php.upstream') {
-                continue;
-            }
-
-            if (!isset($metadata['class']) || empty($metadata['class'])) {
-                continue;
-            }
+        foreach ($upstream_entries as $file => $metadata) {
 
             $class_name = $metadata['class'];
 
@@ -1188,12 +1401,15 @@ class _Manifest_Scanner_Helper
 
             if (file_exists($upstream_path) && !file_exists($restored_path)) {
                 rename($upstream_path, $restored_path);
+                Manifest::$_override_pass_renamed = true;
                 console_debug('MANIFEST', "Class restore: {$class_name} - restored {$file} to .php");
 
                 // Remove the .upstream entry from manifest
                 unset(Manifest::$data['data']['files'][$file]);
 
-                Manifest::$_needs_manifest_restart = true;
+                Manifest::flag_needs_restart(
+                    'an orphaned .upstream file was restored: ' . $class_name . ' (' . $file . ')'
+                );
             }
         }
     }

@@ -92,7 +92,7 @@ Consequences worth internalizing:
 
 `rsx:clean` refuses while sealed. Write choke points throw on unauthorized writes under `rsx-build`. **Only an `--authorized` rebuild context may write sealed assets.**
 
-They exist to stop the framework's OWN write paths, and they do not (and cannot) stop a developer who goes around them: `rm -rf storage/rsx-build`, editing a bundle by hand, `cp` over `manifest_data.php`, `DB::table()->update()`. Nothing at the framework layer sees those. **The analogy is the realtime model layer**: `save()`/`delete()` emit change frames, a raw `DB::table()` write emits nothing, by design. `rsx:prod:verify` is the backstop that DETECTS such drift afterwards - it never prevents it.
+They exist to stop the framework's OWN write paths, and they do not (and cannot) stop a developer who goes around them: `rm -rf storage/rsx-build`, editing a bundle by hand, `cp` over `manifest_index.php`, `DB::table()->update()`. Nothing at the framework layer sees those. **The analogy is the realtime model layer**: `save()`/`delete()` emit change frames, a raw `DB::table()` write emits nothing, by design. `rsx:prod:verify` is the backstop that DETECTS such drift afterwards - it never prevents it.
 
 ---
 
@@ -101,7 +101,7 @@ They exist to stop the framework's OWN write paths, and they do not (and cannot)
 **Two byte-identical codebases, checked out at DIFFERENT absolute paths, produce an IDENTICAL build_key and IDENTICAL bundle filenames, byte-for-byte.** That is what lets one compile be trusted across a cluster, or cached by CI keyed on build_key.
 
 1. **File hashing branches on `RSX_MODE`**, the single mode switch. In a prod mode the hash covers the file's PROJECT-RELATIVE path plus its CONTENT (sha512) - never the absolute path, never disk timestamps. (Development still uses a fast abspath+size+mtime hash; it only needs to notice local edits and is deliberately not portable.)
-2. **The manifest hash excludes per-file mtime/size.** They stay in the cache file for dev change-detection but are OUT of the hashed projection, and the prod cache file also drops the "generated" timestamp (that moved to the seal). So `manifest_data.php` is byte-stable and build_key is content-derived.
+2. **The manifest hash excludes per-file mtime/size.** A file contributes its path and its sha1 to the key and nothing else, so mtime and size cannot reach it; they stay in the index's `file_index` for dev change-detection. The index carries no `generated` timestamp in ANY mode, so both `manifest_index.php` and `manifest_files.php` are byte-stable and build_key is content-derived.
 3. **Bundle filenames are `{Bundle}__{app|vendor}.{hash8}.{ext}`**, the hash8 deriving from the same relative-path + content inputs plus the committed lockfile hashes and npm declarations. Minified output is reproducible given the pinned, committed `node_modules`.
 
 **Bonus, and it is a real one**: because build_key is content-derived and stable across checkouts, full-page-cache keys (`fpc:{build_key}:...`) are **cluster-shareable** - two nodes on the same build hit the same FPC entries. (`rsx:man fpc`.)

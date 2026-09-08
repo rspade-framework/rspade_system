@@ -320,8 +320,7 @@ class Bundle_Show_Command extends Command
         // Convert pattern to regex
         $regex = $this->pattern_to_regex($pattern);
         
-        foreach ($manifest_data as $file_info) {
-            $file_path = $file_info['file'] ?? $file_info['relative_path'] ?? '';
+        foreach ($manifest_data as $file_path => $file_info) {
             if (preg_match($regex, $file_path)) {
                 $files[] = $file_path;
             }

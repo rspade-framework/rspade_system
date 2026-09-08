@@ -4,7 +4,6 @@ namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use PhpParser\Node;
 use PhpParser\NodeFinder;
-use PhpParser\ParserFactory;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -49,7 +48,7 @@ class MassAssignment_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * Process file during manifest update to extract mass assignment metadata
      */
-    public function on_manifest_file_update(string $file_path, string $contents, array $metadata = []): ?array
+    private function __find_violations(string $file_path, string $contents): ?array
     {
 
         // Skip Model_Abstract itself
@@ -73,14 +72,11 @@ class MassAssignment_CodeQualityRule extends CodeQualityRule_Abstract
             return null; // Not a model class
         }
 
-        // Parse the file to check for mass assignment properties
-        $parser = (new ParserFactory())->createForNewestSupportedVersion();
-        try {
-            $ast = $parser->parse($contents);
-            if (!$ast) {
-                return null;
-            }
-        } catch (\Exception $e) {
+        // Parse the file to check for mass assignment properties, through the pass's ONE
+        // parser (null on a missing file or a syntax error).
+        $ast = $this->source()->ast($file_path);
+
+        if (!$ast) {
             return null;
         }
 
@@ -155,8 +151,10 @@ class MassAssignment_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Check for mass assignment violations in code quality metadata
-        if (isset($metadata['code_quality_metadata']['PHP-MASS-01']['mass_assignment_violations'])) {
-            $violations = $metadata['code_quality_metadata']['PHP-MASS-01']['mass_assignment_violations'];
+        $found = $this->__find_violations($file_path, $contents);
+
+        if (isset($found['mass_assignment_violations'])) {
+            $violations = $found['mass_assignment_violations'];
 
             // Throw on first violation
             foreach ($violations as $violation) {

@@ -57,7 +57,7 @@ class InlineScript_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * Process file during manifest update to extract inline script violations
      */
-    public function on_manifest_file_update(string $file_path, string $contents, array $metadata = []): ?array
+    private function __find_violations(string $file_path, string $contents): ?array
     {
         // Skip layouts (they can have script tags for loading external scripts)
         if (str_contains($file_path, 'layout') || str_contains($file_path, 'Layout')) {
@@ -112,8 +112,10 @@ class InlineScript_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Check for violations in code quality metadata
-        if (isset($metadata['code_quality_metadata']['BLADE-SCRIPT-01']['inline_script_violations'])) {
-            $violations = $metadata['code_quality_metadata']['BLADE-SCRIPT-01']['inline_script_violations'];
+        $found = $this->__find_violations($file_path, $contents);
+
+        if (isset($found['inline_script_violations'])) {
+            $violations = $found['inline_script_violations'];
 
             // Throw on first violation
             foreach ($violations as $violation) {

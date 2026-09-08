@@ -49,7 +49,7 @@ class JsFallbackLegacy_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Use original content to check comments before sanitization
-        $original_content = file_get_contents($file_path);
+        $original_content = $this->source()->content($file_path);
         $lines = explode("\n", $original_content);
 
         // Also get sanitized content to check for function calls

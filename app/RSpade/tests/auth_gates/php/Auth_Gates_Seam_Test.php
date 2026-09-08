@@ -423,12 +423,16 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
     // =========================================================================
 
     /**
-     * Every #[Api_Endpoint] row carries a gate list for the API dispatcher to
-     * evaluate (the dispatcher reads $route['auth'], like the other route seams).
+     * Every #[Api_Endpoint] row NAMES ITS SURFACE, and that surface is indexed.
+     *
+     * The gate list lives ONCE, in auth.surfaces; a route row used to carry a third copy of
+     * it. Every dispatcher - staff, portal and API alike - resolves it the same way:
+     * Auth_Gates::surface_gates($route['surface']).
      */
-    public static function test_api_route_rows_carry_gate_lists()
+    public static function test_api_route_rows_name_an_indexed_surface()
     {
         $api_rows = 0;
+        $surfaces = Auth_Gates::get_surfaces();
 
         foreach (\App\RSpade\Core\Manifest\Manifest::get_routes() as $pattern => $route) {
             if (($route['type'] ?? null) !== 'api') {
@@ -436,9 +440,16 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
             }
 
             $api_rows++;
-            static::__assert_true(
+
+            static::__assert_false(
                 array_key_exists('auth', $route),
-                "api route row {$pattern} is missing its 'auth' key"
+                "api route row {$pattern} must not carry its own gate list"
+            );
+
+            static::__assert_array_has_key(
+                $route['surface'] ?? '',
+                $surfaces,
+                "api route row {$pattern} names a surface that is not indexed"
             );
         }
 

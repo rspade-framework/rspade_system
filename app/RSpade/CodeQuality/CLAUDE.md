@@ -6,21 +6,42 @@ The Code Quality system is a modular, extensible framework for enforcing coding 
 
 ## Architecture
 
+**THE DRIVER OWNS THE PASS; A RULE ONLY CHECKS.** Discovery, pattern compilation, reading,
+tokenizing, parsing and the decision to skip work already done are all decided in one place.
+A rule receives a path, the contents and the manifest metadata, and says what is wrong.
+
 ### Core Components
 
-1. **CodeQualityChecker** (`CodeQualityChecker.php`)
-   - Main orchestrator that discovers and runs all rules
-   - Auto-discovers rules via RuleDiscovery::discover_rules()
-   - Handles file scanning, caching, and violation collection
-   - Performs syntax linting for PHP, JavaScript, and JSON files
+1. **Manifest_Rule_Driver** (`Manifest_Rule_Driver.php`)
+   - THE pass. The manifest-time check and `rsx:check` both run it, so there is one loop,
+     one discovery, one source cache and one ledger contract
+   - Loop is **changed files OUTER, matching per-file rules inner** - one read per file for
+     every rule that wants it, not one full walk of the index per rule
+   - Owns the incremental decision: `Validation_Ledger::has_passed("<ID>@<fingerprint>", hash)`
+     before `check()`, `record_pass` after a clean one
+   - Runs cross-file rules once, after the per-file pass, each gated on a fingerprint of its
+     `depends_on()` inputs stored under the pseudo-hash `deps:<hash>`
 
-2. **CodeQualityRule_Abstract** (`Rules/CodeQualityRule_Abstract.php`)
+2. **Support/Source_Cache** (`Support/Source_Cache.php`)
+   - The ONE reader, tokenizer and parser of a source file, per pass
+   - `content()` / `tokens()` / `ast()`, lazy and memoized, with a hard LRU entry bound so
+     peak memory tracks files IN FLIGHT rather than files in the tree
+   - The manifest pass uses the BUILD's instance (`Manifest::build()->source_cache()`,
+     capacity 16), which `Php_Fixer` reads through too
+
+3. **CodeQualityRule_Abstract** (`Rules/CodeQualityRule_Abstract.php`)
    - Base class for all code quality rules
-   - Defines the interface: `get_id()`, `get_name()`, `check()`, etc.
-   - Provides `add_violation()` helper method
-   - Rules self-register by extending this class
+   - Defines the interface: `get_id()`, `get_name()`, `check()`, `kind()`, `depends_on()`,
+     `fingerprint_extra()`
+   - Provides `add_violation()` and `source()`; rules self-register by extending it
 
-3. **Violation** (`Violation.php`)
+4. **CodeQualityChecker** (`CodeQualityChecker.php`)
+   - `rsx:check`'s entry point: the PHP/JS/JSON syntax lints, the sanitized document a rule is
+     handed as `$contents`, and the directory-level `check_*` hooks
+   - The rule loop itself is the driver's, and the rule OBJECTS are the driver's - there is no
+     second discovery
+
+5. **Violation** (`Violation.php`)
    - Data class representing a code violation
    - Contains: rule_id, file_path, line_number, message, severity, code_snippet, suggestion
    - Provides `to_array()` for serialization
@@ -29,9 +50,16 @@ The Code Quality system is a modular, extensible framework for enforcing coding 
 
 - **ViolationCollector** - Aggregates violations from all rules
 - **FileSanitizer** - Removes comments and strings for accurate code analysis
-- **Validation_Ledger** - the ONE store of "this file already passed this check". A rule
-  that remembers a per-file verdict uses it; a rule may NOT create a cache directory of
-  its own (enforced by a test in `tests/code_quality/`).
+- **Source_Cache** - the ONE reader/tokenizer/parser for a pass, LRU-bounded. A rule reaches
+  it as `$this->source()` and NEVER calls `file_get_contents()`, `token_get_all()`,
+  `PhpToken::tokenize()` or `new ParserFactory` itself.
+- **RuleDiscovery** - finds rule classes on disk once per process. The walk RECURSES
+  (`RecursiveIteratorIterator`): the predecessor was `glob('Rules/**' . '/*.php')`, and PHP's
+  `glob()` has no `**` - it matched exactly one directory level by accident, so a rule filed
+  two levels deep would silently never have run.
+- **Validation_Ledger** - the ONE store of "this file already passed this check", written by
+  the DRIVER on a rule's behalf. A rule may NOT create a cache directory of its own, and may
+  not declare a static property (both enforced by a test in `tests/code_quality/`).
 - Sanitized file contents are cached by `CodeQualityChecker` in the shared derived cache
   (`App\RSpade\Core\Cache\File_Content_Cache`, namespace `code-quality-sanitized`) - there
   is no CacheManager any more.
@@ -269,7 +297,7 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
      validation resolves the name against whatever application is installed - so a fixture
      naming an application check FAILS THE MANIFEST BUILD there, which is a hard-down site
      rather than a failing test (this happened)
-   - Per-file (`is_incremental() = true`), PHP token-stream detection: the same characters
+   - Per-file (`kind() = KIND_PER_FILE`), PHP token-stream detection: the same characters
      inside a string literal (fixture SOURCE a validation test writes to a temp file) or a
      comment are not a declaration. `@auth` is line-anchored over comment-blanked JS
    - NO exception marker, deliberately: a fixture that must exercise an application check
@@ -285,7 +313,7 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
    - The failure it exists to see is core calling into a class it believes is its own and
      landing on the application's frozen copy - a 500 at a call site, or silence when the
      member is a hook the framework only invokes
-   - Cross-file (`is_incremental() = false`), pairs every `.php.upstream` sidecar with the
+   - Cross-file (`kind() = KIND_CROSS_FILE`), pairs every `.php.upstream` sidecar with the
      class shadowing it; the comparison is a `PhpToken` pass
      (`Core/Manifest/Class_Override_Drift`), never reflection - an archived file carries no
      reflection metadata and reflection on the override reports the whole lineage
@@ -410,11 +438,15 @@ protected function is_overriding_parent_method($class_name, $method_name) {
 
 #### How Exceptions Are Applied (generic, not per-rule)
 
-Exception handling is implemented ONCE, in the checker, and covers EVERY rule.
-`CodeQualityChecker.php:189-195` reads the original file contents before invoking each rule
-and, if the text contains `@<RULE-ID>-EXCEPTION` anywhere in the file, skips that rule for
-that file. No rule has to opt in: all 133 rules honor a file-level exception comment, including
-rules whose own source never mentions `EXCEPTION`.
+Exception handling is implemented ONCE, in the DRIVER, and covers EVERY rule under
+`rsx:check`. Before invoking a rule the driver reads the file's RAW bytes (never the sanitized
+copy - the marker lives in a comment, and the sanitizer blanks comments) and, if the text
+contains `@<RULE-ID>-EXCEPTION` anywhere in the file, skips that rule for that file. No rule
+has to opt in.
+
+The MANIFEST-TIME pass does not apply it: a manifest-time rule is a build-breaking framework
+convention, and a rule that wants to be suppressible there implements the marker itself (which
+also buys it LINE granularity).
 
 What an individual rule can add on top is PRECISION. A rule that also looks for the marker
 itself can suppress a SINGLE line (same-line or previous-line) rather than the whole file -
@@ -639,45 +671,49 @@ By default, code quality rules run only when `php artisan rsx:check` is executed
 2. Need to provide immediate feedback before code execution
 3. Have been specifically requested by framework maintainers
 
-### Incremental vs Cross-File Rules
+### Per-file vs cross-file rules
 
-Manifest-time rules support two processing modes via `is_incremental()`:
+Every rule declares its kind. The driver reads it and decides how to run the rule.
 
-**Incremental Rules** (`is_incremental() = true`, default):
-- Check each file independently
-- Only changed files are processed during incremental manifest rebuilds
-- More efficient for per-file validation (syntax, patterns, structure)
-- Example: `JqhtmlInlineScriptRule`, `MassAssignmentRule`
+**PER-FILE** (`kind()` returns `self::KIND_PER_FILE`, the default): judges one file from its
+own bytes plus the metadata the manifest already holds. The driver runs it once per CHANGED
+file and banks a clean verdict against that file's hash, so an unchanged file is never judged
+twice. Example: `JqhtmlInlineScriptRule`, `MassAssignmentRule`.
 
-**Cross-File Rules** (`is_incremental() = false`):
-- Need to see relationships between files or check the full manifest
-- Run once per manifest build with access to `Manifest::get_all()`
-- Use for rules that validate naming across files, check for duplicates, etc.
-- Example: `ScssClassScope_CodeQualityRule`, `InstanceMethods_CodeQualityRule`
-
-To make a rule cross-file, override `is_incremental()`:
+**CROSS-FILE** (`kind()` returns `self::KIND_CROSS_FILE`): judges the TREE - duplicate names,
+an index, a relationship between files. The driver runs it ONCE per pass, after the per-file
+pass, and skips it entirely when nothing it declares in `depends_on()` has moved. Example:
+`ScssClassScope_CodeQualityRule`, `InstanceMethods_CodeQualityRule`, `DuplicateCaseFiles`.
 
 ```php
-public function is_incremental(): bool
+public function kind(): string
 {
-    return false; // This rule needs cross-file context
+    return self::KIND_CROSS_FILE;
+}
+
+public function depends_on(): array
+{
+    // A manifest section name, or 'files:<basename glob>'.
+    return ['files:*.php', 'php_classes', 'php_subclass_index'];
 }
 ```
 
-Cross-file rules should use a static guard to ensure they only run once:
+**A cross-file rule does NOT guard itself with a static flag.** The driver calls it exactly
+once. `DuplicateCaseFiles` is the cautionary tale: it was declared per-file, guarded itself
+with a static flag, and RESET that flag at the end of every call - so it rebuilt a map of the
+whole tree once per changed file, 18.5 seconds of a cold build spent answering the same
+question 1,400 times.
 
-```php
-public function check(string $file_path, string $contents, array $metadata = []): void
-{
-    static $already_checked = false;
-    if ($already_checked) return;
-    $already_checked = true;
+**When in doubt, `depends_on()` lists `files:<your own patterns>`.** An under-stated
+dependency is a rule that silently stops firing; an over-stated one only costs time.
 
-    // Access all files via Manifest::get_all()
-    $files = Manifest::get_all();
-    // ... check relationships between files
-}
-```
+### fingerprint_extra()
+
+The driver fingerprints a rule as `md5(<its own file>) . fingerprint_extra()` and files every
+ledger entry under `"<RULE ID>@<that fingerprint>"`. Editing a rule therefore retires every
+verdict it ever recorded. Return the hash of anything ELSE that decides the rule's answer -
+NAME-RESERVED-02 returns the hash of the reserved-name index, so moving a framework name
+retires the verdicts recorded against the old one.
 
 ### Current Manifest-Time Rules
 
@@ -708,13 +744,13 @@ Approved for manifest-time execution, by rule directory:
 
 The heaviest of these deserves its own note:
 
-- **PHP-PARENT-CHAIN-01** (ParentCallChain_CodeQualityRule): Default parent-call chaining. A method override MUST call `parent::<same-method>()` unless the nearest manifest-visible ancestor that declares the method is abstract or marked `#[Replaceable]`. Covers static + instance methods including `__construct` and magic methods. Vendor parents are excluded (the manifest never scans `vendor/`, so overriding a vendor method is not flagged). Cross-file rule (`is_incremental() = false`); AST-based detection (nikic/php-parser), never regex, so a comment/string mention of `parent::method()` cannot spoof it.
+- **PHP-PARENT-CHAIN-01** (ParentCallChain_CodeQualityRule): Default parent-call chaining. A method override MUST call `parent::<same-method>()` unless the nearest manifest-visible ancestor that declares the method is abstract or marked `#[Replaceable]`. Covers static + instance methods including `__construct` and magic methods. Vendor parents are excluded (the manifest never scans `vendor/`, so overriding a vendor method is not flagged). Cross-file rule (`kind() = KIND_CROSS_FILE`); AST-based detection (nikic/php-parser), never regex, so a comment/string mention of `parent::method()` cannot spoof it.
 
-- **POLY-01** (MorphStringPattern_CodeQualityRule): a polymorphic relation whose `*_type` discriminator is not declared as a type ref. RSpade stores the discriminator as a BIGINT type-ref id; with the declaration in place, STOCK Eloquent morph relations work over it unchanged (`Type_Ref_Registry::register_morph_map()` registers each integer id as a morph-map alias next to the class name). Without it you get Laravel's VARCHAR class-name morph, which half-works - it reads plausibly and silently matches nothing the moment anything else in the framework treats the column as a type ref, which is why it is fatal rather than advisory. Cross-file (`is_incremental() = false`), AST-based, and deliberately silent on any call whose owning model cannot be resolved statically. Migrations are NOT covered (the manifest does not scan them, and column definitions live inside raw SQL strings), so a VARCHAR `*_type` column is caught at the model that relates over it. Full contract: `rsx:man polymorphic`.
+- **POLY-01** (MorphStringPattern_CodeQualityRule): a polymorphic relation whose `*_type` discriminator is not declared as a type ref. RSpade stores the discriminator as a BIGINT type-ref id; with the declaration in place, STOCK Eloquent morph relations work over it unchanged (`Type_Ref_Registry::register_morph_map()` registers each integer id as a morph-map alias next to the class name). Without it you get Laravel's VARCHAR class-name morph, which half-works - it reads plausibly and silently matches nothing the moment anything else in the framework treats the column as a type ref, which is why it is fatal rather than advisory. Cross-file (`kind() = KIND_CROSS_FILE`), AST-based, and deliberately silent on any call whose owning model cannot be resolved statically. Migrations are NOT covered (the manifest does not scan them, and column definitions live inside raw SQL strings), so a VARCHAR `*_type` column is caught at the model that relates over it. Full contract: `rsx:man polymorphic`.
 
-- **REVISION-01** (RevisionParent_CodeQualityRule): an incoherent `#[Revision_Parent]`. The attribute says "a revision on this child belongs to that parent's history", and the root pair it produces is written into every `_revisions` row AT WRITE TIME - so an incoherent declaration is never an error, it is a history that is quietly missing rows long after the change that caused it. Three checks: the child must declare `$revisions = true` (otherwise the attribute is inert and its author believes something that is not happening), the method must return a `belongsTo` (only a belongsTo names exactly one parent row, and a revision has exactly one root), and the parent must declare `$revisions = true` too (otherwise the child's writes are filed under a record whose own writes are never recorded - a half history). Cross-file (`is_incremental() = false`), AST-based, and deliberately silent on a target it cannot resolve statically. Full contract: `rsx:man revisions`.
+- **REVISION-01** (RevisionParent_CodeQualityRule): an incoherent `#[Revision_Parent]`. The attribute says "a revision on this child belongs to that parent's history", and the root pair it produces is written into every `_revisions` row AT WRITE TIME - so an incoherent declaration is never an error, it is a history that is quietly missing rows long after the change that caused it. Three checks: the child must declare `$revisions = true` (otherwise the attribute is inert and its author believes something that is not happening), the method must return a `belongsTo` (only a belongsTo names exactly one parent row, and a revision has exactly one root), and the parent must declare `$revisions = true` too (otherwise the child's writes are filed under a record whose own writes are never recorded - a half history). Cross-file (`kind() = KIND_CROSS_FILE`), AST-based, and deliberately silent on a target it cannot resolve statically. Full contract: `rsx:man revisions`.
 
-- **SESSION-ID-01** (SessionIdNullCheck_CodeQualityRule): a null-ish/zero-ish TEST on a `Session::get_session_id()` / `Portal_Session::get_session_id()` result. Both calls CREATE a session and are declared `: int`, so the test is unreachable AND the session it was meant to prevent has already been created — a defect that is completely invisible at runtime, which is why it is fatal at build time rather than advisory. Per-file (`is_incremental() = true`), AST-based (nikic/php-parser), with a single-assignment variable-dataflow model deliberately kept conservative. The two Session facade files and `/CodeQuality/` meta-code are excluded; the rule honors `@SESSION-ID-01-EXCEPTION` itself (file-level or on/above the line), since the manifest-time driver does not apply the checker's generic exception handling.
+- **SESSION-ID-01** (SessionIdNullCheck_CodeQualityRule): a null-ish/zero-ish TEST on a `Session::get_session_id()` / `Portal_Session::get_session_id()` result. Both calls CREATE a session and are declared `: int`, so the test is unreachable AND the session it was meant to prevent has already been created — a defect that is completely invisible at runtime, which is why it is fatal at build time rather than advisory. Per-file (`kind() = KIND_PER_FILE`), AST-based (nikic/php-parser), with a single-assignment variable-dataflow model deliberately kept conservative. The two Session facade files and `/CodeQuality/` meta-code are excluded; the rule honors `@SESSION-ID-01-EXCEPTION` itself (file-level or on/above the line), which is what gives it LINE granularity - the driver's generic file-level marker check runs for `rsx:check` only.
 
 All other rules must return `false` from `is_called_during_manifest_scan()`. Adding to this set
 needs explicit framework-maintainer approval - every manifest-time rule runs on every file change

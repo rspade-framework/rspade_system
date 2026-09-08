@@ -8,6 +8,7 @@ use ReflectionClass;
 use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Support\Rsx_Fingerprint;
 
 /**
  * Support module for extracting database metadata for Rsx_Model_Abstract classes
@@ -16,17 +17,41 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
 class Model_ManifestSupport extends ManifestSupport_Abstract
 {
     /**
-     * Process the manifest and add model database metadata
+     * Rebuild the model registry, introspecting the DATABASE only for models whose answer
+     * could have moved.
+     *
+     * THE FINGERPRINT IS THE WHOLE MECHANISM: the columns a model reports are a function of
+     * its own file (the table name, the detail-table declaration) and of the SCHEMA, and the
+     * schema is defined by the migration files. So the key is
+     *
+     *     <model file hash>__<hash of every migration file's content>
+     *
+     * and it is checked in two places, cheapest first: the row carried forward from the
+     * previous build (no round trip at all), then the persistent cache (Redis, survives a
+     * `rsx:clean`). Only a miss reaches MySQL - which is why two consecutive builds with no
+     * model change issue ZERO `SHOW COLUMNS`. The old code read the persistent cache and
+     * then fell through and re-queried anyway, ~110 round trips per rebuild with the answer
+     * already in hand.
+     *
+     * A model whose table does not exist is a LOUD SKIP, never a silent one: an unmigrated
+     * development database must not fail the build, but it must not disappear either -
+     * field_length() names this cause when it later finds no column.
      *
      * @param array &$manifest_data Reference to the manifest data array
      * @return void
      */
-    public static function process(array &$manifest_data): void
+    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
-        // Initialize models key if it doesn't exist
-        if (!isset($manifest_data['data']['models'])) {
-            $manifest_data['data']['models'] = [];
-        }
+        $previous = $manifest_data['data']['models'] ?? [];
+        $models = [];
+
+        // Models whose table is missing, reported ONCE at the end of the pass. Per-model
+        // error_log() lines are the same information a hundred times over in a fresh test
+        // database, where every fixture model legitimately has no table yet.
+        $skipped = [];
+
+        // The schema identity every model row is keyed on, computed once per build.
+        $schema_fingerprint = Rsx_Fingerprint::migration_files();
 
         // All PHP files should already be loaded in Phase 3 of manifest processing
         // Get all classes extending Rsx_Model_Abstract
@@ -39,18 +64,31 @@ class Model_ManifestSupport extends ManifestSupport_Abstract
 
             $fqcn = $model_entry['fqcn'];
             $class_name = $model_entry['class'] ?? '';
+            $fingerprint = ($model_entry['hash'] ?? '') . '__' . $schema_fingerprint;
 
-            $cachekey = 'Model_ManifestSupport_' . $model_entry['file'] . '__' . $model_entry['hash'];
+            // 1. The row this build inherited, if its fingerprint still holds.
+            if (($previous[$class_name]['fingerprint'] ?? null) === $fingerprint) {
+                $models[$class_name] = $previous[$class_name];
+
+                continue;
+            }
+
+            // 2. The persistent cache. Keyed on explicit content hashes, so it is valid
+            //    across builds and across a cache clear of the build-scoped family.
+            $cachekey = 'Model_ManifestSupport_v3_' . $model_entry['file'] . '__' . $fingerprint;
             $cache = RsxCache::get_persistent($cachekey);
 
             if (!empty($cache)) {
-                $manifest_data['data']['models'][$class_name] = $cache;
+                $models[$class_name] = $cache;
+
+                continue;
             }
 
+            // 3. Introspect.
             include_once($model_entry['file']);
 
             // Check if class is abstract
-            if (\App\RSpade\Core\Manifest\Manifest::php_is_abstract($fqcn)) {
+            if (Manifest::php_is_abstract($fqcn)) {
                 // Skip abstract classes
                 continue;
             }
@@ -61,8 +99,16 @@ class Model_ManifestSupport extends ManifestSupport_Abstract
 
             // Check if table exists
             if (!Schema::hasTable($table_name)) {
-                // This is acceptable, maybe migrations didn't run or migrations are broken.  Just skip adding
-                // the database metadata to the manifest.
+                // ACCEPTABLE (migrations have not run, or are broken) but never SILENT: the
+                // model simply carries no column metadata for the rest of this build, and
+                // Rsx_Model_Abstract::field_length() names this line when it then finds no
+                // column for a field it was asked about.
+                console_debug(
+                    'MANIFEST',
+                    "model {$class_name} skipped: table '{$table_name}' does not exist"
+                );
+                $skipped[] = "{$class_name} ({$table_name})";
+
                 continue;
             }
 
@@ -86,34 +132,48 @@ class Model_ManifestSupport extends ManifestSupport_Abstract
 
             // Class-Table Inheritance: merge detail-table columns into the base model's column
             // map so field_length(), JS stubs, and model codegen span base + detail as one
-            // logical model. Columns are re-introspected live each build, so a detail-table
-            // schema change is picked up here without touching the base model file.
+            // logical model. The detail introspection is cached with the base model's row -
+            // same fingerprint, same reasoning: a detail schema change is a migration change.
             static::__merge_detail_columns($fqcn, $class_name, $table_name, $columns);
 
-            // Look up the file's metadata to get public_static_methods extracted during reflection
-            $file_path = $model_entry['file'] ?? '';
-            $public_static_methods = [];
-
-            // Find the public_static_methods data from the files array
-            if ($file_path && isset($manifest_data['data']['files'][$file_path])) {
-                $file_metadata = $manifest_data['data']['files'][$file_path];
-                $public_static_methods = $file_metadata['public_static_methods'] ?? [];
-            }
-
-            // Store model metadata with database info AND preserved public_static_methods
+            // The row REFERENCES the model's file; it does not copy the file's method map
+            // into itself. That copy was 167 KB of the index - a verbatim second edition of
+            // data `files` already held - and nothing read it: Orm_Controller and
+            // get_relationships() both read the FILE record (php_get_metadata_by_class()).
             $full_data = [
                 'fqcn' => $fqcn,
-                'file' => $file_path,
+                'file' => $model_entry['file'] ?? '',
                 'table' => $table_name,
                 'columns' => $columns,
-                'public_static_methods' => $public_static_methods,  // Include the public static methods
                 'class' => $class_name,  // Ajax_Endpoint_Controller expects this
+                'fingerprint' => $fingerprint,
             ];
 
-            $manifest_data['data']['models'][$class_name] = $full_data;
+            $models[$class_name] = $full_data;
 
             RsxCache::set_persistent($cachekey, $full_data);
         }
+
+        if (!empty($skipped)) {
+            // LOUD, and exactly once: an unmigrated database must not fail the build, but a
+            // model silently losing its columns is how field_length() ends up throwing a
+            // mystery at runtime. That error message names this line.
+            // THE APPLICATION LOG, not error_log(). A model losing its columns must be
+            // written down somewhere durable, but error_log() on the CLI is STDERR, and
+            // stderr is a task command's NARRATION channel - a build that happens inside
+            // `rsx:task:run -q` would corrupt output the command contract says is empty.
+            // The MANIFEST console_debug channel above names every model; this is the one
+            // line that survives.
+            \Illuminate\Support\Facades\Log::warning(
+                '[manifest] ' . count($skipped) . ' model(s) skipped - their tables do not exist '
+                . '(run `php artisan migrate`), so field_length() and their generated JS stubs '
+                . 'do not know their columns: ' . implode(', ', $skipped)
+            );
+        }
+
+        ksort($models);
+
+        $manifest_data['data']['models'] = $models;
     }
 
     /**

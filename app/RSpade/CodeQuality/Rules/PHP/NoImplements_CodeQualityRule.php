@@ -109,7 +109,7 @@ class NoImplements_CodeQualityRule extends CodeQualityRule_Abstract
         ];
 
         // Get the original file content to extract use statements
-        $original_content = file_get_contents($file_path);
+        $original_content = $this->source()->content($file_path);
         $use_statements = $this->extract_use_statements($original_content);
 
         foreach ($implements as $interface) {

@@ -37,7 +37,7 @@ class Manifest_Stats_Command extends FrameworkDeveloperCommand
         $data = Manifest::get_all();
 
         // Get cache file location for stats
-        $cache_file = storage_path('rsx-build/manifest_data.php');
+        $cache_file = storage_path(Manifest::CACHE_FILE);
 
         $this->info('RSX Manifest Statistics');
         $this->info('=======================');

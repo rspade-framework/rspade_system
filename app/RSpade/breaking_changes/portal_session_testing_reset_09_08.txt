@@ -1,0 +1,67 @@
+PORTAL_SESSION TEST SEAM RENAMED
+Date: 2026-09-08
+
+IF YOU DO NOTHING: every Portal_Session::reset() call in your own tests fatals with
+    "Call to undefined method App\RSpade\Core\Portal\Portal_Session::reset()", so the
+    portal tests your fork inherited from the template - rsx/tests/Portal_*_Test.php -
+    fail the moment you run php artisan rsx:test.
+
+SUMMARY
+    Portal_Session::reset() is now Portal_Session::_testing_reset(). It is a test seam
+    and now says so: the underscore marks it framework-internal, the way
+    Session::_testing_reset() and Revision::_testing_reset() already do. Behaviour is
+    unchanged - it clears the portal facade's declared site, portal user, impersonator
+    and resolved caches.
+
+    THE FIX IS TO DELETE THE CALL, NOT TO RENAME IT. The test runner clears the portal
+    facade after EVERY test method, so a call of your own in setup(), teardown() or a
+    test body is doing work that has already happened. It is also refused: the renamed
+    method carries the framework's reserved underscore, so an application reference to
+    it fails the manifest build with NAME-RESERVED-02.
+
+    Ending a portal identity on a LIVE request has not changed and never went through
+    this method: it is Session::_clear_portal_properties(), which the logout paths use.
+
+AFFECTED FILES
+    /rsx/tests/Portal_Register_Flow_Test.php
+    /rsx/tests/Portal_Workspaces_Test.php
+    /rsx/tests/Portal_Impersonation_Test.php
+    /rsx/tests/Portal_Documents_Test.php
+    /rsx/tests/Portal_Request_Threads_Test.php
+    /rsx/tests/Portal_User_Admin_Test.php
+    ... plus any test of your own that calls Portal_Session::reset()
+
+CHANGES REQUIRED
+
+    Find every call site:
+    -------------------------------------------------------------------------
+    grep -rn 'Portal_Session::reset()' rsx/
+
+    Delete each one:
+    -------------------------------------------------------------------------
+    sed -i '/Portal_Session::reset();/d' $(grep -rl 'Portal_Session::reset()' rsx/)
+
+    Then delete any teardown() the line was the only statement in, and any
+    `use App\RSpade\Core\Portal\Portal_Session;` the file no longer needs.
+
+    The one thing you lose: a single test method can no longer switch to a SECOND
+    portal site part-way through, because set_site_id() throws on a different id and
+    the clearing call is no longer yours to make. Declare one portal site per test
+    method (setup() runs once per CLASS and its declaration does not survive the
+    per-test reset anyway) and split the method if you need two.
+
+    IF YOUR TEST HARNESS RESET THE API IDENTITY BY HAND, DELETE THAT CODE TOO.
+    -------------------------------------------------------------------------
+    Api_Dispatcher::dispatch() now clears the API identity in a finally, so it never
+    outlives the request it authenticated (an endpoint that threw included). Anything
+    that dispatches repeatedly in ONE process - a test harness, a CLI tool, a batch
+    runner - no longer has to perform that boundary itself, and must not: the reset is
+    a framework internal and an application reference to it is refused at manifest
+    build (NAME-RESERVED-02). Delete the before/after reset around your dispatch calls;
+    dispatch owns the boundary.
+
+VERIFICATION
+    grep -rn 'Portal_Session::reset(' rsx/          # no hits
+    grep -rn 'Session::_reset_api_identity' rsx/    # no hits
+    php artisan rsx:check                           # clean
+    php artisan rsx:test                            # your portal tests run and pass

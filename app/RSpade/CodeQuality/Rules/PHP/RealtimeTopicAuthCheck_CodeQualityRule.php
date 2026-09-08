@@ -72,7 +72,7 @@ class RealtimeTopicAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        $original_contents = file_get_contents($file_path);
+        $original_contents = $this->source()->content($file_path);
 
         // File-level exception: suppresses both violation kinds for this topic.
         if (strpos($original_contents, '@' . $this->get_id() . '-EXCEPTION') !== false) {

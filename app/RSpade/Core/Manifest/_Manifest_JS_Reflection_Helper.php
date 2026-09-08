@@ -25,7 +25,7 @@ class _Manifest_JS_Reflection_Helper
             throw new \RuntimeException("JavaScript class not found in manifest: {$class_name}");
         }
 
-        return Manifest::$data['data']['js_classes'][$class_name];
+        return Manifest::$data['data']['js_classes'][$class_name]['file'];
     }
 
     /**
@@ -39,10 +39,10 @@ class _Manifest_JS_Reflection_Helper
 
         $classpile = [];
         foreach ($subclasses as $classname) {
-            // Get the file path from js_classes index, then get metadata from files
-            if (isset(Manifest::$data['data']['js_classes'][$classname])) {
-                $file_path = Manifest::$data['data']['js_classes'][$classname];
-                $classpile[$classname] = Manifest::$data['data']['files'][$file_path];
+            $record = Manifest::$data['data']['js_classes'][$classname] ?? null;
+
+            if ($record !== null) {
+                $classpile[$classname] = Manifest::get_file($record['file']);
             }
         }
 
@@ -71,17 +71,17 @@ class _Manifest_JS_Reflection_Helper
             $superclass = end($parts);
         }
 
-        $files = Manifest::get_all();
+        Manifest::init();
+
         $current_class = $subclass;
         $visited = []; // Prevent infinite loops in case of circular inheritance
 
         while ($current_class) {
-            // Prevent infinite loops
-            if (in_array($current_class, $visited)) {
+            if (isset($visited[$current_class])) {
                 return false;
             }
 
-            $visited[] = $current_class;
+            $visited[$current_class] = true;
 
             // HACK #1 - JS Model shortcut: When checking against Rsx_Js_Model, if we encounter
             // a PHP model class name (like "Project_Model"), we know it's a model that will have
@@ -90,25 +90,18 @@ class _Manifest_JS_Reflection_Helper
                 return true;
             }
 
-            // Find the current class in the manifest
-            if (!isset(Manifest::$data['data']['js_classes'][$current_class])) {
+            $record = Manifest::$data['data']['js_classes'][$current_class] ?? null;
+
+            if ($record === null || empty($record['extends'])) {
                 return false;
             }
 
-            // Get file metadata
-            $file_path = Manifest::$data['data']['js_classes'][$current_class];
-            $metadata = Manifest::$data['data']['files'][$file_path];
-
-            if (empty($metadata['extends'])) {
-                return false;
-            }
-
-            if ($metadata['extends'] == $superclass) {
+            if ($record['extends'] === $superclass) {
                 return true;
             }
 
             // Move up the chain to the parent class
-            $current_class = $metadata['extends'];
+            $current_class = $record['extends'];
         }
 
         return false;
@@ -130,37 +123,27 @@ class _Manifest_JS_Reflection_Helper
             $class_name = end($parts);
         }
 
+        Manifest::init();
+
         $lineage = [];
         $current_class = $class_name;
         $visited = []; // Prevent infinite loops
 
         while ($current_class) {
-            // Prevent infinite loops in circular inheritance
-            if (in_array($current_class, $visited)) {
+            if (isset($visited[$current_class])) {
                 break;
             }
 
-            $visited[] = $current_class;
+            $visited[$current_class] = true;
 
-            // Find the current class in manifest
-            if (!isset(Manifest::$data['data']['js_classes'][$current_class])) {
+            $record = Manifest::$data['data']['js_classes'][$current_class] ?? null;
+
+            if ($record === null || empty($record['extends'])) {
                 break;
             }
 
-            // Get the file path from js_classes index, then get metadata from files
-            $file_path = Manifest::$data['data']['js_classes'][$current_class];
-            $metadata = Manifest::$data['data']['files'][$file_path];
-            $extends = $metadata['extends'] ?? null;
-
-            if (!$extends) {
-                break;
-            }
-
-            // Add parent to lineage
-            $lineage[] = $extends;
-
-            // Move up the chain
-            $current_class = $extends;
+            $lineage[] = $record['extends'];
+            $current_class = $record['extends'];
         }
 
         return $lineage;

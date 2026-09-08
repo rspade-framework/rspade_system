@@ -75,7 +75,25 @@ MANIFEST AND BUNDLE PIPELINE
                          directly in Manifest.php.
     'manifest_support'   Modules run AFTER the manifest is built to add
                          metadata needing the full index (Route, Portal
-                         route/SPA, Model, Jqhtml, SPA, Api_Endpoint).
+                         route/SPA, Model, Jqhtml, SPA, Api_Endpoint,
+                         Externals, Task_Command, Email, Bundle_Alias, Auth),
+                         then the three JS STUB GENERATORS that close the
+                         list (Controller_Stub, Model_Stub, Auth_Stub).
+                         ORDER IS THE CONTRACT: a module reads sections the
+                         modules above it wrote, and the stub generators run
+                         last because they read all of them. There is no
+                         second module system - a generated-stub writer is an
+                         ordinary entry here.
+
+                         AN APP'S OWN MODULE APPENDS. The framework list and
+                         the application list are deep-merged, so an app entry
+                         lands AFTER every framework module and sees a finished
+                         index. Its process() signature is
+                         process(array &$manifest_data, array $changed_files,
+                         array $removed_files) and it is expected to update its
+                         section from those two sets rather than scan `files`.
+                         See: php artisan rsx:man manifest_build, section THE
+                         INCREMENTAL MODULE CONTRACT.
     'integrations'       Integration service providers ('providers') plus
                          per-integration config (e.g. jqhtml compiler
                          cache/ttl/source_maps).

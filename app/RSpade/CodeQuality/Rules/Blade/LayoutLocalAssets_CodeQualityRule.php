@@ -58,7 +58,7 @@ class LayoutLocalAssets_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * Process file during manifest update to extract local asset violations
      */
-    public function on_manifest_file_update(string $file_path, string $contents, array $metadata = []): ?array
+    private function __find_violations(string $file_path, string $contents): ?array
     {
         // Only check files that contain <html> (layouts)
         if (!str_contains($contents, '<html')) {
@@ -141,8 +141,10 @@ class LayoutLocalAssets_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Check for violations in code quality metadata
-        if (isset($metadata['code_quality_metadata']['BLADE-LAYOUT-ASSETS-01']['local_asset_violations'])) {
-            $violations = $metadata['code_quality_metadata']['BLADE-LAYOUT-ASSETS-01']['local_asset_violations'];
+        $found = $this->__find_violations($file_path, $contents);
+
+        if (isset($found['local_asset_violations'])) {
+            $violations = $found['local_asset_violations'];
 
             // Throw on first violation
             foreach ($violations as $violation) {

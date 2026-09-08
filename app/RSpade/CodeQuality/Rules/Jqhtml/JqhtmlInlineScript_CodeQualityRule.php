@@ -64,7 +64,7 @@ class JqhtmlInlineScript_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * Process file during manifest update to extract inline script/style violations
      */
-    public function on_manifest_file_update(string $file_path, string $contents, array $metadata = []): ?array
+    private function __find_violations(string $file_path, string $contents): ?array
     {
         $lines = explode("\n", $contents);
         $violations = [];
@@ -106,8 +106,10 @@ class JqhtmlInlineScript_CodeQualityRule extends CodeQualityRule_Abstract
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         // Check for violations in code quality metadata
-        if (isset($metadata['code_quality_metadata']['JQHTML-INLINE-01']['jqhtml_inline_violations'])) {
-            $violations = $metadata['code_quality_metadata']['JQHTML-INLINE-01']['jqhtml_inline_violations'];
+        $found = $this->__find_violations($file_path, $contents);
+
+        if (isset($found['jqhtml_inline_violations'])) {
+            $violations = $found['jqhtml_inline_violations'];
 
             // Throw on first violation
             foreach ($violations as $violation) {

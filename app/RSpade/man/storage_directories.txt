@@ -71,7 +71,8 @@ RSX-BUILD DIRECTORY
 
     Contents:
         build_key            content-derived manifest hash (the cache key)
-        manifest_data.php    compiled manifest cache
+        manifest_index.php   the HOT manifest index (a request loads this one)
+        manifest_files.php   file metadata not read at request time
         bundles/             compiled CSS/JS bundles
         js-stubs/            generated JS stubs for the Internal (Ajax) API
         js-model-stubs/      generated JS model classes (fetch/enum/relationships)
@@ -286,7 +287,8 @@ DEPLOYMENT
         - system/ (code, vendor, node_modules) minus storage, tests, docs.dev,
           docs.goals, ace_reference, bin/publish, DebugProxy, *.expect
         - storage/ - ONLY the sealed build artifacts (rsx-build build_key,
-          manifest_data.php, prod_seal.json, bundles/, js-stubs/, js-model-stubs/,
+          manifest_index.php, manifest_files.php, prod_seal.json, bundles/,
+          js-stubs/, js-model-stubs/,
           cdn-cache/) plus an empty, writable storage skeleton
         - rsx/ (application) minus tests and resource/research|archive|incomplete
         - artisan + root composer/package manifests; root vendor/node_modules only
@@ -319,7 +321,7 @@ MAINTENANCE
           rsx-build safe to include in a deployment - a stray rsx:clean cannot
           wipe a sealed deployment.
 
-    rsx:manifest:build    rebuild storage/rsx-build/manifest_data.php.
+    rsx:manifest:build    rebuild the two storage/rsx-build/manifest_*.php files.
     rsx:bundle:compile <name>  rebuild one bundle under rsx-build/bundles/.
 
     NOTE: never restart the web server to "clear locks". A web-cluster lock is

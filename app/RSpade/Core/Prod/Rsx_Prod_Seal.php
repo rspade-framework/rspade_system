@@ -18,7 +18,7 @@ use App\RSpade\Core\Rsx;
  * A prod build is compiled ONCE by an explicit command (rsx:prod:enable /
  * rsx:prod:refresh) and then treated as IMMUTABLE. The seal is the on-disk record
  * of that build: it pins the build_key, the mode it was built for, and a sha256 of
- * every build artifact (manifest_data.php, build_key, and every file under
+ * every build artifact (manifest_index.php, manifest_files.php, build_key, and every file under
  * bundles/). It exists so the framework can:
  *
  *   - recognize that it is running a sealed build (is_sealed());
@@ -39,7 +39,7 @@ use App\RSpade\Core\Rsx;
  *
  * NOTE: created_at, git_commit and the seal file as a whole are deliberately NOT
  * part of any hashed build artifact - they carry the non-deterministic build
- * metadata that manifest_data.php intentionally drops for byte-stability.
+ * metadata that the manifest index intentionally drops for byte-stability.
  */
 class Rsx_Prod_Seal
 {
@@ -327,7 +327,7 @@ class Rsx_Prod_Seal
     // -------------------------------------------------------------------------
 
     /**
-     * Collect the build assets (manifest_data.php, build_key, bundles/*) with a
+     * Collect the build assets (the two manifest index files, build_key, bundles/*) with a
      * sha256 each, recorded relative to the build root and sorted by path.
      */
     protected static function _collect_assets(): array
@@ -335,11 +335,17 @@ class Rsx_Prod_Seal
         $root = self::_build_root();
         $assets = [];
 
-        $manifest = $root . '/manifest_data.php';
-        if (!is_file($manifest)) {
-            shouldnt_happen('Cannot seal: manifest_data.php is missing - run the build pipeline first.');
+        // The index is TWO files: the hot one every request includes and the cold one
+        // carrying the rest of the file metadata. Both are sealed.
+        foreach (['manifest_index.php', 'manifest_files.php'] as $name) {
+            $manifest = $root . '/' . $name;
+
+            if (!is_file($manifest)) {
+                shouldnt_happen("Cannot seal: {$name} is missing - run the build pipeline first.");
+            }
+
+            $assets[] = self::_asset_entry($root, $manifest);
         }
-        $assets[] = self::_asset_entry($root, $manifest);
 
         $build_key = $root . '/build_key';
         if (is_file($build_key)) {

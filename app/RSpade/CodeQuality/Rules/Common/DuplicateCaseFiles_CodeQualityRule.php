@@ -7,8 +7,6 @@ use App\RSpade\Core\Manifest\Manifest;
 
 class DuplicateCaseFiles_CodeQualityRule extends CodeQualityRule_Abstract
 {
-    private static bool $checked = false;
-
     public function get_id(): string
     {
         return 'FILE-CASE-DUP-01';
@@ -46,17 +44,32 @@ class DuplicateCaseFiles_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Check for duplicate files with different case
-     * This checks the entire manifest once rather than per-file
+     * CROSS-FILE: the question is about the whole tree, and the answer is one map.
+     *
+     * It used to be declared per-file and guard itself with a static flag it RESET at the
+     * end of every call, so the map was rebuilt once per changed file: 18.5 seconds of a
+     * cold build spent answering the same question 1,400 times.
+     */
+    public function kind(): string
+    {
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * The indexed file list, and nothing else - the rule compares names, never contents.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return ['files:*'];
+    }
+
+    /**
+     * Check for duplicate files with different case, once, over the whole index.
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        // Only run this check once for the entire manifest
-        if (self::$checked) {
-            return;
-        }
-        self::$checked = true;
-
         // Get all files from the manifest
         $all_files = Manifest::get_all();
 
@@ -125,8 +138,5 @@ class DuplicateCaseFiles_CodeQualityRule extends CodeQualityRule_Abstract
                 }
             }
         }
-
-        // Reset for next manifest build
-        self::$checked = false;
     }
 }

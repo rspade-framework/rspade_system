@@ -63,30 +63,34 @@ class Realtime_Emitter_Service extends Rsx_Service_Abstract
 
         $found = [];
 
-        foreach (Manifest::get_all() as $info) {
-            if (!isset($info['fqcn']) || !isset($info['public_static_methods'])) {
+        // The attribute index answers this directly, arguments included - the topic and the
+        // optional model constraint ARE the attribute's arguments. This used to be a nested
+        // sweep of every indexed file's method map.
+        foreach (Manifest::by_attribute('Emitter') as $row) {
+            if ($row['member'] === null || $row['class'] === null) {
                 continue;
             }
 
-            foreach ($info['public_static_methods'] as $method_name => $method_info) {
-                foreach ($method_info['attributes'] ?? [] as $attr_name => $attr_instances) {
-                    if ($attr_name !== 'Emitter' && !str_ends_with($attr_name, '\\Emitter')) {
-                        continue;
-                    }
+            $fqcn = Manifest::php_class_metadata($row['class'])['fqcn'] ?? null;
 
-                    foreach ($attr_instances as $instance) {
-                        $topic = $instance[0] ?? null;
-                        if ($topic) {
-                            $constraint = $instance[1] ?? null;
-                            $found[] = [
-                                'class' => $info['fqcn'],
-                                'method' => $method_name,
-                                'topic' => (string) $topic,
-                                'model_constraint' => $constraint !== null ? (string) $constraint : null,
-                            ];
-                        }
-                    }
+            if ($fqcn === null) {
+                continue;
+            }
+
+            foreach ($row['instances'] as $instance) {
+                $topic = $instance[0] ?? null;
+
+                if (!$topic) {
+                    continue;
                 }
+
+                $constraint = $instance[1] ?? null;
+                $found[] = [
+                    'class' => $fqcn,
+                    'method' => $row['member'],
+                    'topic' => (string) $topic,
+                    'model_constraint' => $constraint !== null ? (string) $constraint : null,
+                ];
             }
         }
 

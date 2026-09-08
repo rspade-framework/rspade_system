@@ -72,6 +72,16 @@ class Session_Impersonation_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * Any role this application declares. The role is decorative here - impersonation
+     * swaps identity regardless of it - so the first id in User_Model's own role enum
+     * serves, and no ROLE_ constant is named.
+     */
+    private static function __any_role(): int
+    {
+        return (int) User_Model::role_id__enum_ids()[0];
+    }
+
+    /**
      * Seed a site-specific user bound to a login identity. User_Model is
      * site-scoped, so the site is impersonated for the current test first.
      */
@@ -218,10 +228,10 @@ class Session_Impersonation_Test extends Rsx_Test_Abstract
         static::__acting_as_site(self::SITE_ID);
 
         $admin_login = static::__make_login_user();
-        $admin_user = static::__make_site_user($admin_login->id, User_Model::ROLE_SITE_ADMIN);
+        $admin_user = static::__make_site_user($admin_login->id, self::__any_role());
 
         $target_login = static::__make_login_user();
-        $target_user = static::__make_site_user($target_login->id, User_Model::ROLE_USER);
+        $target_user = static::__make_site_user($target_login->id, self::__any_role());
 
         Session::set_login_user_id($admin_login->id);
         static::__assert_equals($admin_user->id, Session::get_user()->id, 'baseline: effective user is the admin');
@@ -242,7 +252,7 @@ class Session_Impersonation_Test extends Rsx_Test_Abstract
         static::__acting_as_site(self::SITE_ID);
 
         $admin_login = static::__make_login_user();
-        static::__make_site_user($admin_login->id, User_Model::ROLE_SITE_ADMIN);
+        static::__make_site_user($admin_login->id, self::__any_role());
 
         $target_login = static::__make_login_user();
         static::__assert_null($target_login->last_login, 'seeded target has no last_login');
@@ -264,10 +274,10 @@ class Session_Impersonation_Test extends Rsx_Test_Abstract
         static::__acting_as_site(self::SITE_ID);
 
         $admin_login = static::__make_login_user();
-        static::__make_site_user($admin_login->id, User_Model::ROLE_SITE_ADMIN);
+        static::__make_site_user($admin_login->id, self::__any_role());
 
         $target_login = static::__make_login_user();
-        $target_user = static::__make_site_user($target_login->id, User_Model::ROLE_USER);
+        $target_user = static::__make_site_user($target_login->id, self::__any_role());
 
         Session::set_login_user_id($admin_login->id);
         Session::begin_impersonation($target_login->id);

@@ -52,7 +52,7 @@ class RealpathUsage_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Read raw file content for exception checking (not sanitized)
-        $raw_contents = file_get_contents($file_path);
+        $raw_contents = $this->source()->content($file_path);
 
         // If file has @REALPATH-EXCEPTION marker anywhere, skip entire file
         if (str_contains($raw_contents, '@REALPATH-EXCEPTION')) {

@@ -168,27 +168,10 @@ class Ajax
      */
     public static function internal($rsx_controller, $rsx_action, $params = [], $auth = [])
     {
-        // Get manifest to find controller
-        $manifest = \App\RSpade\Core\Manifest\Manifest::get_all();
-        $controller_class = null;
-        $file_info = null;
-
-        // Search for controller class in manifest
-        foreach ($manifest as $file_path => $info) {
-            // Skip non-PHP files or files without classes
-            if (!isset($info['class']) || !isset($info['fqcn'])) {
-                continue;
-            }
-
-            // Check if class name matches exactly (without namespace)
-            $class_basename = basename(str_replace('\\', '/', $info['fqcn']));
-
-            if ($class_basename === $rsx_controller) {
-                $controller_class = $info['fqcn'];
-                $file_info = $info;
-                break;
-            }
-        }
+        // ONE LOOKUP in the class map. This was a linear scan of every indexed file, twice
+        // per XHR (here and in the HTTP entry point below).
+        $class_record = Manifest::php_class_metadata($rsx_controller);
+        $controller_class = $class_record['fqcn'] ?? null;
 
         if (!$controller_class) {
             throw new Exception("Controller class not found: {$rsx_controller}");
@@ -204,35 +187,17 @@ class Ajax
             throw new Exception("Controller {$controller_class} must extend Rsx_Controller_Abstract");
         }
 
-        // Check if method exists and has Ajax_Endpoint attribute
-        if (!isset($file_info['public_static_methods'][$rsx_action])) {
-            throw new Exception("Method {$rsx_action} not found in controller {$controller_class}");
-        }
-
-        $method_info = $file_info['public_static_methods'][$rsx_action];
-        $has_ajax_endpoint = false;
-
-        // Check for Ajax_Endpoint attribute in method metadata
-        if (isset($method_info['attributes'])) {
-            foreach ($method_info['attributes'] as $attr_name => $attr_data) {
-                // Check for Ajax_Endpoint with or without namespace
-                if ($attr_name === 'Ajax_Endpoint' ||
-                    basename(str_replace('\\', '/', $attr_name)) === 'Ajax_Endpoint') {
-                    $has_ajax_endpoint = true;
-                    break;
-                }
-            }
-        }
-
-        if (!$has_ajax_endpoint) {
-            throw new Exception("Method {$rsx_action} in {$controller_class} must have Ajax_Endpoint annotation");
-        }
+        // Is this method an Ajax endpoint? The SURFACE INDEX already answers that - the
+        // manifest records every #[Ajax_Endpoint] there, with its kind and its realm - so
+        // the endpoint's method map is not read at all. It would otherwise be the one thing
+        // an XHR pulled out of the cold half of the index.
+        static::_require_ajax_surface($rsx_controller, $rsx_action, $controller_class);
 
         // --- Declarative #[Auth] gates ---
         // Same seam as the browser path, on the internal caller. Denial raises the
         // coded unauthorized exception this entry point already contracts for, and
         // the endpoint body never runs.
-        if (!static::_endpoint_gates_pass($file_info, $rsx_action)) {
+        if (!static::_endpoint_gates_pass($rsx_controller, $rsx_action)) {
             return static::_handle_special_response(response_unauthorized());
         }
 
@@ -298,6 +263,29 @@ class Ajax
     }
 
     /**
+     * Refuse anything that is not an indexed #[Ajax_Endpoint] surface.
+     *
+     * `auth.surfaces` is the manifest's record of every dispatchable surface and its KINDS,
+     * built from the very attributes this used to re-read: a row whose kinds contain 'ajax'
+     * IS an Ajax endpoint. Reading it here means an XHR never touches a controller's method
+     * map - the one request-path read that would otherwise pull the cold half of the index
+     * into every Ajax call.
+     */
+    protected static function _require_ajax_surface(string $controller_name, string $action_name, string $controller_class): void
+    {
+        $target = $controller_name . '::' . $action_name;
+        $surface = Auth_Gates::get_surfaces()[$target] ?? null;
+
+        if ($surface === null || !in_array('ajax', $surface['kinds'] ?? [], true)) {
+            throw new Exception(
+                "Method {$action_name} in {$controller_class} is not an Ajax endpoint. "
+                . 'An Ajax endpoint is a public static method carrying #[Ajax_Endpoint] and its '
+                . 'mandatory #[Auth].'
+            );
+        }
+    }
+
+    /**
      * Evaluate the REALM and the declarative #[Auth] gates an Ajax endpoint declares.
      *
      * Each realm has its own internal-endpoint channel (/_ajax/... for staff,
@@ -309,15 +297,14 @@ class Ajax
      * REQUEST's realm. The indexed gate list already merges the controller's
      * class-level #[Auth] with the method's own, so that part is a straight lookup.
      *
-     * @param array $file_info Manifest metadata for the controller's file (both entry
-     *                         points resolve it before reaching here, and the manifest
-     *                         search only matches entries carrying 'class')
+     * @param string $controller_name The controller's SIMPLE class name - how auth.surfaces
+     *                         is keyed, and how both entry points name it
      * @param string $action_name The endpoint method
      * @return bool True when the realm permits and every gate passes
      */
-    protected static function _endpoint_gates_pass(array $file_info, string $action_name): bool
+    protected static function _endpoint_gates_pass(string $controller_name, string $action_name): bool
     {
-        $target = $file_info['class'] . '::' . $action_name;
+        $target = $controller_name . '::' . $action_name;
         $realm = Auth_Gates::active_realm();
 
         if (!Auth_Gates::surface_realm_permits($target, $realm)) {
@@ -408,27 +395,9 @@ class Ajax
             throw new Exception('Missing controller or action parameter');
         }
 
-        // Use manifest to find the controller class
-        $manifest = \App\RSpade\Core\Manifest\Manifest::get_all();
-        $controller_class = null;
-        $file_info = null;
-
-        // Search for controller class in manifest
-        foreach ($manifest as $file_path => $info) {
-            // Skip non-PHP files or files without classes
-            if (!isset($info['class']) || !isset($info['fqcn'])) {
-                continue;
-            }
-
-            // Check if class name matches exactly (without namespace)
-            $class_basename = basename(str_replace('\\', '/', $info['fqcn']));
-
-            if ($class_basename === $controller_name) {
-                $controller_class = $info['fqcn'];
-                $file_info = $info;
-                break;
-            }
-        }
+        // ONE LOOKUP in the class map (see Ajax::internal()).
+        $class_record = Manifest::php_class_metadata($controller_name);
+        $controller_class = $class_record['fqcn'] ?? null;
 
         if (!$controller_class) {
             throw new Exception("Controller class not found: {$controller_name}");
@@ -444,29 +413,8 @@ class Ajax
             throw new Exception("Controller {$controller_class} must extend Rsx_Controller_Abstract");
         }
 
-        // Check if method exists and has Ajax_Endpoint attribute
-        if (!isset($file_info['public_static_methods'][$action_name])) {
-            throw new Exception("Method {$action_name} not found in controller {$controller_class} public static methods");
-        }
-
-        $method_info = $file_info['public_static_methods'][$action_name];
-        $has_ajax_endpoint = false;
-
-        // Check for Ajax_Endpoint attribute in method metadata
-        if (isset($method_info['attributes'])) {
-            foreach ($method_info['attributes'] as $attr_name => $attr_data) {
-                // Check for Ajax_Endpoint with or without namespace
-                if ($attr_name === 'Ajax_Endpoint' ||
-                    basename(str_replace('\\', '/', $attr_name)) === 'Ajax_Endpoint') {
-                    $has_ajax_endpoint = true;
-                    break;
-                }
-            }
-        }
-
-        if (!$has_ajax_endpoint) {
-            throw new Exception("Method {$action_name} in {$controller_class} must have Ajax_Endpoint annotation");
-        }
+        // See Ajax::internal(): the surface index is what says this is an Ajax endpoint.
+        static::_require_ajax_surface($controller_name, $action_name, $controller_class);
 
         // Revision history files this call's writes under the endpoint, not under the
         // transport URL the dispatcher saw: the unit of work is Controller::action.
@@ -477,7 +425,7 @@ class Ajax
         // by the dispatcher for POST) and before the controller's pre_dispatch and the
         // endpoint body. Denial returns the standard coded unauthorized error, which
         // the client's generic handlers already render.
-        if (!static::_endpoint_gates_pass($file_info, $action_name)) {
+        if (!static::_endpoint_gates_pass($controller_name, $action_name)) {
             return static::_handle_browser_special_response(response_unauthorized());
         }
 

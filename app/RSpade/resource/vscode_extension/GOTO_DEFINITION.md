@@ -131,7 +131,8 @@ node ./out/test/run_recognizer_tests.js
 ## The extension builds no file index
 
 Resolution is always a question put to the IDE bridge, which answers from the
-RSpade manifest (`storage/rsx-build/manifest_data.php`). The extension never walks
+RSpade manifest (`storage/rsx-build/manifest_index.php`, plus `manifest_files.php` for a
+method-level lookup). The extension never walks
 the tree to build an index of its own, so what it can resolve is exactly what the
 manifest holds. The manifest skips every directory named `resource/`, which means
 a vendored copy of the reference app under

@@ -271,31 +271,13 @@ class Rsx_Framework_Provider extends ServiceProvider
         // Register RSX autoloader
         \App\RSpade\Core\Autoloader::register();
 
-        // Load all classless PHP files from rsx/ directory
-        // These files contain global functions and constants that should be available everywhere
-        $all_files = Manifest::get_all();
-        foreach ($all_files as $file_path => $metadata) {
-            // Only process PHP files in rsx/ directory
-            if (!str_starts_with($file_path, 'rsx/')) {
-                continue;
-            }
-
-            // Only process PHP files
-            if (($metadata['extension'] ?? '') !== 'php') {
-                continue;
-            }
-
-            // Skip files that have classes (we only want classless utility files)
-            if (isset($metadata['class'])) {
-                continue;
-            }
-
-            // Load the classless PHP file
-            require_once base_path($file_path);
-        }
+        // Classless PHP files - global functions and constants - are loaded by
+        // Manifest::post_init(), from the `classless_php_files` index, before this provider
+        // ever boots. The loop that used to sit here walked EVERY indexed file on EVERY boot
+        // to find the four rsx/ ones, and post_init() already includes a superset of them.
 
         // Initialize Main_Abstract extending class
-        $main_classes = Manifest::php_get_extending('Main_Abstract');
+        $main_classes = Manifest::php_class_records_extending('Main_Abstract');
 
         // Sanity check: There should be exactly one Main_Abstract class (like main() in C++)
         if (count($main_classes) !== 1) {

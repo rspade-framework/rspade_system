@@ -53,13 +53,13 @@ class Portal_Realm_Site_Seams_Test extends Rsx_Test_Abstract
         static::$_portal_site_id = static::__make_site('portal');
 
         static::__acting_as_site(static::$_staff_site_id);
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
     }
 
     public static function teardown(): void
     {
         Rsx_Portal::set_portal_request(false);
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         static::__reset_session();
     }
 
@@ -82,7 +82,7 @@ class Portal_Realm_Site_Seams_Test extends Rsx_Test_Abstract
      */
     private static function __as_portal_request(): void
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         Portal_Session::set_site_id(static::$_portal_site_id);
         Rsx_Portal::set_portal_request(true);
     }
@@ -161,7 +161,7 @@ class Portal_Realm_Site_Seams_Test extends Rsx_Test_Abstract
      */
     public static function test_a_portal_request_with_no_declared_site_throws()
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         Rsx_Portal::set_portal_request(true);
 
         static::__assert_throws(\RuntimeException::class, function () {

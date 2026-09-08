@@ -233,8 +233,13 @@ class Php_Fixer_Import_Safety_Test extends Rsx_Test_Abstract
     {
         // A guard that swallowed the whole framework would be indistinguishable from
         // switching deletion off, so the derivation has to actually discriminate.
+        // The set is a deliberate OVER-APPROXIMATION and it GROWS whenever a file already
+        // in it names a new class - it followed Api_Catalog in the day the API dispatcher
+        // started reading the endpoint catalog. So the example here has to be a class the
+        // register phase genuinely cannot reach: the OpenAPI generator is reached only from
+        // the docs route, which dispatches long after the autoloader exists.
         static::__assert_false(
-            Pre_Autoload_Reachability::contains_file('app/RSpade/Core/Api/Api_Catalog.php'),
+            Pre_Autoload_Reachability::contains_file('app/RSpade/Core/Api/Api_Openapi.php'),
             'a class nothing in the register phase reaches is outside the set'
         );
 
@@ -278,7 +283,7 @@ class Php_Fixer_Import_Safety_Test extends Rsx_Test_Abstract
         );
 
         static::__assert_true(
-            static::__invoke_seam('__should_remove_use_statement', ['Route', 'app/RSpade/Core/Api/Api_Catalog.php', &$index]),
+            static::__invoke_seam('__should_remove_use_statement', ['Route', 'app/RSpade/Core/Api/Api_Openapi.php', &$index]),
             'and so does a framework file outside the register phase'
         );
     }

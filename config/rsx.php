@@ -231,9 +231,17 @@ return [
         \App\RSpade\Core\Task\Task_Command_ManifestSupport::class,
         \App\RSpade\Core\Mail\Email_ManifestSupport::class,
         \App\RSpade\Core\Bundle\Bundle_Alias_ManifestSupport::class,
-        // Auth gates run LAST: the consolidated #[Auth] index covers every surface
-        // kind the modules above register.
+        // Auth gates run LAST of the INDEX modules: the consolidated #[Auth] index covers
+        // every surface kind the modules above register.
         \App\RSpade\Core\Auth\Auth_ManifestSupport::class,
+
+        // THE STUB GENERATORS. Ordinary support modules, at the end of the same ordered
+        // list - there is no second module system and no method_exists() dispatch. They run
+        // after every index module because the list says so: the controller and model stubs
+        // read the sections above, and the auth mirrors read auth.checks.
+        \App\RSpade\Core\Controller\Controller_Stub_ManifestSupport::class,
+        \App\RSpade\Core\Database\Model_Stub_ManifestSupport::class,
+        \App\RSpade\Core\Auth\Auth_Stub_ManifestSupport::class,
     ],
 
     /*

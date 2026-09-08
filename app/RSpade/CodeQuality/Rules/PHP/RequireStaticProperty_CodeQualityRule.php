@@ -163,7 +163,7 @@ class RequireStaticProperty_CodeQualityRule extends CodeQualityRule_Abstract
 
                     // Try to find the class declaration line
                     if (file_exists($file_path)) {
-                        $file_contents = file_get_contents($file_path);
+                        $file_contents = $this->source()->content($file_path);
                         if (preg_match('/class\s+' . preg_quote($class_name, '/') . '\s/m', $file_contents, $matches, PREG_OFFSET_CAPTURE)) {
                             $offset = $matches[0][1];
                             $line = substr_count(substr($file_contents, 0, $offset), "\n") + 1;

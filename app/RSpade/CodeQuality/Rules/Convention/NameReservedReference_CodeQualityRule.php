@@ -5,12 +5,11 @@ namespace App\RSpade\CodeQuality\Rules\Convention;
 use PhpParser\Error;
 use PhpParser\Node;
 use PhpParser\NodeFinder;
-use PhpParser\ParserFactory;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
-use App\RSpade\CodeQuality\Support\Validation_Ledger;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Identifier;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * NAME-RESERVED-02 - application code may not REFERENCE a framework-reserved name.
@@ -61,11 +60,11 @@ use App\RSpade\Core\Naming\Rsx_Identifier;
  * and an allowlist would have been a list to keep in step.
  *
  * THE PASS LEDGER. This rule parses and indexes, so a file that passed is remembered by its
- * manifest file hash in the shared `Validation_Ledger` rather than re-judged. The ledger key
- * is `NAME-RESERVED-02@<short hash of the reserved-name index>`, NOT the bare rule id: the
- * verdict depends on the framework's own names as much as on the file's bytes, and a stale
- * index must never be allowed to vouch for a file. Change the framework's declared names and
- * every old verdict is keyed to an id nothing asks about again.
+ * manifest file hash in the shared `Validation_Ledger` - by the DRIVER, which owns the
+ * incremental decision for every rule. What this rule contributes is fingerprint_extra():
+ * the short hash of the reserved-name index, which the driver folds into the ledger id. The
+ * verdict depends on the framework's own names as much as on the file's bytes, so moving a
+ * framework name retires every verdict recorded against the old one.
  *
  * See: rsx:man sys_panel, rsx:man coding_standards, rsx:man code_quality.
  *
@@ -80,13 +79,9 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
     private const RULE_ID = 'NAME-RESERVED-02';
 
     /** The framework tree. Everything declared under it is framework property. */
-    private const FRAMEWORK_TREE = 'app/RSpade/';
-
     /** The reserved-name index, built once per process. */
-    private static ?array $index = null;
+    private ?array $index = null;
 
-    /** The nikic parser, built once per process. */
-    private static $parser = null;
 
     public function get_id(): string
     {
@@ -110,6 +105,16 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
+     * The reserved-name index decides this rule's answer as much as a file's own bytes do,
+     * so its hash is part of the rule's fingerprint: move a framework name and every verdict
+     * recorded under the old index is filed under an id nothing asks about again.
+     */
+    public function fingerprint_extra(): string
+    {
+        return $this->__index()['hash'];
+    }
+
+    /**
      * Blocking: the referenced thing is framework property that may vanish in any release,
      * and its disappearance is silent (a component that stops rendering, a route that stops
      * resolving) rather than loud.
@@ -117,14 +122,6 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
     public function get_default_severity(): string
     {
         return 'critical';
-    }
-
-    /**
-     * Per-file: a reference is decided by the file's own text against the framework index.
-     */
-    public function is_incremental(): bool
-    {
-        return true;
     }
 
     /**
@@ -142,13 +139,13 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Framework code referencing its own names is the point of having them. This also
         // covers the reference_app symlink, whose path contains app/RSpade/.
-        if (str_contains($normalized, self::FRAMEWORK_TREE)) {
+        if (Rsx_Paths::is_framework($normalized)) {
             return;
         }
 
-        // The manifest spells application paths RELATIVE (`rsx/app/...`); fixtures and the
-        // IDE spell them absolute (`/var/www/html/rsx/...`).
-        if (!str_starts_with($normalized, 'rsx/') && !str_contains($normalized, '/rsx/')) {
+        // Rsx_Paths answers both spellings - the manifest's RELATIVE `rsx/app/...` and the
+        // absolute `/var/www/html/rsx/...` a fixture or the IDE passes.
+        if (!Rsx_Paths::is_application($normalized)) {
             return;
         }
 
@@ -158,21 +155,7 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $index = static::__index();
-
-        $file_hash = $metadata['hash'] ?? null;
-
-        if (!is_string($file_hash) || $file_hash === '') {
-            $file_hash = is_file($file_path) ? (sha1_file($file_path) ?: null) : null;
-        }
-
-        $ledger_id = self::RULE_ID . '@' . $index['hash'];
-
-        if ($file_hash !== null && Validation_Ledger::has_passed($ledger_id, $file_hash)) {
-            return;
-        }
-
-        $before = count($this->collector->get_by_rule(self::RULE_ID));
+        $index = $this->__index();
 
         if (str_ends_with($normalized, '.blade.php')) {
             $this->__check_blade($file_path, $contents, $index);
@@ -182,12 +165,6 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
             $this->__check_javascript($file_path, $contents, $index);
         } else {
             $this->__check_php($file_path, $contents, $index);
-        }
-
-        $after = count($this->collector->get_by_rule(self::RULE_ID));
-
-        if ($file_hash !== null && $after === $before) {
-            Validation_Ledger::record_pass($ledger_id, $file_hash);
         }
     }
 
@@ -206,10 +183,10 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
      *               js: array<string,array{path:string,reserved:bool,methods:array<string,int>}>,
      *               jqhtml: array<string,string>, blade: array<string,string>, hash: string}
      */
-    private static function __index(): array
+    private function __index(): array
     {
-        if (static::$index !== null) {
-            return static::$index;
+        if ($this->index !== null) {
+            return $this->index;
         }
 
         $files = Manifest::$_has_init
@@ -221,7 +198,7 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
         foreach ($files as $path => $metadata) {
             $normalized = str_replace('\\', '/', (string) $path);
 
-            if (!str_contains($normalized, self::FRAMEWORK_TREE)) {
+            if (!Rsx_Paths::is_framework($normalized)) {
                 continue;
             }
 
@@ -261,9 +238,9 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
 
         $index['hash'] = substr(sha1(implode("\n", $fingerprint)), 0, 12);
 
-        static::$index = $index;
+        $this->index = $index;
 
-        return static::$index;
+        return $this->index;
     }
 
     /**
@@ -292,11 +269,14 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Discard the process-local index. The seam a test uses to rebuild it.
+     * Discard this rule instance's index.
+     *
+     * Nothing but a test needs it any more: the index is INSTANCE state and dies with the
+     * pass, where it used to be a static array that outlived every build in the process.
      */
-    public static function _reset_index(): void
+    public function _reset_index(): void
     {
-        static::$index = null;
+        $this->index = null;
     }
 
     // =====================================================================
@@ -315,12 +295,9 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
      */
     private function __check_php(string $file_path, string $contents, array $index): void
     {
-        try {
-            $ast = static::__parser()->parse($contents);
-        } catch (Error $error) {
-            // A file that does not parse is the syntax lint's problem, not this rule's.
-            return;
-        }
+        // A file that does not parse yields a null AST - the syntax lint's problem, not
+        // this rule's.
+        $ast = $this->source()->ast($file_path);
 
         if (!$ast) {
             return;
@@ -494,15 +471,6 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         return [];
-    }
-
-    private static function __parser()
-    {
-        if (static::$parser === null) {
-            static::$parser = (new ParserFactory())->createForNewestSupportedVersion();
-        }
-
-        return static::$parser;
     }
 
     // =====================================================================

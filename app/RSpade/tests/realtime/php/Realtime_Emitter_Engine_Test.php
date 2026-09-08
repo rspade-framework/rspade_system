@@ -156,14 +156,14 @@ class Realtime_Emitter_Engine_Test extends Rsx_Test_Abstract
     {
         // A registry entry an emitter does not serve must not run anything, even alongside a
         // real emitter entry. Model_Changed_Topic carries a model-CONSTRAINED fixture emitter
-        // (Realtime_Fixture_Model), so a Client_Model watcher on that topic is not served and
+        // (Realtime_Fixture_Model), so a watcher naming a model no emitter serves is not served and
         // only the Realtime_Test_Public_Topic emitter runs.
         static::__clean_redis();
         static::__seed_registry();
         static::__redis()->sAdd('rsx_rt:subs', json_encode([
             'site_id' => 1,
             'topic' => 'Model_Changed_Topic',
-            'filter' => ['model' => 'Client_Model', 'id' => 3],
+            'filter' => ['model' => 'Absent_Fixture_Model', 'id' => 3],
         ]));
         Realtime::reset_registry_memo();
         Realtime::_testing_start_publish_capture();

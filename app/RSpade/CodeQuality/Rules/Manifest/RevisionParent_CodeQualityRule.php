@@ -2,10 +2,8 @@
 
 namespace App\RSpade\CodeQuality\Rules\Manifest;
 
-use PhpParser\Error;
 use PhpParser\Node;
 use PhpParser\NodeFinder;
-use PhpParser\ParserFactory;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -42,16 +40,7 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
 {
     private const RULE_ID = 'REVISION-01';
 
-    /** @var mixed Shared php-parser instance. */
-    protected static $parser = null;
 
-    /**
-     * Parsed-AST cache keyed by absolute file path (value: Node[]|false). Per-INSTANCE, so
-     * a fixture class name from one test can never answer for a different class in the next.
-     *
-     * @var array
-     */
-    private $ast_cache = [];
 
     public function get_id(): string
     {
@@ -89,11 +78,28 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Cross-file rule: the parent's opt-in lives in another file.
+     * CROSS-FILE: this rule judges the tree, not one file. The driver runs it once per
+     * pass, gated on the fingerprint of what depends_on() declares.
      */
-    public function is_incremental(): bool
+    public function kind(): string
     {
-        return false;
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * Every indexed PHP file, the lineage indexes, and the model index the declaration is
+     * checked against.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return [
+            'files:*.php',
+            'php_classes',
+            'php_subclass_index',
+            'models',
+        ];
     }
 
     /**
@@ -159,7 +165,7 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $contents = @file_get_contents($abs_file);
+        $contents = $this->source()->content($abs_file);
         if ($contents === false) {
             return;
         }
@@ -468,75 +474,13 @@ class RevisionParent_CodeQualityRule extends CodeQualityRule_Abstract
      */
     private function find_class_node(string $abs_file, string $class_name): ?Node\Stmt\ClassLike
     {
-        $ast = $this->parse_file($abs_file);
-        if ($ast === null) {
-            return null;
-        }
+        // THE DRIVER OWNS PARSING, and it owns this lookup too: the node is memoized
+        // beside the file's AST and evicted with it. Four rules each ran a full
+        // NodeFinder traversal per ASK, and PHP-PARENT-CHAIN-01 asks once per ancestor
+        // per method.
+        $node = $this->source()->class_node($abs_file, $class_name);
 
-        $node_finder = new NodeFinder();
-
-        foreach ($node_finder->findInstanceOf($ast, Node\Stmt\ClassLike::class) as $class_like) {
-            if ($class_like->name !== null && strcasecmp($class_like->name->toString(), $class_name) === 0) {
-                return $class_like;
-            }
-        }
-
-        return null;
+        return $node instanceof Node\Stmt\ClassLike ? $node : null;
     }
 
-    /**
-     * Parse a file into an AST (Node[]), cached per absolute path. Null on a missing file or
-     * a parse error (a syntax error is reported by the linter, not by this rule).
-     */
-    private function parse_file(string $abs_file): ?array
-    {
-        if (array_key_exists($abs_file, $this->ast_cache)) {
-            $cached = $this->ast_cache[$abs_file];
-
-            return $cached === false ? null : $cached;
-        }
-
-        if (!is_file($abs_file)) {
-            $this->ast_cache[$abs_file] = false;
-
-            return null;
-        }
-
-        $code = @file_get_contents($abs_file);
-        if ($code === false) {
-            $this->ast_cache[$abs_file] = false;
-
-            return null;
-        }
-
-        try {
-            $ast = $this->get_parser()->parse($code);
-        } catch (Error $error) {
-            $this->ast_cache[$abs_file] = false;
-
-            return null;
-        }
-
-        if (!$ast) {
-            $this->ast_cache[$abs_file] = false;
-
-            return null;
-        }
-
-        $this->ast_cache[$abs_file] = $ast;
-
-        return $ast;
-    }
-
-    /**
-     * Get or create the shared php-parser instance.
-     */
-    private function get_parser()
-    {
-        if (self::$parser === null) {
-            self::$parser = (new ParserFactory())->createForNewestSupportedVersion();
-        }
-
-        return self::$parser;
-    }
 }

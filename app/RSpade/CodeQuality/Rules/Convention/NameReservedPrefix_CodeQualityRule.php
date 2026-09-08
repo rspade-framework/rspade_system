@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\Convention;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Naming\Rsx_Identifier;
+use App\RSpade\Core\Naming\Rsx_Paths;
 
 /**
  * NAME-RESERVED-01 - the single leading underscore is the framework-application prefix.
@@ -70,14 +71,6 @@ class NameReservedPrefix_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Per-file: a name's zone is decided by its own path alone.
-     */
-    public function is_incremental(): bool
-    {
-        return true;
-    }
-
-    /**
      * Manifest-time, because the failure mode is silent shadowing rather than an error, and
      * because the very next build is what would archive the framework file.
      */
@@ -91,10 +84,9 @@ class NameReservedPrefix_CodeQualityRule extends CodeQualityRule_Abstract
         $normalized = str_replace('\\', '/', $file_path);
 
         $in_sys_tree = str_contains($normalized, self::SYS_TREE);
-        // The manifest spells application paths RELATIVE (`rsx/app/...`); fixtures and the
-        // IDE spell them absolute (`/var/www/html/rsx/...`). Both are the application tree.
-        $in_app_tree = !str_contains($normalized, 'app/RSpade/')
-            && (str_starts_with($normalized, 'rsx/') || str_contains($normalized, '/rsx/'));
+        // Rsx_Paths answers both spellings - the manifest's RELATIVE `rsx/app/...` and the
+        // absolute `/var/www/html/rsx/...` a fixture or the IDE passes.
+        $in_app_tree = !Rsx_Paths::is_framework($normalized) && Rsx_Paths::is_application($normalized);
 
         if (!$in_sys_tree && !$in_app_tree) {
             return;

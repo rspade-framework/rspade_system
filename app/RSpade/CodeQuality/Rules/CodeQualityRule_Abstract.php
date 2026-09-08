@@ -3,20 +3,67 @@
 namespace App\RSpade\CodeQuality\Rules;
 
 use App\RSpade\CodeQuality\CodeQuality_Violation;
+use App\RSpade\CodeQuality\Support\Source_Cache;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
 
 #[Instantiatable]
 abstract class CodeQualityRule_Abstract
 {
+    /** The two kinds of rule. See kind(). */
+    public const KIND_PER_FILE = 'per_file';
+    public const KIND_CROSS_FILE = 'cross_file';
+
     protected ViolationCollector $collector;
     protected array $config = [];
     protected bool $enabled = true;
+
+    /**
+     * The build's ONE reader, tokenizer and parser of source files, handed to every rule by
+     * the driver before check() is called.
+     *
+     * A RULE NEVER OPENS A FILE ITSELF. It does not call file_get_contents(), it does not
+     * call token_get_all() or PhpToken::tokenize(), and it does not construct a
+     * PhpParser\ParserFactory - all three used to be written once per rule, and the
+     * retained streams and ASTs were 1.12 GB of a 1,237 MB cold build. The driver owns pass
+     * memory; a rule only checks. Rule_Private_Cache_Test refuses every spelling, with no
+     * whitelist.
+     */
+    protected ?Source_Cache $source = null;
     
     public function __construct(ViolationCollector $collector, array $config = [])
     {
         $this->collector = $collector;
         $this->config = $config;
         $this->enabled = $config['enabled'] ?? true;
+    }
+
+    /**
+     * The driver hands the pass's Source_Cache to every rule it is about to run.
+     *
+     * #[Sealed]-in-spirit: a rule never overrides this and never replaces the instance.
+     */
+    final public function set_source_cache(Source_Cache $source): void
+    {
+        $this->source = $source;
+    }
+
+    /**
+     * The pass's source cache - how a rule reaches a file's bytes, tokens or AST.
+     *
+     * In a real pass the DRIVER hands one in, and every rule in that pass shares it, so a
+     * file read for one rule is not read again for the next. A rule CONSTRUCTED OUTSIDE a
+     * driver - a unit test that news up one rule and calls check() on a fixture - gets an
+     * instance-scoped cache instead. That is still bounded (the same LRU) and still dies
+     * with the object; what it loses is only the sharing, which a single-rule caller has
+     * nothing to share with. It is never static, and a rule still may not build one itself.
+     */
+    final protected function source(): Source_Cache
+    {
+        if ($this->source === null) {
+            $this->source = new Source_Cache();
+        }
+
+        return $this->source;
     }
     
     /**
@@ -97,28 +144,64 @@ abstract class CodeQualityRule_Abstract
     }
 
     /**
-     * Whether this rule checks files incrementally or needs cross-file context
+     * PER-FILE or CROSS-FILE.
      *
-     * This method is only relevant for rules where is_called_during_manifest_scan() = true.
+     * A PER-FILE rule (the default) judges one file from its own bytes plus the metadata
+     * the manifest already holds for it. The driver runs it once per CHANGED file, and
+     * remembers a clean verdict in the Validation_Ledger against the file's hash - so an
+     * unchanged file is never re-judged.
      *
-     * INCREMENTAL (true - default):
-     * - Rule checks each file independently
-     * - Only changed files are passed during incremental manifest rebuilds
-     * - More efficient for per-file validation rules
+     * A CROSS-FILE rule judges the tree: duplicate names, an index, a relationship between
+     * files. The driver runs it ONCE per pass, after the per-file pass, and gates it on a
+     * fingerprint of the manifest sections it declares in depends_on().
      *
-     * CROSS-FILE (false):
-     * - Rule needs to see relationships between files or check the full manifest
-     * - Runs once per manifest build with access to all files via Manifest::get_all()
-     * - Use for rules that validate naming across files, check for duplicates, etc.
-     *
-     * @return bool True for per-file rules, false for cross-file rules
+     * @return string self::KIND_PER_FILE or self::KIND_CROSS_FILE
      */
     #[Replaceable]
-    public function is_incremental(): bool
+    public function kind(): string
     {
-        return true;
+        return self::KIND_PER_FILE;
     }
-    
+
+    /**
+     * What a CROSS-FILE rule reads, so the driver can skip it when none of it moved.
+     *
+     * Each entry is either a manifest section name under Manifest::$data['data']
+     * ('php_classes', 'php_subclass_index', 'auth', 'routes', 'models', ...) or the shape
+     * 'files:<pattern>' naming a set of indexed files by basename glob ('files:*.php'),
+     * whose fingerprint is the sorted list of matching paths and their hashes.
+     *
+     * WHEN IN DOUBT, LIST 'files:<your own patterns>'. That is the conservative answer: it
+     * re-runs the rule whenever any file it could possibly look at changed. An UNDER-stated
+     * dependency is a rule that silently stops firing; an over-stated one only costs time.
+     *
+     * Meaningless for a per-file rule - the file hash is the whole dependency there.
+     *
+     * @return array<int,string>
+     */
+    #[Replaceable]
+    public function depends_on(): array
+    {
+        return [];
+    }
+
+    /**
+     * Anything beyond this rule's OWN source file that changes its verdict.
+     *
+     * The driver fingerprints a rule as md5(<the rule's file>) . fingerprint_extra(), and
+     * every ledger entry is filed under "<ID>@<that fingerprint>", so changing either
+     * retires the rule's previous verdicts instead of letting them vouch for a stale
+     * premise. Return the hash of a helper script, a generated index, a config value the
+     * rule reads - anything the rule's answer depends on that its own bytes do not carry.
+     *
+     * @return string
+     */
+    #[Replaceable]
+    public function fingerprint_extra(): string
+    {
+        return '';
+    }
+
     /**
      * Get default severity for this rule
      */

@@ -3,6 +3,8 @@
 namespace App\RSpade\Core\Manifest;
 
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Manifest\_Manifest_Builder_Helper;
+use App\RSpade\Core\Naming\Rsx_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -16,235 +18,38 @@ use App\RSpade\Core\Rsx;
 class _Manifest_Quality_Helper
 {
     /**
-    * Process code quality metadata extraction for changed files
-    * This runs during Phase 3.5, after PHP classes are loaded but before reflection
-    */
-    public static function _process_code_quality_metadata(array $changed_files): void
-    {
-        // Only run in development mode
-        if (!Rsx::is_development()) {
-            return;
-        }
-
-        // Discover rules with on_manifest_file_update method
-        $rules_with_update = [];
-        $rule_files = glob(base_path('app/RSpade/CodeQuality/Rules/**/*Rule.php'));
-
-        foreach ($rule_files as $rule_file) {
-            $rule_class = null;
-            $content = file_get_contents($rule_file);
-
-            // Extract class name from file
-            if (preg_match('/class\s+(\w+)\s+extends/', $content, $matches)) {
-                $class_name = $matches[1];
-
-                // Extract namespace
-                if (preg_match('/namespace\s+([^;]+);/', $content, $ns_matches)) {
-                    $namespace = $ns_matches[1];
-                    $rule_class = $namespace . '\\' . $class_name;
-                }
-            }
-
-            if ($rule_class && class_exists($rule_class)) {
-                // Check if it has the on_manifest_file_update method
-                if (method_exists($rule_class, 'on_manifest_file_update')) {
-                    $rule_instance = new $rule_class(new \App\RSpade\CodeQuality\Support\ViolationCollector());
-
-                    // Check if it's a manifest-time rule
-                    if ($rule_instance->is_called_during_manifest_scan()) {
-                        $rules_with_update[] = $rule_instance;
-                    }
-                }
-            }
-        }
-
-        // Process each changed file with each rule
-        foreach ($changed_files as $file) {
-            $absolute_path = base_path($file);
-
-            // Skip if file doesn't exist
-            if (!file_exists($absolute_path)) {
-                continue;
-            }
-
-            // Initialize code_quality_metadata if not present
-            if (!isset(Manifest::$data['data']['files'][$file]['code_quality_metadata'])) {
-                Manifest::$data['data']['files'][$file]['code_quality_metadata'] = [];
-            }
-
-            // Process with each rule that has on_manifest_file_update
-            foreach ($rules_with_update as $rule) {
-                try {
-                    $metadata = $rule->on_manifest_file_update(
-                        $absolute_path,
-                        file_get_contents($absolute_path),
-                        Manifest::$data['data']['files'][$file] ?? []
-                    );
-
-                    // Store metadata if returned
-                    if ($metadata !== null) {
-                        $rule_id = $rule->get_id();
-                        Manifest::$data['data']['files'][$file]['code_quality_metadata'][$rule_id] = $metadata;
-                    }
-                } catch (Throwable $e) {
-                    // If the rule throws during metadata extraction, it's a violation
-                    // Mark manifest as bad and throw the error
-                    Manifest::_set_manifest_is_bad();
-
-                    throw $e;
-                }
-            }
-        }
-    }
-
-    /**
-    * Run code quality checks during manifest scan
-    * Only runs in development mode after manifest changes
-    * Throws fatal exception on first violation found
+    * Run the manifest-time code-quality pass.
     *
-    * Supports two types of rules:
-    * - Incremental rules (is_incremental() = true): Only check changed files
-    * - Cross-file rules (is_incremental() = false): Run once with full manifest context
+    * THE DRIVER OWNS THE PASS. Discovery, pattern compilation, source reading, tokenizing,
+    * parsing, the per-file incremental decision and the cross-file dependency gate all live
+    * in App\RSpade\CodeQuality\Manifest_Rule_Driver; this function decides only WHICH
+    * files the pass is about and releases the driver when it is done.
     *
-    * @param array $changed_files Files that changed in this manifest scan
+    * What used to be here: two rule discoveries, a metadata-extraction phase that ran a
+    * separate `on_manifest_file_update` hook over every changed file and stored its findings
+    * in the index, a loop that walked the WHOLE file map once PER RULE re-reading each file,
+    * and every cross-file rule running unconditionally on every rebuild.
+    *
+    * @param array $changed_files Files that changed in this manifest scan (relative paths)
     */
     public static function _run_manifest_time_code_quality_checks(array $changed_files = []): void
     {
-        // Create a minimal violation collector
         $collector = new \App\RSpade\CodeQuality\Support\ViolationCollector();
 
-        // Discover rules that should run during manifest scan
-        // This uses direct file scanning, not the manifest, to avoid pollution
-        $rules = \App\RSpade\CodeQuality\Support\RuleDiscovery::discover_rules(
-            $collector,
-            [],
-            true // Only get rules with is_called_during_manifest_scan() = true
+        $driver = new \App\RSpade\CodeQuality\Manifest_Rule_Driver(
+            collector: $collector,
+            config: [],
+            only_manifest_scan: true,
+            throw_on_violation: true,
+            source: Manifest::build()->source_cache(),
         );
 
-        // Separate rules by type
-        $incremental_rules = [];
-        $cross_file_rules = [];
-
-        foreach ($rules as $rule) {
-            if ($rule->is_incremental()) {
-                $incremental_rules[] = $rule;
-            } else {
-                $cross_file_rules[] = $rule;
-            }
-        }
-
-        // Helper to throw violation exception
-        $throw_violation = function ($collector) {
-            $violations = $collector->get_all();
-            if (!empty($violations)) {
-                $first_violation = $violations[0];
-                $data = $first_violation->to_array();
-
-                Manifest::_set_manifest_is_bad();
-
-                $relative_file = str_replace(base_path() . '/', '', $data['file']);
-
-                $error_message = "Code Quality Violation ({$data['type']}) - {$data['message']}\n\n";
-                $error_message .= "File: {$relative_file}:{$data['line']}\n\n";
-
-                if (!empty($data['code'])) {
-                    $error_message .= "Code:\n    " . $data['code'] . "\n\n";
-                }
-
-                if (!empty($data['resolution'])) {
-                    $error_message .= "Resolution:\n" . $data['resolution'];
-                }
-
-                throw new \App\RSpade\CodeQuality\RuntimeChecks\YoureDoingItWrongException(
-                    $error_message,
-                    0,
-                    null,
-                    $data['file'],
-                    $data['line']
-                );
-            }
-        };
-
-        // Helper to check if file matches rule patterns
-        $file_matches_rule = function ($file_path, $rule) {
-            $patterns = $rule->get_file_patterns();
-            foreach ($patterns as $pattern) {
-                $pattern = str_replace('*', '.*', $pattern);
-                if (preg_match('/^' . $pattern . '$/i', basename($file_path))) {
-                    return true;
-                }
-            }
-            return false;
-        };
-
-        // =========================================================
-        // INCREMENTAL RULES: Only check changed files
-        // =========================================================
-        // Determine which files to check - changed files only for incremental rebuild,
-        // or all files if this is a full rebuild (empty changed_files means check all)
-        $files_to_check = !empty($changed_files)
-            ? array_flip($changed_files)  // Use as lookup for O(1) checks
-            : null;  // null = check all files
-
-        foreach ($incremental_rules as $rule) {
-            foreach (Manifest::$data['data']['files'] as $file_path => $metadata) {
-                // Skip files that haven't changed (for incremental rebuilds)
-                if ($files_to_check !== null && !isset($files_to_check[$file_path])) {
-                    continue;
-                }
-
-                if (!$file_matches_rule($file_path, $rule)) {
-                    continue;
-                }
-
-                $absolute_path = base_path($file_path);
-                if (!file_exists($absolute_path)) {
-                    continue;
-                }
-
-                $contents = file_get_contents($absolute_path);
-
-                $enhanced_metadata = $metadata;
-                if (isset(Manifest::$data['data']['files'][$file_path]['code_quality_metadata'][$rule->get_id()])) {
-                    $enhanced_metadata['rule_metadata'] = Manifest::$data['data']['files'][$file_path]['code_quality_metadata'][$rule->get_id()];
-                }
-
-                $rule->check($absolute_path, $contents, $enhanced_metadata);
-                $throw_violation($collector);
-            }
-        }
-
-        // =========================================================
-        // CROSS-FILE RULES: Run once with full manifest context
-        // =========================================================
-        // These rules internally access Manifest::get_all() to check all files
-        // We just need to trigger them once with any matching file
-        foreach ($cross_file_rules as $rule) {
-            // Find first file matching the rule's patterns to trigger the check
-            foreach (Manifest::$data['data']['files'] as $file_path => $metadata) {
-                if (!$file_matches_rule($file_path, $rule)) {
-                    continue;
-                }
-
-                $absolute_path = base_path($file_path);
-                if (!file_exists($absolute_path)) {
-                    continue;
-                }
-
-                $contents = file_get_contents($absolute_path);
-
-                $enhanced_metadata = $metadata;
-                if (isset(Manifest::$data['data']['files'][$file_path]['code_quality_metadata'][$rule->get_id()])) {
-                    $enhanced_metadata['rule_metadata'] = Manifest::$data['data']['files'][$file_path]['code_quality_metadata'][$rule->get_id()];
-                }
-
-                // Cross-file rules run once, they handle iteration internally
-                $rule->check($absolute_path, $contents, $enhanced_metadata);
-                $throw_violation($collector);
-
-                // Only trigger once per cross-file rule
-                break;
-            }
+        try {
+            // An empty changed set still runs the cross-file rules: a REMOVED file changes
+            // the tree without appearing in the changed list.
+            $driver->run($changed_files);
+        } finally {
+            $driver->finish();
         }
     }
 
@@ -257,7 +62,7 @@ class _Manifest_Quality_Helper
     *
     * Throws a fatal error if duplicates exist within the same area (both rsx/ or both app/RSpade/)
     */
-    public static function _check_unique_base_class_names(): void
+    public static function _check_unique_base_class_names(array $dirty_files = []): void
     {
         // ==================================================================================
         // STEP 1: Restore orphaned .upstream files
@@ -270,34 +75,28 @@ class _Manifest_Quality_Helper
         // ==================================================================================
         // STEP 2: Group classes by extension, then by class name
         // ==================================================================================
-        $classes_by_extension = [];
+        // WHICH CLASS NAMES CAN HAVE MOVED. A duplicate appears only when a file that
+        // declares the name arrived or changed, so the pass ACTS only on names a dirty file
+        // declares. The grouping below is still one scalar pass over the index, because
+        // answering "who else declares this name" needs the whole picture - what it no
+        // longer does is re-adjudicate 640 settled class names on every rebuild.
+        $dirty_classes = null;
 
-        foreach (Manifest::$data['data']['files'] as $file => $metadata) {
-            if (isset($metadata['class']) && !empty($metadata['class'])) {
-                $base_class_name = $metadata['class'];
-                $extension = $metadata['extension'] ?? '';
+        if (!empty($dirty_files)) {
+            $dirty_classes = [];
 
-                // Skip php.upstream files - they're tracked separately for restoration
-                if ($extension === 'php.upstream') {
-                    continue;
+            foreach ($dirty_files as $dirty_file) {
+                $class = Manifest::$data['data']['files'][$dirty_file]['class'] ?? null;
+
+                if ($class !== null && $class !== '') {
+                    $dirty_classes[$class] = true;
                 }
-
-                // Group JavaScript-like files together
-                if (in_array($extension, ['js', 'jsx', 'ts', 'tsx'])) {
-                    $extension = 'js';
-                }
-
-                if (!isset($classes_by_extension[$extension])) {
-                    $classes_by_extension[$extension] = [];
-                }
-
-                if (!isset($classes_by_extension[$extension][$base_class_name])) {
-                    $classes_by_extension[$extension][$base_class_name] = [];
-                }
-
-                $classes_by_extension[$extension][$base_class_name][] = $file;
             }
         }
+        // THE ONE GROUPING - the same one _collate_files_by_classes() reads. This pass used
+        // to build its own, which is how the framework ended up with two answers to "which
+        // files declare this class name" that could disagree about their own filters.
+        $classes_by_extension = _Manifest_Builder_Helper::_group_files_by_class_name();
 
         // ==================================================================================
         // STEP 3: Check for duplicates and create overrides
@@ -310,10 +109,14 @@ class _Manifest_Quality_Helper
 
         foreach ($classes_by_extension as $extension => $base_class_files) {
             foreach ($base_class_files as $class_name => $files) {
+                if ($dirty_classes !== null && !isset($dirty_classes[$class_name])) {
+                    continue;
+                }
+
                 if (count($files) > 1) {
                     // Check if this is a valid override (rsx/ vs app/RSpade/)
-                    $rsx_files = array_filter($files, fn($f) => str_starts_with($f, 'rsx/'));
-                    $framework_files = array_filter($files, fn($f) => str_starts_with($f, 'app/RSpade/'));
+                    $rsx_files = array_filter($files, fn ($f) => Rsx_Paths::is_application($f));
+                    $framework_files = array_filter($files, fn ($f) => Rsx_Paths::is_framework($f));
 
                     // Valid override: exactly one file in rsx/, rest in app/RSpade/
                     if (count($rsx_files) === 1 && count($framework_files) >= 1) {
@@ -356,7 +159,10 @@ class _Manifest_Quality_Helper
                             );
 
                             unset(Manifest::$data['data']['files'][$rsx_file]);
-                            Manifest::$_needs_manifest_restart = true;
+                            Manifest::flag_needs_restart(
+                                'the class-override pass dropped a stale index entry for ' . $class_name
+                                . ' (' . $rsx_file . ' is indexed but not on disk)'
+                            );
 
                             continue;
                         }
@@ -394,6 +200,7 @@ class _Manifest_Quality_Helper
                             if (file_exists($full_framework_path) && !file_exists($upstream_path)) {
                                 // Normal case: rename to .upstream
                                 rename($full_framework_path, $upstream_path);
+                                Manifest::$_override_pass_renamed = true;
 
                                 // Loud, not debug-channel: a class leaving the build must always
                                 // be attributable to the override that took it out.
@@ -407,6 +214,7 @@ class _Manifest_Quality_Helper
                                 // Self-healing: both .php and .php.upstream exist (e.g., after framework update)
                                 // Remove the .php file since .upstream is the correct archived version
                                 unlink($full_framework_path);
+                                Manifest::$_override_pass_renamed = true;
                                 error_log(
                                     '[Manifest] Class override: ' . $class_name . ' - removed duplicate '
                                     . $framework_file . ' (its .upstream archive already exists), '
@@ -420,7 +228,10 @@ class _Manifest_Quality_Helper
                         }
 
                         if ($did_change) {
-                            Manifest::$_needs_manifest_restart = true;
+                            Manifest::flag_needs_restart(
+                                'a framework file was archived as .upstream because ' . $class_name
+                                . ' is overridden in rsx/'
+                            );
                         }
                         continue;
                     }
@@ -604,44 +415,16 @@ class _Manifest_Quality_Helper
         $output .= " * This file should not be included in your code, only analyzed by your IDE!\n";
         $output .= " */\n\n";
 
-        // Generate attribute stubs
-        $attributes = [];
-
-        foreach (Manifest::$data['data']['files'] as $file_path => $metadata) {
-            if (!isset($metadata['extension']) || $metadata['extension'] !== 'php') {
-                continue;
-            }
-
-            if (!isset($metadata['class'])) {
-                continue;
-            }
-
-            // Collect attributes from the class itself
-            if (isset($metadata['attributes'])) {
-                foreach ($metadata['attributes'] as $attr_name => $attr_data) {
-                    // Extract simple attribute name (last part after backslash)
-                    $simple_attr_name = basename(str_replace('\\', '/', $attr_name));
-                    $attributes[$simple_attr_name] = true;
-                }
-            }
-
-            // Collect attributes from public static methods
-            if (isset($metadata['public_static_methods'])) {
-                foreach ($metadata['public_static_methods'] as $method_name => $method_info) {
-                    if (isset($method_info['attributes'])) {
-                        foreach ($method_info['attributes'] as $attr_name => $attr_data) {
-                            // Extract simple attribute name (last part after backslash)
-                            $simple_attr_name = basename(str_replace('\\', '/', $attr_name));
-                            $attributes[$simple_attr_name] = true;
-                        }
-                    }
-                }
-            }
-        }
+        // Generate attribute stubs. The ATTRIBUTE INDEX is the one answer to "which
+        // attributes does this tree declare", and it is ksorted - so the generated file is
+        // deterministic, which matters because it is COMMITTED. This used to walk every file
+        // and every method map in insertion order.
+        $attributes = array_keys(Manifest::$data['data']['attribute_index'] ?? []);
+        sort($attributes, SORT_STRING);
 
         if (!empty($attributes)) {
             $output .= "namespace {\n";
-            foreach (array_keys($attributes) as $attr_name) {
+            foreach ($attributes as $attr_name) {
                 $output .= "    #[\\Attribute(\\Attribute::TARGET_ALL | \\Attribute::IS_REPEATABLE)]\n";
                 $output .= "    class {$attr_name} {\n";
                 $output .= "        public function __construct(...\$args) {}\n";
@@ -650,7 +433,13 @@ class _Manifest_Quality_Helper
             $output .= "}\n";
         }
 
-        file_put_contents_safe($stub_file, $output);
+        // CONTENT-COMPARE BEFORE WRITING. ._rsx_helper.php is COMMITTED, sits in the project
+        // root and is watched by the developer's IDE; rewriting it on every build churned an
+        // mtime (and, before the attribute index made it deterministic, sometimes the bytes)
+        // for a file whose content is a function of the tree's attribute vocabulary alone.
+        if (!file_exists($stub_file) || file_get_contents($stub_file) !== $output) {
+            file_put_contents_safe($stub_file, $output);
+        }
     }
 
 }

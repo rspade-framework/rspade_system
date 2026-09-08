@@ -26,11 +26,12 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *   ABSENCE RETURNS false/0 - the actor may, but there was no such active row.
  *
  * Authorization is self-or-can_admin_role: an actor may always manage their own device
- * list, and otherwise only a role STRICTLY BELOW their own (User_Model role_id
- * can_admin_roles). A PEER therefore refuses, and so does a subordinate reaching upward -
- * both fall out of that list without a rule of their own, which is exactly why the roles
- * chosen here are ROOT_ADMIN(200) over MANAGER(500), MANAGER over MANAGER, and USER(600)
- * under MANAGER.
+ * list, and otherwise only a role named in their own role's can_admin_roles whitelist
+ * (User_Model $enums). A PEER therefore refuses, and so does a subordinate reaching
+ * upward - both fall out of that list without a rule of their own. The roles are derived
+ * from the application's own $enums at runtime (Rsx_Test_Abstract::role_triple()), never
+ * named as role constants, so the class is portable to an application whose User_Model
+ * declares an entirely different role vocabulary.
  *
  * Sessions are inserted as raw rows (the ownership test's approach) because these
  * functions only ever read login_user_id + active; minting real sessions would add
@@ -43,6 +44,22 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 {
     private const SITE_ID = 1;
+
+    /**
+     * The role that may administer others in this application (see role_triple()).
+     */
+    private static function __superior_role(): int
+    {
+        return static::role_triple()[0];
+    }
+
+    /**
+     * A role the superior role may administer.
+     */
+    private static function __subordinate_role(): int
+    {
+        return static::role_triple()[1];
+    }
 
     /**
      * Seed a login identity plus its site user at the given role, and return the
@@ -117,8 +134,8 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
     public static function test_admin_terminates_a_subordinates_session()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
-        $admin  = self::__make_user(User_Model::ROLE_ROOT_ADMIN);
+        $target = self::__make_user(self::__subordinate_role());
+        $admin  = self::__make_user(self::__superior_role());
         $session_id = self::__insert_session((int) $target->login_user_id);
 
         self::__act_as($admin);
@@ -136,7 +153,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
      */
     public static function test_self_termination_through_the_cross_user_function_is_allowed()
     {
-        $me = self::__make_user(User_Model::ROLE_MANAGER);
+        $me = self::__make_user(self::__subordinate_role());
         $session_id = self::__insert_session((int) $me->login_user_id);
 
         self::__act_as($me);
@@ -154,8 +171,8 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
      */
     public static function test_unknown_session_id_under_valid_authority_returns_false()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
-        $admin  = self::__make_user(User_Model::ROLE_ROOT_ADMIN);
+        $target = self::__make_user(self::__subordinate_role());
+        $admin  = self::__make_user(self::__superior_role());
 
         self::__act_as($admin);
 
@@ -172,7 +189,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
      */
     public static function test_the_actors_own_current_session_is_refused_with_false()
     {
-        $me = self::__make_user(User_Model::ROLE_MANAGER);
+        $me = self::__make_user(self::__subordinate_role());
 
         self::__act_as($me);
 
@@ -191,8 +208,8 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
     public static function test_a_peer_is_refused()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
-        $peer   = self::__make_user(User_Model::ROLE_MANAGER);
+        $target = self::__make_user(self::__superior_role());
+        $peer   = self::__make_user(self::__superior_role());
         $session_id = self::__insert_session((int) $target->login_user_id);
 
         self::__act_as($peer);
@@ -209,8 +226,8 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
     public static function test_a_subordinate_reaching_upward_is_refused()
     {
-        $superior    = self::__make_user(User_Model::ROLE_MANAGER);
-        $subordinate = self::__make_user(User_Model::ROLE_USER);
+        $superior    = self::__make_user(self::__superior_role());
+        $subordinate = self::__make_user(self::__subordinate_role());
         $session_id  = self::__insert_session((int) $superior->login_user_id);
 
         self::__act_as($subordinate);
@@ -227,7 +244,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
     public static function test_no_acting_identity_is_refused()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
+        $target = self::__make_user(self::__subordinate_role());
         $session_id = self::__insert_session((int) $target->login_user_id);
 
         self::__act_as_nobody();
@@ -248,7 +265,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
      */
     public static function test_a_target_with_no_user_on_the_acting_site_is_refused()
     {
-        $admin = self::__make_user(User_Model::ROLE_ROOT_ADMIN);
+        $admin = self::__make_user(self::__superior_role());
 
         $stranger = new Login_User_Model();
         $stranger->email = 'terminate_stranger_' . uniqid() . '@example.com';
@@ -278,8 +295,8 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
     public static function test_bulk_termination_by_an_admin_deactivates_every_session()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
-        $admin  = self::__make_user(User_Model::ROLE_ROOT_ADMIN);
+        $target = self::__make_user(self::__subordinate_role());
+        $admin  = self::__make_user(self::__superior_role());
 
         $first  = self::__insert_session((int) $target->login_user_id);
         $second = self::__insert_session((int) $target->login_user_id);
@@ -299,8 +316,8 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
     public static function test_bulk_termination_by_a_peer_is_refused()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
-        $peer   = self::__make_user(User_Model::ROLE_MANAGER);
+        $target = self::__make_user(self::__superior_role());
+        $peer   = self::__make_user(self::__superior_role());
         $session_id = self::__insert_session((int) $target->login_user_id);
 
         self::__act_as($peer);
@@ -317,7 +334,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
     public static function test_bulk_termination_with_no_acting_identity_is_refused()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
+        $target = self::__make_user(self::__subordinate_role());
         $session_id = self::__insert_session((int) $target->login_user_id);
 
         self::__act_as_nobody();
@@ -343,7 +360,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
      */
     public static function test_the_internal_helper_works_with_no_session_context()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
+        $target = self::__make_user(self::__subordinate_role());
         $first  = self::__insert_session((int) $target->login_user_id);
         $second = self::__insert_session((int) $target->login_user_id);
 
@@ -370,8 +387,8 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
      */
     public static function test_event_payload_for_an_admin_termination()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
-        $admin  = self::__make_user(User_Model::ROLE_ROOT_ADMIN);
+        $target = self::__make_user(self::__subordinate_role());
+        $admin  = self::__make_user(self::__superior_role());
         $session_id = self::__insert_session((int) $target->login_user_id);
 
         self::__act_as($admin);
@@ -399,7 +416,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
 
     public static function test_event_scope_is_self_for_a_users_own_session()
     {
-        $me = self::__make_user(User_Model::ROLE_MANAGER);
+        $me = self::__make_user(self::__subordinate_role());
         $session_id = self::__insert_session((int) $me->login_user_id);
 
         self::__act_as($me);
@@ -429,7 +446,7 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
      */
     public static function test_event_scope_is_internal_for_the_unchecked_path()
     {
-        $target = self::__make_user(User_Model::ROLE_MANAGER);
+        $target = self::__make_user(self::__subordinate_role());
         $session_id = self::__insert_session((int) $target->login_user_id);
 
         self::__act_as_nobody();

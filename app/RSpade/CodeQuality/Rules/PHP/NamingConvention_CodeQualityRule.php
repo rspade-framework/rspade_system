@@ -5,14 +5,12 @@ namespace App\RSpade\CodeQuality\Rules\PHP;
 use PhpParser\Error;
 use PhpParser\Node;
 use PhpParser\NodeFinder;
-use PhpParser\ParserFactory;
 use ReflectionClass;
 use ReflectionMethod;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 
 class NamingConvention_CodeQualityRule extends CodeQualityRule_Abstract
 {
-    protected static $parser = null;
     
     public function get_id(): string
     {
@@ -39,17 +37,6 @@ class NamingConvention_CodeQualityRule extends CodeQualityRule_Abstract
         return 'medium';
     }
     
-    /**
-     * Get or create the parser instance
-     */
-    protected function get_parser()
-    {
-        if (static::$parser === null) {
-            static::$parser = (new ParserFactory)->createForNewestSupportedVersion();
-        }
-        return static::$parser;
-    }
-    
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         // Only apply naming convention to files in ./rsx/ directory
@@ -57,9 +44,14 @@ class NamingConvention_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
         
+        $ast = $this->source()->ast($file_path);
+
+        if (!$ast) {
+            // Unparseable - the syntax lint reports it, not this rule.
+            return;
+        }
+
         try {
-            $ast = $this->get_parser()->parse($contents);
-            
             // Get the class name from the AST
             $class_name = $this->get_class_name($ast);
             
@@ -114,18 +106,20 @@ class NamingConvention_CodeQualityRule extends CodeQualityRule_Abstract
                 require_once $file_path;
             } catch (\Exception $e) {
                 // If we can't load it, fall back to AST checking
-                $code = file_get_contents($file_path);
-                $ast = $this->get_parser()->parse($code);
-                $this->check_methods($ast, $file_path);
+                $ast = $this->source()->ast($file_path);
+                if ($ast) {
+                    $this->check_methods($ast, $file_path);
+                }
                 return;
             }
         }
         
         if (!class_exists($class_name)) {
             // Still can't load, fall back to AST
-            $code = file_get_contents($file_path);
-            $ast = $this->get_parser()->parse($code);
-            $this->check_methods($ast, $file_path);
+            $ast = $this->source()->ast($file_path);
+            if ($ast) {
+                $this->check_methods($ast, $file_path);
+            }
             return;
         }
         
@@ -175,9 +169,10 @@ class NamingConvention_CodeQualityRule extends CodeQualityRule_Abstract
             }
         } catch (\ReflectionException $e) {
             // Fall back to AST checking if reflection fails
-            $code = file_get_contents($file_path);
-            $ast = $this->get_parser()->parse($code);
-            $this->check_methods($ast, $file_path);
+            $ast = $this->source()->ast($file_path);
+            if ($ast) {
+                $this->check_methods($ast, $file_path);
+            }
         }
     }
     

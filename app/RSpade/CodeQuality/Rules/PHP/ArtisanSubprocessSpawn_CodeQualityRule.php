@@ -81,7 +81,7 @@ class ArtisanSubprocessSpawn_CodeQualityRule extends CodeQualityRule_Abstract
 
         // The $contents handed to a rule is pre-processed and is NOT line-aligned with the
         // file on disk, so read the file itself. Everything below reports real line numbers.
-        $source = file_get_contents($file_path);
+        $source = $this->source()->content($file_path);
         $original_lines = explode("\n", $source);
 
         // TOKENS, not a line scan. Two reasons, both learned the hard way here:
@@ -92,7 +92,7 @@ class ArtisanSubprocessSpawn_CodeQualityRule extends CodeQualityRule_Abstract
         //     (it returned 194 entries for a 182-line file), so pairing a sanitized index
         //     with a line number silently reports the WRONG LINE. Token line numbers are
         //     correct by construction.
-        foreach (self::__find_spawn_calls($source) as $call) {
+        foreach ($this->__find_spawn_calls($source) as $call) {
             $function = $call['function'];
             $line_num = $call['line'] - 1;
             $original_line = $original_lines[$line_num] ?? '';
@@ -170,9 +170,9 @@ Full contract: `php artisan rsx:man locks` (LOCK GROUPS) and the Rsx_Artisan cla
      *
      * @return array<int, array{function: string, line: int}>
      */
-    private static function __find_spawn_calls(string $contents): array
+    private function __find_spawn_calls(string $contents): array
     {
-        $tokens = token_get_all($contents);
+        $tokens = $this->source()->token_array($contents);
         $found = [];
         $count = count($tokens);
 

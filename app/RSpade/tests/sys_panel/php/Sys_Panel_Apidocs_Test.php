@@ -102,7 +102,7 @@ class Sys_Panel_Apidocs_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(
             'app/RSpade/Sys/app/apidocs/components/_Apidocs_Console.jqhtml',
-            $components['_Apidocs_Console']['template_file'],
+            $components['_Apidocs_Console']['file'],
             '_Apidocs_Console is not in the console module'
         );
     }

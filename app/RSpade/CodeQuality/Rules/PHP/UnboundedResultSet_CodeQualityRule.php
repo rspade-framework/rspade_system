@@ -2,10 +2,8 @@
 
 namespace App\RSpade\CodeQuality\Rules\PHP;
 
-use PhpParser\Error;
 use PhpParser\Node;
 use PhpParser\NodeFinder;
-use PhpParser\ParserFactory;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
 
@@ -40,7 +38,6 @@ use App\RSpade\Core\Manifest\Manifest;
  */
 class UnboundedResultSet_CodeQualityRule extends CodeQualityRule_Abstract
 {
-    protected static $parser = null;
 
     /**
      * Builder-entry static methods: a whole-set read roots at one of these. Restricting to
@@ -99,15 +96,6 @@ class UnboundedResultSet_CodeQualityRule extends CodeQualityRule_Abstract
         return 'medium';
     }
 
-    protected function get_parser()
-    {
-        if (static::$parser === null) {
-            static::$parser = (new ParserFactory())->createForNewestSupportedVersion();
-        }
-
-        return static::$parser;
-    }
-
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
         $normalized = str_replace('\\', '/', $file_path);
@@ -130,18 +118,14 @@ class UnboundedResultSet_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $original = file_get_contents($file_path);
+        $original = $this->source()->content($file_path);
 
         // (b) file-level exception.
         if (str_contains($original, '@' . $this->get_id() . '-EXCEPTION')) {
             return;
         }
 
-        try {
-            $ast = $this->get_parser()->parse($original);
-        } catch (Error $error) {
-            return; // Unparseable - skip.
-        }
+        $ast = $this->source()->ast($file_path);
 
         if (!$ast) {
             return;

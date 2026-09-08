@@ -59,7 +59,7 @@ class Externals_Declaration_Test extends Rsx_Test_Abstract
                 $manifest_data['data']['files'][$relative_path] = ['extension' => 'externals.php'];
             }
 
-            Externals_ManifestSupport::process($manifest_data);
+            Externals_ManifestSupport::process($manifest_data, array_keys($manifest_data['data']['files']), []);
 
             return $manifest_data['data']['external_resources'];
         } finally {

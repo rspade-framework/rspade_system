@@ -99,11 +99,27 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Cross-file rule: walks the manifest rather than the file it was handed.
+     * CROSS-FILE: this rule judges the tree, not one file. The driver runs it once per
+     * pass, gated on the fingerprint of what depends_on() declares.
      */
-    public function is_incremental(): bool
+    public function kind(): string
     {
-        return false;
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * Every indexed PHP file plus the class and subclass indexes: the rule decides whether
+     * an abstract registry's children carry the attribute the parent demands.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return [
+            'files:*.php',
+            'php_classes',
+            'php_subclass_index',
+        ];
     }
 
     /**
@@ -176,7 +192,7 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
         array $class_attributes,
         array $methods
     ): void {
-        $contents = @file_get_contents($file);
+        $contents = $this->source()->content($file);
         $lines = $contents === false ? [] : explode("\n", $contents);
 
         $class_line = $this->find_class_line($lines, $class_name);
@@ -285,7 +301,7 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
      */
     private function find_class_line(array $lines, string $class_name): int
     {
-        $tokens = @token_get_all(implode("\n", $lines));
+        $tokens = $this->source()->token_array(implode("\n", $lines));
         if (empty($tokens)) {
             return 1;
         }

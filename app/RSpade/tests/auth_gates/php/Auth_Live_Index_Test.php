@@ -201,9 +201,15 @@ class Auth_Live_Index_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The gate lists the route rows carry and the consolidated surface index agree.
+     * A ROUTE ROW NAMES ITS SURFACE; the gate list lives in the surface index and nowhere
+     * else.
+     *
+     * It used to be stored a third time on the row itself, and this test asserted the two
+     * copies agreed. They cannot disagree now - there is one copy - so what is left to
+     * assert is that the reference RESOLVES, which is what every dispatcher relies on
+     * (Auth_Gates::surface_gates($route['surface'])).
      */
-    public static function test_route_rows_carry_the_same_gate_list()
+    public static function test_route_rows_reference_an_indexed_surface()
     {
         $routes = \App\RSpade\Core\Manifest\Manifest::get_routes();
         $surfaces = Auth_Gates::get_surfaces();
@@ -213,16 +219,26 @@ class Auth_Live_Index_Test extends Rsx_Test_Abstract
                 continue;
             }
 
-            static::__assert_array_has_key('auth', $route, "Route {$pattern} has no auth key");
+            static::__assert_false(
+                array_key_exists('auth', $route),
+                "Route {$pattern} must not carry its own gate list"
+            );
 
             $simple_class = \App\RSpade\Core\Manifest\Manifest::_normalize_class_name($route['class']);
             $target = $simple_class . '::' . $route['method'];
 
+            static::__assert_equals(
+                $target,
+                $route['surface'] ?? null,
+                "Route {$pattern} names the wrong surface"
+            );
+
             static::__assert_array_has_key($target, $surfaces, "Route {$pattern} missing from surfaces");
+
             static::__assert_equals(
                 $surfaces[$target]['auth'],
-                $route['auth'],
-                "Gate list mismatch for {$target}"
+                Auth_Gates::surface_gates($route['surface']),
+                "surface_gates() must resolve the row's gate list for {$target}"
             );
         }
     }

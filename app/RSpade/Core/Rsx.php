@@ -589,72 +589,31 @@ class Rsx
             return '#';
         }
 
-        // Try to find the class in the manifest
-        try {
-            $metadata = Manifest::php_get_metadata_by_class($class_name);
-        } catch (RuntimeException $e) {
+        // ENTIRELY OUT OF THE HOT INDEX. Every question here - is this an indexed class, is
+        // it a controller, is this member a dispatchable surface, is that surface an Ajax
+        // endpoint - is answered by the class map and the surface index. It used to be
+        // answered by the class's METHOD MAP, which since the index split lives in the cold
+        // half: generating one URL would have loaded 7.6 MB of build metadata.
+        if (Manifest::php_class_metadata($class_name) === null) {
             // Not found as PHP class - might be a SPA action, try that instead
             return static::_try_spa_action_route($class_name, $params_array);
         }
 
-        // Verify it extends Rsx_Controller_Abstract
-        $extends = $metadata['extends'] ?? '';
-        $is_controller = false;
-
-        if ($extends === 'Rsx_Controller_Abstract') {
-            $is_controller = true;
-        } else {
-            // Check if it extends a class that extends Rsx_Controller_Abstract
-            $current_class = $extends;
-            $max_depth = 10;
-
-            while ($current_class && $max_depth-- > 0) {
-                try {
-                    $parent_metadata = Manifest::php_get_metadata_by_class($current_class);
-                    if (($parent_metadata['extends'] ?? '') === 'Rsx_Controller_Abstract') {
-                        $is_controller = true;
-                        break;
-                    }
-                    $current_class = $parent_metadata['extends'] ?? '';
-                } catch (RuntimeException $e) {
-                    // Check if parent is the abstract controller with FQCN
-                    if ($current_class === 'Rsx_Controller_Abstract' ||
-                        $current_class === 'App\\RSpade\\Core\\Controller\\Rsx_Controller_Abstract') {
-                        $is_controller = true;
-                    }
-                    break;
-                }
-            }
-        }
-
-        if (!$is_controller) {
+        if (!Manifest::php_is_subclass_of($class_name, 'Rsx_Controller_Abstract')) {
             throw new Rsx_Caller_Exception("Class {$class_name} must extend Rsx_Controller_Abstract");
         }
 
-        // Check if method exists and has Route attribute
-        if (!isset($metadata['public_static_methods'][$action_name])) {
-            throw new Rsx_Caller_Exception("Method {$action_name} not found in class {$class_name}");
+        $target = $class_name . '::' . $action_name;
+        $surface = \App\RSpade\Core\Auth\Auth_Gates::get_surfaces()[$target] ?? null;
+
+        if ($surface === null) {
+            throw new Rsx_Caller_Exception(
+                "Method {$action_name} in class {$class_name} is not a dispatchable surface "
+                . '(no #[Route], #[SPA], #[Ajax_Endpoint] or #[Api_Endpoint]).'
+            );
         }
 
-        $method_info = $metadata['public_static_methods'][$action_name];
-
-        // All methods in public_static_methods are guaranteed to be static
-        // No need to check - but we assert for safety
-        if (!isset($method_info['static']) || !$method_info['static']) {
-            shouldnt_happen("Method {$class_name}::{$action_name} in public_static_methods is not static - extraction bug");
-        }
-
-        // Check for Ajax_Endpoint attribute
-        $has_ajax_endpoint = false;
-
-        if (isset($method_info['attributes'])) {
-            foreach ($method_info['attributes'] as $attr_name => $attr_instances) {
-                if ($attr_name === 'Ajax_Endpoint' || str_ends_with($attr_name, '\\Ajax_Endpoint')) {
-                    $has_ajax_endpoint = true;
-                    break;
-                }
-            }
-        }
+        $has_ajax_endpoint = in_array('ajax', $surface['kinds'] ?? [], true);
 
         // If has Ajax_Endpoint, return AJAX route URL (no param substitution)
         if ($has_ajax_endpoint) {
@@ -667,7 +626,6 @@ class Rsx
         }
 
         // Look up routes in manifest using routes_by_target
-        $target = $class_name . '::' . $action_name;
         $manifest = Manifest::get_full_manifest();
 
         if (!isset($manifest['data']['routes_by_target'][$target])) {

@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality;
 
 use App\RSpade\CodeQuality\CodeQuality_Violation;
+use App\RSpade\CodeQuality\Manifest_Rule_Driver;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\CodeQuality\Support\Js_CodeQuality_Rpc;
 use App\RSpade\CodeQuality\Support\Validation_Ledger;
@@ -34,14 +35,30 @@ class CodeQualityChecker
     protected static array $rules = [];
     protected static array $config = [];
 
+    /**
+     * THE SAME DRIVER THE MANIFEST PASS RUNS, with scope = the files rsx:check was asked
+     * about. Discovery, pattern compilation, the source cache and the pass ledger are its,
+     * not this class's: what stays here is the syntax-lint stages, the sanitized document a
+     * rule is handed as $contents, and the directory-level check_* entry points.
+     */
+    protected static ?Manifest_Rule_Driver $driver = null;
+
     public static function init(array $config = []): void
     {
         static::$collector = new ViolationCollector();
         static::$sanitized_memory = [];
         static::$config = $config;
 
-        // Load all rules via auto-discovery
-        static::load_rules();
+        // ONE discovery, ONE set of rule objects: the driver's.
+        static::$driver = new Manifest_Rule_Driver(
+            collector: static::$collector,
+            config: static::$config,
+            exclude_manifest_scan: static::$config['exclude_manifest_time_rules'] ?? false,
+            honor_exception_comments: true,
+            contents_resolver: fn (string $path) => static::get_sanitized_file($path)['content'],
+        );
+
+        static::$rules = static::$driver->all_rules();
 
         // Clean up old NPM bundle files on initialization
         static::_cleanup_old_npm_bundles();
@@ -102,23 +119,6 @@ class CodeQualityChecker
     }
     
     /**
-     * Load all rules via shared discovery logic
-     */
-    protected static function load_rules(): void
-    {
-        // Check if we should exclude manifest-time rules (e.g., when running from rsx:check)
-        $exclude_manifest_time_rules = static::$config['exclude_manifest_time_rules'] ?? false;
-
-        // Use shared rule discovery that doesn't require manifest
-        static::$rules = Support\RuleDiscovery::discover_rules(
-            static::$collector,
-            static::$config,
-            false, // Get all rules, not just manifest scan ones
-            $exclude_manifest_time_rules // Exclude manifest-time rules if requested
-        );
-    }
-    
-    /**
      * Check a single file
      */
     public static function check_file(string $file_path): void
@@ -161,55 +161,12 @@ class CodeQualityChecker
             }
         }
         
-        // Get cached sanitized file if available. The entry is keyed by the file's build
-        // hash (path+size+mtime in development, content in a sealed build), so a changed
-        // file simply misses - there is no mtime comparison to get wrong.
-        $sanitized_data = static::get_sanitized_file($file_path);
-        
-        // Get metadata from manifest if available
-        try {
-            $metadata = Manifest::get_file($file_path) ?? [];
-        } catch (\Exception $e) {
-            $metadata = [];
-        }
-        
-        // Check if this is a Console Command file
-        $is_console_command = str_contains($file_path, '/app/Console/Commands/');
-
-        // Run each rule on the file
-        foreach (static::$rules as $rule) {
-            // If this is a Console Command, only run rules that support them
-            if ($is_console_command && !$rule->supports_console_commands()) {
-                continue;
-            }
-
-            // Check if this rule applies to this file type
-            $applies = false;
-            foreach ($rule->get_file_patterns() as $pattern) {
-                if (static::matches_pattern($file_path, $pattern)) {
-                    $applies = true;
-                    break;
-                }
-            }
-
-            if (!$applies) {
-                continue;
-            }
-            
-            // Check for rule-specific exception comment in original file content
-            $rule_id = $rule->get_id();
-            $exception_pattern = '@' . $rule_id . '-EXCEPTION';
-            $original_content = file_get_contents($file_path);
-            if (str_contains($original_content, $exception_pattern)) {
-                // Skip this rule for this file
-                continue;
-            }
-            
-            // Run the rule
-            $rule->check($file_path, $sanitized_data['content'], $metadata);
-        }
+        // The driver owns the loop: pattern matching, the pass ledger, the source cache and
+        // the @<RULE-ID>-EXCEPTION marker are all its. Cross-file rules are NOT run here -
+        // check_files() runs them once, after every file has been seen.
+        static::$driver->run([$file_path], include_cross_file: false);
     }
-    
+
     /**
      * Check multiple files
      */
@@ -255,9 +212,11 @@ class CodeQualityChecker
             static::check_file($file_path);
         }
 
-        // Write the pass ledger now rather than at shutdown: a fatal later in this process
-        // must not cost the work this pass already did.
-        Validation_Ledger::flush();
+        // The cross-file rules once, over the whole tree, after every file has been seen -
+        // then release the pass's memory and write the ledger. Doing it here rather than at
+        // shutdown means a fatal later in this process does not cost the work already done.
+        static::$driver->run([], include_cross_file: true);
+        static::$driver->finish();
     }
     
     /**
@@ -311,9 +270,7 @@ class CodeQualityChecker
             $files = array_filter($items, 'is_file');
         }
 
-        foreach ($files as $file) {
-            static::check_file($file);
-        }
+        static::check_files($files);
     }
     
     /**

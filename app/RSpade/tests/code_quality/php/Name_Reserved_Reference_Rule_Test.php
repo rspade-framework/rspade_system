@@ -455,11 +455,15 @@ class Name_Reserved_Reference_Rule_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A clean file's verdict is banked in the shared ledger under an id that carries the
-     * reserved-name index's own hash - so a framework change retires it rather than letting
-     * a stale index vouch for a file.
+     * THE RULE'S FINGERPRINT CARRIES THE RESERVED-NAME INDEX'S OWN HASH.
+     *
+     * The rule no longer banks its own verdicts: the DRIVER owns the incremental decision
+     * for every rule, and files each verdict under `<RULE ID>@<the rule's fingerprint>`.
+     * What this rule contributes is `fingerprint_extra()` - the index hash - so that moving
+     * a framework name retires every verdict recorded against the old index instead of
+     * letting a stale index vouch for a file.
      */
-    public static function test_a_clean_file_is_recorded_in_the_ledger()
+    public static function test_the_rule_fingerprint_carries_the_index_hash()
     {
         $ledger_path = storage_path('rsx-tmp') . '/name_reserved_02_ledger_' . uniqid() . '.php';
         Validation_Ledger::_use_path_for_tests($ledger_path);
@@ -478,24 +482,21 @@ class Name_Reserved_Reference_Rule_Test extends Rsx_Test_Abstract
 
             static::__assert_count(0, $collector->get_by_rule(self::RULE_ID), 'precondition: the fixture is clean');
 
-            // The rule id is not the bare NAME-RESERVED-02: it carries the reserved-name
-            // index's own hash, so a framework change retires every verdict keyed to the old
-            // index instead of letting a stale index vouch for a file. Flushing is what puts
-            // that id on disk where the test can read it back.
-            Validation_Ledger::flush();
+            $extra = $rule->fingerprint_extra();
 
-            $written = include $ledger_path;
-            $ids = array_keys($written['rules']);
+            static::__assert_not_empty(
+                $extra,
+                'the rule declares an extra fingerprint - without it the driver would key its'
+                . ' verdicts to the rule file alone and a moved framework name would leave'
+                . ' every stale verdict standing'
+            );
 
-            static::__assert_count(1, $ids, 'exactly one rule id was recorded');
-            static::__assert_contains(self::RULE_ID . '@', $ids[0], 'the id carries the index hash, not the bare rule id');
-
-            // And the verdict is keyed by the FILE HASH, so a second pass over the same
-            // bytes finds it and short-circuits.
-            static::__assert_array_has_key(
-                sha1_file($path),
-                $written['rules'][$ids[0]],
-                'the clean verdict is banked against the file hash'
+            // The index hash is a fact about the framework's declared names, so it moves when
+            // they do and not otherwise.
+            static::__assert_equals(
+                $extra,
+                $rule->fingerprint_extra(),
+                'the extra fingerprint is stable for an unchanged tree'
             );
 
         } finally {

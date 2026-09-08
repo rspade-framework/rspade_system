@@ -7,7 +7,6 @@
 
 namespace App\RSpade\Core\Mail;
 
-use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Models\Email_Queue_Model;
 

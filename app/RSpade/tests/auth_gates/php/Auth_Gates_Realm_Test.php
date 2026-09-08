@@ -237,7 +237,7 @@ class Auth_Gates_Realm_Test extends Rsx_Test_Abstract
                     ],
                 ]]];
 
-                Auth_ManifestSupport::process($manifest_data);
+                Auth_ManifestSupport::process($manifest_data, array_keys($manifest_data['data']['files']), []);
             },
             'Invalid #[Auth_Realm] argument'
         );

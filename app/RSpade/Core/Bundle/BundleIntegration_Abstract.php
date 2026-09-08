@@ -158,20 +158,4 @@ abstract class BundleIntegration_Abstract
         return [];
     }
 
-    /**
-     * Generate JavaScript stub files for manifest entries (default: no-op)
-     *
-     * Called during manifest building (Phase 5) to generate JavaScript
-     * stub files that provide IDE autocomplete and runtime functionality
-     * for PHP classes. Integrations can use this to create JS equivalents
-     * of controllers, models, or other PHP classes.
-     *
-     * @param array &$manifest_data The complete manifest data (passed by reference)
-     * @return void
-     */
-    #[Replaceable]
-    public static function generate_manifest_stubs(array &$manifest_data): void
-    {
-        // Override in subclasses to generate stubs
-    }
 }

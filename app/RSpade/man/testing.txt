@@ -122,6 +122,13 @@ TEST DISCOVERY AND SUITES
     list is ksort'ed by name - so a run is reproducible and a failure that
     depends on ordering is reproducible too.
 
+    AN APPLICATION NEED NOT HAVE /rsx/tests. A missing test tree is skipped by
+    the manifest scan and the run reports "No application tests found" and exits
+    0 - it is not a configuration error, and an application that keeps its suites
+    beside the code they test creates nothing to satisfy the runner. Only a root
+    the operator put in config('rsx.manifest.scan_directories') is fatal when it
+    does not exist.
+
 THE TEST TREES IN THE MANIFEST
 
     The three directories that hold tests and fixtures - app/RSpade/tests,
@@ -412,17 +419,33 @@ PER-TEST STATE RESET
     runner also clears the process-global state that would otherwise be borrowed
     by the next test - in this class and in every class that runs after it:
 
-        Session::_cli_end_session()        drops any CLI session row the test
-                                           minted (the row itself vanished with
-                                           the rollback; the static handle must
-                                           not survive pointing at it)
-        Portal_Session::reset()            clears the portal facade's declared
+        Session::_testing_reset()          returns Session to virgin, pre-init
+                                           state: the CLI session row and its
+                                           handle (the row vanished with the
+                                           rollback; the static must not survive
+                                           pointing at it), the API identity
+                                           tier, the loader flags and every
+                                           resolved cache
+        Portal_Session::_testing_reset()   clears the portal facade's declared
                                            site, portal user and impersonator
         Rsx_Turnstile::_reset_request_state()
                                            clears the per-request validation
                                            latch, so a controller call in one
                                            test cannot satisfy the completeness
                                            guard for the next
+
+    BOTH ARE THE RUNNER'S CALLS. A test never makes them, and application code
+    never makes them: outside a runner there is no "the request is over, start
+    another". They carry the framework's reserved underscore, so an application
+    reference to either is refused at manifest build (NAME-RESERVED-02).
+
+    THE TWO DECLARATIONS ARE TREATED DIFFERENTLY, deliberately. The CLI identity
+    declaration - Session::cli_set_site_id() / cli_set_login_user_id() /
+    cli_set_user_id() - SURVIVES between test methods, because setup() runs once
+    per CLASS and is where a suite declares who it acts as; clearing it would
+    land every fixture written after the first test method on site_id 0. The
+    PORTAL declaration does NOT survive: a portal site is declared per REQUEST by
+    the application, so each test declares its own.
 
     The consequence for portal tests: a Portal_Session::set_site_id() call in
     setup() does NOT survive, because setup() runs once per CLASS and this reset

@@ -44,9 +44,28 @@ class ModelDetailTables_CodeQualityRule extends CodeQualityRule_Abstract
         return 'high';
     }
 
-    public function is_incremental(): bool
+    /**
+     * CROSS-FILE: this rule judges the tree, not one file. The driver runs it once per
+     * pass, gated on the fingerprint of what depends_on() declares.
+     */
+    public function kind(): string
     {
-        return false;
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * Every indexed PHP file, the lineage indexes, and the model index.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return [
+            'files:*.php',
+            'php_classes',
+            'php_subclass_index',
+            'models',
+        ];
     }
 
     public function check(string $file_path, string $contents, array $metadata = []): void
@@ -146,7 +165,7 @@ class ModelDetailTables_CodeQualityRule extends CodeQualityRule_Abstract
         $base_path = function_exists('base_path') ? base_path() : '/var/www/html';
         $full_path = str_starts_with($file_path, '/') ? $file_path : $base_path . '/' . $file_path;
 
-        return file_exists($full_path) ? explode("\n", file_get_contents($full_path)) : [];
+        return file_exists($full_path) ? explode("\n", $this->source()->content($full_path)) : [];
     }
 
     private function __find_line(array $lines, string $needle): int

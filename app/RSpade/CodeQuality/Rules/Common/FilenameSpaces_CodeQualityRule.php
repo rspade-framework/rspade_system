@@ -45,68 +45,10 @@ class FilenameSpaces_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Process file during manifest update - throws immediately on violation
-     * This is more efficient than checking later
-     */
-    public function on_manifest_file_update(string $file_path, string $contents, array $metadata = []): ?array
-    {
-        // Skip vendor and node_modules directories
-        if (str_contains($file_path, '/vendor/') || str_contains($file_path, '/node_modules/')) {
-            return null;
-        }
-
-        // Get relative path from absolute
-        $relative_path = str_replace(base_path() . '/', '', $file_path);
-
-        // Check for spaces in the entire path
-        if (str_contains($relative_path, ' ')) {
-            // Get just the filename
-            $filename = basename($relative_path);
-            $dirname = dirname($relative_path);
-
-            // Build error message
-            if (str_contains($filename, ' ')) {
-                $suggested = str_replace(' ', '_', $filename);
-                $error_message = "Code Quality Violation (FILE-SPACE-01) - Filename '{$filename}' contains spaces\n\n";
-                $error_message .= "File: {$relative_path}\n\n";
-                $error_message .= "Spaces in filenames break shell commands, URLs, and tooling.\n\n";
-                $error_message .= "Resolution:\nRename file to '{$suggested}' (replace spaces with underscores or remove them).";
-                throw new \App\RSpade\CodeQuality\RuntimeChecks\YoureDoingItWrongException(
-                    $error_message,
-                    0,
-                    null,
-                    $file_path,
-                    1
-                );
-            }
-
-            if (str_contains($dirname, ' ')) {
-                // Find which directory has the space
-                $path_parts = explode('/', $dirname);
-                $problematic_dirs = array_filter($path_parts, fn($part) => str_contains($part, ' '));
-                $problematic_str = implode(', ', $problematic_dirs);
-
-                $error_message = "Code Quality Violation (FILE-SPACE-01) - Directory path contains spaces\n\n";
-                $error_message .= "File: {$relative_path}\n\n";
-                $error_message .= "Directories with spaces: {$problematic_str}\n\n";
-                $error_message .= "Resolution:\nRename directories to remove spaces. This is critical as spaces in paths break shell commands, git operations, and various build tools.";
-                throw new \App\RSpade\CodeQuality\RuntimeChecks\YoureDoingItWrongException(
-                    $error_message,
-                    0,
-                    null,
-                    $file_path,
-                    1
-                );
-            }
-        }
-
-        // No metadata needed - we throw on violation
-        return null;
-    }
-
-    /**
      * Check if a filename or any directory in its path contains spaces
-     * This method is now just a fallback - on_manifest_file_update handles the real work
+     *
+     * Reported through add_violation(): the driver turns the first violation of a
+     * manifest-time rule into the build failure, so the rule does not throw itself.
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
     {

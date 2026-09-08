@@ -59,11 +59,11 @@ class Jqhtml
         $component = $manifest['data']['jqhtml']['components'][$template_id];
 
         // Get template file path
-        if (!isset($component['template_file'])) {
-            shouldnt_happen("JQHTML component '{$template_id}' has no template_file in manifest");
+        if (!isset($component['file'])) {
+            shouldnt_happen("JQHTML component '{$template_id}' has no file in manifest");
         }
 
-        $template_file = $component['template_file'];
+        $template_file = $component['file'];
 
         // Get full file metadata
         if (!isset($manifest['data']['files'][$template_file])) {

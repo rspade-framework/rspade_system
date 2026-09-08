@@ -132,7 +132,7 @@ class HardcodedInternalUrl_CodeQualityRule extends CodeQualityRule_Abstract
         // that blanks string CONTENTS, which is precisely the text this rule reads. Comments
         // are then removed here, per kind, so an illustrative href in a doc block never
         // fires (item 6 of the request that produced this rule).
-        $original = is_readable($file_path) ? file_get_contents($file_path) : $contents;
+        $original = is_readable($file_path) ? $this->source()->content($file_path) : $contents;
 
         // The overwhelming majority of scanned files hold no href at all; comment stripping
         // (a PHP tokenize, for every .php in the tree) is not worth doing to find that out.

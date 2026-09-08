@@ -32,7 +32,7 @@ class Realtime_Token_Test extends Rsx_Test_Abstract
         // reset() is the CLI clear: it drops the declared site AND the identity,
         // returning the facade to virgin state (there is no set_site_id(0) - a
         // declaration is always a real site).
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         Rsx_Portal::set_portal_request(false);
     }
 
@@ -51,7 +51,7 @@ class Realtime_Token_Test extends Rsx_Test_Abstract
      */
     private static function __enter_portal(int $site_id, ?int $portal_user_id = null): void
     {
-        Portal_Session::reset();
+        Portal_Session::_testing_reset();
         Rsx_Portal::set_portal_request(true);
         Portal_Session::set_site_id($site_id);
 

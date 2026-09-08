@@ -27,7 +27,11 @@ class Bundle_Alias_ManifestSupport extends ManifestSupport_Abstract
         return 'Bundle Aliases';
     }
 
-    public static function process(array &$manifest_data): void
+    /**
+     * NOT incremental: this table is a pure function of `config('rsx.bundle_aliases')` and
+     * reads no file at all, so there is nothing for a changed set to narrow.
+     */
+    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
         $aliases = [];
 

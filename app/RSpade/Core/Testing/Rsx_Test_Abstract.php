@@ -246,11 +246,13 @@ abstract class Rsx_Test_Abstract
                         DB::rollBack();
                     }
 
-                    // Drop any CLI session row the test demanded. A session minted
-                    // inside the transaction just above no longer exists, so the
-                    // static handle must not survive into the next test pointing at
-                    // a vanished row. No-op unless a session was actually minted.
-                    Session::_cli_end_session();
+                    // Return Session to virgin, pre-init state: the CLI session row and its
+                    // handle, the API identity tier, the loader flags and every resolved
+                    // cache. A test is one request; this is the request boundary a web server
+                    // would have provided by ending the process. None of it is a DB row, so
+                    // the rollback above cannot undo it. The CLI identity DECLARATION
+                    // deliberately survives - it belongs to the class, not to the test.
+                    Session::_testing_reset();
 
                     // Clear the portal facade's process-global CLI state (declared site,
                     // portal user, impersonator). It is a static, not a DB row, so the
@@ -259,7 +261,7 @@ abstract class Rsx_Test_Abstract
                     // this class AND in every class that runs after it. Each test declares
                     // its own portal site (setup() runs once per CLASS, so a declaration
                     // there would not survive this reset).
-                    Portal_Session::reset();
+                    Portal_Session::_testing_reset();
 
                     // Clear the Turnstile per-request validation latch so a controller
                     // call in one test cannot satisfy the completeness guard for the next.
@@ -639,5 +641,71 @@ abstract class Rsx_Test_Abstract
         
         // Throw special exception to stop test execution but not mark as failed
         throw new \Exception('__SKIP__:' . $reason);
+    }
+
+    /**
+     * The most privileged role id declared by this application's User_Model.
+     *
+     * The role contract is NOT integer ordering: administration authority is the
+     * explicit `can_admin_roles` whitelist each role declares in $enums (read by
+     * User_Model::can_admin_role()). "Most privileged" is therefore the role that can
+     * administer the most other roles; ties break on the lowest id, and an application
+     * whose roles declare no administration relation at all yields its lowest id.
+     *
+     * This is the ONE derivation - the test runner seeds the baseline user with it, and
+     * a test needing a strong identity asks for it here rather than naming a ROLE_*
+     * constant that an application's own User_Model need not declare.
+     *
+     * @return int
+     */
+    public static function most_privileged_role_id(): int
+    {
+        $roles = User_Model::role_id__enum();
+
+        $best_id = null;
+        $best_count = -1;
+
+        foreach ($roles as $role_id => $definition) {
+            $role_id = (int) $role_id;
+            $count = count($definition['can_admin_roles'] ?? []);
+
+            if ($count > $best_count || ($count === $best_count && $role_id < $best_id)) {
+                $best_id = $role_id;
+                $best_count = $count;
+            }
+        }
+
+        if ($best_id === null) {
+            shouldnt_happen('User_Model declares no role_id enum, so no role can be derived.');
+        }
+
+        return $best_id;
+    }
+
+    /**
+     * A [superior, subordinate, peer] role triple derived from this application's roles.
+     *
+     * - superior: a role whose `can_admin_roles` list is non-empty (the most privileged
+     *   one, so it administers as many roles as this application declares).
+     * - subordinate: a role the superior may administer.
+     * - peer: the superior again - a second holder of the same role, which the
+     *   whitelist contract does NOT let the superior administer.
+     *
+     * An application whose roles declare no administration relation cannot express the
+     * scenario at all, so the test skips rather than failing.
+     *
+     * @return array{0: int, 1: int, 2: int}
+     */
+    public static function role_triple(): array
+    {
+        $superior = static::most_privileged_role_id();
+        $roles = User_Model::role_id__enum();
+        $can_admin = $roles[$superior]['can_admin_roles'] ?? [];
+
+        if (empty($can_admin)) {
+            static::__skip('User_Model declares no role with a non-empty can_admin_roles list, so role administration cannot be exercised in this application.');
+        }
+
+        return [$superior, (int) $can_admin[0], $superior];
     }
 }

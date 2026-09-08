@@ -132,7 +132,7 @@ class JqhtmlCustomEvent_CodeQualityRule extends CodeQualityRule_Abstract
 
             // The $contents passed to check() is already sanitized (strings removed).
             // We need the original file content to extract event names from string literals.
-            $original_contents = file_get_contents($file_path);
+            $original_contents = $this->source()->content($file_path);
             $original_lines = explode("\n", $original_contents);
 
             // Sanitized lines are used to skip comments

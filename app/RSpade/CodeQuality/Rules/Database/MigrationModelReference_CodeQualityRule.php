@@ -107,7 +107,7 @@ class MigrationModelReference_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $source = file_get_contents($file_path);
+        $source = $this->source()->content($file_path);
 
         $marker = '@' . $this->get_id() . '-EXCEPTION';
         if (str_contains($source, $marker)) {
@@ -118,7 +118,7 @@ class MigrationModelReference_CodeQualityRule extends CodeQualityRule_Abstract
 
         $lines = explode("\n", $source);
 
-        foreach (static::find_class_references($source) as $reference) {
+        foreach ($this->find_class_references($source) as $reference) {
             $line_text = $lines[$reference['line'] - 1] ?? '';
 
             $this->add_violation(
@@ -261,9 +261,9 @@ Details: `php artisan rsx:man migrations`, `php artisan rsx:man polymorphic`.";
      *
      * @return array<int, array{kind: string, name: string, line: int}>
      */
-    public static function find_class_references(string $source): array
+    public function find_class_references(string $source): array
     {
-        $tokens = token_get_all($source);
+        $tokens = $this->source()->token_array($source);
         $count = count($tokens);
         $found = [];
 

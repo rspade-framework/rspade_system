@@ -129,9 +129,13 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
     /**
      * Build $manifest_data['data']['auth'], then enforce closed-by-default.
      */
-    public static function process(array &$manifest_data): void
+    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
-        $index = static::build_index($manifest_data['data']['files'] ?? []);
+        $index = static::build_index(
+            $manifest_data['data']['files'] ?? [],
+            $manifest_data['data']['auth']['surfaces'] ?? [],
+            static::dirty_set($changed_files, $removed_files)
+        );
 
         $manifest_data['data']['auth'] = [
             'checks' => $index['checks'],
@@ -148,30 +152,51 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
      * synthetic file metadata (which describes a fixture vocabulary, not the
      * application's, and would therefore fail every closed-by-default assertion).
      *
-     * @param array $files $manifest_data['data']['files']
+     * INCREMENTAL when a dirty set is supplied. The surfaces map is keyed by TARGET and
+     * every entry names the file that declares it, so the diff is exact: keep the entries
+     * whose file is untouched, recompute the rest. The CHECK REGISTRIES are rebuilt in full
+     * every time - one edit to a Permission class changes what every surface in the tree is
+     * allowed to name, and `validate()` re-resolves all of them against it, so an unchanged
+     * surface naming a check that just disappeared still fails the build.
+     *
+     * @param array $files             $manifest_data['data']['files']
+     * @param array $previous_surfaces The surfaces map this build inherited
+     * @param array|null $dirty        path => true for every re-parsed/removed file, or null
+     *                                 to rebuild everything (the synthetic-fixture path)
      * @return array{checks: array, surfaces: array, violations: array}
      */
-    public static function build_index(array $files): array
+    public static function build_index(array $files, array $previous_surfaces = [], ?array $dirty = null): array
     {
-        // Index every class's metadata by FQCN so the extends chain can be walked
-        // here without calling Manifest:: query APIs (the manifest is not finalized
-        // mid-build; same constraint Api_Endpoint_ManifestSupport documents).
-        $fqcn_index = [];
+        // FQCN -> the file that declares it. A REFERENCE, not a record: this used to be
+        // `$metadata + ['__file' => $file]`, which materialized a real copy of every class
+        // record in the tree (tens of MB) to add one string. Everything below dereferences
+        // through $files when it actually needs the record.
+        $fqcn_to_file = [];
         foreach ($files as $file => $metadata) {
             if (isset($metadata['fqcn'])) {
-                $fqcn_index[$metadata['fqcn']] = $metadata + ['__file' => $file];
+                $fqcn_to_file[$metadata['fqcn']] = $file;
             }
         }
 
         $checks = [
-            self::REALM_STAFF => static::_build_check_registry($fqcn_index, self::STAFF_PERMISSION_BASE, self::REALM_STAFF),
-            self::REALM_PORTAL => static::_build_check_registry($fqcn_index, self::PORTAL_PERMISSION_BASE, self::REALM_PORTAL),
+            self::REALM_STAFF => static::_build_check_registry($files, $fqcn_to_file, self::STAFF_PERMISSION_BASE, self::REALM_STAFF),
+            self::REALM_PORTAL => static::_build_check_registry($files, $fqcn_to_file, self::PORTAL_PERMISSION_BASE, self::REALM_PORTAL),
         ];
 
         $surfaces = [];
         $violations = [];
-        static::_collect_php_surfaces($files, $surfaces, $violations);
-        static::_collect_js_action_surfaces($surfaces);
+
+        if ($dirty !== null) {
+            // Carry forward every surface whose declaring file this build did not touch.
+            foreach ($previous_surfaces as $target => $surface) {
+                if (!isset($dirty[$surface['file'] ?? ''])) {
+                    $surfaces[$target] = $surface;
+                }
+            }
+        }
+
+        static::_collect_php_surfaces($files, $surfaces, $violations, $dirty);
+        static::_collect_js_action_surfaces($surfaces, $dirty);
 
         ksort($surfaces);
 
@@ -480,18 +505,19 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
      * an application override of an inherited check is the one that actually runs.
      * Two declarations on unrelated branches are a name collision and fail loud.
      *
-     * @param array $fqcn_index Class metadata keyed by FQCN (each carrying __file)
+     * @param array $files       $manifest_data['data']['files']
+     * @param array $fqcn_to_file FQCN => declaring file (a reference index, not records)
      * @param string $base_fqcn Realm root
      * @param string $realm Realm identifier (for error text)
      * @return array<string, array>
      */
-    private static function _build_check_registry(array $fqcn_index, string $base_fqcn, string $realm): array
+    private static function _build_check_registry(array $files, array $fqcn_to_file, string $base_fqcn, string $realm): array
     {
         // Every class in the realm lineage, base included.
         $realm_classes = [];
-        foreach ($fqcn_index as $fqcn => $metadata) {
-            if ($fqcn === $base_fqcn || static::_is_descendant_of($fqcn, $base_fqcn, $fqcn_index)) {
-                $realm_classes[$fqcn] = $metadata;
+        foreach ($fqcn_to_file as $fqcn => $unused_file) {
+            if ($fqcn === $base_fqcn || static::_is_descendant_of($fqcn, $base_fqcn, $files, $fqcn_to_file)) {
+                $realm_classes[$fqcn] = true;
             }
         }
 
@@ -500,8 +526,9 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
         // name => list of unmarked declarations shadowing a marked one
         $unmarked_declarations = [];
 
-        foreach ($realm_classes as $fqcn => $metadata) {
-            $file = $metadata['__file'] ?? '(unknown file)';
+        foreach (array_keys($realm_classes) as $fqcn) {
+            $file = $fqcn_to_file[$fqcn] ?? '(unknown file)';
+            $metadata = $files[$file] ?? [];
             $instance_methods = $metadata['public_instance_methods'] ?? [];
 
             foreach (($metadata['public_static_methods'] ?? []) as $method_name => $method_data) {
@@ -564,7 +591,7 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
         $registry = [];
 
         foreach ($candidates as $name => $declarations) {
-            $winner = static::_resolve_most_derived($declarations, $fqcn_index);
+            $winner = static::_resolve_most_derived($declarations, $files, $fqcn_to_file);
 
             if ($winner === null) {
                 $lines = [];
@@ -585,7 +612,7 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
             // (a static call resolves to the most derived body), so the marked check
             // would silently never run.
             foreach (($unmarked_declarations[$name] ?? []) as $shadow) {
-                if (static::_is_descendant_of($shadow['class'], $winner['class'], $fqcn_index)) {
+                if (static::_is_descendant_of($shadow['class'], $winner['class'], $files, $fqcn_to_file)) {
                     throw new \RuntimeException(
                         "Unmarked override of auth check '{$name}' in the {$realm} realm:\n" .
                         "    {$shadow['class']}::{$name}() in {$shadow['file']}\n" .
@@ -610,7 +637,7 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
      * Pick the declaration that descends from every other candidate. Returns null
      * when the candidates sit on unrelated branches (an unresolvable collision).
      */
-    private static function _resolve_most_derived(array $declarations, array $fqcn_index): ?array
+    private static function _resolve_most_derived(array $declarations, array $files, array $fqcn_to_file): ?array
     {
         foreach ($declarations as $candidate) {
             $descends_from_all = true;
@@ -619,7 +646,7 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
                 if ($other['class'] === $candidate['class']) {
                     continue;
                 }
-                if (!static::_is_descendant_of($candidate['class'], $other['class'], $fqcn_index)) {
+                if (!static::_is_descendant_of($candidate['class'], $other['class'], $files, $fqcn_to_file)) {
                     $descends_from_all = false;
                     break;
                 }
@@ -637,16 +664,22 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
      * Walk the extends chain to determine whether $child_fqcn descends from
      * $ancestor_fqcn (strictly - a class is not its own descendant).
      */
-    private static function _is_descendant_of(string $child_fqcn, string $ancestor_fqcn, array $fqcn_index): bool
+    private static function _is_descendant_of(string $child_fqcn, string $ancestor_fqcn, array $files, array $fqcn_to_file): bool
     {
-        $current = $fqcn_index[$child_fqcn]['extends_fqcn'] ?? null;
+        $extends_fqcn = static function (string $fqcn) use ($files, $fqcn_to_file): ?string {
+            $file = $fqcn_to_file[$fqcn] ?? null;
+
+            return $file === null ? null : ($files[$file]['extends_fqcn'] ?? null);
+        };
+
+        $current = $extends_fqcn($child_fqcn);
         $guard = 0;
 
         while ($current && $guard++ < 50) {
             if ($current === $ancestor_fqcn) {
                 return true;
             }
-            $current = $fqcn_index[$current]['extends_fqcn'] ?? null;
+            $current = $extends_fqcn($current);
         }
 
         return false;
@@ -771,11 +804,22 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
      * @param array $violations Collects the class-gate / member-'public' contradictions
      *                          found here, for the batched validation failure.
      */
-    private static function _collect_php_surfaces(array $files, array &$surfaces, array &$violations): void
+    private static function _collect_php_surfaces(array $files, array &$surfaces, array &$violations, ?array $dirty = null): void
     {
         $surface_attributes = static::_php_surface_attributes();
 
-        foreach ($files as $file => $metadata) {
+        // INCREMENTAL: only the files this build re-parsed can have changed what they
+        // declare. Their previous entries were dropped by the caller, so recomputing them
+        // here is the whole update. $dirty === null rebuilds everything.
+        $paths = $dirty === null ? array_keys($files) : array_keys($dirty);
+
+        foreach ($paths as $file) {
+            $metadata = $files[$file] ?? null;
+
+            if ($metadata === null) {
+                continue;
+            }
+
             $class = $metadata['class'] ?? null;
             if (!$class) {
                 continue;
@@ -933,9 +977,15 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
      * Record the JS action surfaces: every Spa_Action subclass carrying @route,
      * with the check names from its @auth decorator.
      */
-    private static function _collect_js_action_surfaces(array &$surfaces): void
+    private static function _collect_js_action_surfaces(array &$surfaces, ?array $dirty = null): void
     {
         foreach (Manifest::js_get_extending('Spa_Action') as $class_name => $action_metadata) {
+            // INCREMENTAL: an action whose file this build did not touch kept the surface
+            // entry the caller carried forward.
+            if ($dirty !== null && !isset($dirty[$action_metadata['file'] ?? ''])) {
+                continue;
+            }
+
             $decorators = $action_metadata['decorators'] ?? [];
 
             $has_route = false;

@@ -56,7 +56,7 @@ class FrameworkInitialization_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Get original content for pattern detection
-        $original_content = file_get_contents($file_path);
+        $original_content = $this->source()->content($file_path);
         $original_lines = explode("\n", $original_content);
 
         // Also get sanitized content to skip comments

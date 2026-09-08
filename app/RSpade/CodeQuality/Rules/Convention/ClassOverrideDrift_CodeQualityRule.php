@@ -84,11 +84,26 @@ class ClassOverrideDrift_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Cross-file: the finding IS a comparison of two files.
+     * CROSS-FILE: this rule judges the tree, not one file. The driver runs it once per
+     * pass, gated on the fingerprint of what depends_on() declares.
      */
-    public function is_incremental(): bool
+    public function kind(): string
     {
-        return false;
+        return self::KIND_CROSS_FILE;
+    }
+
+    /**
+     * Every indexed PHP file plus the archived .upstream twins: drift is the difference
+     * between an override and the framework file it shadows.
+     *
+     * @return array<int,string>
+     */
+    public function depends_on(): array
+    {
+        return [
+            'files:*.php',
+            'files:*.upstream',
+        ];
     }
 
     /**
@@ -131,7 +146,7 @@ class ClassOverrideDrift_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $override_source = @file_get_contents($override_path);
+        $override_source = $this->source()->content($override_path);
 
         // The checker's file-level exception check runs against whichever file triggered
         // this pass, which is never the override. The marker has to be read here.

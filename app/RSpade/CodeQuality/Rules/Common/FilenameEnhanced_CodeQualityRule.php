@@ -53,7 +53,7 @@ class FilenameEnhanced_CodeQualityRule extends CodeQualityRule_Abstract
         // Check if filename contains 'enhanced' (case insensitive)
         if (stripos($filename, 'enhanced') !== false) {
             // Check if file has exemption marker
-            $content = file_get_contents($file_path);
+            $content = $this->source()->content($file_path);
             if (str_contains($content, '//@enhanced_filename_allowed')) {
                 return; // File is explicitly exempted
             }

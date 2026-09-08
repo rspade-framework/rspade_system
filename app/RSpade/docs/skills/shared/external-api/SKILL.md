@@ -233,6 +233,8 @@ Reaching it **is** the validation: a bad, revoked or expired key is a 401 from t
 
 Dev calls must use the `APP_URL` host or loopback; CSRF N/A (no cookie session); FPC never applies; `Main_Abstract::pre_dispatch` is skipped for API (Portal precedent). `_api_keys.user_role_id` is RESERVED, NOT enforced (`scopes` IS — see above).
 
+**The API identity is scoped to the dispatch.** `Api_Dispatcher::dispatch()` clears it in a `finally`, so it never outlives the request it authenticated (an endpoint that throws included). Something that dispatches repeatedly in ONE process - a test harness, a CLI tool, a batch runner - needs no reset of its own between calls, and must not write one: the reset is a framework internal and an application reference to it is refused at manifest build (`NAME-RESERVED-02`).
+
 ## Key scopes
 
 A key otherwise carries its holder's **entire** authority. `_api_keys.scopes` narrows one key; `Api_Scopes` (static, pure) is the whole meaning. **A scope is a bare PATH PATTERN and it is a GRANT** — no keyword, no method, no deny form.

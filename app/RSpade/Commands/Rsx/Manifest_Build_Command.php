@@ -14,6 +14,7 @@ use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Support\Rsx_Fingerprint;
 
 class Manifest_Build_Command extends FrameworkDeveloperCommand
 {
@@ -103,7 +104,7 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
 
         // Check if in production mode with existing manifest
         if (config('app.env') === 'production') {
-            $manifest_file = storage_path('rsx-build/manifest_data.php');
+            $manifest_file = storage_path(Manifest::CACHE_FILE);
 
             if (file_exists($manifest_file)) {
                 $file_age = time() - filemtime($manifest_file);
@@ -154,6 +155,15 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
         $this->line('  Blade Views: ' . $stats['blade']);
         $this->line('  Build Time: ' . $elapsed . 'ms');
 
+        // The MEMORY GATE's readout. A cold build's peak can only be measured in a process
+        // that started without a manifest, so the gate spawns this command with a scratch
+        // storage root and reads this line. Framework-internal (the `--_` convention): it is
+        // registered as no InputOption, so it appears in no help output and can never be an
+        // unknown-option error.
+        if (\App\RSpade\Core\Console\Rsx_Internal_Flags::has('--_manifest-report-peak')) {
+            $this->line('MANIFEST_PEAK_BYTES=' . memory_get_peak_usage(true));
+        }
+
         // Reset debug options
         Manifest::$_debug_options = [];
 
@@ -168,7 +178,7 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
         // A FAILED build never reaches here (the tree state is unknown). The scripts are
         // self-detecting and SILENT when already applied, so a healthy build's output
         // grows by zero characters.
-        if (self::__should_run_environment_updates()) {
+        if (self::__should_run_environment_updates() && self::__environment_updates_have_changed()) {
             $post_update = base_path('bin/post-update.sh');
 
             // The lock keeps overlapping builds from running the scripts concurrently.
@@ -203,6 +213,10 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
                         // per-script failures. Report and carry on.
                         if ($post_update_status !== 0) {
                             $this->warn('[WARNING] Environment updates reported a failure (exit ' . $post_update_status . '); the build itself succeeded.');
+                        } else {
+                            // Stamp only a CLEAN run: a failed one has to be retried, and the
+                            // scripts are idempotent, so re-running is always safe.
+                            self::__stamp_environment_updates();
                         }
                     }
                 } finally {
@@ -244,6 +258,60 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
         }
 
         return !Framework_Maintenance::is_active();
+    }
+
+    /**
+    * Where the "these environment-update scripts have been applied" stamp lives.
+    *
+    * storage/rsx-framework/ is the framework's own operational state (the updater ledger,
+    * the maintenance flag) - deliberately not storage/framework/, which is Laravel's.
+    */
+    private static function __environment_updates_stamp_path(): string
+    {
+        return storage_path('rsx-framework/environment_updates_fingerprint');
+    }
+
+    /**
+    * Have the environment-update SCRIPTS changed since they were last run to completion?
+    *
+    * THE TRIGGER IS CODE ARRIVING, NOT A FILE CHANGING. post-update.sh is justified by new
+    * scripts landing in the tree - a git pull, a framework update, a branch switch - and it
+    * was firing after every successful build instead: a git submodule walk and ten bash
+    * spawns (0.33 s measured), all of them no-ops, on every rebuild a developer's editor
+    * triggered. The fingerprint is a stat digest of bin/environment_updates/ (the shared
+    * Rsx_Fingerprint::directories), and it moves exactly when a script is added, removed or
+    * edited.
+    *
+    * A missing or unreadable stamp means RUN, which is the safe direction: the scripts are
+    * self-detecting and silent when already applied, so a needless run costs a third of a
+    * second and nothing else.
+    *
+    * The PULL path does not consult this at all - framework-pull-upstream.sh runs
+    * post-update.sh unconditionally, because a pull is the moment the tree changed under it.
+    */
+    private static function __environment_updates_have_changed(): bool
+    {
+        $stamp = self::__environment_updates_stamp_path();
+
+        if (!is_file($stamp)) {
+            return true;
+        }
+
+        $recorded = trim((string) @file_get_contents($stamp));
+
+        return $recorded === '' || $recorded !== self::__environment_updates_fingerprint();
+    }
+
+    private static function __environment_updates_fingerprint(): string
+    {
+        return Rsx_Fingerprint::directories([base_path('bin/environment_updates')]);
+    }
+
+    private static function __stamp_environment_updates(): void
+    {
+        $stamp = self::__environment_updates_stamp_path();
+        ensure_directory(dirname($stamp));
+        @file_put_contents($stamp, self::__environment_updates_fingerprint());
     }
 
     /**

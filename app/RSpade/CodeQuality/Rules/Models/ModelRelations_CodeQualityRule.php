@@ -78,7 +78,7 @@ class ModelRelations_CodeQualityRule extends CodeQualityRule_Abstract
         // Read original file content
         $base_path = function_exists('base_path') ? base_path() : '/var/www/html';
         $full_path = str_starts_with($file_path, '/') ? $file_path : $base_path . '/' . $file_path;
-        $original_contents = file_get_contents($full_path);
+        $original_contents = $this->source()->content($full_path);
 
         // Get lines for line number tracking
         $lines = explode("\n", $original_contents);

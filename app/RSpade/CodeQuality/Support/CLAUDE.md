@@ -1,5 +1,61 @@
 # Code Quality Support Classes
 
+## Source_Cache - the ONE reader, tokenizer and parser of a pass
+
+`Source_Cache.php` is where a code-quality pass reads a file, tokenizes it and parses it.
+Nothing else does: a rule that called `file_get_contents()`, `token_get_all()`,
+`PhpToken::tokenize()` or `new ParserFactory` kept the result in a static array for the life
+of the process, and those arrays were **1.12 GB of a 1,237 MB cold build** - memory
+proportional to FILES PARSED rather than to the index being produced.
+
+```php
+$this->source()->content($path)          // raw bytes, '' when unreadable
+$this->source()->tokens($path)           // PhpToken::tokenize() output
+$this->source()->ast($path)              // one nikic parse, null on a syntax error
+$this->source()->token_array($code)      // token_get_all() over a string in hand
+$this->source()->php_tokens_of($code)    // PhpToken::tokenize() over a string in hand
+```
+
+**The budget it implements** (owner ruling): peak memory is proportional to the index plus a
+constant bounded by the LARGEST SINGLE FILE, never to the number of files parsed. So it is an
+LRU with a hard entry bound per bucket - a pass may read ten thousand files and hold a handful
+at once - and `release()` empties it at the end of the pass. Nothing in it is static.
+
+**Capacity is measured, not chosen.** `Manifest_Build::BUILD_SOURCE_CACHE_CAPACITY` is 16, and
+the class default is 64. On this reference tree a cold build peaks at 124.8 MB with 64,
+110.1 MB with 32 and 105.9 MB with 16, and the wall time does NOT get worse as it shrinks
+(12.0 s / 11.4 s / 11.2 s) - the allocation an eviction avoids costs more than the re-parse it
+causes. Below 16 it turns: 8 thrashes to 15.4 s.
+
+**The build shares one instance.** `Manifest::build()->source_cache()` is the manifest build's,
+and both `Php_Fixer` (phase 2) and `Manifest_Rule_Driver` (phase 7) read through it, so a file
+read for one is not read again for the other. `rsx:check` has no build in flight and gets one
+of its own.
+
+**Failure posture**: an unreadable file yields `''`/`[]`/`null` rather than throwing (a build
+routinely names files that vanished between the scan and the check), and so does a file with a
+syntax error - the lint stage is what reports syntax, and a rule must not turn an unparseable
+file into its own kind of failure.
+
+## RuleDiscovery - one discovery per process
+
+`RuleDiscovery::rule_files()` returns `[fqcn => absolute path]` for every rule class, memoized
+for the process; `discover_rules()` instantiates them. The walk is a
+`RecursiveIteratorIterator`, and that matters: the predecessor was
+`glob('Rules/**' . '/*.php')`, **PHP's `glob()` has no `**`**, and the pattern matched exactly
+one directory level by accident. A rule filed two levels deep would have been silently never
+discovered and never run. `Rule_Discovery_Depth_Test` writes one and proves it is found.
+
+`file_for($fqcn)` is what the driver fingerprints a rule by.
+
+## Validation_Ledger - the ONE store of "already passed"
+
+See `rsx:man code_quality`, THE VALIDATION LEDGER, for the contract. What is worth repeating
+here: **the DRIVER writes it, not the rule.** Every entry is filed under
+`"<RULE ID>@<md5 of the rule's file . fingerprint_extra()>"`, so editing a rule retires every
+verdict it recorded; a cross-file rule's entry is keyed by the pseudo-hash
+`deps:<hash of its depends_on() inputs>` rather than by a file hash.
+
 ## FileSanitizer - the `sanitize` subsystem of the node service
 
 ### Overview
@@ -22,7 +78,7 @@ Owned entirely by `Rsx_Node_Service`; see `Core/JsParsers/README.md`. Two facts 
    downstream operator - that is an owned zone.
 
 ### RPC Methods
-- `sanitize.sanitize` → `{results: {file: {status, sanitized, original_lines}}}` - batch
+- `sanitize.sanitize` -> `{results: {file: {status, sanitized, original_lines}}}` - batch
   sanitize multiple files
 
 ### PHP API
@@ -38,12 +94,16 @@ Cache location: the shared derived cache, namespace `js-sanitized`
 source-mtime guard kept on top of it.
 
 ### Error Handling
-Server failure → fatal error (no fallback). Server must start or code quality check fails.
+Server failure -> fatal error (no fallback). Server must start or code quality check fails.
 
 ### Sanitization Process
 1. **Remove comments:** Uses `decomment` npm package to strip comments while preserving line numbers
 2. **Replace string contents:** Parses with Acorn AST parser, replaces string literal contents with spaces
 3. **Preserve structure:** Maintains line/column positions for accurate violation reporting
+
+### The sanitized copy is what `rsx:check` hands a rule as `$contents`
+The manifest-time pass hands the RAW bytes instead. A rule that needs the other one asks for
+it by name through `$this->source()`.
 
 ### Performance Impact
 Before RPC: 900+ Node.js process spawns during manifest build (~30-60s overhead)
@@ -66,7 +126,7 @@ inside `"https://example.com"` is never read as a comment opener. Used by
 URL-HARDCODE-01; `sanitize()` itself is unchanged, so no other rule's view moves.
 
 ## One service, two subsystems
-Both classes in this directory are clients of the ONE node service. See
+Both node-service clients in this directory are clients of the ONE node service. See
 `/app/RSpade/Core/JsParsers/README.md` for the lifecycle, the private-socket model and how
 to add a subsystem, and `/app/RSpade/Core/JsParsers/CLAUDE.md` for the short form.
 
@@ -89,8 +149,8 @@ when first used. A startup failure is fatal and is diagnosed by `Rpc_Startup_Dia
 from what was OBSERVED.
 
 ### RPC Methods
-- `quality.lint` → `{results: {file: {status, error}}}` - Check JavaScript syntax using Babel parser
-- `quality.analyze_this` → `{results: {file: {status, violations}}}` - Analyze 'this' usage patterns using Acorn
+- `quality.lint` -> `{results: {file: {status, error}}}` - Check JavaScript syntax using Babel parser
+- `quality.analyze_this` -> `{results: {file: {status, violations}}}` - Analyze 'this' usage patterns using Acorn
 
 ### PHP API
 ```php
@@ -109,14 +169,13 @@ Both lint and analyze_this have their own caching layers:
   under the rule id `JS-LINT`, keyed by the file's sha1 - the same hash the manifest keys a
   file by, so a verdict survives a manifest clear. (`PHP-LINT` is the PHP stage's key.)
 - **This-usage cache:** none. `analyze_this()` returns a VIOLATION LIST, which is not worth
-  storing - the rule (`ThisUsage_CodeQualityRule`) banks the CLEAN verdict in the shared
-  `Validation_Ledger` under the generational id `JS-THIS-01@<fingerprint of this rule +
-  quality-service.js>`, and re-analyzes the few files that are not clean.
+  storing - the driver banks the CLEAN verdict in the shared `Validation_Ledger` under
+  `JS-THIS-01@<the rule's fingerprint>`, and the few files that are not clean are re-analyzed.
 
 Cache is checked before RPC call - only files with stale cache are sent to the server.
 
 ### Error Handling
-Server failure → fatal error for lint, silent failure for analyze_this.
+Server failure -> fatal error for lint, silent failure for analyze_this.
 
 ### Performance Impact
 Before RPC: Thousands of Node.js process spawns during rsx:check (~20+ seconds on first run)

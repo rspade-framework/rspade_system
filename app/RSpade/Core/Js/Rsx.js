@@ -646,15 +646,11 @@ class Rsx {
      * @returns {Array<string>} Route patterns, empty when the name resolves to nothing
      */
     static _spa_route_patterns(class_name) {
-        const all_classes = Manifest.get_all_classes();
+        // ONE LOOKUP. This used to build and SORT the whole registry through
+        // get_all_classes() to find a single name - on every rendered link.
+        const class_object = Manifest.get_class_by_name(class_name);
 
-        for (const class_info of all_classes) {
-            if (class_info.class_name !== class_name) {
-                continue;
-            }
-
-            const class_object = class_info.class_object;
-
+        if (class_object) {
             // Check if it's a SPA action (has Spa_Action in prototype chain)
             if (typeof Spa_Action !== 'undefined' &&
                 class_object.prototype instanceof Spa_Action) {
@@ -668,7 +664,6 @@ class Rsx {
             }
 
             // Found the class but it is not a SPA action, or carries no routes.
-            break;
         }
 
         return Rsx._published_spa_routes[class_name] || [];

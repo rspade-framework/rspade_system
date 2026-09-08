@@ -47,8 +47,26 @@ class Manifest {
 
         Manifest._throw_boot_failures(failures, 'Manifest._define (class registration)');
 
+        // The sorted class list get_all_classes() hands out is a function of the registry,
+        // and the registry just changed.
+        Manifest._all_classes_memo = null;
+
         // Build the subclass index after all classes are defined
         Manifest._build_subclass_index();
+    }
+
+    /**
+     * Framework internal: receive the manifest's own PHP-side subclass index.
+     *
+     * Emitted into the Core bundle beside Rsx._define_routes(), as
+     * `parent name -> [every descendant class name]`. It is the same index the PHP
+     * Manifest keeps, so get_extending() becomes a lookup instead of a scan of every
+     * registered class with an inheritance walk per entry.
+     *
+     * @param {Object} index - parent class name -> array of descendant class names
+     */
+    static _define_published_subclass_index(index) {
+        Manifest._published_subclass_index = index || {};
     }
 
     /**
@@ -153,15 +171,38 @@ class Manifest {
             }
         }
 
+        const base_name = typeof base_class === 'string' ? base_class : base_class_object._name;
         const classes = [];
 
-        for (let class_name in Manifest._classes) {
-            const classdata = Manifest._classes[class_name];
-            if (Manifest.js_is_subclass_of(classdata.class, base_class_object)) {
-                classes.push({
-                    class_name: class_name,
-                    class_object: classdata.class,
-                });
+        // THE PUBLISHED INDEX IS THE ANSWER. It names every descendant of a parent, so the
+        // only work left is mapping names to the class objects THIS bundle registered - a
+        // name the bundle does not carry is simply not here. This used to scan every
+        // registered class and walk its whole inheritance chain, once per call.
+        const published = Manifest._published_subclass_index;
+
+        if (published && base_name && published[base_name]) {
+            published[base_name].forEach((class_name) => {
+                const classdata = Manifest._classes[class_name];
+
+                if (classdata) {
+                    classes.push({
+                        class_name: class_name,
+                        class_object: classdata.class,
+                    });
+                }
+            });
+        } else if (published && base_name) {
+            // A parent nothing extends is absent from the index, which is the same answer.
+        } else {
+            // No published index (a bundle compiled before one was emitted): walk.
+            for (let class_name in Manifest._classes) {
+                const classdata = Manifest._classes[class_name];
+                if (Manifest.js_is_subclass_of(classdata.class, base_class_object)) {
+                    classes.push({
+                        class_name: class_name,
+                        class_object: classdata.class,
+                    });
+                }
             }
         }
 
@@ -247,6 +288,12 @@ class Manifest {
             return [];
         }
 
+        // Memoized: the array and every object in it are freshly built and then SORTED, and
+        // Rsx.Route() reached for this on every rendered link. _define() clears the memo.
+        if (Manifest._all_classes_memo) {
+            return Manifest._all_classes_memo;
+        }
+
         const results = [];
         for (let class_name in Manifest._classes) {
             const classdata = Manifest._classes[class_name];
@@ -259,6 +306,8 @@ class Manifest {
 
         // Sort alphabetically by class name to ensure deterministic behavior and prevent race condition bugs
         results.sort((a, b) => a.class_name.localeCompare(b.class_name));
+
+        Manifest._all_classes_memo = results;
 
         return results;
     }

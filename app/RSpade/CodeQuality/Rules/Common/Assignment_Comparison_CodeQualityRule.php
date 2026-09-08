@@ -119,7 +119,7 @@ class Assignment_Comparison_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         // Use original file content directly (no sanitization)
-        $original_content = file_get_contents($file_path);
+        $original_content = $this->source()->content($file_path);
         $lines = explode("\n", $original_content);
 
         // Process each line individually
