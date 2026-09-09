@@ -1139,8 +1139,16 @@ return [
         'extractors' => [
             'application/pdf' => 'Pdftotext_Text_Extractor',
 
+            // SPREADSHEETS FIRST - first fnmatch match wins, and the two generic Office
+            // patterns below would otherwise swallow them. PhpSpreadsheet reads a workbook
+            // in-process (no soffice spawn, no worker slot) and indexes only the WORDS:
+            // numbers, dates and currency are excluded, because a date and a currency amount
+            // are numbers wearing a format and a full-text index is served worst by them.
+            'application/vnd.ms-excel' => 'Spreadsheet_Text_Extractor',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.*' => 'Spreadsheet_Text_Extractor',
+            'application/vnd.oasis.opendocument.spreadsheet*' => 'Spreadsheet_Text_Extractor',
+
             'application/msword' => 'Libreoffice_Text_Extractor',
-            'application/vnd.ms-excel' => 'Libreoffice_Text_Extractor',
             'application/vnd.ms-powerpoint' => 'Libreoffice_Text_Extractor',
             'application/vnd.openxmlformats-officedocument.*' => 'Libreoffice_Text_Extractor',
             'application/vnd.oasis.opendocument.*' => 'Libreoffice_Text_Extractor',
@@ -1181,8 +1189,18 @@ return [
     'preview' => [
         'viewers' => [
             'application/pdf' => 'Pdf_Viewer',
+
+            // SPREADSHEETS FIRST - first match wins, and the two generic Office patterns below
+            // would otherwise take them. A workbook previews as a GRID (Spreadsheet_Viewer over
+            // the HTML rendition PhpSpreadsheet produces), never as a PDF: a spreadsheet has no
+            // pages, so a PDF of one is LibreOffice's PRINT view - page breaks through the data,
+            // no gridlines, no row or column headers - which is faithful to a print-out and
+            // unrecognisable as the thing being previewed.
+            'application/vnd.ms-excel' => 'Spreadsheet_Viewer',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.*' => 'Spreadsheet_Viewer',
+            'application/vnd.oasis.opendocument.spreadsheet*' => 'Spreadsheet_Viewer',
+
             'application/msword' => 'Pdf_Viewer',
-            'application/vnd.ms-excel' => 'Pdf_Viewer',
             'application/vnd.ms-powerpoint' => 'Pdf_Viewer',
             'application/vnd.openxmlformats-officedocument.*' => 'Pdf_Viewer',
             'application/vnd.oasis.opendocument.*' => 'Pdf_Viewer',

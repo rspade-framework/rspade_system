@@ -9,6 +9,7 @@ use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
+use App\RSpade\Core\Files\Spreadsheet_Rendition;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Session\Session;
@@ -174,6 +175,105 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     }
 
     /**
+     * Serve the HTML rendition of a SPREADSHEET.
+     *
+     * The workbook twin of pdf_rendition(), and gated identically - a rendition exposes the
+     * full content of the document, so it takes BOTH file.thumbnail.authorize AND
+     * file.download.authorize, in that order.
+     *
+     * WHY HTML AND NOT A PDF: Spreadsheet_Rendition's docblock has the argument. Briefly, a
+     * spreadsheet has no pages, and asking LibreOffice for a PDF gets the PRINT view - page
+     * breaks through the data, no gridlines, no headers - which is faithful to a print-out and
+     * unrecognisable as the grid it is previewing.
+     *
+     * THE BYTES ARE SANITIZED BEFORE THEY REACH DISK (Spreadsheet_Rendition purifies at
+     * generation time), and Spreadsheet_Viewer renders them in a SANDBOXED iframe with neither
+     * script execution nor same-origin access. This response carries its own restrictive CSP as
+     * the third layer, because it is the one that applies no matter who fetched the URL - a
+     * rendition served to a browser tab directly is not inside anybody's iframe.
+     *
+     * @param Request $request
+     * @param array $params
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    #[Route('/_preview/sheet/:key', methods: ['GET'])]
+    public static function sheet_rendition(Request $request, array $params = [])
+    {
+        $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
+        if ($bearer_denied !== null) {
+            return $bearer_denied;
+        }
+
+        $key = $params['key'] ?? null;
+        if (!$key) {
+            abort(404, 'File not found');
+        }
+
+        $attachment = File_Attachment_Model::where('key', $key)->first();
+        if (!$attachment) {
+            abort(404, 'File not found');
+        }
+
+        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+            'attachment' => $attachment,
+            'user' => Session::get_user(),
+            'request' => $request,
+        ]);
+        if ($thumbnail_auth !== true) {
+            return $thumbnail_auth;
+        }
+
+        $download_auth = Rsx::trigger_gate('file.download.authorize', [
+            'attachment' => $attachment,
+            'user' => Session::get_user(),
+            'request' => $request,
+        ]);
+        if ($download_auth !== true) {
+            return $download_auth;
+        }
+
+        if (!Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime())) {
+            abort(415, 'This file is not a spreadsheet.');
+        }
+
+        $storage = $attachment->resolve_storage();
+        $path = static::sheet_rendition_cache_path($storage);
+
+        if (!file_exists($path)) {
+            // The background render has not produced it, or the LRU cache evicted it. Queue it
+            // and answer 404 - Document_Preview is already in its "preparing" state machine and
+            // the realtime frame on the attachment brings it back when the rendition lands.
+            $storage->requeue_render();
+
+            abort(404, 'Spreadsheet preview is being prepared.');
+        }
+
+        return Response::file($path, [
+            'Content-Type' => 'text/html; charset=UTF-8',
+            'Content-Disposition' => 'inline; filename="' . static::__sheet_filename($attachment->file_name) . '"',
+            'Cache-Control' => 'public, max-age=31536000, immutable',
+            // Belt and braces around already-purified markup: no script, no plugin, no frame,
+            // and no outbound request of any kind. Images are inlined as data: URIs by the
+            // generator, so img-src needs nothing else.
+            'Content-Security-Policy' => "default-src 'none'; img-src data:; style-src 'unsafe-inline'; sandbox",
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
+    /**
+     * Display filename for a served spreadsheet rendition.
+     *
+     * @param string $file_name
+     * @return string
+     */
+    protected static function __sheet_filename(string $file_name): string
+    {
+        $base = pathinfo($file_name, PATHINFO_FILENAME);
+
+        return ($base !== '' ? $base : 'spreadsheet') . '.html';
+    }
+
+    /**
      * Apply a non-null result from the document.preview_rendition resolve chain, enforcing its
      * contract. See the class docblock for the full contract.
      *
@@ -269,6 +369,22 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     public static function rendition_cache_path(File_Storage_Model $storage): string
     {
         return Rsx_File_Paths::renditions_root() . '/' . $storage->hash . '.pdf';
+    }
+
+    /**
+     * Cache path of the HTML rendition of a SPREADSHEET blob.
+     *
+     * A workbook does not render to a PDF - see Spreadsheet_Rendition for why a print-out is
+     * the wrong picture of a grid - so it gets its own rendition beside the PDFs, in the same
+     * content-addressed store, under the same LRU quota (File_Rendition_Service). Same hash,
+     * different extension: one blob can only ever be one of the two.
+     *
+     * @param File_Storage_Model $storage
+     * @return string Absolute path (storage/rsx-renditions/{hash}.html).
+     */
+    public static function sheet_rendition_cache_path(File_Storage_Model $storage): string
+    {
+        return Rsx_File_Paths::renditions_root() . '/' . $storage->hash . '.html';
     }
 
     /**
@@ -430,11 +546,19 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         $render_status = $attachment->get_render_status();
         $rendition_url = null;
 
+        $is_spreadsheet = Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime());
+
         if ($attachment->pipeline_mime() === 'application/pdf') {
             $rendition_url = Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]);
         } elseif ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED) {
             $storage = File_Storage_Model::find($attachment->file_storage_id);
-            if ($storage && file_exists(static::rendition_cache_path($storage))) {
+
+            // A workbook's rendition is HTML at its own endpoint - see sheet_rendition().
+            if ($is_spreadsheet) {
+                if ($storage && file_exists(static::sheet_rendition_cache_path($storage))) {
+                    $rendition_url = Rsx::Route('File_Preview_Controller::sheet_rendition', ['key' => $attachment->key]);
+                }
+            } elseif ($storage && file_exists(static::rendition_cache_path($storage))) {
                 $rendition_url = Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]);
             }
         }

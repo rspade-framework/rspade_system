@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
@@ -23,10 +24,27 @@ return new class extends Migration
      * placeholder, and an orphan profile (no matching user) would fail the ALTER
      * loudly rather than being silently parked in site 0.
      *
+     * IT IS GUARDED ON THE COLUMN ALREADY EXISTING, which is the one place this framework
+     * accepts a conditional in a migration (owner instruction 2026-09-09; the same shape as
+     * 2026_08_09_112232_add_deleted_at_to_actor_tables). The reason is specific rather than
+     * defensive: an application may have site-scoped `user_profiles` in its OWN migration
+     * before the framework did - one such report is what prompted this change - and on that
+     * database the ALTER below is a duplicate-column error on the next `migrate`. The guard is
+     * not a guess about the schema; it is the framework declining to fight an application that
+     * already reached the same end state.
+     *
+     * It deliberately guards the WHOLE step, not each statement. A database that already has
+     * the column has its own backfill and its own index, and re-running either against data
+     * this migration did not create is a worse outcome than skipping.
+     *
      * @return void
      */
     public function up()
     {
+        if (Schema::hasColumn('user_profiles', 'site_id')) {
+            return;
+        }
+
         DB::statement("ALTER TABLE user_profiles ADD COLUMN site_id BIGINT NULL AFTER user_id");
 
         DB::statement(

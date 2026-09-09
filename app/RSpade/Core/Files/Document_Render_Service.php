@@ -15,6 +15,7 @@ use App\RSpade\Core\Files\File_Rendition_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Libreoffice;
 use App\RSpade\Core\Files\Rsx_File_Paths;
+use App\RSpade\Core\Files\Spreadsheet_Rendition;
 use App\RSpade\Core\Search\Search_Index_Model;
 use App\RSpade\Core\Search\Search_Index_Service;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
@@ -165,8 +166,16 @@ class Document_Render_Service extends Rsx_Service_Abstract
      */
     public static function render_storage(File_Storage_Model $storage): void
     {
-        $needs_render = (int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_PENDING
-            && config('rsx.libreoffice.enabled', true);
+        $is_pending = (int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_PENDING;
+
+        // Resolved once, and only when a render is actually owed - it is a query.
+        $extension = $is_pending ? static::representative_extension($storage) : null;
+        $is_spreadsheet = $is_pending && Spreadsheet_Rendition::handles_extension($extension);
+
+        // A SPREADSHEET RENDERS WITHOUT LIBREOFFICE, so the master switch does not gate it:
+        // PhpSpreadsheet reads the workbook in-process. A box with soffice absent or disabled
+        // still previews its workbooks, and only loses the formats that genuinely need it.
+        $needs_render = $is_pending && ($is_spreadsheet || config('rsx.libreoffice.enabled', true));
         $needs_extract = (int) $storage->is_indexed === 0;
 
         $rendition_path = null;
@@ -186,13 +195,19 @@ class Document_Render_Service extends Rsx_Service_Abstract
             }
 
             if ($needs_render) {
-                $rendition_path = File_Preview_Controller::rendition_cache_path($storage);
+                $rendition_path = $is_spreadsheet
+                    ? File_Preview_Controller::sheet_rendition_cache_path($storage)
+                    : File_Preview_Controller::rendition_cache_path($storage);
 
                 // Short-circuit: the rendition already exists. Real, and not an edge case - every
                 // blob converted by the old synchronous path is backfilled to PENDING with its PDF
                 // already on disk, and a re-queued blob may race the LRU cleanup. No soffice run.
                 if (!file_exists($rendition_path)) {
-                    static::__convert_to_pdf($source_path, static::representative_extension($storage), $rendition_path);
+                    if ($is_spreadsheet) {
+                        Spreadsheet_Rendition::render($source_path, $rendition_path);
+                    } else {
+                        static::__convert_to_pdf($source_path, $extension, $rendition_path);
+                    }
                 }
             } elseif ((int) $storage->render_status_id === File_Storage_Model::RENDER_STATUS_RENDERED) {
                 // Already rendered, but extraction may still be owed: hand the extractor the

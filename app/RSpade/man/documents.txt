@@ -25,6 +25,39 @@ DESCRIPTION
     The state machine, the component and the caching rules are rsx:man thumbnails.
     The text half is rsx:man document_search. The binary is rsx:man libreoffice.
 
+    SPREADSHEETS RENDER TO HTML, NOT TO A PDF
+        A spreadsheet has no pages. Asked for a PDF, LibreOffice applies its PRINT
+        model - page breaks through the middle of the data, the print area only, and
+        by default neither gridlines nor row and column headers - so the result is
+        faithful to a print-out nobody wanted and unrecognisable as the grid it is
+        previewing. Exporting an image instead changes nothing: the print model
+        survives the output format, because the format was never the problem.
+
+        So a workbook takes a different path through the same worker:
+
+            RENDITION   Spreadsheet_Rendition writes a self-contained, sanitized
+                        HTML grid to {hash}.html beside the PDFs, under the same
+                        LRU quota. It uses PhpSpreadsheet IN-PROCESS, so it needs
+                        no soffice and works with rsx.libreoffice.enabled false.
+            VIEWER      Spreadsheet_Viewer, in a SANDBOXED iframe - style isolation
+                        as much as security, since the grid carries the workbook's
+                        own fonts and fills rather than the host theme's.
+            THUMBNAIL   none. There is no page to rasterize, so a spreadsheet keeps
+                        its extension icon.
+            TEXT        Spreadsheet_Text_Extractor, which indexes the WORDS and
+                        excludes numbers, dates and currency - a date and a currency
+                        amount are numbers wearing a format, and a full-text index
+                        is served worst by them.
+
+        FORMULAS ARE NEVER EVALUATED. A workbook stores the cached RESULT of every
+        formula next to the formula; the preview shows those values, which is what
+        the author last saw. Charts are absent rather than wrong - rendering one
+        needs a chart library this framework does not vendor.
+
+        The window is bounded BEFORE the read (Spreadsheet_Preview_Window, a
+        PhpSpreadsheet read filter), so a large workbook costs the memory of the
+        preview window rather than of the workbook.
+
     RENDER FAILURE VS EXTRACTION FAILURE - the distinction that matters
         They are different failures on different columns with different remedies,
         and one document can have either, both, or neither.

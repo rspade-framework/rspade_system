@@ -28,3 +28,16 @@
 | PREVIEW-DOCUMENT-PREVIEW-FIT | $fit="contain" scales the whole page into the host's BOUNDED box, where the default width fit overflows it vertically | playwright | /dev/document_preview: sample PDF, Fit toggle width -> contain | width fit canvas css height > frame height; contain fit canvas css height <= frame height and width within the frame | implemented, NOT RUNNABLE AS SHIPPED - its route is `#[Auth('closed')]`; open the surface locally to run it (B-99) | 2026-09-01 |
 | PREVIEW-DOCUMENT-PREVIEW-RESIZE | growing the host RE-RASTERS the page instead of stretching the bitmap (the debounced ResizeObserver) | playwright | /dev/document_preview: sample PDF under contain, host grown to 1200x900 | canvas BACKING size (canvas.width/height) grows after the debounce settles | implemented, NOT RUNNABLE AS SHIPPED - its route is `#[Auth('closed')]`; open the surface locally to run it (B-99) | 2026-09-01 |
 | PREVIEW-TEXT-PREVIEW-SWAP | "(Extracting Text...)" swaps to the extracted text over realtime, with no reload | playwright | /dev/document_preview: Reset Extraction, then Extract Now inline | notice "(Extracting Text...)" appears, then .Document_Text_Preview__text is non-empty and the notice is gone, page never navigates | implemented, NOT RUNNABLE AS SHIPPED - its route is `#[Auth('closed')]`; open the surface locally to run it (B-99) | 2026-09-01 |
+
+## Spreadsheet_Preview_Test (php, transactions off) - a workbook previews as a grid
+
+A spreadsheet has no pages, so a PDF of one is LibreOffice's PRINT view - page breaks through
+the data, no gridlines, no headers - faithful to a print-out and unrecognisable as a grid.
+Workbooks route to `Spreadsheet_Viewer` over an HTML rendition PhpSpreadsheet produces
+in-process (owner ruling 2026-09-09).
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sheetprev-01 | spreadsheet mimes route to the grid viewer | xls / xlsx / ods mimes | `Spreadsheet_Viewer`, and a .docx still resolves to `Pdf_Viewer` - the registry is an ordered fnmatch map and the generic Office patterns would otherwise take them | implemented |
+| sheetprev-02 | the rendition is a grid carrying the values | a two-row workbook | a `<table>` with the headers, labels AND the numbers - unlike the search index, a preview shows the figures | implemented |
+| sheetprev-03 | hostile cell content cannot execute | cells containing a script element, an onerror attribute and a javascript: anchor | no script element, no event-handler attribute, no anchor at all; the strings survive as escaped TEXT, which is what the cells genuinely contain | implemented |

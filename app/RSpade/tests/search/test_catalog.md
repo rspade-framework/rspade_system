@@ -31,3 +31,17 @@
 | CHAIN-LIVE-SAFETY | a live marker-guarded fixture does NOT hijack a real blob's extraction | php | real text blob | EXTRACTED via Plain_Text_Extractor, not app_filter | implemented | 2026-07-16 |
 | SEARCH-REINDEX-CLI | rsx:search:reindex selector validation + --status counts table | cli | various flags | exactly-one-selector enforced; status table renders | deferred (covered indirectly by SEARCH-REINDEX-FAILED; dedicated cli test candidate) | 2026-07-16 |
 | SEARCH-KICK-ON-CREATE | find_or_create dispatches Document_Render_Service::render_pending when enabled | php | new blob | a pending _tasks row for Document_Render_Service | deferred (dispatch spawns a detached worker; assert on the queued row without spawning - candidate) | 2026-07-16 |
+
+## Spreadsheet_Text_Extraction_Test (php, transactions off) - the words of a workbook, and only the words
+
+A workbook is indexed for its LABELS - sheet names, headers, row captions, notes. Its numeric
+content is what a full-text index serves worst: thousands of figures nobody searches by value,
+diluting the terms that do matter (owner ruling 2026-09-09). This extractor also replaces
+LibreOffice for these mimes, which is what lets a spreadsheet skip the PDF rendition without
+costing the index.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sheettext-01 | labels and sheet names are indexed | a two-sheet workbook | headers, row captions and BOTH sheet names present | implemented |
+| sheettext-02 | a value carrying letters survives | `12 boxes` | kept - the numeric filter is conservative on purpose | implemented |
+| sheettext-03 | numbers, currency and dates are excluded | plain numbers, decimals, `$2,221.75`, `2026-01-15`, `15/02/2026` | none present. A FORMATTED date or currency cell is numeric underneath and excluded by construction; these are the typed-as-text spellings that need their own handling | implemented |

@@ -14,6 +14,7 @@ use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Rsx_File_Upload;
+use App\RSpade\Core\Files\Spreadsheet_Rendition;
 use App\RSpade\Core\Files\Zip_Download_Request_Model;
 use App\RSpade\Core\Files\Zip_Stream;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -996,8 +997,17 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // A rendered document rasterizes from its rendition; everything else from the blob itself.
+        //
+        // A SPREADSHEET IS "everything else" DESPITE BEING RENDERED. Its rendition is HTML, not
+        // a PDF (see Spreadsheet_Rendition), so there is no page to rasterize and no picture to
+        // make - a workbook's thumbnail is its extension icon, which is the owner's ruling and
+        // is also the only honest answer. Excluding it here is load-bearing rather than tidy:
+        // the branch below treats a missing PDF as corruption, logs it and calls
+        // requeue_render(), so a spreadsheet would re-queue on every thumbnail request forever
+        // while the worker dutifully produced the HTML the branch was not looking for.
         $rendition_path = null;
-        if ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED) {
+        if ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED
+            && !Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime())) {
             $rendition_path = File_Preview_Controller::rendition_cache_path($storage);
 
             if (!file_exists($rendition_path)) {

@@ -129,35 +129,26 @@ user_profiles IS NOW SITE-SCOPED IN THE FRAMEWORK - READ THIS IF YOU SCOPED IT Y
     NULL and indexes it.
 
     IF YOU ALREADY ADDED site_id TO user_profiles IN YOUR OWN MIGRATION, the
-    framework migration WILL FAIL on your next `php artisan migrate` with
+    framework migration SKIPS ITSELF. It is guarded on the column already
+    existing and does nothing when it finds one, so `php artisan migrate` runs
+    clean and there is no collision to resolve by hand.
 
-        SQLSTATE[42S21]: Duplicate column name 'site_id'
+    (An earlier draft of this document had you record the migration as applied
+    to step over a duplicate-column error. That is no longer necessary and you
+    should not do it - the guard is in the shipped migration.)
 
-    That is the correct behaviour - migrations in RSpade carry no defensive
-    existence checks, because a migration that guesses at the current state is
-    how a schema silently diverges. It is a one-time collision and you resolve
-    it deliberately:
+    VERIFY YOUR COLUMN ANYWAY, ONCE. The guard skips the framework's backfill
+    along with its ALTER, so the rows are whatever YOUR migration made them, and
+    site_id is now load-bearing rather than decorative - the model refuses a
+    cross-site save against it:
 
-      1. Confirm your column already matches what the framework migration would
-         have produced - BIGINT, NOT NULL, indexed, and every row carrying its
-         owning user's site:
+        SELECT COUNT(*) FROM user_profiles p
+            JOIN users u ON u.id = p.user_id
+            WHERE p.site_id <> u.site_id;
 
-             SELECT COUNT(*) FROM user_profiles p
-                 JOIN users u ON u.id = p.user_id
-                 WHERE p.site_id <> u.site_id;
-
-         That must return 0. If it does not, fix the rows before going further:
-         a mis-filed site_id is now load-bearing, and the model will refuse
-         cross-site saves against it.
-
-      2. Record the framework migration as already applied, so it is skipped
-         without running:
-
-             INSERT INTO migrations (migration, batch)
-             VALUES ('2026_09_09_105542_add_site_id_to_user_profiles',
-                     (SELECT COALESCE(MAX(batch), 0) + 1 FROM migrations m));
-
-      3. Run `php artisan migrate` as usual.
+    That must return 0. If it does not, fix those rows: a profile filed under a
+    tenant other than its user's is now invisible to that user and unwritable by
+    them. Confirm the column is BIGINT NOT NULL and indexed while you are there.
 
     Then DELETE the site-scoping bridge from your User_Profile_Model override -
     the model inherits the boundary from the framework base now, and a bridge
@@ -166,9 +157,11 @@ user_profiles IS NOW SITE-SCOPED IN THE FRAMEWORK - READ THIS IF YOU SCOPED IT Y
     may be an empty shell entirely.
 
     If your own migration is still unapplied anywhere (a fresh environment that
-    has not run it), drop it instead and let the framework's run - two
-    migrations adding the same column is a collision you would otherwise hit
-    again on every new install.
+    has not run it), consider dropping it and letting the framework's run
+    instead: whichever reaches the database first wins and the other skips, so
+    the two are no longer a collision - but keeping both means every new install
+    depends on which order they land in, and the framework's is the one that
+    backfills from the owning user.
 
 SEE ALSO
     rsx:man model            SITE SCOPING AS AN ADOPTABLE TRAIT

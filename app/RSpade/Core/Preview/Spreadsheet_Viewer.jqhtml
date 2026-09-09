@@ -1,0 +1,72 @@
+<%--
+Spreadsheet_Viewer
+
+Displays a workbook AS A GRID - the cells, their fonts, fills and borders - rather than as a
+paginated print-out. Registered for the spreadsheet mimes in config('rsx.preview.viewers').
+
+WHY NOT Pdf_Viewer, WHICH SERVED THESE BEFORE. A spreadsheet has no pages. Asked for a PDF,
+LibreOffice applies its PRINT model: page breaks through the middle of the data, the print area
+only, and by default neither gridlines nor row and column headers. The result is faithful to a
+print-out nobody asked for and unrecognisable as the grid it is previewing. Exporting an image
+instead changes nothing - the print model survives the output format, because the format was
+never the problem.
+
+The rendition is HTML produced by PhpSpreadsheet (Spreadsheet_Rendition) and served by
+File_Preview_Controller::sheet_rendition. Formulas are never evaluated: a workbook stores the
+cached RESULT of every formula, which is what the author last saw, and that is what shows.
+
+IT IS AN IFRAME, AND SANDBOXED, FOR TWO SEPARATE REASONS.
+
+  SECURITY. Cell values are other people's input rendered into markup. The rendition is purified
+  when it is generated and the response carries its own restrictive CSP, and this is the third
+  layer: `sandbox` with neither allow-scripts nor allow-same-origin means that even markup that
+  somehow survived both cannot execute and cannot reach this origin.
+
+  STYLE ISOLATION, which matters more often. The rendition carries the WORKBOOK's fonts, sizes
+  and borders as inline styles. Rendered inline it would sit inside the application's own
+  cascade - the theme's table rules, its border-collapse, its font stack - and the preview would
+  show the workbook wearing this application's clothes. An iframe is a clean sheet, so what the
+  reader sees is the document.
+
+States, in the order the template tests them:
+  render_status 'failed'   terminal - the workbook could not be read     -> (Preview Unavailable)
+  rendition_url set        the rendition exists                          -> the grid
+  otherwise                queued, or evicted from the LRU cache         -> (Preparing Preview...)
+
+The waiting state is not a spinner that spins forever: this viewer subscribes to its attachment
+in on_create(), and the frame the render worker publishes when the rendition lands swaps the grid
+in with no reload and no polling. A rendition evicted by the LRU cleanup re-queues itself on the
+first request for it (sheet_rendition), so this state is also the recovery path.
+
+Args (the viewer contract Document_Preview passes to every dynamic viewer):
+  $attachment_id (required) - the File_Attachment_Model id to read. Throws if absent.
+  $file_name     (optional) - used as the iframe title, for assistive technology.
+
+Events OUT: 'preview_loaded' {pages:1}. The grid scrolls; it does not paginate, so set_page is a
+no-op and the host's page chrome stays hidden.
+--%>
+<Define:Spreadsheet_Viewer tag="div">
+    <% if (!this.args.attachment_id) { throw new Error('Spreadsheet_Viewer requires $attachment_id'); } %>
+    <%
+        const _info = this.data.info;
+        const _failed = this.data.error_data
+            || (_info && _info.render_status_id === File_Storage_Model.RENDER_STATUS_FAILED);
+        const _url = _info ? _info.urls.rendition : null;
+    %>
+    <div class="Spreadsheet_Viewer__frame">
+        <% if (_failed) { %>
+            <%-- Terminal. FAILED is never retried by the worker, so this is an end state and
+                 says so plainly rather than implying something is still coming. --%>
+            <div class="Spreadsheet_Viewer__notice">(Preview Unavailable)</div>
+        <% } else if (!_url) { %>
+            <%-- Queued, still rendering, or evicted from the rendition cache. The realtime
+                 subscription in on_create brings us back the moment it exists. --%>
+            <div class="Spreadsheet_Viewer__notice">(Preparing Preview...)</div>
+        <% } else { %>
+            <iframe class="Spreadsheet_Viewer__sheet"
+                    src="<%= _url %>"
+                    sandbox=""
+                    title="<%= this.args.file_name || 'Spreadsheet preview' %>"></iframe>
+        <% } %>
+    </div>
+</Define:Spreadsheet_Viewer>
