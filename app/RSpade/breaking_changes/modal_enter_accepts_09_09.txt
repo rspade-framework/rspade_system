@@ -1,0 +1,198 @@
+ENTER NOW ACCEPTS AN OPEN MODAL - PORT THE HANDLER INTO YOUR FORKED MODAL LIBRARY
+Date: 2026-09-09
+
+IF YOU DO NOTHING: pressing Enter in a one-field dialog in YOUR application saves
+    the record and leaves the dialog open, with on_success never run and the
+    Modal.form() promise never resolved. Your rsx/lib/modal/ is your own fork, so
+    the handler that makes Enter work correctly does not reach it automatically -
+    and the framework change that makes this urgent DOES.
+
+SUMMARY
+    Two halves, and only one of them arrives on its own.
+
+    THE HALF THAT ARRIVES (system/, automatic): <Rsx_Form> now binds the form
+    element's OWN submit event. Rsx_Form renders as a real <form>, so the
+    browser's implicit submission applies - Enter in a single-line text input
+    submits a form with no button involved - and nothing was bound to it. The
+    default action ran and the browser NAVIGATED: on a full page the action was
+    re-dispatched and the form came back blank; in a modal the dialog vanished
+    with everything typed into it. That is fixed for every page form, and it
+    needs nothing from you.
+
+    THE HALF THAT DOES NOT (rsx/lib/modal/, your fork): Modal.form() puts its
+    submit button in the modal FOOTER, OUTSIDE the <form>, and that button's
+    callback is its ONLY completion path - it awaits the hosted form's submit(),
+    runs on_success, then closes with the result. So in a modal the new binding
+    reaches submit() while bypassing the modal entirely. The record saves. The
+    dialog stays open. on_success never runs. The promise never resolves.
+
+    The fix is one keydown handler in your modal component, which makes Enter
+    activate the dialog's DEFAULT BUTTON - and calls preventDefault(), which is
+    what stops implicit submission from firing at all. Exactly one submission
+    path then runs: the one that closes the dialog.
+
+    A bonus you get from the same handler: Modal.alert / confirm / prompt /
+    select answer to Enter, which they never did.
+
+WHY THE DEFAULT BUTTON AND NOT THE FORM
+    Because it needs no special case. Every dialog the Modal API builds already
+    declares `default: true` on exactly one button - alert and error acknowledge,
+    confirm confirms, prompt and select answer, and Modal.form()'s footer button
+    submits. Activating that button does the right thing in all of them, and the
+    modal never has to know whether a form is inside it. In the form case the
+    default button IS the one whose callback drives the form, so validation,
+    error rendering and closing all stay where they already were.
+
+    Check your fork: if you added dialogs of your own with Modal.show({buttons}),
+    mark the accept button `default: true` or Enter will do nothing in them.
+
+AFFECTED FILES (in YOUR fork)
+    rsx/lib/modal/rsx_modal.js
+
+    Reference implementation, release-current:
+    system/app/RSpade/resource/reference_app/lib/modal/rsx_modal.js
+
+HOW TO APPLY
+
+1.  STATE FLAG. In on_create(), inside the this.state = { ... } literal, add:
+
+            // Set while an Enter-driven accept is in flight, so key auto-repeat
+            // cannot fire the default button's async callback a second time.
+            accepting: false
+
+2.  MARK THE DEFAULT BUTTON. In _set_buttons(), inside the
+    `for (let button_def of this.state.buttons)` loop, after the $button is built
+    and BEFORE its click handler is bound, add:
+
+            if (button_def.default) {
+                $button.attr('data-modal-default', '1');
+            }
+
+3.  CLEAR THE FLAG WHEN THE CALLBACK SETTLES. In that same loop, wrap the
+    existing callback invocation in try/finally. Before:
+
+            $button.on('click', async function () {
+                let result = button_def.value;
+                let had_callback = false;
+
+                if (button_def.callback && typeof button_def.callback === 'function') {
+                    had_callback = true;
+                    result = await button_def.callback();
+                }
+
+                if (result === false && had_callback) {
+                    return;
+                }
+
+                that.close(result);
+            });
+
+    After:
+
+            $button.on('click', async function () {
+                let result = button_def.value;
+                let had_callback = false;
+
+                try {
+                    if (button_def.callback && typeof button_def.callback === 'function') {
+                        had_callback = true;
+                        result = await button_def.callback();
+                    }
+                } finally {
+                    // Whatever happened, another Enter is allowed once this settles.
+                    that.state.accepting = false;
+                }
+
+                if (result === false && had_callback) {
+                    return;
+                }
+
+                that.close(result);
+            });
+
+4.  ADD THE ACCESSOR. As a new method on the component, beside _set_buttons():
+
+        /**
+         * The dialog's accept button - the one its declaration marked
+         * `default: true`. Empty when the dialog has no buttons at all, in which
+         * case Enter has nothing to press and does nothing.
+         */
+        _default_button() {
+            return this.$sid('footer').find('[data-modal-default]').first();
+        }
+
+5.  ADD THE HANDLER. In on_ready(), immediately after your existing Escape
+    handler, add (it assumes `const that = this;` at the top of on_ready, which
+    the Escape handler already needs):
+
+        $(document).on('keydown.rsx_modal_' + this._cid, function (e) {
+            if (e.key !== 'Enter' || !that.state.is_visible) {
+                return;
+            }
+
+            // Mid-composition Enter commits an IME candidate (CJK and friends).
+            // It is not the user accepting the dialog.
+            if (e.originalEvent && (e.originalEvent.isComposing || e.originalEvent.keyCode === 229)) {
+                return;
+            }
+
+            // Enter already belongs to the focused control: a textarea takes a
+            // newline, a select opens/commits natively, and a focused button or
+            // link is activated by Enter - stealing it would be wrong.
+            const $target = $(e.target);
+            if ($target.is('textarea, select, button, a, [contenteditable], [contenteditable] *')) {
+                return;
+            }
+
+            const $default = that._default_button();
+            if (!$default.exists() || $default.prop('disabled')) {
+                return;
+            }
+
+            // Stop the browser's implicit submission before it starts, and stop
+            // key auto-repeat from firing an async callback many times over.
+            e.preventDefault();
+            if (that.state.accepting) {
+                return;
+            }
+            that.state.accepting = true;
+
+            $default.trigger('click');
+        });
+
+6.  CLEAR THE FLAG ON CLOSE. In close(), beside the existing
+    `this.state.is_visible = false;`, add:
+
+            this.state.accepting = false;
+
+IF YOUR FORK HAS DIVERGED
+    The handler only needs three things from your component, so adapt rather than
+    copy if your modal is structured differently:
+
+      - a way to know the dialog is currently visible
+      - a way to find the accept button in the rendered footer
+      - a click on that button running the same path a mouse click runs
+
+    If you already added an Enter handler of your own (a plausible local fix for
+    the navigation bug), keep ONE of them. Two handlers both calling
+    preventDefault is harmless, but two both activating the default button will
+    fire the callback twice, and only Rsx_Form's own re-entrancy guard would
+    catch it - your prompt and select callbacks have no such guard.
+
+HOW TO VERIFY
+    A one-field form modal is the case that was worst, so test that one:
+
+      1. Open any Modal.form() dialog in your app with a single text input.
+      2. Type a value and press Enter.
+      3. The record saves, on_success runs, and the DIALOG CLOSES.
+
+    Then confirm Enter answers Modal.confirm(), does NOT accept while the caret
+    is in a textarea, and does nothing in an unclosable/no-button dialog.
+
+    The reference app ships an executable check of all four:
+    system/app/RSpade/resource/reference_app/tests/playwright/modal_enter_accepts.js
+    Run it with `node`, against a logged-in dashboard route.
+
+SEE ALSO
+    rsx:man modals            THE ENTER KEY
+    rsx:man form_conventions  THE SUBMISSION PIPELINE

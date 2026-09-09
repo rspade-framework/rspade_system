@@ -147,7 +147,18 @@ cleanup() {
     if [ "$MAINT_ACTIVE" = true ]; then
         MAINT_ACTIVE=false
         if [ -f "$SYSTEM_DIR/bin/maintenance-mode.sh" ]; then
-            bash "$SYSTEM_DIR/bin/maintenance-mode.sh" disable || true
+            # disable can legitimately REFUSE - it will not restart services over a tree
+            # with unresolved merge conflicts or an interrupted schema-cache build. Its
+            # own output explains why and how to recover, and it reaches the terminal
+            # unredirected; what `|| true` alone never said is what state that leaves the
+            # box in. Say it, so a refusal is not mistaken for a completed update.
+            bash "$SYSTEM_DIR/bin/maintenance-mode.sh" disable || {
+                say ""
+                err "THE BOX IS STILL DOWN: leaving maintenance mode was refused (see above)."
+                say "        Every supervised service is still stopped; web requests answer 502/503."
+                say "        Resolve what the message names, then: php artisan rsx:maintenance:disable"
+                say ""
+            }
         else
             # The tree lost the script mid-run: never leave a box stuck in 503.
             rm -f "$(storage_base)/rsx-framework/.maintenance.mode.framework.update" 2>/dev/null || true

@@ -38,6 +38,24 @@ WHAT IT DOES WHEN THE REVISIONS DISAGREE
     The window matters: replacing the framework under a live php-fpm is
     exactly the situation maintenance mode exists for.
 
+    IT COMES DOWN ON EVERY EXIT PATH, Ctrl-C included, and it comes down
+    WHETHER OR NOT THE WORK INSIDE IT SUCCEEDED. The window exists to hold the
+    moving parts still while the framework is replaced, not to keep a broken
+    site off the air: when the task is over the services go back, and a site
+    whose code is broken then boots and REPORTS its error, which is strictly
+    more useful than a dark box whose only symptom is a 502 from nginx - a
+    symptom that reads as a broken application rather than a stopped php-fpm.
+    An unresolved merge conflict is reported and the services start anyway.
+
+    Should lowering the window fail anyway, that is now printed rather than
+    swallowed: the proxy names the state the box is in and repeats what the
+    maintenance script said, so a stopped box is never silent.
+
+    A FAILED REBUILD is reported the same way, after the window is down: the
+    box is UP, but the manifest still describes the framework that was replaced,
+    and it stays that way until `rsx:manifest:build --force` succeeds. A failed
+    build is a reason to print the error, never a reason to leave the box down.
+
     The submodule reset is performed DIRECTLY, not through rsx:clean. rsx:clean
     does the same thing and is still called for the caches, but it needs
     artisan to boot - and the checkout must not depend on that. A developer

@@ -212,12 +212,15 @@ Button Definition:
         label: "Button Text",
         value: "return_value",
         class: "btn-primary",  // Bootstrap button class
-        default: true,          // Make this the default button
+        default: true,          // The ACCEPT button - Enter activates it
         callback: async function() {
             // Optional: perform action and return result
             return custom_value;
         }
     }
+
+    `default: true` is not decoration. It marks the button Enter presses, and
+    exactly one button per dialog carries it. See THE ENTER KEY below.
 
 Examples:
 
@@ -256,6 +259,37 @@ Examples:
 Returns: Promise<any> - Value from clicked button (false if cancelled)
 
 ================================================================================
+THE ENTER KEY
+--------------------------------------------------------------------------------
+Enter ACCEPTS the open dialog: it activates the button declared `default: true`,
+whatever that button does. One rule covers every dialog - alert and error
+acknowledge, confirm confirms, prompt and select answer, and a form modal
+submits, because its default button is the footer button whose callback drives
+the hosted <Rsx_Form>. The modal never inspects its own contents.
+
+Enter is IGNORED when:
+
+    - the focus is in a textarea, a select, a contenteditable, or on a button
+      or link (Enter already belongs to that control - a textarea takes a
+      newline, and a focused button is activated by Enter on its own)
+    - an IME composition is in progress (Enter commits a candidate)
+    - the dialog declares no default button (Modal.unclosable has none)
+    - the default button is disabled
+
+The handler calls preventDefault(), and that is load-bearing rather than
+polite. <Rsx_Form> separately binds the form element's own submit event, so
+that Enter on a PAGE form submits instead of navigating. Inside a modal that
+binding would reach submit() while bypassing the modal entirely - Modal.form()'s
+button callback is its ONLY completion path - and the record would save while
+the dialog stayed open and on_success never ran. Suppressing the browser's
+implicit submission is what leaves exactly ONE submission path running: the one
+that closes the dialog.
+
+Key auto-repeat is guarded: holding Enter cannot fire an async button callback
+a second time before the first settles.
+
+Escape closes a `closable` dialog, as it always has.
+
 FORM MODALS
 ================================================================================
 

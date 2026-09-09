@@ -32,7 +32,8 @@
  * before_submit hook -> spinner -> Ajax -> success (clear dirty/parked, fire
  * 'submitted', honor result.redirect, resolve result) or failure (render errors, fire
  * 'submit_error', resolve false). Buttons of type="submit" inside the form are
- * auto-wired; a modal's primary button calls submit() directly.
+ * auto-wired, the form's own submit event is bound so Enter in a text input submits
+ * rather than navigating, and a modal's primary button calls submit() directly.
  *
  * ── Validation lives on the SERVER, once ─────────────────────────────────────────────
  *
@@ -167,6 +168,20 @@ class Rsx_Form extends Component {
                 e.preventDefault();
                 that.submit();
             });
+        });
+
+        // The form element's OWN submit event. <Define:Rsx_Form tag="form"> makes this a
+        // real <form>, so the browser's IMPLICIT submission applies: Enter in a single-line
+        // text input submits the form with no button involved, and the button wiring above
+        // never sees it. Unbound, the default action runs and the page navigates - the form
+        // and everything typed into it are gone. Namespaced and off()-first because
+        // on_render() fires more than once and this element survives every render.
+        //
+        // preventDefault() alone would stop the navigation and leave Enter doing NOTHING,
+        // which is its own bug: Enter in a one-field form is expected to submit it.
+        this.$.off('submit.rsx_form').on('submit.rsx_form', function (e) {
+            e.preventDefault();
+            that.submit();
         });
 
         // Renders rebuild the DOM: whatever the loading state says, redraw it.

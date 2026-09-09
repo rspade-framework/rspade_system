@@ -59,14 +59,14 @@ Take the NEWER revision unless you have a reason not to; a release can carry mig
 
 **Release reconciliation is retired.** The vendored-era proxy read a per-release marker on both refs and restated the winner's whole `system/` tree; a submodule makes that structural - git contributes one gitlink and knows where the boundary is.
 
-**App-file conflicts HALT, with maintenance left ON** - services are down specifically so you can resolve the merge without traffic hitting a half-merged tree:
+**App-file conflicts leave the SITE UP** (owner ruling 2026-09-09). Resolve the merge the ordinary way:
 
 ```bash
 # resolve the files
 php artisan rsx:git commit
-php artisan rsx:maintenance:disable
 ```
-`rsx:maintenance:disable` **refuses while the repository has unmerged paths** (it names them, and names `--force`). That single guard is what holds the halt in place. A resolved-but-uncommitted merge is fine; only unmerged index entries block.
+
+There is no halt to release: services are restarted whether or not the work inside the window succeeded, and unmerged paths are reported rather than refused. The earlier behavior - maintenance left ON so you could resolve without traffic - rested entirely on `rsx:maintenance:disable` refusing over unmerged paths, and that refusal is gone. A site with broken code boots and REPORTS the error; a dark box answers 502, which reads as a broken application rather than a stopped php-fpm and hides the very error you need.
 
 Everything else obeys the merge-conflict mandate: per hunk, keep both by default, never a blanket resolution.
 

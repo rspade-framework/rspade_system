@@ -50,8 +50,13 @@
 # accepted and documented; determinism beats a state file that can go stale.
 #
 # Both actions are IDEMPOTENT. --no-services touches only the flag (test fixtures,
-# containers with no supervisord). disable REFUSES over an unresolved merge conflict
-# unless --force (see repo_is_conflicted).
+# containers with no supervisord).
+#
+# DISABLE ALWAYS STARTS THE SERVICES. A maintenance task stops the moving parts while
+# it works; when it is over they go back, whether or not the task succeeded. A tree
+# with unresolved merge conflicts is REPORTED and started anyway (see do_disable) -
+# a site with broken code boots and says so, which is strictly more useful than a dark
+# box whose only symptom is a 502 that reads as a broken application.
 # =============================================================================
 
 set -u
@@ -407,20 +412,28 @@ do_disable() {
         exit 1
     fi
 
-    if [ "$FORCE" != true ] && repo_is_conflicted; then
-        err "Refusing to leave maintenance mode: the repository has unresolved conflicts."
+    # A HALF-MERGED TREE IS REPORTED, NEVER REFUSED (owner ruling 2026-09-09).
+    #
+    # This used to exit 1 here. It was wrong, and the reasoning that produced it was
+    # backwards: the window does not exist to keep a broken site off the air, it exists
+    # to hold the MOVING PARTS still while a maintenance task runs. Once the task is
+    # over the services go back, and a site whose code is broken is then a site that
+    # SAYS SO - it boots, hits the syntax error and reports it. Refusing instead left
+    # the box dark, where the only symptom is a 502 from nginx that reads as a broken
+    # application rather than a stopped php-fpm, and the actual error is invisible.
+    #
+    # And `rsx:maintenance:disable` IS the operator asking for their services back.
+    # That is not a request to second-guess.
+    if repo_is_conflicted; then
+        warn "The repository has unresolved merge conflicts."
         say ""
         say "  Conflicted files:"
         git -C "$PROJECT_ROOT" diff --name-only --diff-filter=U 2>/dev/null | sed 's/^/    /'
         say ""
-        say "  Resolve them and commit, then run this again:"
+        say "  Services are being started anyway - a site with broken code reports its own"
+        say "  error, which is more useful than a dark box. Resolve them with:"
         say "    php artisan rsx:git commit"
-        say "    php artisan rsx:maintenance:disable"
         say ""
-        say "  Bringing services up over a half-merged tree serves broken code, which is"
-        say "  why this is refused. Override deliberately:"
-        say "    php artisan rsx:maintenance:disable --force"
-        exit 1
     fi
 
     if [ "$SERVICES" = true ]; then

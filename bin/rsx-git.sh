@@ -226,11 +226,46 @@ maint_enable() {
     return 0
 }
 
+# Lower the window - and SAY SO WHEN IT DOES NOT COME DOWN.
+#
+# disable can legitimately REFUSE: it will not restart services over a tree with
+# unresolved merge conflicts or an interrupted schema-cache build, because serving
+# half-merged code is worse than staying down. That refusal is correct, and it is
+# exactly what a `pull` that merged a conflict runs into - so it is the common case
+# here, not an exotic one.
+#
+# This used to redirect the whole thing to /dev/null, and the refusal - with its
+# reason and its recovery command - went with it. The box stayed down, every service
+# stopped, and the only visible symptom was a 502 from nginx on the next request,
+# which reads as a broken application rather than a stopped php-fpm. The window is
+# already lowered on every exit path; what was missing was ever telling anyone when
+# that failed. Report it once, loudly, with what the script actually said.
 maint_disable() {
     [ "$MAINT_ACTIVE" = true ] || return 0
     MAINT_ACTIVE=false
+
     local script="$SYSTEM_DIR/bin/maintenance-mode.sh"
-    [ -f "$script" ] && bash "$script" disable >/dev/null 2>&1
+    if [ ! -f "$script" ]; then
+        err ""
+        err "[ERROR] The maintenance script is missing: $script"
+        err "        The maintenance window is STILL UP and every service is still stopped."
+        err "        Bring the box back with:  php artisan rsx:maintenance:disable"
+        err ""
+        return 0
+    fi
+
+    local out rc=0
+    out="$(bash "$script" disable 2>&1)" || rc=$?
+    [ "$rc" -eq 0 ] && return 0
+
+    err ""
+    err "[ERROR] THE BOX IS STILL DOWN. Leaving maintenance mode was refused (exit ${rc}),"
+    err "        so php-fpm, redis, rsx-lockd, the realtime relay and the FPC proxy are all"
+    err "        still stopped. Web requests answer 502/503 until this is resolved."
+    err ""
+    err "        The maintenance script said:"
+    printf '%s\n' "$out" | sed 's/^/            /' >&2
+    err ""
     return 0
 }
 
@@ -338,14 +373,31 @@ sync_submodule() {
     # The framework just changed underneath a manifest that describes the old one.
     # --force because nothing about the previous build is incrementally valid.
     note "rebuilding"
+    local build_failed=false
     artisan rsx:manifest:build --force --_no-check-schema-updates-pending >/dev/null 2>&1 \
-        || warn "rsx:manifest:build reported a problem - run it yourself: php artisan rsx:manifest:build --force"
+        || build_failed=true
     artisan rsx:bundle:compile >/dev/null 2>&1 \
         || warn "rsx:bundle:compile reported a problem - bundles JIT-compile on request, so continuing."
 
     maint_disable
 
     note "system/ is now at ${recorded:0:12}"
+
+    # A failed build is not advisory, and it was previously reported as one [WARNING]
+    # among three, followed by a normal-looking "system/ is now at ..." - easy to read
+    # as noise. Say what state the box is actually in: UP, but serving a manifest that
+    # describes the framework that was just replaced. Printed AFTER the window comes
+    # down, so it is the last thing on screen.
+    if [ "$build_failed" = true ]; then
+        err ""
+        err "[ERROR] The manifest build FAILED. system/ is at ${recorded:0:12} and services are"
+        err "        running, but the manifest still describes the framework that was replaced."
+        err "        The application will misbehave until this succeeds. Run it yourself to see"
+        err "        the error:"
+        err ""
+        err "            php artisan rsx:manifest:build --force"
+        err ""
+    fi
 
     # Migrations are a separate, deliberate step - a framework release can carry
     # schema changes and this proxy is not the thing that applies them.

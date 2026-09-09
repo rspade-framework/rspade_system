@@ -84,15 +84,11 @@ If a crash leaves maintenance up, **just run `php artisan rsx:maintenance:disabl
 
 `rsx:framework:pull` raises the SAME window for the duration of an update (reason: `framework update in progress`) and lifts it on every exit path. `rsx:git`'s tree-rewriting operations enter through the same script.
 
-**The unmerged-paths guard**: disable REFUSES while the repository has unmerged index entries, listing them and naming `--force`. Bringing services up over a half-merged tree serves broken code. This is also what holds `rsx:git`'s app-conflict halt in place - when a proxied pull/merge/rebase conflicts in APP files it stops and leaves the window UP so you can resolve with no traffic:
+**Disable ALWAYS starts the services** (owner ruling 2026-09-09). Unmerged index entries are REPORTED - the conflicted files are listed with the command that resolves them - and the services start anyway. The window exists to hold the MOVING PARTS still while a maintenance task runs, not to keep a broken site off the air: once the task is over the services go back, and a site whose code is broken then boots and SAYS SO, which beats a dark box whose only symptom is a 502 that reads as a broken application rather than a stopped php-fpm. And `rsx:maintenance:disable` IS the operator asking for their services back - not a request to second-guess.
 
-```bash
-# resolve the conflicted files
-php artisan rsx:git commit
-php artisan rsx:maintenance:disable
-```
+This reverses an earlier rule, and takes `rsx:git`'s app-conflict halt with it: that halt WAS this refusal, so a proxied pull/merge no longer leaves the window up. Resolve a conflicted merge the ordinary way, with the site up (`# resolve the files`, then `php artisan rsx:git commit`).
 
-Only unmerged entries block; a resolved-but-uncommitted merge passes. `--no-services` is unaffected by the guard (it starts nothing) but still clears the flag, so it is not a way around it.
+The ONE remaining refusal is an in-progress or interrupted schema-cache build, which is not about broken code - the database currently holds cache-build scratch data instead of yours. `--force` overrides it. `--no-services` starts nothing but still clears the flag.
 
 Laravel's own `down`/`up` REFUSE - hidden stubs that name the `rsx:maintenance:*` equivalent and exit 1. The mechanism behind them (`storage/framework/maintenance.php`, the `PreventRequestsDuringMaintenance` middleware, the pre-render check in `public/index.php`) is gone - **RSpade has one maintenance mode**.
 

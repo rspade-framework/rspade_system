@@ -120,25 +120,40 @@ THE SCHEMA-CACHE GUARD ON DISABLE
     disable runs. There is deliberately no override token: what the guard catches is the
     INTERRUPTED build - a Ctrl-C, or a recovery that could not finish. Re-running
     rsx:db:rebuild_provision_cache_snapshot completes the restore from exactly those backups (it refuses to
-    overwrite them). --force is the deliberate operator override, as it is for the
-    conflict guard. Full treatment in rsx:man migrations, THE SCHEMA CACHE.
+    overwrite them). --force is the deliberate operator override. This is now the ONLY
+    condition disable refuses on, and it is not about code being broken - it is that the
+    database currently holds cache-build scratch data instead of the operator's own.
+    Full treatment in rsx:man migrations, THE SCHEMA CACHE.
 
-THE CONFLICT GUARD ON DISABLE
-    Disable refuses while the repository has UNMERGED index entries, listing them and naming
-    --force. Bringing services up over a half-merged tree serves broken code.
+DISABLE ALWAYS STARTS THE SERVICES
+    Disable starts the services. It does not weigh whether the tree deserves them.
 
-    This is also the mechanism that holds rsx:git's app-conflict halt in place. When
-    `php artisan rsx:git pull` (or merge/rebase) hits a conflict in APP files, it stops and
-    deliberately leaves this window UP so the merge can be resolved with no traffic. One guard
-    serves both the manual operator and the proxy - there is no second, parallel rule.
+    A repository with UNMERGED index entries is REPORTED - the conflicted files are listed,
+    with the command that resolves them - and the services are started anyway.
+
+    WHY, because this reverses an earlier rule (owner ruling 2026-09-09). Disable used to
+    refuse over unmerged entries, on the reasoning that serving half-merged code is worse
+    than staying down. That reasoning was backwards. The window does not exist to keep a
+    broken site off the air; it exists to hold the MOVING PARTS still while a maintenance
+    task runs. Once the task is over the services go back, and a site whose code is broken
+    is then a site that SAYS SO: it boots, hits the syntax error, and reports it where
+    somebody can read it. Refusing instead left the box dark, and a dark box presents as a
+    502 from nginx - which reads as a broken application, not as a stopped php-fpm, and
+    sends the reader looking in the wrong place entirely. The error was invisible precisely
+    when it was the thing that needed reading.
+
+    And `rsx:maintenance:disable` IS the operator asking for their services back. That is
+    not a request to second-guess.
+
+    A consequence worth knowing: `rsx:git pull` no longer halts behind this guard. It used
+    to leave the window UP after an app-file conflict so the merge could be resolved with no
+    traffic; that halt was this refusal and nothing else, so it is gone with it. Resolve a
+    conflicted merge the ordinary way, with the site up:
 
         <resolve the conflicted files>
         php artisan rsx:git commit
-        php artisan rsx:maintenance:disable
 
-    Only unmerged entries block: a merge that is resolved but not yet committed passes. An
-    in-progress merge is not itself a refusal. --no-services is unaffected by the guard (it
-    starts nothing), but it still clears the flag, so it is not a way around it.
+    --no-services starts nothing but still clears the flag.
 
 THE CLI GATE (allow-most-deny-some)
     The gate exists to stop AUTOMATED processes - the cron tick, task workers, web traffic -
@@ -231,8 +246,9 @@ FLAGS
                       It is the flag's content and appears in the web 503 and every refusal.
     --no-services     Touch the flag ONLY - no task kill, no RPC daemon quiesce, no
                       supervisorctl. For containers with no supervisord and for tests.
-    --force           (disable only) Leave maintenance mode even though the repository has
-                      unresolved conflicts. See THE CONFLICT GUARD ON DISABLE.
+    --force           (disable only) Leave maintenance mode even though a schema-cache
+                      build is in progress or was interrupted. Unmerged index entries do
+                      NOT need it - see DISABLE ALWAYS STARTS THE SERVICES.
 
 RECOVERY
     If a process was killed so violently that the window was never lifted, just run

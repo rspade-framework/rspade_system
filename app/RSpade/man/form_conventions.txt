@@ -110,10 +110,12 @@ THE DECLARATION
 THE SUBMISSION PIPELINE
 
     form.submit() is the only submission path. A button of type="submit" inside
-    the form is auto-wired to it; a modal's primary button calls it; programmatic
-    callers call it. It returns a promise resolving with the server result on
-    success and false on ANY failure (client _validate(), server validation,
-    transport, or a before_submit abort).
+    the form is auto-wired to it; the form element's OWN submit event is bound to
+    it, so the browser's implicit submission - Enter in a single-line text input,
+    with no button involved - submits the form rather than navigating the page; a
+    modal's primary button calls it; programmatic callers call it. It returns a
+    promise resolving with the server result on success and false on ANY failure
+    (client _validate(), server validation, transport, or a before_submit abort).
 
     Stages, in order:
 
