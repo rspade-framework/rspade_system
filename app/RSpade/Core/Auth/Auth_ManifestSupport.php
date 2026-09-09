@@ -8,8 +8,8 @@
 namespace App\RSpade\Core\Auth;
 
 use App\RSpade\Core\Database\Model_Fetch_Lineage;
+use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
 
 /**
  * Support module that builds the declarative authorization index (#[Auth] gates).
@@ -100,7 +100,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * rsx:clean, list/help, --version) still works, and the message names every file
  * and member to fix.
  */
-class Auth_ManifestSupport extends ManifestSupport_Abstract
+class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
 {
     // Realm identifiers. 'any' is a surface-only value; a check always belongs to
     // exactly one of the two real realms.
@@ -130,13 +130,12 @@ class Auth_ManifestSupport extends ManifestSupport_Abstract
     /**
      * Build $manifest_data['data']['auth'], then enforce closed-by-default.
      */
-    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
+    public static function rebuild(array &$manifest_data): void
     {
-        $index = static::build_index(
-            $manifest_data['data']['files'] ?? [],
-            $manifest_data['data']['auth']['surfaces'] ?? [],
-            static::dirty_set($changed_files, $removed_files)
-        );
+        // FULL: no previous surfaces and no dirty set, so build_index() carries nothing
+        // forward and derives every surface from the file map it is handed. That path
+        // already existed - it is what a cold build used - and is now the only one.
+        $index = static::build_index($manifest_data['data']['files'] ?? []);
 
         $manifest_data['data']['auth'] = [
             'checks' => $index['checks'],

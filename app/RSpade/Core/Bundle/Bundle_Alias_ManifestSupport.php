@@ -7,7 +7,7 @@
 
 namespace App\RSpade\Core\Bundle;
 
-use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 
 /**
  * Bundle_Alias_ManifestSupport - bake config('rsx.bundle_aliases') into the manifest.
@@ -20,7 +20,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * so the alias map is recorded here as data['bundle_aliases'] = [alias => bundle FQCN]
  * and the bridge reads that.
  */
-class Bundle_Alias_ManifestSupport extends ManifestSupport_Abstract
+class Bundle_Alias_ManifestSupport extends Full_ManifestSupport_Abstract
 {
     public static function get_name(): string
     {
@@ -31,7 +31,7 @@ class Bundle_Alias_ManifestSupport extends ManifestSupport_Abstract
      * NOT incremental: this table is a pure function of `config('rsx.bundle_aliases')` and
      * reads no file at all, so there is nothing for a changed set to narrow.
      */
-    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
+    public static function rebuild(array &$manifest_data): void
     {
         $aliases = [];
 

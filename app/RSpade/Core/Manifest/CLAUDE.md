@@ -144,7 +144,7 @@ surface; the other four own one phase each and are reached through it.
 | `Manifest_Scanner.php` | Phases 1-2: directory discovery, per-file change detection, the token parse that produces each file record, `Php_Fixer` with its class-structure delta, and the PHP reflection extract with its derived-cache restore | `_get_rsx_files`, `_has_changed`, `_process_file`, `_run_php_fixer`, `_extract_reflection_for_changed_files` |
 | `Manifest_Indexer.php` | Phases 3-6: the derived indexes (autoloader class map, blade views, attribute index, models-by-table, event handlers, classless files), the duplicate-class detectors, the class-override archive pass, the composer classmap validation, the code-quality pass entry and the VS Code stub | `_build_autoloader_class_map`, `_build_attribute_index`, `_check_unique_base_class_names`, `_run_manifest_time_code_quality_checks`, `_generate_vscode_stubs` |
 | `Manifest_Store.php` | The index ON DISK: load hot, load cold on demand, derive the load-time indexes, write both halves atomically as compact PHP literals, the build key, validation, the bad-manifest flag | `_load_cached_data`, `_load_cold_files`, `_save`, `_compute_hash`, `_validate_cached_data` |
-| `ManifestSupport_Abstract.php`, `Modules/` | The incremental module pipeline (phase 5). One module per index section | `process(&$data, $changed, $removed)` |
+| `ManifestSupport_Abstract.php`, `Full_ManifestSupport_Abstract.php`, `Modules/` | The module pipeline (phase 5). One module per index section, in one of two kinds | `process(&$data, $changed, $removed)` / `rebuild(&$data)` |
 | `Class_Override_Drift.php` | The `CLASS-OVERRIDE-DRIFT-01` analysis of an `rsx/` copy against its archived `.upstream` | `analyze_pair()` |
 
 **Reads live in `Manifest.php`; writes live in the four build classes.** A method that answers
@@ -473,42 +473,53 @@ abstract class ManifestSupport_Abstract {
 
 Register the class in `config('rsx.manifest_support')`.
 
-## THE INCREMENTAL MODULE CONTRACT
+## THE TWO MODULE CONTRACTS
 
-**A module's section is CARRIED FORWARD, so its job is a DIFF.** The sections
-`Manifest::MODULE_OWNED_SECTIONS` names survive the reset at the top of
-`_refresh_manifest()`; every other derived section is re-derived from the files map
-every pass and is reset by omission. So a module:
+**A module is one of two kinds, and the difference is COST.**
 
-1. drops every entry derived from a changed or removed file;
-2. re-derives the entries the changed files declare now.
+**FULL (`Full_ManifestSupport_Abstract`, implements `rebuild(&$data)`).** A module whose
+whole job is to read values ALREADY INDEXED in the manifest and regroup them derives its
+section outright, every build. It never sees a changed set - `process()` is `final` on the
+base and discards it - and carries no dirty machinery at all. It assigns its section rather
+than merging into it, so the result depends on nothing but the manifest it was handed.
 
-On a cold build both sets name the whole tree, so the diff IS the full build and no
-module needs a second code path. `dirty_set($changed, $removed)` on the base class is
-the hash set every module tests rows against (`in_array()` over a cold build's
-thousands of paths is the O(N*M) shape this contract exists to remove).
+**DELTA (`ManifestSupport_Abstract`, implements `process(&$data, $changed, $removed)`).**
+For modules that do real per-file work: read source off disk, `include_once` a class to
+reflect on it, or write a generated stub. Its section is CARRIED FORWARD (see
+`Manifest::MODULE_OWNED_SECTIONS`), so its job is a diff - drop every entry derived from a
+changed or removed file, then re-derive what the changed files declare now. On a cold build
+both sets name the whole tree, so the diff IS the full build.
+`dirty_set($changed, $removed)` on the base is the hash set rows are tested against.
 
-**NEVER SCAN `files`.** A module that genuinely cannot work from the changed set
-rebuilds from `php_classes`, `js_classes` or `attribute_index` **and says so in its
-docblock**. Three do:
+**WHY THE SPLIT IS A CORRECTNESS PROPERTY, NOT TIDINESS (owner ruling 2026-09-09).** A
+diffing section is only ever as good as what it carries forward. Lose it and nothing
+restores it, because restoration only happens for files that CHANGE and an unchanged tree
+has none. That state was reached: the standard route table was found EMPTY against a fully
+populated file index - every page 404, all eight bundles failing to compile - and no
+ordinary rebuild fixed it. Touching one controller restored exactly that controller's
+routes. `rsx:manifest:build --force` was the only cure, and it works solely by making every
+file dirty at once. Deriving in full makes that state unreachable, and the cost is a loop
+over a few thousand in-memory records on the only occasion it runs, which is a code change
+- never a served request.
 
-| Module | Why it is not a diff |
+| Kind | Modules |
 |---|---|
-| `Externals` | its inputs are the `*.externals.php` DECLARATION FILES, and an identifier collision is a property of the whole table |
-| `Task_Command` | a command NAME is unique tree-wide; it reads `attribute_index['Command']`, a handful of rows |
-| `Bundle_Alias` | a pure function of `config('rsx.bundle_aliases')`; it reads no file at all |
+| **FULL** | `Route`, `Portal_Route`, `Spa`, `Portal_Spa`, `Api_Endpoint`, `Auth`, `Jqhtml`, `Externals`, `Bundle_Alias` |
+| **DELTA** | `Model` (includes the model file to reflect on it), `Task_Command` and `Email` (read source), and the three STUB GENERATORS `Controller_Stub` / `Model_Stub` / `Auth_Stub` (write generated files) |
 
-**How each module finds its rows again:**
+`Api_Endpoint` is the one full module that touches disk: it reads docblocks for the API
+catalog, but only for files that actually declare an endpoint, and through the build's
+`Source_Cache`. Paying that every build is the deliberate trade against a catalog that can
+silently empty itself.
 
-| Module | Ownership record | Dirty test |
-|---|---|---|
-| Route / Portal_Route | the row's `file` | file in the dirty set |
-| Spa / Portal_Spa | the ACTION's file plus the row's `file` (the bootstrap controller) | either dirty; the controller is resolved through `php_classes`, never a scan |
-| Api_Endpoint | the `routes` row of type `api` carries the declaring file | file dirty, or the catalog row lost its route row |
-| Jqhtml | the entry's `file` and `js_file` | either dirty; reverse maps built from the REGISTRY (a few hundred), never the tree |
-| Email | the entry's `file`; the TEMPLATE half is re-checked for every entry, because a blade can be deleted without its class changing | file dirty |
-| Model | the row's `fingerprint` (model file hash + migration-file hash) | fingerprint moved |
-| Auth | each surface's `file`; the CHECK REGISTRIES are rebuilt in full every build, because one Permission edit changes what every surface may name | file dirty |
+**A full module still OWNS ONLY ITS OWN ROWS.** `routes` is shared by three modules
+(`standard`, `spa`, `api`) and `portal_routes` by two, so each resets by TYPE rather than
+clearing the section.
+
+**ORDER IS UNCHANGED AND STILL LOAD-BEARING.** Both kinds live in the one ordered
+`config('rsx.manifest_support')` list and run in that order, because several modules read a
+section an earlier one produced (`Api_Endpoint` reads `routes`). The full contract is a
+different CALLING CONVENTION, not a separate phase.
 
 **ORDER IS NORMALIZED CENTRALLY.** Several modules write the same section (Route, Spa
 and Api_Endpoint all write `routes`) and an incremental update APPENDS to a

@@ -3,7 +3,7 @@
 namespace App\RSpade\Core\Api;
 
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
-use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 
 /**
  * Support module for building the API routes index from #[Api_Endpoint] attributes.
@@ -49,7 +49,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * - @api-hidden: excludes the endpoint from documentation.
  * - @api-response: an example response JSON block, stored verbatim.
  */
-class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
+class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
 {
     // FQCN of the base every API controller must extend.
     private const BASE_CONTROLLER_FQCN = 'App\\RSpade\\Core\\Api\\Rsx_Api_Controller_Abstract';
@@ -92,44 +92,40 @@ class Api_Endpoint_ManifestSupport extends ManifestSupport_Abstract
     }
 
     /**
-     * Rebuild the API catalog for the CHANGED controller files only.
+     * Rebuild the API catalog and its `api` route rows from the whole file map.
      *
-     * INCREMENTAL. Every catalog row has a matching `routes` row of type `api` carrying the
-     * declaring file, so that row is the ownership record: the dirty files' patterns are
-     * dropped from both tables and re-derived from the dirty files' own attributes.
+     * FULL. Both tables are a pure function of the `#[Api_Endpoint]` attributes already in
+     * the file records, and carrying them forward meant a loss could only be repaired by
+     * files CHANGING - which an unchanged tree never does.
      *
-     * Docblocks (description, response example, the API-GET-PURE-01 body scan) are read
-     * through the BUILD's Source_Cache, so a file the fixer or the quality driver already
-     * read this build is not read from disk again.
+     * THE ONE COST WORTH NAMING. Docblocks (description, response example, the
+     * API-GET-PURE-01 body scan) are read from source, so this module does touch disk -
+     * unlike the other full modules. It reads only files that actually DECLARE an endpoint,
+     * which is a small set even in a large application, and it reads them through the
+     * BUILD's Source_Cache, so a file the fixer or the quality driver already read this
+     * build is not read again. Paying that on every build rather than on changed files only
+     * is the deliberate trade: a manifest build happens when code changes, never in a served
+     * request, and an API catalog that can silently empty itself is the worse outcome.
      */
-    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
+    public static function rebuild(array &$manifest_data): void
     {
-        if (!isset($manifest_data['data']['api_endpoints'])) {
-            $manifest_data['data']['api_endpoints'] = [];
-        }
+        // This module owns BOTH the `api` route rows and the endpoint catalog keyed on the
+        // same patterns, so both are reset together and re-derived from the file map. The
+        // other row types in `routes` belong to other modules and are left alone.
+        $existing = $manifest_data['data']['routes'] ?? [];
 
-        $dirty = static::dirty_set($changed_files, $removed_files);
-
-        foreach ($manifest_data['data']['routes'] ?? [] as $pattern => $row) {
+        $manifest_data['data']['routes'] = [];
+        foreach ($existing as $pattern => $row) {
             if (($row['type'] ?? null) !== 'api') {
-                continue;
-            }
-
-            if (isset($dirty[$row['file'] ?? ''])) {
-                unset($manifest_data['data']['routes'][$pattern], $manifest_data['data']['api_endpoints'][$pattern]);
+                $manifest_data['data']['routes'][$pattern] = $row;
             }
         }
 
-        // A catalog row with no route row left is stale by construction.
-        foreach ($manifest_data['data']['api_endpoints'] as $pattern => $unused) {
-            if (!isset($manifest_data['data']['routes'][$pattern])) {
-                unset($manifest_data['data']['api_endpoints'][$pattern]);
-            }
-        }
+        $manifest_data['data']['api_endpoints'] = [];
 
         $files = $manifest_data['data']['files'];
 
-        foreach (array_keys($dirty) as $file) {
+        foreach (array_keys($files) as $file) {
             $metadata = $files[$file] ?? null;
 
             if ($metadata === null || !isset($metadata['public_static_methods'])) {

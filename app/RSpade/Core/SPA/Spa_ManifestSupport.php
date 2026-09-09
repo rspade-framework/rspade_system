@@ -4,8 +4,8 @@ namespace App\RSpade\Core\SPA;
 
 use RuntimeException;
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
+use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
 
 /**
  * Support module for extracting Spa route metadata from Spa_Action classes
@@ -22,7 +22,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * place, and `Auth_Gates::surface_gates()` is how both are read.
  * See php artisan rsx:man auth_gates.
  */
-class Spa_ManifestSupport extends ManifestSupport_Abstract
+class Spa_ManifestSupport extends Full_ManifestSupport_Abstract
 {
     /**
      * Get the name of this support module
@@ -37,59 +37,34 @@ class Spa_ManifestSupport extends ManifestSupport_Abstract
     /**
      * Rebuild the `spa` route rows for the CHANGED action files only.
      *
-     * INCREMENTAL. An SPA row is owned by TWO files - the JS action that declares the route
-     * and the PHP bootstrap controller whose gates the row names - so the dirty set is the
-     * union: actions whose own file changed, plus actions whose existing row points at a
-     * changed controller file. Everything else keeps the row it already had.
+     * FULL. Every `spa` row is re-derived from the Spa_Action set in `js_subclass_index`,
+     * because deriving one is a decorator lookup on a record already in memory - no source
+     * is read and no class is reflected on. An SPA row is owned by TWO files (the JS action
+     * that declares the route and the PHP bootstrap controller whose gates the row names),
+     * and keeping that two-file ownership correct across a diff was the bulk of this
+     * method; rebuilt in full it is not a question anyone has to answer.
      *
-     * The controller is resolved through `php_classes` (one lookup), never by scanning the
-     * file map, and the action set comes from `js_subclass_index`.
+     * THIS MODULE OWNS THE `spa` ROWS AND NOTHING ELSE. `routes` is shared with the
+     * standard and API row types, so the reset is scoped by type.
      *
      * @param array &$manifest_data Reference to the manifest data array
      * @return void
      */
-    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
+    public static function rebuild(array &$manifest_data): void
     {
-        if (!isset($manifest_data['data']['routes'])) {
-            $manifest_data['data']['routes'] = [];
+        $existing = $manifest_data['data']['routes'] ?? [];
+
+        $manifest_data['data']['routes'] = [];
+        foreach ($existing as $pattern => $row) {
+            if (($row['type'] ?? null) !== 'spa') {
+                $manifest_data['data']['routes'][$pattern] = $row;
+            }
         }
 
-        $dirty = static::dirty_set($changed_files, $removed_files);
         $js_classes = $manifest_data['data']['js_classes'] ?? [];
         $action_classes = $manifest_data['data']['js_subclass_index']['Spa_Action'] ?? [];
 
-        $dirty_actions = [];
         foreach ($action_classes as $class_name) {
-            $action_file = $js_classes[$class_name]['file'] ?? null;
-
-            if ($action_file !== null && isset($dirty[$action_file])) {
-                $dirty_actions[$class_name] = true;
-            }
-        }
-
-        // Drop the rows that have to be re-derived: an action whose file changed, an action
-        // whose BOOTSTRAP CONTROLLER changed (the row carries the controller's file, class
-        // and surface), and an action that is no longer a class at all.
-        foreach ($manifest_data['data']['routes'] as $pattern => $row) {
-            if (($row['type'] ?? null) !== 'spa') {
-                continue;
-            }
-
-            $action = $row['js_action_class'] ?? null;
-
-            if ($action === null || !isset($js_classes[$action])) {
-                unset($manifest_data['data']['routes'][$pattern]);
-
-                continue;
-            }
-
-            if (isset($dirty_actions[$action]) || isset($dirty[$row['file'] ?? ''])) {
-                $dirty_actions[$action] = true;
-                unset($manifest_data['data']['routes'][$pattern]);
-            }
-        }
-
-        foreach (array_keys($dirty_actions) as $class_name) {
             $action_file = $js_classes[$class_name]['file'] ?? null;
             $action_metadata = $action_file !== null ? ($manifest_data['data']['files'][$action_file] ?? null) : null;
 

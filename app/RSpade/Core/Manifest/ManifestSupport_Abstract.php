@@ -26,10 +26,18 @@ namespace App\RSpade\Core\Manifest;
  * On a cold build both sets name the whole tree, so the diff IS the full build and no
  * module needs a second code path.
  *
- * NEVER SCAN `files`. A module that genuinely cannot work from the changed set (its section
- * is a pure function of config, say) rebuilds from `php_classes`, `js_classes` or
- * `attribute_index` and SAYS SO IN ITS DOCBLOCK - never by walking the file map, which is
- * the O(tree) pass this contract exists to delete.
+ * THIS BASE IS FOR EXPENSIVE WORK ONLY. The changed set exists to avoid re-reading source
+ * off disk, including a class to reflect on it, or writing a generated stub - real per-file
+ * cost. A module whose whole job is to read values ALREADY INDEXED in the manifest and
+ * regroup them is not that: it is a loop over a few thousand in-memory records, on the only
+ * occasion it runs, which is a code change. Such a module extends
+ * Full_ManifestSupport_Abstract instead, rebuilds its section outright, and carries none of
+ * the machinery below.
+ *
+ * That split is a CORRECTNESS property, not a tidiness one. A diffing section is only ever
+ * as good as what it carries forward; lose it and nothing restores it, because restoration
+ * only happens for files that CHANGE. A section derived in full cannot enter that state.
+ * See Full_ManifestSupport_Abstract for the incident that settled this.
  *
  * STUB GENERATORS ARE ORDINARY MODULES. The generated JS stubs (controller, model, auth
  * mirror) are the last three entries in the same list; there is no second module system.

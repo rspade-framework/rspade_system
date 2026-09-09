@@ -3,7 +3,7 @@
 namespace App\RSpade\Core\Portal;
 
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
-use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 
 /**
  * Support module for building portal routes index from #[Portal_Route] attributes
@@ -21,7 +21,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * public static function view(Request $request, array $params = []) { ... }
  * ```
  */
-class Portal_Route_ManifestSupport extends ManifestSupport_Abstract
+class Portal_Route_ManifestSupport extends Full_ManifestSupport_Abstract
 {
     /**
      * Get the name of this support module
@@ -34,32 +34,31 @@ class Portal_Route_ManifestSupport extends ManifestSupport_Abstract
     }
 
     /**
-     * Rebuild the `portal` route rows for the CHANGED controller files only.
+     * Rebuild every `portal` route row from the whole file map.
      *
-     * INCREMENTAL, the same shape as Route_ManifestSupport: a row is owned by its `file`,
-     * so dropping the dirty files' rows and re-deriving from those files' own attributes is
-     * the exact diff. Nothing scans the file map.
+     * FULL, the same shape as Route_ManifestSupport and for the same reason: deriving these
+     * rows is a loop over in-memory records looking for one attribute, so the changed-set
+     * machinery bought nothing and cost correctness - a carried-forward section that is
+     * lost can only be restored by files CHANGING, and an unchanged tree has none.
      *
      * @param array &$manifest_data Reference to the manifest data array
      * @return void
      */
-    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
+    public static function rebuild(array &$manifest_data): void
     {
-        if (!isset($manifest_data['data']['portal_routes'])) {
-            $manifest_data['data']['portal_routes'] = [];
-        }
+        $existing = $manifest_data['data']['portal_routes'] ?? [];
 
-        $dirty = static::dirty_set($changed_files, $removed_files);
-
-        foreach ($manifest_data['data']['portal_routes'] as $pattern => $row) {
-            if (($row['type'] ?? null) === 'portal' && isset($dirty[$row['file'] ?? ''])) {
-                unset($manifest_data['data']['portal_routes'][$pattern]);
+        // Keep every row this module does not own, drop all of its own, and re-derive.
+        $manifest_data['data']['portal_routes'] = [];
+        foreach ($existing as $pattern => $row) {
+            if (($row['type'] ?? null) !== 'portal') {
+                $manifest_data['data']['portal_routes'][$pattern] = $row;
             }
         }
 
         $files = $manifest_data['data']['files'];
 
-        foreach (array_keys($dirty) as $file) {
+        foreach (array_keys($files) as $file) {
             $metadata = $files[$file] ?? null;
 
             if ($metadata === null || !isset($metadata['public_static_methods'])) {

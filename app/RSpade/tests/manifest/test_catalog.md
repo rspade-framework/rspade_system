@@ -28,3 +28,23 @@
 | `Manifest_Cold_Isolation_Test::test_an_ajax_call_does_not_load_the_cold_half` | php | implemented | An Ajax dispatch is answered entirely by the hot index |
 | `Manifest_Cold_Isolation_Test::test_a_model_fetch_does_not_load_the_cold_half` | php | implemented | A model fetch is answered entirely by the hot index - which is why models and their ancestors stay hot |
 | `Manifest_Cold_Isolation_Test::test_get_all_loads_the_cold_half_once` | php | implemented | Asking for the whole tree merges it, once, and returns every indexed file |
+
+## Manifest_Derived_Section_Recovery_Test (php, transactions off) - a derived section repairs itself
+
+THE INCIDENT this pins: the standard route table was found EMPTY against a fully populated
+file index. Every page answered 404 and all eight bundles failed to compile, and no ordinary
+rebuild fixed it - the section was carried forward and only rows belonging to CHANGED files
+were re-derived, so an unchanged tree re-derived nothing. Touching one controller restored
+exactly that controller's routes. `rsx:manifest:build --force` was the only cure, and it
+works solely by making every file dirty at once.
+
+The rule (owner ruling 2026-09-09): the changed-set contract is for EXPENSIVE work. A module
+that only regroups data already in the manifest derives its section in full, every build.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| mds-01 | an emptied route table is rebuilt with nothing dirty | live manifest, `routes` set to `[]`, `Route_ManifestSupport::rebuild()` | the standard row count returns to what it was | implemented |
+| mds-02 | the other request-serving sections rebuild too | `portal_routes` and `auth` emptied, both portal modules plus Auth rebuilt | both counts return - an empty surfaces map is what turned the outage into a 500 once routes were back | implemented |
+| mds-03 | the request-serving modules derive in FULL | Route, Portal_Route, Spa, Auth | each is a `Full_ManifestSupport_Abstract` - a named list, so moving one back onto the changed set has to delete this line | implemented |
+| mds-04 | every registered module declares a kind | `config('rsx.manifest_support')` | each extends a support base | implemented |
+

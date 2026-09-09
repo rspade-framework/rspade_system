@@ -3,7 +3,7 @@
 namespace App\RSpade\Core\Dispatch;
 
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
-use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 
 /**
  * Support module for building routes index from #[Route] attributes
@@ -13,7 +13,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * #[Auth] then method-level, additive) the dispatcher evaluates before the
  * controller runs. See php artisan rsx:man auth_gates.
  */
-class Route_ManifestSupport extends ManifestSupport_Abstract
+class Route_ManifestSupport extends Full_ManifestSupport_Abstract
 {
     /**
      * Get the name of this support module
@@ -26,34 +26,40 @@ class Route_ManifestSupport extends ManifestSupport_Abstract
     }
 
     /**
-     * Rebuild the `standard` route rows for the CHANGED controller files only.
+     * Rebuild every `standard` route row from the whole file map.
      *
-     * INCREMENTAL. A row is owned by exactly one file (its `file` value), so the diff is
-     * exact: drop every standard row whose file changed or was removed, then re-derive from
-     * the changed files' own `#[Route]` declarations. Nothing scans the file map.
+     * FULL, not incremental, and deliberately so. Deriving these rows is a loop over the
+     * in-memory file records looking for one attribute - it reads nothing off disk and
+     * reflects on nothing - so the changed-set machinery bought nothing here and cost
+     * correctness: the table was CARRIED FORWARD, so once it was lost or truncated no
+     * later build could restore it, because restoration only happened for files that
+     * CHANGED and an unchanged tree has none. That state was reached (an empty route table
+     * against a fully populated file index: every page 404, every bundle failing to
+     * compile, curable only by `--force`, which works by making everything dirty).
+     * Recomputed in full it is a pure function of the manifest and cannot drift.
+     *
+     * THIS MODULE OWNS THE `standard` ROWS AND NOTHING ELSE. `routes` is shared - the SPA
+     * and API modules add their own row types to it later in the same ordered list - so
+     * the reset below is scoped by type rather than clearing the section.
      *
      * @param array &$manifest_data Reference to the manifest data array
      * @return void
      */
-    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
+    public static function rebuild(array &$manifest_data): void
     {
-        if (!isset($manifest_data['data']['routes'])) {
-            $manifest_data['data']['routes'] = [];
-        }
+        $existing = $manifest_data['data']['routes'] ?? [];
 
-        $dirty = static::dirty_set($changed_files, $removed_files);
-
-        // Drop what the dirty files used to declare. A pattern that moved to another file
-        // is covered because BOTH files are dirty in the build that moved it.
-        foreach ($manifest_data['data']['routes'] as $pattern => $row) {
-            if (($row['type'] ?? null) === 'standard' && isset($dirty[$row['file'] ?? ''])) {
-                unset($manifest_data['data']['routes'][$pattern]);
+        // Keep every row this module does not own, drop all of its own, and re-derive.
+        $manifest_data['data']['routes'] = [];
+        foreach ($existing as $pattern => $row) {
+            if (($row['type'] ?? null) !== 'standard') {
+                $manifest_data['data']['routes'][$pattern] = $row;
             }
         }
 
         $files = $manifest_data['data']['files'];
 
-        foreach (array_keys($dirty) as $file) {
+        foreach (array_keys($files) as $file) {
             $metadata = $files[$file] ?? null;
 
             if ($metadata === null || !isset($metadata['public_static_methods'])) {

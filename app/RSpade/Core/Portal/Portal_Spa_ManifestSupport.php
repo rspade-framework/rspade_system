@@ -4,8 +4,8 @@ namespace App\RSpade\Core\Portal;
 
 use RuntimeException;
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
+use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
 
 /**
  * Support module for extracting Portal Spa route metadata from Spa_Action classes
@@ -24,7 +24,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * }
  * ```
  */
-class Portal_Spa_ManifestSupport extends ManifestSupport_Abstract
+class Portal_Spa_ManifestSupport extends Full_ManifestSupport_Abstract
 {
     /**
      * Get the name of this support module
@@ -37,55 +37,32 @@ class Portal_Spa_ManifestSupport extends ManifestSupport_Abstract
     }
 
     /**
-     * Rebuild the `portal_spa` route rows for the CHANGED action files only.
+     * Rebuild every `portal_spa` route row from the Spa_Action set.
      *
-     * INCREMENTAL, identical in shape to Spa_ManifestSupport: the dirty set is the actions
-     * whose own file changed plus the actions whose existing row points at a changed
-     * bootstrap controller. The controller is resolved through `php_classes`, never by
-     * scanning the file map.
+     * FULL, identical in shape to Spa_ManifestSupport and for the same reason: a row is
+     * owned by TWO files (the action and its bootstrap controller), and tracking that
+     * ownership across a diff was most of this method for no saving - the derivation reads
+     * decorators off records already in memory.
      *
      * @param array &$manifest_data Reference to the manifest data array
      * @return void
      */
-    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
+    public static function rebuild(array &$manifest_data): void
     {
-        if (!isset($manifest_data['data']['portal_routes'])) {
-            $manifest_data['data']['portal_routes'] = [];
+        $existing = $manifest_data['data']['portal_routes'] ?? [];
+
+        // Keep every row this module does not own, drop all of its own, and re-derive.
+        $manifest_data['data']['portal_routes'] = [];
+        foreach ($existing as $pattern => $row) {
+            if (($row['type'] ?? null) !== 'portal_spa') {
+                $manifest_data['data']['portal_routes'][$pattern] = $row;
+            }
         }
 
-        $dirty = static::dirty_set($changed_files, $removed_files);
         $js_classes = $manifest_data['data']['js_classes'] ?? [];
         $action_classes = $manifest_data['data']['js_subclass_index']['Spa_Action'] ?? [];
 
-        $dirty_actions = [];
         foreach ($action_classes as $class_name) {
-            $action_file = $js_classes[$class_name]['file'] ?? null;
-
-            if ($action_file !== null && isset($dirty[$action_file])) {
-                $dirty_actions[$class_name] = true;
-            }
-        }
-
-        foreach ($manifest_data['data']['portal_routes'] as $pattern => $row) {
-            if (($row['type'] ?? null) !== 'portal_spa') {
-                continue;
-            }
-
-            $action = $row['js_action_class'] ?? null;
-
-            if ($action === null || !isset($js_classes[$action])) {
-                unset($manifest_data['data']['portal_routes'][$pattern]);
-
-                continue;
-            }
-
-            if (isset($dirty_actions[$action]) || isset($dirty[$row['file'] ?? ''])) {
-                $dirty_actions[$action] = true;
-                unset($manifest_data['data']['portal_routes'][$pattern]);
-            }
-        }
-
-        foreach (array_keys($dirty_actions) as $class_name) {
             $action_file = $js_classes[$class_name]['file'] ?? null;
             $action_metadata = $action_file !== null ? ($manifest_data['data']['files'][$action_file] ?? null) : null;
 

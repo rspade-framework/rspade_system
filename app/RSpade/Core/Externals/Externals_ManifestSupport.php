@@ -3,7 +3,7 @@
 namespace App\RSpade\Core\Externals;
 
 use RuntimeException;
-use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 
 /**
  * Support module that consolidates every `*.externals.php` declaration file into one
@@ -44,7 +44,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  *
  * See: php artisan rsx:man external_resources
  */
-class Externals_ManifestSupport extends ManifestSupport_Abstract
+class Externals_ManifestSupport extends Full_ManifestSupport_Abstract
 {
     /** Manifest file kind produced by Manifest_Scanner::_process_file(). */
     public const FILE_EXTENSION = 'externals.php';
@@ -82,7 +82,7 @@ class Externals_ManifestSupport extends ManifestSupport_Abstract
      * The declaration files themselves are read through a mtime+size memo, so a rebuild
      * where none of them changed re-reads nothing.
      */
-    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
+    public static function rebuild(array &$manifest_data): void
     {
         $entries = [];
         $declared_in = [];
