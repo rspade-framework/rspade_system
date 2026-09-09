@@ -253,7 +253,58 @@ class Type_Ref_Registry
             $morph_map[(string) $entry['id']] = $entry['fqcn'];
         }
 
-        Relation::morphMap($morph_map);
+        // REPLACE, never merge. Relation::morphMap() merges by default ($map + $existing),
+        // which is right for the single-entry add in _create_type_ref() and WRONG here: this
+        // is the whole map, and a merge cannot REMOVE an alias. Registering against a
+        // different database would then leave the previous database's integer aliases in
+        // place beside the new ones - two ids pointing at the same class, the stale one
+        // still winning for any row that carries it - and morphTo() over an id this database
+        // never issued resolves to nothing, so getActualClassNameForMorph() hands the raw
+        // integer back and `new 26` throws "Class name must be a valid object or a string".
+        Relation::morphMap($morph_map, false);
+    }
+
+    /**
+     * Re-read the registry and re-register the morph map, for a process that has just been
+     * pointed at a DIFFERENT database.
+     *
+     * WHY THIS EXISTS. register_morph_map() runs ONCE at boot (Rsx_Framework_Provider),
+     * against whatever connection the process booted on. The test runner then drops,
+     * recreates and restores the test database and switches the default connection to it.
+     * The registry itself recovers on its own - _reset_cached_state() clears its maps and
+     * its Redis entry, and the next lookup reads the new database - but Relation::morphMap
+     * is a separate Eloquent static that nothing re-registered, so every integer alias in it
+     * stayed the BOOT database's id.
+     *
+     * That is invisible for as long as the two databases happen to agree. A shipped
+     * provisioning snapshot dumped from a long-lived database carries that database's id
+     * history, gaps included, so a test schema restored from it had the same ids as the live
+     * one by coincidence. Rebuild the snapshot from zero and the ids become compact, the
+     * coincidence ends, and every polymorphic read in the suite fails on an alias the map
+     * does not have. Reported from a downstream field report, 2026-09-09.
+     *
+     * NOT wired into Transaction_Rollback_Cache_Reset::reset(), deliberately: that runs on
+     * every rolled-back transaction, in production as well as under test, and re-reading the
+     * registry there would put a query on a hot path to fix a problem only a database SWAP
+     * can create.
+     *
+     * @return void
+     */
+    public static function _reload_for_database_swap(): void
+    {
+        static::_reset_cached_state();
+
+        // EVICT FIRST, unconditionally. register_morph_map() returns without touching the
+        // map when the registry has nothing in it - right for the boot path, where an empty
+        // registry means "no refs minted yet" and there is nothing to say - but wrong here,
+        // where an empty registry means THIS database has no refs and the map is still
+        // describing the last one. A database whose refs are minted lazily (a freshly
+        // provisioned test schema) starts exactly that way, so without this the previous
+        // database's aliases would survive the swap they exist to be cleared by.
+        Relation::morphMap([], false);
+
+        // Reads the NEW database (the cached state above is gone), then replaces the map.
+        static::register_morph_map();
     }
 
     /**

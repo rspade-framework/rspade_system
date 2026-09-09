@@ -688,6 +688,15 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // run rebuilds them from the test database on first use.
         \App\RSpade\Core\Database\Lifecycle\Transaction_Rollback_Cache_Reset::reset();
 
+        // Eloquent's morph map is NOT one of those lazy caches: it is a static registered
+        // once at boot, against the DEVELOPMENT database, and nothing re-registers it. Its
+        // integer aliases are type-ref ids, and this connection now points at a database
+        // that issued its own - so without this every polymorphic read in the suite resolves
+        // an id the map does not carry and throws "Class name must be a valid object or a
+        // string". It stayed hidden while a snapshot dumped from a long-lived database
+        // happened to give the test schema the same ids.
+        \App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry::_reload_for_database_swap();
+
         $this->newLine();
 
         return true;
@@ -714,9 +723,11 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         DB::setDefaultConnection('test');
 
         // The database was dropped and restored, so every cached view of it is stale - and
-        // no rollback event fired to say so. Same two calls, for the same reason, as
-        // prepare_test_database() (see the comment there).
+        // no rollback event fired to say so. Same calls, for the same reasons, as
+        // prepare_test_database() (see the comments there). The re-provision can renumber
+        // the type refs, so the morph map is re-registered here too.
         \App\RSpade\Core\Database\Lifecycle\Transaction_Rollback_Cache_Reset::reset();
+        \App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry::_reload_for_database_swap();
 
         return true;
     }

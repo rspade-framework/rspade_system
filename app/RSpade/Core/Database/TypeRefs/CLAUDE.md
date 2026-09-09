@@ -114,10 +114,45 @@ convert it to the integer. If the integer alias came first, `getMorphClass()` wo
 
 So `register_morph_map()` inserts every class-name alias BEFORE any integer alias, and
 `_create_type_ref()` (incremental registration) passes `[$class_name => $fqcn, (string)$id => $fqcn]`
-in that order. `Relation::morphMap($map, merge: true)` computes `$map + $existing`, which
-preserves the new array's order first. Do not reorder either.
+in that order. Do not reorder either.
 
-Pinned by `tests/polymorphic/php/Polymorphic_Morph_Relations_Test.php`.
+**The two calls use OPPOSITE merge semantics, and that is deliberate.**
+`_create_type_ref()` adds ONE ref to a live map and merges (`$map + $existing`, which also
+preserves the new array's order first). `register_morph_map()` builds the WHOLE map and
+REPLACES (`merge: false`), because a merge cannot REMOVE an alias - and removal is the
+entire point when the process is re-registering against a different database.
+
+### THE MAP IS PER-DATABASE, AND NOTHING RE-REGISTERS IT ON ITS OWN
+
+`register_morph_map()` runs ONCE at boot (`Rsx_Framework_Provider`), against whatever
+connection the process booted on. Its integer aliases are that database's `_type_refs` ids.
+The registry recovers from a connection swap by itself - `_reset_cached_state()` drops its
+maps and its Redis entry and the next lookup reads the new database - but
+`Relation::morphMap` is a separate Eloquent static, so a process pointed at another database
+keeps resolving through the BOOT database's ids.
+
+**`Type_Ref_Registry::_reload_for_database_swap()` is the fix for that**, and the test runner
+calls it after it provisions the test database and switches the connection, and again after
+any `$requires_db_reset` re-provision. It evicts the map outright before re-registering,
+because a database that mints its refs lazily (a freshly provisioned test schema) starts with
+an EMPTY registry, and `register_morph_map()` declines to touch the map when it has nothing
+to say - which would leave the previous database's aliases in place.
+
+It is deliberately NOT wired into `Transaction_Rollback_Cache_Reset::reset()`: that runs on
+every rolled-back transaction, in production as well as under test, and re-reading the
+registry there would put a query on a hot path to fix something only a database SWAP can
+cause.
+
+This hid for a long time behind a coincidence. A shipped provisioning snapshot dumped from a
+long-lived database carries that database's id history, gaps included, so a restored test
+schema had the same ids as the live one and the stale map happened to be right. Rebuild the
+snapshot from zero, the ids compact, and every polymorphic read in the suite fails with
+`Class name must be a valid object or a string` - `morphTo()` resolves an alias the map does
+not have, `getActualClassNameForMorph()` hands the raw integer back, and `new 26` throws.
+Reported from a downstream field report, 2026-09-09.
+
+Pinned by `tests/polymorphic/php/Polymorphic_Morph_Relations_Test.php` and
+`tests/polymorphic/php/Type_Ref_Morph_Map_Swap_Test.php`.
 
 ### What works
 
