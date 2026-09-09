@@ -100,6 +100,20 @@ abstract class Rsx_Test_Abstract
     private static $__boot_site_id = null;
 
     /**
+     * The CLI IDENTITY the test process booted with, captured beside $__boot_site_id and
+     * restored with it at every class boundary.
+     *
+     * @var int|null
+     */
+    private static $__boot_login_user_id = null;
+
+    /** @var int|null */
+    private static $__boot_user_id = null;
+
+    /** @var bool True once the boot context above has been captured. */
+    private static $__boot_captured = false;
+
+    /**
      * Runner-facing accessor for the per-class reset flag.
      * @return bool
      */
@@ -154,8 +168,11 @@ abstract class Rsx_Test_Abstract
         // every class that runs after it in the same process. Site-1 rows then vanish from
         // queries that never asked for a site at all (Preview_Sample_Import_Test after the
         // Portal_Session classes). Remember the boot site once, restore it between classes.
-        if (self::$__boot_site_id === null) {
+        if (!self::$__boot_captured) {
+            self::$__boot_captured = true;
             self::$__boot_site_id = (int) Session::get_site_id();
+            self::$__boot_login_user_id = Session::get_login_user_id();
+            self::$__boot_user_id = Session::get_user_id();
         }
 
         try {
@@ -164,24 +181,51 @@ abstract class Rsx_Test_Abstract
             static::$results = $outer_results;
             static::$current_test = $outer_current_test;
 
-            // A CLASS boundary is always the boot site. Deliberately NOT per test: a class
-            // may create its own site in setup() (once per class) and scope every test to
-            // it - Realtime_User_Refresh_Test does exactly that - so restoring between
-            // tests would silently re-scope the class's own fixtures out of view. Between
-            // classes there is no such expectation, and that is where the leak did damage.
-            static::__restore_boot_site();
+            // A CLASS boundary is always the boot CONTEXT - site AND identity. Deliberately
+            // NOT per test: a class may create its own site in setup() (once per class) and
+            // scope every test to it - Realtime_User_Refresh_Test does exactly that - so
+            // restoring between tests would silently re-scope the class's own fixtures out
+            // of view. Between classes there is no such expectation, and that is where the
+            // leak did damage.
+            static::__restore_boot_context();
         }
     }
 
     /**
-     * Re-establish the staff site the process booted with (see run()). A no-op when the
-     * site is already the boot site, or when no boot site was ever recorded.
+     * Re-establish the staff site AND CLI identity the process booted with (see run()).
+     *
+     * WHY THE IDENTITY IS RESTORED TOO. Session::_testing_reset() runs after every test
+     * and deliberately PRESERVES the CLI declaration ($_cli_site_id / $_cli_login_user_id
+     * / $_cli_user_id), because setup() runs once per CLASS and is where a suite declares
+     * it - clearing it per test would land every later fixture on site 0. That contract is
+     * right within a class and wrong between them: nothing else ever cleared the identity,
+     * so a class that called __acting_as_user() handed its user to every class that ran
+     * after it in the same process. A later class asserting an ANONYMOUS caller then saw
+     * somebody signed in, and the failure moved between classes as container scheduling
+     * changed (Realtime_Token_Test::test_connection_token_returns_valid_signed_shape_when_anonymous).
+     *
+     * A no-op when the context already matches, and when nothing was ever captured.
      */
-    private static function __restore_boot_site(): void
+    private static function __restore_boot_context(): void
     {
-        if (self::$__boot_site_id !== null && (int) Session::get_site_id() !== self::$__boot_site_id) {
-            Session::set_site_id(self::$__boot_site_id);
+        if (!self::$__boot_captured) {
+            return;
         }
+
+        $site_matches = (int) Session::get_site_id() === (int) self::$__boot_site_id;
+        $login_matches = Session::get_login_user_id() === self::$__boot_login_user_id;
+        $user_matches = Session::get_user_id() === self::$__boot_user_id;
+
+        if ($site_matches && $login_matches && $user_matches) {
+            return;
+        }
+
+        // One call sets all three - declaring a context, minting nothing.
+        Session::impersonate(
+            (int) self::$__boot_site_id,
+            self::$__boot_login_user_id,
+            self::$__boot_user_id
+        );
     }
 
     /**

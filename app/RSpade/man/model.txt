@@ -358,8 +358,12 @@ How It Works:
             INDEX idx_site_id (site_id)    -- Added automatically
         )
 
-    The site_id column is added automatically during migration normalization
-    if the model extends Rsx_Site_Model_Abstract.
+    YOU DECLARE THE site_id COLUMN IN YOUR OWN MIGRATION. Schema normalization
+    adds the audit-authorship pairs and the timestamps to every table, but it
+    does NOT add site_id: the branch that once did keys on a trait
+    (App\Models\Traits\Siteable) that no longer exists anywhere in the
+    framework, so it matches no model and adds nothing. Backlog B-119 owns
+    either rewiring it to the Rsx_Site_Model_Abstract lineage or deleting it.
 
 Usage:
 
@@ -402,13 +406,50 @@ Admin Operations (Bypass Site Scoping):
         return Project_Model::where('site_id', 2)->get();
     });
 
+SITE SCOPING AS AN ADOPTABLE TRAIT (Site_Scoped):
+
+    The implementation lives in the Site_Scoped trait, and
+    Rsx_Site_Model_Abstract is a model that adopts it and declares nothing
+    else. Extending that class and adopting the trait install the SAME
+    controls from the SAME source - there is one tenant boundary, not two.
+
+    Extend Rsx_Site_Model_Abstract when the model is site-scoped from the
+    start; that remains the ordinary case and nothing about it changes.
+
+    Adopt the trait directly when a model CANNOT reach that class:
+
+        class User_Profile_Model extends User_Profile_Model_Abstract
+        {
+            use Site_Scoped;
+        }
+
+    The case this exists for is a split core model. An application override of
+    one must extend the framework's X_Model_Abstract base DIRECTLY, which fixes
+    that base's own parent - so when the framework table is not site-scoped but
+    the application added site_id to its copy in its own migration, the override
+    has no inheritance slot left to reach Rsx_Site_Model_Abstract with. Before
+    the trait the only way out was to re-implement the read scope and the create
+    stamp by hand in the override, which is exactly the cloned-machinery drift
+    the base/shell split exists to end.
+
+    The adopting model's table MUST have a site_id column - every control names
+    it - and the migration that creates the table declares it, for a trait
+    adopter and a subclass alike.
+
+    ONE DIFFERENCE WORTH KNOWING. $apply_site_scope is a static the trait
+    contributes to whichever class adopts it, so Rsx_Site_Model_Abstract holds
+    ONE flag shared by every model beneath it - unchanged from before - while a
+    direct adopter holds its own. So without_site_scope() on a direct adopter
+    suspends that model alone and never reaches the rest of the family.
+
 Registering Model Hooks (booted() + parent::booted()):
 
-    Rsx_Site_Model_Abstract::booted() installs the site isolation controls
-    (the read scope, the site_id force, the site_id validation). A site-scoped
-    model that needs its own model event hooks overrides booted() and MUST make
-    parent::booted() its first statement, so the protections are installed
-    before its own hooks run:
+    The site isolation controls (the read scope, the site_id force, the site_id
+    validation) are installed by the trait's boot, which Eloquent calls for every
+    adopting class before booted() - so they are NOT something an override of
+    booted() can drop. A site-scoped model that needs its own model event hooks
+    still overrides booted() and still makes parent::booted() its first
+    statement, because that is the framework-wide chaining rule:
 
         class Project_Model extends Rsx_Site_Model_Abstract
         {
@@ -421,14 +462,20 @@ Registering Model Hooks (booted() + parent::booted()):
             }
         }
 
-    Forgetting parent::booted() would SILENTLY drop the site scope - a
-    fail-open confidentiality defect (Model::find() returning foreign-site
-    rows) with no exception at runtime. That mistake is now caught at manifest
-    build time by the default parent-call chaining rule, PHP-PARENT-CHAIN-01:
-    booted() is a chain-mandatory override (it is NOT #[Replaceable]), so an
-    override that omits parent::booted() is a fatal manifest-time error until
-    the parent call is added. See: php artisan rsx:man code_quality
-    (PARENT-CALL CHAINING section).
+    Forgetting parent::booted() is caught at manifest build time by the default
+    parent-call chaining rule, PHP-PARENT-CHAIN-01: booted() is a
+    chain-mandatory override (it is NOT #[Replaceable]), so an override that
+    omits parent::booted() is a fatal manifest-time error until the parent call
+    is added. See: php artisan rsx:man code_quality (PARENT-CALL CHAINING
+    section).
+
+    That omission used to ALSO drop the site scope silently - a fail-open
+    confidentiality defect, Model::find() returning foreign-site rows with no
+    exception at runtime - because the protections were installed in
+    Rsx_Site_Model_Abstract::booted(). They now ride on the trait boot instead,
+    so the tenant boundary no longer depends on anyone remembering to chain.
+    Chain anyway: the rule is framework-wide and other bases put real work in
+    booted().
 
     A model that needs no hooks of its own defines no booted() at all and
     inherits the base protections unchanged.

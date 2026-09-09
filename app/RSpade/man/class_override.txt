@@ -427,6 +427,36 @@ Everything else - $table = 'users', the role enums and their constants, the ACL
 resolution, fetch() and its gates, the authorship stamping - is inherited from
 User_Model_Abstract and stays current with the framework.
 
+### WHEN YOUR COPY OF THE TABLE IS SITE-SCOPED AND THE FRAMEWORK'S IS NOT
+
+The override must extend the framework base DIRECTLY - an intermediate class
+does not satisfy the check - so the base's own parent is fixed, and PHP has no
+second inheritance slot to reach Rsx_Site_Model_Abstract with. That matters when
+an application adds site_id to a framework table in its own migration as part of
+a tenant sweep: the model needs the tenant boundary and cannot inherit it.
+
+Adopt the trait. It is the same implementation Rsx_Site_Model_Abstract itself
+adopts, not a copy of it:
+
+    namespace Rsx\Models;
+
+    use App\RSpade\Core\Database\Models\Site_Scoped;
+
+    class User_Profile_Model extends User_Profile_Model_Abstract
+    {
+        use Site_Scoped;
+    }
+
+That installs the read scope, the create stamp, the cross-site save refusal and
+the retrieved cross-check - and keeps taking framework changes to them, which a
+hand-rolled bridge in the override would not. Re-implementing site scoping in an
+override is the cloned-machinery drift the split exists to end; the trait is the
+sanctioned way to say "this one is site-scoped too".
+
+Your migration declares the site_id column - schema normalization adds that one
+for nobody (rsx:man model). Full contract: rsx:man model, SITE SCOPING AS AN
+ADOPTABLE TRAIT.
+
 ## FRAMEWORK UPDATES
 
 When updating with `php artisan rsx:framework:pull`:

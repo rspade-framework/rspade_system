@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Models;
 
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
+use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Models\User_Model;
 
 /**
@@ -47,6 +48,7 @@ use App\RSpade\Core\Models\User_Model;
  *
  * @property int $id
  * @property int $user_id
+ * @property int $site_id
  * @property string $title
  * @property string $department
  * @property string $bio
@@ -59,7 +61,7 @@ use App\RSpade\Core\Models\User_Model;
  *
  * @mixin \Eloquent
  */
-abstract class User_Profile_Model_Abstract extends Rsx_Model_Abstract
+abstract class User_Profile_Model_Abstract extends Rsx_Site_Model_Abstract
 {
     /**
      * The table associated with the model

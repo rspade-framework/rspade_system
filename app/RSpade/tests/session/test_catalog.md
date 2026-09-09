@@ -280,3 +280,22 @@ Session::set_temporary_site_id() - a DECLARED tenant that writes nothing, via
 | sess-tmpsite-09 | re-declaring replaces rather than stacking | php | declare 7 then 8, one clear | 8, then 0 | implemented | 2026-08-24 |
 | sess-tmpsite-10 | the test reset seam drops it, so it cannot leak between tests | php | declare 7, reset_impersonation() | has_temporary false, site_id 0 | implemented | 2026-08-24 |
 | sess-tmpsite-11 | in WEB mode it emits no Set-Cookie and mints no row | http | a request that declares a tenant with no session cookie | no Set-Cookie, no row | deferred (structural: the method has no mode branch and both reader branches sit BEFORE self::init(), so the cookie is never read; would need a dedicated probe route to observe) | 2026-08-24 |
+
+## Session_Temporary_Site_Leak_Test (php, transactions on) - a declared tenant does not outlive its test
+
+`set_temporary_site_id()` declares a tenant for the rest of the script and OUTRANKS every
+other tier, the CLI declaration included. That is correct for its real callers - a web request
+or a one-shot command - and `Rsx_Initial_User::create()` deliberately leaves one standing. A
+TEST RUN is not that script: the runner creates the baseline user in-process, so a declaration
+was left behind in a process that then ran every remaining class. `__acting_as_site()` still
+wrote, but `get_site_id()` kept answering the baseline site, so a fixture seeded "in another
+site" landed in the baseline one and every cross-tenant assertion after it passed vacuously.
+
+The two methods are ONE test and their order is the mechanism.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-templeak-01 | a declaration is in force inside the test that made it | `set_temporary_site_id(1)` | `has_temporary_site_id()` true | implemented |
+| sess-templeak-02 | the next test does not inherit it | the following method | `has_temporary_site_id()` false | implemented |
+| sess-templeak-03 | acting as a site means something again | `__acting_as_site(42)` | `get_site_id()` is 42, not the leaked tenant | implemented |
+

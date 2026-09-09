@@ -386,6 +386,27 @@ class Session extends Rsx_System_Model_Abstract
         // Per-request overrides a test may have set on its way through. Narrow on purpose.
         self::$_request_site_id_override = null;
 
+        // THE DECLARED TENANT, and it has to be cleared HERE rather than only in
+        // reset_impersonation(). set_temporary_site_id() declares a tenant "for the rest
+        // of the script" and OUTRANKS every other tier, the CLI declaration included -
+        // correct for its real callers, a web request or a one-shot command whose script
+        // ends moments later. Rsx_Initial_User::create() is one of them and deliberately
+        // leaves the declaration standing.
+        //
+        // A TEST RUN IS NOT THAT SCRIPT. The runner creates the baseline user in-process,
+        // and again whenever a $requires_db_reset class re-provisions, so each of those
+        // left a declaration behind in a process that then ran every remaining class.
+        // Because it outranks the CLI tier, __acting_as_site() still WROTE but
+        // get_site_id() kept answering the baseline site: a fixture seeded "in another
+        // site" landed in the baseline one, and every cross-tenant assertion after it
+        // passed vacuously instead of failing. It surfaced as tests that pass alone and
+        // fail in the suite, moving between classes as container scheduling changed.
+        //
+        // reset_impersonation() already states the rule - a declared tenant is
+        // script-scoped, and for a test the SCRIPT is the test - but that runs only when a
+        // test calls __reset_session() itself. This is the boundary that always runs.
+        self::$_temporary_site_id = null;
+
         // DELIBERATELY NOT CLEARED: $_cli_site_id / $_cli_login_user_id / $_cli_user_id.
         //
         // Those are the CLI identity DECLARATION - "act as this user on this site" - and the

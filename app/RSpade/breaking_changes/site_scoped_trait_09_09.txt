@@ -1,0 +1,175 @@
+SITE SCOPING IS NOW AN ADOPTABLE TRAIT, AND user_profiles IS SITE-SCOPED
+Date: 2026-09-09
+
+IF YOU DO NOTHING: a model in YOUR application that re-implements site scoping by
+    hand - a `creating` stamp and a global scope written into an override because
+    the model could not extend Rsx_Site_Model_Abstract - keeps working and keeps
+    drifting. It is your copy of framework machinery, it reproduces a few of that
+    class's controls and not the rest, and nothing reports the gap. Replace it
+    with `use Site_Scoped` and it becomes the framework's implementation again.
+
+SUMMARY
+    Nothing breaks and nothing changed shape. This document exists because there
+    is now a right answer to a problem that previously had only wrong ones, and
+    the wrong one is a silent drift you would otherwise keep.
+
+    THE PROBLEM. A core model is EXTENDED, never copied: the framework ships
+    X_Model_Abstract carrying every member plus an empty X_Model shell, and an
+    override must extend that base DIRECTLY - an intermediate class does not
+    satisfy the manifest check. That fixes the base's own parent. So when a
+    framework table is NOT site-scoped but your copy of it IS - you added site_id
+    in your own migration as part of a tenant sweep - the override needs the
+    tenant boundary and has no inheritance slot left to reach
+    Rsx_Site_Model_Abstract with. `protected static $apply_site_scope = true` does
+    not help either: that flag is only ever read from inside the site-scoped class,
+    which holds all the machinery.
+
+    The only way through was to re-implement the create stamp and the read scope
+    in the override - which is precisely the cloned-machinery drift the base/shell
+    split exists to end.
+
+    THE FIX. The implementation moved into a trait, Site_Scoped, and
+    Rsx_Site_Model_Abstract is now a model that adopts it and declares nothing
+    else. Extending that class and adopting the trait install the same controls
+    from the same source, so a model that cannot reach the class can still have
+    the boundary:
+
+        namespace Rsx\Models;
+
+        use App\RSpade\Core\Database\Models\Site_Scoped;
+
+        class User_Profile_Model extends User_Profile_Model_Abstract
+        {
+            use Site_Scoped;
+        }
+
+    You get the read-isolation global scope, the creating hook that forces site_id
+    from the current experience, the saving hook that refuses a cross-site or
+    site-changing write, the retrieved cross-check, the save()/update()/delete()
+    guards and the tenant-pinned attachment reader - and you keep getting framework
+    changes to all of them.
+
+NO ACTION IS NEEDED IF
+    Your site-scoped models extend Rsx_Site_Model_Abstract, which is the ordinary
+    case. That path is unchanged, it still works exactly as before, and every
+    control still installs. This is additive.
+
+ACTION REQUIRED - FIND A HAND-ROLLED BRIDGE
+    Look for an override that installs site behaviour itself. The tell is a
+    `creating` hook assigning site_id, or an addGlobalScope naming site_id, in a
+    model that does NOT extend Rsx_Site_Model_Abstract:
+
+        grep -rn "addGlobalScope\|site_id" rsx/models/
+
+    Replace the whole bridge with the trait:
+
+        BEFORE
+            class User_Profile_Model extends User_Profile_Model_Abstract
+            {
+                protected static function booted()
+                {
+                    parent::booted();
+                    static::creating(function ($model) {
+                        $model->site_id = Session::get_site_id();
+                    });
+                    static::addGlobalScope('site', function ($builder) {
+                        $builder->where('site_id', Session::get_site_id());
+                    });
+                }
+            }
+
+        AFTER
+            class User_Profile_Model extends User_Profile_Model_Abstract
+            {
+                use Site_Scoped;
+            }
+
+    A bridge is almost certainly WEAKER than what it replaces, so read what you
+    are deleting rather than assuming parity. Two things a hand-rolled version
+    usually gets wrong:
+
+      - The tenant is NOT Session::get_site_id(). It is
+        Site_Scoped::get_current_site_id(), which forks on the EXPERIENCE of the
+        request: a portal request is scoped by the site the application declared
+        through Portal_Session::set_site_id, which lives in a different column
+        entirely. A bridge reading the staff session scopes a portal request to
+        whatever tenant a co-resident staff cookie happens to be on.
+      - A bridge that stamps on create but never validates on save permits a
+        cross-site UPDATE. The trait makes that fatal.
+
+    Your migration still declares the site_id column yourself: normalization adds
+    it automatically only for a model that EXTENDS Rsx_Site_Model_Abstract.
+
+ONE BEHAVIOURAL DIFFERENCE TO KNOW
+    $apply_site_scope - the flag without_site_scope() toggles - is a static the
+    trait contributes to whichever class adopts it. Rsx_Site_Model_Abstract holds
+    ONE flag shared by every model beneath it, exactly as before; a model that
+    adopts the trait DIRECTLY holds its own. So
+    User_Profile_Model::without_site_scope(...) suspends that model alone and does
+    not reach the rest of the family, which is tighter than the shared flag and is
+    what you want - but do not write a callback that assumes it suspended
+    everything.
+
+ALSO IMPROVED, NOTHING TO DO
+    The controls now install from the trait's boot, which Eloquent calls for every
+    adopting class before booted(). They used to install in
+    Rsx_Site_Model_Abstract::booted(), where an override that forgot
+    parent::booted() dropped them silently - a fail-open cross-tenant read. Keep
+    chaining parent::booted() (it is the framework-wide rule and still a
+    manifest-build fatal without it), but the tenant boundary no longer depends on
+    anyone remembering to.
+
+user_profiles IS NOW SITE-SCOPED IN THE FRAMEWORK - READ THIS IF YOU SCOPED IT YOURSELF
+    Shipped in the same release. user_profiles is a 1:1 satellite of users, and
+    users is site-scoped; the satellite was not, so a profile row carried no
+    tenant of its own and a query against that table was cross-tenant with
+    nothing filtering it. User_Profile_Model_Abstract now extends
+    Rsx_Site_Model_Abstract, and a framework migration adds site_id to
+    user_profiles, backfills it from each profile's owning user, makes it NOT
+    NULL and indexes it.
+
+    IF YOU ALREADY ADDED site_id TO user_profiles IN YOUR OWN MIGRATION, the
+    framework migration WILL FAIL on your next `php artisan migrate` with
+
+        SQLSTATE[42S21]: Duplicate column name 'site_id'
+
+    That is the correct behaviour - migrations in RSpade carry no defensive
+    existence checks, because a migration that guesses at the current state is
+    how a schema silently diverges. It is a one-time collision and you resolve
+    it deliberately:
+
+      1. Confirm your column already matches what the framework migration would
+         have produced - BIGINT, NOT NULL, indexed, and every row carrying its
+         owning user's site:
+
+             SELECT COUNT(*) FROM user_profiles p
+                 JOIN users u ON u.id = p.user_id
+                 WHERE p.site_id <> u.site_id;
+
+         That must return 0. If it does not, fix the rows before going further:
+         a mis-filed site_id is now load-bearing, and the model will refuse
+         cross-site saves against it.
+
+      2. Record the framework migration as already applied, so it is skipped
+         without running:
+
+             INSERT INTO migrations (migration, batch)
+             VALUES ('2026_09_09_105542_add_site_id_to_user_profiles',
+                     (SELECT COALESCE(MAX(batch), 0) + 1 FROM migrations m));
+
+      3. Run `php artisan migrate` as usual.
+
+    Then DELETE the site-scoping bridge from your User_Profile_Model override -
+    the model inherits the boundary from the framework base now, and a bridge
+    layered on top of Rsx_Site_Model_Abstract is a second copy of controls that
+    are already installed. The override should be empty of site machinery, and
+    may be an empty shell entirely.
+
+    If your own migration is still unapplied anywhere (a fresh environment that
+    has not run it), drop it instead and let the framework's run - two
+    migrations adding the same column is a collision you would otherwise hit
+    again on every new install.
+
+SEE ALSO
+    rsx:man model            SITE SCOPING AS AN ADOPTABLE TRAIT
+    rsx:man class_override   WHEN YOUR COPY OF THE TABLE IS SITE-SCOPED

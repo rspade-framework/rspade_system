@@ -1,0 +1,78 @@
+SCSS-ANIM-01: `rsx:disable SCSS-ANIM-01` STOPPED WORKING - CONVERT IT TO
+@SCSS-ANIM-01-EXCEPTION
+Date: 2026-09-09
+
+IF YOU DO NOTHING: an SCSS file in YOUR application that suppresses SCSS-ANIM-01
+    with a `rsx:disable SCSS-ANIM-01` comment is no longer suppressed. The rule
+    is CRITICAL, so rsx:check fails on a file that visibly asks it not to, and
+    nothing in the output connects the failure to the comment sitting above it.
+
+SUMMARY
+    This is a REGRESSION we introduced, and this document exists to help you find
+    what it broke.
+
+    SCSS-ANIM-01 carried a file-level opt-out of its own, matched against the
+    file contents it is handed:
+
+        // rsx:disable SCSS-ANIM-01 - a deliberate colour-only flash
+
+    That worked only for as long as SCSS files reached a rule unsanitized. In the
+    2026-09-09 release, FileSanitizer gained an SCSS comment stripper (part of a
+    manifest performance pass), so every rule now receives SCSS with its comments
+    BLANKED. The rule's own check went looking for a comment in text that no
+    longer contains any comments, and started matching nothing at all - silently.
+    A granted exception expired with no error, no warning and no mention.
+
+    The dead check has been deleted rather than repaired, because RSpade has ONE
+    exception mechanism and it is not that one.
+
+THE ONE SPELLING
+    Exceptions are granted with `@<RULE-ID>-EXCEPTION` in a comment anywhere in
+    the file. The checker reads it off the file's RAW bytes BEFORE the rule runs,
+    which is why it works uniformly for every rule and cannot be defeated by
+    sanitization:
+
+        // @SCSS-ANIM-01-EXCEPTION the approve-flash is an intentional
+        // background-colour-only pulse; nothing moves.
+        .Billing_Timecards_Action {
+            .approve-flash { animation: approve-pulse 600ms ease-out 1; }
+        }
+
+    `rsx:disable <RULE-ID>` is not a spelling RSpade honors, for any rule. It was
+    never documented; SCSS-ANIM-01 was the only rule that ever appeared to accept
+    it, and it now does not.
+
+ACTION REQUIRED - FIND YOURS
+    Search your application for the dead spelling. It is worth searching for the
+    bare `rsx:disable` too: other rules never honored it, so any hit at all is a
+    suppression that is granting nothing.
+
+        grep -rn "rsx:disable" rsx/
+
+    Convert each one, keeping the reason - the reason is the point of the marker,
+    and the next reader needs it:
+
+        BEFORE
+            // rsx:disable SCSS-ANIM-01 - deliberate approve flash, colour only
+
+        AFTER
+            // @SCSS-ANIM-01-EXCEPTION deliberate approve flash, colour only
+
+    Then confirm the file is quiet again:
+
+        php artisan rsx:check
+
+    If a converted file still reports SCSS-ANIM-01, the marker's RULE ID does not
+    match the rule that is firing - the ID in the finding is the ID to use.
+
+WHY NOT JUST SUPPORT BOTH SPELLINGS
+    Two spellings for one thing is the dual implementation this framework
+    deliberately does not carry, and the second one would exist only to preserve
+    an accident. If `rsx:disable` were to become supported it would be
+    implemented ONCE in the checker, beside the marker test that already reads
+    raw bytes - never per rule, which is exactly the shape that produced this
+    defect.
+
+SEE ALSO
+    skill rspade:scss-rules   the SCSS rules, and the exception spelling
+    rsx:man scss              the SCSS contract

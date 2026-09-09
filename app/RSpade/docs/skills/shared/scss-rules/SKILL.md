@@ -98,6 +98,13 @@ cause of "my component has no styles".
   tools: hover effects only on interactive elements, and nothing moves. (`.min.css` /
   `.min.scss` are skipped.)
 
+**Granting an exception is `@<RULE-ID>-EXCEPTION` in a comment, and that spelling only** -
+e.g. `// @SCSS-ANIM-01-EXCEPTION the approve-flash is a colour-only pulse, no movement`.
+The checker reads the marker off the file's RAW bytes before the rule runs, which is why it
+works for every rule uniformly. **`rsx:disable <RULE-ID>` is NOT a spelling RSpade honors** -
+`SCSS-ANIM-01` alone once appeared to accept it, and no longer does; if you have one in an
+SCSS file it is granting nothing.
+
 ## No `<style>`, and no hand-injected stylesheet
 
 Markup carries no `<style>` block and no inline event handlers; SCSS files are the only

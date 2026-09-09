@@ -1,0 +1,83 @@
+TEST HARNESS: A LEAKED TENANT MADE CROSS-SITE ASSERTIONS PASS VACUOUSLY
+Date: 2026-09-09
+
+IF YOU DO NOTHING: a test of YOUR OWN that seeds a fixture "in another site" and
+    asserts it is invisible may start FAILING on this release. It was not
+    protecting you before - the fixture was landing in the same site it was
+    supposed to be isolated from, so the assertion passed without ever
+    exercising the boundary. The failure is the test finally doing its job.
+
+SUMMARY
+    Session::set_temporary_site_id() DECLARES a tenant for the rest of the script
+    and deliberately OUTRANKS every other tier, the CLI declaration included.
+    That is correct for its real callers - a web request, or a one-shot command
+    whose script ends moments later - and Rsx_Initial_User::create() is one of
+    them, deliberately leaving the declaration standing.
+
+    A TEST RUN IS NOT THAT SCRIPT. The test runner creates the baseline user
+    in-process, and again whenever a $requires_db_reset class re-provisions. Each
+    of those left a declaration behind in a process that then ran every remaining
+    test class. Because the declaration outranks the CLI tier,
+    __acting_as_site() still WROTE but Session::get_site_id() kept answering the
+    baseline site.
+
+    So after the first baseline seed in a process:
+
+        static::__acting_as_site(2);
+        $row = new Client_Model();  $row->save();
+        // $row->site_id is 1, not 2 - the baseline site
+
+    Every cross-tenant assertion downstream of that seeded into ONE site and then
+    asserted isolation between it and itself.
+
+    Fixed by clearing the declaration in Session::_testing_reset(), the boundary
+    the runner runs after EVERY test. reset_impersonation() already stated the
+    rule - "a declared tenant is script-scoped, and for a test the SCRIPT is the
+    test" - but only ran when a test called __reset_session() itself.
+
+    A SIBLING WAS FIXED WITH IT. The CLI IDENTITY ($_cli_login_user_id /
+    $_cli_user_id) is deliberately preserved between tests IN a class, because
+    setup() runs once per class and is where a suite declares it. Nothing
+    restored it between CLASSES, so a class calling __acting_as_user() handed its
+    user to every class that ran after it in the same process, and a later class
+    asserting an ANONYMOUS caller saw somebody signed in.
+    Rsx_Test_Abstract now restores the boot site AND identity at every class
+    boundary.
+
+    Both defects moved between classes as the parallel runner's scheduling
+    changed, which is why they read as flaky rather than broken.
+
+ACTION REQUIRED - RE-READ YOUR TENANT TESTS
+    Run your suite. Nothing to change if it stays green.
+
+        php artisan rsx:test
+
+    For each NEW failure, the test is now telling the truth and the assertion it
+    makes was previously unreachable. Two shapes account for almost all of them:
+
+      1. A CROSS-SITE ISOLATION TEST THAT NOW FAILS TO FIND ITS FIXTURE.
+         Previously the "other site" fixture was written into the acting site;
+         now it really is elsewhere, so a lookup that used to find it does not.
+         That is correct. Fix the test's expectations, not the isolation.
+
+      2. A TEST THAT NOW SEES A DIFFERENT TENANT'S DATA COUNT.
+         A query that used to see rows because everything piled into one site now
+         sees only its own. Re-baseline the count.
+
+    Also audit any test that asserts an ANONYMOUS or logged-out caller. Those were
+    the ones the identity leak reached, and they were passing while somebody was
+    signed in.
+
+    A test that was RIGHT all along is unaffected - this release only removes a
+    false pass.
+
+NOT AFFECTED
+    Application runtime behaviour. Both defects lived in test-time session state:
+    the temporary declaration is cleared at a test boundary that does not exist
+    outside the runner, and the identity restore is in Rsx_Test_Abstract. Nothing
+    about how a request resolves its tenant changed, and
+    Session::set_temporary_site_id() keeps its contract for its real callers.
+
+SEE ALSO
+    rsx:man session          the tiers get_site_id() resolves through
+    rsx:man testing          the runner, and what it resets between tests

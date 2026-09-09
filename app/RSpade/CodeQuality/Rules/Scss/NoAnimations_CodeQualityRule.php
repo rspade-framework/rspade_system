@@ -57,11 +57,17 @@ class NoAnimations_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        // Check for file-level exception comment
-        // Supports: /* rsx:disable SCSS-ANIM-01 */ or // rsx:disable SCSS-ANIM-01
-        if (preg_match('/(?:\/\*|\/\/)\s*rsx:disable\s+SCSS-ANIM-01/', $contents)) {
-            return;
-        }
+        // NO FILE-LEVEL EXCEPTION CHECK LIVES HERE. The ONE exception mechanism is the
+        // driver's @SCSS-ANIM-01-EXCEPTION marker, which it reads off the RAW BYTES and
+        // acts on before check() is ever called - $contents arrives with its comments
+        // blanked, so a rule that looks for a marker in it finds one in no file at all.
+        //
+        // This rule used to carry its own `rsx:disable SCSS-ANIM-01` check against
+        // $contents. It worked only for as long as SCSS was passed through unsanitized;
+        // once FileSanitizer gained an SCSS comment stripper the branch became
+        // unreachable, and a granted exception downstream silently expired with the rule
+        // firing on a file that visibly asked it not to. One mechanism, honored in one
+        // place - see rsx:man code_quality.
 
         // Parse SCSS using our context parser
         // See App\RSpade\CodeQuality\Parsers\ScssContextParser for implementation

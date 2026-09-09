@@ -321,7 +321,9 @@ entirely.
   * INDEX updated_at(updated_at)
 
 ### Trait-Specific Columns
-  * site_id BIGINT (for Siteable trait)
+  * site_id BIGINT - NOT ADDED. The branch keys on App\Models\Traits\Siteable,
+    a trait that no longer exists, so it matches no model. A site-scoped table
+    declares site_id in its own migration. Backlog B-119.
   * version BIGINT (for Versionable/Ajaxable traits)
 
 ### Order Column (Manual Sorting)
