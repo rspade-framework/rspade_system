@@ -1,0 +1,149 @@
+A HUMAN-FACING, SORTABLE FILE-TYPE LABEL ON FILE_ATTACHMENT_MODEL
+Date: 2026-09-14
+
+IF YOU DO NOTHING: the Type column of every file listing in your application keeps
+    rendering file_type_id__label, which says "Document" for a PDF, a Word file, an
+    Excel workbook and a CSV alike - four things your users distinguish at a glance and
+    the column refuses to. Nothing breaks and nothing warns; you simply keep the worse
+    rendering, and the column keeps sorting by an internal enum id that is neither
+    alphabetical nor meaningful.
+
+SUMMARY
+    File_Attachment_Model now carries a human-facing type label as a first-class,
+    queryable property, so an application never writes an extension-to-label map of its
+    own:
+
+        $attachment->file_type_label;      // "PDF Document"
+                                           // "Excel Spreadsheet"
+                                           // "ZIP Archive", "JPEG Image"
+        $attachment->file_type_id__label;  // "Document" - for the first two of those
+
+    It is a real column - VARCHAR(64) on _file_attachments, indexed as
+    idx_file_attachments_file_type_label - so a listing sorts and filters on it in SQL
+    rather than in PHP after the fact. The framework migration adds the column and
+    backfills every existing row, so your data is already correct the moment you pull.
+
+    What is NOT automatic is your own rendering. Nothing about your code breaks, which
+    is exactly why this document exists: the switch is one line per listing and no
+    update can make it for you.
+
+THE CHANGE
+    file_type_id is a seven-value ENGINE enum - IMAGE, ANIMATED_IMAGE, VIDEO, ARCHIVE,
+    TEXT, DOCUMENT, OTHER - and it is right for what it is for: is_image(), is_video(),
+    whether a preview can render, which viewer to mount. It was never meant to be read
+    by a person, and the mapping from a file format to a name a person recognises is a
+    property of the FORMAT, not of any application's domain - so it belongs in the
+    framework, once, rather than in N drifting copies.
+
+    The framework already sniffed the mime, stored file_extension and mime_type, and
+    classified into file_type_id from them. It was doing the harder part of this work and
+    discarding the specificity on the way out. It now keeps it.
+
+THE FIX
+    In /system/ core, arriving automatically via the submodule - nothing here to copy:
+
+      - File_Attachment_Model_Abstract::file_type_label_for(?string $mime_type,
+        ?string $extension): string - ONE pure static, #[Replaceable]. It resolves the
+        PIPELINE mime first (so a .docx that byte-sniffs as application/zip is a "Word
+        Document", and a webp saved as .png is a "WebP Image" - the same signals
+        file_type_id is decided on), then applies an exact mime table, then an extension
+        table for the formats a generic sniff cannot distinguish, then the generic form:
+        the uppercased extension plus " File" ("XYZ File"), or the bare word "File" when
+        there is no extension.
+
+      - File_Attachment_Model_Abstract::save() derives the column on EVERY write, create
+        and update alike. No caller sets it; a caller that does is overwritten.
+
+      - File_Attachment_Model::regenerate_file_type_labels(): int walks every row - all
+        sites, trashed included - and rewrites only the rows whose stored label differs.
+
+      - The migration add_file_type_label_to_file_attachments adds the column and index
+        and calls the regeneration function as its backfill.
+
+      - Both file payloads (the /_upload response and the /api/v1/files payload) now carry
+        'file_type_label' beside the existing 'file_type'. 'file_type' is unchanged.
+
+ACTION REQUIRED
+
+    1. FIND EVERY FILE LISTING THAT SHOWS A TYPE, AND SWITCH THE COLUMN.
+
+       The affected code is spelled differently in every application, so grep for all
+       three symptoms:
+
+           grep -rn "file_type_id__label" rsx/
+           grep -rn "file_type_label" rsx/
+           grep -rn "file_type" rsx/
+           grep -rni "'Type'" rsx/app rsx/portal        # a DataGrid column header
+
+       A DataGrid's transform_row() is the usual site. The change is one line:
+
+           // before
+           'file_type_label' => $attachment->file_type_id__label,
+
+           // after
+           'file_type_label' => $attachment->file_type_label,
+
+       Note the trap in that example: an application that already built this feature
+       locally very likely named its computed key file_type_label too, so the grep for
+       the NEW name finds your OLD hand-rolled map as readily as it finds nothing. If you
+       carry a local extension-to-label map, delete it - that duplication is what this
+       change exists to end - and make sure nothing else still calls it.
+
+    2. MOVE THE SORT FROM file_type_id TO file_type_label.
+
+       Sorting a Type column on file_type_id sorts by an internal enum id. In a
+       DataGrid_Abstract:
+
+           protected $sortable_columns = ['file_name', 'file_type_label', 'file_size'];
+
+       and in the query, ->orderBy('file_type_label') - the column is indexed precisely
+       so that this is cheap on a large table. A filter dropdown can be built from
+       SELECT DISTINCT file_type_label.
+
+    3. DO NOT MIGRATE ANY BEHAVIOURAL CHECK ONTO THE LABEL.
+
+       file_type_id is NOT deprecated and is not going anywhere. It, and the
+       is_image() / is_video() / is_document() predicates, remain the ONLY sanctioned way
+       to ask what a file IS. file_type_label is a RENDERING and SORTING convenience;
+       nothing may branch on it, and no code may compare it to a string to make a
+       decision. A string comparison against a label is exactly the bug this column is an
+       attractive nuisance for - the wording of a label is allowed to change, and it will.
+
+    4. IF YOU WIDEN THE MAP, YOU OWE A REGENERATION MIGRATION.
+
+       file_type_label_for() is #[Replaceable], so an override of File_Attachment_Model
+       (which EXTENDS File_Attachment_Model_Abstract) may declare its own and add labels
+       for formats your industry cares about. The stored column is a PROJECTION of that
+       function: change it and every existing row is stale, silently, forever. Ship a
+       migration whose whole body is the regeneration call:
+
+           public function up()
+           {
+               File_Attachment_Model::regenerate_file_type_labels();
+           }
+
+       The same rule is written beside the map in the framework, so it travels with the
+       code that triggers it.
+
+    5. IF YOUR OVERRIDE OF File_Attachment_Model ALREADY OVERRIDES save(), CHAIN IT.
+
+       The framework model now declares save(). An override that declares its own must
+       call parent::save($options) - it already had to, under PHP-PARENT-CHAIN-01, and a
+       missing chain is a manifest-build FATAL rather than a silent loss. The consequence
+       if it were missing is worth naming anyway: the label would never be derived and
+       every row your application writes would carry NULL in the Type column.
+
+VERIFICATION
+    After pulling and running migrate:
+
+        php artisan db:query "SELECT file_extension, mime_type, file_type_label
+                              FROM _file_attachments LIMIT 25" --table
+
+    Every row carries a label, and a PDF, a .docx and a .xlsx read differently. Then open
+    your file listing: the Type column shows format names, and clicking its header sorts
+    them alphabetically rather than by enum id.
+
+SEE ALSO
+    rsx:man file_upload             FILE TYPE DETECTION -> Human-facing label
+    rsx:man external_api            FILE ENDPOINTS (the payload field list)
+    skill rspade:file-attachments   the Type column, and displaying files generally

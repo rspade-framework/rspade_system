@@ -606,6 +606,11 @@ shell declares anything or a base ships without exactly one concrete.
   Override the concrete, which is what the shell is for
 - JavaScript classes do NOT support this override pattern - a duplicate JS
   class name is a hard fatal build error, not an override
+- Framework ARTISAN COMMANDS are not overridable, by design. An application
+  writes no command classes at all (rsx:man task_commands - a named command is
+  a #[Command] on a #[Task]), and a Laravel command needs an instance handle()
+  that MANIFEST-INST-01 refuses under rsx/. A defect in a framework command is a
+  framework change request, never a local copy
 
 ## TROUBLESHOOTING
 

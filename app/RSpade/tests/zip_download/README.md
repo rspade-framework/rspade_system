@@ -84,3 +84,11 @@ streaming a large set.
 ## Documents
 
 - `test_catalog.md` - full catalog (implemented + deferred).
+
+## Range headers (`Zip_Download_Range_Headers_Test`)
+
+`/_download_zip` is restartable, not resumable: generated as it streams, and two
+generations of one key differ (the DOS mod-time is stamped at stream-open), so a byte-range
+resume would corrupt the archive. The response says so with `Accept-Ranges: none`, ignores a
+`Range` request (200, never 416) and sets no `ETag`/`Last-Modified`. Runs as the baseline user
+because the per-member download gate requires a staff login.

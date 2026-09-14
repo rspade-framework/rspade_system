@@ -79,6 +79,30 @@ THE CONTRACT
        whole of the vocabulary, and it needs no special handling to use.
        Anything else throws, and the exception is the reminder.
 
+    7. THE ENVELOPE IS THE VALUE, EVERYWHERE IT TRAVELS. A typed value
+       leaves the server as {__TEXT, raw, empty} on EVERY payload - a
+       fetch(), a list, a relationship, an /api/vN response - and it is
+       never flattened to a string for a consumer's convenience, not for a
+       page, not for an external client. Flattening puts the guessing back:
+       the consumer is once again inferring an encoding from a bare string,
+       which is the failure this feature exists to end. The envelope is a
+       black box that only the widgets built for its type understand, and
+       that is the point - a template interpolates it with no hydration
+       call because the PRINTER is the one thing that can render it, and a
+       consumer that needs a plain rendition asks the endpoint to add one
+       deliberately (to_text(), under its own key) rather than rewriting
+       the column's value.
+
+    8. AN EDITOR ACCEPTS ONLY ITS TYPE. An input component built to edit a
+       declared type names it (`static ACCEPTS = 'Rich_Text'`) and THROWS
+       when handed anything else - a bare string, a value of another type -
+       in both directions of val(). It never quietly wraps a string into
+       the type "to be helpful": a widget that tolerated a raw string would
+       be the one place in the system deciding what encoding that string
+       has, which is exactly the decision no widget may make. A string
+       reaching a typed editor is a bug at the call site (a '' form
+       default, a hand-built payload), and the throw is what finds it.
+
 DECLARING A COLUMN
     Beside $enums on the model:
 
@@ -305,8 +329,17 @@ PRINTING AND EDITING
 
     Both are the jqhtml features built for this and essentially nothing else.
     rsx:man jqhtml, ADVANCED: VALUE PRINTERS and ADVANCED: DYNAMIC COMPONENT
-    TAGS. An input component names the type it edits with
-    `static ACCEPTS = 'Rich_Text'` and refuses everything else, both ways.
+    TAGS. Neither site hydrates, converts or unwraps anything: the value
+    reaches the template as the envelope and the printer is what renders it.
+
+    An input component names the type it edits with
+    `static ACCEPTS = 'Rich_Text'` and refuses everything else, both ways -
+    a bare string included. That refusal is the contract, not a strictness
+    to soften: an editor that accepted a string and wrapped it would be
+    choosing the string's encoding, and no widget may. val() takes and
+    returns the value OBJECT; the widget's own _get_value()/_set_value()
+    convert between the object and its internal document
+    (Type.from_editor() / value.to_storage()), and nothing else does.
 
 CHANGING A COLUMN'S TYPE
     Two acts, in order:
@@ -344,6 +377,18 @@ GOTCHAS
     PLUCK AND RAW SQL BYPASS THE CAST, exactly as they already do for dates
     and type refs. That boundary is not new.
 
+    NEVER FLATTEN THE ENVELOPE FOR A CONSUMER. An external API client, a
+    report, a second application: each receives {__TEXT, raw, empty} exactly
+    as the browser does. "Just give them the string" reintroduces inference
+    at the consumer and defeats the conversion. A consumer that needs plain
+    text gets a deliberate extra key from the endpoint (to_text()), never a
+    rewritten column.
+
+    NEVER TEACH AN EDITOR TO ACCEPT A STRING. When a typed input throws on a
+    string, the fix is at the call site that produced the string (a '' form
+    default, a payload assembled by hand, an undeclared column wired to a
+    typed widget) - never a tolerant branch in the widget.
+
 HOW IT WORKS INSIDE
     The rest of this page is the mechanism and the reasoning. Nothing here
     changes what you write; it explains why the contract above is safe.
@@ -361,7 +406,9 @@ HOW IT WORKS INSIDE
                              the JS class for PRINTER and EDITOR. Only raw
                              and one boolean go with it: no plain-text
                              rendition, which would double every text
-                             column's payload to serve nobody.
+                             column's payload to serve nobody. This is the
+                             ONE serialization: every payload a model
+                             produces carries it, the external API included.
 
       browser -> PHP         hydrate_request_value() -> Rsx_Text_Request_Value
                              TYPELESS. See below.

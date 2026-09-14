@@ -71,3 +71,15 @@ and deferred). Implemented php tests live in `php/Zip_Stream_Test.php` (writer),
 - ZS-06's memory assertion uses `memory_get_peak_usage()` delta across the 3MB stream; a
   buffering (non-streaming) implementation would spike peak by roughly the file size, so
   a sub-2MB delta is the streaming signal.
+
+## Zip_Download_Range_Headers_Test (php) - restartable, not resumable
+
+The endpoint's response object, built in-process against a real attachment and a minted
+request, body never streamed. Pins the header contract a download accelerator or a naive
+resumer would otherwise probe for.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| ZR-01 | no range support is declared | plain GET | 200, `Accept-Ranges: none` | implemented |
+| ZR-02 | a Range request is ignored, not refused | `Range: bytes=0-99` | 200 (never 416/206), no Content-Range, declaration stands | implemented |
+| ZR-03 | no validator invites If-Range | plain GET | no ETag, no Last-Modified, no Content-Length | implemented |

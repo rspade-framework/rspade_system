@@ -205,6 +205,21 @@ VALUE COERCION
         }
     }
 
+    TYPED VALUES: ACCEPTS
+        An input built to edit a declared TEXT column type (rsx:man
+        text_types) names that type - `static ACCEPTS = 'Rich_Text'`, a class
+        NAME, since inputs evaluate before rsx/lib in a bundle - and val()
+        then takes and returns the value OBJECT. The base class refuses a
+        mismatch in both directions: a typed value reaching an input with no
+        ACCEPTS, and a bare string or a value of another type reaching a
+        typed input. The refusal is the contract. An input never wraps a
+        string into its type to be accommodating, because that would make
+        the widget the one place deciding what encoding a string has. A
+        string arriving at a typed input is a call-site bug ('' as a form
+        default, a hand-built payload) and the throw is what surfaces it.
+        Inside the widget, _get_value() returns Type.from_editor(...) and
+        _set_value() reads value.to_storage(); nothing else converts.
+
 EXTENDING ANOTHER INPUT
 
     class Select_Ajax_Input extends Select_Input {

@@ -45,6 +45,16 @@
 | RDR-07 | An all-digits 64-char key is read as a KEY, not coerced to an id | php | key of 64 sevens | resolves to the right row | implemented | 2026-08-27 |
 | RDR-08 | get_all_attachments spans every category; equals the union of the per-category readers | php | 2 in one category, 1 in another | all = 3 = union | implemented | 2026-08-27 |
 | RDR-09 | get_all_attachments excludes soft-deleted rows | php | delete one of N | count drops by one | implemented | 2026-08-27 |
+| LBL-01 | The document family is distinguished: pdf/docx/xlsx/pptx/csv/txt get four different labels where file_type_id says "Document" for all | php | mime+extension pairs | PDF Document / Word Document / Excel Spreadsheet / PowerPoint Presentation / CSV File / Text File | implemented | 2026-09-14 |
+| LBL-02 | Derived from the PIPELINE mime: a .docx sniffing as application/zip is still a Word Document | php | application/zip + docx | "Word Document" | implemented | 2026-09-14 |
+| LBL-03 | The image sniff wins the other way: a webp saved as .png is a WebP Image | php | image/webp + png | "WebP Image" | implemented | 2026-09-14 |
+| LBL-04 | Image and archive families map to recognisable format names | php | jpeg/png/zip/7z | JPEG Image / PNG Image / ZIP Archive / 7-Zip Archive | implemented | 2026-09-14 |
+| LBL-05 | Generic fallbacks: unknown extension uppercases into "<EXT> File"; no extension is the bare word "File" (nulls tolerated) | php | xyz / exe / '' / null | XYZ File / EXE File / File / File | implemented | 2026-09-14 |
+| LBL-06 | A factory-created row arrives labelled, on the instance AND in the database | php | create_from_string('notes.txt') | "Text File" both reads | implemented | 2026-09-14 |
+| LBL-07 | The label is re-derived on EVERY save, not only create (repoint/re-derivation change mime+extension) | php | change extension+mime, save | "PDF Document" | implemented | 2026-09-14 |
+| LBL-08 | A caller-assigned label is overwritten by save() - the model derives it, the caller supplies bytes | php | hand-set label, save | derived label wins | implemented | 2026-09-14 |
+| LBL-09 | regenerate_file_type_labels() repairs stale rows including TRASHED ones, returns the changed count, and is a no-op on a second run | php | two rows stale via direct UPDATE, one soft-deleted | 2 then 0, both repaired | implemented | 2026-09-14 |
+| LBL-10 | The label rides toArray() as an ordinary column (no $appends), and field_length() answers 64 | php | toArray() of a created attachment | key present, "PDF Document", 64 | implemented | 2026-09-14 |
 | ATT-HTTP-01 | Real Content-Type on /_download and /_inline for old+new rows | http | GET endpoints | correct Content-Type header | planned | 2026-07-02 |
 | ATT-HTTP-02 | Thumbnail endpoints materialize + serve external attachments over the wire | http | GET /_thumbnail | 200 image/webp | planned | 2026-07-02 |
 | STO-01 | Row present, file missing: the bytes are rewritten under the SAME storage record (no duplicate-hash insert) | php | store_blob, unlink the blob, store_blob the same bytes | same id + hash, file restored, exactly one `_file_storage` row | implemented | 2026-08-22 |

@@ -42,6 +42,12 @@ use App\RSpade\Core\Time\Rsx_Time;
  * The framework will add more sophisticated enum support later, but this
  * provides the basic structure for categorizing uploaded files.
  *
+ * file_type_label is the HUMAN-FACING companion to that bucket: "PDF Document",
+ * "Excel Spreadsheet", "ZIP Archive". It is a derived, cosmetic column - a rendering
+ * and sorting convenience for a user-facing list, never a behavioural input. Nothing
+ * branches on it; file_type_id and the is_*() predicates answer what a file IS.
+ * See file_type_label_for() and regenerate_file_type_labels().
+ *
  * THE BASE OF A SPLIT MODEL. Every member of the framework's File_Attachment_Model lives here;
  * `File_Attachment_Model.php` beside it is a shell an application replaces by declaring
  * `class File_Attachment_Model extends File_Attachment_Model_Abstract` under rsx/models/ - so an
@@ -91,6 +97,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property string $destroyed_at
  * @property int $deleted_by_id
  * @property int $deleted_by_type
+ * @property string $file_type_label
  *
  * @property-read string $file_type_id__label
  * @property-read string $file_type_id__constant
@@ -1714,6 +1721,259 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         }
 
         return 7; // other
+    }
+    /**
+     * THE HUMAN-FACING TYPE LABEL MAP.
+     *
+     * Keyed by PIPELINE mime (resolve_pipeline_mime()), so a .docx that byte-sniffs as
+     * application/zip is a "Word Document" and a webp saved as .png is a "WebP Image" - the
+     * same signals file_type_id is decided on. Wording is "a format name a person recognises,
+     * then the family noun": PDF Document, Excel Spreadsheet, ZIP Archive, JPEG Image.
+     *
+     * GENERIC SNIFFS ARE DELIBERATELY ABSENT. text/plain and application/octet-stream are what
+     * libmagic answers when it has nothing specific to say, so mapping them here would make
+     * every .css, .php and .log a "Text File". They fall through to the extension table below.
+     *
+     * CHANGING THIS TABLE REQUIRES SHIPPING A MIGRATION THAT CALLS
+     * regenerate_file_type_labels(). The stored file_type_label column is a projection of this
+     * map; edit the map and every existing row is stale until it is recomputed. A one-line
+     * migration is the whole obligation:
+     *
+     *     public function up() { File_Attachment_Model::regenerate_file_type_labels(); }
+     *
+     * @var array<string, string>
+     */
+    protected const FILE_TYPE_LABEL_BY_MIME = [
+        // Documents
+        'application/pdf' => 'PDF Document',
+        'application/msword' => 'Word Document',
+        'application/vnd.ms-word' => 'Word Document',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document' => 'Word Document',
+        'application/vnd.ms-excel' => 'Excel Spreadsheet',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'Excel Spreadsheet',
+        'application/vnd.ms-powerpoint' => 'PowerPoint Presentation',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation' => 'PowerPoint Presentation',
+        'application/vnd.oasis.opendocument.text' => 'OpenDocument Text',
+        'application/vnd.oasis.opendocument.spreadsheet' => 'OpenDocument Spreadsheet',
+        'application/vnd.oasis.opendocument.presentation' => 'OpenDocument Presentation',
+        'application/rtf' => 'Rich Text Document',
+        'text/rtf' => 'Rich Text Document',
+        'text/csv' => 'CSV File',
+        'text/markdown' => 'Markdown Document',
+        'text/html' => 'HTML Document',
+        'application/json' => 'JSON File',
+        'application/xml' => 'XML File',
+        'text/xml' => 'XML File',
+        'application/epub+zip' => 'EPUB Book',
+
+        // Images
+        'image/jpeg' => 'JPEG Image',
+        'image/png' => 'PNG Image',
+        'image/gif' => 'GIF Image',
+        'image/webp' => 'WebP Image',
+        'image/svg+xml' => 'SVG Image',
+        'image/bmp' => 'Bitmap Image',
+        'image/tiff' => 'TIFF Image',
+        'image/heic' => 'HEIC Image',
+        'image/heif' => 'HEIF Image',
+        'image/avif' => 'AVIF Image',
+        'image/x-icon' => 'Icon Image',
+        'image/vnd.microsoft.icon' => 'Icon Image',
+        'image/vnd.adobe.photoshop' => 'Photoshop Image',
+
+        // Video
+        'video/mp4' => 'MP4 Video',
+        'video/quicktime' => 'QuickTime Video',
+        'video/x-msvideo' => 'AVI Video',
+        'video/webm' => 'WebM Video',
+        'video/x-matroska' => 'Matroska Video',
+        'video/mpeg' => 'MPEG Video',
+        'video/3gpp' => '3GPP Video',
+        'video/x-ms-wmv' => 'Windows Media Video',
+        'video/x-flv' => 'Flash Video',
+
+        // Audio
+        'audio/mpeg' => 'MP3 Audio',
+        'audio/mp4' => 'M4A Audio',
+        'audio/wav' => 'WAV Audio',
+        'audio/x-wav' => 'WAV Audio',
+        'audio/flac' => 'FLAC Audio',
+        'audio/x-flac' => 'FLAC Audio',
+        'audio/aac' => 'AAC Audio',
+        'audio/ogg' => 'Ogg Audio',
+        'audio/aiff' => 'AIFF Audio',
+        'audio/x-aiff' => 'AIFF Audio',
+        'audio/x-ms-wma' => 'Windows Media Audio',
+
+        // Archives
+        'application/zip' => 'ZIP Archive',
+        'application/x-zip-compressed' => 'ZIP Archive',
+        'application/x-7z-compressed' => '7-Zip Archive',
+        'application/x-rar' => 'RAR Archive',
+        'application/x-rar-compressed' => 'RAR Archive',
+        'application/vnd.rar' => 'RAR Archive',
+        'application/x-tar' => 'TAR Archive',
+        'application/gzip' => 'GZIP Archive',
+        'application/x-gzip' => 'GZIP Archive',
+        'application/x-bzip2' => 'BZIP2 Archive',
+        'application/x-xz' => 'XZ Archive',
+        'application/x-iso9660-image' => 'Disc Image',
+        'application/x-apple-diskimage' => 'Apple Disk Image',
+    ];
+
+    /**
+     * The second half of the map: formats the BYTE SNIFF cannot distinguish, keyed by
+     * extension. Everything in here sniffs as a generic type (text/plain for source and
+     * config files, application/octet-stream for opaque binaries), so the mime table above
+     * has nothing to say about it and the extension is the only signal there is.
+     *
+     * The same regeneration rule applies to this table as to the one above.
+     *
+     * @var array<string, string>
+     */
+    protected const FILE_TYPE_LABEL_BY_EXTENSION = [
+        'txt' => 'Text File',
+        'log' => 'Log File',
+        'md' => 'Markdown Document',
+        'csv' => 'CSV File',
+        'json' => 'JSON File',
+        'xml' => 'XML File',
+        'html' => 'HTML Document',
+        'htm' => 'HTML Document',
+        'css' => 'CSS File',
+        'scss' => 'SCSS File',
+        'js' => 'JavaScript File',
+        'ts' => 'TypeScript File',
+        'php' => 'PHP File',
+        'py' => 'Python File',
+        'rb' => 'Ruby File',
+        'go' => 'Go File',
+        'rs' => 'Rust File',
+        'java' => 'Java File',
+        'sql' => 'SQL File',
+        'sh' => 'Shell Script',
+        'bash' => 'Shell Script',
+        'yml' => 'YAML File',
+        'yaml' => 'YAML File',
+        'ini' => 'Configuration File',
+        'conf' => 'Configuration File',
+        'psd' => 'Photoshop Image',
+        'ai' => 'Illustrator Document',
+        'pages' => 'Pages Document',
+        'numbers' => 'Numbers Spreadsheet',
+        'epub' => 'EPUB Book',
+    ];
+
+    /**
+     * The human-facing type label for a file, derived from its sniffed mime and extension.
+     *
+     * THIS VALUE IS COSMETIC. It is a convenience for RENDERING and SORTING a file type in a
+     * user-facing list, and it is NEVER a behavioural input - nothing may branch on it, and
+     * no code may compare it to a string to decide what a file IS. file_type_id and the
+     * is_image() / is_video() / is_document() predicates are the only sanctioned way to ask
+     * that question; this is what a person reads in a Type column.
+     *
+     * The mime is resolved through resolve_pipeline_mime() - NOT pipeline_mime(), which
+     * generalizes a degraded attachment to application/octet-stream. A PNG whose bytes would
+     * not parse is still a "PNG Image" to the person looking at the list; what it is not is
+     * previewable, and preview_unavailable is the column that says so.
+     *
+     * Resolution order: the exact pipeline-mime table, then the extension table for the
+     * formats a generic sniff cannot distinguish, then the generic form - the uppercased
+     * extension plus " File" ("EXE File", "XYZ File"), or the bare word "File" when the
+     * upload had no extension at all.
+     *
+     * #[Replaceable] so an application override (which EXTENDS this class) can widen the map
+     * without chaining. An override that adds labels owes its own regeneration - see
+     * regenerate_file_type_labels().
+     *
+     * @param string|null $mime_type The STORED sniffed mime type.
+     * @param string|null $extension The STORED file extension (case-insensitive, no dot).
+     * @return string
+     */
+    #[Replaceable]
+    public static function file_type_label_for(?string $mime_type, ?string $extension): string
+    {
+        $pipeline_mime = strtolower(trim(static::resolve_pipeline_mime($mime_type, $extension)));
+        $ext = strtolower(trim((string) $extension));
+
+        if (isset(static::FILE_TYPE_LABEL_BY_MIME[$pipeline_mime])) {
+            return static::FILE_TYPE_LABEL_BY_MIME[$pipeline_mime];
+        }
+
+        if ($ext !== '' && isset(static::FILE_TYPE_LABEL_BY_EXTENSION[$ext])) {
+            return static::FILE_TYPE_LABEL_BY_EXTENSION[$ext];
+        }
+
+        if ($ext === '') {
+            return 'File';
+        }
+
+        return strtoupper($ext) . ' File';
+    }
+
+    /**
+     * Recompute file_type_label for EVERY attachment row - all sites, trashed and destroyed
+     * rows included, because the label is a property of the BYTES and not of the row's state.
+     *
+     * THE RULE THIS EXISTS FOR: changing FILE_TYPE_LABEL_BY_MIME / FILE_TYPE_LABEL_BY_EXTENSION
+     * (or a file_type_label_for() override that widens them) leaves every stored label stale,
+     * so such a change ships a migration whose whole body is a call to this function.
+     *
+     * A row is written only when its stored label actually differs, through a DIRECT
+     * prepared UPDATE on the row id rather than through save(). That is deliberate: this
+     * is a derived cosmetic column, and routing a backfill through the model layer would fire
+     * a revision document, a realtime frame and every after_* hook per row, for a value no
+     * reader may branch on.
+     *
+     * The walk is a keyset-paged result set - no LIMIT, no batch ceiling. It processes every
+     * row it promised to process.
+     *
+     * @return int The number of rows whose label changed.
+     */
+    public static function regenerate_file_type_labels(): int
+    {
+        $changed = 0;
+
+        static::without_site_scope(function () use (&$changed) {
+            $rows = static::withTrashed()
+                ->select(['id', 'mime_type', 'file_extension', 'file_type_label'])
+                ->result_set();
+
+            foreach ($rows as $row) {
+                $label = static::file_type_label_for($row->mime_type, $row->file_extension);
+
+                if ((string) $row->file_type_label === $label) {
+                    continue;
+                }
+
+                \Illuminate\Support\Facades\DB::statement(
+                    'UPDATE ' . (new static())->getTable() . ' SET file_type_label = ? WHERE id = ?',
+                    [$label, $row->id]
+                );
+
+                $changed++;
+            }
+        });
+
+        return $changed;
+    }
+
+    /**
+     * Derive file_type_label on EVERY write, not only on create: repoint_storage() and the
+     * re-derivation paths change mime_type / file_extension on an existing row, and the label
+     * is a projection of exactly those two columns. No caller sets it; a caller that does is
+     * overwritten here, which is the contract - the caller supplies the bytes, the model
+     * derives the label.
+     *
+     * @param array $options
+     * @return bool
+     */
+    public function save(array $options = [])
+    {
+        $this->file_type_label = static::file_type_label_for($this->mime_type, $this->file_extension);
+
+        return parent::save($options);
     }
 
     /**

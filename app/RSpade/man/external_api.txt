@@ -365,8 +365,13 @@ FILE ENDPOINTS
 
     Optional filename_override stores the file under a different name. The
     response is the file payload: key, id, file_name, file_extension, mime_type,
-    file_type, size, width/height, is_animated, duration, has_thumbnail,
-    preview_unavailable, and absolute urls{download,inline,thumbnail,preview}.
+    file_type, file_type_label, size, width/height, is_animated, duration,
+    has_thumbnail, preview_unavailable, and absolute
+    urls{download,inline,thumbnail,preview}.
+
+    file_type is the coarse engine bucket ("Document"); file_type_label is the
+    human-facing format name ("PDF Document", "Excel Spreadsheet"). The label is
+    for display and sorting only - see rsx:man file_upload, FILE TYPE DETECTION.
 
     The upload gate applies here exactly as it does to POST /_upload: an app with
     no file.upload.authorize handler gets a loud 5xx, not an open endpoint, and a

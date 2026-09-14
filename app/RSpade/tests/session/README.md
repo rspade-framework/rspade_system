@@ -23,6 +23,9 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 ## Source files
 
 - `app/RSpade/Core/Session/Session.php` - the facade + the `_sessions` Eloquent model
+- `app/RSpade/Commands/Rsx/Ajax_Debug_Command.php` - `rsx:ajax`, whose `--user`/`--site`
+  establish a CLI identity through `Session::impersonate()` (`Ajax_Debug_Identity_Test`, with
+  the fixture endpoint `Ajax_Debug_Identity_Fixture_Controller` beside it)
 - `app/RSpade/Core/Session/User_Agent.php` - user-agent parsing
 - `app/RSpade/Core/Session/Login_History.php` (and `_login_history` table)
 - `app/RSpade/Core/Auth/RsxAuth.php` - attempt() / login() / logout()

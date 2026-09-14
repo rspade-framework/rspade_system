@@ -68,12 +68,27 @@ Related framework capabilities on the file-attachment subsystem:
    site, so they stay tenant-correct inside a `without_site_scope()` callback, which suspends the
    ordinary global scope for every site model at once.
 
+8. **The human-facing type label** - `file_type_label`, a stored, indexed VARCHAR(64) on
+   `_file_attachments` that carries the format name a person recognises ("PDF Document",
+   "Excel Spreadsheet", "ZIP Archive") where `file_type_id__label` says only "Document" for all
+   three. Derived by ONE `#[Replaceable]` pure static, `file_type_label_for($mime_type,
+   $extension)`, over the PIPELINE mime (so a zip-sniffed .docx is a Word Document and a webp
+   saved as .png is a WebP Image) - an exact mime table, then an extension table for the formats
+   a generic sniff cannot distinguish, then the generic "<EXT> File" / "File". Written by the
+   model on EVERY save, never by a caller. The column is a RENDERING and SORTING convenience and
+   is never a behavioural input: `file_type_id` and the `is_*()` predicates stay the only way to
+   ask what a file is. `regenerate_file_type_labels()` is the maintenance half - changing the map
+   ships a migration that calls it - and it walks every row, all sites, trashed included, writing
+   only what differs through a direct query-builder UPDATE rather than save().
+
 ## Source under test
 
 - `system/app/RSpade/Core/Files/File_Attachment_Model.php` (residency APIs, ingest metadata,
   `fileable()`, the `Staff_Authorizable` adoption)
 - `system/app/RSpade/Core/Auth/Staff_Authorizable.php` (`can_view()` / `scope_can_view()`)
 - `system/app/RSpade/Core/Files/File_Storage_Model.php` (`store_blob`)
+- `system/app/RSpade/Core/Files/File_Attachment_Model_Abstract.php` (`file_type_label_for()`,
+  `regenerate_file_type_labels()`, the `save()` derivation)
 - `system/app/RSpade/Core/Files/File_Attachment_Controller.php` (upload gate, serve paths, renderer registry)
 - `system/app/RSpade/Core/Events/Event_Registry.php` (`has_handlers()` + the test-handler seam)
 - `system/app/RSpade/Core/Files/Rsx_Attachment_Handler_Abstract.php`
@@ -112,6 +127,11 @@ Related framework capabilities on the file-attachment subsystem:
   was removed from disk rewrites them under that SAME record (the row and its attachments stay
   valid, and the uniquely-indexed hash is never inserted twice), corrects a stale recorded size,
   and leaves an intact blob's dedup path untouched.
+  Plus the human-facing type label: the derivation table across the document, image and archive
+  families, the pipeline-mime policy in both directions (a zip-sniffed .docx, a webp saved as
+  .png), the two generic fallbacks, the model writing the column on every save and overwriting a
+  caller-assigned value, the regeneration walk repairing stale and trashed rows and reporting
+  only what it changed, and the label riding toArray() as an ordinary column.
 - http (not yet implemented): real Content-Type headers on `/_download` / `/_inline`; thumbnail
   endpoints for external attachments over the wire.
 

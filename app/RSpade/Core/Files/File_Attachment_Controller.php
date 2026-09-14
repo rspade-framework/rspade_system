@@ -308,6 +308,9 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
                 'key' => $attachment->key,
                 'file_name' => $attachment->file_name,
                 'file_type' => $attachment->file_type_id__label,
+                // The human-facing format name ("PDF Document"); file_type above stays the
+                // coarse engine bucket. Cosmetic - nothing branches on it.
+                'file_type_label' => $attachment->file_type_label,
                 'file_extension' => $attachment->file_extension,
                 'url' => $attachment->get_url(),
                 'download_url' => $attachment->get_download_url(),
@@ -691,6 +694,19 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Defeat nginx proxy buffering so the archive streams to the client immediately.
         $response->headers->set('X-Accel-Buffering', 'no');
         $response->headers->set('Cache-Control', 'no-store');
+        // A transfer of this archive is RESTARTABLE, NOT RESUMABLE, and this header says so.
+        // The archive is generated as it streams (no Content-Length is possible), and two
+        // generations of the same key are not byte-identical: Zip_Stream stamps every member
+        // with the wall-clock DOS mod-time at stream-open, and a member whose bytes cannot be
+        // resolved becomes an error marker on that run only. A byte-range resume would splice a
+        // later generation onto an earlier one and corrupt the archive whenever the two
+        // requests straddle a two-second DOS-time tick. Declaring no range support stops a
+        // download accelerator probing for a split (each parallel attempt is a FULL server-side
+        // regeneration) and stops a naive resumer appending a 200 body to a partial file. A
+        // Range request is deliberately ignored and answered 200, never 416 (RFC 9110 s14.2);
+        // no ETag or Last-Modified is set, because a validator that looks stable but is not
+        // invites If-Range and is worse than none.
+        $response->headers->set('Accept-Ranges', 'none');
 
         return $response;
     }

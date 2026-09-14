@@ -378,6 +378,20 @@ TESTING
     ---------------------
     php artisan rsx:ajax Controller action --args='{"id":1}'
 
+    Run as a user
+    -------------
+    php artisan rsx:ajax Controller action --user=<id|email> [--site=<id>]
+
+    --user establishes the WHOLE identity the endpoint will see - the login
+    identity, the site, and the site user (users.id) resolved for that login
+    identity on that site - through Session::impersonate(). With no --site the
+    site is the one the login identity has a users row on; a login identity with
+    rows on several sites, or on none, is refused with error_type site_required
+    until --site chooses. A login identity with no users row on the chosen site
+    is a real state and runs with Session::get_user_id() null; --show-context
+    prints all three parts, that null included, so a user-scoped endpoint that
+    answers "nothing" is never a silent surprise.
+
     Test Validation Error
     ---------------------
     php artisan rsx:ajax Controller action --args='{"id":""}'

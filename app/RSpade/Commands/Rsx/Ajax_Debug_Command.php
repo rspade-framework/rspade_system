@@ -16,6 +16,7 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxFatalErrorException;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Models\Site_Model;
 
 /**
@@ -65,8 +66,8 @@ class Ajax_Debug_Command extends Command
         {controller : The RSX controller name}
         {action : The action/method name}
         {--args= : JSON-encoded arguments to pass to the action}
-        {--user= : Set user ID or email for session context}
-        {--site= : Set site ID for session context}
+        {--user= : Run as this login identity (login_users id or email); the site user is resolved from it}
+        {--site= : Run under this site (required when the login identity has users rows on several sites)}
         {--debug : Wrap output in HTTP-like response format (success, _ajax_return_value, console_debug)}
         {--show-context : Show request context before JSON output}';
 
@@ -125,15 +126,37 @@ class Ajax_Debug_Command extends Command
         // Rotate logs before test
         Debugger::logrotate();
 
-        // Set session context if provided
+        // Establish the session context. An identity has three parts - the site, the LOGIN
+        // identity (login_users.id) and the SITE user (users.id) - and a user-scoped endpoint
+        // reads the third. Session::set_login_user_id() sets only the second: in CLI mode
+        // get_user_id() answers from a static that nothing derives, so a command that set the
+        // login identity alone ran every user-scoped endpoint as nobody, with a correct actor
+        // stamp and no warning (a downstream field report, 2026-09-04). Session::impersonate()
+        // sets all three, so it is the one call made when a login identity is given.
         if ($user_id !== null) {
-            Session::set_login_user_id((int)$user_id);
+            if ($site_id === null) {
+                $site_id = $this->resolve_site_for_login_user((int) $user_id);
+                if ($site_id === null) {
+                    return 1; // Error already displayed
+                }
+            }
+
+            $site_user = $this->resolve_site_user((int) $user_id, (int) $site_id);
+
+            Session::impersonate((int) $site_id, (int) $user_id, $site_user);
+
             if ($show_context) {
                 $this->error("Set login_user_id to {$user_id}");
+                $this->error("Set site_id to {$site_id}");
+                if ($site_user !== null) {
+                    $this->error("Set user_id to {$site_user} (the users row of login user {$user_id} on site {$site_id})");
+                } else {
+                    // Not an error: a cross-site login with no presence on this tenant is a
+                    // real state. It is the state that used to be silent, so it is named.
+                    $this->error("Set user_id to NULL: login user {$user_id} has no users row on site {$site_id}, so Session::get_user_id() answers null and a user-scoped endpoint sees no user");
+                }
             }
-        }
-
-        if ($site_id !== null) {
+        } elseif ($site_id !== null) {
             Session::set_site_id((int)$site_id);
             if ($show_context) {
                 $this->error("Set site_id to {$site_id}");
@@ -262,6 +285,56 @@ class Ajax_Debug_Command extends Command
         }
 
         return $user_id;
+    }
+
+    /**
+     * The users.id of a login identity on one site, or null when it has no row there.
+     *
+     * Read outside the site scope: the scope keys on Session::get_site_id(), which is
+     * what this lookup is about to establish.
+     */
+    protected function resolve_site_user(int $login_user_id, int $site_id): ?int
+    {
+        return User_Model::without_site_scope(function () use ($login_user_id, $site_id) {
+            $user = User_Model::where('login_user_id', $login_user_id)
+                ->where('site_id', $site_id)
+                ->first();
+
+            return $user ? (int) $user->id : null;
+        });
+    }
+
+    /**
+     * The site to run under when --site was not given: the one site the login identity
+     * has a users row on. A web request always runs under a site (it is resolved from
+     * the host), so an endpoint run under no site at all is not a state worth
+     * reproducing; when the answer is not unique the caller is told to choose.
+     *
+     * @return int|null Site id, or null if not resolvable (error already displayed)
+     */
+    protected function resolve_site_for_login_user(int $login_user_id): ?int
+    {
+        $site_ids = User_Model::without_site_scope(function () use ($login_user_id) {
+            return User_Model::where('login_user_id', $login_user_id)
+                ->orderBy('site_id')
+                ->get()
+                ->pluck('site_id')
+                ->unique()
+                ->values()
+                ->all();
+        });
+
+        if (count($site_ids) === 1) {
+            return (int) $site_ids[0];
+        }
+
+        if (count($site_ids) === 0) {
+            $this->output_json_error("Login user {$login_user_id} has no users row on any site; pass --site=<id> to choose the site to run under", 'site_required');
+            return null;
+        }
+
+        $this->output_json_error("Login user {$login_user_id} has users rows on sites " . implode(', ', $site_ids) . "; pass --site=<id> to choose one", 'site_required');
+        return null;
     }
 
     /**

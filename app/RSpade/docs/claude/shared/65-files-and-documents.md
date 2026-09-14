@@ -6,6 +6,8 @@ Two models, one dedup boundary: `File_Storage_Model` = the physical content-addr
 
 **The upload gate is MANDATORY.** Both upload transports THROW when no `file.upload.authorize` handler is registered — an unhandled gate would be an anonymous upload endpoint. Every app ships one handler in `/rsx/handlers/` (minimum: require login).
 
+**`file_type_label` is the human-facing type** — a stored, indexed VARCHAR the model derives on every save (`file_type_label_for()`, `#[Replaceable]`): "PDF Document", "Excel Spreadsheet", "ZIP Archive" where `file_type_id__label` says only "Document". **Render and SORT a Type column on it; never branch on it** — `file_type_id` and the `is_*()` predicates are what a file IS. Changing the map ships a migration calling `regenerate_file_type_labels()`.
+
 **`$attachment->fileable` is the polymorphic parent** — a framework `#[Relationship]` `morphTo()`, read as a PROPERTY (the method form is for the relation object, `->fileable()->withTrashed()`); the integer discriminator is transparent, so **never hand-roll a fileable accessor**. **`can_view()` / `scope_can_view()` (`Staff_Authorizable`) is the staff-realm read seam** — row and set, permissive by default, and a model's own declaration beats the trait's. It is the twin of the portal's `portal_can_read()`, and **it exists so an app never class-overrides a core model just to attach a visibility pair**.
 
 **Never hardcode the size ceiling in a label** — "Max size 25MB" is wrong the day the limit changes and nothing breaks to tell you. One number both languages read (`config('rsx.files.max_file_size')` / `window.rsxapp.files.max_file_size`), rendered by `Ajax::max_file_size_human()` / `Ajax.max_file_size_human()`. **`0` means UNLIMITED, never "reject everything".**

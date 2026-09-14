@@ -188,6 +188,19 @@ Two different routes. There is no `?download=1` query parameter.
 
 (Resolve those two URLs server-side in `fetch()`/an endpoint and pass them down — `get_url()` is PHP.)
 
+### The Type column of a file listing is `file_type_label`
+
+```php
+$attachment->file_type_label;      // "PDF Document" / "Excel Spreadsheet" / "ZIP Archive"
+$attachment->file_type_id__label;  // "Document" - for all three of the above
+```
+
+`file_type_id` is a seven-value engine enum, so a Type column built from it cannot tell a PDF, a Word file, a workbook and a CSV apart. **`file_type_label` is the column a person reads**, and it is a real indexed VARCHAR — so it is also the column to SORT on (`$sortable_columns`, `orderBy('file_type_label')`); sorting on `file_type_id` sorts by an internal enum id. It rides `toArray()` like any other column, so JS gets it with no plumbing.
+
+**`file_type_label` is cosmetic and nothing branches on it.** `file_type_id` and `is_image()` / `is_video()` / `is_document()` stay the behavioural enum — never compare the label to a string to decide what a file is.
+
+The map lives in `File_Attachment_Model_Abstract` and the derivation is one `#[Replaceable]` static, `file_type_label_for($mime_type, $extension)`, so an override that EXTENDS the base can widen it. **Widening it obliges a migration that calls `File_Attachment_Model::regenerate_file_type_labels()`** — the stored labels are a projection of the map and are stale the moment it changes. See `rsx:man file_upload` (FILE TYPE DETECTION, Human-facing label).
+
 ### Thumbnails: `<Attachment_Thumbnail>` is the way, and the only way
 
 ```jqhtml
@@ -240,6 +253,7 @@ $attachment->key;             // unguessable identifier used in every URL
 $attachment->file_name;       // original filename
 $attachment->file_extension;  // lowercased, no dot
 $attachment->mime_type;
+$attachment->file_type_label;  // human-facing format name; display + sort only
 $attachment->get_size();      // bytes (works even for externally-resident bytes)
 $attachment->fileable_type;   // polymorphic PAIR with fileable_id (+ fileable_category)
 $attachment->fileable;        // the PARENT RECORD itself (null while unclaimed)

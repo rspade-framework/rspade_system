@@ -154,9 +154,25 @@ class Entity_Tag_Input extends Form_Input_Abstract {
 }
 ```
 
-`val()` gets and sets a value **object**. Both directions are refused on a mismatch. A form
-need not name the widget — `<{Comment_Model.editor_for('body')} $name="body" />` asks the
-column (see the `jqhtml` skill's `reference/dynamic-tags-and-printers.md`).
+`val()` gets and sets a value **object**. Both directions are refused on a mismatch — **a bare
+string included, and that is the rule, not a strictness to soften.** An editor that accepted a
+string and wrapped it would be deciding what encoding the string has, which is the one decision
+no widget may make. When a typed input throws on a string, fix the call site that produced it
+(a `''` form default, a hand-built payload, an undeclared column wired to a typed widget); never
+add a tolerant branch to the widget. A form need not name the widget —
+`<{Comment_Model.editor_for('body')} $name="body" />` asks the column (see the `jqhtml` skill's
+`reference/dynamic-tags-and-printers.md`).
+
+## The envelope is the value, everywhere it travels
+
+A typed value leaves the server as `{__TEXT, raw, empty}` on **every** payload — `fetch()`, a
+list, a relationship, an `/api/vN` response — and is never flattened to a string for a
+consumer's convenience, not for a page and not for an external client. Flattening puts the
+guessing back at the consumer, which is the failure this feature ends. The envelope is a black
+box only the widgets built for its type understand: a template interpolates it with no
+hydration call because the PRINTER is the one thing that can render it. A consumer that needs
+a plain rendition gets a deliberate extra key from the endpoint (`to_text()`), never a rewritten
+column.
 
 ## What happens on an Ajax POST
 
@@ -254,6 +270,9 @@ plausible. Say what you mean: `to_text()`, `to_html()`, `is_empty()` — and onl
 type defines them.
 
 **A wrapping encoding must override `is_empty()`.** The default is the raw form.
+
+**"Just give the API client the string" is the same mistake as `=== ''`.** The external API
+emits the envelope. See the section above.
 
 **Changing a column's type is two acts, in order**: a migration that re-encodes the rows
 (`Type::from_string()`), then the declaration change.

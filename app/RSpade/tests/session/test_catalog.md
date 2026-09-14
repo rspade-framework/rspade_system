@@ -1,7 +1,7 @@
 # Test catalog: session
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues) | `planned`.
-Type: php / cli / asset / http / playwright. Last updated: 2026-08-30.
+Type: php / cli / asset / http / playwright. Last updated: 2026-09-14.
 
 ## Session_Cli_Test (php, default isolation) - CLI impersonation & resolvers
 
@@ -299,3 +299,21 @@ The two methods are ONE test and their order is the mechanism.
 | sess-templeak-02 | the next test does not inherit it | the following method | `has_temporary_site_id()` false | implemented |
 | sess-templeak-03 | acting as a site means something again | `__acting_as_site(42)` | `get_site_id()` is 42, not the leaked tenant | implemented |
 
+
+## Ajax_Debug_Identity_Test (php, default isolation) - `rsx:ajax --user=` establishes the whole identity
+
+Runs the command in-process (Artisan::call) against `Ajax_Debug_Identity_Fixture_Controller`,
+an endpoint that reports the three identity parts as it sees them. Pins the 2026-09-04 field
+report: the command used to set only the login identity, so `get_user_id()` answered null in
+every user-scoped endpoint while the actor stamp was correct.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-ajaxdbg-01 | --user + --site set all three parts | `--user=1 --site=<baseline>` | login 1, site, users.id 1 | implemented |
+| sess-ajaxdbg-02 | email form resolves the same | `--user=<email of login 1>` | users.id 1 | implemented |
+| sess-ajaxdbg-03 | site resolved from the single users row | `--user=1` (no --site) | baseline site, users.id 1 | implemented |
+| sess-ajaxdbg-04 | no users row on the site is a real state, named | login user with no row, `--site --show-context` | exit 0, user_id null, context line says NULL and why | implemented |
+| sess-ajaxdbg-05 | --show-context prints the resolved site user | `--user=1 --site --show-context` | "Set user_id to 1 (...)" | implemented |
+| sess-ajaxdbg-06 | no site anywhere, no --site: refused | login user with no rows | exit 1, `site_required`, names --site | implemented |
+| sess-ajaxdbg-07 | several sites, no --site: refused | rows on sites A and B | exit 1, `site_required`, lists A and B | implemented |
+| sess-ajaxdbg-08 | several sites, --site chooses | rows on A and B, `--site=B` | site B and B's users row | implemented |

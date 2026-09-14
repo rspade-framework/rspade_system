@@ -170,6 +170,17 @@ class Checkbox_Input extends Form_Input_Abstract {
 }
 ```
 
+## Typed values: `ACCEPTS`
+
+An input that edits a declared TEXT column type (skill `rspade:text-types`) names it with
+`static ACCEPTS = 'Rich_Text'` (a class NAME string). `val()` then takes and returns the value
+**object**, and the base class refuses a mismatch in both directions — a typed value at an input
+with no `ACCEPTS`, and a bare string or another type at a typed input. **Never add a branch that
+accepts a string and wraps it**: the widget would become the one place deciding a string's
+encoding. A string reaching a typed input is a call-site bug (`''` as a form default, a
+hand-built payload); the throw is how it is found. `_get_value()` returns `Type.from_editor(...)`
+and `_set_value()` reads `value.to_storage()`; nothing else converts.
+
 ## Extending an existing input
 
 Adding behaviour to a parent's setter overrides `_set_value()` and calls

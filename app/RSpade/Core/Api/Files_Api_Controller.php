@@ -317,6 +317,9 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
             'file_extension' => $attachment->file_extension,
             'mime_type' => $attachment->mime_type,
             'file_type' => $attachment->file_type_id__label,
+            // The human-facing format name ("PDF Document"); file_type above stays the
+            // coarse engine bucket. Cosmetic - nothing branches on it.
+            'file_type_label' => $attachment->file_type_label,
             'size' => $attachment->get_size(),
             'width' => $attachment->width,
             'height' => $attachment->height,

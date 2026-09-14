@@ -99,6 +99,8 @@ MODELS
             file_size          Authoritative byte size. Works WITHOUT a resident
                                blob; get_size() reads this column directly.
             file_type_id       Coarse enum bucket (see FILE TYPE DETECTION)
+            file_type_label    Human-facing format name, derived and indexed
+                               (see FILE TYPE DETECTION, Human-facing label)
             width / height     Pixel dimensions (images/video), else null
             duration           Media duration in seconds, else null
             is_animated        True for animated GIF/WebP, etc.
@@ -551,6 +553,83 @@ FILE TYPE DETECTION
         "is this a document / is this previewable" question wrongly for it.
         FILE_TYPE_TEXT remains a valid enum value that nothing assigns.
 
+    Human-facing label (file_type_label)
+        file_type_id answers what a file IS; it is the wrong thing to show a
+        person. A Type column built from file_type_id__label reads "Document"
+        for a PDF, a Word file, a workbook and a CSV alike. file_type_label is
+        the format name a user recognises:
+
+            echo $file->file_type_label;   // "PDF Document"
+                                           // "Excel Spreadsheet"
+                                           // "ZIP Archive", "JPEG Image"
+
+        It is a stored VARCHAR(64) column on _file_attachments, indexed
+        (idx_file_attachments_file_type_label), so a file listing sorts and
+        filters on it in SQL:
+
+            $query->orderBy('file_type_label');
+            $query->where('file_type_label', 'Excel Spreadsheet');
+
+        In a DataGrid it is the column to name in $sortable_columns; sorting on
+        file_type_id sorts by an internal enum id, which is neither alphabetical
+        nor meaningful. Being an ordinary column it rides toArray() like any
+        other - no $appends entry - so it reaches the JS record on every payload,
+        and Model.field_length('file_type_label') answers 64.
+
+        NEVER A BEHAVIOURAL INPUT
+            The column is a RENDERING and SORTING convenience. Nothing may
+            branch on it and no code may compare it to a string to decide what a
+            file is. file_type_id and the is_image() / is_video() /
+            is_document() predicates remain the only sanctioned way to ask that.
+
+        DERIVATION
+            File_Attachment_Model::file_type_label_for(?string $mime_type,
+            ?string $extension): string is one pure static, #[Replaceable] so an
+            application override (which EXTENDS File_Attachment_Model_Abstract)
+            can widen the map. It resolves the PIPELINE mime first - so a .docx
+            sniffing as application/zip is a "Word Document" and a webp saved as
+            .png is a "WebP Image" - then applies, in order:
+
+                1. the exact pipeline-mime table (documents, images, video,
+                   audio, archives);
+                2. an extension table, for the formats a generic sniff
+                   (text/plain, application/octet-stream) cannot distinguish;
+                3. the generic form - uppercased extension plus " File"
+                   ("EXE File", "XYZ File"), or the bare word "File" when the
+                   upload had no extension.
+
+            Deliberately NOT pipeline_mime(): that generalizes a degraded
+            attachment to application/octet-stream, and a PNG whose bytes would
+            not parse is still a "PNG Image" to a person (preview_unavailable is
+            the column that says it cannot be previewed).
+
+        WRITTEN BY THE MODEL, ON EVERY SAVE
+            File_Attachment_Model::save() derives the column before every write,
+            create and update alike, because repoint_storage() and the
+            re-derivation paths change mime_type / file_extension on an existing
+            row. No caller sets it; a caller that does is overwritten.
+
+        REGENERATION IS THE MAINTENANCE RULE
+            The stored value is a projection of the map. CHANGING THE MAP - here
+            or in an override that widens it - REQUIRES SHIPPING A MIGRATION
+            THAT CALLS THE REGENERATION FUNCTION, or every existing row keeps
+            the old wording:
+
+                public function up()
+                {
+                    File_Attachment_Model::regenerate_file_type_labels();
+                }
+
+            regenerate_file_type_labels(): int walks EVERY row - all sites,
+            trashed included, since the label is a property of the bytes and not
+            of the row's state - as a keyset-paged result set with no batch
+            ceiling, writes only the rows whose stored label differs, and returns
+            how many changed. It writes through a direct query-builder UPDATE
+            rather than save(): the column is derived and cosmetic, and routing a
+            backfill through the model layer would fire a revision document, a
+            realtime frame and every after_* hook per row for a value no reader
+            may branch on.
+
     Derived properties on the attachment payload
         is_image / is_video / is_document / can_open_inline are declared in
         $appends, so they ride toArray() and reach the JS record on every
@@ -692,6 +771,7 @@ UPLOAD ENDPOINT
             "key": "<64-hex>",
             "file_name": "document.pdf",
             "file_type": "Document",
+            "file_type_label": "PDF Document",
             "file_extension": "pdf",
             "url": "/_inline/<64-hex>",
             "download_url": "/_download/<64-hex>",
@@ -943,6 +1023,19 @@ MULTI-FILE ZIP DOWNLOAD
     Limits (NO ZIP64 in v1 - rejected up front): total <= 4,000,000,000 bytes;
     no single file at/above 0xFFFFFFFF bytes; at most 65,000 entries. Exceeding
     any of these throws before streaming. (ZIP64 is backlogged.)
+
+    Restartable, not resumable
+        The response is streamed with no Content-Length (the archive is
+        generated as it goes) and carries Accept-Ranges: none. That header is a
+        statement of fact: two generations of the same key are not
+        byte-identical (every member is stamped with the wall-clock DOS mod-time
+        at stream-open, and a member whose bytes cannot be resolved becomes an
+        error marker on that run only), so a byte-range resume would splice one
+        generation onto another and corrupt the archive. A Range request is
+        ignored and answered 200 with the whole archive, never 416; no ETag or
+        Last-Modified is set, so nothing invites If-Range. A download that stops
+        is started again from the beginning, and chunked framing means a
+        truncated transfer is detectable (the terminal chunk is missing).
 
 THUMBNAILS
 
