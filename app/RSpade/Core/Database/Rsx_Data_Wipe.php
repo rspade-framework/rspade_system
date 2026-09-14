@@ -166,6 +166,56 @@ class Rsx_Data_Wipe
         return $password === '' ? [] : ['MYSQL_PWD' => $password];
     }
 
+    /**
+     * THE DEFINER FILTER every dump the framework produces passes through.
+     *
+     * mysqldump writes the account that owns each trigger, view, routine and event into the
+     * dump - `DEFINER=`rspade`@`localhost`` - in the version-guarded comments MySQL replays
+     * (/*!50013 ... *\/, /*!50017 ... *\/) and in CREATE DEFINER= statements. Restoring that
+     * dump under ANY OTHER account or host fails: the named account does not exist there,
+     * and impersonating one needs SET_USER_ID / SUPER, which an application database user
+     * does not have (ERROR 1227). A downstream field report (2026-08-24) lost every
+     * production install's first migration to exactly this - the shipped schema cache
+     * carried the developer box's account, the customer database was external and reached
+     * as an ordinary user, and the restore aborted mid-way with half the tables in.
+     *
+     * DEFINER=CURRENT_USER is the portable spelling: valid in every CREATE that takes a
+     * DEFINER clause, and it means "whoever runs the restore", which is the only account a
+     * dump can honestly name. mysqldump has no --skip-definer (mysqlpump does), so the
+     * rewrite is a sed over the stream.
+     *
+     * DATA IS NEVER TOUCHED: the rewrite skips INSERT lines, so a row whose text happens to
+     * contain a DEFINER= clause is stored byte-for-byte.
+     *
+     * The bash test library (tests/_lib/db_snapshot_create.sh) carries the same expression
+     * by hand, since it cannot call this class; keep the two identical.
+     */
+    public const DEFINER_SED_EXPRESSION = '/^INSERT /!s/DEFINER=`[^`]*`@`[^`]*`/DEFINER=CURRENT_USER/g';
+
+    /** The ` | sed -E <expression>` segment that applies DEFINER_SED_EXPRESSION to a stream. */
+    public static function definer_filter_segment(): string
+    {
+        return ' | sed -E ' . escapeshellarg(self::DEFINER_SED_EXPRESSION);
+    }
+
+    /**
+     * THE ONE mysqldump invocation: the framework's dump options, the database, and the
+     * definer filter, under pipefail so a mysqldump failure is the pipeline's exit status
+     * (without it the pipeline reports sed's success and a dump of an error message is
+     * written). A caller appends its own consumer - ` | gzip > file`, ` > file`, or the
+     * mysqlpv progress segment first.
+     *
+     * The client flags default to the LIVE connection's; a caller dumping another database
+     * (the test runner, against the test connection) passes its own.
+     */
+    public static function mysqldump_command(string $database, ?string $client_flags = null): string
+    {
+        return 'set -o pipefail; mysqldump ' . ($client_flags ?? self::client_flags())
+            . ' --no-tablespaces --single-transaction --quick --lock-tables=false '
+            . escapeshellarg($database)
+            . self::definer_filter_segment();
+    }
+
     /** The shared `-h -P -u` prefix for the mysql/mysqldump client. */
     public static function client_flags(): string
     {

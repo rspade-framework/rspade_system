@@ -98,6 +98,21 @@ so the real expression is exercised and no file is touched.
 | MDC-04 | THE POINT: a stale APP_ENV/APP_DEBUG in the environment moves neither value | php | both keys set against the mode | env `local`, debug true | implemented | 2026-08-23 |
 | MDC-05 | the BOOTED container agrees with the running mode (the derivation is what actually reached config()) | php | live `config('app.*')` vs `Rsx::get_mode()` | both follow the mode | implemented | 2026-08-23 |
 
+## First_Run_Token_Test (php, no transactions) - the pre-boot APP_URL screen's double-submit token
+
+`rsx_first_run_token()` in `system/bootstrap/rsx_first_run.php`: the token the browser already
+holds is reused when well-formed, so the favicon request a browser fires beside the page no
+longer rotates the cookie underneath the open form (the 2026-09-14 field report).
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| env-frtok-01 | a well-formed cookie is reused | cookie = 32 hex | same value returned | implemented |
+| env-frtok-02 | parallel renders agree | mint, then render with that cookie | identical token | implemented |
+| env-frtok-03 | no cookie mints | no cookie | 32 lowercase hex | implemented |
+| env-frtok-04 | minting is random | two mints | differ | implemented |
+| env-frtok-05 | malformed cookies replaced | empty, short, uppercase, non-hex, too long, newline | never reused; fresh well-formed token | implemented |
+| env-frtok-06 | only the named cookie counts | the first-user screen's cookie present | not reused | implemented |
+
 ## Deferred / planned
 
 | ID | Purpose | Type | Status | Last updated |

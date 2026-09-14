@@ -680,15 +680,15 @@ class Db_Rebuild_Provision_Cache_Snapshot_Command extends Command
      * Dump $database to $gz_target, gzipped, with the same options the test harness uses.
      *
      * Streamed through mysqlpv in line-log mode so the operator sees table names go by
-     * rather than a silent wait. pipefail makes a mysqldump failure the pipeline's exit
+     * rather than a silent wait. The invocation itself is Rsx_Data_Wipe::mysqldump_command():
+     * the framework's dump options, the DEFINER rewrite that makes the dump restorable under
+     * any account on any host, and pipefail so a mysqldump failure is the pipeline's exit
      * status - without it the pipeline reports gzip's success and we would ship a dump of
      * an error message.
      */
     protected function __dump_database(string $database, string $gz_target): void
     {
-        $pipeline = 'set -o pipefail; mysqldump ' . Rsx_Data_Wipe::client_flags()
-            . ' --no-tablespaces --single-transaction --quick --lock-tables=false '
-            . escapeshellarg($database)
+        $pipeline = Rsx_Data_Wipe::mysqldump_command($database)
             . self::mysqlpv_pipe_segment()
             . ' | gzip > ' . escapeshellarg($gz_target);
 
@@ -855,7 +855,7 @@ replaying every migration ever written.
 
 | File | What it is |
 |---|---|
-| `schema_cache.sql.gz` | A gzipped `mysqldump` of a database migrated from zero. No user rows: the first-run screen creates user 1 after the restore. |
+| `schema_cache.sql.gz` | A gzipped `mysqldump` of a database migrated from zero. No user rows: the first-run screen creates user 1 after the restore. Every `DEFINER=` clause is rewritten to `DEFINER=CURRENT_USER`, so the dump restores under any database account on any host. |
 | `uploads_cache.tar.gz` | The content-addressed blob store's contents at that same point - whatever the data-seed migrations wrote. Relative paths, so it extracts into any blob root. |
 
 ## Who writes them

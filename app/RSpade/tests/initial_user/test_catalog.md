@@ -14,3 +14,19 @@
 | IU-10 | The test provisioning migrate never seeds an env account of its own (`--_no-initial-user`) | cli | provisioning run with `RSPADE_DEFAULT_*` configured | the baseline user is the account at id 1 | deferred - would require a provisioning run under two different env states; the flag is unconditional in `run_migrate_subprocess()` | 2026-08-24 |
 | IU-11 | The env seed is a no-op once an account exists (the property that makes running it after every migrate harmless) | php | `create_from_env_if_needed()` with the baseline present | null, nothing written | implemented | 2026-08-24 |
 | IU-12 | The env seed runs end to end on an empty database, and any account it produces is id 1 | php | initial account removed, then `create_from_env_if_needed()` | null (declined) or a user with id 1 - asserted both ways, since RSPADE_DEFAULT_* is a property of the box | implemented | 2026-08-24 |
+
+## First_User_Setup_Token_Test (php, no transactions) - the first-user screen's double-submit token
+
+`Rsx_First_User_Setup::token_for()`: the token the browser already holds is reused when
+well-formed, so the favicon request a browser fires beside the page no longer rotates the
+cookie underneath the open form (the 2026-09-14 field report; the pre-boot APP_URL screen had
+the identical defect, pinned in the `env` concern's `First_Run_Token_Test`).
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| iu-token-01 | a well-formed cookie is reused | cookie = 32 hex | same value returned | implemented |
+| iu-token-02 | parallel renders agree | mint, then render with that cookie | identical token | implemented |
+| iu-token-03 | no cookie mints | no cookie | 32 lowercase hex | implemented |
+| iu-token-04 | minting is random | two mints | differ | implemented |
+| iu-token-05 | malformed cookies replaced | empty, short, uppercase, non-hex, too long, newline | never reused; fresh well-formed token | implemented |
+| iu-token-06 | only this screen's cookie counts | the APP_URL screen's cookie present | not reused | implemented |

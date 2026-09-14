@@ -465,6 +465,24 @@ THE SCHEMA CACHE
        resource/ is manifest-invisible and SHIPS with the application, so the cache
        travels with the code whose migrations produced it.
 
+   Portable across accounts and hosts
+
+       Every dump the framework produces - the schema cache, its live-data backup,
+       the test runner's cache - is written through ONE command,
+       Rsx_Data_Wipe::mysqldump_command(), which rewrites every DEFINER=`user`@`host`
+       mysqldump emits for a trigger, view, routine or event to DEFINER=CURRENT_USER.
+       A dump naming the developer box's account restores under NO other account: the
+       account does not exist on the customer's server, and assuming one needs
+       SET_USER_ID / SUPER, which an application user does not have (ERROR 1227,
+       mid-restore, half the tables in - a 2026-08-24 field report). CURRENT_USER
+       means "whoever runs the restore", the only account a dump can honestly name.
+       INSERT lines are never rewritten. A cache built before this rewrite existed is
+       regenerated with rsx:db:rebuild_provision_cache_snapshot.
+
+       Creating a trigger or stored FUNCTION under binary logging is a separate,
+       server-side requirement (log_bin_trust_function_creators=ON, or SUPER) that
+       no dump can remove.
+
    Building it - php artisan rsx:db:rebuild_provision_cache_snapshot
 
        DEVELOPMENT MODE ONLY. It refuses in debug and production: a sealed build's

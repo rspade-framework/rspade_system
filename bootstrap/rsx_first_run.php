@@ -117,6 +117,36 @@ function rsx_first_run_auto_app_url(string $detected_url, string $os_hostname): 
 }
 
 /**
+ * The double-submit token for THIS response: the value the browser already holds in the
+ * cookie when it is well-formed, otherwise a fresh one.
+ *
+ * REUSE IS THE WHOLE POINT. A browser loading this screen also requests /favicon.ico,
+ * and that request lands on this same file (there is no static favicon; every path
+ * reaches index.php) and renders the screen again. Minting a new token on every render
+ * made that second request rotate the cookie underneath the form the person was looking
+ * at, so the submit carried a token the cookie no longer matched - "Setup token
+ * mismatch" on the very first click (a downstream field report, 2026-09-14). Answering
+ * with the token the browser already holds makes every parallel render agree, and costs
+ * nothing in defence: the attacker the double-submit exists against cannot read the
+ * cookie either way.
+ *
+ * Well-formed means exactly what this file mints: 32 lowercase hex characters. Anything
+ * else is replaced, so a foreign or damaged cookie never becomes the accepted token.
+ *
+ * @param array  $cookies     the request cookies ($_COOKIE)
+ * @param string $cookie_name the cookie the token lives in
+ */
+function rsx_first_run_token(array $cookies, string $cookie_name): string
+{
+    $existing = (string) ($cookies[$cookie_name] ?? '');
+    if (preg_match('/^[0-9a-f]{32}$/', $existing) === 1) {
+        return $existing;
+    }
+
+    return bin2hex(random_bytes(16));
+}
+
+/**
  * Set one key in an environment file, replacing every existing definition of it with a
  * single line. Returns false when the file cannot be read or written.
  */
@@ -272,7 +302,9 @@ function rsx_first_run_write_env_value(string $path, string $key, string $value)
         exit;
     }
 
-    $token = bin2hex(random_bytes(16));
+    // The token the browser already holds when it has one - see rsx_first_run_token().
+    // The cookie is re-set either way so its expiry runs from the latest render.
+    $token = rsx_first_run_token($_COOKIE, $cookie_name);
     setcookie($cookie_name, $token, [
         'expires' => time() + 1800,
         'path' => '/',

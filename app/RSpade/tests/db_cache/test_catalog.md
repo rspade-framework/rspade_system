@@ -20,3 +20,15 @@
 | DBC-14b | The mysqlpv pipe segment is optional and well-formed: a pipe stage invoking python3 on bin/mysqlpv in -l mode, or empty on a box with no interpreter | php | `mysqlpv_pipe_segment()` | ` \| python3 <path> -l` or `''` | implemented | 2026-08-24 |
 | DBC-15 | The command refuses outside development mode, and the refusal touches nothing (no maintenance window, no marker, no blob backup, no database change) | cli | subprocess with `RSX_MODE=debug`; this box stays in development | exit 1 naming DEVELOPMENT and the mode it ran in; flag/marker/backup absent; table + migration counts unchanged | implemented | 2026-08-24 |
 | DBC-16 | A real end-to-end build (backup, wipe, migrate, dump, restore) against a scratch database | cli | a disposable database + blob root | live data byte-identical afterwards | deferred - the command targets the DEFAULT connection and enters the real maintenance window; needs a target-database seam first | 2026-08-24 |
+
+## Definer_Neutralization_Test (php, no transactions) - dumps restore under any account on any host
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| DBC-DEF-01 | a trigger's /*!50017 DEFINER=...*/ comment is rewritten | php | mysqldump trigger line | `DEFINER=CURRENT_USER` | implemented | 2026-09-14 |
+| DBC-DEF-02 | a view's /*!50013 DEFINER=... SQL SECURITY DEFINER */ is rewritten | php | mysqldump view line | `DEFINER=CURRENT_USER SQL SECURITY DEFINER` | implemented | 2026-09-14 |
+| DBC-DEF-03 | CREATE DEFINER= on a routine is rewritten, dotted hosts included | php | `CREATE DEFINER=`u`@`db.internal.example` PROCEDURE` | `CREATE DEFINER=CURRENT_USER PROCEDURE` | implemented | 2026-09-14 |
+| DBC-DEF-04 | INSERT lines are never touched | php | a row whose text contains a DEFINER clause | byte-identical | implemented | 2026-09-14 |
+| DBC-DEF-05 | lines with no definer pass unchanged | php | a CREATE TABLE | byte-identical | implemented | 2026-09-14 |
+| DBC-DEF-06 | mysqldump_command() is pipefail + options + database + the filter, with the caller's client flags | php | `('somedb', flags)` | the composed pipeline | implemented | 2026-09-14 |
+| DBC-DEF-07 | a real dump of a real trigger names no account | php | trigger created on the test database, real command | `DEFINER=CURRENT_USER`, no `` `u`@`h` `` anywhere | implemented | 2026-09-14 |

@@ -68,13 +68,20 @@ echo "[SNAPSHOT] Found $migration_count migrations" >&2
 # Create snapshot (already in test mode, .env points to rspade_test)
 echo "[SNAPSHOT] Creating snapshot file..." >&2
 
-# Create dump - connect directly to test database
+# Create dump - connect directly to test database. The sed is the framework's DEFINER
+# rewrite (Rsx_Data_Wipe::DEFINER_SED_EXPRESSION, kept identical by hand): every
+# DEFINER=`user`@`host` becomes DEFINER=CURRENT_USER so the dump restores under any
+# account on any host; INSERT lines are never touched. pipefail so a mysqldump failure is
+# the pipeline's status rather than sed's success.
+set -o pipefail
 if ! mysqldump -h127.0.0.1 -urspade -prspadepass rspade_test \
     --no-tablespaces \
     --single-transaction \
     --quick \
     --lock-tables=false \
-    > "$SNAPSHOT_FILE" 2>/dev/null; then
+    2>/dev/null \
+    | sed -E '/^INSERT /!s/DEFINER=`[^`]*`@`[^`]*`/DEFINER=CURRENT_USER/g' \
+    > "$SNAPSHOT_FILE"; then
     echo "[ERROR] Failed to create database dump" >&2
     exit 1
 fi

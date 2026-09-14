@@ -55,3 +55,13 @@ maintenance concern: `maintenance/cli/Maintenance_Db_Cache_Guard_Cli_Test`.
 
 - `php artisan rsx:man migrations` - THE SCHEMA CACHE
 - `php artisan rsx:man maintenance_mode` - the disable refusals
+
+## Definers (`Definer_Neutralization_Test`)
+
+`Rsx_Data_Wipe::mysqldump_command()` is the one dump invocation (the cache build, its
+live-data backup, the test runner's cache, and the CLI test above all use it), and it
+rewrites every `DEFINER=`user`@`host`` mysqldump emits to `DEFINER=CURRENT_USER`, so a dump
+restores under any account on any host. A dump naming the developer box's account fails
+mid-restore everywhere else (ERROR 1227) - the 2026-08-24 field report. INSERT lines are
+never rewritten. The bash library `_lib/db_snapshot_create.sh` carries the same expression
+by hand.

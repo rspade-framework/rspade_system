@@ -1,0 +1,66 @@
+THE SHIPPED SCHEMA CACHE NAMES NO DATABASE ACCOUNT: REGENERATE YOURS
+Date: 2026-09-14
+
+IF YOU DO NOTHING: your rsx/resource/db/schema_cache.sql.gz still carries the account
+    that produced it - DEFINER=`rspade`@`localhost`, or whatever your development box's
+    database user is - on every trigger, view, routine and event in it. A fresh database
+    restored from that file under any OTHER account, or on any host where that account
+    does not exist, fails PARTWAY through the restore:
+
+        ERROR 1227 (42000): Access denied; you need (at least one of) the SUPER or
+                            SET_USER_ID privilege(s) for this operation
+
+    leaving half the tables in and the first migration of the install failed. A
+    development box that restores under the same account that built the cache never
+    sees this, which is why it reaches you as a production incident rather than a
+    local one. The file is in rsx/, so it is yours, and nothing regenerates it for you.
+
+SUMMARY
+    Every dump the framework produces now passes through ONE invocation,
+    Rsx_Data_Wipe::mysqldump_command(), which rewrites every DEFINER clause mysqldump
+    emits to DEFINER=CURRENT_USER - "whoever runs the restore", the only account a
+    dump can honestly name. That covers the shipped schema cache, the live-data backup
+    the cache build takes, and the test runner's database cache. INSERT lines are never
+    rewritten, so stored data is byte-identical.
+
+    A cache built BEFORE this change still names an account. It has to be rebuilt.
+
+ACTION REQUIRED
+
+    1. REGENERATE THE SCHEMA CACHE, on a development box, after pulling this release:
+
+           php artisan rsx:db:rebuild_provision_cache_snapshot
+
+       It backs your live database and blob store up, builds the cache from zero, and
+       restores your data afterwards (rsx:man migrations, "Building it"). Development
+       mode only; it refuses under a sealed build.
+
+    2. COMMIT THE TWO REGENERATED FILES:
+
+           rsx/resource/db/schema_cache.sql.gz
+           rsx/resource/db/uploads_cache.tar.gz
+
+       (README.md beside them is regenerated too.) The cache ships with your
+       application, so the fix reaches an install only through your repository.
+
+    3. VERIFY that no account is named:
+
+           zcat rsx/resource/db/schema_cache.sql.gz | grep -c 'DEFINER=`'
+
+       must print 0. A non-zero count means the cache was built by a framework older
+       than this release.
+
+    4. IF YOUR DEPLOYMENT GRANTED A WORKAROUND, REVOKE IT. A deploy that granted
+       SET_USER_ID (or SUPER) to the application user around the first migrate, or
+       ran the restore as a privileged account, did so only to assume the definer this
+       change removes. Take that grant back.
+
+WHAT THIS DOES NOT CHANGE
+    Creating a trigger or a stored FUNCTION under binary logging (MySQL 8's default)
+    is a separate, server-side requirement: log_bin_trust_function_creators=ON on the
+    server, or SUPER for the restoring account. No dump can remove it. If your schema
+    carries triggers, that setting is still part of provisioning the server.
+
+SEE ALSO
+    rsx:man migrations        THE SCHEMA CACHE, "Portable across accounts and hosts"
+    system/app/RSpade/Core/Database/Rsx_Data_Wipe.php   DEFINER_SED_EXPRESSION, mysqldump_command()

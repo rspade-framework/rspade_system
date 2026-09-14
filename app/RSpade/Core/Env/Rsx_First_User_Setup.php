@@ -208,12 +208,45 @@ class Rsx_First_User_Setup
     // Rendering
     // -------------------------------------------------------------------------
 
+    /**
+     * The double-submit token for THIS response: the value the browser already holds
+     * in the cookie when it is well-formed, otherwise a fresh one.
+     *
+     * REUSE IS THE WHOLE POINT. A browser loading this screen also requests
+     * /favicon.ico, and that request reaches the dispatcher, passes check() and
+     * renders the screen again. Minting a new token on every render made that second
+     * request rotate the cookie underneath the form the person was looking at, so the
+     * submit carried a token the cookie no longer matched - "session expired" on the
+     * very first click (a downstream field report, 2026-09-14; the pre-boot APP_URL
+     * screen in bootstrap/rsx_first_run.php had the identical defect and the identical
+     * fix). Answering with the token the browser already holds makes every parallel
+     * render agree, and costs nothing in defence: the attacker the double-submit exists
+     * against cannot read the cookie either way.
+     *
+     * Well-formed means exactly what this class mints: 32 lowercase hex characters.
+     * Anything else is replaced, so a foreign or damaged cookie never becomes the
+     * accepted token. Pure, so it is testable without a request.
+     *
+     * @param array $cookies the request cookies ($_COOKIE)
+     */
+    public static function token_for(array $cookies): string
+    {
+        $existing = (string) ($cookies[self::COOKIE_NAME] ?? '');
+        if (preg_match('/^[0-9a-f]{32}$/', $existing) === 1) {
+            return $existing;
+        }
+
+        return bin2hex(random_bytes(16));
+    }
+
     private static function __render_form(
         ?string $error = null,
         string $email = '',
         bool $autofill = false
     ): void {
-        $token = bin2hex(random_bytes(16));
+        // The token the browser already holds when it has one - see token_for(). The
+        // cookie is re-set either way so its expiry runs from the latest render.
+        $token = self::token_for($_COOKIE);
         setcookie(self::COOKIE_NAME, $token, [
             'expires' => time() + 1800,
             'path' => '/',

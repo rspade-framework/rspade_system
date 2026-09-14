@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
 use App\RSpade\Commands\Migrate\Maint_Migrate;
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Database\Rsx_Data_Wipe;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -117,17 +118,16 @@ class Db_Cache_Restore_Cli_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Produce the cache artifact from the (already migrated) test database. This is the
-     * same mysqldump invocation rsx:db:rebuild_provision_cache_snapshot uses.
+     * Produce the cache artifact from the (already migrated) test database, through the
+     * same dump command rsx:db:rebuild_provision_cache_snapshot uses - against the TEST
+     * connection's client flags.
      */
     protected static function __write_cache_from_test_database(): void
     {
         $source = (string) config('database.connections.test.database');
 
         static::__shell(
-            'set -o pipefail; mysqldump ' . static::__client_flags()
-            . ' --no-tablespaces --single-transaction --quick --lock-tables=false '
-            . escapeshellarg($source)
+            Rsx_Data_Wipe::mysqldump_command($source, static::__client_flags())
             . ' | gzip > ' . escapeshellarg(static::__schema_cache_path()),
             'dumping ' . $source
         );

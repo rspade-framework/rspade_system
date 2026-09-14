@@ -105,3 +105,10 @@ before the Portal_Dispatcher delegation); resolver substitution at
 - All tests are pure logic (`$use_database_transactions = false`); no DB.
 - The PHP test runner is CLI, where `check()` bails immediately, so the tests
   drive the pure cores directly rather than the request/boot wrappers.
+
+## First-run screen token (`First_Run_Token_Test`)
+
+`system/bootstrap/rsx_first_run.php` - the pre-boot APP_URL screen - reuses the double-submit
+token the browser already holds (`rsx_first_run_token()`), so the favicon request a browser
+fires beside the page cannot rotate the cookie underneath the open form. The class requires the
+bootstrap file; its main closure returns at once under the CLI SAPI.

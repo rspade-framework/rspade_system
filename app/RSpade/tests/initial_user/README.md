@@ -46,3 +46,9 @@ rows - a group membership, admin ACLs - instead of a migration hardcoding user i
   own dev-mode-only gating), and the post-migrate step's `RSPADE_DEFAULT_*` blank-value
   branches (environment-dependent - they turn on the running mode and the identity of
   the database being migrated).
+
+## Setup screen token (`First_User_Setup_Token_Test`)
+
+`Rsx_First_User_Setup::token_for()` reuses the double-submit token the browser already holds,
+so the favicon request a browser fires beside the first-user screen cannot rotate the cookie
+underneath the open form. Pure seam, no request, no database.

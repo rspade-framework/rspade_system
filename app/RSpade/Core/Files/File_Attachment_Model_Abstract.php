@@ -1971,9 +1971,35 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     public function save(array $options = [])
     {
-        $this->file_type_label = static::file_type_label_for($this->mime_type, $this->file_extension);
+        // The column may not exist yet. A from-zero migration replay writes attachments
+        // through this model BEFORE add_file_type_label_to_file_attachments has run
+        // (import_sample_documents, 2026-07-16, does exactly that), and an unconditional
+        // assignment made that replay fail with "Unknown column 'file_type_label'" - unseen
+        // on any developer box, whose database already had the column. That migration's own
+        // backfill repairs every row written before the column arrived.
+        if (static::__file_type_label_column_exists()) {
+            $this->file_type_label = static::file_type_label_for($this->mime_type, $this->file_extension);
+        }
 
         return parent::save($options);
+    }
+
+    /**
+     * Whether _file_attachments has the file_type_label column, from the live schema.
+     *
+     * A TRUE answer is remembered for the process (a column does not disappear); a FALSE
+     * answer is re-asked on every save, because the one process that sees it - a migration
+     * replay - is the process that is about to add the column.
+     */
+    private static function __file_type_label_column_exists(): bool
+    {
+        static $exists = false;
+
+        if (!$exists) {
+            $exists = static::hasColumn('file_type_label');
+        }
+
+        return $exists;
     }
 
     /**

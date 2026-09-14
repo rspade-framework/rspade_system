@@ -1102,15 +1102,13 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $partial = $cache_file . '.partial';
 
         // Password rides in the child's environment, never on the command line, where
-        // `ps` would expose it to every user on the box.
-        $command = sprintf(
-            'mysqldump -h%s -P%s -u%s --no-tablespaces --single-transaction --quick --lock-tables=false %s > %s 2>/dev/null',
-            escapeshellarg((string) $conn['host']),
-            escapeshellarg((string) $conn['port']),
-            escapeshellarg((string) $conn['username']),
-            escapeshellarg($test_db),
-            escapeshellarg($partial)
-        );
+        // `ps` would expose it to every user on the box. The invocation is the framework's
+        // one dump command (options, DEFINER rewrite, pipefail) against the TEST connection.
+        $client_flags = '-h' . escapeshellarg((string) $conn['host'])
+            . ' -P' . escapeshellarg((string) $conn['port'])
+            . ' -u' . escapeshellarg((string) $conn['username']);
+        $command = \App\RSpade\Core\Database\Rsx_Data_Wipe::mysqldump_command($test_db, $client_flags)
+            . ' > ' . escapeshellarg($partial) . ' 2>/dev/null';
 
         $output = [];
         $exit_code = 0;
