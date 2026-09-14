@@ -75,6 +75,14 @@
  */
 class Form_Input_Abstract extends Component {
     /**
+     * The NAME of the declared TEXT column type this input edits ('Rich_Text'), or null
+     * for an ordinary string input. A name rather than a class reference: an input
+     * component is defined before rsx/lib/ in a bundle, so naming the class directly
+     * would read it before its declaration is initialised. See _assert_accepts().
+     */
+    static ACCEPTS = null;
+
+    /**
      * Initialize buffering state and stamp data-name.
      * Concrete classes that override on_create() must call super.on_create().
      */
@@ -105,12 +113,66 @@ class Form_Input_Abstract extends Component {
         }
 
         // Setter
+        this._assert_accepts(value);
+
         if (this._is_ready) {
             this._set_value(value);
             this.trigger('val', value);
         } else {
             this._pending_value = value;
             this._has_pending = true;
+        }
+    }
+
+    /**
+     * Refuse a value this input cannot edit.
+     *
+     * An input that edits a declared TEXT column type names it:
+     *
+     *     class Wysiwyg_Input extends Form_Input_Abstract { static ACCEPTS = Rich_Text; }
+     *
+     * and is then the only widget that column can be wired to. Both directions are
+     * refused, because both are real mistakes: a Rich_Text value reaching a plain
+     * Text_Input would be stringified into a textarea and saved back as escaped markup,
+     * and a Raw_Text value reaching a WYSIWYG would start accepting HTML into a column
+     * whose type says it holds none.
+     *
+     * An input with no ACCEPTS edits ordinary strings and refuses every text value.
+     *
+     * @param {*} value
+     */
+    _assert_accepts(value) {
+        const accepts_name = this.constructor.ACCEPTS;
+        const is_text_value = value instanceof Rsx_Text_Abstract;
+
+        if (accepts_name) {
+            const accepts = Manifest.get_class_by_name(accepts_name);
+
+            // Dynamic type resolution requires checking class existence - @JS-DEFENSIVE-01-EXCEPTION
+            if (!accepts) {
+                shouldnt_happen(
+                    `${this.constructor.name} declares ACCEPTS = '${accepts_name}', but no such ` +
+                    `text type is in this bundle.`
+                );
+            }
+
+            if (value !== null && value !== undefined && !(value instanceof accepts)) {
+                shouldnt_happen(
+                    `${this.constructor.name} ($name="${this.args.name}") edits ${accepts_name} values, ` +
+                    `but was given ${is_text_value ? value.constructor.name : typeof value}. ` +
+                    `Check the model's $text_types declaration for this column.`
+                );
+            }
+
+            return;
+        }
+
+        if (is_text_value) {
+            shouldnt_happen(
+                `${this.constructor.name} ($name="${this.args.name}") edits plain strings, but was ` +
+                `given a ${value.constructor.name} value. That column has a declared text type - ` +
+                `use its EDITOR component (${value.constructor.editor_component()}) instead.`
+            );
         }
     }
 

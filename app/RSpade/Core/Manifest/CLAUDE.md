@@ -504,10 +504,10 @@ over a few thousand in-memory records on the only occasion it runs, which is a c
 
 | Kind | Modules |
 |---|---|
-| **FULL** | `Route`, `Portal_Route`, `Spa`, `Portal_Spa`, `Api_Endpoint`, `Auth`, `Jqhtml`, `Externals`, `Bundle_Alias` |
-| **DELTA** | `Model` (includes the model file to reflect on it), `Task_Command` and `Email` (read source), and the three STUB GENERATORS `Controller_Stub` / `Model_Stub` / `Auth_Stub` (write generated files) |
+| **FULL** | `Route`, `Portal_Route`, `Spa`, `Portal_Spa`, `Api_Endpoint`, `Auth`, `Jqhtml`, `Externals`, `Bundle_Alias`, `Email` |
+| **DELTA** | `Model` (includes the model file to reflect on it), `Task_Command` (reads source), and the three STUB GENERATORS `Controller_Stub` / `Model_Stub` / `Auth_Stub` (write generated files) |
 
-`Api_Endpoint` is the one full module that touches disk: it reads docblocks for the API
+`Api_Endpoint` and `Email` are the two full modules that touch disk, and for the same reason it is acceptable: each reads source only for the files that are its subject, through the build's `Source_Cache`, so the cost is per matching class and never per file in the tree. `Email` was DELTA until 2026-09-14, when the test-run manifest transition was found to drop every unchanged email from the carried-forward table. `Api_Endpoint` reads docblocks for the API
 catalog, but only for files that actually declare an endpoint, and through the build's
 `Source_Cache`. Paying that every build is the deliberate trade against a catalog that can
 silently empty itself.

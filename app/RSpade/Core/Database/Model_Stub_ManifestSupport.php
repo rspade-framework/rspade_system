@@ -623,6 +623,45 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         $content .= "        return lengths[column] ?? null;\n";
         $content .= "    }\n\n";
 
+        // The declared TEXT column types, by SIMPLE NAME. Published for the same reason
+        // field_length() is: the model is the one place that knows, and a template or a
+        // form that has to restate it is a second place that can disagree.
+        //
+        // The editor a column needs is derived from this and NOT from the value, because
+        // there is no value to ask at the moment it is needed - an add form has null in
+        // every field, and an edit form is still fetching. The column's type is known
+        // synchronously at render; the value is not.
+        $text_types = [];
+
+        foreach ((array) $fqcn::$text_types as $col_name => $type_class) {
+            $text_types[$col_name] = class_basename($type_class);
+        }
+
+        $content .= "    /**\n";
+        $content .= "     * The declared text type for a column, or null when it has none.\n";
+        $content .= "     * @param {string} column - Column name\n";
+        $content .= "     * @returns {Function|null} The text type class\n";
+        $content .= "     */\n";
+        $content .= "    static text_type(column) {\n";
+        $content .= "        const types = " . json_encode($text_types, JSON_FORCE_OBJECT) . ";\n";
+        $content .= "        const name = types[column] ?? null;\n";
+        $content .= "        return name === null ? null : Manifest.get_class_by_name(name);\n";
+        $content .= "    }\n\n";
+
+        $content .= "    /**\n";
+        $content .= "     * The input component that edits a column, for a dynamic tag:\n";
+        $content .= "     *     <{Project_Model.editor_for('description')} \$name=\"description\" />\n";
+        $content .= "     * @param {string} column - Column name\n";
+        $content .= "     * @returns {string} Component name\n";
+        $content .= "     */\n";
+        $content .= "    static editor_for(column) {\n";
+        $content .= "        const type = this.text_type(column);\n";
+        $content .= "        if (!type) {\n";
+        $content .= "            shouldnt_happen(`\${this.name}.\${column} has no declared text type, so no editor is derivable from it. Name the input component directly.`);\n";
+        $content .= "        }\n";
+        $content .= "        return type.editor_component();\n";
+        $content .= "    }\n\n";
+
         $content .= "}\n";
 
         return $content;

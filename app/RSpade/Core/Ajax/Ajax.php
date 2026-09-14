@@ -447,6 +447,11 @@ class Ajax
             $ajax_params = array_diff_key($all_input, array_flip(['controller', 'action', '_method', '_route', '_handler']));
         }
 
+        // Rehydrate {__TEXT, raw} envelopes into their value objects before anything reads
+        // the params, so an endpoint receives a typed value and never the wire shape. The
+        // raw form is untrusted here and is filtered by its type as part of construction.
+        $ajax_params = \App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract::hydrate_request_value($ajax_params);
+
         // Call pre_dispatch if it exists
         $response = null;
         if (method_exists($controller_class, 'pre_dispatch')) {

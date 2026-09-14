@@ -7,7 +7,7 @@
 
 namespace App\RSpade\Core\Mail;
 
-use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 
 /**
  * Support module that bakes the table of every email an application can send.
@@ -47,7 +47,7 @@ use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
  * before the autoloader can resolve application classes, and the file metadata indexes
  * methods and properties but not constants.
  */
-class Email_ManifestSupport extends ManifestSupport_Abstract
+class Email_ManifestSupport extends Full_ManifestSupport_Abstract
 {
     /**
      * The class every email extends (directly or through an application base class).
@@ -69,44 +69,30 @@ class Email_ManifestSupport extends ManifestSupport_Abstract
     }
 
     /**
-     * Update the email table from the CHANGED and REMOVED sets.
+     * Derive the email table from the FULL file map, every build.
      *
-     * INCREMENTAL for the class half: an entry is owned by its `file`, so the dirty files'
-     * entries are dropped and re-derived from those files' own records. The descendant set
-     * comes from `php_subclass_index`, so nothing walks an inheritance chain per file and
-     * nothing scans the file map.
+     * FULL, not delta - this is a derived section, and deriving it is cheap: a walk of the
+     * file map that reads source only for the handful of files that are email classes,
+     * through the build's Source_Cache. That is the same narrow disk read Api_Endpoint
+     * makes, and the same reason it is FULL despite touching disk: the cost is per email
+     * class, not per file in the tree.
+     * The delta form carried the previous table forward and re-derived only dirty files,
+     * which is correct when the incoming table is intact and silently drops every
+     * unchanged email when it is not - which is exactly what the test-run manifest
+     * transition handed it. A full derivation cannot lose an entry it never had to keep.
      *
-     * The TEMPLATE half is re-checked for every surviving entry, not only the dirty ones,
-     * because a template can be deleted without its email class changing at all - and the
-     * check is O(emails), not O(tree).
+     * @param array $manifest_data
      */
-    public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
+    public static function rebuild(array &$manifest_data): void
     {
-        if (!isset($manifest_data['data']['emails'])) {
-            $manifest_data['data']['emails'] = [];
-        }
-
-        $table = $manifest_data['data']['emails'];
-        $dirty = static::dirty_set($changed_files, $removed_files);
-        $files = $manifest_data['data']['files'];
-
-        foreach ($table as $class => $entry) {
-            if (isset($dirty[$entry['file'] ?? ''])) {
-                unset($table[$class]);
-            }
-        }
+        $table = [];
+        $files = $manifest_data['data']['files'] ?? [];
 
         // Every DESCENDANT of the root, one lookup - the index already walked the chains.
         $descendants = array_flip($manifest_data['data']['php_subclass_index'][self::ROOT_CLASS] ?? []);
         $view_ids = $manifest_data['data']['blade_views'] ?? [];
 
-        foreach (array_keys($dirty) as $file) {
-            $metadata = $files[$file] ?? null;
-
-            if ($metadata === null) {
-                continue;
-            }
-
+        foreach ($files as $file => $metadata) {
             $class = $metadata['class'] ?? null;
 
             if ($class === null || $class === self::ROOT_CLASS || !isset($descendants[$class])) {
@@ -153,21 +139,13 @@ class Email_ManifestSupport extends ManifestSupport_Abstract
         $manifest_data['data']['emails'] = $table;
     }
 
-    /**
-     * The declared `const CATEGORY`, read from the source file.
-     *
-     * @param string $file
-     * @param array $metadata
-     * @param string $location
-     * @return int
-     */
     private static function _read_category(string $file, array $metadata, string $location): int
     {
-        $source = file_get_contents(base_path($file));
-
-        if ($source === false) {
-            throw new \RuntimeException("Unable to read email class source: {$location}");
-        }
+        // Through the BUILD's Source_Cache, as Api_Endpoint reads: a file the fixer or the
+        // quality driver already read this build is served from memory, and one that was
+        // not is read once and shared. Only the handful of files that are email classes
+        // reach this line - the descendant check above has already excluded the rest.
+        $source = \App\RSpade\Core\Manifest\Manifest::build()->source_cache()->content($file);
 
         $matched = preg_match('/\bconst\s+CATEGORY\s*=\s*([^;]+);/', $source, $match);
 

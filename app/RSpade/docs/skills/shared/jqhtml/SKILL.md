@@ -24,6 +24,7 @@ Reference files in this skill, one level deep:
 - `reference/component-api-events.md` - DOM/component access, events, dynamic creation
 - `reference/inheritance-and-slots.md` - `extends=`, abstract bases, passing data into slots
 - `reference/semantic-composition.md` - designing a page as a composition of named concepts
+- `reference/dynamic-tags-and-printers.md` - ADVANCED and narrow: `<{expr}>` dynamic component names and `add_object_printer()`. Both exist for declared TEXT column types (`rsx:man text_types`) and essentially nothing else - a plain conditional is the right answer everywhere a component's identity is known
 
 The authoritative contract is `php artisan rsx:man jqhtml`; the page-composition method is `php artisan rsx:man semantic_composition`.
 

@@ -2838,6 +2838,123 @@ SERVER-SIDE RENDERING
     - Progressive enhancement
     - Works without JavaScript (degraded)
 
+ADVANCED: DYNAMIC COMPONENT TAGS
+    A component's name may come from an EXPRESSION rather than being written
+    literally:
+
+        <{expression} $arg=value attr="literal" />
+
+        <{expression} $arg=value>
+            content
+        </{expression}>
+
+    The expression is evaluated at render time with the same semantics as an
+    unquoted argument value ($foo=this.data.bar), and must produce a component
+    name string.
+
+    READ THIS BEFORE REACHING FOR IT. There is essentially ONE situation this
+    exists for: a column whose DECLARED TEXT TYPE says which component edits
+    it (rsx:man text_types). Outside that, an ordinary JavaScript conditional
+    around two literal tags is the correct and clearer answer:
+
+        [OK]  <% if (this.data.compact) { %>
+                  <Compact_Card $item=_item />
+              <% } else { %>
+                  <Full_Card $item=_item />
+              <% } %>
+
+        [NO]  <{this.data.compact ? 'Compact_Card' : 'Full_Card'} $item=_item />
+
+    The literal form is greppable, is seen by rename refactoring, and states
+    at the call site what can appear there. A dynamic tag gives all of that
+    up, and should be used only when the set of possible components is
+    genuinely open because it is declared as data elsewhere.
+
+    THE CLOSING TAG IS REQUIRED for the non-self-closing form, and its
+    expression must MATCH the opening tag's as text. The comparison is
+    lexical and happens at compile time - whitespace is normalized, the
+    expression is never evaluated twice - so a copy-paste mismatch is a build
+    error rather than a runtime surprise. It is there for the reader, exactly
+    as </div> is: it says what block is being closed.
+
+    NAME VALIDATION is identical to a literal tag and no stricter: a
+    non-empty string of letters, digits and underscores, starting with a
+    capital letter or a single underscore then a capital. A name that passes
+    but names nothing renders the ordinary placeholder component, the same as
+    an undefined literal tag - which is a jqhtml feature, not an oversight.
+
+    THE FAILURE MODE TO KNOW: because any valid name is accepted and unknown
+    names become placeholders, an expression yielding a valid-but-WRONG name
+    renders an empty placeholder and raises nothing. 'Wysiwig_Input' is a
+    perfectly legal component name. Derive the name from a declared source
+    rather than composing it from strings.
+
+    WORKED EXAMPLE - the case this is for:
+
+        <Form_Field $label="Description">
+            <{Project_Model.editor_for('description')} $name="description" />
+        </Form_Field>
+
+    Note it asks the MODEL, not the value. The editor is a property of the
+    COLUMN, and at the moment the form renders there is often no value to ask:
+    an add form holds null in every field, and an edit form is still fetching.
+    See system/app/RSpade/resource/reference_app/app/frontend/projects/edit/
+    Projects_Edit_Action.jqhtml for the shipped example.
+
+ADVANCED: VALUE PRINTERS - INTERPOLATING AN OBJECT
+    <%= %> renders primitives. An OBJECT reaching an interpolation is passed
+    to a chain of registered value printers, which decide what it looks like.
+
+    This is how a framework hands templates TYPED VALUES instead of
+    pre-stringified ones: the value carries its own encoding, and the template
+    interpolates it without choosing an escape, a sanitizer or a component.
+    RSpade uses it for declared text types (rsx:man text_types), which is the
+    only use of it in this framework.
+
+        jqhtml.add_object_printer(function (value) {
+            if (!(value instanceof My_Value)) {
+                return undefined;          // decline - try the next printer
+            }
+
+            return 'text';                 // a string, OR
+            return {                       // a component descriptor
+                component: {
+                    name:  'My_Value_Display',
+                    args:  { value: value },
+                    attrs: { class: 'my-value' },
+                },
+            };
+        });
+
+    PRINTERS FORM A CHAIN in registration order. Returning `undefined`
+    declines and passes the value along; the first printer to return anything
+    else handles it and the rest are not called. The chain is what lets an
+    application register printers for its own value types beside the
+    framework's without either knowing about the other.
+
+    PRIMITIVES NEVER ENTER THE CHAIN. Compiled templates route only non-null,
+    non-array objects to it, so ordinary interpolation costs exactly what it
+    always did. Arrays keep their existing coercion and are not printed.
+
+    A RETURNED STRING IS TREATED AS A STRING LITERAL AT THAT SITE: escaped by
+    <%= %>, raw under <%!= %>, escaped with line breaks under <%br= %>. A
+    printer cannot opt out of escaping - a type whose rendition needs markup
+    returns a descriptor and lets its component own that decision.
+
+    A DESCRIPTOR CARRIES NO CONTENT. `args` and `attrs` are separate buckets
+    and neither takes a $ sigil: the $ is template syntax, not part of an
+    argument's name. jqhtml decides what mounting means in its environment -
+    live in the browser, server-rendered under SSR - so a printer is correct
+    in both without knowing which it is in.
+
+    ATTRIBUTE POSITION NEVER CONSULTS PRINTERS. <div title="<%= value %>">
+    compiles through a different path and keeps ordinary coercion, which lets
+    a value type refuse to be flattened into an attribute by throwing from
+    toString().
+
+    AN UNHANDLED OBJECT THROWS, naming its constructor. [object Object] is
+    never an intentional render, so jqhtml refuses to produce it.
+
 DEBUGGING
     Enable debug mode by assigning a logger object; the runtime calls its
     .log(component, phase, status, data) on every lifecycle transition:
@@ -2866,6 +2983,8 @@ SEE ALSO
     rsx:man manifest_api
     rsx:man semantic_composition
     rsx:man scss
+    rsx:man text_types - declared TEXT column types, the one consumer of
+    dynamic component tags and value printers
 
     skill rspade:view-decomposition - breaking an over-long view template
     into region components (the ~325-line trigger, the seam test, the

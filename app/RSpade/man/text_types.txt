@@ -1,0 +1,478 @@
+TEXT_TYPES(3)                  RSX Framework                  TEXT_TYPES(3)
+
+NAME
+    text_types - declared types for TEXT columns: what kind of string a
+    column holds, stated once on the model, enforced everywhere it is used
+
+SYNOPSIS
+    php artisan rsx:man text_types
+
+    public static $text_types = [
+        'description' => Rich_Text::class,
+        'notes'       => Raw_Text::class,
+    ];
+
+    $project->description                      a Rich_Text, not a string
+    $project->description = $params['description'];    filtered, typed, stored
+    <%= this.data.project.description %>       prints through its own component
+
+    Rich_Text::from_request($params['body'])   the value, typed, for code that
+                                               must read it before storing it
+
+DESCRIPTION
+    A TEXT column may hold plain text, sanitized HTML from a WYSIWYG, or an
+    application's own notation. Which one is a property of the COLUMN - but
+    the value stops carrying it the moment it is read, so every place that
+    prints, edits, exports or indexes the column has to independently remember
+    which kind it is and reach for the matching escape, widget or filter. The
+    cost of misremembering is not a crash: it is markup rendered as literal
+    text, or user input rendered unescaped, and nothing reports either.
+
+    A declared column is read as a VALUE OBJECT. The object carries its own
+    encoding, so the knowledge lives in one place and every sink asks the
+    value instead of remembering.
+
+    A column with NO declaration is unchanged: an ordinary string, no object,
+    no filtering. Declaration is OPT-IN.
+
+THE CONTRACT
+    Read this section as if the framework were a black box, because from an
+    application's side it is one. These are the rules you write against; how
+    they are enforced is the last section of this page.
+
+    1. THE CONTENT IS OPAQUE. A user may enter anything. To your code the
+       value is as nebulous as an image: it has a size, it may be empty, it
+       can be stored and displayed. It is NOT a string you inspect, search,
+       trim, concatenate or format. The framework holds you to this - a
+       typed value used as a string throws.
+
+    2. ONE FUNCTION IS REQUIRED OF A TYPE, AND IT TOUCHES THE CONTENT ONCE.
+       filter_set(), the SANITIZER ON THE SERVER, applied to every value that
+       did not come from the database. The framework will not let a type
+       omit it - even when it is a passthrough, which it should not be. An
+       optional SANITIZER ON THE CLIENT, filter_set() on the JS class, runs
+       at the editor as defense in depth; never the authority.
+
+    3. EVERYTHING ELSE A TYPE OFFERS IS A CONVENTION, NOT A REQUIREMENT.
+       to_text() and to_html() are predictable names application code can
+       rely on WHEN a type chooses to offer them, and they throw by default
+       so that asking a type for a rendition it never defined fails loudly
+       rather than guessing. Rule of thumb: rarely necessary. A page renders
+       through the PRINTER component in the browser; to_html() is for the
+       specific case of producing markup on the server, and to_text() for a
+       plain rendition an export or index needs. Many types never define
+       either.
+
+    4. ANYTHING YOU READ OUT OF THE CONTENT IS A DEDICATED FUNCTION ON THE
+       TYPE. The entities tagged in a comment, a word count, a first line -
+       each is a method you write on the type class, in the language it is
+       needed in. The type is the only code that knows the encoding; nothing
+       outside it may assume one.
+
+    5. A TYPE IS TWO CLASSES OF THE SAME NAME. PHP owns the encoding: the
+       sanitizer, any renditions, any dedicated functions. JavaScript owns
+       presentation and is registration only: which component prints it,
+       which component edits it.
+
+    6. AN ENDPOINT DOES NOT KNOW THE FIELD IS SPECIAL. It may ask the value
+       one question - is_empty() - and assign it to a column. That is the
+       whole of the vocabulary, and it needs no special handling to use.
+       Anything else throws, and the exception is the reminder.
+
+DECLARING A COLUMN
+    Beside $enums on the model:
+
+        public static $text_types = [
+            'description' => Rich_Text::class,
+        ];
+
+    From then on:
+
+        $project->description             a Rich_Text on read
+        $project->description = $x        filtered by Rich_Text, then stored
+        $project->description->is_empty() the blessed emptiness test
+        $project->description->to_text()  readable text, IF the type offers it
+        $project->description->to_html()  a document rendition, IF it offers it
+
+    The concrete types are APPLICATION code. The framework ships the abstract
+    and no types; which exist and what each permits is yours to decide. The
+    reference app ships Raw_Text and Rich_Text at
+    resource/reference_app/lib/text_types/.
+
+WRITING A TYPE
+    PHP. One required method; the rest are conventions with throwing
+    defaults, adopted only when the type needs the capability:
+
+        class My_Text extends Rsx_Text_Abstract
+        {
+            // REQUIRED. The trust boundary. A pure string transform: no I/O,
+            // no deserialization, nothing that runs a command. This is the
+            // one application function standing directly in front of
+            // untrusted input.
+            public static function filter_set(string $raw): string { ... }
+
+            // CONVENTION. Emptiness. Default: a whitespace check on the raw
+            // form. Override when the encoding WRAPS its content, so that an
+            // empty document is not mistaken for a full one.
+            public function is_empty(): bool { ... }
+
+            // CONVENTION. Readable text for a CSV cell or an index. Default:
+            // throws. Define it only if something needs a plain rendition.
+            public function to_text(): string { ... }
+
+            // CONVENTION. Markup for a server-generated document. Default:
+            // throws. Rarely needed - a page renders through the PRINTER.
+            public function to_html(): string { ... }
+
+            // Plain text -> this format, for a column migrating to this type.
+            // Default: from_untrusted($plain).
+            public static function from_string(string $plain): static { ... }
+
+            // DEDICATED FUNCTIONS: whatever the application must READ from
+            // the encoding, written here and nowhere else.
+        }
+
+    JavaScript. Registration only - nothing is implemented:
+
+        class My_Text extends Rsx_Text_Abstract {
+            static PRINTER = 'My_Text_Display';    // renders it on a page
+            static EDITOR  = 'My_Text_Input';      // edits it in a form
+            static EDITOR_ARGS = { rows: 8 };      // default editor args
+
+            // Optional: the client-side sanitizer, at the editor.
+            static filter_set(raw) { ... }
+        }
+
+    THERE IS NO to_text() IN JAVASCRIPT, on purpose. Where a type offers one
+    at all, it lives on the server, which can resolve references
+    synchronously; the browser often cannot, and rather than be right in one
+    language and approximate in the other it does not answer: toString()
+    throws. A different rendition on a page is an argument to the PRINTER
+    component. String coercion throws on the server too.
+
+TWO TYPES, WORKED
+    The shipped Rich_Text, and a type this page describes but the framework
+    does NOT ship: Entity_Tag_Text, plain text in which {{Client_Model:42}}
+    tags a record. The second is the shape every notation type takes, and it
+    shows where the optional conventions are NOT needed.
+
+    RICH_TEXT (shipped, resource/reference_app/lib/text_types/rich_text/)
+
+        The encoding is HTML from a WYSIWYG.
+
+        filter_set()   safe_html() - HTMLPurifier with the application's
+                       allow-list. What the column holds is already safe.
+        is_empty()     OVERRIDDEN: trim(strip_tags(...)) === ''. An emptied
+                       editor stores <p><br></p>, which the raw check would
+                       call full.
+        to_text()      DEFINED: markup removed, block boundaries kept as
+                       newlines. Needed because the reference app exports
+                       projects to CSV.
+        to_html()      DEFINED: returns the stored form as-is. Storage was
+                       filtered on write, so the stored form IS the safe
+                       rendition. Defined because an email may embed it.
+        JS             PRINTER = 'Rich_Text_Display' (injects the stored
+                       HTML through DOMPurify), EDITOR = 'Wysiwyg_Input',
+                       filter_set = safe_html() at the editor.
+
+    ENTITY_TAG_TEXT (theoretical - not shipped)
+
+        The encoding is plain text with {{Model_Class:id}} markers. A comment
+        might read: "Handed off to {{User_Model:33}} - see {{Client_Model:7}}."
+
+        filter_set()   Refuse a malformed tag so the column never holds one:
+                       strip any {{...}} whose class is not a model the
+                       manifest knows (Manifest::php_get_extending on
+                       Rsx_Model_Abstract) or whose id is not digits. Nothing
+                       else - the text between tags is opaque.
+
+        is_empty()     Default is correct: the storage form is text.
+
+        tagged_entities()   THE DEDICATED FUNCTION, and the reason the type
+                       exists. A parse, no database:
+
+                           preg_match_all('/\{\{([A-Z][A-Za-z0-9_]*):(\d+)\}\}/',
+                                          $this->raw, $m, PREG_SET_ORDER);
+                           return array_map(fn ($t) => [$t[1], (int) $t[2]], $m);
+
+                       returns [['User_Model', 33], ['Client_Model', 7]].
+
+        to_text()      NOT DEFINED, and that is the point. A plain rendition
+                       means resolving every tag to get_printed_name() - one
+                       query per tag, per row. If this application never
+                       exports comments, that is work the server has no
+                       reason to know how to do. Define it the day an export
+                       needs it, and not before.
+
+        to_html()      NOT DEFINED. Comments are only ever shown on a page,
+                       where Entity_Tag_Display renders each tag as a live
+                       chip - fetching the record through Model.fetch(),
+                       linking to it, subscribing to its changes. That is
+                       interactive rendering, which is what a component is
+                       for and what a static string cannot be.
+
+        JS             PRINTER = 'Entity_Tag_Display', EDITOR =
+                       'Entity_Tag_Input' (a textarea with an @-style
+                       autocomplete that inserts {{Class:id}}). Nothing else.
+
+        The complete type is filter_set() plus tagged_entities(). Two
+        methods, both about the encoding, neither a rendition.
+
+IN AN ENDPOINT
+    A declared field arrives already wrapped. The endpoint does what it does
+    for any field:
+
+        public static function save(Request $request, array $params = [])
+        {
+            $project = Project_Model::find($params['id']);
+
+            $project->name        = $params['name'];
+            $project->description = $params['description'];   // just assign
+
+            if ($project->description->is_empty()) {
+                return response_form_error('Description is required.');
+            }
+
+            $project->save();
+        }
+
+    ASSIGN, THEN VALIDATE. Nothing is written until save(). Assignment runs
+    the column's sanitizer and types the value; reading it back gives you the
+    real, filtered value to validate. is_empty() on it is correct because the
+    column's type is answering - an emptied WYSIWYG stores <p><br></p>, which
+    a string comparison calls non-empty and Rich_Text knows is empty.
+
+    The value the endpoint received BEFORE assignment is typeless, and can be
+    asked exactly one thing:
+
+        $params['description']->is_empty()
+
+    Everything else throws. Assignment resolves it.
+
+WORKING WITH THE VALUE BEFORE STORING IT
+    Sometimes an endpoint has to READ the content, not just store it: a
+    comment is saved, and the entities tagged in it must be notified. That
+    reading is a dedicated function on the type (contract rule 4), and the
+    endpoint needs a typed value to call it on - explicitly, because at the
+    boundary the framework did not know which type this field was.
+
+        Type::from_request($value): ?static
+
+    The programmer names the type by calling it on that type:
+
+        public static function post_comment(Request $request, array $params = [])
+        {
+            $comment = new Comment_Model();
+            $comment->thread_id = (int) $params['thread_id'];
+            $comment->body      = $params['body'];
+            $comment->save();
+
+            // The endpoint must READ the body: who was tagged? That is
+            // Entity_Tag_Text's business, on an Entity_Tag_Text - ask for one.
+            $body = Entity_Tag_Text::from_request($params['body']);
+
+            foreach ($body->tagged_entities() as [$class, $id]) {
+                if ($class === 'User_Model') {
+                    Notification::send($id, 'mentioned', $comment);
+                }
+            }
+        }
+
+    from_request() accepts:
+      - the typeless request value. Its client-claimed type must match the
+        type you named; a mismatch throws. That is a CONSISTENCY check
+        between the form and the endpoint, not a security control - the
+        value resolves to the type you named regardless of the claim.
+      - an already-typed value of the same type, returned as is.
+      - a bare string (a plain field that never wrapped), filtered.
+      - null, returned as null.
+    A typed value of a DIFFERENT type throws. Types do not convert.
+
+    Equivalent, when the record is at hand: assign first and read back.
+    $comment->body after assignment IS an Entity_Tag_Text, so
+    $comment->body->tagged_entities() works with no explicit resolution.
+    from_request() is for the case where you need the typed value and do not
+    have - or do not want - a record to assign it to.
+
+PRINTING AND EDITING
+    A live page interpolates the value and its PRINTER component renders it:
+
+        <%= this.data.project.description %>
+
+    A form need not name the widget - the column's type says which one:
+
+        <{Project_Model.editor_for('description')} $name="description" />
+
+    Both are the jqhtml features built for this and essentially nothing else.
+    rsx:man jqhtml, ADVANCED: VALUE PRINTERS and ADVANCED: DYNAMIC COMPONENT
+    TAGS. An input component names the type it edits with
+    `static ACCEPTS = 'Rich_Text'` and refuses everything else, both ways.
+
+CHANGING A COLUMN'S TYPE
+    Two acts, in order:
+
+    1. A migration that RE-ENCODES the existing rows. Type::from_string()
+       is the plain-text-to-format path.
+    2. The one-line change to $text_types.
+
+    Declaring without re-encoding leaves every row claiming an encoding it
+    does not have.
+
+GOTCHAS
+    USE is_empty(). NEVER === '' OR empty(). A value object is never
+    identical to a string, and PHP's empty() is always false on an object.
+    Both are silently wrong: an empty body reads as non-empty. This is the
+    single most likely mistake when adopting a type on an existing column.
+
+    `|| ''` IN FORM DEFAULTS IS THE SAME TRAP. A default of '' for a declared
+    column hands a string to an editor that edits objects and is refused.
+    null is the right empty.
+
+    A TYPED VALUE THROWS WHEN USED AS A STRING - deliberately. The case that
+    settles it is a write: `$copy->notes = $orig->notes . 'more'` would strip
+    the markup and store something plausible. Say what you mean: to_text(),
+    to_html(), is_empty() - and only where the type defines them.
+
+    A WRAPPING ENCODING MUST OVERRIDE is_empty(). The default is the raw
+    form. Rich_Text overrides; a notation type over plain text need not.
+
+    A THIRD-PARTY EDITOR MAY NOT ROUND-TRIP HTML IT DID NOT AUTHOR. Load a
+    stored value into a widget and save it back; the result must be
+    byte-identical. A library with its own document model can silently drop
+    markup it does not recognise.
+
+    PLUCK AND RAW SQL BYPASS THE CAST, exactly as they already do for dates
+    and type refs. That boundary is not new.
+
+HOW IT WORKS INSIDE
+    The rest of this page is the mechanism and the reasoning. Nothing here
+    changes what you write; it explains why the contract above is safe.
+
+    THE CONVERSION POINTS. A value crosses four boundaries, and it is a
+    different thing on each side of each one:
+
+      database -> PHP        Rsx_Text_Cast::get() -> Type::from_storage()
+                             TRUSTED. No filter: the store was filtered on
+                             the way in, and re-purifying on every read would
+                             put HTMLPurifier on every row of every list.
+
+      PHP -> browser         jsonSerialize() -> {__TEXT, raw, empty}
+                             The type name travels so the browser can pick
+                             the JS class for PRINTER and EDITOR. Only raw
+                             and one boolean go with it: no plain-text
+                             rendition, which would double every text
+                             column's payload to serve nobody.
+
+      browser -> PHP         hydrate_request_value() -> Rsx_Text_Request_Value
+                             TYPELESS. See below.
+
+      PHP -> database        Rsx_Text_Cast::set() -> Type::from_untrusted()
+                             THE trust boundary. The column's type is applied
+                             and its filter_set() runs, exactly once.
+
+    WHY THE REQUEST SIDE IS TYPELESS. At the Ajax boundary the server holds a
+    bag of keys and does not know which column each is bound for - that is
+    only known at assignment. So the boundary cannot know the RIGHT type, and
+    it must not guess it from the client's __TEXT: that is a client-supplied
+    string naming a class, and resolving it - even against an allowlist - is
+    a load of attacker-chosen code. It is also UNNECESSARY, because the
+    column declaration already holds the answer.
+
+    So the boundary resolves nothing. It wraps the raw string and the claim
+    in Rsx_Text_Request_Value and carries the claim as an OPAQUE string that
+    is never looked at. The filter runs at the cast, with the column's type.
+    A client that claims the wrong type is not an error; it is ignored, and
+    the server does the right thing regardless. A __TEXT naming a class that
+    does not exist produces a wrapper, not a failure - a failure would prove
+    the name was examined.
+
+    WHY THE WRAPPER IS INERT. Between the boundary and the cast, the value is
+    unfiltered and untyped. If it could be used as a string there, an
+    endpoint could log it, email it, or concatenate it - every one of which
+    is the trust boundary skipped. So it answers is_empty() and nothing else;
+    __toString throws. Assignment is how it becomes usable, and assignment is
+    where the filter is.
+
+    WHY is_empty() TRUSTS THE CLIENT AT THE BOUNDARY. Emptiness depends on
+    the encoding, and at the boundary the server has no type to ask. The
+    browser computed it with the real type at hand. The wrapper checks ''
+    itself - that needs no trust - and takes the client's word for the
+    encoding-specific case. The lie is useful in exactly one direction: a
+    blank document slipped past a required-field check, into the client's own
+    record. The server recomputes from the stored, typed value on every read,
+    so it survives one request's validation and reaches nobody else.
+
+    WHY is_empty() IS THE ONE RENDITION EVERY TYPE ANSWERS. Every endpoint's
+    assign-then-validate depends on it, so it cannot be optional and cannot
+    depend on to_text(), which is. Its default is therefore the raw form,
+    and a wrapping encoding owes an override.
+
+    WHY to_text() AND to_html() ARE OPTIONAL. Nothing in the framework calls
+    either. A page renders in the browser through the PRINTER component; a
+    CSV export or an email is application code, calling the convention by
+    name. Requiring them would make every notation type carry database
+    lookups it may never perform, to exist. Throwing by default keeps the
+    convention honest: the name is predictable everywhere, and an undefined
+    one fails loudly instead of returning a guess.
+
+    WHY from_request() CHECKS THE CLAIM. Not for safety - the value resolves
+    to the type the programmer named no matter what was claimed. The check
+    exists because a disagreement between the form and the endpoint about
+    what a field IS is a bug worth surfacing at the first request rather than
+    in the data.
+
+    WHY THE ECHO-BACK CARRIES THE CLAIM. An endpoint that returns a request
+    value without assigning it sends the client's own claim back. It is never
+    resolved server-side, so it costs nothing; the browser refuses a name that
+    is not a text type; and it cannot reach another user, because storage
+    goes through the cast and discards it. The raw it carries is UNFILTERED,
+    which is self-reflection of the sender's own input - and the reason the
+    Rich_Text printer runs DOMPurify at the injection point regardless of how
+    the value got there.
+
+    WHY THE CAST DOES NOT CACHE. Eloquent's default for a class cast is to
+    remember the assigned OBJECT and hand it back on the next read. Here the
+    assigned object is often the typeless wrapper, and the point of assignment
+    is that the column types it. With caching on, assign-then-validate would
+    validate the wrapper - unfiltered, untyped. So Rsx_Text_Cast sets
+    withoutObjectCaching, and every read re-hydrates from the stored string.
+    from_storage() is an allocation; reads never filter.
+
+    WHY __toString THROWS ON A TYPED VALUE. Not for reads - a CSV cell would
+    be fine with to_text() - but for writes. Concatenation coerces, strips the
+    encoding, and hands the cast a plain string it dutifully stores. Nothing
+    fails and the markup is gone. A throw at the coercion is the only place
+    that can be caught.
+
+    WHY THE CLIENT CANNOT PRODUCE A TYPED VALUE. Every typed value in
+    existence came from from_storage() (the database, trusted) or
+    from_untrusted() (filtered). from_string() routes through the latter.
+    Hydration yields a wrapper, never a type. So a typed value reaching the
+    cast has already been filtered once, and the cast passing it through
+    unfiltered is correct rather than a gap.
+
+    WHY filter_set() IS REQUIRED. So that "no filter" is always a declaration
+    with its reason beside it, never something a type inherits by omission.
+    Raw_Text's passthrough is written down with why it is safe: plain text is
+    never rendered as markup, so there is no encoding to enforce.
+
+    WHAT IS NOT DEFENDED. Raw SQL, DB::table() and query-builder bulk writes
+    bypass the cast, as they do every cast. Mass assignment is refused by
+    Rsx_Model_Abstract (fill, forceFill, update) and would route through the
+    cast even if it were not. And a filter_set() that does something beyond
+    transforming its string is outside what the framework can check - which
+    is why the contract names it a pure transform.
+
+SEE ALSO
+    rsx:man jqhtml - ADVANCED: VALUE PRINTERS, ADVANCED: DYNAMIC COMPONENT TAGS
+    rsx:man model - $enums and the model's other column declarations
+    rsx:man form_input - the input value contract
+    rsx:man csv_exports - where to_text() lands in an export
+    skill rspade:text-types - use cases, writing a custom type, the tagged-entities example
+
+    resource/reference_app/lib/text_types/ - the shipped types
+    resource/reference_app/models/project_model.php - a declaring model
+    resource/reference_app/app/frontend/projects/edit/Projects_Edit_Action.jqhtml
+        - the dynamic editor tag in use
+
+RSX Framework                    2026-09-14                    TEXT_TYPES(3)

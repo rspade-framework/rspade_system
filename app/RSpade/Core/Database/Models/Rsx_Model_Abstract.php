@@ -592,6 +592,29 @@ abstract class Rsx_Model_Abstract extends Model
     public static $enums;
 
     /**
+     * Declared TEXT column types (see rsx:man text_types).
+     *
+     * Maps a column to the Rsx_Text_Abstract subclass that owns its encoding:
+     *
+     * public static $text_types = [
+     *     'description' => Rich_Text::class,
+     *     'notes'       => Raw_Text::class,
+     * ];
+     *
+     * A declared column is read as a VALUE OBJECT rather than a string, is filtered by
+     * its type on every write, and travels to the browser as a {__TEXT, raw} envelope
+     * the JavaScript side rehydrates. The knowledge of what kind of string a column
+     * holds lives here, once, instead of at every place that prints, edits, exports or
+     * indexes it.
+     *
+     * A column NOT listed here keeps today's behaviour exactly: a naked string, no
+     * object, no filtering. Declaration is opt-in.
+     *
+     * @var array<string, class-string<\App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract>>
+     */
+    public static $text_types = [];
+
+    /**
      * Class-Table Inheritance (CTI) detail-table map (see man detail_tables).
      *
      * Declares, per discriminator value, the detail model holding that type's
@@ -667,6 +690,45 @@ abstract class Rsx_Model_Abstract extends Model
     public static function _type_ref_columns(): array
     {
         return array_values(array_unique(array_merge(self::$type_ref_columns, static::$type_ref_columns)));
+    }
+
+    /**
+     * The declared text type for a column, or null when the column has none.
+     *
+     * @param string $column
+     * @return class-string<\App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract>|null
+     */
+    public static function text_type_or_null(string $column): ?string
+    {
+        return ((array) static::$text_types)[$column] ?? null;
+    }
+
+    /**
+     * The declared text type for a column.
+     *
+     * Throws when the column has none - every caller reaches this from a cast that only
+     * exists because a declaration put it there, so an absence is a broken invariant and
+     * not an input to handle.
+     *
+     * @param string $column
+     * @return class-string<\App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract>
+     */
+    public static function text_type_for(string $column): string
+    {
+        $type = static::text_type_or_null($column);
+
+        if ($type === null) {
+            shouldnt_happen(static::class . "::\$text_types has no entry for '{$column}'");
+        }
+
+        if (!is_subclass_of($type, \App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract::class)) {
+            throw new \LogicException(
+                static::class . "::\$text_types['{$column}'] names {$type}, which does not extend "
+                . 'Rsx_Text_Abstract.'
+            );
+        }
+
+        return $type;
     }
 
     /**
@@ -778,6 +840,16 @@ abstract class Rsx_Model_Abstract extends Model
         foreach (static::_type_ref_columns() as $column) {
             if (!isset($casts[$column])) {
                 $casts[$column] = \App\RSpade\Core\Database\TypeRefs\Rsx_Type_Ref_Cast::class;
+            }
+        }
+
+        // Apply text-value casts for columns with a declared type. Opt-in and last, so a
+        // declaration never fights a schema-derived cast: a column is a date or a text
+        // type, never both, and a nonsensical pairing is caught by the declaration check
+        // in text_type_for() rather than by silent precedence here.
+        foreach (array_keys((array) static::$text_types) as $column) {
+            if (!isset($casts[$column])) {
+                $casts[$column] = \App\RSpade\Core\Database\TextTypes\Rsx_Text_Cast::class;
             }
         }
 

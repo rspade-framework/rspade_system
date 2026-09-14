@@ -1,0 +1,122 @@
+DECLARED TEXT COLUMN TYPES: A TEXT COLUMN CAN NOW SAY WHAT KIND OF STRING IT HOLDS
+Date: 2026-09-14
+
+IF YOU DO NOTHING: nothing breaks. Every TEXT column in your application stays an
+    ordinary string, and every place you print, edit, export or index one keeps
+    doing what it does today - which is the problem. Each of those places is
+    independently remembering whether the column holds plain text or HTML from a
+    WYSIWYG, and independently choosing an escape, a widget and a sanitizer. When
+    two of them disagree, the result is markup rendered as literal text, or user
+    input rendered unescaped, and nothing reports either. Any rich-text or
+    @-tagging field you built by hand is carrying that risk at every call site,
+    and will keep carrying it until you declare its type.
+
+SUMMARY
+    A model may now declare, beside $enums, what KIND of string each TEXT column
+    holds:
+
+        public static $text_types = [
+            'description' => Rich_Text::class,
+            'notes'       => Raw_Text::class,
+        ];
+
+    A declared column is read as a VALUE OBJECT that carries its own encoding.
+    The knowledge of what the column is lives in that one line, and every sink
+    asks the value instead of remembering:
+
+      - a live page prints it with plain interpolation -
+        <%= this.data.project.description %> - and jqhtml routes the object to
+        the type's own printer component, so the template chooses no escaping;
+      - a form need not name the widget - the column's type says which
+        component edits it - and an input that edits one type REFUSES another;
+      - every write passes through the type's sanitizer exactly once, at the
+        column, so an endpoint assigns it like any other field and never calls
+        safe_html() itself;
+      - used as a string anywhere - concatenated, interpolated, logged - it
+        THROWS, in PHP and in JavaScript. That exception is the point: the
+        content is opaque to your code, and the throw is what makes it hard to
+        use incorrectly.
+
+    WHY. Rich text, and any notation over text, has a trust boundary and a
+    rendering rule that belong to the COLUMN. Spread across call sites they
+    drift, and the drift is silent. Moving both onto the value makes the safe
+    path the only path: there is one sanitizer, it runs at one place, and the
+    templates and endpoints that handle the value cannot skip it because they
+    never hold a bare string to skip it with.
+
+    The framework ships the abstract, Rsx_Text_Abstract, and NO concrete types.
+    Which types exist and what each permits is your application's decision.
+
+READ THE MAN PAGE FIRST
+    php artisan rsx:man text_types
+
+    Its top section is the contract you write against, treating the framework
+    as a black box; the worked examples show a shipped type and a theoretical
+    entity-tagging type side by side; and it closes with the mechanism and the
+    security reasoning behind every conversion point. The skill
+    rspade:text-types covers the same ground from the "how do I build one" side.
+
+ACTION RECOMMENDED - CONVERT YOUR RICH-TEXT AND TAGGING FIELDS
+    Find every column in your application that holds something other than
+    plain text and declare it. The two shapes to look for:
+
+    1. RICH TEXT. Any column edited by Quill, TinyMCE, CKEditor or a similar
+       WYSIWYG, and any template that prints one through safe_html() or an
+       unescaped interpolation. Each of those call sites is a decision the
+       template is making about the column's encoding; declaring the column
+       moves that decision onto the type and deletes the call sites.
+
+           grep -rn "safe_html\|<%!=" rsx/app rsx/theme
+
+    2. TAGGING. Any field that lets a user type "@name" or otherwise embed a
+       reference to a record - a comment that mentions a user, a note that
+       links a client - and that your code later parses to find who was
+       tagged. That parser is a dedicated function that belongs ON the type,
+       where the encoding is known, and nowhere else. The man page's
+       Entity_Tag_Text example is exactly this shape, including how an
+       endpoint reads the tagged entities back out of a submitted value with
+       Type::from_request() before notifying them.
+
+    For each: write the type (one required method, filter_set(), the
+    sanitizer; everything else is an optional convention), declare the column,
+    re-encode existing rows if the storage form changes, and replace the
+    hand-rolled call sites with interpolation and the dynamic editor tag. The
+    conversion steps, the two-act migration rule and the gotchas - is_empty()
+    over === '', null over '' in form defaults - are in the man page.
+
+THE SHIPPED REFERENCE IMPLEMENTATION
+    The reference application vendored into every release at
+
+        system/app/RSpade/resource/reference_app/
+
+    contains a complete, working example of both shipped types, with their
+    editors, printers, declaring models, endpoints and tests:
+
+        lib/text_types/rich_text/     Rich_Text: sanitized HTML from a WYSIWYG.
+                                      Probably useful VERBATIM for most
+                                      projects - copy it into your rsx/lib/ and
+                                      adapt the allow-list in filter_set() if
+                                      your application permits more or less.
+        lib/text_types/raw_text/      Raw_Text: a block of plain text. A
+                                      reference for the minimal shape; most
+                                      projects will not need it.
+        theme/components/inputs/wysiwyg/       the Quill editor, typed
+        theme/components/inputs/raw_text/      the textarea editor, typed
+        theme/components/view/rich_text_display/   the two printer components
+        theme/components/view/raw_text_display/
+        models/project_model.php               a declaring model
+        app/frontend/projects/edit/Projects_Edit_Action.jqhtml
+                                      the dynamic editor tag in use
+        tests/Text_Type_Assignment_Test.php    the column behaviour, pinned
+
+    lib/text_types/CLAUDE.md in that tree is the living description of the
+    shipped types and how to adapt them.
+
+    These live in rsx/, which is your fork, so they do not arrive by pulling
+    the framework - the engine does, the reference implementation is yours to
+    copy.
+
+SEE ALSO
+    rsx:man text_types       the contract, two worked types, the security design
+    rsx:man jqhtml           ADVANCED: VALUE PRINTERS, ADVANCED: DYNAMIC COMPONENT TAGS
+    skill rspade:text-types  writing a custom type on both halves; the tagging example

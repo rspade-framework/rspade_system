@@ -538,6 +538,25 @@ class Rsx_Js_Model {
 
         // Handle objects
         if (typeof data === 'object') {
+            // A {__TEXT, raw} envelope is a declared TEXT column's value. It rehydrates
+            // into the JS class of the same name, whose PRINTER renders it and whose
+            // EDITOR edits it - the browser mirror of the PHP text type. Checked before
+            // __MODEL because a text value is a leaf and never carries nested records.
+            if (data.__TEXT && typeof data.__TEXT === 'string') {
+                const Text_Class = Manifest.get_class_by_name(data.__TEXT);
+
+                // Dynamic type resolution requires checking class existence - @JS-DEFENSIVE-01-EXCEPTION
+                if (!Text_Class || !Manifest.js_is_subclass_of(Text_Class, Rsx_Text_Abstract)) {
+                    shouldnt_happen(
+                        `Text value '${data.__TEXT}' arrived from the server but no such text type ` +
+                        `exists in the browser bundle. Every text type declared in PHP needs a ` +
+                        `JavaScript class of the same name declaring its PRINTER and EDITOR.`
+                    );
+                }
+
+                return Text_Class.from_wire(data);
+            }
+
             // Check if this object has a __MODEL property
             if (data.__MODEL && typeof data.__MODEL === 'string') {
                 // Look up the model class in the Manifest registry
@@ -546,7 +565,22 @@ class Rsx_Js_Model {
                 // If the model class exists and extends Rsx_Js_Model, instantiate it
                 // Dynamic model resolution requires checking class existence - @JS-DEFENSIVE-01-EXCEPTION
                 if (ModelClass && Manifest.js_is_subclass_of(ModelClass, Rsx_Js_Model)) {
-                    return new ModelClass(data);
+                    // The record's own FIELDS are walked before the instance is built. They
+                    // used to be handed to the constructor exactly as they came off the
+                    // wire, so anything that needs rehydrating inside a record - a declared
+                    // TEXT column's {__TEXT, raw} envelope, a nested {__MODEL} record - was
+                    // left as a plain object and reached templates as one.
+                    const fields = {};
+
+                    for (const key in data) {
+                        if (data.hasOwnProperty(key)) {
+                            fields[key] = key === '__MODEL'
+                                ? data[key]
+                                : Rsx_Js_Model._instantiate_models_recursive(data[key]);
+                        }
+                    }
+
+                    return new ModelClass(fields);
                 }
             }
 
