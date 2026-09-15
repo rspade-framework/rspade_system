@@ -99,4 +99,4 @@ Notes:
 - The live counterpart is not a test file: the template's `Main::init()` staff site
   declaration was NEUTRALIZED and a full portal login + site-scoped portal Ajax was run
   over HTTP (workspaces returned the portal tenant's own rows). That proved portal
-  tenancy no longer rides the staff line. See the C2 notes in the epic research doc.
+  tenancy no longer rides the staff line.

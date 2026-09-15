@@ -32,7 +32,7 @@ structurally impossible.
 
 ## Governing docs
 
-- `docs.dev/external_requests/2026_07_15_document_models_regen_clobbers_class_top.md`
+- `docs.dev/external_requests/archive/2026_07_15_document_models_regen_clobbers_class_top.md`
   (the four-point contract these tests enforce).
 
 ## Testable surface

@@ -3,7 +3,8 @@
  * CODING CONVENTION:
  * This file follows the coding convention where variable_names and function_names
  * use snake_case (underscore_wherever_possible).
- *
+ */
+/**
  * @ROUTE-EXISTS-01-EXCEPTION - This file generates code templates with placeholder route names
  */
 

@@ -344,8 +344,12 @@ PRINTING AND EDITING
 CHANGING A COLUMN'S TYPE
     Two acts, in order:
 
-    1. A migration that RE-ENCODES the existing rows. Type::from_string()
-       is the plain-text-to-format path.
+    1. A migration that RE-ENCODES the existing rows into the type's storage
+       form, in RAW SQL: a migration never names an application class
+       (MIGRATION-MODEL-01, rsx:man migrations), so it reproduces what
+       Type::from_string() produces rather than calling it. from_string() is
+       the reference the SQL must match, and the path for a conversion made
+       in code.
     2. The one-line change to $text_types.
 
     Declaring without re-encoding leaves every row claiming an encoding it

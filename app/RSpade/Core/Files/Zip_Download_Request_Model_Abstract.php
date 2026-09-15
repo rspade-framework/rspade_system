@@ -9,11 +9,10 @@ use App\RSpade\Core\Time\Rsx_Time;
 /**
  * Zip_Download_Request_Model_Abstract - one row per minted multi-file ZIP download (_zip_download_requests).
  *
- * Reworks the multi-file ZIP download into a database-backed, server-authorized flow.
+ * Implements the multi-file ZIP download as a database-backed, server-authorized flow.
  * Server-side app code records the file set with create_request(), receives an opaque
  * download_key, and hands the browser a plain GET URL (get_download_url()); the browser
- * simply navigates to it. The stored file set is the SAME entry format the old POST
- * accepted: a JSON array of {key, name?}.
+ * simply navigates to it. The stored file set is a JSON array of {key, name?}.
  *
  * create_request() validates the STRUCTURE of the file set fail-loud, but does NOT
  * authorize the files: authorization happens per-file at download time against the

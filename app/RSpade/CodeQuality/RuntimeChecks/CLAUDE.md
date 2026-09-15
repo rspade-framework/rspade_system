@@ -130,7 +130,7 @@ if (!app()->environment('production')) {
 - `YoureDoingItWrongException.php` - The base exception class
 - `BundleErrors.php` - Bundle-related convention violations
 - `ViewErrors.php` - View/template convention violations
-- `RouteErrors.php` - Routing convention violations
+- `ManifestErrors.php` - Manifest-related convention violations
 - etc. (grouped by feature domain)
 
 ## Remember

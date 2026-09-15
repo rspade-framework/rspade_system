@@ -13,7 +13,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * Regression tests for the fence-safe model-docblock rewriter.
  *
  * These enforce the contract from
- * docs.dev/external_requests/2026_07_15_document_models_regen_clobbers_class_top.md:
+ * docs.dev/external_requests/archive/2026_07_15_document_models_regen_clobbers_class_top.md:
  *
  *   1. Every byte outside the __AUTO_GENERATED fences survives a regeneration verbatim -
  *      including code between the class brace and the first fence (the spot a past regen
@@ -262,7 +262,7 @@ EOF;
     // Old-format constants_regenerate fence (B2) is MIGRATED in one pass, never duplicated.
     // A B2 fence is the old-format home for enum constants; a fresh B1 must REPLACE it, not
     // stack beside it (which declared every constant twice - the parse fatal this fixes).
-    // See docs.dev/external_requests/2026_07_15_document_models_regen_clobbers_class_top.md
+    // See docs.dev/external_requests/archive/2026_07_15_document_models_regen_clobbers_class_top.md
     // (UPDATE 2026-07-15).
     // -------------------------------------------------------------------------
 

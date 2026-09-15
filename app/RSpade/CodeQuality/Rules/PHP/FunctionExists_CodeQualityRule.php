@@ -48,10 +48,6 @@ class FunctionExists_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
         
-        // Skip InspectCommand.php - it documents what the checks do
-        if (str_contains($file_path, 'InspectCommand.php')) {
-            return;
-        }
         
         // Get both original and sanitized content
         $original_content = $this->source()->content($file_path);

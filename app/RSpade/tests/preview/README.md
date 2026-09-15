@@ -36,7 +36,7 @@ Shipped in the Document Pipeline epic, Batch 3 (rendition endpoint + filter chai
 
 `php artisan rsx:man document_search` (authored in Batch 6). Until then the plan doc
 (`hashed-whistling-pumpkin.md`, BATCH 3) and the CR
-(`docs.dev/external_requests/2026_07_16_document_preview_rendering.md`) are the contract.
+(`docs.dev/external_requests/archive/2026_07_16_document_preview_rendering.md`) are the contract.
 
 ## Testable surface
 

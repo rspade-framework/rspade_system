@@ -34,7 +34,7 @@ Shipped in the Document Pipeline epic, Batch 2 (extraction core).
 
 `php artisan rsx:man document_search` (authored in Batch 6). Until then the plan doc
 (`docs.dev` / `hashed-whistling-pumpkin.md`, BATCH 2) and the CR
-(`docs.dev/external_requests/2026_07_16_document_text_extraction.md`) are the contract.
+(`docs.dev/external_requests/archive/2026_07_16_document_text_extraction.md`) are the contract.
 
 ## Testable surface
 

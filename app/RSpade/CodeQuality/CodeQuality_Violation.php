@@ -17,7 +17,7 @@ class CodeQuality_Violation
     
     public function to_array(): array
     {
-        // Return in format expected by InspectCommand
+        // The wire format rsx:check's output and the test suite's assertions both key off
         return [
             'file' => $this->file_path,
             'line' => $this->line_number,

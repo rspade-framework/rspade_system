@@ -2,7 +2,7 @@
 
 ## Overview
 
-The Code Quality system is a modular, extensible framework for enforcing coding standards and best practices across the RSpade codebase. It replaces a monolithic 1921-line checker with a clean, maintainable architecture using Manifest-based auto-discovery.
+The Code Quality system is a modular, extensible framework for enforcing coding standards and best practices across the RSpade codebase, built on Manifest-based auto-discovery.
 
 ## Architecture
 
@@ -72,7 +72,7 @@ A rule receives a path, the contents and the manifest metadata, and says what is
 
 ## Rule Categories
 
-145 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
+146 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
 Database, JavaScript, Jqhtml, Manifest, Meta, Models, PHP, Scss). The listings below are
 ILLUSTRATIVE SAMPLES of each category, not an inventory - the rule set is discovered from the
 filesystem, so `Rules/` itself is the authoritative list - read the directory for the full set.
@@ -649,16 +649,6 @@ class MyNew_CodeQualityRule extends CodeQualityRule_Abstract
 3. Verify violations are detected correctly
 4. Clean up test files
 
-## Migration from Monolith
-
-The original 1921-line `CodeStandardsChecker.php` has been:
-1. Archived to `/archived/CodeStandardsChecker.old.php`
-2. Split into modular rule classes
-3. Enhanced with auto-discovery via Manifest
-4. Improved with better caching and performance
-
-All original rule logic has been preserved exactly, ensuring no regression in code quality checks.
-
 ## Performance
 
 - **Caching**: Sanitized file contents are cached to avoid repeated processing
@@ -738,7 +728,7 @@ retires the verdicts recorded against the old one.
 
 ### Current Manifest-Time Rules
 
-**47 of the 145 rules** return `true` from `is_called_during_manifest_scan()` (verified
+**47 of the 146 rules** return `true` from `is_called_during_manifest_scan()` (verified
 2026-09-07). This list drifts; regenerate it from the source of truth:
 
 ```bash

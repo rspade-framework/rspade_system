@@ -53,14 +53,12 @@ Provides path-agnostic class loading - classes are found by name, not path.
 
 Indexes all files in `/rsx/` for automatic discovery and loading.
 
-## JQHTML Named Slots (v2.2.112+)
+## JQHTML Named Slots
 
-Child template syntax changed from `<Slot:slotname />` tags to `content('slotname')` function:
-- Old: `<Slot:header />` (deprecated)
-- New: `<%= content('header') %>` (v2.2.112+)
-- Parent syntax: `<Slot:header>content</Slot:header>`
+A child template reads a named slot with `<%= content('slotname') %>`; the parent
+fills it with `<Slot:header>content</Slot:header>`.
 
-## JQHTML Slot-Based Template Inheritance (v2.2.108+)
+## JQHTML Slot-Based Template Inheritance
 
 When component template contains ONLY slots (no HTML), it automatically inherits parent class template structure:
 - Enables abstract base components with customizable slots

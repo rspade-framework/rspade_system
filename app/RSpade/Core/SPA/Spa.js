@@ -1333,9 +1333,9 @@ class Spa {
     /**
      * The @auth checks an action declares that the current user was NOT granted
      *
-     * An action with no @auth passes (empty result): closed-by-default enforcement
-     * arrives with the annotation pass, and until every action is annotated an
-     * un-gated action must still dispatch.
+     * An action with no @auth passes (empty result). That is not a bypass: the
+     * manifest build refuses a routed action that declares no gate, so a class that
+     * reaches dispatch always carries one.
      *
      * Reads window.rsxapp.auth - the ACTIVE realm's grants-only map, so the same
      * code serves staff and portal pages. A denied or nonexistent check name is

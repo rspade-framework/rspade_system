@@ -17,8 +17,9 @@ cache, DB 1 locks and the task worker registry, DB 2 the reduced-volatility cach
 
 **`clear()` runs on every database transaction rollback.** A rollback can undo a write the
 cache already memoized, and a stale memo hands application code a confidently wrong answer -
-the `_type_refs` defect recorded in `../test_runner/issues_encountered.md`. So the flush is
-unconditional (`Transaction_Rollback_Cache_Reset`), and anything that must survive it is not
+the type-ref registry's cached id-to-class map once survived a test-database restore, so
+an id registered after the dump was taken resolved to the class it meant BEFORE the
+restore, confidently and wrongly. So the flush is unconditional (`Transaction_Rollback_Cache_Reset`), and anything that must survive it is not
 cache: counters are on DB 3, and a cache key that must outlive the resets carries the
 internal `_RVC_` prefix that routes it to DB 2.
 

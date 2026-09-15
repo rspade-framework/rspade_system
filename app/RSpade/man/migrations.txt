@@ -73,6 +73,12 @@ MIGRATION RULES
        Recommended for Simplicity:
        - Just use INT for integers (becomes BIGINT automatically)
        - Just use TEXT for long content (becomes LONGTEXT automatically)
+       - What a column HOLDS is declared on the MODEL, never in the migration:
+         an enum column is BIGINT here and mapped by $enums there; a TEXT column
+         holding rich text or a custom notation is TEXT here and typed by
+         $text_types there (rsx:man text_types). Converting an existing plain-text
+         column to a type is two acts: a raw-SQL migration that re-encodes the
+         rows into the type's storage form, then the declaration on the model
        - Just use FLOAT for decimals (becomes DOUBLE automatically)
        - Don't add created_at/updated_at (added automatically)
        - Don't add created_by_id/_type or updated_by_id/_type (added automatically)

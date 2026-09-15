@@ -65,7 +65,7 @@ curl / `rsx:debug` testing channel). A loopback-VALUED APP_URL is NOT exempt.
     `${HOSTNAME}` and strip a trailing slash.
   - `enforce_https(string $app_url)` - pure: throw unless the scheme is https.
   - `patch_environment()` / `enforce_https_from_env()` - impure boot seams
-    (read/write env); proven E2E in the ticket, not unit-tested.
+    (read/write env); proven by manual E2E testing, not unit-tested.
 
 Call sites: guard at `Dispatcher::dispatch()` (after `__validate_route_attributes()`,
 before the Portal_Dispatcher delegation); resolver substitution at
@@ -97,8 +97,8 @@ before the Portal_Dispatcher delegation); resolver substitution at
 | Rsx_App_Url::resolve token spellings / trailing slash / passthrough / idempotent | php | implemented |
 | config/app.php: app.env / app.debug derive from RSX_MODE; APP_ENV / APP_DEBUG ignored; booted container agrees | php | implemented |
 | Rsx_App_Url::enforce_https https-pass / http-throw / http-localhost-throw / empty-throw | php | implemented |
-| check() web path (loopback-request exempt + throw on mismatch) | http | deferred - PHP runner is CLI, so check() always bails there; proven by E2E curl in the ticket verification, not a persistent test |
-| patch_environment / enforce_https_from_env boot seams (env patched before config, readable https error) | http | deferred - boot-phase behavior; proven by E2E curl + boot script in the ticket verification |
+| check() web path (loopback-request exempt + throw on mismatch) | http | deferred - PHP runner is CLI, so check() always bails there; proven by manual E2E curl testing, not a persistent test |
+| patch_environment / enforce_https_from_env boot seams (env patched before config, readable https error) | http | deferred - boot-phase behavior; proven by manual E2E curl + boot script testing |
 
 ## Notes
 

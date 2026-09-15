@@ -561,7 +561,6 @@ class Manifest
     */
     public static function find_view_by_rsx_id(string $id): string
     {
-        // This method now properly checks for duplicates
         return self::find_view($id);
     }
 

@@ -50,7 +50,7 @@ Shipped in the Document Pipeline epic, Batch 5.
 
 ## Behavior defined by
 
-The CR `docs.dev/external_requests/2026_07_16_health_check_command.md` and the plan doc
+The CR `docs.dev/external_requests/archive/2026_07_16_health_check_command.md` and the plan doc
 (`hashed-whistling-pumpkin.md`, BATCH 5). A man page is authored in Batch 6.
 
 ## Testable surface

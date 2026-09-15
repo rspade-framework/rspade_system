@@ -274,8 +274,9 @@ type defines them.
 **"Just give the API client the string" is the same mistake as `=== ''`.** The external API
 emits the envelope. See the section above.
 
-**Changing a column's type is two acts, in order**: a migration that re-encodes the rows
-(`Type::from_string()`), then the declaration change.
+**Changing a column's type is two acts, in order**: a raw-SQL migration that re-encodes the
+rows into the storage form `Type::from_string()` produces (a migration never calls an
+application class - MIGRATION-MODEL-01), then the declaration change.
 
 **A third-party editor may not round-trip HTML it didn't author.** Load a stored value and
 save it back; the result must be byte-identical.

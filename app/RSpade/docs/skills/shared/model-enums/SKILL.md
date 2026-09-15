@@ -7,6 +7,8 @@ description: "Implementing model enums in RSX with integer-backed values, consta
 
 Integer-backed enums with model-level mapping to constants, labels, and custom properties. Uses BEM-style double underscore naming for magic properties.
 
+The sibling declaration for a TEXT column is `public static $text_types` - what kind of string the column holds (rich text, a notation), so its encoding is stated once rather than at every print site. Skill `rspade:text-types`.
+
 ## Defining Enums
 
 ```php

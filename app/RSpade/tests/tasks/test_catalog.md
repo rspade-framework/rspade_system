@@ -1,6 +1,6 @@
 # Test catalog: tasks
 
-Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues_encountered.md) | `planned`.
+Status legend: `implemented` | `deferred` (reason) | `blocked` (reason) | `planned`.
 Type: php / cli. Last updated: 2026-08-31.
 
 ## Task_Definition_Test (php, default isolation) - metadata, no commits

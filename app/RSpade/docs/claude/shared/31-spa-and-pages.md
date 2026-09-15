@@ -2,7 +2,7 @@
 
 ## SPA, PAGES & URLS
 
-Client-side routing for authenticated areas: **ONE PHP bootstrap controller per module** (`#[SPA]`, returning `rsx_view(SPA)`) plus MANY JavaScript actions that navigate without page reloads. Feature controllers inside an SPA module are **Ajax endpoints only**.
+Client-side routing for authenticated areas: **ONE PHP bootstrap controller per module** (`#[SPA]`, returning `rsx_view(SPA, ['bundle' => 'Frontend_Bundle'])`) plus MANY JavaScript actions that navigate without page reloads. Feature controllers inside an SPA module are **Ajax endpoints only**.
 
 ```javascript
 @route('/contacts')                     // repeat for a dual-route add/edit action

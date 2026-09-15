@@ -19,7 +19,7 @@ class Frontend_Spa_Controller extends Rsx_Controller_Abstract
     #[Auth('is_logged_in')]   // MANDATORY; pre_dispatch does NOT do auth
     public static function index(Request $request, array $params = [])
     {
-        return rsx_view(SPA);
+        return rsx_view(SPA, ['bundle' => 'Frontend_Bundle']);
     }
 }
 ```

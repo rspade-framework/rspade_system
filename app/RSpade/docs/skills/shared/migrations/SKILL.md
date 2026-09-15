@@ -1,6 +1,6 @@
 ---
 name: migrations
-description: "RSX database migrations - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, the self-containment rule (no model class and no Type_Ref_Registry - MIGRATION-MODEL-01), automatic schema normalization and audit columns, and the datadir snapshot that auto-rolls-back a failed run (and the three conditions that decide whether it is taken at all). Use when creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, or wondering whether it is safe to run migrate."
+description: "RSX database migrations and the column kinds a model declares over them - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, the self-containment rule (no model class and no Type_Ref_Registry - MIGRATION-MODEL-01), automatic schema normalization and audit columns, and the datadir snapshot that auto-rolls-back a failed run (and the three conditions that decide whether it is taken at all). Use when creating or altering any table or column, adding a field to a model, choosing a column type (an enum is BIGINT + $enums, a polymorphic reference is a type-ref pair, rich text is TEXT + $text_types), converting an existing column to a declared text type, creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, or wondering whether it is safe to run migrate."
 ---
 
 # RSX Database Migrations
@@ -149,6 +149,27 @@ Ids are still never hardcoded - the closure resolves or creates the row at repla
 ```
 
 Schema work and type-ref lookups are never the exception; convert those.
+
+---
+
+## What a column holds is declared on the model
+
+The migration carries the STORAGE type only. What the column means is a model declaration,
+and each kind has its own skill:
+
+| Column | Migration | Model | Skill |
+|---|---|---|---|
+| enum (status, type, role) | `BIGINT` | `public static $enums` | `rspade:model-enums` |
+| polymorphic reference | `BIGINT` `_type` + `_id` pair | `$type_ref_columns` | `rspade:polymorphic` |
+| rich text / custom notation | `TEXT` | `public static $text_types` | `rspade:text-types` |
+| type-specific 1:1 fields | a detail table | `$detail_tables` | `rspade:detail-tables` |
+
+A text type exists so the encoding of a TEXT column (sanitized HTML from a WYSIWYG, an
+`{{Entity:id}}` notation) is stated once and every print, edit, export and index asks the
+value instead of remembering. **Converting an existing plain-text column is two acts**: a
+raw-SQL migration that re-encodes the rows into the type's storage form (this rule forbids
+calling the type class here; reproduce what its `from_string()` produces), then the
+`$text_types` declaration.
 
 ---
 

@@ -22,7 +22,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Regression: a global resort of the assembled file list (plus tail-appended
  * stubs/aliases) inverted declared order and TDZ-crashed downstream apps.
- * See docs.dev/external_requests/2026_07_15_bundle_emission_order_tdz.md.
+ * See docs.dev/external_requests/archive/2026_07_15_bundle_emission_order_tdz.md.
  *
  * NOTHING HERE NAMES AN APPLICATION CLASS OR BUNDLE. The bundle is resolved from the
  * manifest (an application module bundle that has been compiled and whose include list

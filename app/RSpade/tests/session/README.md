@@ -36,7 +36,7 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 
 ## Man page(s)
 
-- `man/session.txt` (reconciled - see issues_encountered.md)
+- `man/session.txt` (reconciled)
 
 ## Testable surface
 
@@ -74,4 +74,3 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
 ## Documents
 
 - `test_catalog.md` - full catalog (implemented + deferred).
-- `issues_encountered.md` - man-page/code divergences found during the audit.

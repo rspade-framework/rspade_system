@@ -318,6 +318,14 @@ Examples:
 - Search index? System (_search_indexes) - API is Search::query()
 - Client records? Application (clients) - business domain entity
 
+Column kinds the MODEL declares (the migration carries only the storage type):
+- An enum: BIGINT column, mapped by public static $enums (rsx:man enums).
+- A polymorphic reference: a BIGINT {relation}_type + {relation}_id pair,
+  declared in $type_ref_columns (rsx:man polymorphic).
+- Rich text or a custom notation: a TEXT column, typed by public static
+  $text_types so the encoding is stated once and every print, edit, export
+  and index asks the value (rsx:man text_types).
+
 CONCLUSION
 ----------
 

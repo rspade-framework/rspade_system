@@ -164,8 +164,8 @@ class Email_Queue_Test extends Rsx_Test_Abstract
     // exists - #[Exclusive] guarantees no second runner, so there is nobody else it
     // could belong to. Nothing else can ever free it: claim_next() only looks at
     // PENDING, so the message sits there forever, invisible, neither sent nor failed.
-    // That is what stranded two real rows on the development box while this epic was
-    // being built.
+    // That is what stranded two real rows on the development box before this reclaim
+    // existed.
     // =========================================================================
 
     public static function test_reclaim_stranded_returns_a_sending_row_to_pending()

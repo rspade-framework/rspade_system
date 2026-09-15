@@ -18,7 +18,7 @@ use App\RSpade\Tests\Realtime\Php\Realtime_Method_Touch_Parent_Fixture_Model;
  * realtime_touch() METHOD rung: a touch-only child (no $realtime, no #[Realtime_Touch]
  * attribute - the overridden method is its ONLY realtime surface) must still walk the cascade
  * and notify its PARENTS, publishing NOTHING for its own frame. This mirrors the attribute
- * rung and closes the dead-code trap the CR reported (Entity_Association_Model). Covers the
+ * rung and closes the dead-code trap the method-rung decoupling fixes (Entity_Association_Model). Covers the
  * per-row save path, both bulk-builder paths (update/delete hydrate the method surface), the
  * own-frame negative, and manual realtime_emit() (which DOES publish the own frame - calling
  * it IS the intent, protecting request_emit() semantics).

@@ -48,10 +48,6 @@ class ClassExists_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        // Skip InspectCommand.php - it documents what the checks do
-        if (str_contains($file_path, 'InspectCommand.php')) {
-            return;
-        }
 
         // Skip Autoloader.php - it needs to check class existence as part of its core functionality
         if (str_contains($file_path, 'Autoloader.php')) {

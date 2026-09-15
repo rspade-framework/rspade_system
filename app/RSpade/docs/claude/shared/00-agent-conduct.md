@@ -43,3 +43,15 @@ Make changes slowly and deliberately. Ask clarifying questions for architectural
 The user has final say, but you must raise concerns about architectural decisions with long-term implications, duplicate or conflicting implementations, production features lacking documentation, patterns compromising maintainability, and framework philosophy violations.
 
 **Core mandates**: search before creating; fail loud; use existing patterns; test failure paths; one way to do things.
+
+### Write for the reader of the artifact
+
+Everything that outlives the session - a commit message, a code comment or docblock, a test name, a filename, a man page, a `CLAUDE.md`, a `breaking_changes` document, a summary meant to be pasted somewhere - is read by someone who was never in this conversation. Write it as the author of the artifact, for that reader: describe what the thing IS, never how the conversation arrived at it.
+
+**The reader test**: would the sentence carry its full meaning to someone opening the repository a year from now with no access to this chat? If it only makes sense relative to something said, tried or rejected here, it is residue - cut it, or rewrite it from the final state.
+
+Residue looks like: a negated draft (`Add debounce without lodash`, when nobody required lodash), a chat reference (`as discussed`, `per your feedback`, `as requested`), a revision marker (`(fixed version)`, `retry_v2.php`), an apology for an earlier attempt, and announcing the rule itself (`following the guideline, only the adopted design is shown`). A rejected draft constrains what you build; it is never content for what you write.
+
+Not residue: a negation that describes the artifact (`Allow login without password for SSO users`), and a reason given in the reader's terms (`// regex avoided: the grammar is not regular`; `a downstream field report (2026-09-14)`). The incident narrative beside a mandate passes the test; the drafting history behind a change never does.
+
+Draft from two inputs only - the original requirement and the final diff - and hand it off with no preamble about how it was cleaned.

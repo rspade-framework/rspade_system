@@ -1359,11 +1359,11 @@ function handle_resolve_class_service($data) {
         return implode('_', array_map('ucfirst', $parts));
     };
 
-    // If no type list specified, try auto-detection with legacy 'class' type
+    // If no type list specified, auto-detect against the 'class' type
     if (empty($type_list)) {
         // `_?[A-Z][A-Za-z0-9_]*` is the RSpade name shape (App\RSpade\Core\Naming\Rsx_Identifier).
         if (!$type || $type === 'class' || preg_match('/^_?[A-Z][A-Za-z0-9_]*$/', $identifier)) {
-            // Legacy: Try PHP class with auto-detection fallback
+            // Try each candidate type in turn, PHP class first.
             $type_list = ['php_class', 'view', 'bundle_alias', 'jqhtml_template', 'jqhtml_class'];
         }
     }
@@ -1482,23 +1482,6 @@ function handle_resolve_class_service($data) {
         'searched_types' => $type_list,
     ]);
 }
-
-/**
- * OBSOLETE LEGACY CODE REMOVED
- * =============================
- * The code below (approximately lines 1410-1685) was the old resolution system
- * that tried each type individually without CSV support. It has been replaced
- * by the new CSV type list system above with dedicated resolver functions.
- *
- * Removed sections:
- * - Legacy PHP class fallback (duplicate of try_resolve_php_class)
- * - Legacy view resolution (duplicate of try_resolve_view)
- * - Legacy bundle alias resolution (duplicate of try_resolve_bundle_alias)
- * - Legacy jqhtml template resolution (duplicate of try_resolve_jqhtml_template)
- * - Legacy jqhtml class resolution (duplicate of try_resolve_jqhtml_class)
- * - Legacy jqhtml method resolution (duplicate of try_resolve_jqhtml_method)
- */
-
 
 /**
  * Handle js_lineage service - get JavaScript class inheritance chain

@@ -29,7 +29,7 @@ all background/scheduled work in the framework.
 
 ## Man page(s)
 
-- `man/tasks.txt` (reconciled - several fixes; see issues_encountered.md)
+- `man/tasks.txt` (reconciled)
 - `man/task_commands.txt` - `#[Command]` and the console output contract
 
 ## Testable surface
@@ -42,8 +42,7 @@ all background/scheduled work in the framework.
   status/queue, `status()` reads it back. (php - **commits**, so
   `$requires_db_reset = true` + `$use_database_transactions = false`)
   (Resolved 2026-06-17: the code referenced a non-existent `_task_queue` table;
-  fixed to `_tasks`. The dispatch/status tests are now implemented and passing.
-  See issues_encountered.md ISSUE-1.)
+  fixed to `_tasks`. The dispatch/status tests are now implemented and passing.)
 - `#[Command]` declaration: the five manifest-build FATALs, the baked `task_commands`
   table, alias construction, and registration from a present/absent table. (php - synthetic
   manifest data, default isolation)
@@ -59,4 +58,3 @@ all background/scheduled work in the framework.
 ## Documents
 
 - `test_catalog.md` - full catalog (implemented + blocked + deferred).
-- `issues_encountered.md` - the `_task_queue` bug + man-page divergences.
