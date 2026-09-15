@@ -1,0 +1,85 @@
+FULL-PAGE CACHE: ALWAYS AVAILABLE, OPTED INTO PER ROUTE, WITH A PER-ROUTE TTL
+Date: 2026-09-15
+
+IF YOU DO NOTHING: SSR_FPC_ENABLED and FPC_TTL_MINS in your .env are read by nothing.
+    If you had SSR_FPC_ENABLED=false, every route carrying #[FPC] is now cached for
+    anonymous GETs where before it was not - it serves a stored copy until something
+    clears it, and Set-Cookie is stripped from that response. If you relied on
+    FPC_TTL_MINS to bound entry lifetime, your entries no longer expire on their own.
+    A call to Rsx_FPC::is_enabled() is a fatal: the method is gone.
+
+SUMMARY
+    The full-page cache is an application behaviour, not an administrator switch. A
+    page is cached because its route declares #[FPC], and only then; the cache is
+    available in every mode with nothing to enable. The entry lifetime is declared on
+    the same attribute, in minutes:
+
+        #[FPC]              // no expiry - the entry lives until it is cleared
+        #[FPC(ttl: 5)]      // 300 seconds
+
+    The dispatcher sends the lifetime to the page-cache proxy on the response header
+    that already marks a page cacheable (X-RSpade-FPC: 300, or none), and the proxy's
+    Redis write uses it. Four things clear an entry: php artisan rsx:fpc:clear
+    [--url=/path], php artisan rsx:clean (it flushes the whole FPC store), a build-key
+    rotation, and the entry's own TTL.
+
+ACTION REQUIRED
+
+    1. Delete the two dead keys from .env (and from any deploy template of yours):
+
+           SSR_FPC_ENABLED=
+           FPC_TTL_MINS=
+
+    2. If you kept the cache OFF with SSR_FPC_ENABLED=false: find every route that
+       declares #[FPC] and decide per route.
+
+           grep -rn "#\[FPC" rsx/
+
+       Remove the attribute from a route that must never serve a stored copy; keep it
+       on a route that may, and clear it when its content changes:
+
+           php artisan rsx:fpc:clear --url=/about
+           php artisan rsx:fpc:clear              # every entry of this build
+
+    3. If you relied on FPC_TTL_MINS: declare the lifetime on each route that needs
+       one. Before:
+
+           #[FPC]
+           #[Route('/about', methods: ['GET'])]
+           public static function about(Request $request, array $params = [])
+
+       After:
+
+           #[FPC(ttl: 15)]
+           #[Route('/about', methods: ['GET'])]
+           public static function about(Request $request, array $params = [])
+
+       The value is a non-negative integer literal (an attribute argument is read by
+       reflection before the autoloader is ready, so never a constant); the manifest
+       build refuses anything else naming the class and method.
+
+    4. Delete any branch on Rsx_FPC::is_enabled(). Before:
+
+           if (Rsx_FPC::is_enabled()) {
+               Rsx_FPC::clear_url('/about');
+           }
+
+       After:
+
+           Rsx_FPC::clear_url('/about');
+
+    5. Restart the page-cache proxy once after pulling this release
+       (supervisorctl restart fpc-proxy, or however your host runs it): the proxy
+       reads the lifetime off the marker header, and the previous build's proxy is
+       still running the old code until it restarts. It keeps caching in the
+       meantime; it only ignores the per-route lifetime.
+
+VERIFICATION
+    php artisan rsx:health shows the FPC rows OK in every mode. Request an #[FPC]
+    page twice as an anonymous visitor: the second response carries
+    X-FPC-Cache: HIT. php artisan rsx:fpc:clear --url=<that path> reports the entry
+    cleared, and the next request misses.
+
+SEE ALSO
+    rsx:man fpc - the attribute, the marker header, what clears an entry
+    rsx:man prod - the administration levers, rsx:fpc:clear and rsx:clean

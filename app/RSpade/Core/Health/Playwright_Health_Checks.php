@@ -7,102 +7,53 @@
 
 namespace App\RSpade\Core\Health;
 
-use Symfony\Component\Process\Process;
+use App\RSpade\Core\Health\Playwright_Stack;
 
 /**
- * Playwright_Health_Checks - boolean probes for the Playwright + Chromium stack that
- * rsx:debug (Route_Debug_Command) needs to render SPA pages.
+ * Playwright_Health_Checks - the rsx:health view of the Playwright + Chromium stack
+ * that rsx:debug renders pages with.
  *
- * DELIBERATELY DIVERGES from Route_Debug_Command: that command auto-INSTALLS a missing
- * playwright package / chromium browser mid-run. rsx:health only PROBES and reports the
- * exact install command the operator would run - it never installs anything (a health
- * command must be a safe, read-only, non-mutating check).
+ * MODE: development only. Playwright is a development tool - rsx:debug refuses to run
+ * in any other mode, and nothing a sealed build serves touches it. A production box
+ * reporting a missing browser is reporting an absence it is correct to have.
  *
- * These live in the Health domain (not beside Route_Debug_Command) because
- * `#[Health_Check]` discovery is a manifest attribute scan and app/RSpade/Commands is
- * NOT in the manifest scan_directories - an attribute there would never be discovered.
+ * WARN AND NEVER FAIL. Nothing the site serves depends on this: an absent browser costs
+ * the developer one command, and rsx:health exits non-zero only on FAIL, so a missing
+ * development convenience can never break a deploy gate or a container healthcheck.
+ *
+ * The probe and the install commands live in Playwright_Stack, which rsx:debug's
+ * preflight reads too - so the remediation this row prints is the literal command that
+ * refusal prints.
  */
 class Playwright_Health_Checks
 {
     /**
-     * node -> playwright package -> chromium browser, each a boolean probe. Short-circuits
-     * to a single FAIL when node itself is absent (the other probes cannot run without it).
+     * Report whether rsx:debug could render a page on this box.
      *
      * @return array
      */
-    #[Health_Check('Playwright / Chromium')]
+    #[Health_Check('Playwright / Chromium', modes: 'development')]
     public static function playwright_stack(): array
     {
-        // node is a prerequisite for every other probe here.
-        $node = new Process(['node', '--version']);
-        // NO TIMEOUT (null). A probe that hangs means the thing it probes is wedged,
-        // and that is a fault to SEE, not to convert into a tidy FAIL row that reads the
-        // same as "not installed". See the no-timeout mandate.
-        $node->setTimeout(null);
-        $node->run();
+        return static::_row(Playwright_Stack::probe());
+    }
 
-        if (!$node->isSuccessful()) {
-            return [
-                'label' => 'Playwright / Chromium',
-                'status' => 'FAIL',
-                'detail' => 'node not found - required for Playwright and rsx:debug',
-                'remediation' => 'install nodejs (apt-get install -y nodejs)',
-            ];
+    /**
+     * The row for a probe result. Public so the tests can drive every branch - the
+     * interesting states are ones a working development box is never in.
+     *
+     * @return array{status: string, detail: string, remediation: ?string}
+     */
+    public static function _row(array $probe): array
+    {
+        if ($probe['ok']) {
+            return ['status' => 'OK', 'detail' => $probe['detail'], 'remediation' => null];
         }
 
-        $rows = [];
-
-        // The playwright npm package must be require()-able from the framework root.
-        $pkg = new Process(['node', '-e', "require('playwright')"], base_path());
-        $pkg->setTimeout(null);
-        $pkg->run();
-
-        if (!$pkg->isSuccessful()) {
-            $rows[] = [
-                'label' => 'Playwright Package',
-                'status' => 'FAIL',
-                'detail' => "the 'playwright' npm package is not installed",
-                'remediation' => 'npm install playwright',
-            ];
-
-            // Without the package the chromium probe cannot run - stop here.
-            return $rows;
-        }
-
-        $rows[] = ['label' => 'Playwright Package', 'status' => 'OK', 'detail' => 'playwright is installed'];
-
-        // Chromium: probe that the resolved executablePath actually exists on disk. Pure
-        // filesystem check via node - never LAUNCHES a browser.
-        $script = "const {chromium}=require('playwright');"
-            . "const fs=require('fs');"
-            . "const p=chromium.executablePath();"
-            . "process.stdout.write(p||'');"
-            . "process.exit(p && fs.existsSync(p) ? 0 : 1);";
-
-        $chromium = new Process(['node', '-e', $script], base_path());
-        $chromium->setTimeout(null);
-        $chromium->run();
-
-        if (!$chromium->isSuccessful()) {
-            $path = trim($chromium->getOutput());
-            $rows[] = [
-                'label' => 'Chromium Browser',
-                'status' => 'FAIL',
-                'detail' => $path === ''
-                    ? 'chromium browser binary not installed'
-                    : 'chromium binary missing at ' . $path,
-                'remediation' => 'npx playwright install chromium',
-            ];
-
-            return $rows;
-        }
-
-        $rows[] = [
-            'label' => 'Chromium Browser',
-            'status' => 'OK',
-            'detail' => 'installed at ' . trim($chromium->getOutput()),
+        return [
+            'status' => 'WARN',
+            'detail' => $probe['detail'] . ' - rsx:debug cannot render a page until it is installed',
+            'remediation' => $probe['remediation'],
         ];
-
-        return $rows;
     }
 }

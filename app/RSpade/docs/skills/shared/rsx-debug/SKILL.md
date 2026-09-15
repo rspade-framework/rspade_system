@@ -135,6 +135,19 @@ selector (above) is driving code you did not intend to reach.
 | `--full` | everything except `--no-body`/`--follow-redirects` |
 | `--examples` | the command's own example set |
 
+## When the browser stack is missing
+
+`rsx:debug` preflights node, the Playwright package and the Chromium build before it launches anything, and **refuses rather than installing**:
+
+```
+[ERROR] rsx:debug needs Playwright to render a page, and this box does not have it.
+  Missing: the chromium browser binary Playwright expects is not installed
+  Install: npx playwright install chromium
+  Then run rsx:debug again. See rsx:man health for the matching health row.
+```
+
+Run the command it names; it is the same literal string `rsx:health`'s WARN-level "Playwright / Chromium" row prints, because one class (`Playwright_Stack`) owns the probe and the install commands. **Do not work around this by installing something else or by skipping the render step** - the refusal is the tool telling you its dependency is absent, not a bug in the tool.
+
 ## See also
 
 `rsx:man rsx_debug` for the full reference. For calling an endpoint directly without a page, use `rsx:ajax` (endpoints fragment).

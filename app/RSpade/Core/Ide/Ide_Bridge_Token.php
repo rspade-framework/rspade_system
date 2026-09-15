@@ -40,8 +40,9 @@ use App\RSpade\Core\Rsx;
  * Two consumers key off it:
  *
  *   1. The IDE bridge (/_ide/service/*), which takes the secret as the X-Ide-Token
- *      bearer. That consumer is additionally gated on rsx.ide_integration.enabled and
- *      on RSX_IDE_SERVICES_ENABLED at auth.php - switches that belong to the BRIDGE.
+ *      bearer. That consumer is additionally gated on rsx.ide_integration.enabled, and
+ *      refused outright by auth.php in any mode but development - a switch and a gate
+ *      that belong to the BRIDGE.
  *   2. rsx:debug's dev-auth headers, which sign the harness's identity assertion with
  *      the secret instead of APP_KEY (Core/Debug/Dev_Auth_Token). APP_KEY is the wrong
  *      key for this: it also encrypts every cookie and sits in backups, so signing a

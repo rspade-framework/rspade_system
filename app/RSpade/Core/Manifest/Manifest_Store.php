@@ -750,10 +750,12 @@ class Manifest_Store
                         // Check FPC attribute constraints
                         $has_fpc = false;
                         $has_spa = false;
+                        $fpc_instances = [];
 
                         foreach ($method_info['attributes'] as $attr_name => $attr_instances) {
                             if ($attr_name === 'FPC' || str_ends_with($attr_name, '\\FPC')) {
                                 $has_fpc = true;
+                                $fpc_instances = $attr_instances;
                             }
                             if ($attr_name === 'SPA' || str_ends_with($attr_name, '\\SPA')) {
                                 $has_spa = true;
@@ -805,6 +807,28 @@ class Manifest_Store
 "File: {$file_path}\n\n" .
 "#[FPC] can only be used on methods with a #[Route] attribute.\n\n" .
 "Solution: Add #[Route('/path')] to this method, or remove #[FPC]."
+                                );
+                            }
+
+                            // The optional TTL argument, validated HERE so a bad value is a
+                            // build failure naming the method rather than a cache entry with
+                            // a lifetime nobody meant. Non-negative integer literals only -
+                            // an attribute argument is read by reflection before the
+                            // autoloader is ready, so a constant or an expression there dies
+                            // at the scan anyway.
+                            $ttl_args = $fpc_instances[0] ?? [];
+                            $ttl = is_array($ttl_args) ? ($ttl_args['ttl'] ?? $ttl_args[0] ?? 0) : 0;
+
+                            if (!is_int($ttl) || $ttl < 0) {
+                                throw new \RuntimeException(
+                                    "#[FPC] TTL must be a non-negative integer number of minutes\n" .
+"Class: {$class_name}\n" .
+"Method: {$method_name}\n" .
+"File: {$file_path}\n" .
+'Given: ' . var_export($ttl, true) . "\n\n" .
+"#[FPC(ttl: 5)] caches each entry for five minutes. #[FPC] (or ttl: 0) caches it\n" .
+"until the build key rotates or something clears it.\n\n" .
+"Solution: write an integer literal, or drop the argument."
                                 );
                             }
                         }

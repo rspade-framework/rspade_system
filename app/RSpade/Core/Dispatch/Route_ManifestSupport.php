@@ -162,14 +162,40 @@ class Route_ManifestSupport extends Full_ManifestSupport_Abstract
                 'target' => $surface,
             ];
 
-            // #[FPC] is a ROUTING FACT, so it is baked onto the row. The
-            // dispatcher used to answer it by pulling the handler's whole method
-            // map on every matched request.
-            if (isset($file_metadata['public_static_methods'][$method_name]['attributes']['FPC'])) {
+            // #[FPC] is a ROUTING FACT, so it is baked onto the row - the flag AND the
+            // declared TTL. The dispatcher used to answer it by pulling the handler's
+            // whole method map on every matched request, and the TTL used to be an
+            // environment value the proxy read behind everybody's back.
+            $fpc_instances = $file_metadata['public_static_methods'][$method_name]['attributes']['FPC'] ?? null;
+
+            if ($fpc_instances !== null) {
                 $route_data['fpc'] = true;
+                $route_data['fpc_ttl_mins'] = static::_fpc_ttl_minutes($fpc_instances);
             }
 
             $manifest_data['data']['routes'][$pattern] = $route_data;
         }
+    }
+
+    /**
+     * The TTL a #[FPC] declared, in minutes. 0 (the default, and what a bare #[FPC]
+     * means) is "until something clears it".
+     *
+     * Positional or named: #[FPC(5)] and #[FPC(ttl: 5)] are the same declaration. The
+     * VALUE is validated at build time by Manifest_Store, which throws on anything but a
+     * non-negative integer literal - so by the time a row is baked the argument is known
+     * good and this only has to read it.
+     *
+     * @param array $instances The attribute instances as the scanner recorded them
+     */
+    protected static function _fpc_ttl_minutes(array $instances): int
+    {
+        $args = $instances[0] ?? [];
+
+        if (!is_array($args)) {
+            return 0;
+        }
+
+        return (int) ($args['ttl'] ?? $args[0] ?? 0);
     }
 }

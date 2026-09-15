@@ -19,6 +19,12 @@ use Illuminate\Console\Command;
  * rsx:debug's emoji). Exit 1 iff at least one FAIL row; WARN and INFO NEVER flip the
  * exit code, so a deploy pipeline / container healthcheck can gate on this command
  * while tolerating advisory warnings. `--json` emits a machine-readable payload only.
+ *
+ * A check declares which modes it applies to (`#[Health_Check('Label', modes: ...)]`);
+ * one that does not apply here prints no row. The active mode and the skipped labels are
+ * reported either way - a footer line under the table, a `mode` and a `skipped` field in
+ * the JSON - so the axis is visible and an operator can see WHY a row they expected is
+ * absent.
  */
 class Health_Command extends Command
 {
@@ -28,7 +34,8 @@ class Health_Command extends Command
 
     public function handle(): int
     {
-        $rows = Health_Check_Runner::run();
+        $report = Health_Check_Runner::report();
+        $rows = $report['rows'];
 
         $fail_count = 0;
         $warn_count = 0;
@@ -44,7 +51,9 @@ class Health_Command extends Command
         if ($this->option('json')) {
             $this->line(json_encode([
                 'generated_at' => Rsx_Time::now_iso(),
+                'mode' => $report['mode'],
                 'ok' => $ok,
+                'skipped' => $report['skipped'],
                 'checks' => array_map(static fn ($row) => [
                     'label' => $row['label'],
                     'status' => $row['status'],
@@ -64,6 +73,14 @@ class Health_Command extends Command
         ], $rows);
 
         $this->table(['Check', 'Status', 'Detail', 'Remediation'], $table);
+        $this->newLine();
+
+        $this->line('Mode: ' . $report['mode']);
+
+        if (!empty($report['skipped'])) {
+            $this->line('Not applicable in this mode: ' . implode(', ', $report['skipped']));
+        }
+
         $this->newLine();
 
         if (!$ok) {

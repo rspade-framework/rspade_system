@@ -8,6 +8,6 @@
 
 **Code you run inside the window sees degraded services, deliberately and silently**: cluster locks are granted as no-ops (every writer they would exclude is already gone), `RsxCache` reads miss and writes drop, realtime frames are discarded with an empty registry. **System (flock) locks are untouched** — their contenders are exactly what maintenance does NOT stop. A connect failure with **no** flag on disk stays as loud as ever.
 
-**Health**: `php artisan rsx:health [--json]` verifies dependencies, services and environment. **Exit 1 iff at least one FAIL row; WARN and INFO never flip the exit code.**
+**Health**: `php artisan rsx:health [--json]` verifies dependencies, services and environment. **Exit 1 iff at least one FAIL row; WARN and INFO never flip the exit code.** **Every check declares which modes it applies to** (`#[Health_Check('Label', modes: 'development')]`, absent = every mode), so a sealed box drops the development-only rows and gains the seal/https/auto-fill/IDE-bridge ones; the active mode and the skipped labels are printed either way.
 
 Skill `rspade:maintenance-mode` (exact service order and reasoning, the full tolerance list, stuck-flag recovery, how the pull and `rsx:git` raise the same window). Details: `rsx:man maintenance_mode`.

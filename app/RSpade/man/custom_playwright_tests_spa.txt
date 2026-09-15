@@ -69,8 +69,11 @@ HOW PLAYWRIGHT TESTS RUN
     Requirements to run one:
     - The dev web server must be up and serving the app (tests hit it over
       HTTP, they do not boot Laravel in-process).
-    - Playwright and Chromium must be installed (rsx:debug auto-installs both
-      on first use; running it once primes the environment).
+    - Playwright and Chromium must be installed. rsx:debug does NOT install
+      them: it preflights the stack and refuses with the literal install
+      command (npm install playwright / npx playwright install chromium),
+      which is the same command rsx:health's "Playwright / Chromium" row
+      names. rsx:man rsx_debug.
     - Any data the test asserts on must already exist in the dev database.
 
 DEV-AUTH AUTHENTICATION

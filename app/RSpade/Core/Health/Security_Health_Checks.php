@@ -21,6 +21,11 @@ use App\RSpade\Core\Ide\Ide_Bridge_Token;
  * docroot / autoindex = hard FAIL. This is the real defense against a bad web-server
  * setup (it does not rely on file permissions, which a stray `chmod` can wipe).
  *
+ * MODE: every mode. This is a security probe and the development surface is the one that
+ * is secured - a development RSpade site may be serving the public right now. The IDE
+ * bridge directory is probed in every mode too, and for the same reason: what it proves
+ * is the DOCROOT BOUNDARY, not whether the bridge is switched on.
+ *
  * Content-match (not status code) is deliberate: an SPA/catch-all that answers 200 with
  * index.html for unknown paths would false-positive a status-only check.
  */

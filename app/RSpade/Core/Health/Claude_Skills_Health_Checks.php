@@ -29,6 +29,10 @@ use App\RSpade\Core\Rsx;
  * wiring with a healer of its own - and a heal target is declared WHERE ITS FEATURE
  * LIVES, so the feature gets a file.
  *
+ * MODE: development only. The skills this wires are agent tooling for a developer
+ * reading and writing this application's source; a sealed build serves requests and
+ * nobody authors code against it.
+ *
  * WHY WARN AND NEVER FAIL. An unwired skill costs the site nothing; it costs the
  * developer a skill their agent does not load. rsx:health exits non-zero only on FAIL, so
  * this can never break a deploy gate or a container healthcheck.
@@ -62,7 +66,7 @@ class Claude_Skills_Health_Checks
      *
      * @return array
      */
-    #[Health_Check('Claude Skills')]
+    #[Health_Check('Claude Skills', modes: 'development')]
     public static function claude_skills(): array
     {
         $state = static::inspect(dirname(base_path()));

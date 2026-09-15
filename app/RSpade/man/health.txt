@@ -16,6 +16,11 @@ SYNOPSIS
             return ['status' => 'OK', 'detail' => '...'];
         }
 
+    Declare which modes it applies to (absent = every mode):
+
+        #[Health_Check('Playwright / Chromium', modes: 'development')]
+        #[Health_Check('Production Seal', modes: ['debug', 'production'])]
+
 DESCRIPTION
     rsx:health verifies that every dependency, service, and environment invariant
     RSpade relies on is installed, reachable, and sane, and reports OK / WARN / FAIL /
@@ -38,7 +43,15 @@ COMMAND BEHAVIOR
     rsx:prod:verify), ASCII only, ending in a [OK] or [FAIL] bracket summary.
 
     --json: a machine-readable payload only:
-        {"generated_at": ..., "ok": bool, "checks": [{label, status, detail, remediation}]}
+        {"generated_at": ..., "mode": "development", "ok": bool,
+         "skipped": ["label", ...],
+         "checks": [{label, status, detail, remediation}]}
+
+    Both forms report the MODE they ran in and the labels of the checks that do
+    not apply to it: a footer line under the table ("Mode: production" /
+    "Not applicable in this mode: ..."), the "mode" and "skipped" fields in the
+    JSON. A row an operator expected and did not get is therefore explained on
+    the same screen.
 
     Exit code: 1 if and only if at least one FAIL row exists. WARN and INFO NEVER flip
     the exit code - they are advisory - so a deploy pipeline or container healthcheck
@@ -56,6 +69,30 @@ THE #[Health_Check] ATTRIBUTE
       /rsx) so the attribute scan finds it. Declare it in the FEATURE that owns the
       dependency, not in a central file.
     - A missing label fails loud at discovery.
+    - modes: names the application modes the check applies to - a bare string or
+      a list, drawn from development | debug | production. ABSENT MEANS EVERY
+      MODE, which is the right answer for most checks. An unknown name fails
+      loud at discovery, exactly as a missing label does: a typo would otherwise
+      silence the check on every box, which is the one outcome nobody notices.
+      LITERALS ONLY - attribute arguments are read by reflection before the
+      autoloader is ready, so a class constant there dies at the scan.
+
+    THE MODE AXIS. A check whose modes exclude the running RSX_MODE is NOT
+    INVOKED and produces no row. The reason is signal: a development tool
+    reported as missing on a production box is an absence that box is correct to
+    have, and a row nobody acts on devalues every row beside it. The converse
+    matters more - a sealed box has questions development cannot answer (is the
+    seal intact, is a development convenience still switched on), and before the
+    axis existed there was nowhere to ask them.
+
+    Two rules follow for an app declaring its own checks:
+
+      - Declare modes only when the check would report a WRONG answer in the
+        modes you exclude. "Slow" or "noisy" is not a reason; nothing is skipped
+        for cost.
+      - A check that BRANCHES on the mode internally (reporting a different
+        status or detail per mode) declares no modes at all. Those are different
+        questions with different answers, not one question that does not apply.
 
     Return contract - a single row OR a list of rows:
 
@@ -96,17 +133,82 @@ THE #[Health_Check] ATTRIBUTE
         }
 
 FRAMEWORK INVENTORY
-    The framework declares these checks (each in the feature that owns it):
+    The framework declares these checks (each in the feature that owns it).
+    THE MODES COLUMN is the axis above: "all" is a check declaring none.
 
+        Check                       Modes         Why
+        ------------------------------------------------------------------
+        APP_URL Scheme              debug, prod   only a sealed build emits
+                                                  Secure cookies a plain-http
+                                                  page would discard
+        App Dependency Layer        development   the layer exists so
+                                                  rsx:composer / rsx:npm have
+                                                  somewhere to record a
+                                                  package - an authoring act
+        Application Mode            all           reports WHICH mode is active
+        Claude Skills               development   agent tooling for someone
+                                                  authoring this source
+        Class Override Drift        all           arrives with a framework
+                                                  pull, which happens on both
+        Console Debug               debug, prod   names which sealed variant
+                                                  this is
+        Document Render Backlog     all
+        Env Encryption              all           branches on the mode itself
+        Env Symlink                 all
+        FPC                         all
+        LibreOffice (soffice)       all
+        Lock Server                 all
+        Login Auto-fill             debug, prod   a working credential on an
+                                                  unauthenticated page
+        Mail                        all           every mode delivers mail
+        Mail Delivery Target        debug, prod   the development catcher on a
+                                                  sealed box is a silent
+                                                  outage
+        MySQL Connectivity          all
+        Node.js                     all           the realtime relay and the
+                                                  fpc proxy are node daemons a
+                                                  production box runs
+        PHP                         all
+        Pending Migrations          all
+        Playwright / Chromium       development   rsx:debug refuses to run in
+                                                  any other mode
+        Production Seal             debug, prod   there is no seal elsewhere
+        Realtime Relay              all
+        Redis Connectivity          all
+        Storage Writable            all           build/ row in development
+                                                  only - branches internally
+        Submodule Visibility        development   a git REVIEW surface; a
+                                                  production checkout is
+                                                  deployed, not reviewed
+        Task Schedule Failures      all
+        Task Scheduler Liveness     all           WARN in development, FAIL on
+                                                  a sealed build
+        Turnstile                   all
+        Web Exposure                all           security, and the
+                                                  development surface is the
+                                                  one that is secured
+        poppler-utils (pdftotext)   all
+
+    What each one reports:
+
+        APP_URL Scheme           the CONFIGURED application URL is https. FAIL
+                                 otherwise. Rsx_App_Url throws at boot on a
+                                 non-https APP_URL outside development, reading
+                                 the RAW environment; this row reads the value the
+                                 application is actually running with, which on a
+                                 sealed box comes from the cached config the build
+                                 produced - so it catches the one shape the guard
+                                 cannot see, a .env repaired after the build. The
+                                 remediation says so: edit .env, then rsx:build
+                                 --force.
         Application Mode         active RSX_MODE, plus - in a production mode only -
                                  an INFO row per deployed tree (system/, rsx/,
                                  build/) stating whether the current process can
                                  write it (the recommended posture is read-only; see
-                                 rsx:man prod), a WARN when login auto-fill is on,
-                                 and a WARN when the default log channel resolves to
-                                 level debug (remediation: LOG_LEVEL=info in .env).
-                                 A stack channel resolves to the LOUDEST level any of
-                                 its members accepts.
+                                 rsx:man prod), and a WARN when the default log
+                                 channel resolves to level debug (remediation:
+                                 LOG_LEVEL=info in .env). A stack channel resolves
+                                 to the LOUDEST level any of its members accepts.
         Claude Skills            every rsx/resource/skills/<name>/SKILL.md is linked
                                  into .claude/skills/. WARN per unlinked skill,
                                  framework-created dangling link, or blocked/reserved
@@ -117,6 +219,14 @@ FRAMEWORK INVENTORY
                                  ONE probe for one worker and one queue; it
                                  replaced "Search Index Backlog" on 2026-08-22.
                                  Remediation points at rsx:documents:status.
+        Console Debug            INFO naming the sealed variant: strict
+                                 production strips every console_debug() call
+                                 site from the bundle and returns early in the
+                                 PHP gate whatever CONSOLE_DEBUG_ENABLED says;
+                                 the debug variant keeps both, which is the
+                                 point of the variant. Neither is wrong, so it
+                                 never WARNs - it is the one-line answer to "why
+                                 is there debug output in this browser".
         Env Symlink              system/.env symlink to root .env intact
         LibreOffice (soffice)    headless soffice present (or disabled)
         Lock Server              rsx-lockd listening (INFO under maintenance)
@@ -136,12 +246,36 @@ FRAMEWORK INVENTORY
                                  127.0.0.1:1025; both remediations name
                                  [program:mail-catcher] in aiosmtpd mode. Not probed
                                  when delivery is suppressed or disabled. email(7).
+        Login Auto-fill          RSPADE_LOGIN_AUTOFILL is off. FAIL when it is
+                                 on: it pre-fills RSPADE_DEFAULT_EMAIL /
+                                 RSPADE_DEFAULT_PASSWORD into the login form,
+                                 which is a working credential on an
+                                 unauthenticated page.
+        Mail Delivery Target     rsx.mail.delivery is not the development
+                                 catcher. WARN when it is aiosmtpd on a sealed
+                                 build - the queue drains, every row reads Sent
+                                 and no recipient is ever written to. WARN and
+                                 not FAIL because a staging box deliberately
+                                 catching its own mail is legitimate.
         MySQL Connectivity       database reachable
         Node.js                  node binary present (relay, tooling)
         PHP                      version + every required extension (see PHP
                                  EXTENSION CONTRACT below)
         Pending Migrations       schema up to date
-        Playwright / Chromium    Playwright package + browser installed (rsx:debug)
+        Playwright / Chromium    node, the Playwright package and the Chromium
+                                 build it expects, for rsx:debug. WARN and never
+                                 FAIL - an absent browser costs a developer one
+                                 command and the site nothing. The probe and the
+                                 three install commands are Playwright_Stack,
+                                 which rsx:debug's preflight reads too, so the
+                                 remediation here is the literal command that
+                                 refusal prints (rsx:man rsx_debug).
+        Production Seal          every sealed asset still hashes to what the seal
+                                 recorded, the build_key matches, and the seal was
+                                 built for the mode now running - the same
+                                 comparison rsx:prod:verify performs, reported on
+                                 the command an operator already runs. FAIL on
+                                 drift, naming rsx:build --force.
         Realtime Relay           WebSocket relay reachable when enabled
         Redis Connectivity       Redis reachable (cache, realtime, task slots)
         Storage Writable         the project trees this process must be able to
@@ -168,13 +302,30 @@ FRAMEWORK INVENTORY
                                  naming TMPDIR (a php-fpm pool, an ini or a
                                  supervisor program answered first, and third-party
                                  scratch is landing outside the project).
-        Task Scheduler Liveness  rsx:task:process cron ticking
+        Task Scheduler Liveness  rsx:task:process cron ticking, inferred from
+                                 #[Schedule] tracker staleness. WARN in
+                                 development, where a box that is not left
+                                 running is expected to have a stale tracker;
+                                 FAIL on a sealed build, where nothing would be
+                                 sweeping the mail queue, rendering documents,
+                                 rotating logs or reaping workers and every one
+                                 of those failures is silent. The signal cannot
+                                 say WHICH of a dead cron and a wedged pool is
+                                 wrong, and says so.
         Turnstile                INFO when disabled; FAIL when enabled with a
                                  missing key (half-configured install)
         Web Exposure             sensitive files are NOT web-served (see below)
         poppler-utils (pdftotext) PDF text-extraction binary present
 
     An app's own #[Health_Check] methods appear in the same table, ordered by label.
+
+    THERE IS DELIBERATELY NO OPcache ROW. Whether a host runs OPcache is the host's
+    decision - a php.ini setting on a machine this framework does not own - and
+    rsx:health runs under the CLI SAPI, where the php-fpm values are not visible
+    anyway. The framework reminds instead of checking: a web process with no OPcache
+    writes ONE log warning naming opcache.enable=1, at most once every six hours per
+    build key (Opcache_Advisory, called at the end of Rsx_Framework_Provider::boot()).
+    See rsx:man prod, ADMINISTRATION.
 
 PHP EXTENSION CONTRACT
     ONE DECLARATION. App\RSpade\Core\Health\Rsx_Php_Requirements holds

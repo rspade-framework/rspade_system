@@ -11,6 +11,7 @@ use Illuminate\Console\Command;
 use Symfony\Component\Process\Process;
 use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Debug\Dev_Auth_Token;
+use App\RSpade\Core\Health\Playwright_Stack;
 use App\RSpade\Core\Ide\Ide_Bridge_Token;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
@@ -99,7 +100,8 @@ use App\RSpade\Core\Time\Rsx_Time;
  *   X-Dev-Auth-Portal-User-Id, X-Dev-Auth-Exp, X-Dev-Auth-Token). The signature is
  *   keyed on the local development grant (Ide_Bridge_Token) and expires; the wire
  *   format and the threat model are documented on Dev_Auth_Token.
- * - Auto-installs Playwright and Chromium if not present
+ * - Preflights the Playwright stack and REFUSES with the install command when it is
+ *   absent (Playwright_Stack owns both the probe and the command text)
  * - Route interception prevents CORS issues with CDN resources
  * - Works with both Laravel routes and RSX routes
  * - Logs rotated via Debugger::logrotate() for clean testing
@@ -383,74 +385,23 @@ class Route_Debug_Command extends Command
             return 1;
         }
         
-        // Check if node/npm is available
-        $node_check = new Process(['node', '--version']);
-        $node_check->run();
-        
-        if (!$node_check->isSuccessful()) {
-            $this->error('[ERROR] Node.js is not installed or not in PATH');
+        // PREFLIGHT the browser stack before anything is launched. An absent node,
+        // package or chromium used to surface as whatever the launcher threw once it
+        // was already running; it is now a refusal naming the missing link and the
+        // literal install command - the same command rsx:health's
+        // "Playwright / Chromium" row prints, because Playwright_Stack owns both.
+        //
+        // It REFUSES rather than installing. A package install and a browser download
+        // are large network-bound operations an operator chooses to start, and a debug
+        // run that silently becomes one is a surprise rather than a convenience.
+        $playwright = Playwright_Stack::probe();
+
+        if (!$playwright['ok']) {
+            $this->error(Playwright_Stack::refusal_message($playwright, 'rsx:debug'));
+
             return 1;
         }
-        
-        // Check if playwright is installed
-        $playwright_check = new Process(['node', '-e', "require('playwright')"], base_path());
-        $playwright_check->run();
-        
-        if (!$playwright_check->isSuccessful()) {
-            $this->warn('[WARNING]  Playwright not installed. Installing now...');
-            $npm_install = new Process(['npm', 'install', 'playwright'], base_path());
-            // NO TIMEOUT (null). Symfony's Process defaults to 60 SECONDS when you say
-            // nothing, so silence here was a package install capped at a minute - it
-            // fails on a cold cache or a slow link, and :393 reads that as "playwright
-            // unavailable". An inherited default is still a deadline.
-            $npm_install->setTimeout(null);
-            $npm_install->run(function ($type, $buffer) {
-                echo $buffer;
-            });
-            
-            if (!$npm_install->isSuccessful()) {
-                $this->error('[ERROR] Failed to install Playwright');
-                return 1;
-            }
-            $this->info('[OK] Playwright installed');
-            $this->info('');
-        }
-        
-        // Check if chromium browser is installed and up to date
-        $browser_check_script = "const {chromium} = require('playwright'); chromium.launch({headless:true}).then(b => {b.close(); process.exit(0);}).catch(e => {console.error(e.message); process.exit(1);});";
-        $browser_check = new Process(['node', '-e', $browser_check_script], base_path(), $_ENV, null, 10);
-        $browser_check->run();
-        
-        if (!$browser_check->isSuccessful()) {
-            $error_output = $browser_check->getErrorOutput() . $browser_check->getOutput();
-            
-            // Check if it's a browser not installed or out of date error
-            if (str_contains($error_output, "Executable doesn't exist") || 
-                str_contains($error_output, "browserType.launch") || 
-                str_contains($error_output, "Playwright was just installed or updated")) {
-                
-                $this->info('Installing/updating Chromium browser...');
-                $browser_install = new Process(['npx', 'playwright', 'install', 'chromium'], base_path());
-                // NO TIMEOUT (null). A cold chromium download over a slow link
-                // legitimately runs long; capping it aborts a working download and
-                // leaves a partial browser install behind. See the no-timeout mandate.
-                $browser_install->setTimeout(null);
-                $browser_install->run(function ($type, $buffer) {
-                    // Silent - downloads can be verbose
-                });
-                
-                if (!$browser_install->isSuccessful()) {
-                    $this->error('[ERROR] Failed to install Chromium browser');
-                    $this->error('Run manually: npx playwright install chromium');
-                    return 1;
-                }
-                $this->info('[OK] Chromium browser installed/updated');
-                $this->info('');
-            } else {
-                $this->error('[ERROR] Browser check failed: ' . trim($error_output));
-                return 1;
-            }
-        }
+
         
         // Mint the signed identity assertion the browser will present. The store is
         // ensured FIRST: a box that has never served a development web request, or that

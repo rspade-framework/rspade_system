@@ -19,7 +19,8 @@ Shipped in the Document Pipeline epic, Batch 5.
 
 - `Commands/Rsx/Health_Command.php` - the `rsx:health {--json}` command (table + [OK]/[FAIL]
   summary, exit 1 iff any FAIL, WARN/INFO never flip the exit).
-- `Core/Health/Health_Check_Runner.php` - discovery, `run()` / `run_one()`, and
+- `Core/Health/Health_Check_Runner.php` - discovery, `run()` / `report()` / `run_one()`,
+  the MODE AXIS (`normalize_modes()`, `applies_in_mode()`, `partition()`), and
   `normalize_check_result()` (single-row vs list, label inheritance + #n suffix, invalid
   shape/status -> FAIL-naming-offender, throw -> FAIL).
 - `Core/Health/Rsx_Php_Requirements.php` - the ONE declaration of the required PHP
@@ -28,8 +29,18 @@ Shipped in the Document Pipeline epic, Batch 5.
   and rsx:heal).
 - `Core/Health/Environment_Health_Checks.php` - PHP version + extensions, node, storage
   writability, env-encryption posture, application-mode posture.
-- `Core/Health/Playwright_Health_Checks.php` - node/playwright/chromium boolean probes
-  (NO auto-install - deliberately diverges from Route_Debug_Command).
+- `Core/Health/Playwright_Stack.php` - the ONE probe of the node -> playwright ->
+  chromium chain and the ONE set of install commands, read by both the health row and
+  `rsx:debug`'s preflight refusal. Probe only; it never installs anything.
+- `Core/Health/Playwright_Health_Checks.php` - the health row over that probe: WARN and
+  never FAIL, `modes: 'development'`.
+- `Core/Health/Opcache_Advisory.php` - NOT a health row: the once-per-six-hours log
+  recommendation a web process with no OPcache writes during boot (whether a host runs
+  OPcache is the host's decision, so rsx:health carries no OPcache check).
+- `Core/Health/Production_Health_Checks.php` - the rows that only mean something on a
+  sealed box (the seal, the APP_URL scheme, login auto-fill, the console_debug
+  variant, the mail delivery target), each declaring
+  `modes: ['debug', 'production']`.
 - `Core/Database/Database_Health_Checks.php` - MySQL connectivity, pending migrations.
 - `Core/Task/Task_Health_Checks.php` - #[Schedule] tracker-staleness scheduler-liveness.
 - `Core/Task/Task_Worker_Registry.php::redis_connectivity` - Redis reachability.
@@ -52,6 +63,16 @@ Shipped in the Document Pipeline epic, Batch 5.
 
 The CR `docs.dev/external_requests/archive/2026_07_16_health_check_command.md` and the plan doc
 (`hashed-whistling-pumpkin.md`, BATCH 5). A man page is authored in Batch 6.
+
+## The mode axis
+
+A check declares the modes it applies to (`#[Health_Check('Label', modes: ...)]`); one
+that does not apply to the running `RSX_MODE` is not invoked and prints no row, and its
+LABEL is reported instead. The axis is tested as the pure partition it is
+(`Health_Mode_Axis_Test`) rather than by running the real inventory under a forced mode:
+a forced-production run on this unsealed box would fatal at the manifest gate before a
+single row ran, and the prod rows are driven directly through their public row builders
+instead (`Production_Health_Test`).
 
 ## Testable surface
 

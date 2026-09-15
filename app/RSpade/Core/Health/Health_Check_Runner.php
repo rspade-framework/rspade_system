@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Health;
 
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Rsx;
 
 /**
  * Health_Check_Runner - discovery, invocation, and normalization for rsx:health.
@@ -25,11 +26,29 @@ use App\RSpade\Core\Manifest\Manifest;
  * A check that throws, returns an out-of-contract shape, or an invalid status becomes
  * a FAIL row naming the offender - the runner NEVER dies mid-report, so one broken
  * check cannot hide the rest of the inventory.
+ *
+ * THE MODE AXIS. A check may declare which application modes it applies to:
+ *
+ *     #[Health_Check('Playwright / Chromium', modes: 'development')]
+ *     #[Health_Check('Production Seal', modes: ['debug', 'production'])]
+ *
+ * Absent = every mode. A check whose modes exclude the current RSX_MODE is not invoked
+ * and prints no row at all - a development tool reported as missing on a production box
+ * is noise that an operator has to learn to ignore, and a row nobody acts on devalues
+ * every row beside it. The skipped LABELS are still reported (the table footer and the
+ * --json `skipped` list), so the axis is visible rather than a silent omission.
+ *
+ * Literals only, exactly as everywhere else in this framework: attribute arguments are
+ * read by reflection before the autoloader is ready, so a class constant there dies at
+ * the scan.
  */
 class Health_Check_Runner
 {
     /** The valid row statuses. */
     private const VALID_STATUSES = ['OK', 'WARN', 'FAIL', 'INFO'];
+
+    /** The modes a check may declare. The same three RSX_MODE values, spelled as literals. */
+    private const VALID_MODES = ['development', 'debug', 'production'];
 
     /**
      * Run every discovered health check and return the normalized result rows.
@@ -41,15 +60,69 @@ class Health_Check_Runner
      */
     public static function run(): array
     {
+        return static::report()['rows'];
+    }
+
+    /**
+     * Run the checks that apply to a mode and return the rows beside the axis that
+     * produced them.
+     *
+     * @param string|null $mode The mode to report for; null = this box's RSX_MODE.
+     * @return array{mode: string, rows: array<int, array{label: string, status: string, detail: string, remediation: ?string}>, skipped: array<int, string>}
+     */
+    public static function report(?string $mode = null): array
+    {
+        $partition = static::partition($mode);
+
         $rows = [];
 
-        foreach (static::discover() as $check) {
+        foreach ($partition['run'] as $check) {
             foreach (static::run_one($check['fqcn'], $check['method'], $check['label']) as $row) {
                 $rows[] = $row;
             }
         }
 
-        return $rows;
+        return [
+            'mode' => $partition['mode'],
+            'rows' => $rows,
+            'skipped' => $partition['skipped'],
+        ];
+    }
+
+    /**
+     * Split the discovered inventory into the checks that apply to a mode and the labels
+     * of those that do not. Pure: discovery plus the declared modes, nothing invoked.
+     *
+     * @param string|null $mode The mode to partition for; null = this box's RSX_MODE.
+     * @return array{mode: string, run: array<int, array{fqcn: string, method: string, label: string, modes: ?array}>, skipped: array<int, string>}
+     */
+    public static function partition(?string $mode = null): array
+    {
+        $mode = $mode ?? Rsx::get_mode();
+
+        $run = [];
+        $skipped = [];
+
+        foreach (static::discover() as $check) {
+            if (static::applies_in_mode($check['modes'], $mode)) {
+                $run[] = $check;
+            } else {
+                $skipped[] = $check['label'];
+            }
+        }
+
+        return ['mode' => $mode, 'run' => $run, 'skipped' => $skipped];
+    }
+
+    /**
+     * Does a check declaring these modes apply in this one? A check that declares none
+     * applies everywhere.
+     *
+     * @param array<int, string>|null $modes
+     */
+    public static function applies_in_mode(?array $modes, string $mode): bool
+    {
+        return $modes === null || in_array($mode, $modes, true);
     }
 
     /**
@@ -79,7 +152,11 @@ class Health_Check_Runner
      * Discover the health-check inventory from the manifest: every public static method
      * tagged `#[Health_Check('label')]`. A method with no label argument fails loud.
      *
-     * @return array<int, array{fqcn: string, method: string, label: string}>
+     * Each row carries the declared `modes` (null when the attribute declares none),
+     * which partition() applies; an unknown mode name fails loud at discovery, exactly
+     * as a missing label does.
+     *
+     * @return array<int, array{fqcn: string, method: string, label: string, modes: ?array}>
      */
     public static function discover(): array
     {
@@ -109,6 +186,10 @@ class Health_Check_Runner
                 'fqcn' => $row['fqcn'],
                 'method' => $row['method'],
                 'label' => $label,
+                'modes' => static::normalize_modes(
+                    is_array($first) ? ($first['modes'] ?? null) : null,
+                    ($row['fqcn'] ?? 'unknown') . '::' . ($row['method'] ?? 'unknown')
+                ),
             ];
         }
 
@@ -165,6 +246,42 @@ class Health_Check_Runner
         }
 
         return $rows;
+    }
+
+    /**
+     * The `modes:` argument as a validated list, or null when the attribute declares none.
+     *
+     * Accepts a bare string or a list of strings. An unknown mode name is a typo that
+     * would otherwise silence a check on every box - shouldnt_happen names it.
+     *
+     * @param mixed $declared
+     * @return array<int, string>|null
+     */
+    public static function normalize_modes($declared, string $identifier): ?array
+    {
+        if ($declared === null) {
+            return null;
+        }
+
+        $modes = is_array($declared) ? array_values($declared) : [$declared];
+
+        if (empty($modes)) {
+            shouldnt_happen(
+                "#[Health_Check] on {$identifier} declares an empty modes list"
+                . ' (omit the argument to apply in every mode)'
+            );
+        }
+
+        foreach ($modes as $mode) {
+            if (!is_string($mode) || !in_array($mode, self::VALID_MODES, true)) {
+                shouldnt_happen(
+                    "#[Health_Check] on {$identifier} declares an unknown mode "
+                    . var_export($mode, true) . ' (expected ' . implode('|', self::VALID_MODES) . ')'
+                );
+            }
+        }
+
+        return $modes;
     }
 
     // =========================================================================

@@ -20,9 +20,12 @@
  *    host 'localhost' + http + loopback REMOTE_ADDR + no X-* proxy headers + not
  *    production. Never the sole gate.
  *
- * Hard gates first: IDE services are refused entirely in production unless
- * RSX_IDE_SERVICES_ENABLED=true, and refused anywhere RSX_IDE_SERVICES_ENABLED=false
- * is set.
+ * HARD GATE FIRST: the bridge exists in DEVELOPMENT MODE AND NOWHERE ELSE. RSX_MODE is
+ * the single mode switch and anything but 'development' is refused here, before any
+ * token is read - there is no env key, no config value and no opt-in that reopens it.
+ * That is the whole rule, and it is enforced twice by construction: the grant token the
+ * bridge authenticates with is only ever written in development, and this gate refuses
+ * even if one were somehow present.
  */
 
 // Base path - framework is in system/ subdirectory
@@ -104,23 +107,19 @@ function ide_auth_env($key, $env_content) {
     return null;
 }
 
-// Master switch + production hard-off (resolved pre-boot, no config()).
+// DEVELOPMENT ONLY (resolved pre-boot, no config()).
 $env_file = IDE_AUTH_BASE_PATH . '/.env';
 $env_content = file_exists($env_file) ? file_get_contents($env_file) : '';
 
-$ide_services_flag = strtolower((string) ide_auth_env('RSX_IDE_SERVICES_ENABLED', $env_content));
-// RSX_MODE is the single mode switch; APP_ENV is not read anywhere. Absent means development.
-$is_production = strtolower((string) ide_auth_env('RSX_MODE', $env_content)) === 'production';
+// RSX_MODE is the single mode switch; APP_ENV is not read anywhere. Absent means
+// development, which is what a fresh checkout with no .env is, and 'dev' is the alias
+// Rsx::get_mode() normalizes - this gate answers the same question it does, so it has to
+// accept the same spellings. Anything else, including an unreadable or invalid value, is
+// refused: an answer this gate cannot understand is not an answer that opens the bridge.
+$mode = strtolower((string) ide_auth_env('RSX_MODE', $env_content));
 
-// Explicit kill switch: RSX_IDE_SERVICES_ENABLED=false refuses the bridge entirely,
-// in any mode (belt to the dev-only token creation on the framework side).
-if ($ide_services_flag === 'false') {
-    ide_auth_error_response('IDE services disabled', 403);
-}
-
-// Production requires an explicit opt-in.
-if ($is_production && $ide_services_flag !== 'true') {
-    ide_auth_error_response('IDE services disabled in production', 403);
+if ($mode !== '' && $mode !== 'development' && $mode !== 'dev') {
+    ide_auth_error_response('IDE services are development-only', 403);
 }
 
 // Parse request URI to get service
@@ -155,15 +154,14 @@ $is_loopback_ip = (
      str_starts_with($remote_addr, '127.'))
 );
 
-// Not in production (production is handled by the hard-off gate above).
-$is_not_production = !$is_production;
+// The mode is not tested again here: anything but development was refused by the hard
+// gate above, so reaching this line already means a development box.
 
 // All conditions must be true for bypass
 if (
     $request_host === 'localhost' &&
     $request_scheme === 'http' &&
-    $is_loopback_ip &&
-    $is_not_production
+    $is_loopback_ip
 ) {
     $is_localhost_bypass = true;
     $auth_data = ['session' => 'localhost-bypass'];

@@ -77,3 +77,70 @@ mode seam.
 | HEALTH-LOG-UNKNOWN | a channel nothing declares has no level | php | unknown channel name | null | implemented | 2026-09-15 |
 | HEALTH-LOG-WARN | debug logging WARNs in a production mode only, naming LOG_LEVEL=info | php | default channel at debug, both modes | WARN in prod, silent in dev | implemented | 2026-09-15 |
 | HEALTH-LOG-QUIET | info logging warns about nothing in a production mode | php | default channel at info | no Log Level row | implemented | 2026-09-15 |
+
+## Health_Mode_Axis_Test (php)
+
+The `modes:` argument on `#[Health_Check]`: which checks run in which mode, and the
+visibility of the ones that do not. Driven through the pure partition - a forced
+production run on an unsealed box fatals at the manifest gate before a row runs.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| HEALTH-MODE-ABSENT | a check declaring no modes applies in every mode | php | normalize_modes(null) | null | implemented | 2026-09-15 |
+| HEALTH-MODE-FORMS | a bare string and a list normalize the same way | php | 'development'; ['debug','production'] | ['development']; ['debug','production'] | implemented | 2026-09-15 |
+| HEALTH-MODE-TYPO | an unknown or empty mode fails loud naming the offender - a typo would otherwise silence a check on every box | php | 'prod'; [] | RuntimeException naming fqcn::method | implemented | 2026-09-15 |
+| HEALTH-MODE-APPLIES | applies_in_mode includes and excludes per declaration | php | null / dev / sealed declarations | true/false per mode | implemented | 2026-09-15 |
+| HEALTH-MODE-DEV-SKIP | a development-only check is skipped in production AND listed as skipped, never silently omitted | php | partition(production) | Playwright / Chromium in skipped, not in run | implemented | 2026-09-15 |
+| HEALTH-MODE-PROD-SKIP | a sealed-build check is skipped in development and listed | php | partition(development) | Production Seal in skipped | implemented | 2026-09-15 |
+| HEALTH-MODE-EVERY | a check with no modes runs in all three | php | partition per mode | PHP in run, never skipped | implemented | 2026-09-15 |
+| HEALTH-MODE-TOTAL | every discovered check is either run or skipped, exactly once, in every mode | php | partition per mode | run + skipped == discover() | implemented | 2026-09-15 |
+| HEALTH-MODE-DEFAULT | partition() with no argument reports this box's mode | php | partition() | Rsx::get_mode() | implemented | 2026-09-15 |
+| HEALTH-MODE-JSON | --json carries `mode` and `skipped`, and a skipped label contributes no row | php | rsx:health --json | mode == current; skipped labels absent from checks | implemented | 2026-09-15 |
+| HEALTH-MODE-TABLE | the table run states the mode it ran in | php | rsx:health | output contains 'Mode: <mode>' | implemented | 2026-09-15 |
+
+## Playwright_Stack_Test (php)
+
+The node -> playwright -> chromium chain, the WARN row over it, and the refusal
+`rsx:debug` prints. The property under test is ONE STRING, TWO CONSUMERS: the install
+command the health row names and the one the refusal names are the same literal.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| HEALTH-PW-PRESENT | the development container ships the whole stack | php | probe() | ok, chromium path resolved | implemented | 2026-09-15 |
+| HEALTH-PW-MISSING | each absent link is named with its own install command | php | absent-link seam per link | missing == link; remediation == that install constant | implemented | 2026-09-15 |
+| HEALTH-PW-SHORT | the probe stops at the first absent link - the later ones cannot be asked | php | node absent | missing == 'node' | implemented | 2026-09-15 |
+| HEALTH-PW-WARN | the row is WARN for every absent link and never FAIL; every WARN names its remedy | php | _row() per link | WARN + remediation; OK when complete | implemented | 2026-09-15 |
+| HEALTH-PW-DEV-ONLY | the check is declared development-only - rsx:debug refuses to run anywhere else | php | discover() | modes == ['development'] | implemented | 2026-09-15 |
+| HEALTH-PW-REFUSAL | the refusal names the tool, the missing link and the SAME install command the row prints | php | refusal_message + _row | both contain the identical remediation string | implemented | 2026-09-15 |
+
+## Production_Health_Test (php)
+
+The rows that only mean something on a SEALED box. None of these states is one this box
+is in and forcing the mode would not create them, so every row builder takes what it
+reports as a parameter and is driven directly.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| HEALTH-PROD-MODES | every check in the class declares exactly the two sealed modes, and the test knows about every check the class declares | php | discover() | modes == ['debug','production'] for all five | implemented | 2026-09-15 |
+| HEALTH-PROD-SEAL | an intact seal is OK; drift is a FAIL carrying the finding and naming rsx:build --force | php | _seal_row(true, []) / (true, [finding]) | OK; FAIL naming the file and the rebuild | implemented | 2026-09-15 |
+| HEALTH-PROD-SEAL-NONE | a missing seal is a FAIL naming the build | php | _seal_row(false, []) | FAIL; rsx:build --force | implemented | 2026-09-15 |
+| HEALTH-PROD-URL | https is OK; http, a schemeless value and an empty one all FAIL naming APP_URL | php | _app_url_row per value | OK; three FAILs | implemented | 2026-09-15 |
+| HEALTH-PROD-URL-CACHE | the remediation says a .env edit alone changes nothing - the running value came from the cached config the build produced | php | _app_url_row('http://...') | remediation names rsx:build --force | implemented | 2026-09-15 |
+| HEALTH-PROD-AUTOFILL | login auto-fill on a sealed build is a FAIL naming RSPADE_LOGIN_AUTOFILL | php | _login_autofill_row(true/false) | OK; FAIL + key | implemented | 2026-09-15 |
+| HEALTH-PROD-CONSOLE | the console_debug row is INFO and names the variant (stripped vs intact) | php | _console_debug_row per mode | two INFO rows | implemented | 2026-09-15 |
+| HEALTH-PROD-MAIL | the development catcher on a sealed build WARNs and names the silent outage; live is OK | php | _mail_delivery_row('aiosmtpd'/'live') | WARN naming 'no recipient'; OK | implemented | 2026-09-15 |
+
+## Opcache_Advisory_Test (php)
+
+The once-per-six-hours OPcache recommendation written at the end of
+`Rsx_Framework_Provider::boot()`. The throttle is what is proved; the window is driven
+by the stamp, never by waiting.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| HEALTH-OPCACHE-ONCE | the first call writes exactly one line and a second inside the window writes none | php | _log_once(key) twice | true + 1 captured line; false + 0 | implemented | 2026-09-15 |
+| HEALTH-OPCACHE-SCOPE | another scope (another build key) has its own window, and an unstamped scope reads as unstamped | php | two distinct keys | both log; a third key is a cache miss | implemented | 2026-09-15 |
+| HEALTH-OPCACHE-STAMP | the stamp is what closes the window, and the window is six hours | php | _log_once + RsxCache::get | stamp present; WINDOW_SECONDS == 21600 | implemented | 2026-09-15 |
+| HEALTH-OPCACHE-CLI | a CLI process is never advised and never consumes the live window - OPcache is correctly off for the CLI SAPI | php | check() under the suite's cli SAPI | no line; live key unstamped | implemented | 2026-09-15 |
+| HEALTH-OPCACHE-INI | an ini nothing declares reads as OFF, never as enabled | php | _ini_enabled(false/'0'/'1'/'On') | false, false, true, true | implemented | 2026-09-15 |
+| HEALTH-OPCACHE-MSG | the line names the exact setting, says it is a recommendation, and states its own cadence | php | message() | contains opcache.enable=1, 'recommendation', '6 hours' | implemented | 2026-09-15 |

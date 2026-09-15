@@ -6,9 +6,18 @@ NAME
 SYNOPSIS
     Controller attribute:
 
-        #[FPC]
+        #[FPC]                  entries live until something clears them
+        #[FPC(ttl: 5)]          each entry lives five minutes
+        #[FPC(5)]               the same, positionally
+
+        #[FPC(ttl: 5)]
         #[Route('/about', methods: ['GET'])]
         public static function index(Request $request, array $params = [])
+
+    Operator:
+
+        php artisan rsx:fpc:clear
+        php artisan rsx:fpc:clear --url=/about
 
     PHP cache management:
 
@@ -30,6 +39,15 @@ DESCRIPTION
     FPC is designed for public, anonymous pages like marketing sites,
     documentation, and SSR-rendered content. Pages accessed by logged-in
     users always bypass the cache.
+
+    IT IS ALWAYS AVAILABLE, AND THERE IS NOTHING TO ENABLE. Full page caching
+    is an APPLICATION behaviour a developer opts into per route by writing
+    #[FPC] on it - the code that knows whether a page is safe to serve twice is
+    the code that decides - not a deployment setting an administrator flips. A
+    route without the attribute is never cached in any mode, which is what "off"
+    means for an application that has not asked for it. The only FPC config key
+    is the proxy port the health probe knocks on; the per-entry lifetime is
+    declared on the route too (see PER-ROUTE TTL).
 
     Architecture:
 
@@ -73,12 +91,62 @@ CACHE BEHAVIOR
     entries are effectively invalidated: new requests compute new cache keys,
     so the old entries are simply never read again. Those orphaned entries
     are reclaimed one of three ways:
-    - FPC_TTL_MINS > 0: each entry carries that TTL and ages out on its own.
-    - FPC_TTL_MINS = 0 (default): entries persist until an explicit clear
-      (Rsx_FPC::clear()/clear_url()).
+    - #[FPC(ttl: N)]: each entry carries that TTL and ages out on its own.
+    - #[FPC] with no TTL (the default): entries persist until something clears
+      them - see WHAT CLEARS AN ENTRY below.
     - The shipped redis.conf evicts allkeys-lru across the whole instance, but
       an install may run a different policy - do not rely on eviction to
-      reclaim orphans, set FPC_TTL_MINS instead.
+      reclaim orphans, declare a ttl on the routes that can tolerate one.
+
+PER-ROUTE TTL
+    The lifetime is a property of the PAGE, declared beside the route that
+    knows how long its own output stays true:
+
+        #[FPC]            no expiry
+        #[FPC(ttl: 5)]    300 seconds
+        #[FPC(0)]         no expiry (0 is the default, spelled out)
+
+    MINUTES, as an integer LITERAL. An attribute argument is read by reflection
+    before the autoloader is ready, so a class constant or an expression there
+    dies at the manifest scan; anything but a non-negative integer is a
+    manifest-build failure naming the class, the method and the value it was
+    given.
+
+    HOW IT REACHES THE PROXY. The dispatcher already marks a cacheable response
+    with the X-RSpade-FPC header, which is what the Node proxy keys its Redis
+    write on. The TTL rides on that SAME header as its VALUE - a number of
+    SECONDS, or the word 'none' - so the proxy's SET uses the route's own
+    lifetime and no environment value has to be kept in step with the code.
+    ('none' rather than 0 because a number meaning "forever" reads as
+    "immediately" to whoever meets it next, on the wire or in a log.)
+
+WHAT CLEARS AN ENTRY
+    Four things, and nothing else:
+
+    php artisan rsx:fpc:clear [--url=/path]
+        The operator lever. With no --url it clears THIS BUILD's entries
+        (fpc:{build_key}:*), never the whole database - another build's entries
+        are another build's business. With --url it clears one page, sorting
+        query parameters exactly as the proxy's key derivation does. A page
+        that was not cached is reported and exits 0: that is the state the
+        operator wanted, reached before they asked. An unreachable Redis FAILS
+        LOUD rather than reporting "0 cleared".
+
+    php artisan rsx:clean
+        Empties Redis database 2 WHOLE, through
+        RsxCache::clear_reduced_volatility() - every build's FPC entries, plus
+        every _RVC_ key. Discarding build state rotates the build key, which
+        orphans all of them at once, so "clean" means they go now rather than
+        whenever LRU gets round to them. `cache:clear` delegates to rsx:clean
+        and therefore does the same.
+
+    A build-key rotation
+        Every new build computes new cache keys, so the old entries are simply
+        never read again (and are then reclaimed by one of the above, or by
+        eviction).
+
+    The entry's own TTL
+        When its route declared one.
 
     REDIS DATABASE: 2, the reduced-volatility cache. Both writers name the
     number in a constant of their own (Rsx_FPC::REDIS_DB and FPC_REDIS_DB in
@@ -119,28 +187,23 @@ RESPONSE HEADERS
     is stripped by the proxy and never sent to clients.
 
 PHP CACHE MANAGEMENT
-    Rsx_FPC::is_enabled()
-        True when SSR_FPC_ENABLED is set (config('rsx.fpc.enabled')). The clear
-        methods gate on this first.
-
     Rsx_FPC::clear()
         Clear all FPC entries for the current build key.
         Uses SCAN (not KEYS) to avoid blocking Redis.
         Returns count of deleted entries.
-        No-op returning 0 when FPC is disabled (nothing is cached). When
-        ENABLED, an unreachable or unauthenticated Redis FAILS LOUD - a purge
-        that cannot reach Redis must never silently claim success.
+        An unreachable or unauthenticated Redis FAILS LOUD - a purge that
+        cannot reach Redis must never silently claim success.
 
     Rsx_FPC::clear_url(string $url)
         Clear FPC entry for a specific URL path.
         Handles query parameter sorting to match proxy key generation.
-        Returns true if entry was deleted (false when FPC is disabled).
-        Same fail-loud-on-unreachable-Redis behavior as clear() when enabled.
+        Returns true if an entry was deleted.
+        Same fail-loud-on-unreachable-Redis behavior as clear().
 
-    rsx:clean
-        Does NOT remove FPC entries. It attempts a flush of the DEFAULT redis
-        database (0), which is neither the FPC database (2) nor a command the
-        shipped redis.conf permits. Rsx_FPC::clear() is the purge.
+    Rsx_FPC::marker_value(int $ttl_minutes)
+        The marker header value for a declared TTL: the number of SECONDS as a
+        string, or Rsx_FPC::MARKER_NO_EXPIRY ('none'). The dispatcher stamps it;
+        the proxy reads it. MARKER_HEADER is the header name both sides use.
 
     Examples:
 
@@ -152,15 +215,12 @@ PHP CACHE MANAGEMENT
         Rsx_FPC::clear_url('/search?q=test&page=1');
 
 CONFIGURATION
-    Environment variables (in .env):
+    There is no switch and no TTL here - see the DESCRIPTION and PER-ROUTE TTL.
+    The remaining environment variables (in .env) are addresses:
 
-        SSR_FPC_ENABLED     Master switch for the FPC subsystem. When false,
-                            Rsx_FPC::clear()/clear_url() are clean no-ops (no
-                            Redis contact). Surfaced as config('rsx.fpc.enabled').
-        FPC_TTL_MINS        Per-entry cache TTL in MINUTES. 0 = never expire
-                            (default); >0 sets an EX on each Redis write. Read
-                            directly by the Node proxy - keep it in sync.
-        FPC_PROXY_PORT      Port for FPC proxy (default: 3200)
+        FPC_PROXY_PORT      Port for FPC proxy (default: 3200). Mirrored as
+                            config('rsx.fpc.proxy_port') for the rsx:health
+                            liveness probe; the proxy reads .env itself.
         FPC_BACKEND_PORT    Port for nginx backend (default: 3201)
         REDIS_HOST          Redis server host (default: 127.0.0.1)
         REDIS_PORT          Redis server port (default: 6379)
@@ -170,8 +230,9 @@ CONFIGURATION
                             missing/wrong password now FAILS LOUD from the clear
                             path (no longer a silent no-op).
 
-    Redis uses DB 0. It is NOT configured with LRU eviction by default - use
-    FPC_TTL_MINS to bound entry lifetime (see CACHE BEHAVIOR).
+    Entries live in Redis DB 2 (see CACHE BEHAVIOR). Do not rely on eviction
+    to bound entry lifetime - declare #[FPC(ttl: N)] on the routes that can
+    tolerate one.
 
 NGINX SETUP
     The FPC requires two nginx changes:
@@ -219,7 +280,7 @@ NGINX SETUP
 SUPERVISOR
     The FPC proxy runs as a supervised service:
 
-        /system/supervisor/fpc-proxy.conf
+        system/app/RSpade/resource/docker/supervisor/conf.d/fpc-proxy.conf
 
     Start manually for testing:
 
@@ -233,7 +294,8 @@ DISPATCHER BEHAVIOR
     3. If user is logged in, skips FPC (no header set)
     4. If anonymous, blanks all cookies except 'rsx' from $_COOKIE
     5. Executes controller method normally
-    6. Adds X-RSpade-FPC: 1 header to response
+    6. Adds the X-RSpade-FPC header, whose value is the route's own declared
+       lifetime in seconds - or 'none'
     7. Removes Set-Cookie headers from response
 
     Cookie blanking (step 4) ensures controller code produces identical
@@ -268,7 +330,7 @@ DEBUGGING
 
     Clear all FPC entries:
 
-        redis-cli KEYS "fpc:*" | xargs -r redis-cli DEL
+        php artisan rsx:fpc:clear
 
     Check proxy logs:
 
@@ -289,7 +351,9 @@ TESTING
 FILES
     system/bin/fpc-proxy.js                     Node.js proxy server
     system/app/RSpade/Core/FPC/Rsx_FPC.php      PHP cache utility
-    system/supervisor/fpc-proxy.conf            Supervisor config
+    system/app/RSpade/Commands/Rsx/Fpc_Clear_Command.php   rsx:fpc:clear
+    system/app/RSpade/resource/docker/supervisor/conf.d/fpc-proxy.conf
+                                                Supervisor config
     build/build_key          Build key file
     system/app/RSpade/tests/fpc/                Integration tests
 

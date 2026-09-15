@@ -327,6 +327,14 @@ class Rsx_Framework_Provider extends ServiceProvider
 
         // Ensure the IDE bridge local-file grant token + passive guards exist (dev only).
         $this->ensure_ide_bridge_token();
+
+        // Recommend OPcache to a web process that has none. LAST in boot(), which is the
+        // point where the framework's own system checks belong: the manifest is loaded
+        // (so RsxCache's build-scoped throttle has a build key to fold in and Redis is
+        // reachable), nothing has dispatched yet, and a check that lands here cannot
+        // change what the request does. Web SAPI only, every mode, silent when OPcache
+        // is on. See Opcache_Advisory.
+        \App\RSpade\Core\Health\Opcache_Advisory::check();
     }
 
     /**

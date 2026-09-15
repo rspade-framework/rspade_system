@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
@@ -23,7 +24,14 @@ use App\RSpade\Core\Time\Rsx_Time;
  * the cron reconciles and advances each tick. Zero trackers => the cron has never run.
  * A tracker whose next_run_at is well in the past => the cron is not advancing it. That
  * staleness signal CANNOT distinguish a missing cron tick from a wedged worker pool, so
- * it is a WARN-with-caveat, never a FAIL.
+ * it is a WARN-with-caveat in development - where a box that is never left running is
+ * expected to have a stale tracker.
+ *
+ * ON A SEALED BUILD IT IS A FAIL. A production box with no scheduler is a box where
+ * nothing is sweeping the mail queue, rendering documents, rotating logs or reaping
+ * workers, and every one of those failures is silent. The caveat still stands (it cannot
+ * say WHICH of the two is wrong), but "one of these two is broken" is a deploy-gating
+ * fact there, not an advisory one.
  */
 class Task_Health_Checks
 {
@@ -43,9 +51,13 @@ class Task_Health_Checks
     {
         $tracker_count = DB::table('_tasks')->whereNotNull('next_run_at')->count();
 
+        // A missing scheduler is silent, and on a sealed build everything it drives is
+        // load-bearing - so the same finding gates a deploy there and advises here.
+        $severity = Rsx::is_production() ? 'FAIL' : 'WARN';
+
         if ($tracker_count === 0) {
             return [
-                'status' => 'WARN',
+                'status' => $severity,
                 'detail' => 'no #[Schedule] tracker rows - rsx:task:process has never run',
                 'remediation' => 'install the cron entry: * * * * * cd '
                     . base_path() . ' && php artisan rsx:task:process',
@@ -57,7 +69,7 @@ class Task_Health_Checks
 
         if ($stale_seconds > self::STALE_MINUTES * 60) {
             return [
-                'status' => 'WARN',
+                'status' => $severity,
                 'detail' => $tracker_count . ' tracker(s); oldest is due ' . Rsx_Time::relative($oldest)
                     . ' (over ' . self::STALE_MINUTES . 'min stale). NOTE: this cannot distinguish a'
                     . ' missing cron tick from a stalled worker pool',

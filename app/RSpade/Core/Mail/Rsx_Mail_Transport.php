@@ -283,6 +283,12 @@ class Rsx_Mail_Transport
      *                        anything but `live` is a development setup, not a
      *                        deliverability problem.
      *
+     * MODE: every mode. Mail is delivered in every mode, and each of the four delivery
+     * modes is a legitimate configuration somewhere - which is precisely why the row is
+     * descriptive here. Whether the DEVELOPMENT CATCHER is an appropriate target for a
+     * SEALED build is a different question, asked by the prod-only "Mail Delivery
+     * Target" row (Production_Health_Checks).
+     *
      * NO TIMEOUT beyond the 2-second fsockopen argument every probe in this framework
      * uses. The DNS lookups have none: a dead resolver is a fault to SEE.
      *

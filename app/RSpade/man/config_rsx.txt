@@ -398,13 +398,16 @@ DEVELOPMENT AND CODE QUALITY
 
     'ide_integration' => [
         'bridge_path' => 'storage/rsx-ide-bridge',
-        'enabled' => env('RSX_IDE_SERVICES_ENABLED', env('RSX_MODE', 'development') !== 'production'),
+        'enabled' => \App\RSpade\Core\Rsx::is_development(),
     ]
 
     bridge_path   Where the IDE local-file grant token lives (OUTSIDE the
                   docroot; keep it that way).
-    enabled       Master switch for the VS Code / IDE bridge (dev-only by
-                  default; hard-off in production unless opted in).
+    enabled       Master switch for the VS Code / IDE bridge: DEVELOPMENT MODE
+                  AND NOWHERE ELSE, with no env key. Turning it off in a user
+                  config turns the bridge off in development too; it cannot
+                  turn it on elsewhere, because the pre-boot gate refuses any
+                  other mode by itself (rsx:man vs_code_extension).
 
 JAVASCRIPT
     'javascript' => [
@@ -620,13 +623,20 @@ REALTIME
 
 FULL PAGE CACHE
     'fpc' => [
-        'enabled' => env('SSR_FPC_ENABLED', false),
-        'ttl_mins' => env('FPC_TTL_MINS', 0),        # 0 = never expire
         'proxy_port' => env('FPC_PROXY_PORT', 3200), # advisory mirror
     ]
 
     Node reverse proxy caching #[FPC] pages in Redis. The proxy reads
-    FPC_* / REDIS_* directly from .env. See: php artisan rsx:man fpc
+    FPC_* / REDIS_* directly from .env.
+
+    THERE IS NO MASTER SWITCH AND NO TTL KEY. Full page caching is an
+    application behaviour a developer opts into per route by writing
+    #[FPC] on it, and the per-entry lifetime is #[FPC(ttl: 5)] on that
+    same route, carried to the proxy on the response marker. A route
+    without the attribute is never cached in any mode. proxy_port is
+    the only key left, and it is advisory - it mirrors .env so the
+    rsx:health liveness probe knows where to knock.
+    See: php artisan rsx:man fpc
 
 MAIL AND SMS
     'mail' => [

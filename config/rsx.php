@@ -705,11 +705,14 @@ return [
         // reads the server URL straight from APP_URL in .env (no domain.txt discovery).
         'bridge_path' => 'storage/rsx-ide-bridge',
 
-        // Master switch for the IDE bridge (dev-only by default; hard-off in production
-        // unless explicitly opted in). Governs whether the grant token is created. The
-        // pre-boot auth gate (auth.php) also refuses the bridge outright when
-        // RSX_IDE_SERVICES_ENABLED=false, and in production without =true.
-        'enabled' => env('RSX_IDE_SERVICES_ENABLED', env('RSX_MODE', 'development') !== 'production'),
+        // Master switch for the IDE bridge. DEVELOPMENT ONLY, by construction: there is
+        // no env key and no opt-in that turns it on anywhere else, because the bridge's
+        // grant is a file on local disk and its consumer is an editor sitting beside the
+        // source. Setting this false in a user config turns the bridge off in
+        // development too; setting it true elsewhere changes nothing, because the
+        // pre-boot gate (Ide/Services/auth.php) refuses any mode but development before
+        // it reads a token. Governs whether the grant token is created at all.
+        'enabled' => \App\RSpade\Core\Rsx::is_development(),
     ],
 
     /*
@@ -1865,21 +1868,23 @@ return [
     |--------------------------------------------------------------------------
     |
     | The FPC is a Node.js reverse proxy (system/bin/fpc-proxy.js) that caches
-    | #[FPC]-marked pages in Redis (DB 0). When disabled, Rsx_FPC::clear() /
-    | clear_url() are clean no-ops. When enabled, an unreachable/unauthenticated
-    | Redis fails loud (a developer purge must never silently claim success).
-    | The proxy reads FPC_* / REDIS_* directly from .env (no Laravel config
+    | #[FPC]-marked pages in Redis (DB 2).
+    |
+    | THERE IS NO MASTER SWITCH, and that is the design: full page caching is an
+    | APPLICATION decision a developer makes per route by writing #[FPC] on it,
+    | not a deployment setting an administrator flips. A route without the
+    | attribute is never cached in any mode, so "off" is what an application
+    | that has not asked for it already gets. The per-entry TTL comes from the
+    | attribute too - #[FPC(ttl: 5)] - and rides to the proxy on the response
+    | marker, so no environment value has to be kept in step with the code.
+    |
+    | An unreachable or unauthenticated Redis fails loud on a purge (a developer
+    | purge must never silently claim success). The proxy reads REDIS_* and
+    | FPC_PROXY_PORT / FPC_BACKEND_PORT directly from .env (no Laravel config
     | cache). See: php artisan rsx:man fpc
     |
     */
     'fpc' => [
-        'enabled' => env('SSR_FPC_ENABLED', false),
-
-        // Entry TTL in minutes. 0 = never expire (entries persist until the
-        // build key rotates, an explicit clear, or rsx:clean). Read directly
-        // from .env by the Node proxy on the Redis SET - keep it in sync.
-        'ttl_mins' => env('FPC_TTL_MINS', 0),
-
         // Proxy listen port (advisory - the Node proxy reads FPC_PROXY_PORT
         // from .env itself; this mirrors it for the rsx:health liveness probe).
         'proxy_port' => env('FPC_PROXY_PORT', 3200),

@@ -444,6 +444,40 @@ ADMINISTRATION
         one FAIL row. It boots the manifest, so on an unsealed box it fails
         with the unsealed message like everything else.
 
+        Every check declares which modes it applies to, so on a sealed box the
+        table drops the development-only rows (Playwright, Claude Skills,
+        Submodule Visibility, the app dependency layer) and ADDS the ones that
+        only mean something here. Both are named under the table - "Mode:
+        production" and "Not applicable in this mode: ..." - and in --json as
+        "mode" and "skipped". What it verifies on a production box:
+
+            Production Seal       every sealed asset still hashes to what the
+                                  seal recorded and the build_key matches -
+                                  rsx:prod:verify's comparison, FAIL on drift.
+            APP_URL Scheme        the CONFIGURED url is https. The boot guard
+                                  reads the raw .env; this reads what the
+                                  running application uses, so it catches a
+                                  .env repaired after the build.
+            Login Auto-fill       RSPADE_LOGIN_AUTOFILL is off. FAIL.
+            Console Debug         INFO naming the variant (strict production
+                                  strips console_debug; debug keeps it).
+            Mail Delivery Target  WARN when the development catcher is the
+                                  delivery target.
+            Task Scheduler        the cron liveness row is a FAIL here, not a
+              Liveness            WARN: everything it drives fails silently.
+
+        rsx:man health for the full inventory and the mode axis.
+
+    rsx:fpc:clear [--url=/path]
+        Purge full-page-cache entries for the current build - the lever for
+        "that page is stale now". A page is cached because its route carries
+        #[FPC]; one with no #[FPC(ttl: N)] lives until something removes it.
+        With --url it clears one page. rsx:clean empties the whole FPC
+        database (every build's entries) as part of discarding build state,
+        and cache:clear delegates to rsx:clean, so both do it too. A new build
+        orphans the previous build's entries by rotating the key.
+        rsx:man fpc.
+
     rsx:maintenance:enable --reason / rsx:maintenance:disable
         The window to hold around a pull, a migrate and a build. Both are
         intercepted pre-boot and shell out, so they work on a broken tree and
@@ -452,6 +486,23 @@ ADMINISTRATION
     migrate + rsx:migrate:check_consistency
         See WHY MIGRATE COMES BEFORE THE BUILD above and rsx:man migrations.
         check_consistency runs in a prod mode only and refuses elsewhere.
+
+    OPcache
+        RSpade does not check, require or configure OPcache: whether a host
+        runs it is a php.ini setting on a machine the framework does not own,
+        and there is no reading of it that should make an application refuse
+        to serve. So rsx:health carries no OPcache row. What the framework
+        does instead is REMIND: a web process with no OPcache writes one
+        warning to the Laravel log naming opcache.enable=1 - and, on a sealed
+        build, opcache.validate_timestamps=0, because the build is immutable
+        and validating timestamps is a stat() per included file per request
+        buying nothing. That line is throttled through the build-key-scoped
+        Redis cache to at most once every six hours per build, best effort: a
+        Redis outage never blocks the request and never doubles the line, it
+        only means the reminder may come round sooner. The CLI never receives
+        it - OPcache is correctly off for the CLI SAPI. Reload php-fpm after
+        each `rsx:build --force` with validate_timestamps=0, or the workers go
+        on serving the previous build's compiled code.
 
     LOG_LEVEL
         Set LOG_LEVEL=info in .env on a production box. DEBUG logging writes

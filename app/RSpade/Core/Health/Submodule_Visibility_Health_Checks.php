@@ -35,6 +35,10 @@ use App\RSpade\Core\Rsx;
  * starter and framework-pull-upstream.sh sets it during the vendored -> submodule
  * conversion; this row plus its healer serve the boxes converted before that landed.
  *
+ * MODE: development only. The subject is a git REVIEW surface - whether a framework
+ * update shows up in status, diff and the commit summary - and commits are authored on a
+ * development box. A production checkout is deployed, not reviewed.
+ *
  * WHY WARN AND NEVER FAIL. Nothing is broken, corrupted or at risk - a review surface is
  * quieter than it should be. rsx:health exits non-zero only on FAIL, so this can never
  * break a deploy gate or a container healthcheck.
@@ -56,7 +60,7 @@ class Submodule_Visibility_Health_Checks
      *
      * @return array
      */
-    #[Health_Check('Submodule Visibility')]
+    #[Health_Check('Submodule Visibility', modes: 'development')]
     public static function submodule_visibility(): array
     {
         // The monorepo authors system/ rather than tracking it; there is no gitlink here

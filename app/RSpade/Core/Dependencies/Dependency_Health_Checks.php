@@ -18,6 +18,10 @@ use App\RSpade\Core\Dependencies\Dependency_Manager;
  * resolves node modules through Node's own upward walk (system/node_modules first, then
  * the project root), so an app with no npm layer serves pages exactly as one with it.
  *
+ * MODE: development only. The layer exists so that `rsx:composer require` and
+ * `rsx:npm install` have somewhere to record a package - an authoring action. A sealed
+ * build ships the vendored result of those commands and never runs one.
+ *
  * WHY THIS IS A WARN AND NOT A FAIL. A missing manifest costs nothing today; it costs
  * something the first time the developer wants a package of their own, because
  * `rsx:npm install` writes to a file that is not there. That is a "you will want this
@@ -49,7 +53,7 @@ class Dependency_Health_Checks
      *
      * @return array
      */
-    #[Health_Check('App Dependency Layer')]
+    #[Health_Check('App Dependency Layer', modes: 'development')]
     public static function app_dependency_layer(): array
     {
         $composer = file_exists(Dependency_Manager::root_composer_json_path());

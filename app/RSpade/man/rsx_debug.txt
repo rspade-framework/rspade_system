@@ -322,10 +322,28 @@ The command outputs in a terse, parseable format:
 
 PREREQUISITES
 
-The tool automatically installs required dependencies:
-- Node.js (must be pre-installed)
-- Playwright npm package (auto-installed if missing)
-- Chromium browser (auto-installed if missing)
+The browser stack, preflighted before anything is launched:
+- Node.js
+- the Playwright npm package
+- the Chromium build Playwright expects
+
+An absent link is a REFUSAL, not an install. The command names which link is
+missing and the literal command that installs it, and exits 1:
+
+    [ERROR] rsx:debug needs Playwright to render a page, and this box does not
+    have it.
+      Missing: the chromium browser binary Playwright expects is not installed
+      Install: npx playwright install chromium
+      Then run rsx:debug again. See rsx:man health for the matching health row.
+
+It refuses rather than installing because a package install and a browser
+download are large network-bound operations an operator chooses to start; a
+debug run that silently becomes one is a surprise rather than a convenience.
+
+The probe and the three install commands are App\RSpade\Core\Health\
+Playwright_Stack, which rsx:health's "Playwright / Chromium" row reads too - so
+the command the refusal names and the command the health table names are the
+same literal. That row is WARN and development-only (rsx:man health).
 
 LOG ROTATION
 
@@ -401,6 +419,7 @@ IMPORTANT NOTES
 
 SEE ALSO
 
+rsx:man health               the Playwright / Chromium row and the mode axis
 rsx:man console_debug        console_debug() channels and filtering
 rsx:man config_rsx           the rsx.debug configuration block
 rsx:man routing              route declaration and URL generation

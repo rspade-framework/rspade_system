@@ -10,8 +10,12 @@
  * Usage: node system/bin/fpc-proxy.js
  *
  * Requires .env: REDIS_HOST, REDIS_PORT, REDIS_PASSWORD
- * Optional: FPC_PROXY_PORT (default 3200), FPC_BACKEND_PORT (default 3201),
- *           FPC_TTL_MINS (default 0 = never expire; >0 sets a per-entry TTL)
+ * Optional: FPC_PROXY_PORT (default 3200), FPC_BACKEND_PORT (default 3201)
+ *
+ * THE TTL IS NOT CONFIGURED HERE. It arrives on the marker header the PHP side sets per
+ * route from that route's own #[FPC(ttl: N)] - 'none', or a number of seconds - so a page
+ * lifetime is a property of the page, declared beside it, and this process never has to be
+ * told out of band what some route wants.
  */
 
 const http = require('http');
@@ -56,9 +60,11 @@ const REDIS_PASSWORD = process.env.REDIS_PASSWORD === 'null' ? undefined : proce
 // database map is the RsxCache class header (database 0 is flushed on every database
 // transaction rollback, so a page cache must not live there).
 const FPC_REDIS_DB = 2;
-// Entry TTL in minutes. 0 (or 'null'/unset) = never expire. Prevents orphaned
-// keys from accumulating forever (Redis defaults to noeviction).
-const FPC_TTL_MINS = (process.env.FPC_TTL_MINS === 'null' || process.env.FPC_TTL_MINS === undefined) ? 0 : parseInt(process.env.FPC_TTL_MINS, 10) || 0;
+// The marker header the PHP dispatcher sets on a cacheable response. Its PRESENCE says
+// "cache this"; its VALUE is the lifetime - MARKER_NO_EXPIRY, or a number of seconds.
+// Mirrors Rsx_FPC::MARKER_HEADER / MARKER_NO_EXPIRY.
+const MARKER_HEADER = 'x-rspade-fpc';
+const MARKER_NO_EXPIRY = 'none';
 
 // The volatile-tree roots, resolved exactly as PHP resolves them.
 const rsx_paths = require(path.join(__dirname, 'lib', 'rsx_paths.js'));
@@ -154,6 +160,22 @@ function has_session_cookie(req) {
 // Proxy logic
 // ---------------------------------------------------------------------------
 
+/**
+ * The lifetime a marker value asks for, in seconds. MARKER_NO_EXPIRY - and anything this
+ * process cannot read as a positive number - means no expiry, which is the marker's own
+ * default and the safe direction: a page that outlives its intent is cleared by a build or
+ * a purge, where a misread lifetime of a few seconds would quietly turn the cache off.
+ */
+function marker_ttl_seconds(marker) {
+    if (marker === undefined || marker === MARKER_NO_EXPIRY) {
+        return 0;
+    }
+
+    const seconds = parseInt(marker, 10);
+
+    return Number.isFinite(seconds) && seconds > 0 ? seconds : 0;
+}
+
 function proxy_to_backend(client_req, client_res, cache_key) {
     const options = {
         hostname: BACKEND_HOST,
@@ -164,13 +186,13 @@ function proxy_to_backend(client_req, client_res, cache_key) {
     };
 
     const proxy_req = http.request(options, (proxy_res) => {
-        const fpc_header = proxy_res.headers['x-rspade-fpc'];
+        const fpc_header = proxy_res.headers[MARKER_HEADER];
 
         // No FPC header or no cache_key — pass through as-is
         if (!fpc_header || !cache_key) {
             // Strip internal header before sending to client
             const headers = { ...proxy_res.headers };
-            delete headers['x-rspade-fpc'];
+            delete headers[MARKER_HEADER];
             client_res.writeHead(proxy_res.statusCode, headers);
             proxy_res.pipe(client_res);
             return;
@@ -204,12 +226,14 @@ function proxy_to_backend(client_req, client_res, cache_key) {
                 entry.html = body_str;
             }
 
-            // Store in Redis (fire-and-forget). Apply a TTL when FPC_TTL_MINS > 0;
-            // otherwise the entry never expires (invalidated by build-key rotation
-            // or an explicit clear).
+            // Store in Redis (fire-and-forget). The lifetime is the route's own, read off
+            // the marker; with none, the entry is invalidated by a build-key rotation or an
+            // explicit clear (rsx:fpc:clear, rsx:clean) and by nothing else.
+            const ttl_seconds = marker_ttl_seconds(fpc_header);
+
             if (redis_available) {
-                const write = FPC_TTL_MINS > 0
-                    ? redis_client.set(cache_key, JSON.stringify(entry), { EX: FPC_TTL_MINS * 60 })
+                const write = ttl_seconds > 0
+                    ? redis_client.set(cache_key, JSON.stringify(entry), { EX: ttl_seconds })
                     : redis_client.set(cache_key, JSON.stringify(entry));
                 write.catch((err) => {
                     console.error('[fpc] Redis write error:', err.message);
@@ -218,7 +242,7 @@ function proxy_to_backend(client_req, client_res, cache_key) {
 
             // Build response headers — strip internals, add cache headers
             const response_headers = { ...proxy_res.headers };
-            delete response_headers['x-rspade-fpc'];
+            delete response_headers[MARKER_HEADER];
             delete response_headers['set-cookie'];
             response_headers['etag'] = etag;
             response_headers['x-fpc-cache'] = 'MISS';
@@ -313,8 +337,8 @@ const server = http.createServer(async (req, res) => {
 async function start() {
     const { createClient } = require('redis');
 
-    // Connect to Redis (DB 2 — the reduced-volatility cache; FPC entries carry a TTL
-    // only when FPC_TTL_MINS > 0)
+    // Connect to Redis (DB 2 - the reduced-volatility cache; an entry carries a TTL only
+    // when its route's #[FPC] declared one)
     redis_client = createClient({
         socket: { host: REDIS_HOST, port: REDIS_PORT },
         password: REDIS_PASSWORD,

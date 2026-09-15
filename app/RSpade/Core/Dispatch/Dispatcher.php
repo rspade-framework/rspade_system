@@ -368,6 +368,7 @@ class Dispatcher
         // once at build time. Reading it here used to pull the handler class's whole METHOD
         // MAP into every matched request.
         $has_fpc = false;
+        $fpc_ttl_mins = 0;
 
         if (!empty($route_match['fpc'])) {
             // FPC only active for unauthenticated GET requests without POST/FILE data
@@ -376,6 +377,7 @@ class Dispatcher
 
                 if (!\App\RSpade\Core\Session\Session::is_logged_in()) {
                     $has_fpc = true;
+                    $fpc_ttl_mins = (int) ($route_match['fpc_ttl_mins'] ?? 0);
 
                     // Blank all cookies except session to prevent tainted output
                     foreach ($_COOKIE as $key => $value) {
@@ -464,9 +466,15 @@ class Dispatcher
         // Convert result to response
         $response = static::__build_response($result);
 
-        // Add FPC header if conditions were met — signals the FPC proxy to cache this response
+        // Add the FPC marker if conditions were met - it signals the proxy to cache this
+        // response, and its VALUE is the lifetime the route's own #[FPC(ttl: N)] declared:
+        // a number of SECONDS, or 'none' for an entry that lives until something clears it.
+        // One channel, so the proxy never has to be told a TTL out of band.
         if ($has_fpc && $response instanceof \Symfony\Component\HttpFoundation\Response) {
-            $response->headers->set('X-RSpade-FPC', '1');
+            $response->headers->set(
+                \App\RSpade\Core\FPC\Rsx_FPC::MARKER_HEADER,
+                \App\RSpade\Core\FPC\Rsx_FPC::marker_value($fpc_ttl_mins)
+            );
             $response->headers->remove('Set-Cookie');
         }
 

@@ -22,7 +22,9 @@
 | auth_reject_no_token | `auth.php` returns 401 when no `X-Ide-Token` and not loopback | http | request without header | 401 Authentication required | deferred (pre-boot standalone; manual) | 2026-07-29 |
 | auth_accept_token | `auth.php` accepts a request whose `X-Ide-Token` matches the grant's `secret` | http | header = document `secret` | 200 from service | deferred (pre-boot standalone; manual) | 2026-08-25 |
 | auth_loopback_bypass | strict `http://localhost` loopback bypass still works | http | loopback, no X-* headers | 200 without token | deferred (pre-boot standalone; manual) | 2026-07-29 |
-| auth_prod_hard_off | production without `RSX_IDE_SERVICES_ENABLED=true` refuses | http | RSX_MODE=production | 403 | deferred (pre-boot standalone; manual) | 2026-07-29 |
+| IDE-GATE-SEALED | the pre-boot gate refuses debug and production before any token is read - the bridge is development-only by construction | php | `php -r` child per mode with RSX_MODE in its environment | 403 body "IDE services are development-only"; never "Authentication required" | implemented | 2026-09-15 |
+| IDE-GATE-DEV | development falls through the mode gate to the credential question | php | same child, RSX_MODE=development | "Authentication required" | implemented | 2026-09-15 |
+| IDE-GATE-NO-OPT-IN | the RSX_IDE_SERVICES_ENABLED opt-in is retired - the gate reads no such key and an environment carrying one changes nothing | php | auth.php source + a production child | key absent; still refused | implemented | 2026-09-15 |
 | refactor_allowlist | `handle_refactor_service` rejects a non-allowlisted command | http | command not in allowlist | 403 not allowed | deferred (pre-boot standalone; manual) | 2026-07-29 |
 | web_exposure_ok | `Web Exposure` health rows are OK on a correct docroot | http | `rsx:health` | OK rows, exit 0 | deferred (manual via rsx:health) | 2026-07-29 |
 

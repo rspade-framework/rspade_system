@@ -104,7 +104,10 @@ class Environment_Health_Checks
     }
 
     /**
-     * Node.js binary (realtime relay, rsx:debug, build tooling).
+     * Node.js binary (realtime relay, fpc-proxy, rsx:debug, build tooling).
+     *
+     * MODE: every mode. node is not development tooling here - the realtime relay and
+     * the fpc proxy are node daemons a production box runs.
      *
      * @return array
      */
@@ -299,8 +302,13 @@ class Environment_Health_Checks
     }
 
     /**
-     * Application-mode sanity: the active RSX_MODE, plus a warning for a risky prod-mode
-     * posture (debug-site backdoors active on a prod-mode box).
+     * Application-mode sanity: the active RSX_MODE, the deployed trees' read-only
+     * posture, and the log level a sealed build writes at.
+     *
+     * MODE: every mode. It reports WHICH mode is active, which is a question with an
+     * answer everywhere; the rows that only mean something on a sealed box live in
+     * Production_Health_Checks, which declares the two prod modes. Login auto-fill moved
+     * there as a FAIL - a working credential on an unauthenticated page is not advisory.
      *
      * @return array
      */
@@ -322,17 +330,6 @@ class Environment_Health_Checks
                 'label' => 'RSX Mode',
                 'status' => 'INFO',
                 'detail' => $mode . ' (sealed build)',
-            ];
-        }
-
-        // Credential auto-fill on a production build puts a working login on an
-        // unauthenticated page. It is a development convenience and nothing else.
-        if (Rsx::is_production() && config('rsx.development.login_autofill')) {
-            $rows[] = [
-                'label' => 'Login Auto-fill',
-                'status' => 'WARN',
-                'detail' => 'the login form pre-fills RSPADE_DEFAULT_EMAIL / RSPADE_DEFAULT_PASSWORD on a production-mode box',
-                'remediation' => 'clear RSPADE_LOGIN_AUTOFILL in .env',
             ];
         }
 

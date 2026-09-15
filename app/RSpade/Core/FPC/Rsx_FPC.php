@@ -11,13 +11,24 @@ use App\RSpade\Core\Manifest\Manifest;
  * The FPC is a Node.js reverse proxy that caches responses
  * marked with #[FPC] attribute in Redis.
  *
+ * THE FPC IS ALWAYS AVAILABLE. There is no master switch and nothing to enable: a route
+ * is cached because a developer wrote #[FPC] on it, and a route without the attribute is
+ * never cached. Caching is an application behaviour, decided in the code that knows
+ * whether a page is safe to serve twice - not a deployment setting somebody has to
+ * remember to turn on for the feature to work, or off for it to stop.
+ *
  * Cache key format: fpc:{build_key}:{sha1(url)}
  * Redis DB: 2, the reduced-volatility cache. The authority on the database map is the
  * RsxCache class header; the Node proxy (system/bin/fpc-proxy.js) names the same number
  * in its own constant. Database 0 is flushed on every database transaction rollback, which
  * would throw away a page cache for reasons that have nothing to do with the page.
- * Entries carry a TTL only when FPC_TTL_MINS > 0; otherwise they persist until the build
- * key rotates or an explicit clear removes them.
+ *
+ * WHAT CLEARS AN ENTRY, and there is nothing else:
+ *   - php artisan rsx:fpc:clear [--url=/path]  (this class's clear()/clear_url())
+ *   - php artisan rsx:clean, which empties Redis DB 2 whole through
+ *     RsxCache::clear_reduced_volatility() - so does cache:clear, which delegates to it
+ *   - a build-key rotation, which orphans every fpc:{old_key}:* entry at once
+ *   - the entry's own TTL, when its #[FPC(ttl: N)] declared one
  */
 class Rsx_FPC
 {
@@ -29,29 +40,36 @@ class Rsx_FPC
     private const REDIS_DB = 2;
 
     /**
-     * Whether the FPC subsystem is active for this deployment.
-     *
-     * Backed by SSR_FPC_ENABLED in .env (config('rsx.fpc.enabled')). When
-     * disabled, the clear methods are clean no-ops that never touch Redis.
+     * The response header the PHP side marks a cacheable response with, and which the
+     * Node proxy keys its Redis write on. ONE channel: its VALUE carries the TTL, so a
+     * per-route lifetime needs no second header and no environment value.
      */
-    public static function is_enabled(): bool
+    public const MARKER_HEADER = 'X-RSpade-FPC';
+
+    /** The marker value meaning "cache this until something clears it". */
+    public const MARKER_NO_EXPIRY = 'none';
+
+    /**
+     * The marker value for a route whose #[FPC] declared $ttl_minutes.
+     *
+     * SECONDS on the wire, because that is what the proxy hands Redis; MINUTES in the
+     * attribute, because that is the unit a developer thinks in. Zero (the default, and
+     * what a bare #[FPC] means) is the word 'none' rather than the number 0 - a number
+     * that means "forever" is the kind of thing that reads as "immediately" to whoever
+     * meets it next, on the wire or in a log.
+     */
+    public static function marker_value(int $ttl_minutes): string
     {
-        return (bool) config('rsx.fpc.enabled');
+        return $ttl_minutes > 0 ? (string) ($ttl_minutes * 60) : self::MARKER_NO_EXPIRY;
     }
 
     /**
      * Clear all FPC cache entries for the current build key
      *
-     * @return int Number of deleted entries (0 when FPC is disabled)
+     * @return int Number of deleted entries
      */
     public static function clear(): int
     {
-        // FPC disabled: nothing is cached, so there is nothing to purge. Clean
-        // no-op WITHOUT touching Redis (and without failing loud - see _get_redis).
-        if (!self::is_enabled()) {
-            return 0;
-        }
-
         $redis = self::_get_redis();
 
         $build_key = Manifest::get_build_key();
@@ -74,15 +92,10 @@ class Rsx_FPC
      * Clear FPC cache for a specific URL
      *
      * @param string $url The URL path with optional query string (e.g., '/about' or '/search?q=test')
-     * @return bool True if entry was deleted (false when FPC is disabled)
+     * @return bool True if an entry was deleted
      */
     public static function clear_url(string $url): bool
     {
-        // FPC disabled: nothing to purge. Clean no-op, no Redis contact.
-        if (!self::is_enabled()) {
-            return false;
-        }
-
         $redis = self::_get_redis();
 
         $build_key = Manifest::get_build_key();
@@ -109,9 +122,9 @@ class Rsx_FPC
      * rsx:health probe: FPC subsystem status. A public static
      * `#[Health_Check('label')]` (bare marker attribute - never a defined class).
      *
-     * When FPC is disabled it is an INFO, not a FAIL. When enabled it verifies
-     * Redis reachability + auth (via the fail-loud _get_redis path, whose throw is
-     * caught here and reported as a FAIL row rather than crashing the runner) and a
+     * The subsystem is always available, so there is no disabled branch to report: this
+     * verifies Redis reachability + auth (via the fail-loud _get_redis path, whose throw
+     * is caught here and reported as a FAIL row rather than crashing the runner) and a
      * PING, plus an advisory liveness probe of the Node proxy port.
      *
      * @return array
@@ -119,10 +132,6 @@ class Rsx_FPC
     #[Health_Check('FPC')]
     public static function fpc_health(): array
     {
-        if (!self::is_enabled()) {
-            return ['status' => 'INFO', 'detail' => 'disabled (SSR_FPC_ENABLED=false)'];
-        }
-
         $rows = [];
 
         // Redis reachability + auth. _get_redis() fails loud on any connect/auth
@@ -132,7 +141,7 @@ class Rsx_FPC
             $pong = $redis->ping();
             $ok = ($pong === true || $pong === 'PONG' || $pong === '+PONG');
             $rows[] = $ok
-                ? ['status' => 'OK', 'detail' => 'Redis reachable (DB 0), auth OK']
+                ? ['status' => 'OK', 'detail' => 'Redis reachable (DB ' . self::REDIS_DB . '), auth OK']
                 : ['status' => 'FAIL', 'detail' => 'Redis PING returned an unexpected value', 'remediation' => 'check Redis health and REDIS_PASSWORD'];
         } catch (\Throwable $e) {
             $rows[] = [
@@ -144,7 +153,7 @@ class Rsx_FPC
 
         // Advisory: is the Node proxy listening? A down proxy is a WARN (nginx
         // falls back to PHP), so it never fails the health run on its own.
-        $port = (int) env('FPC_PROXY_PORT', 3200);
+        $port = (int) config('rsx.fpc.proxy_port', 3200);
         $errno = 0;
         $errstr = '';
         $socket = @fsockopen('127.0.0.1', $port, $errno, $errstr, 2);
@@ -170,8 +179,7 @@ class Rsx_FPC
      * Fails loud on any connect/auth/select failure - a developer-invoked purge
      * that cannot reach Redis MUST surface, never silently report "nothing to
      * clear" (which would let stale pages serve forever). A failed handle is never
-     * cached; only a healthy connection is memoized. Callers must gate on
-     * is_enabled() first (a disabled subsystem has nothing to reach).
+     * cached; only a healthy connection is memoized.
      */
     private static function _get_redis(): \Redis
     {
