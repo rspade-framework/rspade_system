@@ -7,7 +7,7 @@
 #
 #   $PROJECT/                          git repo, branch master, remote -> $BARE
 #     .env                             (IS_FRAMEWORK_DEVELOPER absent by default)
-#     storage/.rspade_storage_relocated  so the maintenance flag lands in $PROJECT/storage
+#     storage/.rspade_storage_relocated  a sentinel proving storage/ survives the reset
 #     system/bin/rsx-git.sh            COPY of the real proxy (it derives PROJECT_ROOT
 #                                      from its own location, so a symlink would resolve
 #                                      to the real repo - it must be a copy)
@@ -31,6 +31,7 @@
 # =============================================================================
 
 REAL_PROXY="/var/www/html/system/bin/rsx-git.sh"
+REAL_PATHS_LIB="/var/www/html/system/bin/lib/rsx_paths.sh"
 REAL_MAINT="/var/www/html/system/bin/maintenance-mode.sh"
 
 FX_ROOT=""
@@ -146,8 +147,11 @@ fx_build_project() {
     if [ ! -d "$FRAMEWORK_BARE" ]; then
         git init -q --bare "$FRAMEWORK_BARE"
         local fw="$FX_ROOT/framework_work"
-        mkdir -p "$fw/bin" "$fw/app/RSpade"
+        mkdir -p "$fw/bin/lib" "$fw/app/RSpade"
         cp "$REAL_PROXY" "$fw/bin/rsx-git.sh"
+        # The proxy resolves the volatile-tree roots through this library; a framework
+        # tree without it cannot answer where storage/state is.
+        cp "$REAL_PATHS_LIB" "$fw/bin/lib/rsx_paths.sh"
 
         # A FLAG-ONLY maintenance-mode.sh. The proxy calls this script directly (not
         # through artisan), so there is no seam a test could use to pass --no-services -
@@ -157,7 +161,7 @@ fx_build_project() {
 #!/bin/bash
 # Test stub: the flag half of maintenance mode, with no service control.
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-FLAG="$PROJECT_ROOT/storage/rsx-framework/.maintenance.mode.framework.update"
+FLAG="$PROJECT_ROOT/storage/state/.maintenance.mode.framework.update"
 mkdir -p "$(dirname "$FLAG")"
 case "$1" in
     enable)  printf 'framework update in progress\nmode=development\n' > "$FLAG" ;;
@@ -215,8 +219,9 @@ MAINT
         # THE MONOREPO HAS NO SUBMODULE. There system/ IS the authored framework source,
         # ordinary tracked files - so the fixture must not build a submodule for it, or
         # the inertness test would be asserting against a shape that does not exist.
-        mkdir -p "$PROJECT/system/bin" "$PROJECT/system/app/RSpade"
+        mkdir -p "$PROJECT/system/bin/lib" "$PROJECT/system/app/RSpade"
         cp "$REAL_PROXY" "$PROJECT/system/bin/rsx-git.sh"
+        cp "$REAL_PATHS_LIB" "$PROJECT/system/bin/lib/rsx_paths.sh"
         fx_write_shim "$PROJECT/system"
         printf 'framework v1\n' > "$PROJECT/system/app/RSpade/core.php"
     else
@@ -388,4 +393,4 @@ fx_publish_framework_update() {
 }
 
 # The maintenance flag path inside the fixture.
-fx_maint_flag() { printf '%s' "$PROJECT/storage/rsx-framework/.maintenance.mode.framework.update"; }
+fx_maint_flag() { printf '%s' "$PROJECT/storage/state/.maintenance.mode.framework.update"; }

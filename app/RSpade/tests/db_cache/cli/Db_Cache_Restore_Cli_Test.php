@@ -14,6 +14,7 @@ use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Database\Rsx_Data_Wipe;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Framework\Framework_Maintenance;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -49,7 +50,7 @@ class Db_Cache_Restore_Cli_Test extends Rsx_Test_Abstract
 
     protected static function __sandbox(): string
     {
-        $dir = storage_path('rsx-tmp/test-db-cache-sandbox');
+        $dir = Rsx_Project_Paths::tmp_path('test-db-cache-sandbox');
         ensure_directory($dir);
 
         return $dir;
@@ -143,11 +144,15 @@ class Db_Cache_Restore_Cli_Test extends Rsx_Test_Abstract
      *
      * --_no-snapshot is not an optimization here, it is a requirement: the development
      * snapshot path STOPS THE WHOLE MYSQL INSTANCE and copies its data directory, which a
-     * test must never do to the box it is running on. RSX_MODE=debug runs the child as a
-     * sealed deployment would run it - the mode the cache restore actually ships to. That
-     * child inherits the test-run flag Rsx_Artisan forwards, so it boots on an http box
-     * too (Rsx_App_Url's test-run allowance). --_no-initial-user keeps the account out,
-     * the way the real cache build does.
+     * test must never do to the box it is running on. It also selects the run_without_snapshot()
+     * path, which regenerates no constants and no bundles - so this child writes no source.
+     *
+     * The child runs in DEVELOPMENT mode because the mode is not the subject here: the
+     * restore is a pre-migrate step of execute_migrations() and is mode-independent, while
+     * a production-like child would need a SEALED BUILD on this box to boot at all (the
+     * manifest seal gate refuses an unsealed production box with
+     * Manifest::UNSEALED_BUILD_MESSAGE). --_no-initial-user keeps the account out, the way
+     * the real cache build does.
      *
      * @return array{0: int, 1: string} exit code, combined output
      */
@@ -162,7 +167,7 @@ class Db_Cache_Restore_Cli_Test extends Rsx_Test_Abstract
         $output = [];
         $exit_code = Rsx_Artisan::run('migrate', $args, $output, [
             'DB_DATABASE' => self::SCRATCH_DATABASE,
-            'RSX_MODE' => 'debug',
+            'RSX_MODE' => 'development',
         ]);
 
         return [$exit_code, implode("\n", $output)];
@@ -172,7 +177,7 @@ class Db_Cache_Restore_Cli_Test extends Rsx_Test_Abstract
     {
         DB::connection('mysql')->statement('DROP DATABASE IF EXISTS `' . self::SCRATCH_DATABASE . '`');
 
-        $sandbox = storage_path('rsx-tmp/test-db-cache-sandbox');
+        $sandbox = Rsx_Project_Paths::tmp_path('test-db-cache-sandbox');
         if (is_dir($sandbox)) {
             rmdir_recursive($sandbox);
         }
@@ -225,10 +230,17 @@ class Db_Cache_Restore_Cli_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * THE REFUSAL (DBC-15). rsx:db:rebuild_provision_cache_snapshot runs in DEVELOPMENT mode only, and the
-     * refusal is the FIRST statement of handle() - before the paths are resolved, before
-     * maintenance is raised, before anything is backed up. So a run outside development
-     * exits 1 having touched nothing at all.
+     * THE REFUSAL (DBC-15). rsx:db:rebuild_provision_cache_snapshot never runs outside
+     * DEVELOPMENT mode, and it exits 1 having touched nothing at all.
+     *
+     * WHICH refusal answers depends on what the box has to serve, and on an UNSEALED
+     * production-like box the manifest seal gate answers first: it runs in Manifest::init(),
+     * before any command handler, and refuses everything but the build and the mode-change
+     * commands with Manifest::UNSEALED_BUILD_MESSAGE. That is the refusal a development box
+     * gets when it spawns a debug-mode child, so it is the one asserted here. The command's
+     * own mode refusal (the first statement of handle(), named in the message the gate
+     * points at) is what a SEALED debug box would print; either way the command never
+     * reaches __resolve_paths() and nothing moves.
      *
      * The mode is flipped for the SUBPROCESS only (RSX_MODE=debug on the child's
      * environment). This box stays in development: flipping its actual mode would seal
@@ -236,9 +248,8 @@ class Db_Cache_Restore_Cli_Test extends Rsx_Test_Abstract
      */
     public static function test_the_build_refuses_outside_development_and_touches_nothing()
     {
-        $marker_path = storage_path(
-            Db_Rebuild_Provision_Cache_Snapshot_Command::WORK_DIR_RELATIVE . '/' . Db_Rebuild_Provision_Cache_Snapshot_Command::MARKER_FILE
-        );
+        $marker_path = Rsx_Project_Paths::db_cache_dir()
+            . '/' . Db_Rebuild_Provision_Cache_Snapshot_Command::MARKER_FILE;
 
         static::__assert_false(
             Framework_Maintenance::is_active_on_disk(),
@@ -253,11 +264,20 @@ class Db_Cache_Restore_Cli_Test extends Rsx_Test_Abstract
         $text = implode("\n", $output);
 
         static::__assert_equals(1, $exit_code, 'the command must refuse with exit 1: ' . $text);
-        static::__assert_contains('DEVELOPMENT mode only', $text, 'the refusal must name the required mode: ' . $text);
-        static::__assert_contains('Debug', $text, 'the refusal must name the mode it actually ran in: ' . $text);
+        static::__assert_contains(
+            'This production build is unsealed',
+            $text,
+            'the unsealed seal gate must refuse before the command runs: ' . $text
+        );
+        static::__assert_contains(
+            'rsx:build --force',
+            $text,
+            'the refusal must name the remedy: ' . $text
+        );
 
         // Nothing was touched: no maintenance window, no in-progress marker, no database
-        // change. The refusal returns before __resolve_paths(), so none of these can move.
+        // change. The refusal happens before handle() is ever entered, so none of these can
+        // move.
         static::__assert_false(Framework_Maintenance::is_active_on_disk(), 'the refusal must not raise maintenance mode');
         static::__assert_false(is_file($marker_path), 'the refusal must not write an in-progress marker');
         static::__assert_false(

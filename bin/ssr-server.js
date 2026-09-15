@@ -14,14 +14,8 @@ const path = require('path');
 const fs = require('fs');
 const { SSRServer } = require(path.join(__dirname, '..', 'node_modules', '@jqhtml', 'ssr', 'src', 'server.js'));
 
-// Volatile storage root: <project>/storage once the relocation marker exists (written by
-// system/bin/environment_updates/030_relocate_storage.sh), historic system/storage before
-// that. Mirrors the PHP bootstrap bridge; TRANSITIONAL fallback.
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const SYSTEM_DIR = path.resolve(__dirname, '..');
-const STORAGE_ROOT = fs.existsSync(path.join(PROJECT_ROOT, 'storage', '.rspade_storage_relocated'))
-    ? path.join(PROJECT_ROOT, 'storage')
-    : path.join(SYSTEM_DIR, 'storage');
+// The volatile-tree roots, resolved exactly as PHP resolves them.
+const rsx_paths = require(path.join(__dirname, 'lib', 'rsx_paths.js'));
 
 // Parse --socket argument
 let socketPath = null;
@@ -32,7 +26,7 @@ for (let i = 2; i < process.argv.length; i++) {
 }
 
 if (!socketPath) {
-    socketPath = path.join(STORAGE_ROOT, 'rsx-tmp', 'ssr-server.sock');
+    socketPath = path.join(rsx_paths.tmp_root(), 'ssr-server.sock');
 }
 
 // SANCTIONED TIMEOUT (owner ruling 2026-08-22). Written down here because a sanctioned

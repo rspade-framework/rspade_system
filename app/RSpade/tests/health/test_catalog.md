@@ -51,3 +51,29 @@
 | HEALTH-PHPREQ-ROW | the rsx:health PHP rows are built from the shared lists (no second declaration), one summary per tier | php | run_one on php_environment | 'PHP Extensions' + 'PHP CLI Extensions' rows; every listed name is in its own tier | implemented | 2026-08-28 |
 | HEALTH-CHECK-FIXTURE | a discoverable #[Health_Check] fixture exercising real discovery end-to-end | php | fixture check under tests/ | discovered + invoked by rsx:health | deferred (a manifest-discovered #[Health_Check] fixture is LIVE in dev - it would pollute the real rsx:health output; the throw/shape paths are covered via run_one + a non-attributed probe instead) | 2026-07-16 |
 | HEALTH-CHECK-DISCOVERY | discover() finds every real #[Health_Check] and fails loud on a missing label | php | manifest scan | all real checks; shouldnt_happen on labelless | deferred (indirectly covered by HEALTH-CMD-JSON-LABELS; a label-less method cannot be added without either shipping a bad real check or a live fixture) | 2026-07-16 |
+
+## Project_Tree_Health_Test (php)
+
+The project-tree rows: `storage/` and `tmp/` writable in every mode, `build/` only in
+development, the production read-only posture as INFO, and the debug-log-level warning.
+`storage_root()` is deliberately not redirectable per process, so the branches are driven
+through `Environment_Health_Checks::__tree_row()` against sandbox paths and through the
+mode seam.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| HEALTH-TREE-OK | an existing writable tree is OK and carries the label it was given | php | sandbox dir | OK | implemented | 2026-09-15 |
+| HEALTH-TREE-CREATE | a missing tree is CREATED rather than reported - the next command would create it anyway | php | absent sandbox path | OK; the directory now exists | implemented | 2026-09-15 |
+| HEALTH-TREE-UNCREATABLE | a tree that cannot be created is a FAIL with a remediation | php | a regular file in the way | FAIL; "could not be created" | implemented | 2026-09-15 |
+| HEALTH-TREE-UNWRITABLE | an existing unwritable tree is a FAIL | php | 0500 sandbox dir | FAIL; "not writable" (skipped when the suite runs as root) | implemented | 2026-09-15 |
+| HEALTH-TREE-DEV-SET | development reports storage/, tmp/ AND build/ | php | dev mode | all three labels | implemented | 2026-09-15 |
+| HEALTH-TREE-PROD-SET | a production mode reports storage/ and tmp/ and does NOT require a writable build/ | php | debug + production | build/ absent from the writability rows | implemented | 2026-09-15 |
+| HEALTH-TMP-LINKS | tmp/logs and tmp/app are reported and healthy - Laravel's storage path is the tmp tree, so a broken link is a data-loss shape rather than an error | php | live tree | both rows OK | implemented | 2026-09-15 |
+| HEALTH-PHP-TEMP-DIR | the PHP temp dir row says whether sys_get_temp_dir() resolves inside the tmp tree, which is where the framework's TMPDIR export points it | php | live process | OK inside the tree, WARN outside | implemented | 2026-09-15 |
+| HEALTH-CACHE-SUBDIRS | the regenerable caches are reported under their tmp/ names beside the persistent storage/logs | php | live tree | tmp/thumbnails, tmp/renditions, storage/logs | implemented | 2026-09-15 |
+| HEALTH-POSTURE-DEV | development reports nothing about system/, rsx/ or build/ writability | php | dev mode | no such rows | implemented | 2026-09-15 |
+| HEALTH-POSTURE-PROD | a production mode reports all three as INFO, naming the expected read-only posture | php | production mode | three INFO rows | implemented | 2026-09-15 |
+| HEALTH-LOG-STACK | a stack channel resolves to the LOUDEST level any member accepts | php | stack over error + debug | 'debug' | implemented | 2026-09-15 |
+| HEALTH-LOG-UNKNOWN | a channel nothing declares has no level | php | unknown channel name | null | implemented | 2026-09-15 |
+| HEALTH-LOG-WARN | debug logging WARNs in a production mode only, naming LOG_LEVEL=info | php | default channel at debug, both modes | WARN in prod, silent in dev | implemented | 2026-09-15 |
+| HEALTH-LOG-QUIET | info logging warns about nothing in a production mode | php | default channel at info | no Log Level row | implemented | 2026-09-15 |

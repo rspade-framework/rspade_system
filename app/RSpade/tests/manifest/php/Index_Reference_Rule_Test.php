@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Manifest\Php;
 
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -46,7 +47,7 @@ class Index_Reference_Rule_Test extends Rsx_Test_Abstract
      */
     private static function __hot(): array
     {
-        $path = storage_path(Manifest::CACHE_FILE);
+        $path = Rsx_Project_Paths::manifest_index_file();
 
         static::__assert_true(file_exists($path), 'the hot index exists at ' . $path);
 
@@ -58,7 +59,7 @@ class Index_Reference_Rule_Test extends Rsx_Test_Abstract
      */
     private static function __cold(): array
     {
-        $path = storage_path(Manifest::COLD_FILE);
+        $path = Rsx_Project_Paths::manifest_files_file();
 
         static::__assert_true(file_exists($path), 'the cold index exists at ' . $path);
 

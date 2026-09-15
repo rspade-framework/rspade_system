@@ -1,8 +1,8 @@
 <?php
 
 return [
-    // Where to store source maps
-    'source_maps_path' => storage_path('jqhtml-sourcemaps'),
+    // Where to store source maps - a derived artifact of a compile, so tmp/.
+    'source_maps_path' => App\RSpade\Core\Paths\Rsx_Project_Paths::tmp_path('jqhtml-sourcemaps'),
 
     // Show source code context in errors
     // Derived from RSX_MODE (the single mode switch); APP_DEBUG is not read

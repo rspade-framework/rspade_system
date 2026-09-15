@@ -18,7 +18,7 @@ class Route_Cache_Command extends Command
      *
      * @var string
      */
-    protected $description = '[RESTRICTED] Use optimize:cache instead to cache all Laravel components';
+    protected $description = '[RESTRICTED] The route cache is a build output - use rsx:build';
 
     /**
      * Hide this command from artisan list
@@ -36,10 +36,11 @@ class Route_Cache_Command extends Command
     {
         $this->error('This command has been restricted in RSX.');
         $this->line('');
-        $this->info('Please use the following command instead:');
-        $this->line('  php artisan optimize:cache');
+        $this->info('The route cache is a build output. Build it with:');
+        $this->line('  php artisan rsx:build --force');
         $this->line('');
-        $this->comment('The optimize:cache command will cache all Laravel components including routes.');
+        $this->comment('rsx:build writes it into build/ along with the manifest, the bundles and');
+        $this->comment('the other Laravel caches.');
         
         return 1;
     }

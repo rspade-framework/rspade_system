@@ -22,7 +22,8 @@ $finder = PhpCsFixer\Finder::create()
     ->notName('*.blade.php')
     ->notPath('vendor')
     ->notPath('storage')
-    ->notPath('bootstrap/cache')
+    ->notPath('build')
+    ->notPath('tmp')
     ->ignoreDotFiles(true)
     ->ignoreVCS(true);
 

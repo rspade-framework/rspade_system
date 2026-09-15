@@ -103,7 +103,7 @@ TASK_INSTANCE API
     (90s) is not mistaken for a dead worker and pruned.
 
     Temp workspace (auto-deleted on completion/failure):
-        $dir = $task->get_temp_dir()    // storage/rsx-tmp/tasks/task_<id>/
+        $dir = $task->get_temp_dir()    // tmp/tasks/task_<id>/
 
     Misc: $task->get_id(), get_status(), get_params(), get_queue().
 

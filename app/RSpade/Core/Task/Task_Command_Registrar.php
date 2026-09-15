@@ -29,6 +29,14 @@ class Task_Command_Registrar
      */
     public static function register(): void
     {
+        // Kernel::commands() runs for EVERY artisan invocation, including the escape-hatch
+        // ones that deliberately skip the manifest - so reading the table here must never
+        // be what makes an unsealed production box unreachable by the commands that repair
+        // it. No table, no aliases; they come back with the next build.
+        if (Manifest::__production_build_is_unusable()) {
+            return;
+        }
+
         foreach (Manifest::get_task_commands() as $name => $row) {
             // Task::internal() resolves a service by BASENAME, which is also what an author
             // types into rsx:task:run; the table stores the FQCN the manifest recorded.

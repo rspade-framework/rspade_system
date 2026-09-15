@@ -83,7 +83,7 @@ return [
             'maxmind' => [
                 'account_id' => env('MAXMIND_ACCOUNT_ID'),
                 'license_key' => env('MAXMIND_LICENSE_KEY'),
-                'database_path' => storage_path('app/maxmind/GeoLite2-City.mmdb'),
+                'database_path' => App\RSpade\Core\Paths\Rsx_Project_Paths::app_dir('maxmind/GeoLite2-City.mmdb'),
                 'update_database' => env('MAXMIND_UPDATE_DATABASE', true),
             ],
             'ip2location' => [

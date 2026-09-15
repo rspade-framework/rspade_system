@@ -90,11 +90,15 @@ two invocation suppressors; no container, no DB, no process.
 | SPP-10 | a configured unix socket is local regardless of host | php | host=db.example.com + unix_socket set | local | implemented | 2026-08-26 |
 | SPP-11 | hosts merely BEGINNING with a loopback literal are remote | php | 127.0.0.1.attacker.example, localhost.example.com, 127.0.0.10, 1270.0.1, ::11, '' | NOT local | implemented | 2026-08-26 |
 | SPP-12 | an empty unix_socket does not make a remote host local | php | host=db.example.com, unix_socket='' | NOT local | implemented | 2026-08-26 |
-| MNCE-01 | execute_migrations() fires migrate.normalize_schema.complete as an action with an empty payload | php | method source | trigger_action('migrate.normalize_schema.complete', []) present | implemented | 2026-08-28 |
-| MNCE-02 | the trigger sits AFTER the post-migration migrate:normalize_schema call | php | method source offsets | trigger offset > last normalize offset | implemented | 2026-08-28 |
-| MNCE-03 | the trigger sits BEFORE create_initial_user_if_needed() | php | method source offsets | trigger offset < initial-user offset | implemented | 2026-08-28 |
-| MNCE-04 | the trigger sits BEFORE build_revision_dictionary_if_stale() | php | method source offsets | trigger offset < dictionary offset | implemented | 2026-08-28 |
-| MNCE-05 | nothing catches around the trigger - a throwing handler rolls the run back | php | source between trigger and initial user | no 'catch' | implemented | 2026-08-28 |
+| MNCE-01 | fire_post_normalize_hook() fires the event as an action with an empty payload | php | method source | trigger_action('migrate.normalize_schema.complete', []) present | implemented | 2026-09-15 |
+| MNCE-02 | the FINAL firing sits AFTER the post-migration migrate:normalize_schema call | php | method source offsets | last firing offset > last normalize offset | implemented | 2026-09-15 |
+| MNCE-03 | the final firing sits BEFORE create_initial_user_if_needed() | php | method source offsets | firing offset < initial-user offset | implemented | 2026-09-15 |
+| MNCE-04 | the final firing sits BEFORE build_revision_dictionary_if_stale() | php | method source offsets | firing offset < dictionary offset | implemented | 2026-09-15 |
+| MNCE-05 | nothing catches around the dispatcher or the final firing - a throwing handler rolls the run back | php | dispatcher source + span to initial user | no 'catch' | implemented | 2026-09-15 |
+| MNCE-06 | the dispatch lives in exactly ONE method - no second hand-written trigger | php | whole command file | one trigger_action for the event | implemented | 2026-09-15 |
+| MNCE-07 | the dispatcher is called after every normalize pass (2 in execute_migrations, 1 in the loop) | php | both method sources | call counts 2 and 1 | implemented | 2026-09-15 |
+| MNCE-08 | the mid-loop firing follows its normalize call and its failure check | php | loop source offsets | firing after both | implemented | 2026-09-15 |
+| MNCE-09 | the pre-migration firing follows the pre pass and precedes the migration loop | php | method source offsets | between the two | implemented | 2026-09-15 |
 | TRTR-01 | `RENAME TABLE a TO b` is recognised | php | plain statement | one from/to pair | implemented | 2026-09-01 |
 | TRTR-02 | Backticks and a `db`.`table` qualifier are stripped - `_type_refs` stores a bare name | php | quoted, qualified statement | bare names | implemented | 2026-09-01 |
 | TRTR-03 | A multi-rename list records every pair | php | `RENAME TABLE a TO b, c TO d;` | two pairs, in order | implemented | 2026-09-01 |
@@ -120,3 +124,77 @@ tree the migration does not live in.
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
 | MIGRATE-WHITELIST-PATH | the entry lands in the directory --path names, and no other whitelist is touched | php | a real mint into a scratch dir under app/RSpade/temp | file + .migration_whitelist in that dir, entry names the file, app whitelist byte-identical | implemented | 2026-09-08 |
+
+## Post_Normalize_Hook_Per_Migration_Test (php)
+
+`migrate.normalize_schema.complete` fires after EVERY normalize pass - pre-migration, each
+per-migration pass, and post-migration - so a run of N pending migrations fires it N+1 times
+and a run with nothing to migrate fires it twice. Before this, a from-zero replay fired the
+hook once at the end, so every mid-history migration saw a schema no incremental box ever
+produced and a migration reading a hook-computed column died with an unknown-column error
+(a downstream field report, 2026-09-15). The per-migration firings are measured by running
+the REAL loop against a scratch migration directory with a fake migrator and a stubbed
+normalize call; the two firings inside `execute_migrations()` are pinned structurally by
+MNCE-07 and carried here as a constant.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| PNH-01 | two pending migrations produce one mid-loop firing | php | 2 staged migration files | 1 firing | implemented | 2026-09-15 |
+| PNH-02 | N pending migrations produce N-1 mid-loop firings | php | 4 staged migration files | 3 firings | implemented | 2026-09-15 |
+| PNH-03 | a single pending migration has no BETWEEN and fires nothing mid-loop | php | 1 staged file | 0 firings | implemented | 2026-09-15 |
+| PNH-04 | nothing to migrate never enters the loop | php | 0 staged files | 0 firings | implemented | 2026-09-15 |
+| PNH-05 | the whole-run total is N+1 (and 2 when nothing is pending) | php | 0,1,2,4,7 staged files | 2,2,3,5,8 | implemented | 2026-09-15 |
+| PNH-06 | a FAILED normalize pass throws and fires nothing | php | stubbed exit code 1 | throw; 0 firings | implemented | 2026-09-15 |
+
+## Check_Consistency_Test (php)
+
+`rsx:migrate:check_consistency` compares the SEALED manifest's column map against the live
+schema after a production migrate, and `migrate` propagates its exit code. Driven against
+real fixture tables in the test database plus a replaced model map in `Manifest::$data`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| CC-01 | development mode is a fatal refusal naming why | php | dev mode | exit 1; "runs in a production mode only" | implemented | 2026-09-15 |
+| CC-02 | debug is a production mode and the check runs there | php | debug mode | exit 0 | implemented | 2026-09-15 |
+| CC-03 | no manifest index is a fatal refusal naming rsx:build --force | php | build root redirected to an empty dir | exit 1; names the file and the repair | implemented | 2026-09-15 |
+| CC-04 | a detail-table base model passes - merged detail columns are never compared against the base table | php | base model carrying a detail-sourced column | exit 0; the detail column is never named | implemented | 2026-09-15 |
+| CC-05 | a manifest column missing from its table is an ERROR and exits 1, with the two-orderings explainer | php | one extra manifest column | exit 1; names the column, rsx:build --force, migrate, rsx:man prod | implemented | 2026-09-15 |
+| CC-06 | every discrepancy is listed before the verdict | php | two extra manifest columns | both named; verdict counts 2 | implemented | 2026-09-15 |
+| CC-07 | a manifest table missing from the database is an ERROR | php | a model whose table was never created | exit 1; names the table | implemented | 2026-09-15 |
+| CC-08 | a table column unknown to the manifest is a WARNING and exits 0 | php | one extra database column | exit 0; warning names it | implemented | 2026-09-15 |
+| CC-09 | a warning and an error together exit 1 with both reported | php | both at once | exit 1; both named | implemented | 2026-09-15 |
+| CC-E2E-01 | a production `migrate` returns the check's non-zero exit as its own | cli | prod-mode migrate against a mismatched build | exit 1 | deferred (covered by the prod lifecycle bash test, Phase E) | 2026-09-15 |
+
+## Whitelist_Prod_Mode_Test (php)
+
+`.migration_whitelist` is SOURCE: WRITTEN only in development, CONSULTED in every mode,
+SKIPPED silently when absent outside development. It was the one ungated source write left on
+a production `migrate` (a downstream field report, 2026-09-15). Driven through the command's
+own `whitelist_locations()` seam against a throwaway sandbox.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| WPM-01 | createInitialWhitelist() refuses loudly in debug and production | php | each prod mode | nothing written; refusal names why | implemented | 2026-09-15 |
+| WPM-02 | development writes it | php | dev mode | file created | implemented | 2026-09-15 |
+| WPM-03 | an absent whitelist in a production mode is skipped SILENTLY and the run proceeds | php | prod modes, no file | true; nothing written; no output | implemented | 2026-09-15 |
+| WPM-04 | an absent whitelist in development is created and the run proceeds | php | dev mode, no file | true; file created | implemented | 2026-09-15 |
+| WPM-05 | a present whitelist is enforced in EVERY mode - a stray migration aborts the run | php | all three modes, one unlisted file | false; the stray is named | implemented | 2026-09-15 |
+| WPM-06 | a fully listed tree passes in every mode and the file is never rewritten | php | all three modes | true; whitelist contents unchanged | implemented | 2026-09-15 |
+
+## Constants_Regenerate_Scope_Test (php)
+
+`rsx:constants:regenerate` never rewrites a file under `system/` unless this box is a
+framework-developer box - and the test is on the RESOLVED declaring file, because a shell
+model in `rsx/models/` declares its `$table` in an abstract base under `app/RSpade/`, which is
+the file the command would actually write (dirtying the downstream `system/` submodule on
+every development migrate).
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| CRS-01 | a framework file is refused downstream | php | app/RSpade path, flag false | false | implemented | 2026-09-15 |
+| CRS-02 | a framework file is allowed for a framework developer | php | same path, flag true | true | implemented | 2026-09-15 |
+| CRS-03 | the abstract half of a split core model is refused downstream | php | a real *_Model_Abstract.php | false | implemented | 2026-09-15 |
+| CRS-04 | an application file is writable in either posture | php | rsx/ path, both flags | true | implemented | 2026-09-15 |
+| CRS-05 | a nonexistent framework path still classifies | php | a deleted app/RSpade path | false | implemented | 2026-09-15 |
+| CRS-06 | a sibling directory sharing the prefix is not the framework tree | php | app/RSpade_extras path | true | implemented | 2026-09-15 |
+| CRS-07 | the gate is applied AFTER resolve_declaring_file(), not to the model's own file record | php | handle() source offsets | gate offset > resolve offset | implemented | 2026-09-15 |

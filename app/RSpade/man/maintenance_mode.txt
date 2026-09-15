@@ -16,7 +16,7 @@ DESCRIPTION
     those raises the window on entry and lowers it on every exit path. Same mechanism, same
     script, different reason - there is no second maintenance system to learn.
 
-        storage/rsx-framework/.maintenance.mode.framework.update
+        storage/state/.maintenance.mode.framework.update
 
     The flag lives under storage/ - OUTSIDE the system/ submodule, so no update or rsx:clean can remove it, and it
     can never itself trip a verify finding). Its CONTENT is the operator REASON, quoted by the
@@ -36,7 +36,7 @@ WHAT ENABLE DOES (in order - the order is load-bearing)
     2. rsx:tasks:kill-all - force-kill running background tasks (SIGTERM, 5s grace, SIGKILL).
        Best-effort: a pre-database or broken tree must not fail the transition.
     3. Quiesce the node daemons - every node process whose command line names a socket
-       under storage/rsx-tmp/ (the node service and ssr-server, plus anything added later,
+       under tmp/ (the node service and ssr-server, plus anything added later,
        since the match is on the socket DIRECTORY rather than a name): SIGTERM, one settle
        pass, SIGKILL, with one line reporting the count. Pure bash, so it works on a broken
        tree. This is the twin of Rsx_Node_Service::quiesce_all(), which rsx:clean calls; see
@@ -83,7 +83,7 @@ WHY THE RPC DAEMONS ARE A SPECIAL CASE
     daemons those workers left behind. Each one took its socket path as an argv argument at
     spawn time and never reconsiders it, which is also the only handle that works:
 
-        pgrep -f -- '--socket=<storage>/rsx-tmp/'
+        pgrep -f -- '--socket=<tmp>/'
 
     They must go down with everything else because a maintenance window is, by definition, the
     moment the code under them changes - a framework update rewrites the server scripts, and
@@ -106,12 +106,12 @@ THE SCHEMA-CACHE GUARD ON DISABLE
 
     Two paths are checked, and either one alone refuses:
 
-        storage/rsx-tmp/db_cache/live_db.sql.gz     the live database dump
+        tmp/db_cache/live_db.sql.gz     the live database dump
         <blob_root>_tmp                            the live blob store, moved aside
 
     The blob root is not derivable pre-boot, so the command writes it into
 
-        storage/rsx-tmp/db_cache/.in_progress
+        tmp/db_cache/.in_progress
 
     as the marker's first line, and removes the marker only once no backup remains.
 
@@ -258,7 +258,7 @@ RECOVERY
     It is immune to its own gate and idempotent. As an absolute last resort (no working PHP),
     remove the flag file by hand and start the five services yourself:
 
-        rm storage/rsx-framework/.maintenance.mode.framework.update
+        rm storage/state/.maintenance.mode.framework.update
 
 RSX VS LARAVEL
     Laravel's `php artisan down` / `up` REFUSE. Both are replaced by hidden stubs in

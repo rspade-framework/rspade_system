@@ -46,16 +46,14 @@ use App\RSpade\Core\Manifest\Manifest;
  * cache key, since they are inputs no bundle file list contains.
  *
  * GENERATION lives in Auth_Stub_ManifestSupport, an ordinary entry at the end of
- * config('rsx.manifest_support'); this class owns the DIRECTORY constant and the
- * compiler-facing lookup of what that module produced.
+ * config('rsx.manifest_support'); this class owns the compiler-facing lookup of what
+ * that module produced. The directory itself is named by
+ * Rsx_Project_Paths::stubs_dir(STUBS_AUTH), like the other two stub kinds.
  *
  * See: php artisan rsx:man auth_gates
  */
 class Auth_BundleIntegration extends BundleIntegration_Abstract
 {
-    /** Project-relative directory the mirror files are written to. */
-    public const STUB_DIR = 'storage/rsx-build/js-auth-stubs';
-
     public static function get_name(): string
     {
         return 'auth';

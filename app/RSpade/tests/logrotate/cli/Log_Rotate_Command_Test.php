@@ -3,6 +3,7 @@
 namespace App\RSpade\Tests\Logrotate\Cli;
 
 use Illuminate\Support\Facades\Artisan;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -21,7 +22,7 @@ class Log_Rotate_Command_Test extends Rsx_Test_Abstract
      */
     public static function test_command_rotates_and_summarises()
     {
-        $dir = storage_path('rsx-tmp/test-logrotate/cli');
+        $dir = Rsx_Project_Paths::tmp_path('test-logrotate/cli');
 
         if (is_dir($dir)) {
             foreach (glob($dir . '/*') as $file) {
@@ -59,7 +60,7 @@ class Log_Rotate_Command_Test extends Rsx_Test_Abstract
      */
     public static function test_json_output()
     {
-        $dir = storage_path('rsx-tmp/test-logrotate/cli-json');
+        $dir = Rsx_Project_Paths::tmp_path('test-logrotate/cli-json');
 
         if (is_dir($dir)) {
             foreach (glob($dir . '/*') as $file) {

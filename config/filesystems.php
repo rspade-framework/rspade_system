@@ -26,19 +26,24 @@ return [
     |
     | Supported Drivers: "local", "ftp", "sftp", "s3"
     |
+    | THE LOCAL DISK IS PINNED TO PERSISTENT STORAGE. Laravel's storage path is the
+    | tmp tree, which rsx:clean wipes, so the local and public disks name the path
+    | owner's app_dir() - <storage>/app - rather than storage_path('app'). A disk is
+    | how an application stores a file it expects to still be there tomorrow.
+    |
     */
 
     'disks' => [
 
         'local' => [
             'driver' => 'local',
-            'root' => storage_path('app'),
+            'root' => App\RSpade\Core\Paths\Rsx_Project_Paths::app_dir(),
             'throw' => false,
         ],
 
         'public' => [
             'driver' => 'local',
-            'root' => storage_path('app/public'),
+            'root' => App\RSpade\Core\Paths\Rsx_Project_Paths::app_dir('public'),
             'url' => env('APP_URL').'/storage',
             'visibility' => 'public',
             'throw' => false,
@@ -70,7 +75,7 @@ return [
     */
 
     'links' => [
-        public_path('storage') => storage_path('app/public'),
+        public_path('storage') => App\RSpade\Core\Paths\Rsx_Project_Paths::app_dir('public'),
     ],
 
 ];

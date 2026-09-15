@@ -7,6 +7,7 @@
 namespace App\RSpade\Tests\ProdMode\Php;
 
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -30,7 +31,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * groups are the FIRST and LAST of those directories, and the model chain is found by
  * shape - `class Base_X_Model` and its `class X_Model extends Base_X_Model` alias.
  *
- * The compiled app JS is read from storage/rsx-build/bundles, which dev JIT keeps
+ * The compiled app JS is read from the build tree's bundles directory, which dev JIT keeps
  * current. When no application bundle qualifies the tests skip: the property under test
  * is emission order, which is independent of how fresh a bundle's contents are.
  */
@@ -148,7 +149,7 @@ class Bundle_Emission_Order_Test extends Rsx_Test_Abstract
     protected static function __ordering_bundle(): ?array
     {
         foreach (static::__application_bundle_names() as $name) {
-            $files = glob(storage_path("rsx-build/bundles/{$name}__app.*.js"));
+            $files = glob(Rsx_Project_Paths::bundles_dir() . "/{$name}__app.*.js");
 
             if (empty($files)) {
                 continue;

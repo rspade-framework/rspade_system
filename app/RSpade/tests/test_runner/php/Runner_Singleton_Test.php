@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Tests\TestRunner\Php;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -10,7 +11,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * Two concurrent runs share the test database, the migration dump cache, the relocated
  * file-storage root and (in docker mode) the container names, so the second one has to
  * wait rather than interleave. The guard is a RAW flock on
- * storage/flock/rsx_test_runner.lock, taken as the first statement of handle() - before
+ * storage/state/flock/rsx_test_runner.lock, taken as the first statement of handle() - before
  * any service is consulted, and deliberately NOT through RsxLocks, which is granted as a
  * no-op inside a maintenance window.
  *
@@ -53,7 +54,7 @@ class Runner_Singleton_Test extends Rsx_Test_Abstract
      */
     protected static function __singleton_lock_path(): string
     {
-        return storage_path('flock/rsx_test_runner.lock');
+        return Rsx_Project_Paths::flock_dir() . '/rsx_test_runner.lock';
     }
 
     /**
@@ -94,7 +95,7 @@ class Runner_Singleton_Test extends Rsx_Test_Abstract
      */
     public static function test_the_lock_is_granted_again_once_released()
     {
-        $path = storage_path('flock/rsx_test_runner_fixture_' . getmypid() . '.lock');
+        $path = Rsx_Project_Paths::flock_dir() . '/rsx_test_runner_fixture_' . getmypid() . '.lock';
 
         $handle = fopen($path, 'c');
         static::__assert_true($handle !== false, 'the fixture lock file opened');

@@ -320,11 +320,11 @@ entirely.
   * INDEX created_at(created_at)
   * INDEX updated_at(updated_at)
 
-### Trait-Specific Columns
-  * site_id BIGINT - NOT ADDED. The branch keys on App\Models\Traits\Siteable,
-    a trait that no longer exists, so it matches no model. A site-scoped table
-    declares site_id in its own migration. Backlog B-119.
-  * version BIGINT (for Versionable/Ajaxable traits)
+### Per-Model Columns
+Normalization is DATABASE-DRIVEN: it walks SHOW TABLES and information_schema
+and consults no model and no manifest. It therefore adds only columns EVERY
+table carries. A column that belongs to one model - site_id on a site-scoped
+table, a version counter - is declared by that table's own migration.
 
 ### Order Column (Manual Sorting)
 Tables with an `order` column are automatically normalized:

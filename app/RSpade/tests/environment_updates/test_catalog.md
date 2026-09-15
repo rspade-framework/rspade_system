@@ -42,3 +42,7 @@
 | ENVUPD-100-IDEMPOTENT | a second run after adoption is silent and alters nothing | cli | rerun | empty stdout, record unchanged | implemented | 2026-09-04 |
 | ENVUPD-100-BOTH | both names present: WARNING on stderr, NEITHER file touched (rule 7) | cli | both dotfiles seeded differently | both byte-identical afterwards, stderr WARNING, exit 0 | implemented | 2026-09-04 |
 | ENVUPD-100-QUIET | RSPADE_ENV_UPDATE_QUIET=true still adopts, prints nothing | cli | quiet env + old file | adoption happened, empty stdout | implemented | 2026-09-04 |
+| ENVUPD-120-REMOVE | 120 removes the `system/storage` and `system/tmp` symlinks and leaves `system/build` (fixed root, so its link is a constant) | cli | all three links | two gone, build intact, both names on stdout | implemented | 2026-09-15 |
+| ENVUPD-120-IDEMPOTENT | a second run is silent on both streams | cli | rerun | empty stdout and stderr, exit 0 | implemented | 2026-09-15 |
+| ENVUPD-120-REAL-DIRECTORY | a REAL directory at either path is reported and left exactly as it is - it may hold the only copy of something | cli | system/storage with a file in it | directory and file intact, stderr names it, exit 0 | implemented | 2026-09-15 |
+| ENVUPD-120-QUIET | quiet mode still removes the link and says nothing | cli | RSPADE_ENV_UPDATE_QUIET=true | link gone, empty stdout | implemented | 2026-09-15 |

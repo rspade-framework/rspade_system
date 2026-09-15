@@ -77,27 +77,40 @@ if (str_contains($base_path, ' ')) {
 | the IoC container for the system binding all of the various parts.
 |
 */
+// The pre-boot path resolver. Both entrypoints require it before anything else, but
+// a test harness or a tool that boots the application directly may not have, and every
+// path below depends on it.
+require_once __DIR__ . '/rsx_paths.php';
+
+// Rsx_Application is Laravel's container taught where the build tree is: the five
+// cached artifacts (config, routes, events, services, packages) are build OUTPUTS and
+// land in build/laravel, not inside the framework checkout. The class is required
+// directly because the autoloader's map is not consulted for it this early.
+require_once __DIR__ . '/../app/RSpade/Core/Paths/Rsx_Project_Paths.php';
+require_once __DIR__ . '/../app/RSpade/Core/Laravel/Rsx_Application.php';
+
 /** @phpstan-ignore-next-line */
-$app = new Illuminate\Foundation\Application(
+$app = new App\RSpade\Core\Laravel\Rsx_Application(
     $_ENV['APP_BASE_PATH'] ?? dirname(__DIR__)
 );
 
-// RSpade storage: volatile state lives at <project>/storage, one level ABOVE the
-// Laravel base path. system/ is a git submodule - replaced wholesale on every update
-// and cleaned of untracked files - so nothing durable can live inside it.
+// LARAVEL'S STORAGE PATH IS THE TMP TREE, and that is a deliberate reading of what
+// Laravel keeps there: framework caches, compiled views, package scratch, session and
+// temp files - derived state, all of it regenerable. Pointing useStoragePath() at tmp/
+// puts every package and every helper that assumes storage_path() into a disposable
+// tree by construction, instead of leaving each one to be discovered and repointed.
 //
-// UNCONDITIONAL. This used to consult a relocation marker and fall back to the
-// historic system/storage, because the move was a migration each environment
-// performed at some unknown moment. It is not a migration any more: the framework
-// SHIPS system/storage as a symlink to this directory, so both spellings were
-// already landing here and the marker only chose which string storage_path()
-// returned. Two spellings of one path is how the same file ends up under two
-// different manifest keys, so there is now one.
+// The persistent exceptions are named rather than assumed: config/logging.php pins the
+// log channels to <storage>/logs, config/filesystems.php pins the local disk to
+// <storage>/app, and ensure_tmp_tree() keeps tmp/logs and tmp/app as symlinks onto
+// those two directories - so even a lazy storage_path('logs') lands in persistent
+// storage. Durable application files go through a Storage disk or through
+// Rsx_Project_Paths.
 //
-// dirname(__DIR__, 2) = the project root (system/bootstrap -> up 2). Every
-// storage_path() consumer follows from here; nothing else needs per-call edits.
-$rsx_storage_root = dirname(__DIR__, 2) . '/storage';
-$app->useStoragePath($rsx_storage_root);
+// ONE SPELLING. The resolver answers here exactly as it answers the pre-boot guards
+// and Rsx_Project_Paths. Two spellings of one path is how the same file ends up under
+// two different manifest keys.
+$app->useStoragePath(rsx_paths_tmp_root());
 
 // RSpade env: the project-root .env is the ONE authoritative environment file, so
 // Laravel is pointed straight at it rather than at base_path('.env'). Same bytes
@@ -135,61 +148,54 @@ $app->afterLoadingEnvironment(function () {
 
 /*
 |--------------------------------------------------------------------------
-| Ensure Storage Directory Structure Exists
+| Ensure The Volatile Directory Skeletons Exist
 |--------------------------------------------------------------------------
 |
-| Create the required storage directory structure if it doesn't exist.
-| This ensures the application can run even if storage is gitignored.
+| storage/ holds user data and process state; tmp/ holds derived caches and
+| runtime temp. Both are created on demand because both are regenerable and an
+| absent one is simply a fresh checkout.
+|
+| build/ is NOT created here, and that is the point. It holds build outputs, it
+| is read-only to the web user on a correctly configured production box, and a
+| missing artifact there must fail loud naming the build command rather than
+| quietly growing an empty tree for a request to find nothing in.
 |
 */
 
-// Paths are relative to the RESOLVED storage root ($rsx_storage_root above), never to
-// base_path() - otherwise a relocated install would silently recreate system/storage.
-$storageDirs = [
-    '',
-    'app',
-    'app/public',
-    'app/temp',
-    'db_backups',
-    'framework',
-    'framework/cache',
-    'framework/cache/data',
-    'framework/sessions',
-    'framework/testing',
-    'framework/views',
-    'logs',
-    'rsx-build',
-    'rsx-build/bundles',
-    'rsx-build/js-stubs',
-    'rsx-tmp',
-    'rsx-tmp/npm-cache',
-    // No per-source-file cache directory is pre-created here. Every one of them lives
-    // under rsx-tmp/derived/<namespace>/ and is created on demand by
-    // App\RSpade\Core\Cache\File_Content_Cache - one owner, not a bootstrap list to
-    // keep in step.
-    'rsx-locks',
-];
+App\RSpade\Core\Paths\Rsx_Project_Paths::ensure_storage_tree();
+App\RSpade\Core\Paths\Rsx_Project_Paths::ensure_tmp_tree();
 
-foreach ($storageDirs as $dir) {
-    $fullPath = $dir === '' ? $rsx_storage_root : $rsx_storage_root . '/' . $dir;
-    if (!is_dir($fullPath)) {
-        @mkdir($fullPath, 0755, true);
+// The ONE exception, and it is Laravel's: PackageManifest WRITES its packages.php
+// during boot whenever that file is missing, and throws "The .../build/laravel
+// directory must be present and writable" when the directory is not there. That
+// happens before any command runs, so on a fresh development checkout it refuses the
+// very build that would create the tree. Development therefore makes this single
+// directory on demand, as it makes storage/ and tmp/.
+//
+// A production-like mode still creates nothing: there the whole build tree - this
+// directory included - is the build's to produce, and its absence must stay loud.
+$rsx_mode = rsx_paths_env_value('RSX_MODE');
+
+if ($rsx_mode === '' || $rsx_mode === 'development') {
+    $rsx_laravel_cache_dir = App\RSpade\Core\Paths\Rsx_Project_Paths::laravel_cache_dir();
+
+    if (!is_dir($rsx_laravel_cache_dir)) {
+        @mkdir($rsx_laravel_cache_dir, 0775, true);
     }
 }
 
-// Create .gitignore files in storage subdirectories to ensure structure
+// Keep the contents of the three user-data directories out of git without ignoring
+// the directories themselves, so a fresh checkout has the shape a running app needs.
 $gitignoreContent = "*\n!.gitignore\n";
-$gitignoreDirs = [
-    'app/public',
-    'app/temp',
-    'framework/cache/data',
-    'framework/sessions',
-    'framework/views',
-    'logs',
+
+$rsx_gitignore_dirs = [
+    App\RSpade\Core\Paths\Rsx_Project_Paths::app_dir('public'),
+    App\RSpade\Core\Paths\Rsx_Project_Paths::app_dir('temp'),
+    App\RSpade\Core\Paths\Rsx_Project_Paths::logs_dir(),
 ];
 
-foreach ($gitignoreDirs as $dir) {
-    $gitignorePath = $rsx_storage_root . '/' . $dir . '/.gitignore';
+foreach ($rsx_gitignore_dirs as $rsx_gitignore_dir) {
+    $gitignorePath = $rsx_gitignore_dir . '/.gitignore';
     if (!file_exists($gitignorePath)) {
         @file_put_contents($gitignorePath, $gitignoreContent);
     }

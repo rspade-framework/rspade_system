@@ -51,7 +51,7 @@ return [
 
         'file' => [
             'driver' => 'file',
-            'path' => storage_path('framework/cache/data'),
+            'path' => \App\RSpade\Core\Paths\Rsx_Project_Paths::laravel_file_cache_dir(),
         ],
 
         'memcached' => [

@@ -34,6 +34,7 @@ const { execFile } = require('child_process');
 const docker = require('./lib/docker.js');
 const dockerfile = require('./lib/dockerfile.js');
 const { Queue_Server } = require('./lib/queue_server.js');
+const rsx_paths = require('../lib/rsx_paths.js');
 
 // The label every container this daemon starts carries, and the ONLY handle the zombie
 // sweep and the prune act on. Nothing else on the box is ever touched.
@@ -56,7 +57,7 @@ const SWEEP_BOUND_MS = 180000;
 // How often the sweep re-asks the daemon which containers are still there.
 const SWEEP_POLL_MS = 500;
 
-// Run directories kept under storage/rsx-tmp. Enough for a post-mortem of the last few
+// Run directories kept in the tmp tree. Enough for a post-mortem of the last few
 // runs (worker logs, classes.json, results.jsonl); old ones are removed so a box that runs
 // the suite all day does not accumulate them.
 const RUN_DIRS_KEPT = 3;
@@ -218,7 +219,7 @@ function write_dockerignore(project_root) {
     // `/.dockerignore` excludes THIS file from the image. Docker keeps it out of the
     // context on its own, but the generated Dockerfile enumerates the checkout's real
     // top-level entries and would otherwise emit a COPY for a file that is not there.
-    const lines = ['**/.git', 'storage/', '/.env', '/.dockerignore'];
+    const lines = ['**/.git', 'storage/', 'build/', 'tmp/', '/.env', '/.dockerignore'];
 
     const exclude_file = path.join(project_root, '.git/info/exclude');
     if (fs.existsSync(exclude_file)) {
@@ -458,7 +459,7 @@ async function prune(image, dev_image) {
  * sortable timestamp, so newest-first is a plain descending sort.
  */
 function prune_run_dirs(project_root) {
-    const parent = path.join(project_root, 'storage/rsx-tmp');
+    const parent = rsx_paths.tmp_root();
     if (!fs.existsSync(parent)) {
         return;
     }

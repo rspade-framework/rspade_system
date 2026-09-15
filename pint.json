@@ -32,7 +32,8 @@
         "vendor",
         "node_modules",
         "storage",
-        "bootstrap/cache"
+        "build",
+        "tmp"
     ],
     "notPath": [
         "app/RSpade/Scripts/Parsers"

@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Manifest\Php;
 
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -29,7 +30,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * WHY A CHILD PROCESS. A cold build's peak can only be measured in a process that started
  * without a manifest, and this one is holding one. So the gate spawns rsx:manifest:build
- * with a scratch storage root (nothing exists there, so the build is cold by construction)
+ * with a scratch build root (nothing exists there, so the build is cold by construction)
  * and reads the MANIFEST_PEAK_BYTES line the --_manifest-report-peak internal flag prints.
  *
  * WHY THE SCAN LIST IS PASSED EXPLICITLY. Every child of a test run carries --_test-run,
@@ -50,8 +51,11 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
     /** How many times the reference file count the synthetic tree must reach. */
     private const SYNTHETIC_MULTIPLE = 5;
 
-    /** Absolute path of the scratch storage root. */
-    private static string $storage = '';
+    /** Absolute path of the scratch build root. */
+    private static string $build_root = '';
+
+    /** Absolute path of the scratch tmp root the child derives into. */
+    private static string $scratch_tmp = '';
 
     /** The synthetic tree, relative to base_path(). */
     private static string $synthetic = '';
@@ -73,20 +77,23 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
      */
     private static function __peak_of_build(array $scan_roots): int
     {
-        static::$storage = storage_path('rsx-tmp/manifest-gate/' . getmypid());
+        static::$build_root = Rsx_Project_Paths::tmp_path('manifest-gate/' . getmypid() . '/build');
+        static::$scratch_tmp = Rsx_Project_Paths::tmp_path('manifest-gate/' . getmypid() . '/tmp');
 
-        static::__remove_directory(static::$storage);
-        ensure_directory(static::$storage);
+        static::__remove_directory(dirname(static::$build_root));
+        ensure_directory(static::$build_root);
+        ensure_directory(static::$scratch_tmp);
 
         $output = [];
 
         $exit = Rsx_Artisan::run('rsx:manifest:build', [
-            '--_manifest-storage-root=' . static::$storage,
+            '--_rsx-build-root=' . static::$build_root,
+            '--_rsx-tmp-root=' . static::$scratch_tmp,
             '--_manifest-scan-roots=' . implode(',', $scan_roots),
             '--_manifest-report-peak',
         ], $output);
 
-        static::__remove_directory(static::$storage);
+        static::__remove_directory(dirname(static::$build_root));
 
         static::__assert_equals(
             0,

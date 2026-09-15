@@ -3,172 +3,146 @@
  * CODING CONVENTION:
  * snake_case for variable_names and function_names.
  *
- * PRE-BOOT STORAGE LINK GUARD
+ * PRE-BOOT BUILD LINK GUARD
  *
- * Laravel boots from `system/`, so every `storage_path()` in the framework and
- * every relative path anybody writes resolves under `system/storage`. That path
- * is a SYMLINK to `../storage` - the project-root directory where all volatile
- * state actually lives: the file-attachment blob store, thumbnails, renditions,
- * logs, build artifacts, locks, database snapshots.
+ * Laravel boots from `system/`, so a path anybody writes relative to the framework
+ * tree resolves inside it. `system/build` is a symlink onto `<project>/build`, which
+ * is where the build outputs live - beside `system/` and `rsx/`, so that a production
+ * box can make all three read-only together.
  *
- * WHY A SYMLINK AND NOT A REAL DIRECTORY. `system/` is a git submodule - a
- * checkout of the framework's own repository, replaced wholesale on every update.
- * Volatile application data cannot live inside a directory whose contents are
- * `git clean -fdx`ed as a matter of routine. Moving storage one level up puts it
- * in the application's own space, and the symlink is what lets every existing
- * `system/storage` path keep working without a single call site changing.
+ * WHY A SYMLINK AND NOT A REAL DIRECTORY. `system/` is a git submodule - a checkout of
+ * the framework's own repository, replaced wholesale on every update and cleaned of
+ * untracked files. Nothing volatile can live inside a directory that is `git clean
+ * -fdx`ed as a matter of routine.
  *
- * WHY THIS FAILS LOUD RATHER THAN REPAIRING ITSELF. A wrong `system/storage` is
- * ambiguous in a way `.env` never is. A real directory there may hold a previous
- * install's uploads and logs - possibly the only copy - and silently replacing it
- * with a symlink would orphan that data behind a path nothing resolves to any
- * more. The framework does not get to make that call: it says exactly what is
- * wrong and what the correct shape is, and lets a person decide what happens to
- * whatever is sitting there.
+ * ONLY build/ HAS A LINK. `tmp/` and `storage/` are RELOCATABLE, and a convenience
+ * link cannot promise where a relocated root is: an operator who edits `RSX_TMP_PATH`
+ * on a sealed box would be left with a link the runtime refuses to repair, in a tree
+ * it cannot write. Code reaches those two through the path owner, which reads the
+ * live value. `build/` is fixed, so its link is a constant.
  *
- * The TARGET is different, and is created. An absent `../storage` holds nothing
- * and loses nothing - creating it is unambiguous, and refusing to start over a
- * missing empty directory would be pedantry rather than safety. Whether it is a
- * real directory or itself a symlink (onto another volume, a network mount, a
- * per-environment path) is the administrator's business and is not inspected
- * beyond "does it exist".
+ * The LINK is repaired silently - it is one machine-made string - but the TARGET is
+ * never created here: the build and `rsx:clean` own that, so a production box with no
+ * build fails loud naming the build command. A DANGLING `system/build` is therefore a
+ * correct, expected state.
  *
- * Required by BOTH entrypoints (`system/artisan` and `system/public/index.php`)
- * before anything reads configuration. It must therefore run with no autoloader,
- * no framework and no config: plain filesystem calls only.
+ * A real directory squatting on `system/build` is refused with the remedy, with one
+ * exception: the two-child `cache/`+`temp/` shape an older artifact cache left there,
+ * which holds nothing anybody wants and is removed by
+ * `bin/environment_updates/110_relocate_build_tmp.sh`.
+ *
+ * Required by BOTH entrypoints (`system/artisan` and `system/public/index.php`) before
+ * anything reads configuration. It must therefore run with no autoloader, no framework
+ * and no config: plain filesystem calls only.
  */
 
+require_once __DIR__ . '/rsx_paths.php';
+
 (static function (): void {
-    $system_dir   = dirname(__DIR__);
-    $project_root = dirname($system_dir);
+    // build: outputs. Repair the link; never create the target.
+    rsx_tree_link_guard_build(rsx_paths_system_dir(), rsx_paths_build_root());
+})();
 
-    $link   = $system_dir . '/storage';      // ./storage,  from Laravel's base
-    $target = $project_root . '/storage';    // ../storage, one level up
+/**
+ * The `system/build` invariant.
+ *
+ * It holds only machine-made state, so a wrong or missing LINK is repaired in place
+ * with nothing to report. The TARGET is never created: build outputs are the build's
+ * to produce, and a production box with none must fail loud naming it.
+ */
+function rsx_tree_link_guard_build(string $system_dir, string $target): void
+{
+    $name = 'build';
+    $link = $system_dir . '/' . $name;
+    $link_target = '../' . $name;
 
-    // -----------------------------------------------------------------------
-    // 1. The TARGET. Absent means nothing is there to lose, so make it.
-    //
-    //    A symlink is as valid as a directory here - an administrator pointing
-    //    storage at another volume or a network mount is doing something
-    //    supported, and this guard has no opinion about it. Only genuine absence
-    //    is acted on. (file_exists() follows symlinks, so a symlink pointing at
-    //    nothing counts as absent, which is the right reading: it resolves to no
-    //    directory, and the operator gets told below rather than silently
-    //    getting a second one.)
-    // -----------------------------------------------------------------------
-    if (!is_link($target) && !file_exists($target)) {
-        if (!@mkdir($target, 0775, true) && !is_dir($target)) {
-            rsx_storage_link_fail([
-                "Could not create the storage directory: {$target}",
-                '',
-                '  RSpade keeps all volatile state one level above the framework, and that',
-                '  directory does not exist and could not be created. Almost always this is',
-                '  a permissions problem on the project root.',
-                '',
-                '  Create it by hand:',
-                '',
-                "      mkdir -p " . escapeshellarg($target),
-                '',
-            ]);
-        }
-    }
-
-    // A symlink that resolves nowhere: the operator pointed storage at something
-    // that is not there. Say so rather than quietly creating a directory beside
-    // it, which would leave two notions of where storage is.
-    if (is_link($target) && !file_exists($target)) {
-        rsx_storage_link_fail([
-            "The storage directory is a symlink that points nowhere: {$target}",
-            '',
-            '  It points at: ' . (readlink($target) ?: '(unreadable)'),
-            '',
-            '  RSpade keeps all volatile state there - the file store, logs, build',
-            '  artifacts, locks and database snapshots. Point it at a directory that',
-            '  exists, or remove the link and let RSpade create a real directory.',
-            '',
-        ]);
-    }
-
-    // -----------------------------------------------------------------------
-    // 2. The LINK. It must be a symlink, and it must land on the target.
-    //
-    //    Both spellings are accepted - the relative `../storage` the framework
-    //    ships, and an absolute path that resolves to the same directory - so an
-    //    operator who rebuilt the link by hand is not second-guessed over syntax.
-    //    What is NOT accepted is a real directory, a file, or a symlink pointing
-    //    somewhere else.
-    // -----------------------------------------------------------------------
     if (is_link($link)) {
-        $link_real   = realpath($link);
-        $target_real = realpath($target);
-
-        if ($link_real !== false && $target_real !== false && $link_real === $target_real) {
-            return;     // correct - the overwhelmingly common path
+        if (readlink($link) === $link_target) {
+            return;
         }
 
-        rsx_storage_link_fail([
-            "system/storage is a symlink, but it does not point at the project's storage.",
-            '',
-            '  It points at:   ' . (readlink($link) ?: '(unreadable)')
-                . ($link_real === false ? '  (which does not resolve)' : "  -> {$link_real}"),
-            "  It must reach:  {$target}",
-            '',
-            ...rsx_storage_link_remedy($system_dir),
-        ]);
+        // A dangling build link is CORRECT while no build exists, so the comparison
+        // above is against the link's own text, never against what it resolves to.
+        @unlink($link);
+        @symlink($link_target, $link);
+
+        return;
     }
 
     if (is_dir($link)) {
+        if (rsx_tree_link_guard_is_stale_artifact_cache($link)) {
+            // The two-child cache/temp shape an older artifact cache left behind.
+            // It holds nothing anybody wants; the 110 environment update removes it,
+            // and until it runs this refuses rather than deleting a directory on a
+            // developer's behalf.
+            rsx_storage_link_fail([
+                "system/{$name} is the old artifact-cache directory. It must be a symlink.",
+                '',
+                '  Everything inside it is regenerated on demand. Remove it and let the',
+                '  environment update (or the two commands below) put the link in place:',
+                '',
+                ...rsx_storage_link_remedy($system_dir, $name, $target),
+            ]);
+        }
+
         rsx_storage_link_fail([
-            'system/storage is a real directory. It must be a symlink to ../storage.',
+            "system/{$name} is a real directory. It must be a symlink to {$target}.",
             '',
-            '  system/ is a git submodule - a checkout of the framework, replaced wholesale',
-            '  on every update and cleaned of untracked files. Volatile data cannot live',
-            '  there, so storage was moved one level up and system/storage became a link to',
-            '  it.',
+            '  system/ is a git submodule - replaced wholesale on every framework update -',
+            '  so nothing volatile can live inside it. RSpade will not remove a directory',
+            '  it did not make. Move anything that matters out, then replace it:',
             '',
-            '  THAT DIRECTORY MAY HOLD THE ONLY COPY of a previous install\'s uploads, logs',
-            '  and database snapshots, so RSpade will not remove it for you. Move what',
-            '  matters into ' . $project_root . '/storage, then replace it:',
-            '',
-            ...rsx_storage_link_remedy($system_dir),
+            ...rsx_storage_link_remedy($system_dir, $name, $target),
         ]);
     }
 
     if (file_exists($link)) {
         rsx_storage_link_fail([
-            'system/storage exists but is not a symlink (it is a file).',
+            "system/{$name} exists but is not a symlink (it is a file).",
             '',
-            '  It must be a symlink to ../storage.',
+            "  It must be a symlink to {$target}.",
             '',
-            ...rsx_storage_link_remedy($system_dir),
+            ...rsx_storage_link_remedy($system_dir, $name, $target),
         ]);
     }
 
-    // Missing entirely. system/storage is a TRACKED symlink in the framework
-    // repository, so its absence means the checkout is incomplete rather than
-    // misconfigured - which is worth saying, because the fix is different.
-    rsx_storage_link_fail([
-        'system/storage is missing. It must be a symlink to ../storage.',
-        '',
-        '  This path is a tracked symlink in the framework repository, so its absence',
-        '  usually means an incomplete checkout rather than a configuration mistake:',
-        '',
-        '      git submodule update --init --recursive',
-        '',
-        '  If that does not restore it, create it directly:',
-        '',
-        ...rsx_storage_link_remedy($system_dir),
-    ]);
-})();
+    @symlink($link_target, $link);
+}
 
 /**
- * The two commands that put the link back. One place, so every message agrees.
+ * Is this directory the two-child artifact cache, and nothing else?
  */
-function rsx_storage_link_remedy(string $system_dir): array
+function rsx_tree_link_guard_is_stale_artifact_cache(string $dir): bool
 {
+    $entries = @scandir($dir);
+
+    if ($entries === false) {
+        return false;
+    }
+
+    foreach ($entries as $entry) {
+        if ($entry === '.' || $entry === '..') {
+            continue;
+        }
+
+        if ($entry !== 'cache' && $entry !== 'temp') {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/**
+ * The two commands that put a link back. One place, so every message agrees.
+ */
+function rsx_storage_link_remedy(string $system_dir, string $name, string $target): array
+{
+    $link_target = '../' . $name;
+
     return [
-        '      rm -rf ' . escapeshellarg($system_dir . '/storage'),
-        '      ln -s ../storage ' . escapeshellarg($system_dir . '/storage'),
+        '      rm -rf ' . escapeshellarg($system_dir . '/' . $name),
+        '      ln -s ' . escapeshellarg($link_target) . ' ' . escapeshellarg($system_dir . '/' . $name),
         '',
     ];
 }
@@ -179,7 +153,7 @@ function rsx_storage_link_remedy(string $system_dir): array
 function rsx_storage_link_fail(array $lines): void
 {
     if (PHP_SAPI === 'cli') {
-        fwrite(STDERR, "\n[ERROR] RSpade storage layout is wrong.\n\n");
+        fwrite(STDERR, "\n[ERROR] RSpade build layout is wrong.\n\n");
         foreach ($lines as $line) {
             fwrite(STDERR, $line . "\n");
         }
@@ -192,7 +166,7 @@ function rsx_storage_link_fail(array $lines): void
         header('Retry-After: 60');
     }
 
-    echo "503 - RSpade storage layout is wrong\n\n";
+    echo "503 - RSpade build layout is wrong\n\n";
     foreach ($lines as $line) {
         echo $line . "\n";
     }

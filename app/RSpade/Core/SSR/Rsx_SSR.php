@@ -14,23 +14,14 @@ namespace App\RSpade\Core\SSR;
 
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 class Rsx_SSR
 {
-    /**
-     * Unix socket path (relative to base_path)
-     */
-    private const SOCKET_PATH = 'storage/rsx-tmp/ssr-server.sock';
-
-    /**
-     * Build key sidecar file (relative to base_path)
-     */
-    private const BUILD_KEY_FILE = 'storage/rsx-tmp/ssr-server.build_key';
-
-    /**
-     * PID file (relative to base_path)
-     */
-    private const PID_FILE = 'storage/rsx-tmp/ssr-server.pid';
+    /** Basenames of the server's three runtime files, inside the tmp tree. */
+    private const SOCKET_NAME = 'ssr-server.sock';
+    private const BUILD_KEY_NAME = 'ssr-server.build_key';
+    private const PID_NAME = 'ssr-server.pid';
 
     /**
      * SSR server script (relative to base_path)
@@ -139,8 +130,8 @@ class Rsx_SSR
      */
     private static function _ensure_server(): void
     {
-        $socket_path = rsx_project_file_path(self::SOCKET_PATH);
-        $build_key_file = rsx_project_file_path(self::BUILD_KEY_FILE);
+        $socket_path = Rsx_Project_Paths::ssr_file(self::SOCKET_NAME);
+        $build_key_file = Rsx_Project_Paths::ssr_file(self::BUILD_KEY_NAME);
         $current_build_key = Manifest::get_build_key();
 
         if (file_exists($socket_path)) {
@@ -174,8 +165,8 @@ class Rsx_SSR
      */
     private static function _start_server(): void
     {
-        $socket_path = rsx_project_file_path(self::SOCKET_PATH);
-        $pid_file = rsx_project_file_path(self::PID_FILE);
+        $socket_path = Rsx_Project_Paths::ssr_file(self::SOCKET_NAME);
+        $pid_file = Rsx_Project_Paths::ssr_file(self::PID_NAME);
         $server_script = base_path(self::SERVER_SCRIPT);
 
         if (!file_exists($server_script)) {
@@ -230,8 +221,8 @@ class Rsx_SSR
      */
     private static function _stop_server(bool $force = false): void
     {
-        $socket_path = rsx_project_file_path(self::SOCKET_PATH);
-        $pid_file = rsx_project_file_path(self::PID_FILE);
+        $socket_path = Rsx_Project_Paths::ssr_file(self::SOCKET_NAME);
+        $pid_file = Rsx_Project_Paths::ssr_file(self::PID_NAME);
 
         if (file_exists($socket_path)) {
             // Send shutdown command via socket
@@ -276,7 +267,7 @@ class Rsx_SSR
      */
     private static function _ping_server(): bool
     {
-        $socket_path = rsx_project_file_path(self::SOCKET_PATH);
+        $socket_path = Rsx_Project_Paths::ssr_file(self::SOCKET_NAME);
 
         if (!file_exists($socket_path)) {
             return false;
@@ -327,7 +318,7 @@ class Rsx_SSR
             throw new \RuntimeException("SSR: Invalid bundle class '{$bundle_class}' - not a registered bundle");
         }
 
-        $build_dir = storage_path('rsx-build/bundles');
+        $build_dir = Rsx_Project_Paths::bundles_dir();
 
         $vendor_files = glob("{$build_dir}/{$bundle_class}__vendor.*.js");
         $app_files = glob("{$build_dir}/{$bundle_class}__app.*.js");
@@ -355,7 +346,7 @@ class Rsx_SSR
      */
     private static function _send_request(array $request): array
     {
-        $socket_path = rsx_project_file_path(self::SOCKET_PATH);
+        $socket_path = Rsx_Project_Paths::ssr_file(self::SOCKET_NAME);
         $timeout = self::DEFAULT_TIMEOUT + 5;
 
         $socket = @stream_socket_client(

@@ -39,9 +39,9 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
     protected static $use_database_transactions = false;
 
     /** The pgrep the script must be doing, verbatim. */
-    const QUIESCE_PGREP = 'pgrep -f -- "--socket=$(storage_base)/rsx-tmp/"';
+    const QUIESCE_PGREP = 'pgrep -f -- "--socket=$(rsx_tmp_root)/"';
 
-    /** Scratch root for this run; the fakes are socketed under <root>/rsx-tmp/. */
+    /** Scratch root for this run; the fakes are socketed directly under it, as the tmp root. */
     protected static $scratch_root = null;
 
     /** @var Process[] */
@@ -172,7 +172,8 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
 
         // The socket directory is never actually bound - the reaper matches on ARGV, which is
         // the point: it is the one handle that still works after a socket file is unlinked.
-        ensure_directory($root . '/rsx-tmp');
+        // A node daemon binds its socket directly in the tmp root, so the scratch root IS it.
+        ensure_directory($root);
 
         $cooperative = $root . '/fake-cooperative.js';
         $wedged = $root . '/fake-wedged.js';
@@ -184,7 +185,7 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
         );
 
         foreach ([$cooperative, $wedged] as $script) {
-            $fake = new Process(['node', $script, '--socket=' . $root . '/rsx-tmp/fake.sock']);
+            $fake = new Process(['node', $script, '--socket=' . $root . '/fake.sock']);
             $fake->setTimeout(null);
             $fake->start();
             static::$fakes[] = $fake;
@@ -198,8 +199,9 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
         }
         static::__assert_equals(2, static::__matching_daemon_count($root), 'both fakes must match the pattern');
 
-        // The harness supplies exactly what do_enable() supplies - a say() and a storage_base()
-        // pointing at the scratch root - then runs the script's own lines against it.
+        // The harness supplies exactly what do_enable() supplies - a say() and an
+        // rsx_tmp_root() pointing at the scratch root - then runs the script's own lines
+        // against it.
         //
         // It has to be a FILE, not `bash -c '<text>'`: with -c the block's text is the shell's
         // own command line, so the pattern would match the shell running it and the reaper
@@ -209,7 +211,7 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
         file_put_contents_safe($harness, implode("\n", [
             'set -u',
             'say() { echo "$*"; }',
-            "storage_base() { printf '%s' " . escapeshellarg($root) . '; }',
+            "rsx_tmp_root() { printf '%s' " . escapeshellarg($root) . '; }',
             '',
             static::__extract_quiesce_block(static::__script_source()),
         ]));
@@ -263,7 +265,7 @@ class Maintenance_Rpc_Quiesce_Cli_Test extends Rsx_Test_Abstract
         $rc = 0;
 
         // pgrep exits 1 when nothing matched, which is the answer 0 rather than an error.
-        exec_safe('pgrep -a -f -- ' . escapeshellarg('--socket=' . $root . '/rsx-tmp/'), $output, $rc);
+        exec_safe('pgrep -a -f -- ' . escapeshellarg('--socket=' . $root . '/'), $output, $rc);
 
         $count = 0;
         foreach ($output as $line) {

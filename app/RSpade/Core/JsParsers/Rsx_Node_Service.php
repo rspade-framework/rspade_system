@@ -10,6 +10,7 @@ namespace App\RSpade\Core\JsParsers;
 use Symfony\Component\Process\Process;
 use App\RSpade\Core\JsParsers\Rpc_Startup_Diagnostics;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * THE node service: one daemon per PHP process, one socket, one lifecycle, eight subsystems.
@@ -31,7 +32,7 @@ use App\RSpade\Core\Locks\RsxLocks;
  * maintenance window to reap.
  *
  * THE SOCKET IS PRIVATE TO THIS PROCESS. Its name carries a random component minted once,
- * lazily, per PHP process: storage/rsx-tmp/node-service-<random>.sock. Nobody else can ever
+ * lazily, per PHP process: <tmp>/node-service-<random>.sock. Nobody else can ever
  * learn that name, so nobody else can ever kill, rebind or "collect" the daemon this process
  * is mid-request on. That is the whole point: a well-known socket shared between processes
  * has a real race in it - process B's ensure() reaps the daemon process A is using, and two
@@ -41,7 +42,7 @@ use App\RSpade\Core\Locks\RsxLocks;
  * on disk AT SPAWN TIME by its own parent, and its lifetime is a subset of that parent's. No
  * process ever inherits a daemon it did not start, so there is nothing to validate at all.
  *
- * The socket still lives under storage/rsx-tmp/ deliberately: quiesce_all(),
+ * The socket lives in the tmp tree deliberately: quiesce_all(),
  * bin/maintenance-mode.sh and rsx:clean all sweep that directory by argv match
  * ('--socket=<dir>/'), so every daemon is reachable by the operational sweeps without any of
  * them knowing a name.
@@ -74,15 +75,6 @@ class Rsx_Node_Service
      * '<prefix>.<method>' through it; PHP reads it so the two lists can never drift.
      */
     public const MODULE_REGISTRY = 'app/RSpade/Core/JsParsers/resource/node-service-modules.json';
-
-    /**
-     * Directory holding every daemon socket, as a PROJECT-relative 'storage/...' path.
-     *
-     * Under storage/rsx-tmp/ deliberately: quiesce_all(), bin/maintenance-mode.sh and
-     * rsx:clean all sweep that directory by socket-path match, and rsx:clean reaps before
-     * it wipes (unlinking a socket under a running daemon strands it forever).
-     */
-    public const SOCKET_DIR = 'storage/rsx-tmp';
 
     /**
      * Filename prefix every node-service socket carries. The rest of the name is random.
@@ -366,13 +358,13 @@ class Rsx_Node_Service
     }
 
     /**
-     * Kill EVERY node daemon bound to a socket under storage/rsx-tmp, whatever it is, and
+     * Kill EVERY node daemon bound to a socket in the tmp tree, whatever it is, and
      * return how many were reaped.
      *
      * The PHP twin of the bash reaper in bin/maintenance-mode.sh. It exists because of the
      * rule in bin/CLAUDE.md: any framework operation that changes a socket or state
      * directory must reap the daemons bound to the previous one. rsx:clean is that
-     * operation - it unlinks every socket in rsx-tmp, which strands every daemon behind
+     * operation - it unlinks every socket in the tmp tree, which strands every daemon behind
      * them permanently.
      *
      * The match is on argv, not on identity: the socket path a daemon was launched with is
@@ -383,7 +375,7 @@ class Rsx_Node_Service
      */
     public static function quiesce_all(): int
     {
-        $socket_dir = rtrim(storage_path('rsx-tmp'), '/');
+        $socket_dir = rtrim(Rsx_Project_Paths::sockets_dir(), '/');
 
         $pids = self::__pgrep_node_daemons('--socket=' . $socket_dir . '/');
         $killed = self::__term_then_kill($pids);
@@ -457,9 +449,8 @@ class Rsx_Node_Service
      */
     private static function __mint_socket_path(): void
     {
-        self::$socket_path = rsx_project_file_path(
-            self::SOCKET_DIR . '/' . self::SOCKET_PREFIX . random_hash(8) . '.sock'
-        );
+        self::$socket_path = Rsx_Project_Paths::sockets_dir()
+            . '/' . self::SOCKET_PREFIX . random_hash(8) . '.sock';
     }
 
     /**
@@ -480,7 +471,7 @@ class Rsx_Node_Service
 
         // Collect whatever is left of the old private daemon before abandoning its name. It
         // is unreachable by definition (the connect we just made failed), it is OURS, and its
-        // socket file would otherwise sit in rsx-tmp forever.
+        // socket file would otherwise sit in the tmp tree forever.
         self::__self_heal_kill();
         self::__mint_socket_path();
 
@@ -589,7 +580,7 @@ class Rsx_Node_Service
                 continue;
             }
 
-            // These daemons are node processes; nothing else in rsx-tmp is ours to kill.
+            // These daemons are node processes; nothing else in the tmp tree is ours to kill.
             if (!str_contains($command_line, 'node ')) {
                 continue;
             }

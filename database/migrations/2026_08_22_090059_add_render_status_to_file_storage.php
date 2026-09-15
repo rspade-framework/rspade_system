@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
  * All LibreOffice work (the PDF rendition that feeds both the viewer and the Office-document
  * thumbnail, plus text extraction) moves out of the web request into ONE background worker,
  * Document_Render_Service. The state that worker drives off lives on the BLOB, not the
- * attachment, because both products of a render - the rendition (storage/rsx-renditions/
+ * attachment, because both products of a render - the rendition (tmp/renditions/
  * {hash}.pdf) and the thumbnail cache key - are already content-addressed on the blob hash.
  * Ten attachments sharing one deduplicated blob therefore share one render.
  *

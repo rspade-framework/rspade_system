@@ -72,7 +72,7 @@ use App\RSpade\Core\Session\Session;
  *   - mime application/pdf                              -> serve the resident blob as-is.
  *   - mime in rsx.preview.convertible AND LibreOffice enabled
  *                                                       -> serve the rendition Document_Render_Service
- *                                                          already produced (storage/rsx-renditions/
+ *                                                          already produced (tmp/renditions/
  *                                                          {hash}.pdf) when the blob is RENDERED;
  *                                                          404 naming the render state otherwise. A
  *                                                          RENDERED blob whose file was LRU-evicted
@@ -364,7 +364,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * File_Rendition_Service for LRU cleanup.
      *
      * @param File_Storage_Model $storage
-     * @return string Absolute path (storage/rsx-renditions/{hash}.pdf).
+     * @return string Absolute path (tmp/renditions/{hash}.pdf).
      */
     public static function rendition_cache_path(File_Storage_Model $storage): string
     {
@@ -380,7 +380,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * different extension: one blob can only ever be one of the two.
      *
      * @param File_Storage_Model $storage
-     * @return string Absolute path (storage/rsx-renditions/{hash}.html).
+     * @return string Absolute path (tmp/renditions/{hash}.html).
      */
     public static function sheet_rendition_cache_path(File_Storage_Model $storage): string
     {

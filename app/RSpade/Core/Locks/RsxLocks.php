@@ -8,6 +8,7 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\Lockd_Client;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 // Ensure helpers are loaded since we run early in bootstrap
 $helpers_path = __DIR__ . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . '..' . DIRECTORY_SEPARATOR . 'helpers.php';
@@ -33,7 +34,7 @@ if (file_exists($helpers_path)) {
  *       at enqueue. Use it for anything guarding shared state: a tenant, the blob store, a
  *       cluster-wide concurrency quota. `named_*_lock()` and `site_*_lock()` are cluster.
  *
- *   SYSTEM_LOCK - THIS BOX ONLY, backed by flock() over files in storage/flock/, and
+ *   SYSTEM_LOCK - THIS BOX ONLY, backed by flock() over files in storage/state/flock/, and
  *       EXCLUSIVE ONLY (there is no such thing as a system READ lock). Use it only for
  *       something that is genuinely per-box: build artifacts on local disk, a local node
  *       process, this machine's environment. Rare by design.
@@ -991,7 +992,7 @@ class RsxLocks
     /**
      * The per-environment scope every BACKEND lock name is namespaced under.
      *
-     * Two RSpade environments that share one rsx-lockd daemon or one storage/flock directory
+     * Two RSpade environments that share one rsx-lockd daemon or one storage/state/flock directory
      * must never collide on a lock NAME that is not theirs - the parallel test runner's
      * per-worker databases on a single box are the motivating case, but the same is true of a
      * dev database and a test database side by side. A lock protects DATA, and the data it
@@ -1073,7 +1074,7 @@ class RsxLocks
      * a leaked lock makes the entire CLI unusable, not merely builds.
      *
      * Detection is evidence-based rather than bookkeeping: every descriptor this process has
-     * open onto storage/flock/ IS one of our lock handles, whoever opened it. Linux-only by
+     * open onto storage/state/flock/ IS one of our lock handles, whoever opened it. Linux-only by
      * construction (/proc/self/fd); an empty result elsewhere simply means no wrapping, which
      * is the pre-existing behavior.
      *
@@ -1086,7 +1087,7 @@ class RsxLocks
             return [];
         }
 
-        $lock_dir = rtrim(storage_path('flock'), '/') . '/';
+        $lock_dir = rtrim(Rsx_Project_Paths::flock_dir(), '/') . '/';
         $fds = [];
 
         foreach ((array) @scandir($fd_dir) as $entry) {
@@ -1163,7 +1164,7 @@ class RsxLocks
 
     private static function __flock_path(string $domain, string $name, bool $db_scoped = true): string
     {
-        $dir = storage_path('flock');
+        $dir = Rsx_Project_Paths::flock_dir();
         if (!is_dir($dir)) {
             @mkdir($dir, 0755, true);
         }

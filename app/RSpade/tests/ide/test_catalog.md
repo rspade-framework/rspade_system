@@ -19,10 +19,6 @@
 | active_secrets_order | `active_secrets()` is newest-first and capped at ACTIVE_GRANTS; a retired secret disappears | php | ensure() + 2 rotations | [] -> [a] -> [b,a] -> [c,b] | implemented | 2026-09-06 |
 | active_secrets_mode | `active_secrets()` is [] outside development - no development credential exists there | php | `Rsx::_testing_set_mode(debug/production)` | [] in both | implemented | 2026-09-06 |
 | token_bridge_dir | `bridge_dir()` honors `rsx.ide_integration.bridge_path` | php | config override | equals base_path(config) | implemented | 2026-07-29 |
-| export_excl_bridge | export whitelist excludes the IDE bridge grant token dir | php | `_is_excluded()` predicate | true (via `storage` exclude) | implemented | 2026-07-29 |
-| export_excl_runtime | export excludes blob store / db_backups / logs / rsx-framework / .env / .git / tests / DebugProxy / bin/publish / *.expect | php | `_is_excluded()` predicate | all true | implemented | 2026-07-29 |
-| export_ship_source | export does NOT exclude source (Core/Ide/config/public/vendor) | php | `_is_excluded()` predicate | all false | implemented | 2026-07-29 |
-| export_segment_match | `storage` exclude matches a path segment, not a substring | php | `_is_excluded()` predicate | `.../Storage/...` not excluded | implemented | 2026-07-29 |
 | auth_reject_no_token | `auth.php` returns 401 when no `X-Ide-Token` and not loopback | http | request without header | 401 Authentication required | deferred (pre-boot standalone; manual) | 2026-07-29 |
 | auth_accept_token | `auth.php` accepts a request whose `X-Ide-Token` matches the grant's `secret` | http | header = document `secret` | 200 from service | deferred (pre-boot standalone; manual) | 2026-08-25 |
 | auth_loopback_bypass | strict `http://localhost` loopback bypass still works | http | loopback, no X-* headers | 200 without token | deferred (pre-boot standalone; manual) | 2026-07-29 |

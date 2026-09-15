@@ -91,10 +91,10 @@ class Db_Reset_Refusal_Cli_Test extends Rsx_Test_Abstract
 
         // All three configured roots are named, so the operator sees the blob store AND
         // the two caches that go with it. Matched by suffix: the child resolves them from
-        // its own storage root, which is not this process's test-scoped one.
+        // its own roots, which are not this process's test-scoped ones.
         static::__assert_contains('/uploads', $text);
-        static::__assert_contains('/rsx-thumbnails', $text);
-        static::__assert_contains('/rsx-renditions', $text);
+        static::__assert_contains('/thumbnails', $text);
+        static::__assert_contains('/renditions', $text);
 
         // Nothing moved. The refusal returns before the window is raised, before the
         // snapshot decision, before a single table is counted.

@@ -120,14 +120,10 @@ export function resolveServerUrl(rspadeRoot: string): string {
  * When several exist the newest by mtime wins, so the answer is deterministic.
  * Throws (fail loud) when the directory or the file is missing.
  *
- * Volatile storage was relocated out of system/ to the project root; the historic
- * system/storage location is still probed as a fallback for an environment that
- * has not yet run the relocation.
+ * The storage tree lives at the project root, beside system/ and rsx/.
  */
 function find_grant_file(rspadeRoot: string): string {
-    const relocated_dir = path.join(rspadeRoot, 'storage', 'rsx-ide-bridge');
-    const legacy_dir = path.join(rspadeRoot, 'system', 'storage', 'rsx-ide-bridge');
-    const bridge_dir = fs.existsSync(relocated_dir) ? relocated_dir : legacy_dir;
+    const bridge_dir = path.join(rspadeRoot, 'storage', 'rsx-ide-bridge');
 
     let entries: string[];
     try {

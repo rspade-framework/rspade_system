@@ -173,9 +173,14 @@ chain replayable.",
      * @" . $this->get_id() . "-EXCEPTION <why this migration needs live application code>
      */
 
-The legitimate case is DATA SEEDING that needs model behaviour no raw SQL can reproduce
-(a file pipeline, an encryption cast, a factory). Schema work and type-ref lookups are
-never it - convert those instead.",
+An exception is essentially never justified: a table name and raw SQL always suffice,
+backfills included (SELECT the rows, UPDATE them). The only shape that has earned one is
+DATA SEEDING that needs model behaviour no SQL can reproduce - a file pipeline, an
+encryption cast. Schema work, type-ref lookups and backfills are never it.
+
+A migration that writes through a model also runs against a MANIFEST THAT MAY BE AHEAD OF
+THE DATABASE on a production host (columns the model knows and the table does not have
+yet), so the rationale is owning that too.",
                 'high'
             );
 
@@ -235,13 +240,27 @@ A class-name STRING LITERAL is data, not a symbol: it needs no class to exist an
 never flagged. The table name is hardcoded for the same reason - asking a model for its
 table is asking the model to exist.
 
-FIX THIS AUTONOMOUSLY when the migration is resolving a type-ref id, reading a table the
-model happens to own, or otherwise doing SCHEMA or DATA work: convert it to raw SQL plus
-the closure above. That is the overwhelming majority of cases and needs nobody's approval.
+FIX THIS AUTONOMOUSLY. A table name and raw SQL always suffice, and that includes the two
+cases people reach for a model to do: resolving a type-ref id (the closure above) and
+BACKFILLING a column (SELECT the rows you need and UPDATE them - a migration has the whole
+of SQL, and the rows are just rows). Converting needs nobody's approval.
 
-THE ONE EXCEPTION IS DATA SEEDING that genuinely needs model BEHAVIOUR raw SQL cannot
-reproduce - a file-upload pipeline, an encryption cast, a factory with side effects. That
-migration is knowingly coupled to code that may be deleted, and says so in its docblock:
+AN EXCEPTION IS ESSENTIALLY NEVER JUSTIFIED. The only shape that has ever earned one is
+DATA SEEDING that needs model BEHAVIOUR no SQL can reproduce - bytes that must travel
+through the file-upload pipeline, a value that must be written through an encryption cast.
+If you are reaching for a model to read a column, resolve an id, compute a value or update
+rows, you have the ordinary case and you convert it.
+
+THERE IS A SECOND HAZARD, and it is the one nobody sees coming. On a production host the
+MANIFEST CAN BE AHEAD OF THE DATABASE: the build bakes every model's column map in at
+build time, and a deploy that builds before it migrates is serving a model that knows
+columns the table does not have yet. A migration writing through that model does not fail
+at a missing class - it fails at an unknown column, halfway through the run, on the box
+where a half-applied migration matters most. Raw SQL against a table name describes the
+schema AT THAT POINT IN HISTORY and cannot drift.
+
+A migration that genuinely needs model behaviour anyway says so in its docblock, and owns
+both hazards:
 
     /**
      * @" . $this->get_id() . "-EXCEPTION <why raw SQL cannot do this>

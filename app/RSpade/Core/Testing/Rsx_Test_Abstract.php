@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Testing;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Turnstile\Rsx_Turnstile;
@@ -114,6 +115,20 @@ abstract class Rsx_Test_Abstract
     private static $__boot_captured = false;
 
     /**
+     * The path-owner override set the test process booted with (see run()).
+     *
+     * The run's FILE-SUBSYSTEM ISOLATION is one of these overrides: Rsx_Test_Command points
+     * Rsx_Project_Paths' files root at tmp/test-storage for the whole run, so a test-database
+     * attachment delete can never unlink a developer blob (backlog B-38). A class that
+     * redirects a root of its own and ends with a bare _clear_overrides() drops that
+     * isolation for every class that runs after it in the same process - the same shape of
+     * leak the boot session context has, and restored in the same place.
+     *
+     * @var array<string,string>
+     */
+    private static $__boot_path_overrides = [];
+
+    /**
      * Runner-facing accessor for the per-class reset flag.
      * @return bool
      */
@@ -173,6 +188,7 @@ abstract class Rsx_Test_Abstract
             self::$__boot_site_id = (int) Session::get_site_id();
             self::$__boot_login_user_id = Session::get_login_user_id();
             self::$__boot_user_id = Session::get_user_id();
+            self::$__boot_path_overrides = Rsx_Project_Paths::_overrides();
         }
 
         try {
@@ -188,6 +204,11 @@ abstract class Rsx_Test_Abstract
             // of view. Between classes there is no such expectation, and that is where the
             // leak did damage.
             static::__restore_boot_context();
+
+            // The path overrides are process-global and belong to the RUN. A class may
+            // redirect a root inside its own body; between classes the run's set is what
+            // holds, file-subsystem isolation included.
+            Rsx_Project_Paths::_restore_overrides(self::$__boot_path_overrides);
         }
     }
 

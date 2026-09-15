@@ -140,7 +140,7 @@ rows are the round trip - the stub, as an artifact on disk, cannot disagree with
 | db-fl-03 | an unknown column throws, naming the model and the column | `'nope_not_a_column'` | RuntimeException containing both | implemented | 2026-09-07 |
 | db-fl-04 | a CTI base model answers for a DETAIL column it does not physically have | the first merged detail column the manifest reports for any model (`source_table` != base table) | the manifest's length, and the column is not in `getColumns()` | implemented (skips where the application declares no CTI model) | 2026-09-08 |
 | db-fl-05 | `Manifest::php_model_columns()` declines a non-model class rather than inventing a map | `'Rsx_Test_Abstract'` | null | implemented | 2026-09-07 |
-| db-fl-06 | every length baked into every generated stub equals the model's answer | all stubs in `storage/rsx-build/js-model-stubs/` | equal for every column | implemented | 2026-09-07 |
+| db-fl-06 | every length baked into every generated stub equals the model's answer | all stubs in `tmp/js-model-stubs/` | equal for every column | implemented | 2026-09-07 |
 | db-fl-07 | no publishable column with a length is missing from its stub | same | present in the stub's table | implemented | 2026-09-07 |
 | db-fl-08 | the system-column filter is the ONE deliberate divergence: PHP answers, the stub omits | `_`-prefixed (never `__`) columns | absent from every stub, no throw from PHP | implemented | 2026-09-07 |
 

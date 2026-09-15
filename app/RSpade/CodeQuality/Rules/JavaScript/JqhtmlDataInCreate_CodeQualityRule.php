@@ -4,6 +4,7 @@ namespace App\RSpade\CodeQuality\Rules\JavaScript;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\Support\Validation_Ledger;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 class JqhtmlDataInCreate_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -107,7 +108,7 @@ class JqhtmlDataInCreate_CodeQualityRule extends CodeQualityRule_Abstract
     {
         // The parser is SOURCE, checked in beside its client - it is not written to disk at
         // check time. It used to be a heredoc inside this class that materialized itself
-        // into storage/rsx-tmp/persistent/ if absent, which meant editing this file left the
+        // into the persistent ledger if absent, which meant editing this file left the
         // OLD script on disk running forever, and meant a code-quality rule owned a
         // directory under storage. Both are gone: the script is a file, and this rule
         // touches the filesystem for nothing.

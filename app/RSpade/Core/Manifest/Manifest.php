@@ -20,6 +20,7 @@ use App\RSpade\Core\Manifest\Manifest_Indexer;
 use App\RSpade\Core\Manifest\Manifest_Scanner;
 use App\RSpade\Core\Manifest\Manifest_Store;
 use App\RSpade\Core\Naming\Rsx_Paths;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -132,7 +133,7 @@ use App\RSpade\Core\Rsx;
 * ]
 *
 * CACHING:
-* - Stores as two compact PHP literals under /storage/rsx-build/ for fast include()
+* - Stores as two compact PHP literals in the build tree for fast include()
 * - Also exports as JSON for JavaScript tooling compatibility
 * - Uses file size + mtime for change detection (fast, avoids unnecessary hashing)
 */
@@ -157,31 +158,19 @@ class Manifest
     public const PROCESSABLE_EXTENSIONS = ['php', 'js', 'jsx', 'ts', 'tsx', 'phtml', 'scss', 'less', 'css', 'blade.php'];
 
     /**
-    * The HOT index, RELATIVE to the storage root (storage_path()).
+    * The HOT index, as a BASENAME inside the build tree.
     *
     * Every derived section plus the `files` entries whose method map is read at request time.
     * This is the only file a served request includes.
     */
-    public const CACHE_FILE = 'rsx-build/manifest_index.php';
+    public const CACHE_FILE = 'manifest_index.php';
 
     /**
-    * The COLD half, RELATIVE to the storage root: every other `files` entry, method maps
+    * The COLD half, as a BASENAME inside the build tree: every other `files` entry, method maps
     * intact. Loaded ONCE per process, by the first accessor that needs a record the hot file
     * does not carry. Boot, dispatch, an Ajax call and a model fetch never do.
     */
-    public const COLD_FILE = 'rsx-build/manifest_files.php';
-
-    /**
-    * The fixer's memory of the tree's class SHAPE (class name => "file|parent").
-    *
-    * Its OWN file, deliberately: it is build-only state that no request reads, and the two
-    * places it could otherwise live are both wrong. The hot index is included on every
-    * request, so 640 rows of build bookkeeping would be a per-request tax on data nothing
-    * serves; the cold file is a flat `files` map with no room for a second section. It is
-    * not atomic with the index and does not need to be - a lost or stale copy costs one
-    * full Php_Fixer pass and nothing else.
-    */
-    public const PHP_FIXER_STRUCTURE_FILE = 'rsx-build/php_fixer_structure.php';
+    public const COLD_FILE = 'manifest_files.php';
 
     /**
     * The loaded manifest data structure:
@@ -295,8 +284,11 @@ class Manifest
     */
     public static ?Manifest_Build $_build = null;
 
-    // Flag to allow forced rebuilding in production-like modes (used by rsx:prod:build)
-    public static bool $_force_build = false;
+    /**
+     * What a production-like box says when it has no build to serve.
+     */
+    public const UNSEALED_BUILD_MESSAGE = 'This production build is unsealed. '
+        . 'Run: php artisan rsx:build --force. See rsx:man prod.';
 
     // True when this process's init() actually (re)scanned/rebuilt the manifest
     // (incremental update WITH changes, or a no-cache full build). Stays false on a
@@ -1191,52 +1183,6 @@ class Manifest
     }
 
     /**
-     * Check if current CLI command is "safe" - doesn't require manifest to be built
-     *
-     * These commands can run in production mode without a pre-built manifest because
-     * they don't actually use manifest data (e.g., rsx:clean just deletes directories).
-     */
-    protected static function _is_safe_command(): bool
-    {
-        if (php_sapi_name() !== 'cli') {
-            return false;
-        }
-
-        $argv = $_SERVER['argv'] ?? [];
-        if (count($argv) < 2) {
-            return false;
-        }
-
-        // When a sealed prod build is in force, the ONLY context permitted to
-        // bypass the pre-built-manifest requirement is an authorized rebuild
-        // (rsx:prod:enable / rsx:prod:refresh, which pass the --authorized
-        // invocation flag to the build subprocess). rsx:clean is refused entirely
-        // while sealed, and rsx:mode:set delegates to the authorized enable/disable
-        // commands - so neither may claim "safe" status here anymore.
-        if (\App\RSpade\Core\Prod\Rsx_Prod_Seal::is_sealed()) {
-            return \App\RSpade\Core\Prod\Rsx_Prod_Seal::is_authorized();
-        }
-
-        // Not sealed: these commands can run without a pre-built manifest because
-        // they build it themselves, tear it down, or manage the build lifecycle.
-        // The prod-mode lifecycle commands MUST be able to boot even when the
-        // manifest is absent (e.g. after an interrupted build, or to recover a
-        // prod-ish RSX_MODE back to development).
-        $safe_commands = [
-            'rsx:clean',
-            'rsx:prod:build',    // Builds the manifest itself
-            'rsx:mode:set',      // Delegates to the prod-mode commands
-            'rsx:prod:enable',   // Runs the build pipeline (may rebuild from scratch)
-            'rsx:prod:refresh',  // Rebuilds the sealed assets
-            'rsx:prod:disable',  // Returns to development (recovery)
-            'rsx:prod:verify',   // Inspects the seal; boots to report drift
-        ];
-
-        $command = $argv[1] ?? '';
-        return in_array($command, $safe_commands, true);
-    }
-
-    /**
      * The always-runnable escape hatch: CLI invocations that skip framework/manifest
      * boot entirely, so they still work when a manifest-time code quality violation
      * has poisoned the manifest and every other command aborts.
@@ -1249,6 +1195,13 @@ class Manifest
      *   - rsx:man    - prints static man page .txt files
      *   - list/help  - Symfony's own command introspection
      *   - bare `php artisan`, --version/-V/-h/--help - Symfony introspection
+     *
+     * The three MODE-CHANGE commands join them for a different reason: rsx:prod:enable,
+     * rsx:prod:disable and rsx:mode:set exist to move a box between modes, which is
+     * exactly what an operator reaches for when a production box has no build to serve.
+     * They read no manifest data - they rewrite RSX_MODE and spawn rsx:build / rsx:clean
+     * - so booting one here would make the recovery command depend on the artifact it
+     * was invoked to produce.
      *
      * rsx:health is deliberately ABSENT: its check inventory is discovered through
      * manifest attribute scanning (Manifest::get_with_attribute('Health_Check')), so
@@ -1280,9 +1233,32 @@ class Manifest
             '-V',
             '--help',
             '-h',
+            'rsx:prod:enable',
+            'rsx:prod:disable',
+            'rsx:mode:set',
         ];
 
         return in_array($argv[1], $introspection_commands, true);
+    }
+
+    /**
+     * Is this box's build artifact unusable - a production-like mode with no manifest
+     * index or no seal, read by a process that is not the build?
+     *
+     * The seal gate in init() is where that is FATAL. This is the same question asked by
+     * code that runs BEFORE any command's boot - Kernel::commands(), which builds the
+     * console registry for every invocation, the escape-hatch ones included. Such code
+     * must not be the thing that trips the gate, or the commands that repair an unsealed
+     * box would be unreachable on exactly the box that needs them.
+     */
+    public static function __production_build_is_unusable(): bool
+    {
+        if (!Rsx::is_production() || \App\RSpade\Core\Prod\Rsx_Build_Context::is_active()) {
+            return false;
+        }
+
+        return !\App\RSpade\Core\Prod\Rsx_Prod_Seal::exists()
+            || !is_file(self::_get_cache_file_path());
     }
 
     /**
@@ -1292,7 +1268,7 @@ class Manifest
      * framework boot, before any command's handle() executes - so per-invocation
      * intent cannot come from a command handler or $this->option() at that point.
      * Reading argv is the sanctioned channel for boot-time code to see invocation
-     * flags, the same technique _is_safe_command() uses to read the command name.
+     * flags, the same technique __cli_skips_manifest_boot() uses to read the command name.
      *
      * Invocation intent is ALWAYS a --flag, never an environment variable: env vars
      * describe the ENVIRONMENT (PATH-like, deployment facts), not the parameters of
@@ -1332,24 +1308,20 @@ class Manifest
         console_debug('MANIFEST', 'Checking for manifest cache', $cache_file_path);
         $loaded_cache = self::_load_cached_data();
 
-        // In production-like modes (debug/production), require a pre-built manifest.
-        // A (re)build is permitted when either:
-        //   - $_force_build is set in-process (rsx:prod:build's handler sets it), or
-        //   - this is a "safe" lifecycle command that builds/manages the manifest.
-        // _is_safe_command() already grants rsx:prod:build boot access (and, when a
-        // sealed build is in force, gates that on the `--authorized` invocation flag
-        // via Rsx_Prod_Seal::is_authorized()), so the old RSX_FORCE_BUILD env token
-        // was redundant with it and has been removed. Invocation intent lives in
-        // flags (argv), never in environment variables.
-        $force_build = self::$_force_build || self::_is_safe_command();
-        if (Rsx::is_production() && !$force_build) {
-            if (!$loaded_cache) {
-                $rebuild_command = \App\RSpade\Core\Prod\Rsx_Prod_Seal::is_sealed()
-                    ? 'rsx:prod:refresh'
-                    : 'rsx:prod:build';
-                throw new \RuntimeException(
-                    "Manifest not built for production mode. Run: php artisan {$rebuild_command}"
-                );
+        // THE SEAL GATE. In a production-like mode the build tree is a deployment
+        // artifact, and a box missing either half of it - the manifest index or the
+        // seal that says a build actually completed - is a broken deployment, not a
+        // box that should quietly build one for itself mid-request. So both must be
+        // present and the failure is loud and names the remedy.
+        //
+        // The ONE exception is the process producing that artifact (rsx:build and the
+        // subprocesses it spawns). The commands that MOVE a box between modes need no
+        // manifest at all and never reach here - they are in
+        // __cli_skips_manifest_boot(), together with the read-only introspection
+        // invocations, so recovery from an unsealed box always works.
+        if (Rsx::is_production() && !\App\RSpade\Core\Prod\Rsx_Build_Context::is_active()) {
+            if (!$loaded_cache || !\App\RSpade\Core\Prod\Rsx_Prod_Seal::exists()) {
+                throw new \RuntimeException(self::UNSEALED_BUILD_MESSAGE);
             }
 
             console_debug('MANIFEST', 'Manifest cache loaded (production mode)');
@@ -1458,7 +1430,7 @@ class Manifest
     * Fired in order:
     *   1. rsx.rebuilt          - only if this process rebuilt (dev: on the next request
     *                             after any source change; prod: once inside the authorized
-    *                             rsx:prod:build during enable/refresh). Payload: the changed
+    *                             rsx:build). Payload: the changed
     *                             file list under 'files' and the removed one under
     *                             'removed' (see below).
     *   2. rsx.rebuilt.dev|.prod - same condition, immediately after; .prod when
@@ -1572,6 +1544,7 @@ class Manifest
 
         foreach ([static::_get_cache_file_path(), Manifest_Store::_get_cold_file_path()] as $file) {
             if (file_exists($file)) {
+                \App\RSpade\Core\Paths\Rsx_Project_Paths::assert_build_writable($file, 'Manifest::clear');
                 unlink($file);
             }
         }
@@ -2193,7 +2166,7 @@ class Manifest
     * a dead entry is inert, it is simply not referenced any more. So it runs when a file
     * LEFT the tree (the event that creates dead entries), and otherwise at most hourly.
     *
-    * The stamp is one file under rsx-tmp/derived/. A missing or unreadable stamp means
+    * The stamp is one file in the derived-cache tree. A missing or unreadable stamp means
     * "due", which is the safe direction: a sweep that runs when it need not costs a pass,
     * a sweep that never runs leaks.
     */
@@ -2203,7 +2176,7 @@ class Manifest
             return true;
         }
 
-        $stamp = storage_path('rsx-tmp/derived/last_sweep');
+        $stamp = Rsx_Project_Paths::derived_dir() . '/last_sweep';
         $now = time();
 
         if (is_file($stamp)) {
@@ -2231,8 +2204,53 @@ class Manifest
     * manifest's own sha1 (what the reflection cache keys on) and _rsx_file_hash_for_build()
     * (what every other derived cache keys on). A superset is harmless - sweep() only ever
     * removes an entry that matches nothing at all.
+    *
+    * THE SWEEP NEVER RUNS WHILE A BUNDLE COMPILE IS READING THE TREE, and that exclusion is
+    * what makes this safe rather than merely tidy. The live set is an index of files the
+    * MANIFEST tracks, and a compile legitimately derives artifacts from files the manifest
+    * does not track - a vendored third-party bundle under a `vendor/` directory the scanner
+    * skips is transformed like any other input. Such an entry matches nothing live, so the
+    * sweep removes it; removed BETWEEN the moment the compiler is handed its path and the
+    * moment the concatenator opens it, the compile fails with "Input file not found:
+    * tmp/derived/...". The compile already holds the bundle build lock for its whole
+    * duration, so taking that same lock here is the exclusion, and the in-process counter
+    * covers what a reentrant lock cannot (a compile that reaches the manifest and rebuilds
+    * it from inside itself).
+    *
+    * The acquire does not WAIT: a contended tree means a compile owns it, and this is
+    * optional housekeeping that reclaims disk. It stands down and the next build sweeps.
     */
     public static function _sweep_derived_caches(): void
+    {
+        if (\App\RSpade\Core\Bundle\BundleCompiler::is_compiling()) {
+            console_debug('MANIFEST', 'Derived cache sweep stood down: a bundle compile in this process is reading the tree');
+
+            return;
+        }
+
+        try {
+            $lock = \App\RSpade\Core\Locks\RsxLocks::system_lock(
+                \App\RSpade\Core\Locks\RsxLocks::LOCK_BUNDLE_BUILD,
+                0,
+                false
+            );
+        } catch (\RuntimeException $e) {
+            console_debug('MANIFEST', 'Derived cache sweep stood down: another process holds the bundle build lock');
+
+            return;
+        }
+
+        try {
+            static::__sweep_derived_caches_under_lock();
+        } finally {
+            \App\RSpade\Core\Locks\RsxLocks::release_lock($lock);
+        }
+    }
+
+    /**
+    * The sweep itself, with every bundle compile on this box excluded.
+    */
+    private static function __sweep_derived_caches_under_lock(): void
     {
         $live = [];
 

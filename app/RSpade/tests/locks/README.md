@@ -15,7 +15,7 @@ asks for, and `?int $timeout = null` (the default everywhere) means wait forever
    counting semaphores. `named_*_lock()`, `site_*_lock()` and `acquire_semaphore()` are all
    cluster. **The connection IS the lock** - a socket close (clean exit, crash, `kill -9`, or a
    partitioned peer) releases everything that connection held, immediately.
-2. **`SYSTEM_LOCK`** - this box only, backed by `flock()` over files in `storage/flock/`, and
+2. **`SYSTEM_LOCK`** - this box only, backed by `flock()` over files in `storage/state/flock/`, and
    **exclusive only** (there is no system READ lock: `flock()` is per open file description, so
    a READ-then-WRITE nesting would open a second descriptor and block against itself forever).
    `system_lock()`. Rare by design - build artifacts, a local helper process, this machine's

@@ -12,6 +12,7 @@ use App\RSpade\Core\Bundle\Concatenator;
 use App\RSpade\Core\Bundle\Minifier;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\JsParsers\Rsx_Node_Service;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -132,7 +133,7 @@ class Rpc_Lifecycle_Test extends Rsx_Test_Abstract
      */
     public static function test_a_real_child_php_process_does_not_disturb_this_process_daemon()
     {
-        $probe_file = storage_path('rsx-tmp/node-service-lifecycle-child-probe.js');
+        $probe_file = Rsx_Project_Paths::tmp_path('node-service-lifecycle-child-probe.js');
 
         try {
             Rsx_Node_Service::ensure();
@@ -182,7 +183,7 @@ class Rpc_Lifecycle_Test extends Rsx_Test_Abstract
      */
     public static function test_an_idle_service_exits_on_its_own_and_unlinks_its_socket()
     {
-        $socket = storage_path('rsx-tmp/node-service-idle-exit-probe.sock');
+        $socket = Rsx_Project_Paths::sockets_dir() . '/node-service-idle-exit-probe.sock';
         $daemon = null;
 
         try {
@@ -230,7 +231,7 @@ class Rpc_Lifecycle_Test extends Rsx_Test_Abstract
      */
     public static function test_the_idle_exit_never_fires_while_a_request_is_still_arriving()
     {
-        $socket = storage_path('rsx-tmp/node-service-idle-midrequest-probe.sock');
+        $socket = Rsx_Project_Paths::sockets_dir() . '/node-service-idle-midrequest-probe.sock';
         $daemon = null;
         $client = null;
 
@@ -326,7 +327,7 @@ class Rpc_Lifecycle_Test extends Rsx_Test_Abstract
             static::__assert_count(1, self::__daemon_pids($new_socket), 'exactly one daemon on the new socket');
             static::__assert_false(
                 file_exists($dead_socket),
-                'the abandoned socket file must be collected, not left in rsx-tmp forever'
+                'the abandoned socket file must be collected, not left in the tmp tree forever'
             );
         } finally {
             Rsx_Node_Service::stop(force: true);
@@ -370,7 +371,7 @@ class Rpc_Lifecycle_Test extends Rsx_Test_Abstract
      */
     public static function test_one_process_serves_two_subsystems_loading_each_on_first_use()
     {
-        $output_file = storage_path('rsx-tmp/node-service-lifecycle-test-concat.js');
+        $output_file = Rsx_Project_Paths::tmp_path('node-service-lifecycle-test-concat.js');
 
         try {
             Rsx_Node_Service::stop(force: true);
@@ -463,14 +464,14 @@ class Rpc_Lifecycle_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * quiesce_all() is what rsx:clean calls before it wipes rsx-tmp. It knows nothing about
+     * quiesce_all() is what rsx:clean calls before it wipes tmp. It knows nothing about
      * WHICH daemon it is killing - it matches on the socket directory in argv - so it takes
      * down every process's private node service, the SSR server, a stray left over from an
      * older framework release, and anything added later, and reports how many.
      */
     public static function test_quiesce_all_takes_down_every_daemon_in_the_socket_directory()
     {
-        $decoy_socket = storage_path('rsx-tmp/node-service-lifecycle-test-decoy.sock');
+        $decoy_socket = Rsx_Project_Paths::sockets_dir() . '/node-service-lifecycle-test-decoy.sock';
         $decoy = null;
 
         try {

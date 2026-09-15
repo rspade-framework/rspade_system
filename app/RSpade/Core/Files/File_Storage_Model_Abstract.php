@@ -68,7 +68,7 @@ abstract class File_Storage_Model_Abstract extends Rsx_Model_Abstract
      *
      * render_status_id is the DOCUMENT RENDER lifecycle, driven by Document_Render_Service. It
      * lives on the blob rather than the attachment because both products of a render - the PDF
-     * rendition (storage/rsx-renditions/{hash}.pdf) and the thumbnail cache key - are already
+     * rendition (tmp/renditions/{hash}.pdf) and the thumbnail cache key - are already
      * content-addressed on the blob hash, so N attachments sharing one blob share one render.
      *
      *   NOT_REQUIRED  nothing to render (an image, a zip, a plain PDF). The DEFAULT: store_blob()

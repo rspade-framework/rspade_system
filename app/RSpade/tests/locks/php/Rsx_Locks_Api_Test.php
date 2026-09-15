@@ -5,6 +5,7 @@ namespace App\RSpade\Tests\Locks\Php;
 use RuntimeException;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * The RsxLocks public API against the running rsx-lockd daemon.
@@ -196,7 +197,7 @@ class Rsx_Locks_Api_Test extends Rsx_Test_Abstract
         // database, its own scope) leaves a sibling file under a DIFFERENT scope, so "the only
         // scoped file" is not a safe assumption. The current scope's file is the one our own
         // acquire just created.
-        $path = storage_path('flock/system__' . Rsx_Connection_Scope::token() . '__rsxtest_system.lock');
+        $path = Rsx_Project_Paths::flock_dir() . '/system__' . Rsx_Connection_Scope::token() . '__rsxtest_system.lock';
 
         try {
             static::__assert_true(
@@ -337,10 +338,10 @@ class Rsx_Locks_Api_Test extends Rsx_Test_Abstract
      */
     public static function test_a_deadlock_throws_with_the_cycle_described()
     {
-        $ready_file = storage_path('rsx-tmp/rsxtest_deadlock_ready');
+        $ready_file = Rsx_Project_Paths::tmp_path('rsxtest_deadlock_ready');
         @unlink($ready_file);
 
-        $helper_path = storage_path('rsx-tmp/rsxtest_deadlock_helper.php');
+        $helper_path = Rsx_Project_Paths::tmp_path('rsxtest_deadlock_helper.php');
         ensure_directory(dirname($helper_path));
         file_put_contents($helper_path, static::__deadlock_helper_source($ready_file));
 

@@ -131,15 +131,15 @@ SERVER LIFECYCLE
     - Cleanup: Server is killed by PID when restarting
 
     Files:
-        storage/rsx-tmp/ssr-server.sock       Unix socket
-        storage/rsx-tmp/ssr-server.pid        Process ID
-        storage/rsx-tmp/ssr-server.build_key  Last known build key
+        tmp/ssr-server.sock       Unix socket
+        tmp/ssr-server.pid        Process ID
+        tmp/ssr-server.build_key  Last known build key
 
     The server process is daemonized (detached from PHP). It survives
     PHP-FPM worker recycling and terminal disconnects.
 
     CAVEAT - THE PID FILE IS INSIDE THE BLAST RADIUS. All three files above live
-    in storage/rsx-tmp/, which rsx:clean wipes wholesale. Rsx_SSR's own teardown
+    in tmp/, which rsx:clean wipes wholesale. Rsx_SSR's own teardown
     is a kill BY PID read from that file, so a clean removes the only handle it
     has and the running server becomes unreachable: still listening on an inode
     nobody can open, still holding the port of its socket path, invisible to the
@@ -149,10 +149,10 @@ SERVER LIFECYCLE
     What covers it now is the DIRECTORY-WIDE quiesce, which does not use the PID
     file at all - it matches on the socket path in the process's own argv:
 
-        pgrep -f -- '--socket=<storage>/rsx-tmp/'
+        pgrep -f -- '--socket=<tmp>/'
 
     rsx:clean runs it (Rsx_Node_Service::quiesce_all()) immediately BEFORE
-    wiping rsx-tmp, and bin/maintenance-mode.sh enable runs the bash twin. The
+    wiping tmp/, and bin/maintenance-mode.sh enable runs the bash twin. The
     SSR socket lives in that directory, so ssr-server is collected for free even
     though it is not the node service and has its own hand-rolled lifecycle.
     Nothing restarts it:

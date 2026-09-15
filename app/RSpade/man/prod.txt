@@ -1,0 +1,552 @@
+PROD(7)                     RSX Framework Manual                     PROD(7)
+
+NAME
+    prod - Running RSpade in production: the sealed build, the deployment
+    recipes, the read-only posture, and every administration lever
+
+SYNOPSIS
+    Enter and leave a production-like mode:
+        php artisan rsx:prod:enable [--debug]
+        php artisan rsx:prod:disable
+        php artisan rsx:mode:set dev|debug|prod
+
+    Produce and discard the build:
+        php artisan rsx:build [--force]
+        php artisan rsx:clean [--force]
+
+    Inspect the box:
+        php artisan rsx:prod:verify
+        php artisan rsx:health [--json]
+        php artisan rsx:migrate:check_consistency
+
+    Take the site down and bring it back:
+        php artisan rsx:maintenance:enable --reason="..."
+        php artisan rsx:maintenance:disable
+
+DESCRIPTION
+    A production-like mode - debug or production, collectively "a prod mode" -
+    serves a BUILD ARTIFACT. One command, rsx:build, produces that artifact;
+    everything else on the box only reads it. That single sentence is the
+    whole contract, and the rest of this page is its consequences.
+
+    RSX_MODE in the project-root .env selects the mode and is the only source
+    of truth for it (rsx:man app_mode covers the mode mechanics, the debug
+    variant, determinism and the seal file format). This page covers running
+    the thing.
+
+  THE THREE TREES
+    A deployed RSpade box has three volatile roots beside the code:
+
+        build/     Everything rsx:build produces: the manifest index, the
+                   compiled bundles, Laravel's route/event/package caches,
+                   precompiled Blade, and the seal. In a prod mode this is
+                   the deployment artifact, and NOTHING but the build writes
+                   it.
+        tmp/       Every derived cache and every runtime scratch file: node
+                   daemon sockets, per-source-file derived caches, npm
+                   scratch, staging directories for atomic writes, the
+                   thumbnail and rendition caches. It is also what Laravel
+                   calls its storage path, and what TMPDIR points at. Wholly
+                   regenerable; wiped by rsx:clean without ceremony.
+        storage/   User data and operational state: the uploaded-file blob
+                   store, storage/app, logs, and storage/state (the
+                   maintenance flag, flock files, framework-update markers).
+
+    So the posture a production host wants falls out of the split: the web
+    user needs to WRITE storage/ and tmp/ and needs only to READ system/,
+    rsx/ and build/. See THE READ-ONLY POSTURE.
+
+    build/ is FIXED at <project>/build, beside system/ and rsx/: the seal,
+    the manifest index and the build key live inside it, and it is deployed
+    with the two source trees and made read-only with them. tmp/ and
+    storage/ are overridable in .env with RSX_TMP_PATH and RSX_STORAGE_PATH,
+    each taking an absolute path or one relative to the PROJECT ROOT ('./tmp'
+    and 'tmp' both mean <project>/tmp). Full tree listings, what each entry
+    is and what regenerates it: rsx:man storage_directories.
+
+  LARAVEL'S STORAGE IS tmp/
+    Laravel is handed the TMP root as its storage path, so storage_path()
+    and every package that composes a location from it land under tmp/. That
+    is the right default: most of what Laravel calls storage is scratch -
+    framework caches, compiled views, temp files - and putting it in the
+    disposable tree by construction means nothing has to remember to keep it
+    out of a backup.
+
+    The persistent exceptions are pinned, and there are exactly four:
+
+        logging       config/logging.php pins the single, daily and emergency
+                      channels at <storage>/logs/laravel.log.
+        local disk    The 'local' and 'public' filesystem disks are rooted
+                      at <storage>/app, and so is the public storage link.
+        tmp/logs      A symlink onto <storage>/logs.
+        tmp/app       A symlink onto <storage>/app.
+
+    The two links are what make the lazy spelling safe: code resolving
+    storage_path('logs') or storage_path('app') - a package, a copied recipe
+    - lands on the link and writes into persistent storage rather than into
+    a tree rsx:clean wipes. The tmp skeleton creates and validates both on
+    every boot, and rsx:clean recreates them after its wipe. A symlink
+    pointing somewhere else is replaced silently; a REAL directory or file
+    sitting on either name is fatal, because somebody put it there:
+
+        tmp/logs is a real directory, and it has to be a symlink onto
+        <storage>/logs.
+          Laravel's storage path is the tmp tree, so storage_path('logs')
+          resolves here and this link is what keeps it persistent.
+          Move anything that matters out of '<path>', then remove it - the
+          next boot recreates the link.
+          See:      php artisan rsx:man prod
+
+    A PACKAGE THAT PERSISTS THROUGH storage_path() LOSES ITS FILES ON
+    rsx:clean. Anything durable belongs on a Storage disk (the local disk is
+    already rooted in persistent storage) or on an explicit owner method:
+    Rsx_Project_Paths::app_dir('<name>') for durable data,
+    Rsx_Project_Paths::tmp_path('<name>') for a cache. The four pinned names
+    above are the only ones that survive without saying so.
+
+    TMPDIR. A plain composer library writes its scratch through PHP's
+    sys_get_temp_dir(), which reads the sys_temp_dir ini setting, then
+    TMPDIR, then falls back to /tmp. The framework sets TMPDIR to the tmp
+    root on the first lines of both entrypoints, so every process RSpade
+    starts inherits it. ON A HOST WHERE YOU START PHP YOURSELF - your own
+    php-fpm pool, your own supervisor program, your own cron line - set
+    TMPDIR to the tmp root there as well; PHP answers sys_get_temp_dir()
+    once per process and caches it, so nothing can correct it later.
+    rsx:health reports where it landed:
+
+        PHP temp dir   OK    /var/www/html/tmp
+        PHP temp dir   WARN  /tmp is outside the tmp tree (/var/www/html/tmp)
+
+    A php.ini that sets sys_temp_dir wins over TMPDIR; that WARN is how you
+    find out.
+
+  THE WRITABILITY CHECKS AT BOOT
+    Both entrypoints assert, before anything can use them, that this process
+    can write the trees it is about to write. storage/ and tmp/ are checked
+    in EVERY mode - and created when simply absent, since a fresh checkout
+    has neither - because a box that cannot write them cannot accept an
+    upload, compile a template or take a lock, and every symptom of that
+    surfaces somewhere far from the cause:
+
+        The storage directory is not writable: /var/www/html/storage
+
+          RSpade writes there in every mode, as www-data.
+
+              chown -R 'www-data' '/var/www/html/storage'
+              chmod -R u+rwX '/var/www/html/storage'
+
+    A failed mkdir says "The storage directory does not exist and could not
+    be created: <path>" instead, and names RSX_STORAGE_PATH as the other
+    possibility.
+
+    The project root, system/ and build/ are checked only where something is
+    expected to write them: in development, and in a prod mode when the
+    process IS the build (rsx:build). A sealed production RUNTIME wants
+    exactly the opposite posture, so it never checks them:
+
+        The build tree is not writable: /var/www/html/build
+
+          A build writes the manifest, the bundles and the seal, so it needs
+          this tree writable.
+          The current user is www-data.
+
+              chown -R 'www-data' '/var/www/html/build'
+              chmod -R u+rwX '/var/www/html/build'
+
+          A production RUNTIME is meant to have these read-only; only a
+          build and development mode write them. See: php artisan rsx:man
+          prod
+
+    In development the same refusal reads "Development rebuilds the manifest
+    and the bundles on demand, so it needs this tree writable." Top-level
+    directories only - a boot sanity check, not a permissions audit. On the
+    web it is a 503 carrying the same text.
+
+  THE SEAL
+    build/prod_seal.json is the record that a build COMPLETED. rsx:build
+    writes it last and only on success, so a box whose pipeline died halfway
+    has no seal, and a box with no seal has nothing to serve.
+
+    In a prod mode, Manifest::init() refuses to run when either the manifest
+    index or the seal is missing:
+
+        This production build is unsealed. Run: php artisan rsx:build
+        --force. See rsx:man prod.
+
+    That is fatal for a web request, for migrate, for rsx:health, for a task
+    worker - for everything. The exceptions are exactly the commands that
+    repair the box: rsx:build itself (and the subprocesses it spawns),
+    rsx:prod:enable, rsx:prod:disable, rsx:mode:set, rsx:clean, rsx:man, and
+    the bare introspection invocations (list, help, --version). An unsealed
+    production box is a broken deployment, not a box that should quietly
+    build one for itself inside a request.
+
+    A PREVIOUS RELEASE'S SEAL SATISFIES THE GATE. The seal says "a build
+    completed here", not "this build matches the code on disk". Deploying new
+    code without rebuilding leaves a box serving the old artifact - which is
+    why every deployment recipe below ends in a build, and why
+    rsx:prod:verify exists.
+
+  THE BUILD CONTEXT
+    Permission to write the build tree is a property of the PROCESS, not of
+    a flag or an environment variable. rsx:build declares itself a build
+    context from the first line of boot (recognised from argv, so it holds
+    before any command handler runs) and carries that context to every
+    subprocess it spawns as a framework-internal flag. rsx:clean declares one
+    too, because its whole job is discarding the tree.
+
+    Every framework write path into build/ passes through one guard. Outside
+    a build context, in a prod mode, it throws:
+
+        <context>: '<path>' is a build artifact, and only a build may write
+        it.
+          Rebuild:  php artisan rsx:build --force
+          See:      php artisan rsx:man prod
+
+    The guard is a GUARDRAIL, not a security boundary. It intercepts the
+    framework's own write paths; a raw `rm -rf build/`, a hand-edited bundle
+    or a `cp` over manifest_index.php is not something the framework can see.
+    rsx:prod:verify is the backstop that detects that drift afterwards.
+
+  AN APPLICATION ARTIFACT IN build/
+    An application that generates something at build time - a sitemap, a
+    precomputed index, a compiled data file - writes it from an
+    #[OnEvent('rsx.rebuilt')] handler into
+    Rsx_Project_Paths::build_path('app/<name>'). In a prod mode that handler
+    runs inside rsx:build, which is the only writer of build/; in development
+    it runs on the first request after a change. Worked example and the
+    rules: rsx:man event_hooks.
+
+  WHAT A PROD MODE NEVER DOES
+    - No JIT. The manifest never auto-rebuilds and a bundle never compiles on
+      a web request. A missing artifact fails loud naming rsx:build.
+    - No source writes. migrate regenerates no constants, no model docblocks
+      and no bundles; those are SOURCE, committed from the development box
+      that authored the migration.
+    - No .migration_whitelist writes. The file is source and ships with the
+      code; a prod mode consults it when present and skips it silently when
+      absent (rsx:man migrations).
+    - No downloads. Only the build phase may fetch an external asset into the
+      mirror. A sealed request that misses one throws naming the file.
+    - No build directories created at boot. Boot creates the storage/ and
+      tmp/ skeletons; the build tree is created by rsx:build and rsx:clean
+      and by nothing else.
+
+      THE ONE EXCEPTION IS DEVELOPMENT-ONLY AND IS LARAVEL'S: development
+      boot creates build/laravel, because Laravel's PackageManifest writes
+      its packages.php there during boot and throws when the directory is
+      absent - a fresh development checkout could not otherwise run the build
+      that would create it. A production-like mode creates nothing.
+
+THE RECOMMENDED DEPLOYMENT
+    On the production host, with the code already fetched or about to be:
+
+        php artisan rsx:maintenance:enable --reason="deploying <version>"
+        git pull                       # or however the code arrives
+        php artisan migrate
+        php artisan rsx:mode:set prod  # = rsx:prod:enable = build + seal
+        php artisan rsx:prod:verify
+        php artisan rsx:maintenance:disable
+
+    rsx:mode:set prod on a box that is ALREADY in production mode is a
+    reseal: it rewrites RSX_MODE (a no-op) and runs rsx:build --force. There
+    is no separate "refresh" command - the build is the refresh.
+
+    FIRST INSTALL on an empty database needs the build twice, because the
+    first one has no schema to compile against:
+
+        php artisan rsx:build --force
+        php artisan migrate
+        php artisan rsx:build --force
+
+  WHY MIGRATE COMES BEFORE THE BUILD
+    The manifest bakes every model's column map in AT BUILD TIME. The
+    database moves AT MIGRATE TIME. Those are two steps and they can be run
+    in either order, so one of the two orderings is always wrong somewhere:
+
+        migrate, then build   The build compiles against the schema the
+                              database now has. Correct at every instant the
+                              site is serving. THIS IS THE RECOMMENDED ORDER.
+        build, then migrate   Between the two steps the served code believes
+                              in columns the tables do not have yet. The
+                              window is the length of the migration, and a
+                              migration that itself writes through a model
+                              fails inside it.
+
+    After a migrate in a prod mode, rsx:migrate:check_consistency runs
+    automatically and MIGRATE PROPAGATES ITS EXIT CODE. It compares the
+    sealed manifest against the live schema:
+
+        [ERROR] N column(s) the manifest declares are missing from the
+        database.
+
+          This build was compiled against a DIFFERENT schema than the one
+          this database has. The manifest bakes every model's columns in at
+          build time; the database moves at migrate time. Code that is being
+          served right now believes those columns exist.
+
+          Repair it by rebuilding against the schema you now have:
+
+              php artisan rsx:build --force
+
+          Avoid it next time by migrating BEFORE the build - that is the
+          recommended deployment order:
+
+              php artisan migrate
+              php artisan rsx:mode:set prod
+
+          See rsx:man prod.
+
+    A column the DATABASE has and the manifest does not is a [WARNING] and
+    exits 0: the database is merely ahead of the build and nothing served
+    reads that column.
+
+  COMPOSER IS NOT A PRODUCTION-BOX OPERATION
+    Do not run `composer install` or `composer dump-autoload` by hand on an
+    unsealed production box. Composer's post-autoload-dump hook spawns a bare
+    `php artisan package:discover`, which is not a build context; on a box
+    whose seal has not been written yet the seal gate refuses it and composer
+    reports the refusal as a failed dump. The recommended order never needs
+    it: rsx:build dumps the optimized autoloader itself, inside the build
+    context, as one of its own steps.
+
+BUILD ELSEWHERE
+    Both recipes below produce an artifact on a machine that is not the
+    production host. Both depend on the determinism contract (rsx:man
+    app_mode): two byte-identical codebases produce an identical build_key
+    and byte-identical bundle filenames, whatever absolute path they sit at.
+    So an artifact built in CI is the same artifact a host build would have
+    produced, and rsx:prod:verify on the host proves it.
+
+  A CI ARTIFACT
+    The build needs a database to compile the manifest against, because the
+    manifest holds every model's column map. A THROWAWAY database is enough -
+    nothing in the build reads a row.
+
+        # in the CI job, with .env pointing at a scratch MySQL
+        php artisan migrate
+        php artisan rsx:build --force
+        tar -czf release.tgz \
+            --exclude=./storage --exclude=./tmp \
+            --exclude=./.env --exclude=./.git \
+            .
+
+    Unpack it on the host, supply the host's own .env, create writable
+    storage/ and tmp/, and run rsx:prod:verify. The host still runs its own
+    migrate against its own database (with maintenance mode up), and
+    check_consistency is what confirms the shipped build matches the schema
+    that migrate left behind.
+
+  A CONTAINER IMAGE
+    The same thing inside a build stage: migrate a scratch database, run
+    rsx:build --force, and COPY the code tree plus build/ into the runtime
+    image. storage/ and tmp/ are volumes, not image layers - they are the
+    only two trees the runtime user writes.
+
+    Because the artifact is deterministic, an image built twice from one
+    commit carries the same build_key, and rsx:prod:verify inside the running
+    container is a real integrity check rather than a formality.
+
+THE READ-ONLY POSTURE
+    A correctly configured production box has:
+
+        system/    read-only to the web user   (framework source)
+        rsx/       read-only to the web user   (application source)
+        build/     read-only to the web user   (the build artifact)
+        storage/   WRITABLE by the web user    (user data, logs, state)
+        tmp/       WRITABLE by the web user    (derived caches, sockets)
+
+    Own the first three with the DEPLOY user and the last two with the web
+    user. Nothing in RSpade needs to write source or build output while
+    serving a request, and this posture is what makes that guarantee
+    enforceable by the operating system rather than by framework code.
+
+    It is a POSTURE, not a requirement: a box that has not adopted it works
+    fine. rsx:health reports where the box stands, as INFO rows in a prod
+    mode:
+
+        system/          INFO  read-only to www-data (the recommended
+                               production posture)
+        rsx/             INFO  WRITABLE by www-data - the recommended
+                               production posture is read-only
+        build/           INFO  ...
+
+    and as FAIL rows for the two trees that MUST be writable (storage/ and
+    tmp/, in every mode; build/ too in development). rsx:build and rsx:clean
+    check writability BEFORE touching anything and refuse with nothing
+    changed:
+
+        Cannot build - these directories are not writable by this user:
+          /var/www/html/build
+          Nothing was changed.
+
+    THE PATH OVERRIDES. When the two writable trees cannot live beside the
+    code - a read-only image with volumes elsewhere, a shared storage mount
+    - point them somewhere else in .env. Each takes an absolute path or one
+    relative to the project root:
+
+        RSX_TMP_PATH=/var/tmp/rspade
+        RSX_STORAGE_PATH=/mnt/data/rspade-storage
+
+    build/ has no key. It is fixed at <project>/build, because the seal, the
+    manifest index and the build key live inside it and it is deployed with
+    system/ and rsx/.
+
+    storage/state follows RSX_STORAGE_PATH and is not independently
+    overridable: the flock files under it are how processes on this box
+    exclude each other, so a subprocess that resolved a different state root
+    than its parent would stop excluding anything.
+
+ADMINISTRATION
+    rsx:build [--force]
+        The build. In development: the manifest and every bundle, nothing
+        sealed. In a prod mode: preflight, rsx:clean --force, manifest,
+        mirror externals, bundles (minified in strict production), optimized
+        composer autoloader (classmap-authoritative in strict production),
+        Laravel route/event/view caches, then the seal. Refuses without
+        --force when a seal is already present, because rebuilding replaces
+        what the box is serving right now.
+
+    rsx:clean [--force]
+        Owns every wipe: quiesces the node daemons, empties build/ and tmp/,
+        flushes the Redis caches, sweeps orphaned staging directories, and
+        recreates the two empty roots. In a prod mode it requires --force and
+        says why:
+
+            Refusing to clean a production build tree without --force.
+              Discarding it leaves the site unable to serve until it is
+              rebuilt.
+              Rebuild instead:      php artisan rsx:build --force
+
+    rsx:prod:enable [--debug]
+        Heal the .env invariant, write RSX_MODE, run rsx:build --force. With
+        --debug it builds the debug variant (unminified, sourcemaps,
+        console_debug working) - the sealed build to reproduce a
+        production-only issue with readable code.
+
+    rsx:prod:disable
+        Remove the seal, write RSX_MODE=development, rsx:clean, restore the
+        non-authoritative composer autoloader, rsx:build. Idempotent.
+
+    rsx:mode:set dev|debug|prod
+        A thin delegator over the two above, so each transition has exactly
+        one implementation.
+
+    rsx:prod:verify
+        Recompute the sha256 of every sealed asset, compare the build_key on
+        disk against the seal, report OPcache posture (advisory). Exits 0
+        when the build matches the seal and 1 otherwise. This is the deploy
+        health check and the cluster drift check.
+
+    rsx:health [--json]
+        Dependencies, services, environment, the tree writability rows, the
+        read-only posture rows and the log-level warning. Exit 1 iff at least
+        one FAIL row. It boots the manifest, so on an unsealed box it fails
+        with the unsealed message like everything else.
+
+    rsx:maintenance:enable --reason / rsx:maintenance:disable
+        The window to hold around a pull, a migrate and a build. Both are
+        intercepted pre-boot and shell out, so they work on a broken tree and
+        are immune to their own gate. rsx:man maintenance_mode.
+
+    migrate + rsx:migrate:check_consistency
+        See WHY MIGRATE COMES BEFORE THE BUILD above and rsx:man migrations.
+        check_consistency runs in a prod mode only and refuses elsewhere.
+
+    LOG_LEVEL
+        Set LOG_LEVEL=info in .env on a production box. DEBUG logging writes
+        every query and every framework notice to disk forever; it fills a
+        volume and it puts request detail in a file that is not the place for
+        it. rsx:health WARNs when the default channel resolves to debug in a
+        prod mode (a stack channel resolves to its loudest member).
+
+    THE ENVIRONMENT UPDATE
+        system/bin/environment_updates/ scripts are self-detecting and
+        idempotent, and run automatically after a framework pull and on every
+        development rebuild. They are how a durable layout change reaches an
+        existing install without an operator step. Contract:
+        system/bin/environment_updates/CLAUDE.md.
+
+ERRORS
+    "This production build is unsealed. Run: php artisan rsx:build --force.
+     See rsx:man prod."
+        The manifest index or the seal is missing in a prod mode. Every web
+        request 500s and almost every command refuses. Run the named build.
+        If the build itself is what is failing, rsx:prod:disable returns the
+        box to development so the failure can be read without the gate in the
+        way.
+
+    "A sealed production build is already present."
+        rsx:build without --force on a sealed box. Rebuilding replaces what
+        the box is serving; say so with --force.
+
+    "Refusing to clean a production build tree without --force."
+        rsx:clean on a sealed box. Almost always the command wanted is
+        rsx:build --force, which cleans as its first step.
+
+    "<context>: '<path>' is a build artifact, and only a build may write it."
+        Something outside a build context tried to write under build/ in a
+        prod mode. This is the guard doing its job; the fix is to run the
+        operation through rsx:build.
+
+    "The storage directory is not writable: <path>"
+    "The tmp directory does not exist and could not be created: <path>"
+        The boot writability check, in any mode. The message names the
+        directory, the user and the chown/chmod that repairs it. A relocated
+        root is the other possibility: RSX_TMP_PATH / RSX_STORAGE_PATH name
+        the directory being checked.
+
+    "The build tree is not writable: <path>"
+        The same check, in development or inside rsx:build. A sealed
+        production RUNTIME never raises it - build/ read-only is the
+        recommended posture there.
+
+    "tmp/logs is a real directory, and it has to be a symlink onto
+     <storage>/logs."
+        Something replaced one of the two persistent links inside tmp/ with
+        real content. Move what is in it somewhere permanent, remove it, and
+        the next boot recreates the link. Same message for tmp/app.
+
+    "Cannot build - these directories are not writable by this user:"
+        Preflight. Nothing was changed. Either run the build as the deploy
+        user, or the read-only posture has been applied to a tree the build
+        needs to write.
+
+    "[ERROR] N column(s) the manifest declares are missing from the
+     database."
+        The build and the schema disagree. Rebuild with rsx:build --force,
+        and migrate before the build next time.
+
+    "[ERROR] There is no manifest to check."
+        rsx:migrate:check_consistency on a box with no build. The box cannot
+        serve a request either: rsx:build --force.
+
+    "[ERROR] rsx:migrate:check_consistency runs in a production mode only."
+        A development box rebuilds its manifest from the live schema on the
+        next request, so the comparison is "consistent" by construction.
+
+    "Bundle 'X' not compiled for production mode"
+        A bundle the manifest knows about has no compiled output. The build
+        did not complete, or the tree was modified after it. rsx:build
+        --force; rsx:prod:verify says whether the rest of the artifact drifted
+        too.
+
+SEE ALSO
+    rsx:man app_mode - mode mechanics, the debug variant, the seal file
+                       format, the determinism contract, external mirroring
+    rsx:man storage_directories - the three trees, entry by entry
+    rsx:man event_hooks - rsx.rebuilt, and writing an application artifact
+                       into build/
+    rsx:man migrations - the whitelist, the consistency check, the ordering
+    rsx:man maintenance_mode - the window to hold around a deployment
+    rsx:man health - the check inventory and what each row means
+    rsx:man prelaunch_checklist - the launch-gating audits, including the
+                       read-only posture
+    rsx:man config_rsx - configuration tiers and the .env contract
+    skill rspade:application-modes-deployment - when to reach for which
+                       command, and diagnosing a refusal
+
+AUTHOR
+    RSpade Framework
+
+RSpade                       September 2026                         PROD(7)

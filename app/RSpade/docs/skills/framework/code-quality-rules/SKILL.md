@@ -156,7 +156,7 @@ There are exactly three sanctioned homes, and none of them is a directory a rule
 | Want | Home |
 |---|---|
 | "this file already passed this check" | `Validation_Ledger` - and the DRIVER writes it, not you |
-| a derived FILE (a sanitized copy, a parse tree) | `App\RSpade\Core\Cache\File_Content_Cache`, which owns `storage/rsx-tmp/derived/<namespace>/` |
+| a derived FILE (a sanitized copy, a parse tree) | `App\RSpade\Core\Cache\File_Content_Cache`, which owns `tmp/derived/<namespace>/` |
 | a derived VALUE that was expensive to compute | `RsxCache::get_persistent()` / `set_persistent()`, keyed on a CONTENT HASH |
 
 **The build-scoped `RsxCache::get()` / `set()` is unusable at manifest time, by construction.**
@@ -176,7 +176,7 @@ bytes.
 
 ### The Validation_Ledger, in the shape a rule author needs
 
-One `var_export`'d array at `storage/rsx-tmp/persistent/validation_ledger.php`, shape version 2:
+One `var_export`'d array at `tmp/persistent/validation_ledger.php`, shape version 2:
 
 ```php
 ['version' => 2,
@@ -199,7 +199,7 @@ structure map and the dependency fingerprint both counted the 635 test-tree file
 fingerprint flipped in both directions every time the suite started or stopped.
 
 `flush()` is registered as a shutdown function on the first `record_pass()` AND called at the end
-of the pass, so a later fatal costs nothing already earned. `rsx:clean` wipes `rsx-tmp`, the
+of the pass, so a later fatal costs nothing already earned. `rsx:clean` wipes `tmp/`, the
 ledger with it.
 
 ---

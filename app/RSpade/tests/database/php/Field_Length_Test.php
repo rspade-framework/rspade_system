@@ -12,6 +12,7 @@ use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -260,7 +261,7 @@ class Field_Length_Test extends Rsx_Test_Abstract
 
         $stubs = [];
 
-        foreach (glob(storage_path('rsx-build/js-model-stubs/*.js')) as $path) {
+        foreach (glob(Rsx_Project_Paths::stubs_dir(Rsx_Project_Paths::STUBS_MODEL) . '/*.js') as $path) {
             $source = file_get_contents($path);
 
             if (!preg_match("/static __MODEL = '([A-Za-z0-9_]+)';/", $source, $model_match)) {

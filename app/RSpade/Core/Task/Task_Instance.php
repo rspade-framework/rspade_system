@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Task;
 
 use Exception;
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task_Status;
 use App\RSpade\Core\Task\Task_Worker_Registry;
 
@@ -449,7 +450,7 @@ class Task_Instance
             return $this->temp_dir;
         }
 
-        $base_temp_dir = storage_path('rsx-tmp/tasks');
+        $base_temp_dir = Rsx_Project_Paths::tasks_dir();
 
         if (!is_dir($base_temp_dir)) {
             mkdir($base_temp_dir, 0755, true);

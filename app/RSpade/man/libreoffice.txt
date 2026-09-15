@@ -46,7 +46,7 @@ HOW IT WORKS
        The private user profile is what lets a fresh invocation never collide with a
        stale LibreOffice profile.
     3. The produced PDF is published ATOMICALLY into the rendition cache: copied to a
-       temp file BESIDE storage/rsx-renditions/{blob-hash}.pdf (same filesystem) and
+       temp file BESIDE tmp/renditions/{blob-hash}.pdf (same filesystem) and
        renamed over the destination. A half-written rendition is never observable.
     4. The blob settles RENDERED, its poisoned thumbnail cache entries are purged, and
        every attachment referencing it emits a realtime frame.

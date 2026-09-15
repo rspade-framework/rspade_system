@@ -16,25 +16,31 @@ instance of `Manifest_Build`, reachable as `Manifest::build()`:
 | It carries | Read by |
 |---|---|
 | scan roots, relative to `base_path()` | `Manifest_Scanner::_scan_directories()` |
-| the storage root (where `rsx-build/` lives) | `Manifest_Store::_get_cache_file_path()` |
+| the build root (where the index lives) | `Manifest_Store::_get_cache_file_path()` |
 | the mode | reporting |
 | the build's ONE `Source_Cache` | `Php_Fixer::fix()` (phase 2) and the code-quality driver (phase 7) |
 
 `Manifest_Build::from_config()` is the ordinary answer: `config('rsx.manifest.scan_directories')`
-plus the three test trees while `Rsx_Test_Abstract::suite_is_running()`, and `storage_path()`.
+plus the three test trees while `Rsx_Test_Abstract::suite_is_running()`, and
+`Rsx_Project_Paths::build_root()`.
 
 **Why it exists: testability.** Until it did, "build a manifest" meant "build THE manifest,
-from config, into the developer's own storage directory" - so a test could not build a fixture
+from config, into the developer's own build directory" - so a test could not build a fixture
 tree and assert on the index that came out, and the build could not be held to a MEMORY
-BUDGET. `Manifest::_use_build_for_tests()` replaces it in-process, and three
+BUDGET. `Manifest::_use_build_for_tests()` replaces it in-process, and
 framework-INTERNAL flags (the `--_` convention) drive a CHILD build:
 
 | Flag | Effect |
 |---|---|
-| `--_manifest-storage-root=<abs>` | write the index under this root |
+| `--_rsx-build-root=<abs>` | write the index (and the rest of the build tree) under this root |
+| `--_rsx-tmp-root=<abs>` | put the derived caches and the generated stubs under this root |
 | `--_manifest-extra-scan-roots=<csv>` | ADD roots to the configured list |
 | `--_manifest-scan-roots=<csv>` | replace the list outright |
 | `--_manifest-report-peak` | print `MANIFEST_PEAK_BYTES=<n>` after the summary |
+
+The first two are `Rsx_Project_Paths`' own flags rather than the manifest's - the manifest
+holds no root of its own. A fixture build passes BOTH, so it never regenerates the
+developer's real stubs while writing its own index somewhere else.
 
 An extra root cannot be the ONLY root: the framework's own support modules, models and parent
 classes are resolved THROUGH the index, so a build of a fixture tree alone dies at "Manifest
@@ -64,8 +70,8 @@ The Manifest is a compiled cache of all file metadata in the RSX application. It
 
 | File | What it holds | Who loads it |
 |---|---|---|
-| `storage/rsx-build/manifest_index.php` | every derived section; `file_index` (path -> `[size, mtime]`) for the WHOLE tree; the `files` entries whose METHOD MAP is read at request time - models and their ancestors, task services, the generated stubs - plus every record that has no method map at all | `init()`, on every request |
-| `storage/rsx-build/manifest_files.php` | every other `files` entry, method maps intact | ONCE per process, on demand |
+| `build/manifest_index.php` | every derived section; `file_index` (path -> `[size, mtime]`) for the WHOLE tree; the `files` entries whose METHOD MAP is read at request time - models and their ancestors, task services, the generated stubs - plus every record that has no method map at all | `init()`, on every request |
+| `build/manifest_files.php` | every other `files` entry, method maps intact | ONCE per process, on demand |
 
 **81% of the index was `files`, and 76% of that was method maps.** A served request reads
 almost none of them: `Orm_Controller` and `get_relationships()` read a model's, `Task` and
@@ -230,14 +236,16 @@ map above.
 | 4 class map | `_scan_directory_for_classes()` re-tokenized every framework php file, the scanned ones included | the indexed half comes from the files map; the UNINDEXED framework subtrees (Commands, Database, Http, Ide, ...) are walked only when their stat fingerprint moved, memoized in the PERSISTENT cache |
 | 5 modules | twelve full O(tree) passes | the diff contract above |
 | 6 stubs | model stubs rewritten unconditionally; per-model `stat` + `sha1_file` + `glob` | content-compared; the sweep is one pass over a set, skipped entirely on a no-change build |
-| 7 `_sweep_derived_caches` | every build, content-hashing every file | when a file was REMOVED, else at most hourly (stamp under `rsx-tmp/derived/`). It reclaims DISK, never correctness, so a deferred sweep costs nothing |
+| 7 `_sweep_derived_caches` | every build, content-hashing every file | when a file was REMOVED, else at most hourly (stamp under `tmp/derived/`). It reclaims DISK, never correctness, so a deferred sweep costs nothing |
 | 7 `view:clear` | every build | only when a `.blade.php` changed or was removed - it exists to stop a stale `@rsx_extends` surviving a rename, and nothing else can create one |
 | 7 override pass | re-adjudicated all 640 class names | acts only on names a dirty file declares; the restore pass gets its `.upstream` entries from the same single pass that builds the active class map |
 | 7 composer classmap | every rebuild (~15k warm stats) | only when the override pass actually renamed something (`Manifest::$_override_pass_renamed`, sticky across restarts) |
 | 7 duplicate-class check | three detectors | ONE: `_collate_files_by_classes()`. The copy in `_validate_manifest_data()` is gone |
 | 2 Php_Fixer | five whole-map scans PER FILE; a full pass over the tree on any structural change | one class index per RUN (`Php_Fixer::begin_run()`); a structural change fixes the changed files plus the files that REFERENCE a class in the delta |
 
-**The fixer's memory is its own file.** `storage/rsx-build/php_fixer_structure.php`
+**The fixer's memory is its own file.** `Rsx_Project_Paths::php_fixer_structure_file()`
+(`tmp/php-fixer/<hash of the build root>.php` - keyed so a fixture build never poisons the
+real build's memory)
 holds `class name => "file|parent"` for the whole tree, and it is written AFTER the
 re-parse of what the fixer rewrote - recording the PRE-fix shape guaranteed a second
 full pass on the next build. It is not in the index because the hot half is included
@@ -255,14 +263,14 @@ map with no room for another section. A lost copy costs one full fixer pass.
 - The last three entries are the STUB GENERATORS, which are ordinary support modules that happen to write files (see THE STUB GENERATORS ARE MODULES)
 
 ### Phase 6: Stub Generation
-- `Controller_Stub_ManifestSupport` -> `storage/rsx-build/js-stubs/`
-- `Model_Stub_ManifestSupport` -> `storage/rsx-build/js-model-stubs/`
-- `Auth_Stub_ManifestSupport` -> `storage/rsx-build/js-auth-stubs/`
+- `Controller_Stub_ManifestSupport` -> `tmp/js-stubs/`
+- `Model_Stub_ManifestSupport` -> `tmp/js-model-stubs/`
+- `Auth_Stub_ManifestSupport` -> `tmp/js-auth-stubs/`
 - Every generator CONTENT-COMPARES before writing, so a rebuild that changes no source rewrites no stub and recompiles no bundle
 
 ### Phase 7: Cache Writing
 - Implemented in `Manifest_Store::_save()`
-- Writes `storage/rsx-build/manifest_index.php` and `manifest_files.php` (see THE INDEX IS
+- Writes `build/manifest_index.php` and `manifest_files.php` (see THE INDEX IS
   TWO FILES, above)
 - Emits a COMPACT PHP literal (short arrays, no whitespace), STREAMED to the temp file in
   chunks - `var_export()` built the whole 8.8 MB file as one string first
@@ -657,7 +665,7 @@ pass (`rsx:check` runs the same one); `Support/Source_Cache` is the ONE reader, 
 parser, shared with `Php_Fixer` so a file read in phase 2 is not read again in the pass, and
 LRU-bounded at 16 during a build (`Manifest_Build::BUILD_SOURCE_CACHE_CAPACITY`);
 `Support/Validation_Ledger` is the ONE memory of "already passed", at
-`storage/rsx-tmp/persistent/validation_ledger.php`, keyed on the manifest's own file hash so a
+`tmp/persistent/validation_ledger.php`, keyed on the manifest's own file hash so a
 verdict survives a manifest clear. The build hands over the changed set and the cache and takes
 back a verdict; everything else is the driver's contract, in `rsx:man code_quality` and skill
 `rspade:code-quality-rules`.
@@ -692,7 +700,7 @@ The guarantee does NOT come from change tracking: the clean `_save()` already re
 offending file's mtime/size/hash, so incremental detection alone would consider it unchanged.
 It comes from the flag.
 
-**The flag is a SIDECAR FILE**, `storage/rsx-build/manifest_is_bad`, and raising it is ALL
+**The flag is a SIDECAR FILE**, `build/manifest_is_bad`, and raising it is ALL
 `_set_manifest_is_bad()` does. Its existence is the whole signal; its content is a sentence
 for a human. `_load_cached_data()` refuses the cache outright while it exists, so `init()`
 forces a FULL rebuild, the pass re-fires the same violation, and the build aborts again -
@@ -739,9 +747,9 @@ When testing manifest functionality:
 
 ## Important Constants & Paths
 
-- Cache files: `storage/rsx-build/manifest_index.php` (hot) and `manifest_files.php` (cold)
-- JS stubs: `storage/rsx-build/js-stubs/`
-- Model stubs: `storage/rsx-build/js-model-stubs/`
+- Cache files: `build/manifest_index.php` (hot) and `manifest_files.php` (cold)
+- JS stubs: `tmp/js-stubs/`
+- Model stubs: `tmp/js-model-stubs/`
 - Scan dirs (`Manifest::scan_directories()`): `['rsx', 'app/RSpade/Core', 'app/RSpade/Integrations', 'app/RSpade/Bundles', 'app/RSpade/Breadcrumbs', 'app/RSpade/CodeQuality', 'app/RSpade/Lib', 'app/RSpade/Sys']` - the last is the framework's own application tree (the /_sys control panel) - plus `app/RSpade/tests`, `app/RSpade/temp` and `rsx/tests` while the process is a test run
 
 ## Direct Data Access

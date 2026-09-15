@@ -1,0 +1,41 @@
+# Test catalog: paths
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| PA-01 | The default roots are `<project>/{build,tmp,storage}` | php | no override | three project-root directories | implemented | 2026-09-15 |
+| PA-02 | `state_root()` follows storage and holds the flock directory - a lock only excludes when a parent and its children open one file | php | none | `<storage>/state`, `<storage>/state/flock` | implemented | 2026-09-15 |
+| PA-03 | `key_for()` / `absolute_for()` round-trip for all three trees: the determinism two boxes with different roots need to produce one index | php | index, bundle, model stub, upload | `build/...`, `tmp/...`, `storage/...` and back | implemented | 2026-09-15 |
+| PA-04 | A path under none of the three trees is not claimed | php | `/etc/hosts`, `app/RSpade/helpers.php` | unchanged; null | implemented | 2026-09-15 |
+| PA-05 | `stub_key()` is the one stub-key spelling, and the predicates answer BOTH the key form and the absolute form | php | each stub kind, a source file | true/false per case | implemented | 2026-09-15 |
+| PA-06 | Precedence: in-process override beats argv flag beats resolver, and the default returns afterwards | php | `--_rsx-build-root`, then `_override()` | flag, then override, then default | implemented | 2026-09-15 |
+| PA-07 | An override travels to a child as an argv FLAG, the build root carries no environment key, and a child inherits `TMPDIR` as the tmp root | php | build + files overrides | `child_flags()` carries both; no build key in `child_env()`; `TMPDIR` present | implemented | 2026-09-15 |
+| PA-08 | `files_root()` is redirectable and `storage_root()` is NOT - the file subsystem isolates, state and locks stay shared | php | files override | files moves, storage and state do not | implemented | 2026-09-15 |
+| PA-09 | `_override()` refuses a root it does not own rather than accepting a typo and answering the default forever | php | `['storage' => ...]` | InvalidArgumentException | implemented | 2026-09-15 |
+| PA-10 | ONLY `ensure_build_tree()` creates the build root; the tmp skeleton does not - a production box with no build must fail loud naming the build command | php | scratch roots | tmp created, build absent, then build + its three children | implemented | 2026-09-15 |
+| PA-11 | The pre-boot resolver's defaults match the owner's | php (child) | synthetic root, empty `.env` | four default roots | implemented | 2026-09-15 |
+| PA-12 | The FIRST `.env` occurrence wins and one matched quote pair is stripped - phpdotenv's immutable behaviour, so pre-boot and booted agree | php (child) | two `RSX_TMP_PATH` definitions, first quoted | the first, unquoted | implemented | 2026-09-15 |
+| PA-13 | A real environment variable beats the `.env` file | php (child) | both set | the environment | implemented | 2026-09-15 |
+| PA-14 | An EMPTY override means the default, which is how a shipped `.env.dist` declares a key without relocating anything | php (child) | `RSX_TMP_PATH=` | `<project>/tmp` | implemented | 2026-09-15 |
+| PA-15 | A RELATIVE override resolves against the PROJECT ROOT, never the working directory a subprocess did not choose | php (child) | `RSX_STORAGE_PATH=./shared/storage`, `RSX_TMP_PATH=scratch` | `<project>/shared/storage`, `<project>/scratch` | implemented | 2026-09-15 |
+| PA-16 | PARITY: the pre-boot functions and the booted owner answer identically on this box, and Laravel's `storage_path()` IS the tmp root | php | none | four equalities plus the tmp identity | implemented | 2026-09-15 |
+| PA-17 | The container IS `Rsx_Application` - a plain Illuminate Application would put all five cache files back inside the framework checkout with nothing to report it | php | `app()` | instance of | implemented | 2026-09-15 |
+| PA-18 | All five Laravel cached-artifact getters answer inside `build/laravel` | php | the five getters | `laravel_cache_file($name)` each | implemented | 2026-09-15 |
+| PA-19 | `bootstrapPath()` itself did NOT move - `bootstrap/providers.php` is source | php | `bootstrapPath()` | `base_path('bootstrap')` | implemented | 2026-09-15 |
+| PA-20 | Compiled Blade is a build output, with no `realpath()` behind it (the directory legitimately does not exist before a build) | php | `config('view.compiled')` | `views_compiled_dir()`, under the build root | implemented | 2026-09-15 |
+| PA-20b | A DEVELOPMENT box recreates `build/laravel` at boot - Laravel's PackageManifest WRITES packages.php during boot and throws when the directory is absent, which would otherwise refuse the very build that creates it on a fresh checkout | php | remove the directory, boot a child | child exits 0, directory present again | implemented | 2026-09-15 |
+| PA-21 | Laravel's file cache driver is DERIVED, not built | php | `config('cache.stores.file.path')` | `laravel_file_cache_dir()`, under the tmp root | implemented | 2026-09-15 |
+| PA-22 | `system/build` is a symlink resolving onto the build root (a DANGLING one is correct before a build), and `system/storage` and `system/tmp` do not exist at all - a relocatable root cannot have a link that says where it moved to | php | the three paths | one symlink; two absent | implemented | 2026-09-15 |
+| PA-23 | Both spellings reach one directory - the property that lets a `base_path()`-relative call site inside the framework tree keep working | php | write through the build root | visible through `system/build` | implemented | 2026-09-15 |
+| PA-24 | The compiled-view directory is reachable through the build link, so the view compiler's request-time writes land in the build tree | php | `config('view.compiled')` | owner-named, inside the build root | implemented | 2026-09-15 |
+| PA-25 | The guard REFUSES a real directory squatting on `system/build` rather than removing a directory it did not make | php | - | refusal names the remedy | deferred - the refusal exits the process, and the shape it refuses cannot be fabricated against the live tree | 2026-09-15 |
+| PA-26 | A relocated root is honoured end to end by a real build (index, bundles and stubs all land in the overridden trees) | cli | `rsx:build` under `RSX_TMP_PATH` | every artifact in the override | planned - belongs with the build command | 2026-09-15 |
+| PA-27 | The build root is FIXED: there is no environment key for it, in the file or the environment | php (child) | a build key set both ways | `<project>/build` | implemented | 2026-09-15 |
+| PA-28 | The export sets `TMPDIR`, so `sys_get_temp_dir()` - and every plain library that uses it - writes into the project's own tmp tree | php (child) | `rsx_paths_export()` | `TMPDIR` and `sys_get_temp_dir()` are the tmp root | implemented | 2026-09-15 |
+| PA-29 | The init check CREATES an absent storage and tmp tree: both are the framework's to make, and a fresh checkout has neither | php (child) | empty project root | both directories exist afterwards | implemented | 2026-09-15 |
+| PA-30 | An unwritable storage tree REFUSES at init, naming the directory, the user and the remedy - every later symptom of it appears far from the cause | php (child) | `0500` storage | exit 1, message names the path and `chown` | implemented (skipped as root) | 2026-09-15 |
+| PA-31 | `build/` is checked only where something writes it: a production RUNTIME passes with an unwritable build tree, the BUILD itself refuses | php (child) | `0500` build, `RSX_MODE=production`, with and without `rsx:build` in argv | pass, then exit 1 naming the build tree | implemented (skipped as root) | 2026-09-15 |
+| PA-32 | The tmp skeleton keeps `tmp/logs` and `tmp/app` as links into persistent storage, replaces a wrong target, and is FATAL on a real directory | php | scratch tmp root | two links; repaired target; RuntimeException | implemented | 2026-09-15 |
+| PA-33 | Thumbnails and renditions are tmp CACHES - derived from a blob that is still in the store | php | the two owner methods | `tmp/thumbnails`, `tmp/renditions` | implemented | 2026-09-15 |
+
+Cross-references: `PATH-OWNER-01` is covered by `code_quality/php/Path_Owner_Rule_Test.php`;
+the one-time relocation by `environment_updates/cli/t9_relocate_build_tmp.sh`.

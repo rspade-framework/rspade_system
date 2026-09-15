@@ -120,7 +120,7 @@ Login credential auto-fill is NOT hostname-derived: it is `RSPADE_LOGIN_AUTOFILL
 
 The same pass checks that `DB_HOST`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` and `REDIS_HOST` are present (the first three non-empty; an empty `DB_PASSWORD` and a passwordless Redis are legal), and mints an `APP_KEY` when there is none - **in development only**. Outside development an empty `APP_KEY` is refused rather than replaced: a new key silently invalidates every encrypted value and signed cookie made with the one that went missing.
 
-**One implementation** - `Rsx_Env_Symlink::full_heal()` - behind `php artisan rsx:env:heal`, both entrypoints pre-boot (`system/artisan`, `system/public/index.php`, via `bootstrap/rsx_env_heal.php`), and the container entrypoint. In development it runs on EVERY boot and costs one stat when nothing changed (a stamp under `storage/rsx-tmp` compared against `.env` and both `.env.dist` files).
+**One implementation** - `Rsx_Env_Symlink::full_heal()` - behind `php artisan rsx:env:heal`, both entrypoints pre-boot (`system/artisan`, `system/public/index.php`, via `bootstrap/rsx_env_heal.php`), and the container entrypoint. In development it runs on EVERY boot and costs one stat when nothing changed (a stamp under `tmp/` compared against `.env` and both `.env.dist` files).
 
 ## The `.env` symlink invariant
 
@@ -161,12 +161,12 @@ With BOTH present, `.env` wins and the heal proceeds normally. Nothing keeps `.e
 
 | Want | Use | Not |
 |---|---|---|
-| Anything under storage | `storage_path('rsx-tmp/x')` | `base_path('storage/...')` - lands inside the framework tree |
+| Anything under the volatile trees | `Rsx_Project_Paths::tmp_path('x')` / `::storage_path('x')` / `::build_path('x')` (the OWNER's methods - the global `storage_path()` is Laravel's and means the tmp tree) | a path literal, or `base_path('storage/...')` - lands inside the framework tree. `PATH-OWNER-01` flags both |
 | A project-logical path (manifest keys keep this spelling) | `rsx_project_file_path('storage/...')` | string concatenation |
 | A genuinely framework-internal file | `base_path('bin/script.js')` | - |
 | Resolve a path without following symlinks | `rsxrealpath($path)` | `realpath()` |
 
-Volatile storage lives at `<project>/storage`, one level ABOVE the base path, relocated out of the framework-owned `system/` zone. `storage_path()` follows it automatically via the bootstrap bridge (marker: `storage/.rspade_storage_relocated`); pre-boot code reads the same marker. Per-directory purpose and ship/omit posture: `rsx:man storage_directories`.
+The three volatile trees sit one level ABOVE the base path: `<project>/build` (fixed, the build artifact), `<project>/tmp` and `<project>/storage` (relocatable with `RSX_TMP_PATH` / `RSX_STORAGE_PATH`, each taking an absolute path or one relative to the PROJECT ROOT). **`storage_path()` is the TMP root** - Laravel's storage path is the disposable tree - so anything durable goes on a `Storage` disk or through `Rsx_Project_Paths::app_dir()`; `storage_path('logs')` and `storage_path('app')` stay persistent only because `tmp/logs` and `tmp/app` are symlinks into storage. A `./`-prefixed string is working-directory relative and addresses nothing a subprocess can rely on; a resource file is reached with `__DIR__` or `base_path('rsx/...')`. Per-directory purpose and ship/omit posture: `rsx:man storage_directories`.
 
 ---
 

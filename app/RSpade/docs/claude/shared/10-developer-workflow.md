@@ -17,6 +17,9 @@
 | `rsx:logrotate` | Rotate/compress/prune `storage/logs` on demand (the nightly task does it too). **No OS logrotate is assumed anywhere.** |
 | `rsx:database_and_storage_reset` | Drop every table and delete every stored file, then migrate to the fresh-install state. Refuses without `--yes` (plus `--force` under a sealed build), printing what it would destroy. **Never run it unasked.** `rsx:man migrations`. |
 | `rsx:db:rebuild_provision_cache_snapshot` | Rebuild the shipped schema cache a fresh database restores instead of replaying every migration. Development only; backs up and restores the live data. Skill/details: `rsx:man migrations`. |
+| `rsx:build [--force]` | The ONE build: manifest + bundles in development; clean, build, mirror, compile, cache and SEAL in a production-like mode (where it needs `--force` over an existing seal). Never run it to "make changes live" — development is invisible-build. `rsx:man prod`. |
+| `rsx:clean [--force]` | Discard `build/` and `tmp/` and flush the Redis caches. `--force` required in a production-like mode. **Rarely necessary** — see the invisible-build rule. |
+| `rsx:migrate:check_consistency` | Does the sealed manifest describe the schema this database has? Production modes only; `migrate` runs it and propagates its exit code. `rsx:man migrations`. |
 | `rsx:refactor:rename_php_class` · `:rename_php_class_function` · `:sort_php_class_functions` | The three AST-based editor refactors. |
 | Owned elsewhere | `migrate` · `rsx:app:module:create` · `rsx:search:reindex` · `rsx:maintenance:enable`/`:disable` · `rsx:ajax` |
 

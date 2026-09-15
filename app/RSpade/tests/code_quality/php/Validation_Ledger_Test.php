@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\CodeQuality\Php;
 
 use App\RSpade\CodeQuality\Support\Validation_Ledger;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -33,7 +34,7 @@ class Validation_Ledger_Test extends Rsx_Test_Abstract
 
     private static function __begin(): void
     {
-        self::$fixture_path = storage_path('rsx-tmp') . '/validation_ledger_test_' . uniqid() . '.php';
+        self::$fixture_path = Rsx_Project_Paths::tmp_path() . '/validation_ledger_test_' . uniqid() . '.php';
         Validation_Ledger::_use_path_for_tests(self::$fixture_path);
     }
 

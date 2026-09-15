@@ -4,7 +4,7 @@
 
 Bundle definition and compilation: `Rsx_Bundle_Abstract` / `Rsx_Module_Bundle_Abstract` /
 `Rsx_Asset_Bundle_Abstract` and the `BundleCompiler` that turns a definition into the
-`vendor` / `app` JS+CSS artifacts under `storage/rsx-build/bundles`.
+`vendor` / `app` JS+CSS artifacts under `build/bundles`.
 
 Three concerns live here.
 

@@ -15,8 +15,8 @@ use App\RSpade\Core\Task\Task_Instance;
  * - Statistics and reporting
  *
  * Storage Structure:
- * - storage/rsx-thumbnails/preset/  - Named preset thumbnails (100MB quota, scheduled cleanup)
- * - storage/rsx-thumbnails/dynamic/ - Dynamic ad-hoc thumbnails (50MB quota, synchronous cleanup)
+ * - tmp/thumbnails/preset/  - Named preset thumbnails (100MB quota, scheduled cleanup)
+ * - tmp/thumbnails/dynamic/ - Dynamic ad-hoc thumbnails (50MB quota, synchronous cleanup)
  *
  * Cleanup Strategy:
  * - Preset: Runs every 30 minutes via scheduled task (this class)

@@ -72,7 +72,7 @@ A rule receives a path, the contents and the manifest metadata, and says what is
 
 ## Rule Categories
 
-146 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
+147 rule classes live under `Rules/`, grouped by subdirectory (Blade, Common, Convention,
 Database, JavaScript, Jqhtml, Manifest, Meta, Models, PHP, Scss). The listings below are
 ILLUSTRATIVE SAMPLES of each category, not an inventory - the rule set is discovered from the
 filesystem, so `Rules/` itself is the authoritative list - read the directory for the full set.
@@ -330,6 +330,30 @@ filesystem, so `Rules/` itself is the authoritative list - read the directory fo
      itself, read off the OVERRIDE file (the checker's generic file-level check never sees
      it - the file that triggers this rule is not the override)
    - Severity: High. Paired with the `Class Override Drift` health row (WARN, never FAIL)
+
+2. **PathOwner_CodeQualityRule** (PATH-OWNER-01)
+   - A path into `build/`, `tmp/`, `storage/` or Laravel's cache trees written as a
+     literal, rather than taken from `App\RSpade\Core\Paths\Rsx_Project_Paths` - the one
+     owner of every volatile path. Also `storage_path()` with a literal argument,
+     `rsx_project_file_path()` / `base_path()` handed a literal that starts with one of the
+     three roots, and a raw write primitive aimed at the build root outside the allow-list
+   - Two more probes cover the shapes a literal takes when it is not spelled outright: a
+     `./`- or `../`-prefixed tree literal (`'./tmp/x'`), and a tree name CONCATENATED onto a
+     root (`base_path() . '/storage/x'`, `__DIR__ . '/../../build'`, `$PROJECT_ROOT/tmp` in
+     bash, `path.join(root, 'storage')` in node). A LOGICAL key (`'tmp/js-stubs/x'`) is not a
+     path and stays legal - it is a manifest key, and `rsx_project_file_path()` resolves it
+   - `tmp/` and `storage/` are RELOCATABLE (`RSX_TMP_PATH`, `RSX_STORAGE_PATH`), so a literal
+     is not merely untidy: it addresses a directory that may not be where the box put it, and
+     on a box that relocated one it silently addresses nothing. `build/` is fixed, and a
+     literal for it is still a finding - one owner, one spelling
+   - RETIRED_LITERALS additionally names the spellings a past layout used (`system/storage`,
+     `system/tmp`, `RSX_BUILD_PATH`, `rsx-thumbnails`, `rsx-renditions`), so a copied recipe
+     that still addresses them is reported rather than failing silently at runtime
+   - Runs over `*.php` (a `token_get_all()` string-token walk), `*.js` and `*.sh` (a literal
+     regex). Exempt: the owner itself, the pre-boot resolver, the bash/node path libs,
+     `bin/environment_updates/`, `man/`, `docs/`, `breaking_changes/`, vendored trees
+   - Severity: High, not manifest-fatal. Honors `@PATH-OWNER-01-EXCEPTION`; the remediation
+     carries the owner's method table
 
 ## Configuration
 
@@ -740,7 +764,7 @@ Approved for manifest-time execution, by rule directory:
 
 - `Blade/` - BLADE-EVENT-01, BLADE-LAYOUT-ASSETS-01, BLADE-SCRIPT-01
 - `Common/` - FILE-CASE-DUP-01, FILE-SPACE-01, ROUTE-SYNTAX-01
-- `Convention/` - CONV-BUNDLE-03, NAME-RESERVED-01, NAME-RESERVED-02
+- `Convention/` - CONV-BUNDLE-03, NAME-RESERVED-01, NAME-RESERVED-02, PATH-OWNER-01
 - `JavaScript/` - JQHTML-EVENT-01, JQHTML-IMPL-01, JS-CATCH-FALLBACK-01, JS-DECORATOR-01,
   JS-DECORATOR-IDENT-01, JS-DUPLICATE-METHOD-01, JS-LIFECYCLE-01, JS-READY-01
 - `Jqhtml/` - JQHTML-CLASS-01, JQHTML-COMMENT-01, JQHTML-INLINE-01

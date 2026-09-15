@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Core\Bundle;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 /**
  * BundleProcessor_Abstract - Base class for file transformation processors
  *
@@ -168,7 +170,7 @@ abstract class BundleProcessor_Abstract
      */
     protected static function _write_temp_file(string $content, string $extension = 'tmp'): string
     {
-        $temp_dir = storage_path('rsx-tmp');
+        $temp_dir = Rsx_Project_Paths::tmp_root();
         if (!is_dir($temp_dir)) {
             mkdir($temp_dir, 0755, true);
         }

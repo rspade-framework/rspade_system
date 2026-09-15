@@ -21,23 +21,43 @@ define('LARAVEL_START', microtime(true));
 |
 */
 
+/*
+|--------------------------------------------------------------------------
+| Path Resolver (pre-boot)
+|--------------------------------------------------------------------------
+|
+| The three volatile roots - build/, tmp/, storage/ - and the state directory
+| inside storage. Required FIRST, before any guard, because every guard below
+| addresses one of them, and exported into the environment so every spawned
+| child resolves the same absolutes instead of re-deriving them. The export also
+| sets TMPDIR, which PHP answers sys_get_temp_dir() with and caches for the life
+| of the process, so nothing may run before it.
+|
+| Then the writability check: storage/ and tmp/ in every mode, plus build/,
+| system/ and the project root wherever something is expected to write them.
+|
+*/
+
+require_once __DIR__.'/bootstrap/rsx_paths.php';
+rsx_paths_export();
+rsx_paths_assert_trees_writable();
+
 require __DIR__.'/bootstrap/rsx_env_link.php';
 
 /*
 |--------------------------------------------------------------------------
-| Storage Link Guard (pre-boot)
+| Build Link Guard (pre-boot)
 |--------------------------------------------------------------------------
 |
-| Laravel boots from system/, so every storage_path() lands under system/storage -
-| which is a SYMLINK to ../storage, the project-root tree where volatile state
-| actually lives. system/ is a submodule, replaced wholesale on every update, and
-| nothing durable can live inside it.
+| system/build is a SYMLINK to ../build, the project-root tree holding the build
+| outputs. system/ is a submodule, replaced wholesale on every update, and nothing
+| volatile can live inside it.
 |
-| Creates ../storage when it is simply absent; REFUSES when system/storage is
-| anything other than a link onto it, because a real directory there may hold the
-| only copy of a previous install's data.
+| The link is repaired silently; the TARGET is never created, because a production
+| box with no build must fail loud naming the build command. tmp/ and storage/ have
+| no link - they are relocatable, and code reaches them through the path owner.
 |
-| Placed before the submodule guard, which writes its own state into storage.
+| Placed before the submodule guard, which writes its own state into the state tree.
 |
 */
 
@@ -148,21 +168,18 @@ require __DIR__.'/bootstrap/rsx_container_gate.php';
 
 /*
 |--------------------------------------------------------------------------
-| Storage Root (pre-boot)
+| State Root (pre-boot)
 |--------------------------------------------------------------------------
 |
-| Volatile storage lives at <project>/storage, one level ABOVE the Laravel base
-| path. Everything below runs BEFORE Laravel boots, so storage_path() does not
-| exist yet and the path is composed directly - the same single answer the
-| bootstrap bridge (bootstrap/app.php) and the updater (bin/
-| framework-pull-upstream.sh, storage_base) give.
-|
-| No marker, no fallback: the framework ships system/storage as a symlink to this
-| directory, so there is one place storage can be.
+| storage/state holds the small facts about the environment's own lifetime -
+| the maintenance flag, the flock files, the updater's ledger. Everything below
+| runs BEFORE Laravel boots, so the answer comes from the pre-boot resolver
+| required at the top of this file, which is the same answer
+| App\RSpade\Core\Paths\Rsx_Project_Paths gives a booted process.
 |
 */
 
-$__rsx_storage = dirname(__DIR__) . '/storage';
+$__rsx_state = rsx_paths_state_root();
 
 /*
 |--------------------------------------------------------------------------
@@ -314,7 +331,7 @@ if (isset($argv[1]) && ($argv[1] === 'rsx:maintenance:enable' || $argv[1] === 'r
         echo "\n";
         echo "It ships in the framework-owned bin/ zone. Restore it from the distribution,\n";
         echo "or remove the flag by hand to exit maintenance mode:\n";
-        echo "  rm -f " . escapeshellarg($__rsx_storage . '/rsx-framework/.maintenance.mode.framework.update') . "\n";
+        echo "  rm -f " . escapeshellarg($__rsx_state . '/.maintenance.mode.framework.update') . "\n";
         exit(1);
     }
 
@@ -390,7 +407,7 @@ if (isset($argv[1]) && $argv[1] === 'rsx:git') {
 |
 */
 
-$__rsx_maint_flag = $__rsx_storage . '/rsx-framework/.maintenance.mode.framework.update';
+$__rsx_maint_flag = $__rsx_state . '/.maintenance.mode.framework.update';
 define('RSPADE_MAINT_MODE', file_exists($__rsx_maint_flag));
 
 if (RSPADE_MAINT_MODE && !$__fw_update_override) {
@@ -460,7 +477,7 @@ if (function_exists('is_ide') && is_ide()) {
     $command = implode(' ', $argv);
     $timestamp = date('Y-m-d H:i:s');
     $log_message = "[{$timestamp}] IDE artisan request: {$command}";
-    error_log($log_message . PHP_EOL, 3, storage_path('logs/laravel.log'));
+    error_log($log_message . PHP_EOL, 3, rsx_paths_storage_root().'/logs/laravel.log');
 }
 
 /*

@@ -31,11 +31,11 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
 
-    // A path (relative to base_path()) that is guaranteed NOT to exist on disk.
-    private const MISSING_MODEL_STUB = 'storage/rsx-build/js-model-stubs/base-does-not-exist-xyzzy-model.js';
-    private const MISSING_CONTROLLER_STUB = 'storage/rsx-build/js-stubs/does_not_exist_xyzzy_controller.js';
+    // A manifest key that is guaranteed NOT to exist on disk.
+    private const MISSING_MODEL_STUB = 'tmp/js-model-stubs/base-does-not-exist-xyzzy-model.js';
+    private const MISSING_CONTROLLER_STUB = 'tmp/js-stubs/does_not_exist_xyzzy_controller.js';
     // A stub path under a directory that itself does not exist (whole-dir-absent case).
-    private const MISSING_STUB_DIR = 'storage/rsx-build/js-model-stubs-gone-xyzzy/base-user-model.js';
+    private const MISSING_STUB_DIR = 'tmp/js-model-stubs-gone-xyzzy/base-user-model.js';
 
     // =====================================================================
     // Fix 1: _first_missing_stub_output
@@ -113,11 +113,11 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
     }
 
     // A NON-stub file missing from disk must NOT be reported by this guard (it is the
-    // deletion sweep's job, and storage/ entries are intentionally exempt there).
+    // deletion sweep's job, and generated entries are intentionally exempt there).
     public static function test_missing_non_stub_file_is_ignored()
     {
         $files = [
-            'storage/rsx-build/js-model-stubs/some-plain-file.js' => ['extension' => 'js', 'class' => 'Plain'],
+            'tmp/js-model-stubs/some-plain-file.js' => ['extension' => 'js', 'class' => 'Plain'],
         ];
 
         static::__assert_null(
@@ -173,12 +173,12 @@ class Framework_Stub_Guard_Test extends Rsx_Test_Abstract
     // Helpers
     // =====================================================================
 
-    // Create a real temp file under storage/rsx-tmp and return its project-logical
-    // path (so rsx_project_file_path($rel) resolves to it - storage lives at the
-    // project root, NOT under base_path()).
+    // Create a real temp file under tmp/ and return its project-logical path (so
+    // rsx_project_file_path($rel) resolves to it - the tmp tree lives at the project
+    // root, NOT under base_path()).
     private static function __make_temp_stub(): string
     {
-        $rel = 'storage/rsx-tmp/stub_guard_test_' . uniqid() . '.js';
+        $rel = 'tmp/stub_guard_test_' . uniqid() . '.js';
         file_put_contents(rsx_project_file_path($rel), "// temp stub for stub-guard test\n");
 
         return $rel;

@@ -29,7 +29,7 @@ define('IDE_SYSTEM_PATH', $system_path);                  // Framework root
  * entry, method maps intact.
  *
  * This bridge runs BEFORE the autoloader, so it cannot call Manifest::; it addresses the
- * files by path against its own storage_path() shim. What it can do - and now does - is
+ * files by path through the path owner it requires directly. What it can do - and now does - is
  * load each of them ONCE per request: there used to be eight independent `include`s of an
  * 8.8 MB var_export, two of which could fire in a single request.
  *
@@ -46,7 +46,7 @@ function ide_manifest(bool $with_files = false): ?array
     static $cold_merged = false;
 
     if ($manifest === null) {
-        $index_file = storage_path('rsx-build/manifest_index.php');
+        $index_file = \App\RSpade\Core\Paths\Rsx_Project_Paths::manifest_index_file();
 
         if (!file_exists($index_file)) {
             return null;
@@ -63,7 +63,7 @@ function ide_manifest(bool $with_files = false): ?array
 
     if ($with_files && !$cold_merged) {
         $cold_merged = true;
-        $cold_file = storage_path('rsx-build/manifest_files.php');
+        $cold_file = \App\RSpade\Core\Paths\Rsx_Project_Paths::manifest_files_file();
 
         if (file_exists($cold_file)) {
             $cold = include $cold_file;
@@ -96,17 +96,11 @@ function ide_framework_path($relative_path) {
     return IDE_SYSTEM_PATH . '/' . ltrim($relative_path, '/');
 }
 
-// Volatile storage root. Relocated to <project>/storage once the relocation marker
-// exists (bin/environment_updates/030_relocate_storage.sh); historic system/storage
-// until then. This handler runs WITHOUT Laravel, so the marker is read directly.
-define('IDE_STORAGE_PATH', IDE_BASE_PATH . '/storage');
-
-// Define the Laravel helper this standalone handler needs
-// This handler never runs with Laravel, so no conflict
-function storage_path($path = '') {
-    $base = IDE_STORAGE_PATH;
-    return $path ? $base . '/' . ltrim($path, '/') : $base;
-}
+// This handler runs WITHOUT Laravel and therefore without an autoloader: the pre-boot
+// resolver and the path owner are required directly, so the files this bridge reads are
+// exactly the ones a booted process writes.
+require_once ide_framework_path('bootstrap/rsx_paths.php');
+require_once ide_framework_path('app/RSpade/Core/Paths/Rsx_Project_Paths.php');
 
 // Load exec_safe() function
 require_once ide_framework_path('app/RSpade/helpers.php');
@@ -258,7 +252,7 @@ function handle_format_service($data) {
     }
 
     // Log formatting request
-    $log_file = storage_path('logs/ide-formatter.log');
+    $log_file = \App\RSpade\Core\Paths\Rsx_Project_Paths::logs_dir() . '/ide-formatter.log';
     $log_dir = dirname($log_file);
     if (!is_dir($log_dir)) {
         mkdir($log_dir, 0755, true);

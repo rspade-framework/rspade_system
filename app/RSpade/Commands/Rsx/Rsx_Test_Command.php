@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
 use App\RSpade\Commands\Migrate\Maint_Migrate;
 use App\Console\Commands\FrameworkDeveloperCommand;
@@ -109,10 +111,8 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * re-proving it. The selector key is the suite plus the normalised class list, so a
      * SUBSET's verdict replays only for that same subset and can never stand in for the
      * suite. Any edit to a scanned file changes the build key and the next run is live.
-     * rsx:clean wipes rsx-tmp.
+     * rsx:clean wipes the tmp tree.
      */
-    const RESULTS_CACHE_DIR = 'rsx-tmp/test-results';
-
     /**
      * A worker with no timing history for a $requires_db_reset class scores this many
      * seconds when ordering the work queue longest-first. It is an ORDERING PROXY, never
@@ -510,7 +510,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      */
     protected function acquire_runner_singleton(): void
     {
-        $lock_file = storage_path('flock/rsx_test_runner.lock');
+        $lock_file = Rsx_Project_Paths::flock_dir() . '/rsx_test_runner.lock';
 
         $dir = dirname($lock_file);
         if (!is_dir($dir)) {
@@ -633,15 +633,15 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // Without this, a model-layer attachment delete on the TEST database unlinks a
         // shared disk file - destroying a developer-database blob whose bytes exist in
         // both (backlog B-38). Every file path resolves through Rsx_File_Paths, which
-        // reads this key. Set BEFORE any provisioning so in-process work is covered,
-        // and passed to the migrate subprocess below via --rsx-storage-root.
+        // reads the path owner's files_root(). Set BEFORE any provisioning so in-process
+        // work is covered, and forwarded to every subprocess as an internal argv flag.
         //
         // No DB-match-style refusal guard here: unlike DB_TEST_DATABASE (user config
-        // that could collide with the dev DB), this root is hard-coded by the runner
-        // under storage/rsx-tmp - it can never point at the live store.
-        $storage_root = storage_path('rsx-tmp/test-storage');
+        // that could collide with the dev DB), this root is named by the path owner
+        // inside the tmp tree - it can never point at the live store.
+        $storage_root = Rsx_Project_Paths::test_storage_dir();
         ensure_directory($storage_root);
-        config(['rsx.files.storage_root' => $storage_root]);
+        Rsx_Project_Paths::_override(['files' => $storage_root]);
 
         // Sync schema when forced (--fresh) or when the test database has no
         // migrated schema yet. Migrations are forward-only and cannot reconcile
@@ -850,20 +850,19 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * first site-scoped write and holds it until shutdown, then blocks here in waitpid
      * while the child queues for the same lock. Observed live, twice, for 10-12 hours.
      *
-     * The subprocess does NOT inherit our in-process rsx.files.storage_root config, so a
-     * data-seed migration that writes blobs (the template app's import_sample_documents
-     * runs create_from_disk) would land in the REAL blob store. Per-invocation intent
-     * rides as a --flag (owner ruling: NO env prefixes for invocation intent): the
-     * migrate command reads --rsx-storage-root and sets the config before migrating, so
-     * provisioning stays inside the isolated test root too (B-38).
+     * The subprocess does NOT inherit our in-process files-root override, so a data-seed
+     * migration that writes blobs (the template app's import_sample_documents runs
+     * create_from_disk) would land in the REAL blob store. Per-invocation intent rides as
+     * a --flag (owner ruling: NO env prefixes for invocation intent):
+     * Rsx_Project_Paths::child_flags() spells the override as --_rsx-files-root, which the
+     * pre-boot strip lifts before Symfony parses, so provisioning stays inside the
+     * isolated test root too (B-38).
      *
      * @param string $test_db
      * @return bool
      */
     protected function run_migrate_subprocess(string $test_db): bool
     {
-        $storage_root = config('rsx.files.storage_root');
-
         // --_no-initial-user: the migrate post-step must NOT seed an account from
         // RSPADE_DEFAULT_* here. This database's ONE identity is the baseline user, seeded
         // as the very next step by seed_test_baseline_user() - and it needs id 1, which an
@@ -871,10 +870,10 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // than relying on those keys being blank: whether the developer running the suite
         // happens to have configured credentials is not something the baseline may depend
         // on. (The `--_` convention: no InputOption, stripped pre-boot from argv.)
-        $args = ['--force', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG];
-        if (!empty($storage_root)) {
-            $args[] = '--rsx-storage-root=' . (string) $storage_root;
-        }
+        $args = array_merge(
+            ['--force', '--_no-initial-user', Maint_Migrate::NO_SNAPSHOT_FLAG],
+            Rsx_Project_Paths::child_flags()
+        );
 
         $output = [];
         $exit_code = Rsx_Artisan::run('migrate', $args, $output, [
@@ -985,14 +984,14 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     }
 
     /**
-     * Directory holding cached test-database dumps. Lives under storage so it
-     * survives rsx:clean (which only wipes rsx-build and rsx-tmp).
+     * Directory holding cached test-database dumps. A regenerable cache: rsx:clean
+     * discards it with the rest of the tmp tree, and the next run rebuilds it.
      *
      * @return string
      */
     protected function test_cache_dir(): string
     {
-        $dir = storage_path('db_backups/test-db-cache');
+        $dir = Rsx_Project_Paths::db_backups_dir() . '/test-db-cache';
         ensure_directory($dir);
 
         return $dir;
@@ -1583,7 +1582,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         }
 
         $run_id = date('Ymd_His') . '_' . bin2hex(random_bytes(4));
-        $run_dir = storage_path('rsx-tmp/test-run-' . $run_id);
+        $run_dir = Rsx_Project_Paths::test_run_dir($run_id);
         ensure_directory($run_dir);
 
         // The containers bind-mount this directory at /rsx-test-ipc and reach the queue
@@ -1751,7 +1750,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      */
     protected static function results_cache_path(string $suite, string $build_key, string $selector_key): string
     {
-        return storage_path(self::RESULTS_CACHE_DIR . '/' . $suite . '_' . $build_key . '_' . $selector_key . '.json');
+        return Rsx_Project_Paths::test_results_dir() . '/' . $suite . '_' . $build_key . '_' . $selector_key . '.json';
     }
 
     /**
@@ -1982,17 +1981,17 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     }
 
     /**
-     * Path of the persisted per-class timing hints ({fqcn: seconds}). Under rsx-tmp - a cache,
-     * never a correctness input.
+     * Path of the persisted per-class timing hints ({fqcn: seconds}). In the tmp tree - a
+     * cache, never a correctness input.
      *
      * @return string
      */
     protected function timings_path(): string
     {
-        $dir = storage_path('rsx-tmp');
-        ensure_directory($dir);
+        $path = Rsx_Project_Paths::test_timings_file();
+        ensure_directory(dirname($path));
 
-        return $dir . '/test-timings.json';
+        return $path;
     }
 
     /**

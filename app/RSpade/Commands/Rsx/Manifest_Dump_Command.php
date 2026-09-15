@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use Illuminate\Console\Command;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Identifier;
@@ -73,13 +75,13 @@ class Manifest_Dump_Command extends Command
         // dump needs to know about the shape in front of them.
         $hot_paths = [];
 
-        foreach ((include storage_path(Manifest::CACHE_FILE))['data']['files'] as $path => $ignored) {
+        foreach ((include Rsx_Project_Paths::manifest_index_file())['data']['files'] as $path => $ignored) {
             $hot_paths[$path] = true;
         }
 
         $data['index'] = [
-            'hot_file' => 'storage/' . Manifest::CACHE_FILE,
-            'cold_file' => 'storage/' . Manifest::COLD_FILE,
+            'hot_file' => Rsx_Project_Paths::key_for(Rsx_Project_Paths::manifest_index_file()),
+            'cold_file' => Rsx_Project_Paths::key_for(Rsx_Project_Paths::manifest_files_file()),
             'files_total' => count($data['data']['files'] ?? []),
             'files_hot' => count($hot_paths),
             'files_cold' => count($data['data']['files'] ?? []) - count($hot_paths),

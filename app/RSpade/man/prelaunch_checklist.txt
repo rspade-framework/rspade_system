@@ -7,8 +7,6 @@ NAME
 SYNOPSIS
     php artisan rsx:man prelaunch_checklist
 
-    rsx:prod:enable prints a pointer to this page after sealing a build.
-
 DESCRIPTION
     Some framework requirements cannot be enforced by an rsx:check lint rule -
     either the machinery to recognize the pattern would be too brittle, or the
@@ -35,8 +33,8 @@ HOW TO USE
         3. Correct any divergence, following the entry's guidelines.
         4. Perform the manual walk-throughs where an entry calls for one.
 
-    rsx:prod:enable reminds the operator to do this after it seals a build; the
-    reminder is advisory and never blocks the build.
+    Walk it once before the first launch and again before any launch that
+    changes how the application is deployed. Nothing here blocks a build.
 
 --------------------------------------------------------------------------------
 
@@ -1318,6 +1316,115 @@ ENTRY 12: MONEY ARITHMETIC IN A FLOAT (amounts that drift)
         system/app/RSpade/resource/reference_app/lib/formatters.php
                                                (Formatters::currency)
 
+--------------------------------------------------------------------------------
+
+ENTRY 13: THE PRODUCTION READ-ONLY POSTURE (who owns which tree on the host)
+
+    What to audit
+        Whether the deployed host actually gives the web user write access to
+        exactly two trees - storage/ and tmp/ - and read-only access to the
+        three that hold code and build output: system/, rsx/ and build/. And,
+        where either writable root has been relocated with RSX_TMP_PATH or
+        RSX_STORAGE_PATH, whether the override points at a directory whose
+        ownership matches the same split. build/ has no override: it is fixed
+        beside system/ and rsx/ and is deployed with them.
+
+        Audit TMPDIR at the same time. A plain composer library writes its
+        scratch through PHP's sys_get_temp_dir(); the framework sets TMPDIR to
+        the tmp root in every process it starts, but a php-fpm pool, a
+        supervisor program or a cron line YOU wrote starts PHP itself and has
+        to set it too. The `PHP temp dir` row in rsx:health is the answer for
+        the process that ran it - run it as the serving user.
+
+        Run `php artisan rsx:health` on the host, as the user that serves
+        requests. In a production-like mode it reports one INFO row per tree:
+
+            system/    read-only to www-data (the recommended production
+                       posture)
+            rsx/       WRITABLE by www-data - the recommended production
+                       posture is read-only
+            build/     ...
+
+        Every row that says WRITABLE is an item for this audit. The two FAIL
+        rows - storage/ and tmp/ not writable - are the other direction and
+        are not advisory: the application cannot accept an upload, write a log
+        or compile a template without them.
+
+    Why it matters
+        RSpade guarantees that nothing writes source or build output while
+        serving a request: the manifest never auto-rebuilds in a production
+        mode, bundles never compile JIT, migrate regenerates no source, and
+        every framework write into build/ passes a guard that throws outside a
+        build. That guarantee is worth having enforced by the operating system
+        rather than only by framework code, because the framework's guard is a
+        guardrail and not a security boundary - it intercepts the framework's
+        own write paths and cannot see a raw write that goes around them.
+
+        Making the three trees read-only turns "RSpade does not write here"
+        into "nothing can write here", which is a materially different
+        statement to make about a host that is reachable from the internet.
+
+        The posture is also what makes a deployment reproducible. A tree the
+        web user can write is a tree that can acquire a file nobody
+        deliberately put there, and rsx:prod:verify then reports drift that no
+        deploy step caused.
+
+    Guidelines
+        Own system/, rsx/ and build/ with the DEPLOY user - the account that
+        pulls code and runs rsx:build - and give the web user read and execute
+        only. Own storage/ and tmp/ with the web user.
+
+        Run the build as the deploy user. rsx:build and rsx:clean check
+        writability BEFORE touching anything and refuse with nothing changed,
+        so a build accidentally run as the web user fails immediately and
+        loudly rather than half-way.
+
+        Keep the two writable trees OFF the docroot. The web-server document
+        root points at system/public and nothing else.
+
+        An override takes an absolute path or one relative to the PROJECT
+        ROOT ('./tmp' and 'tmp' both mean <project>/tmp) - never one relative
+        to the working directory, which a spawned subprocess does not choose.
+        storage/state is not independently overridable and follows
+        RSX_STORAGE_PATH: the flock files under it are how processes on the
+        box exclude each other, so two processes resolving different state
+        roots would stop excluding anything.
+
+        The framework checks the writability it needs at boot, in every mode:
+        storage/ and tmp/ always, and the project root, system/ and build/ in
+        development or inside rsx:build. That check is the framework's half.
+        THIS AUDIT IS THE OTHER HALF - that the three trees a production
+        runtime never writes are read-only to the web user - and no boot check
+        can perform it, because a tree the framework is happy to read is
+        exactly the tree this entry asks you to make unwritable.
+
+        Re-audit after any change to how the application is deployed - a new
+        image, a new volume layout, a new orchestration tool. The posture lives
+        in the deployment, not in the codebase, so nothing in the repository
+        carries it forward for you.
+
+    Dos and don'ts
+        DO run rsx:health on the host, as the serving user, and read the tree
+             rows. Running it as root reports root's access and tells you
+             nothing about the web user.
+        DO verify the posture against the artisan commands too, by running one
+             as the web user and confirming it is refused where it should be.
+             This is the part rsx:health cannot answer for you.
+        DON'T make build/ writable "so deploys are easier". The build is run by
+             the deploy user; that is the whole design.
+        DON'T chmod a tree writable to work around a refusal without first
+             reading which tree the refusal names - a build refusing on
+             storage/ and a build refusing on build/ are different problems
+             with different answers.
+        DON'T put storage/ or tmp/ under the docroot, whatever their
+             permissions.
+
+    Related
+        php artisan rsx:man prod                (the posture, the overrides,
+                                                 the deployment recipes)
+        php artisan rsx:man storage_directories (what lives in each tree)
+        php artisan rsx:man health              (the check inventory)
+
 
 SEE ALSO
     rsx:man login_redirect
@@ -1328,6 +1435,8 @@ SEE ALSO
     rsx:man portal
     rsx:man tasks
     rsx:man app_mode
+    rsx:man prod
+    rsx:man storage_directories
     rsx:man csp
     rsx:man external_resources
     rsx:man time

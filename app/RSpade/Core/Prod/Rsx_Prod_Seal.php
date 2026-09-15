@@ -8,34 +8,28 @@ namespace App\RSpade\Core\Prod;
 
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
-use RuntimeException;
-use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
  * Sealed production build manifest ("the seal").
  *
- * A prod build is compiled ONCE by an explicit command (rsx:prod:enable /
- * rsx:prod:refresh) and then treated as IMMUTABLE. The seal is the on-disk record
- * of that build: it pins the build_key, the mode it was built for, and a sha256 of
- * every build artifact (manifest_index.php, manifest_files.php, build_key, and every file under
- * bundles/). It exists so the framework can:
+ * A prod build is compiled ONCE by rsx:build and then treated as IMMUTABLE. The seal
+ * is the on-disk record of that build: it pins the build_key, the mode it was built
+ * for, and a sha256 of every build artifact (manifest_index.php, manifest_files.php,
+ * build_key, and every file under bundles/). It exists so the framework can:
  *
- *   - recognize that it is running a sealed build (is_sealed());
- *   - refuse obviously-wrong mutations of the build assets from unauthorized
- *     contexts (assert_mutable() - a guardrail, NOT a security boundary);
+ *   - recognize that a production-like mode has a build to serve at all (is_sealed(),
+ *     which the manifest gate reads: an unsealed prod box refuses to run);
  *   - verify on demand that the assets on disk still match what was sealed
  *     (verify() - the cluster/CI drift check).
  *
- * Only an AUTHORIZED rebuild context (a CLI process that either called
- * authorize_process() in-process, or received the `--authorized` invocation flag,
- * both set by enable/refresh when they run the build pipeline) may write the build
- * assets while sealed.
+ * The seal is a STATE RECORD, not a permission: what may write the build tree is
+ * Rsx_Project_Paths::assert_build_writable(), which keys on the mode and the build
+ * context, so an unsealed production box is guarded exactly like a sealed one.
  *
- * The seal file itself lives INSIDE the guarded directory
- * (storage/rsx-build/prod_seal.json). Asset paths are stored relative to that
- * build root so the seal is self-contained and location-independent, and so tests
- * can point the whole class at a throwaway build root via a seam.
+ * The seal file lives inside the build root, and asset paths are stored relative to
+ * it, so the seal is self-contained and location-independent.
  *
  * NOTE: created_at, git_commit and the seal file as a whole are deliberately NOT
  * part of any hashed build artifact - they carry the non-deterministic build
@@ -49,31 +43,12 @@ class Rsx_Prod_Seal
     public const SEAL_FILENAME = 'prod_seal.json';
 
     /**
-     * Invocation flag that marks an authorized rebuild subprocess/context.
-     */
-    public const AUTHORIZED_FLAG = '--authorized';
-
-    /**
-     * Programmatic authorization for THIS process (set via authorize_process()).
-     *
-     * enable/refresh mark themselves so their own guarded seal write / cache
-     * teardown is permitted; a spawned build subprocess is authorized instead by
-     * carrying the AUTHORIZED_FLAG on its argv.
-     */
-    protected static bool $_authorized = false;
-
-    /**
-     * Test seam: override the build root (defaults to storage_path('rsx-build')).
-     */
-    protected static ?string $_root = null;
-
-    /**
      * Test seam: force the is_sealed() result without touching real .env / mode.
      */
     protected static ?bool $_testing_sealed = null;
 
     /**
-     * Memoized is_sealed() result (cheap short-circuit on the write hot path).
+     * Memoized is_sealed() result.
      */
     protected static ?bool $_is_sealed_cache = null;
 
@@ -86,7 +61,7 @@ class Rsx_Prod_Seal
      */
     public static function _build_root(): string
     {
-        return self::$_root ?? storage_path('rsx-build');
+        return Rsx_Project_Paths::build_root();
     }
 
     /**
@@ -128,8 +103,8 @@ class Rsx_Prod_Seal
      * Is the system running a sealed prod build right now?
      *
      * True only when a seal file exists AND the current RSX_MODE is a
-     * production-like mode. Memoized for the write hot path; reset by every
-     * mutation (write/clear) and by the test seam.
+     * production-like mode. Memoized; reset by every mutation (write/clear) and by
+     * the test seam.
      */
     public static function is_sealed(): bool
     {
@@ -142,41 +117,6 @@ class Rsx_Prod_Seal
         }
 
         return self::$_is_sealed_cache = (self::exists() && Rsx::is_production());
-    }
-
-    /**
-     * Mark THIS process as an authorized rebuild context.
-     *
-     * Called by rsx:prod:enable / rsx:prod:refresh so their own guarded operations
-     * (the seal write, cache teardown) are permitted even if a prior seal is still
-     * present. A spawned build subprocess is authorized separately by receiving the
-     * AUTHORIZED_FLAG on its argv - it need not call this.
-     */
-    public static function authorize_process(): void
-    {
-        self::$_authorized = true;
-    }
-
-    /**
-     * Is the current context authorized to rebuild sealed assets?
-     *
-     * Authorized ONLY from a CLI process that either called authorize_process()
-     * (enable/refresh mark themselves) or received the `--authorized` invocation
-     * flag on its argv (the build subprocess enable/refresh/export spawn). Nothing
-     * else grants it, so a web request or a plain `php artisan tinker` can never
-     * write build assets while sealed.
-     *
-     * Authorization is an INVOCATION parameter, so it travels as a --flag (read
-     * from argv via the boot-safe Manifest helper) or an explicit in-process call -
-     * never as an environment variable.
-     */
-    public static function is_authorized(): bool
-    {
-        if (PHP_SAPI !== 'cli') {
-            return false;
-        }
-
-        return self::$_authorized || Manifest::__cli_has_flag(self::AUTHORIZED_FLAG);
     }
 
     // -------------------------------------------------------------------------
@@ -219,9 +159,10 @@ class Rsx_Prod_Seal
     }
 
     /**
-     * Remove the seal (unseal). Direct unlink - does not route through the
-     * guarded write path, and resets the memoized state so subsequent operations
-     * in this process see an unsealed system.
+     * Remove the seal (unseal). Direct unlink: the command that unseals is leaving
+     * prod mode, so it is not a build context and the build-tree guard would refuse a
+     * routed write. Resets the memoized state so subsequent operations in this process
+     * see an unsealed system.
      */
     public static function clear(): void
     {
@@ -283,43 +224,6 @@ class Rsx_Prod_Seal
         }
 
         return $drift;
-    }
-
-    // -------------------------------------------------------------------------
-    // Guard
-    // -------------------------------------------------------------------------
-
-    /**
-     * Throw when an unauthorized context tries to mutate a sealed build asset.
-     *
-     * Short-circuits cheaply on the common path: if the system is not sealed (the
-     * memoized default in dev/debug/prod-without-seal) it returns immediately.
-     * Only when SEALED and NOT authorized and the target is under the build root
-     * does it refuse. This is a developer guardrail, not a security boundary.
-     *
-     * @param string $path Absolute filesystem path about to be written/deleted
-     * @param string $context Short description of the operation (for the message)
-     * @throws RuntimeException when the write would mutate a sealed asset
-     */
-    public static function assert_mutable(string $path, string $context): void
-    {
-        if (!self::is_sealed()) {
-            return;
-        }
-
-        if (self::is_authorized()) {
-            return;
-        }
-
-        $root = self::_build_root();
-        if ($path !== $root && !str_starts_with($path, $root . '/')) {
-            return;
-        }
-
-        throw new RuntimeException(
-            "{$context}: '{$path}' is an immutable prod build asset (sealed prod mode); "
-            . 'rebuild via rsx:prod:refresh.'
-        );
     }
 
     // -------------------------------------------------------------------------
@@ -409,15 +313,6 @@ class Rsx_Prod_Seal
     // -------------------------------------------------------------------------
 
     /**
-     * Point the whole class at a throwaway build root (tests only).
-     */
-    public static function _testing_set_root(?string $root): void
-    {
-        self::$_root = $root;
-        self::_reset_cache();
-    }
-
-    /**
      * Force the is_sealed() result without touching real .env / mode (tests only).
      */
     public static function _testing_set_sealed(?bool $value): void
@@ -426,14 +321,11 @@ class Rsx_Prod_Seal
     }
 
     /**
-     * Restore all test seams to their defaults (including any authorization set via
-     * authorize_process()).
+     * Restore all test seams to their defaults.
      */
     public static function _testing_reset(): void
     {
-        self::$_root = null;
         self::$_testing_sealed = null;
-        self::$_authorized = false;
         self::_reset_cache();
     }
 }

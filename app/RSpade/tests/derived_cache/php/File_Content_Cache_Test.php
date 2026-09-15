@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\DerivedCache\Php;
 
 use App\RSpade\Core\Cache\File_Content_Cache;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -37,7 +38,7 @@ class File_Content_Cache_Test extends Rsx_Test_Abstract
         $token = uniqid();
 
         self::$namespace = 'test-derived-' . $token;
-        self::$source_dir = storage_path('rsx-tmp') . '/derived_cache_fixture_' . $token;
+        self::$source_dir = Rsx_Project_Paths::tmp_path() . '/derived_cache_fixture_' . $token;
 
         ensure_directory(self::$source_dir);
     }
@@ -77,7 +78,7 @@ class File_Content_Cache_Test extends Rsx_Test_Abstract
     // =====================================================================
 
     /**
-     * The path is storage/rsx-tmp/derived/<namespace>/<hash><variant>.<ext>, and nothing
+     * The path is tmp/derived/<namespace>/<hash><variant>.<ext>, and nothing
      * a caller passes can escape the namespace directory.
      */
     public static function test_path_shape()
@@ -91,9 +92,9 @@ class File_Content_Cache_Test extends Rsx_Test_Abstract
             $hash = File_Content_Cache::hash_of($source);
 
             static::__assert_contains(
-                '/rsx-tmp/derived/' . self::$namespace . '/',
+                Rsx_Project_Paths::derived_dir(self::$namespace) . '/',
                 $path,
-                'an entry lives under storage/rsx-tmp/derived/<namespace>/'
+                'an entry lives under tmp/derived/<namespace>/'
             );
 
             static::__assert_equals(

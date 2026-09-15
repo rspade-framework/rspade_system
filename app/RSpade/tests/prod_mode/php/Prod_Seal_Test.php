@@ -6,14 +6,15 @@
 
 namespace App\RSpade\Tests\ProdMode\Php;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Unit coverage for Rsx_Prod_Seal: write/read/verify + drift detection + the
- * is_sealed() gate. A throwaway build root is injected via the class seam so no
- * test ever touches the real storage/rsx-build, and every seam is restored in a
- * finally block.
+ * is_sealed() gate. A throwaway build root is injected with
+ * Rsx_Project_Paths::_override(['build' => ...]) so no test ever touches the real build
+ * tree, and every seam is restored in a finally block.
  *
  * Pure logic, no DB.
  */
@@ -34,7 +35,7 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
         file_put_contents($root . '/build_key', "deadbeefcafef00d\n");
         file_put_contents($root . '/bundles/Foo__app.abc123.js', "console.log(1);\n");
 
-        Rsx_Prod_Seal::_testing_set_root($root);
+        Rsx_Project_Paths::_override(['build' => $root]);
 
         return $root;
     }
@@ -76,6 +77,7 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
             static::__assert_true(Rsx_Prod_Seal::exists(), 'seal file exists after write');
         } finally {
             Rsx_Prod_Seal::_testing_reset();
+            Rsx_Project_Paths::_clear_overrides();
             self::_rmtree($root);
         }
     }
@@ -100,6 +102,7 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
             }
         } finally {
             Rsx_Prod_Seal::_testing_reset();
+            Rsx_Project_Paths::_clear_overrides();
             self::_rmtree($root);
         }
     }
@@ -121,6 +124,7 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
             static::__assert_true($has_missing, 'verify() must flag a deleted asset');
         } finally {
             Rsx_Prod_Seal::_testing_reset();
+            Rsx_Project_Paths::_clear_overrides();
             self::_rmtree($root);
         }
     }
@@ -142,6 +146,7 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
             static::__assert_true($has_mismatch, 'verify() must flag a tampered asset');
         } finally {
             Rsx_Prod_Seal::_testing_reset();
+            Rsx_Project_Paths::_clear_overrides();
             self::_rmtree($root);
         }
     }
@@ -163,6 +168,7 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
             static::__assert_true($has_key_drift, 'verify() must flag a build_key change');
         } finally {
             Rsx_Prod_Seal::_testing_reset();
+            Rsx_Project_Paths::_clear_overrides();
             self::_rmtree($root);
         }
     }
@@ -177,6 +183,7 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
             static::__assert_true(str_contains($drift[0], 'No seal present'));
         } finally {
             Rsx_Prod_Seal::_testing_reset();
+            Rsx_Project_Paths::_clear_overrides();
             self::_rmtree($root);
         }
     }
@@ -202,6 +209,7 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
             );
         } finally {
             Rsx_Prod_Seal::_testing_reset();
+            Rsx_Project_Paths::_clear_overrides();
             self::_rmtree($root);
         }
     }
@@ -213,6 +221,7 @@ class Prod_Seal_Test extends Rsx_Test_Abstract
             static::__assert_false(Rsx_Prod_Seal::is_sealed(), 'no seal file -> not sealed');
         } finally {
             Rsx_Prod_Seal::_testing_reset();
+            Rsx_Project_Paths::_clear_overrides();
             self::_rmtree($root);
         }
     }

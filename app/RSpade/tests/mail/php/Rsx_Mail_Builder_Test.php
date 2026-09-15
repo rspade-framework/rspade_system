@@ -11,6 +11,7 @@ use Symfony\Component\Mime\Email;
 use App\RSpade\Core\Mail\Rsx_Mail_Builder;
 use App\RSpade\Core\Mail\Rsx_Mail_Text;
 use App\RSpade\Core\Models\Email_Queue_Model;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
 
@@ -76,7 +77,7 @@ class Rsx_Mail_Builder_Test extends Rsx_Test_Abstract
 
     private static function __png_path(): string
     {
-        $path = storage_path('rsx-tmp/mail_builder_probe_' . uniqid() . '.png');
+        $path = Rsx_Project_Paths::tmp_path('mail_builder_probe_' . uniqid() . '.png');
         file_put_contents_safe($path, base64_decode(self::ONE_PIXEL_PNG));
 
         return $path;

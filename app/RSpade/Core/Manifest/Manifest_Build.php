@@ -6,6 +6,7 @@ use App\RSpade\CodeQuality\Support\Source_Cache;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\Manifest_Scanner;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -25,7 +26,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  *   - `scan_directories()` - where source is read from (config, plus the test trees when the
  *     process is a test run);
- *   - `cache_file_path()` / `storage_root()` - where the index is written.
+ *   - `cache_file_path()` / `build_root()` - where the index is written.
  *
  * Every scan root is expressed RELATIVE to `base_path()`, because that is the manifest's own
  * path vocabulary: an index key is a relative path and `base_path($key)` is the file. A root
@@ -54,8 +55,8 @@ class Manifest_Build
     /** Scan roots, relative to base_path(). */
     private array $scan_directories;
 
-    /** Absolute path of the storage root - the directory holding rsx-build/ and rsx-tmp/. */
-    private string $storage_root;
+    /** Absolute path of the build root - the directory this build's outputs land in. */
+    private string $build_root;
 
     /** The application mode this build is for ('development', 'debug', 'production'). */
     private string $mode;
@@ -66,10 +67,10 @@ class Manifest_Build
     /**
      * @param array<int,string> $scan_directories Relative to base_path()
      */
-    public function __construct(array $scan_directories, string $storage_root, string $mode)
+    public function __construct(array $scan_directories, string $build_root, string $mode)
     {
         $this->scan_directories = array_values($scan_directories);
-        $this->storage_root = rtrim($storage_root, '/');
+        $this->build_root = rtrim($build_root, '/');
         $this->mode = $mode;
     }
 
@@ -119,7 +120,6 @@ class Manifest_Build
         // parent classes are resolved THROUGH the index, so an index without them fails at
         // "Manifest support module must extend ManifestSupport_Abstract".
         $extra = Rsx_Internal_Flags::get('--_manifest-extra-scan-roots');
-        $storage = Rsx_Internal_Flags::get('--_manifest-storage-root');
 
         if ($extra !== null && $extra !== '') {
             foreach (array_filter(array_map('trim', explode(',', $extra))) as $path) {
@@ -131,7 +131,7 @@ class Manifest_Build
 
         return new self(
             $scan_paths,
-            $storage !== null && $storage !== '' ? $storage : storage_path(),
+            Rsx_Project_Paths::build_root(),
             Rsx::get_mode()
         );
     }
@@ -154,9 +154,9 @@ class Manifest_Build
         return array_map(fn ($path) => base_path($path), $this->scan_directories);
     }
 
-    public function storage_root(): string
+    public function build_root(): string
     {
-        return $this->storage_root;
+        return $this->build_root;
     }
 
     public function mode(): string
@@ -169,7 +169,7 @@ class Manifest_Build
      */
     public function cache_file_path(): string
     {
-        return $this->storage_root . '/' . Manifest::CACHE_FILE;
+        return $this->build_root . '/' . Manifest::CACHE_FILE;
     }
 
     /**

@@ -98,7 +98,15 @@ THE #[Health_Check] ATTRIBUTE
 FRAMEWORK INVENTORY
     The framework declares these checks (each in the feature that owns it):
 
-        Application Mode         active RSX_MODE + risky prod-posture warnings
+        Application Mode         active RSX_MODE, plus - in a production mode only -
+                                 an INFO row per deployed tree (system/, rsx/,
+                                 build/) stating whether the current process can
+                                 write it (the recommended posture is read-only; see
+                                 rsx:man prod), a WARN when login auto-fill is on,
+                                 and a WARN when the default log channel resolves to
+                                 level debug (remediation: LOG_LEVEL=info in .env).
+                                 A stack channel resolves to the LOUDEST level any of
+                                 its members accepts.
         Claude Skills            every rsx/resource/skills/<name>/SKILL.md is linked
                                  into .claude/skills/. WARN per unlinked skill,
                                  framework-created dangling link, or blocked/reserved
@@ -136,7 +144,30 @@ FRAMEWORK INVENTORY
         Playwright / Chromium    Playwright package + browser installed (rsx:debug)
         Realtime Relay           WebSocket relay reachable when enabled
         Redis Connectivity       Redis reachable (cache, realtime, task slots)
-        Storage Writable         storage/ + feature subdirs writable
+        Storage Writable         the project trees this process must be able to
+                                 write: storage/ (user data) and tmp/ (derived
+                                 caches) in every mode, build/ in development only -
+                                 a production mode writes build/ once, from
+                                 rsx:build, and only reads it afterwards. All three
+                                 are EXIST-OR-CREATE: a missing one is created here
+                                 rather than reported, and only absent-and-
+                                 uncreatable or present-and-unwritable is a FAIL.
+                                 Feature subdirs (storage/logs, tmp/thumbnails,
+                                 tmp/renditions) are created on first use, so a
+                                 missing one is a WARN.
+
+                                 Three more rows come with the split. `tmp/logs
+                                 link` and `tmp/app link` check the two symlinks
+                                 inside tmp/ that send storage_path('logs') and
+                                 storage_path('app') back into persistent storage -
+                                 FAIL when one is missing, points elsewhere, or has
+                                 been replaced by real content, because a broken one
+                                 is a silent data-loss shape rather than an error.
+                                 `PHP temp dir` reports where sys_get_temp_dir()
+                                 resolves: OK under the tmp root, WARN otherwise,
+                                 naming TMPDIR (a php-fpm pool, an ini or a
+                                 supervisor program answered first, and third-party
+                                 scratch is landing outside the project).
         Task Scheduler Liveness  rsx:task:process cron ticking
         Turnstile                INFO when disabled; FAIL when enabled with a
                                  missing key (half-configured install)
@@ -267,6 +298,8 @@ SEE ALSO
     rsx:man document_search   the extraction/preview dependencies this gates
     rsx:man libreoffice       the soffice dependency
     rsx:man app_mode          RSX modes surfaced by the Application Mode check
+    rsx:man prod              the read-only posture the INFO tree rows report on
+    rsx:man storage_directories  the three trees the writability rows check
     rsx:man tasks             the scheduler whose liveness is checked
     rsx:man locks             the lock daemon behind the Lock Server check
 

@@ -80,7 +80,7 @@ class Rsx_Mail_Transport
      * The runner constructs its own transport (that is the point - nobody hands it
      * one), so a test that needs to observe how the loop reacts to a particular SMTP
      * outcome has no other way in. Same shape and same rules as the
-     * rsx.files.storage_root override: a test sets it, a test clears it in a finally,
+     * Rsx_Project_Paths::_override(): a test sets it, a test clears it in a finally,
      * and NOTHING in the framework or an application ever assigns it at runtime.
      */
     public static ?TransportInterface $override_for_tests = null;

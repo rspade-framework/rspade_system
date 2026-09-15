@@ -28,9 +28,9 @@ return [
     |
     */
 
-    'compiled' => env(
-        'VIEW_COMPILED_PATH',
-        realpath(storage_path('framework/views'))
-    ),
+    // Compiled Blade is a BUILD OUTPUT and lives in the build tree with every other
+    // one. No realpath(): the directory legitimately does not exist yet on a box that
+    // has not built, and realpath() would answer false and send Blade to the CWD.
+    'compiled' => \App\RSpade\Core\Paths\Rsx_Project_Paths::views_compiled_dir(),
 
 ];

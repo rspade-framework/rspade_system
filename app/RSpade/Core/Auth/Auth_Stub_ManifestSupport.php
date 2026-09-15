@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Auth;
 use App\RSpade\Core\Auth\Auth_BundleIntegration;
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * Emit the JS Permission mirrors for #[Auth_Check] - one attachment per realm check, so a
@@ -45,7 +46,7 @@ class Auth_Stub_ManifestSupport extends ManifestSupport_Abstract
      */
     public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
-        $stub_dir = rsx_project_file_path(Auth_BundleIntegration::STUB_DIR);
+        $stub_dir = Rsx_Project_Paths::stubs_dir(Rsx_Project_Paths::STUBS_AUTH);
 
         if (!is_dir($stub_dir)) {
             mkdir($stub_dir, 0755, true);
@@ -82,7 +83,7 @@ class Auth_Stub_ManifestSupport extends ManifestSupport_Abstract
             }
 
             $generated_filenames[] = $filename;
-            $generated_relative_paths[] = Auth_BundleIntegration::STUB_DIR . '/' . $filename;
+            $generated_relative_paths[] = Rsx_Project_Paths::stub_key(Rsx_Project_Paths::STUBS_AUTH, $filename);
         }
 
         // Clean up orphaned mirrors (a realm that lost its last check, or a rename).

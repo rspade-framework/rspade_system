@@ -22,7 +22,7 @@ Rsx_Node_Service::introspect(): array;      // {pid, socket, loaded[], registere
 Rsx_Node_Service::stop($force = false);     // shutdown message, THEN reap by pid ($force skips the message)
 Rsx_Node_Service::force_restart();          // stop(force) + ensure
 Rsx_Node_Service::get_process(): ?Process;  // the handle THIS process published, or null
-Rsx_Node_Service::quiesce_all(): int;       // kill every node daemon under rsx-tmp; returns the count
+Rsx_Node_Service::quiesce_all(): int;       // kill every node daemon under tmp/; returns the count
 Rsx_Node_Service::socket_path(): string;    // THIS process's private socket, minted on first use
 Rsx_Node_Service::module_paths(): array;    // prefix => module path, from the shared registry
 ```
@@ -48,7 +48,7 @@ A subsystem module is loaded on FIRST USE. A ping loads nothing; a concat-only s
 loads sass. `introspect()` reports what is actually loaded and is how this is asserted.
 
 ## The socket is PRIVATE to this process
-`socket_path()` mints `storage/rsx-tmp/node-service-<random>.sock` ONCE per PHP process,
+`socket_path()` mints `tmp/node-service-<random>.sock` ONCE per PHP process,
 lazily. Nobody else can learn that name, so nobody else can kill, rebind or reuse the daemon
 behind it. That is what removes a real race: a shared well-known socket lets process B's
 `ensure()` reap the daemon process A is mid-request on, and lets two cold starts fight over
@@ -60,7 +60,7 @@ its lifetime is a subset of that parent's. Nothing is ever inherited, so there i
 validate - edited source, a fresh framework pull and a bumped npm library are all picked up
 because the next process spawns from current disk.
 
-The socket still lives under `storage/rsx-tmp/` deliberately: `quiesce_all()`, `rsx:clean` and
+The socket still lives under `tmp/` deliberately: `quiesce_all()`, `rsx:clean` and
 `bin/maintenance-mode.sh` all sweep that DIRECTORY by argv match, so every daemon stays
 reachable by the operational sweeps without any of them knowing a name. Several
 `node-service-*.sock` files at once is normal - it means several PHP processes are live.
@@ -88,10 +88,10 @@ file was unlinked under it (by `rsx:clean`, by a storage relocation) keeps a lis
 dead inode forever and can NEVER receive another socket message - but its argv still names the
 path, so pgrep still finds it.
 
-`quiesce_all()` is the same reaper widened to the whole `storage/rsx-tmp/` socket directory:
+`quiesce_all()` is the same reaper widened to the whole `tmp/` socket directory:
 it matches on argv, not on identity, so it takes down every process's node service,
 `ssr-server`, a stray left over from an older framework release, and anything added later
-without knowing they exist. `rsx:clean` calls it immediately before wiping `rsx-tmp`;
+without knowing they exist. `rsx:clean` calls it immediately before wiping `tmp/`;
 `bin/maintenance-mode.sh enable` runs the bash twin. See `bin/CLAUDE.md` for the normative
 rule.
 
@@ -112,7 +112,7 @@ destructor already reaps what this process spawned.
 - `Js_Parser.php` - PHP client (cache + marshaling + `Js_Exception` vocabulary)
 - `resource/parser-service.js` - the `parser` subsystem
 - Cache: the shared derived cache, namespace `js-parser`
-  (`storage/rsx-tmp/derived/js-parser/`), keyed by `_rsx_file_hash_for_build()` through
+  (`tmp/derived/js-parser/`), keyed by `_rsx_file_hash_for_build()` through
   `App\RSpade\Core\Cache\File_Content_Cache`. Checked FIRST - only a miss reaches the
   service, so a fully cached manifest build never starts node.
 - `Js_Parser::parse($file_path)` / `Js_Parser::extract_metadata($file_path)`
@@ -120,7 +120,7 @@ destructor already reaps what this process spawned.
 ## JS Transformer (Babel)
 - `Js_Transformer.php` - PHP client (cache + toolchain fingerprint + error vocabulary)
 - `resource/babel-service.js` - the `babel` subsystem
-- Cache: the shared derived cache, namespace `babel` (`storage/rsx-tmp/derived/babel/`),
+- Cache: the shared derived cache, namespace `babel` (`tmp/derived/babel/`),
   keyed by `_rsx_file_hash_for_build()` with the target + toolchain fingerprint as the
   VARIANT, through `App\RSpade\Core\Cache\File_Content_Cache`
 - `Js_Transformer::transform($path, $target)` / `transform_string($code, $path, $target)`

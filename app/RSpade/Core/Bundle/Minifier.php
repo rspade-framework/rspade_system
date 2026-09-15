@@ -82,7 +82,7 @@ class Minifier
      * Force a fresh node service.
      *
      * Kept as its own name because the production build calls it explicitly
-     * (Prod_Build_Command). Since consolidation there is ONE service per process, so this
+     * (the build pipeline). Since consolidation there is ONE service per process, so this
      * restarts the whole thing, not a minify-only daemon. A daemon is always spawned from
      * current disk by its own parent, so this is never needed for CHANGED code; it remains
      * the way to demand a brand new process regardless.

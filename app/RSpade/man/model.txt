@@ -389,18 +389,17 @@ How It Works:
     Database Schema:
         CREATE TABLE projects (
             id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
-            site_id BIGINT NOT NULL,       -- Added by migration normalization
+            site_id BIGINT NOT NULL,
             name VARCHAR(255) NOT NULL,
             description LONGTEXT,
-            INDEX idx_site_id (site_id)    -- Added automatically
+            INDEX idx_site_id (site_id)
         )
 
-    YOU DECLARE THE site_id COLUMN IN YOUR OWN MIGRATION. Schema normalization
-    adds the audit-authorship pairs and the timestamps to every table, but it
-    does NOT add site_id: the branch that once did keys on a trait
-    (App\Models\Traits\Siteable) that no longer exists anywhere in the
-    framework, so it matches no model and adds nothing. Backlog B-119 owns
-    either rewiring it to the Rsx_Site_Model_Abstract lineage or deleting it.
+    YOU DECLARE THE site_id COLUMN AND ITS INDEX IN YOUR OWN MIGRATION. Schema
+    normalization is database-driven - it walks SHOW TABLES and consults no
+    model - so it adds only the columns EVERY table carries: the audit-authorship
+    pairs and the timestamps. site_id belongs to one lineage, not to every table,
+    so it is the migration's to declare.
 
 Usage:
 

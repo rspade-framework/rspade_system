@@ -7,18 +7,23 @@ use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Paths;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * File-storage isolation (backlog B-38).
  *
- * The whole file subsystem (content-addressed blob store, thumbnail cache, rendition cache)
- * resolves its on-disk locations through Rsx_File_Paths. In default mode those paths are
- * exactly the storage_path('...') layout. During a test run the runner
- * (Rsx_Test_Command) sets the INTERNAL config key rsx.files.storage_root to
- * storage/rsx-tmp/test-storage, so a test-DB attachment delete can never unlink a blob shared
- * with the developer database.
+ * The whole file subsystem resolves its on-disk locations through Rsx_File_Paths, and it
+ * spans two trees by lifetime: the content-addressed BLOB STORE is user data under the
+ * files root, while the thumbnail and rendition CACHES are derived from a blob that is
+ * still there and live in tmp/.
+ *
+ * During a test run the runner (Rsx_Test_Command) redirects the path owner's files root
+ * with Rsx_Project_Paths::_override(['files' => ...]) at tmp/test-storage, so a test-DB
+ * attachment delete can never unlink a blob shared with the developer database. The two
+ * caches are deliberately outside that isolation: a run has nothing to lose in a
+ * directory it can regenerate.
  *
  * These tests execute INSIDE a run, where the runner has already set the override - so the live
  * isolation proof observes the real production configuration, not a mock.
@@ -67,48 +72,52 @@ class Storage_Isolation_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Default mode (no override) roots must equal storage_path('...') exactly, so relocation
-     * NEVER changes normal-deployment paths. We temporarily clear the run's override to observe
-     * default behavior, then restore it.
+     * Default mode (no override) roots must equal the owner's own answers exactly, so a
+     * relocation NEVER changes normal-deployment paths. We temporarily clear the run's
+     * override to observe default behavior, then restore it.
      */
     public static function test_default_mode_paths_are_exactly_storage_path()
     {
-        $saved = config('rsx.files.storage_root');
+        $saved = Rsx_Project_Paths::files_root();
 
         try {
-            config(['rsx.files.storage_root' => null]);
+            Rsx_Project_Paths::_clear_overrides();
 
-            static::__assert_equals(storage_path(), Rsx_File_Paths::storage_root(), 'default storage_root is storage_path()');
-            static::__assert_equals(storage_path('uploads'), Rsx_File_Paths::blob_root(), 'default blob_root is storage_path(uploads)');
-            static::__assert_equals(storage_path('rsx-thumbnails'), Rsx_File_Paths::thumbnails_root(), 'default thumbnails_root is storage_path(rsx-thumbnails)');
-            static::__assert_equals(storage_path('rsx-renditions'), Rsx_File_Paths::renditions_root(), 'default renditions_root is storage_path(rsx-renditions)');
+            static::__assert_equals(Rsx_Project_Paths::storage_root(), Rsx_File_Paths::storage_root(), 'default files root is the storage root');
+            static::__assert_equals(Rsx_Project_Paths::storage_path('uploads'), Rsx_File_Paths::blob_root(), 'default blob_root is <storage>/uploads');
+            static::__assert_equals(Rsx_Project_Paths::thumbnails_dir(), Rsx_File_Paths::thumbnails_root(), 'default thumbnails_root is the tmp cache');
+            static::__assert_equals(Rsx_Project_Paths::renditions_dir(), Rsx_File_Paths::renditions_root(), 'default renditions_root is the tmp cache');
 
-            // A storage record's full path must equal storage_path(get_storage_path()).
+            // A storage record's full path must equal <storage>/<get_storage_path()>.
             $m = new File_Storage_Model();
             $m->hash = 'abc123def456abc123def456';
             static::__assert_equals(
-                storage_path($m->get_storage_path()),
+                Rsx_Project_Paths::storage_path($m->get_storage_path()),
                 $m->get_full_path(),
-                'get_full_path equals storage_path(get_storage_path) in default mode'
+                'get_full_path equals <storage>/get_storage_path() in default mode'
             );
         } finally {
-            config(['rsx.files.storage_root' => $saved]);
+            Rsx_Project_Paths::_override(['files' => $saved]);
         }
     }
 
     /**
-     * With the run's override active, every root lives under storage/rsx-tmp/test-storage.
+     * With the run's override active, the BLOB store lives under tmp/test-storage. The
+     * two caches do not move with it: they hold nothing a run can lose.
      */
     public static function test_override_relocates_roots()
     {
-        $override = config('rsx.files.storage_root');
-        static::__assert_not_empty($override, 'the test runner set an override storage root for this run');
+        static::__assert_not_equals(
+            Rsx_Project_Paths::storage_root(),
+            Rsx_Project_Paths::files_root(),
+            'the test runner redirected the files root for this run'
+        );
 
-        $expected_root = storage_path('rsx-tmp/test-storage');
-        static::__assert_equals($expected_root, Rsx_File_Paths::storage_root(), 'override root is storage/rsx-tmp/test-storage');
+        $expected_root = Rsx_Project_Paths::test_storage_dir();
+        static::__assert_equals($expected_root, Rsx_File_Paths::storage_root(), 'override root is tmp/test-storage');
         static::__assert_equals($expected_root . '/uploads', Rsx_File_Paths::blob_root(), 'blob_root under the override');
-        static::__assert_equals($expected_root . '/rsx-thumbnails', Rsx_File_Paths::thumbnails_root(), 'thumbnails_root under the override');
-        static::__assert_equals($expected_root . '/rsx-renditions', Rsx_File_Paths::renditions_root(), 'renditions_root under the override');
+        static::__assert_equals(Rsx_Project_Paths::thumbnails_dir(), Rsx_File_Paths::thumbnails_root(), 'the thumbnail cache stays in tmp/');
+        static::__assert_equals(Rsx_Project_Paths::renditions_dir(), Rsx_File_Paths::renditions_root(), 'the rendition cache stays in tmp/');
     }
 
     /**
@@ -127,10 +136,10 @@ class Storage_Isolation_Test extends Rsx_Test_Abstract
         $test_path = $storage->get_full_path();
         $dir1 = substr($hash, 0, 2);
         $dir2 = substr($hash, 2, 2);
-        $real_path = storage_path("uploads/{$dir1}/{$dir2}/{$hash}");
+        $real_path = Rsx_Project_Paths::storage_path("uploads/{$dir1}/{$dir2}/{$hash}");
 
         // Written into the isolated test root, provably NOT the real developer store.
-        static::__assert_contains('/rsx-tmp/test-storage/uploads/', $test_path, 'blob resolves under the test root');
+        static::__assert_contains(Rsx_Project_Paths::test_storage_dir() . '/uploads/', $test_path, 'blob resolves under the test root');
         static::__assert_true(file_exists($test_path), 'blob written to the test root');
         static::__assert_false(file_exists($real_path), 'blob does NOT exist in the real developer store');
 
@@ -146,21 +155,27 @@ class Storage_Isolation_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Thumbnail and rendition path derivation (the cache-path seams used by the controllers) honor
-     * the override without needing to actually render.
+     * The cache-path seams the controllers use resolve into the tmp caches, without
+     * needing to actually render.
      */
-    public static function test_thumbnail_and_rendition_paths_honor_override()
+    public static function test_thumbnail_and_rendition_paths_resolve_under_tmp()
     {
-        $root = storage_path('rsx-tmp/test-storage');
-
         // Thumbnail cache path seam.
         $cache_path = \App\RSpade\Core\Files\File_Attachment_Controller::_get_cache_path('preset', 'x_1x1_deadbeef_png.webp');
-        static::__assert_equals($root . '/rsx-thumbnails/preset/x_1x1_deadbeef_png.webp', $cache_path, 'thumbnail cache path honors the override');
+        static::__assert_equals(
+            Rsx_Project_Paths::thumbnails_dir() . '/preset/x_1x1_deadbeef_png.webp',
+            $cache_path,
+            'the thumbnail cache path is under tmp/'
+        );
 
         // Rendition cache path seam (content-addressed on the blob hash).
         $storage = new File_Storage_Model();
         $storage->hash = 'feed0000feed0000feed0000';
         $rendition_path = File_Preview_Controller::rendition_cache_path($storage);
-        static::__assert_equals($root . '/rsx-renditions/feed0000feed0000feed0000.pdf', $rendition_path, 'rendition cache path honors the override');
+        static::__assert_equals(
+            Rsx_Project_Paths::renditions_dir() . '/feed0000feed0000feed0000.pdf',
+            $rendition_path,
+            'the rendition cache path is under tmp/'
+        );
     }
 }

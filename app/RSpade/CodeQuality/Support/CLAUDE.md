@@ -102,7 +102,7 @@ fired across processes, so every build re-ran every cross-file rule.
 
 ### Overview
 JavaScript sanitization runs over the ONE node service (`Rsx_Node_Service`, on this
-process's private `storage/rsx-tmp/node-service-<random>.sock`) rather than spawning 1000+
+process's private `tmp/node-service-<random>.sock`) rather than spawning 1000+
 Node processes during a check. `FileSanitizer` owns marshaling and its cache; it owns NO lifecycle.
 
 ### Components
@@ -131,7 +131,7 @@ FileSanitizer::sanitize_javascript($file_path);  // Cache first, then the node s
 ### Cache Integration
 Cache checked before RPC call - only files with stale cache sent to server for sanitization.
 Cache location: the shared derived cache, namespace `js-sanitized`
-(`storage/rsx-tmp/derived/js-sanitized/`), through
+(`tmp/derived/js-sanitized/`), through
 `App\RSpade\Core\Cache\File_Content_Cache` - keyed by the file's build hash, with the
 source-mtime guard kept on top of it.
 
@@ -224,7 +224,7 @@ violation list.
 
 ### Cache Integration
 Both lint and analyze_this have their own caching layers:
-- **Lint cache:** the shared `Validation_Ledger` (`storage/rsx-tmp/persistent/validation_ledger.php`),
+- **Lint cache:** the shared `Validation_Ledger` (`tmp/persistent/validation_ledger.php`),
   under the rule id `JS-LINT`, keyed by the file's sha1 - the same hash the manifest keys a
   file by, so a verdict survives a manifest clear. (`PHP-LINT` is the PHP stage's key.)
 - **This-usage cache:** none. `analyze_this()` returns a VIOLATION LIST, which is not worth

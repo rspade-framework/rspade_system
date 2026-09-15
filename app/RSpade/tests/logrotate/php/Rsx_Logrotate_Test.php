@@ -3,12 +3,13 @@
 namespace App\RSpade\Tests\Logrotate\Php;
 
 use App\RSpade\Core\Logging\Rsx_Logrotate;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Rsx_Logrotate - the rotation mechanics.
  *
- * Every test builds its own fixture directory under storage/rsx-tmp; the real
+ * Every test builds its own fixture directory under tmp/; the real
  * storage/logs is never named here.
  */
 class Rsx_Logrotate_Test extends Rsx_Test_Abstract
@@ -23,7 +24,7 @@ class Rsx_Logrotate_Test extends Rsx_Test_Abstract
      */
     private static function __fixture_dir(string $label): string
     {
-        $dir = storage_path('rsx-tmp/test-logrotate/' . $label);
+        $dir = Rsx_Project_Paths::tmp_path('test-logrotate/' . $label);
 
         if (is_dir($dir)) {
             foreach (glob($dir . '/*') as $file) {
@@ -198,7 +199,7 @@ class Rsx_Logrotate_Test extends Rsx_Test_Abstract
     {
         static::__assert_throws(
             \RuntimeException::class,
-            fn () => Rsx_Logrotate::rotate(storage_path('rsx-tmp/test-logrotate/does-not-exist'), 3, 21),
+            fn () => Rsx_Logrotate::rotate(Rsx_Project_Paths::tmp_path('test-logrotate/does-not-exist'), 3, 21),
             'not a directory'
         );
     }

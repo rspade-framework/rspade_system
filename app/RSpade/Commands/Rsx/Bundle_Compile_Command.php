@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Manifest\Manifest;
 use Exception;
@@ -112,7 +114,7 @@ class Bundle_Compile_Command extends Command
         }
 
         // Ensure storage directory exists
-        $bundle_dir = storage_path('rsx-build/bundles');
+        $bundle_dir = Rsx_Project_Paths::bundles_dir();
         if (!is_dir($bundle_dir)) {
             mkdir($bundle_dir, 0755, true);
         }
@@ -154,7 +156,7 @@ class Bundle_Compile_Command extends Command
                 console_debug('BUNDLE', 'Compile returned: ' . json_encode(array_keys($compiled)));
 
                 // Read compiled content from bundle files
-                $bundle_dir = storage_path('rsx-build/bundles');
+                $bundle_dir = Rsx_Project_Paths::bundles_dir();
                 $js_content = '';
                 $css_content = '';
 

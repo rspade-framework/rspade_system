@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\SysPanel\Php;
 
 use App\RSpade\Core\Bundle\BundleCompiler;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Sys\App\Sys\_Sys_Bundle;
 use App\RSpade\Sys\Theme\_Sys_Theme_Bundle;
@@ -85,7 +86,7 @@ class Sys_Panel_Bundle_Test extends Rsx_Test_Abstract
 
         // compile() returns bundle-relative filenames for the vendor/app split;
         // the bundles themselves live in one directory.
-        $bundle_dir = storage_path('rsx-build/bundles');
+        $bundle_dir = Rsx_Project_Paths::bundles_dir();
         $css = '';
 
         foreach (['vendor_css_bundle_path', 'app_css_bundle_path'] as $key) {

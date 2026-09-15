@@ -6,9 +6,9 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+
 use App\RSpade\Core\Bundle\Cdn_Cache;
 use App\RSpade\Core\Console\Rsx_Artisan;
-use App\RSpade\Core\Prod\Rsx_Prod_Env;
 use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 use Illuminate\Console\Command;
 
@@ -33,7 +33,7 @@ use Illuminate\Console\Command;
  *
  * WHY IT REFUSES WHILE SEALED. The mirror is a SOURCE artifact - git-tracked, refreshed
  * on a development box, reviewed and committed. A sealed host serves out of the copy it
- * shipped with; the command that rebuilds a sealed host's assets is rsx:prod:refresh.
+ * shipped with; the command that rebuilds a sealed host's assets is rsx:build --force.
  *
  * See: php artisan rsx:man external_resources
  */
@@ -44,14 +44,17 @@ class Cdn_Externals_Refresh_Command extends Command
     protected $description = 'Empty the CDN externals mirror store and re-download every declared external asset';
 
     /**
-     * Testing seam: skip the bundle-compile subprocess (step 4).
+     * Testing seam: record the artisan subprocesses instead of running them.
      *
      * A unit test drives this command in-process to assert the store's before/after
-     * state; spawning a real full compile from inside the suite is neither wanted nor
-     * fast. The seam suppresses the SPAWN, never the accounting - the step still prints
-     * and the command still reports the store it produced.
+     * state; spawning a real rsx:clean and a real full compile from inside the suite
+     * would wipe the developer's build tree and take minutes. When this is an array the
+     * command appends each command name to it and runs nothing - the accounting is
+     * untouched, so the steps still print and the store is still reported.
+     *
+     * @var array<int, string>|null
      */
-    public static bool $_testing_skip_bundle_compile = false;
+    public static ?array $_testing_spawned = null;
 
     public function handle(): int
     {
@@ -59,7 +62,7 @@ class Cdn_Externals_Refresh_Command extends Command
             $this->error('[ERROR] The CDN externals mirror is a source artifact, not a build output.');
             $this->line('  It is refreshed on a development box and committed, so a sealed host serves');
             $this->line('  the copy it shipped with and never re-downloads.');
-            $this->line('  To rebuild a sealed host\'s assets: php artisan rsx:prod:refresh');
+            $this->line('  To rebuild a sealed host\'s assets: php artisan rsx:build --force');
 
             return 1;
         }
@@ -72,16 +75,21 @@ class Cdn_Externals_Refresh_Command extends Command
         $this->line("      {$removed} files removed");
 
         // The compiled bundles NAME /_vendor/ files, and the SCSS second-level cache under
-        // storage/rsx-tmp holds already-localized stylesheets. Both must go or the localize
-        // pass never re-runs and the store comes back short.
+        // the tmp tree holds already-localized stylesheets. Both must go or the localize
+        // pass never re-runs and the store comes back short. rsx:clean owns that wipe.
         $this->line('[2/4] Clearing compiled bundle caches');
-        Rsx_Prod_Env::clear_rsx_caches();
+        $clean_exit = $this->_spawn('rsx:clean', ['--silent', Clean_Command::FLAG_NO_SYSTEM_RESET]);
+        if ($clean_exit !== 0) {
+            $this->error("[ERROR] rsx:clean failed (exit {$clean_exit}). The store was not refreshed.");
+
+            return 1;
+        }
 
         $this->line('[3/4] Mirroring declared externals');
         $mirrored = Cdn_Cache::mirror_externals(fn ($line) => $this->line($line));
         $this->line("      {$mirrored} declared urls mirrored");
 
-        $this->line('[4/4] Compiling every bundle');
+        $this->line('[4/4] Rebuilding every bundle');
         $this->newLine();
 
         $exit_code = $this->_compile_bundles();
@@ -102,16 +110,28 @@ class Cdn_Externals_Refresh_Command extends Command
     /**
      * Recompile every bundle, repopulating every CDN asset and every localized reference.
      *
-     * A fresh process is mandatory (rsx:bundle:compile refuses $this->call()), and an
-     * artisan subprocess is spawned only through Rsx_Artisan - ARTISAN-SPAWN-01.
+     * A fresh process is mandatory (the manifest and every cache must be re-read), and
+     * an artisan subprocess is spawned only through Rsx_Artisan - ARTISAN-SPAWN-01.
      */
     protected function _compile_bundles(): int
     {
-        if (self::$_testing_skip_bundle_compile) {
+        return $this->_spawn('rsx:build', []);
+    }
+
+    /**
+     * Run one artisan subprocess, or record it when the testing seam is armed.
+     *
+     * @param array<int, string> $args
+     */
+    protected function _spawn(string $command, array $args): int
+    {
+        if (self::$_testing_spawned !== null) {
+            self::$_testing_spawned[] = $command;
+
             return 0;
         }
 
-        return Rsx_Artisan::passthru('rsx:bundle:compile');
+        return Rsx_Artisan::passthru($command, $args);
     }
 
     /**

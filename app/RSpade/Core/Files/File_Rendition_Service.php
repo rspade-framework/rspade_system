@@ -12,7 +12,7 @@ use App\RSpade\Core\Task\Task_Instance;
  * Cache management for document PDF renditions produced by File_Preview_Controller.
  *
  * Storage Structure:
- * - storage/rsx-renditions/{blob-hash}.pdf - cached soffice->PDF renditions of convertible
+ * - tmp/renditions/{blob-hash}.pdf - cached soffice->PDF renditions of convertible
  *   documents (Office docs). Content-addressed on the deduplicated blob hash, so identical bytes
  *   convert exactly once. PDF attachments are served directly and never cached here.
  *

@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Naming;
 
 use App\RSpade\Core\Manifest\Manifest_Scanner;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * THE ONE ANSWER TO "WHERE IS THIS FILE".
@@ -64,8 +65,9 @@ class Rsx_Paths
      *
      * THREE CASES, and they are the reason this exists once instead of five times:
      *
-     *   - `storage/...` is NOT under `base_path()` at all (volatile storage lives one level
-     *     above it), so it goes through `rsx_project_file_path()`;
+     *   - a key naming one of the three volatile trees (`build/...`, `tmp/...`,
+     *     `storage/...`) is not under `base_path()` at all and each root is relocatable,
+     *     so it goes through the path owner;
      *   - `rsx/...` resolves through the `system/rsx` symlink, which `base_path()` gives us
      *     for free - the `base_path('../' . $file)` spelling two call sites used reaches the
      *     same file by the real mount, and `rsxrealpath()` then made the two agree;
@@ -80,8 +82,10 @@ class Rsx_Paths
             return $path;
         }
 
-        if (str_starts_with($path, 'storage/')) {
-            return rsx_project_file_path($path);
+        $owned = Rsx_Project_Paths::absolute_for($path);
+
+        if ($owned !== null) {
+            return $owned;
         }
 
         return base_path($path);

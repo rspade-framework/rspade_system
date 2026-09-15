@@ -2,6 +2,7 @@
 
 namespace App\RSpade\Core\Framework;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -30,15 +31,15 @@ use App\RSpade\Core\Rsx;
  * class and bin/maintenance-mode.sh) produce that shape; readers take line 1 for the reason and
  * treat a missing stamp as production.
  *
- * The flag lives under storage/rsx-framework/ - the framework-update state directory, which is
- * OUTSIDE the system/ submodule and therefore untouched by the reset that every update and every
+ * The flag lives under storage/state/ - the environment's own lifetime state, which is OUTSIDE
+ * the system/ submodule and therefore untouched by the reset that every update and every
  * rsx:clean performs. That is why a raised window survives until deliberately cleared, including
  * across the update that raised it.
  */
 class Framework_Maintenance
 {
-    /** Path RELATIVE to the PROJECT root (the directory containing storage/). The pre-boot enforcement sites hardcode this literally. */
-    public const FLAG_RELATIVE = 'storage/rsx-framework/.maintenance.mode.framework.update';
+    /** Path RELATIVE to the PROJECT root (the directory containing storage/), for a synthetic-tree caller. */
+    public const FLAG_RELATIVE = 'storage/state/.maintenance.mode.framework.update';
 
     /**
      * The internal override token the pull passes on its own artisan calls so THEY run while the
@@ -51,10 +52,9 @@ class Framework_Maintenance
     public const MODE_PREFIX = 'mode=';
 
     /**
-     * Absolute path to the flag file. Defaults to the RESOLVED storage root - volatile
-     * storage relocated out of system/ to <project>/storage, so it must never be derived
-     * from base_path() again. $base is the directory CONTAINING storage/ and exists for
-     * pre-boot / synthetic-tree callers (base_path() is unavailable before boot).
+     * Absolute path to the flag file, from the path owner. $base is the directory
+     * CONTAINING storage/ and exists for synthetic-tree callers that are asking about a
+     * project root other than this one.
      */
     public static function flag_path(?string $base = null): string
     {
@@ -62,7 +62,7 @@ class Framework_Maintenance
             return rtrim($base, '/') . '/' . self::FLAG_RELATIVE;
         }
 
-        return storage_path('rsx-framework/.maintenance.mode.framework.update');
+        return Rsx_Project_Paths::maintenance_flag_file();
     }
 
     /**

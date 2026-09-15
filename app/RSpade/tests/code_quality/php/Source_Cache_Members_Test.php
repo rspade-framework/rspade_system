@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\CodeQuality\Php;
 
 use App\RSpade\CodeQuality\Support\Source_Cache;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -38,7 +39,7 @@ class Source_Cache_Members_Test extends Rsx_Test_Abstract
      */
     private static function __fixture(string $source): string
     {
-        $path = storage_path('rsx-tmp') . '/source_cache_members_' . uniqid() . '.php';
+        $path = Rsx_Project_Paths::tmp_path() . '/source_cache_members_' . uniqid() . '.php';
         file_put_contents($path, $source);
         self::$fixtures[] = $path;
 

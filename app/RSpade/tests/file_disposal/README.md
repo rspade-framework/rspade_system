@@ -40,7 +40,7 @@ test just proved. `File_Disposal_Test` therefore declares `$requires_db_reset = 
 itself around every method.
 
 That is safe because the runner relocates the ENTIRE file subsystem to
-`storage/rsx-tmp/test-storage` (see `tests/CLAUDE.md`, File-storage isolation). Without
+`tmp/test-storage` (see `tests/CLAUDE.md`, File-storage isolation). Without
 that relocation a test-DB destroy would unlink a blob whose bytes match a developer file
 and take the real one with it - the deduplication is content-addressed and does not care
 which database pointed at it.

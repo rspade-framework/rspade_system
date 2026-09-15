@@ -10,6 +10,7 @@ namespace App\RSpade\Tests\Locks\Php;
 use Symfony\Component\Process\Process;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -94,7 +95,7 @@ class Lock_Fd_Inheritance_Test extends Rsx_Test_Abstract
         // fuser MUST inspect the file the lock is actually on - built from the same scope
         // token the lock uses. (The old unscoped spelling is a stale, unheld file; checking it
         // would let this test pass without ever seeing the inherited-fd defect it guards.)
-        $lock_path = storage_path('flock/system__' . Rsx_Connection_Scope::token() . '__' . self::PROBE_LOCK . '.lock');
+        $lock_path = Rsx_Project_Paths::flock_dir() . '/system__' . Rsx_Connection_Scope::token() . '__' . self::PROBE_LOCK . '.lock';
         $process = null;
 
         try {

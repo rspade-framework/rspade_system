@@ -11,6 +11,7 @@
 namespace App\RSpade\Core\Prod;
 
 use RuntimeException;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * Maintains the ".env symlink invariant".
@@ -286,7 +287,7 @@ class Rsx_Env_Symlink
      * The PRE-BOOT entry point: full_heal(), skipped when nothing has changed.
      *
      * Development runs this on EVERY boot, so the common path must cost close to
-     * nothing. The stamp under storage/rsx-tmp is that: it records the size and
+     * nothing. The stamp in the tmp tree is that: it records the size and
      * mtime of every file the heal reads, and matching it exactly means the last
      * heal already saw this input. A missing or differing stamp means the heal
      * runs.
@@ -336,9 +337,10 @@ class Rsx_Env_Symlink
      *
      * A key already present anywhere is left exactly as it is, whatever its
      * value; nothing is deleted, nothing is reordered, and the source line is
-     * appended verbatim. system/.env.dist exists downstream only (it is the
-     * framework's shipped copy); this monorepo has none and the first pass is
-     * simply skipped.
+     * appended verbatim - together with the comment lines directly above it in the
+     * source, because a key arriving with no explanation is a key nobody can set.
+     * system/.env.dist exists downstream only (it is the framework's shipped copy);
+     * this monorepo has none and the first pass is simply skipped.
      */
     protected static function __sync_keys(string $root_env, string $root_dist, string $system_dist, array &$report): void
     {
@@ -351,18 +353,20 @@ class Rsx_Env_Symlink
         if (is_file($system_dist)) {
             $system_dist_data = self::__parse_env_lines((string) file_get_contents($system_dist));
             foreach ($system_dist_data['lines'] as $key => $line) {
+                $chunk = array_merge($system_dist_data['comments'][$key] ?? [], [$line]);
+
                 if (!array_key_exists($key, $root_dist_data['keys'])) {
-                    $to_dist[$key] = $line;
+                    $to_dist[$key] = $chunk;
                 }
                 if (!array_key_exists($key, $root_env_data['keys'])) {
-                    $to_env[$key] = $line;
+                    $to_env[$key] = $chunk;
                 }
             }
         }
 
         foreach ($root_dist_data['lines'] as $key => $line) {
             if (!array_key_exists($key, $root_env_data['keys']) && !isset($to_env[$key])) {
-                $to_env[$key] = $line;
+                $to_env[$key] = array_merge($root_dist_data['comments'][$key] ?? [], [$line]);
             }
         }
 
@@ -726,38 +730,65 @@ class Rsx_Env_Symlink
     // -------------------------------------------------------------------------
 
     /**
-     * Parse KEY=VALUE lines. Comments and blank lines are ignored. Quoted values
-     * are preserved verbatim - we move whole lines, never reformat a value.
+     * Parse KEY=VALUE lines, with the comment block that introduces each one.
      *
-     * @return array{keys: array<string,string>, lines: array<string,string>}
+     * Quoted values are preserved verbatim - we move whole lines, never reformat a
+     * value. `comments` holds the CONTIGUOUS run of `#` lines directly above a key,
+     * which is what a reader of .env.dist wrote to explain that key: a key copied
+     * downstream without it arrives as a bare name nobody can act on. The run must end
+     * on the line immediately above the key, so a comment separated by a blank line is
+     * a section header belonging to the file, not to the key.
+     *
+     * @return array{keys: array<string,string>, lines: array<string,string>, comments: array<string,array<int,string>>}
      */
     protected static function __parse_env_lines(string $contents): array
     {
         $keys = [];
         $lines = [];
+        $comments = [];
+        $run = [];
 
         foreach (explode("\n", $contents) as $raw) {
             $trimmed = ltrim($raw);
-            if ($trimmed === '' || $trimmed[0] === '#') {
+
+            if ($trimmed === '') {
+                $run = [];
+
+                continue;
+            }
+
+            if ($trimmed[0] === '#') {
+                $run[] = rtrim($raw, "\r\n");
+
                 continue;
             }
 
             $eq_pos = strpos($raw, '=');
             if ($eq_pos === false) {
+                $run = [];
+
                 continue;
             }
 
             $key = trim(substr($raw, 0, $eq_pos));
             $is_valid_key = preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $key);
             if (!$is_valid_key) {
+                $run = [];
+
                 continue;
             }
 
             $keys[$key] = substr($raw, $eq_pos + 1);
             $lines[$key] = rtrim($raw, "\r\n");
+
+            if ($run !== []) {
+                $comments[$key] = $run;
+            }
+
+            $run = [];
         }
 
-        return ['keys' => $keys, 'lines' => $lines];
+        return ['keys' => $keys, 'lines' => $lines, 'comments' => $comments];
     }
 
     // -------------------------------------------------------------------------
@@ -765,9 +796,15 @@ class Rsx_Env_Symlink
     // -------------------------------------------------------------------------
 
     /**
-     * Append the unique-key lines to the root .env under a dated marker comment.
+     * Append the unique-key entries to the root .env under a dated marker comment.
      * The root file's existing bytes are left untouched (root wins). Written via
      * temp+rename in the file's own directory for an atomic replace.
+     *
+     * An entry is either one line or a CHUNK - the key's comment lines followed by the
+     * key - and chunks are separated by a blank line, so the appended region reads the
+     * way the source file reads.
+     *
+     * @param array<int,string|array<int,string>> $merged_lines
      */
     protected static function __append_block(string $root_env, array $merged_lines, ?string $marker = null): void
     {
@@ -776,8 +813,22 @@ class Rsx_Env_Symlink
             $root_contents .= "\n";
         }
 
+        $rendered = [];
+        $has_chunk = false;
+
+        foreach ($merged_lines as $entry) {
+            if (is_array($entry)) {
+                $has_chunk = $has_chunk || count($entry) > 1;
+                $rendered[] = implode("\n", $entry);
+
+                continue;
+            }
+
+            $rendered[] = $entry;
+        }
+
         $marker = $marker ?? '# merged from system/.env by rsx env healer (' . date('Y-m-d') . ')';
-        $block = "\n" . $marker . "\n" . implode("\n", $merged_lines) . "\n";
+        $block = "\n" . $marker . "\n" . implode($has_chunk ? "\n\n" : "\n", $rendered) . "\n";
 
         self::__atomic_write($root_env, $root_contents . $block);
     }
@@ -903,12 +954,17 @@ class Rsx_Env_Symlink
     }
 
     /**
-     * The boot-heal stamp. Under storage/rsx-tmp, which is volatile by design:
-     * losing it costs one heal.
+     * The boot-heal stamp. In the tmp tree, which is volatile by design: losing it
+     * costs one heal.
+     *
+     * The path owner is required directly because this runs pre-boot, before the
+     * autoloader exists.
      */
     protected static function __stamp_path(): string
     {
-        return dirname(self::__root_env_path()) . '/storage/rsx-tmp/env_heal.stamp';
+        require_once dirname(__DIR__, 2) . '/Core/Paths/Rsx_Project_Paths.php';
+
+        return Rsx_Project_Paths::env_heal_stamp_file();
     }
 
     /**

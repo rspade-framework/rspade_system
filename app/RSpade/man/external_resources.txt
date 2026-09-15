@@ -204,7 +204,7 @@ WHO POPULATES THE MIRROR
           URL.
 
     A SEALED WEB REQUEST NEVER DOWNLOADS. A miss while sealed THROWS, naming
-    the file, the store directory and rsx:prod:refresh. A miss in development
+    the file, the store directory and rsx:build --force. A miss in development
     is a 404 naming rsx:cdn_externals:refresh - it means the compile that
     names the file has never run on this box, or the store was emptied.
 
@@ -217,7 +217,7 @@ WHO POPULATES THE MIRROR
     complete, since a bundle never compiled on this box has never produced its
     files. Run it when a declared URL's bytes changed upstream, when
     rsx.cdn_externals.user_agent changed, or to clear orphans. It REFUSES on a
-    sealed host, where the rebuild command is rsx:prod:refresh.
+    sealed host, where the rebuild command is rsx:build --force.
 
     Filenames come from the same Cdn_Cache naming rule the bundle's cdn_assets
     use, so both halves name the same file and a URL version bump simply
@@ -422,7 +422,7 @@ TROUBLESHOOTING
 
     "Missing mirrored external asset: <file>" (sealed)
         The build's mirror step did not run, or the .cdn-cache file was
-        deleted. Re-run rsx:prod:refresh (or rsx:prod:enable). A sealed build
+        deleted. Re-run rsx:build --force. A sealed build
         never downloads at request time by design; the loud error is the
         feature.
 

@@ -48,31 +48,9 @@ const EXIT_DEADLOCK = 125;
 // Environment
 // ---------------------------------------------------------------------------
 
-/**
- * Hand-rolled .env reader, same as the other node helpers in system/bin. Only fills keys
- * that are not already in the real environment, so an explicit export always wins. Absent
- * file is not an error: outside RSpade the key just comes from the environment.
- */
-function load_env_file(env_path) {
-    if (!fs.existsSync(env_path)) return;
-
-    const content = fs.readFileSync(env_path, 'utf8');
-    for (const line of content.split('\n')) {
-        const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) continue;
-        const eq = trimmed.indexOf('=');
-        if (eq === -1) continue;
-        const key = trimmed.substring(0, eq);
-        let value = trimmed.substring(eq + 1);
-        if ((value.startsWith('"') && value.endsWith('"'))
-            || (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1);
-        }
-        if (!process.env[key]) {
-            process.env[key] = value;
-        }
-    }
-}
+// The .env reader every node helper in system/bin shares. Only fills keys that are not
+// already in the real environment, so an explicit export always wins.
+const { load_env_file } = require(require('path').join(__dirname, '..', 'lib', 'rsx_paths.js'));
 
 // ---------------------------------------------------------------------------
 // Argument parsing

@@ -46,7 +46,7 @@ A model whose JS class arrives by CLASS REFERENCE rather than by include needs n
 
 ## Output
 
-Compiled artifacts are written under `storage/rsx-build/bundles/` as:
+Compiled artifacts are written under `build/bundles/` as:
 
 - `{Bundle}__app.{hash}.js` - the module's own code
 - `{Bundle}__vendor.{hash}.js` - third-party dependencies
@@ -113,7 +113,7 @@ class Bootstrap_Icons_Bundle extends Rsx_Asset_Bundle_Abstract
 }
 ```
 
-**Every mode mirrors it.** The asset is downloaded into `rsx/resource/.cdn-cache/` (git-tracked - commit what a compile adds) on first compile and the tag points at `/_vendor/<md5(url)>_<name>.<ext>` - a development box exactly like a sealed build, so a `cdn_asset` contributes nothing to the CSP policy anywhere. A declared `integrity` hash is verified at download and a mismatch fails the compile; an unreachable URL fails it too. A **sealed** web request never downloads (a miss throws naming `rsx:prod:refresh`); a development miss is a 404 naming `rsx:cdn_externals:refresh`.
+**Every mode mirrors it.** The asset is downloaded into `rsx/resource/.cdn-cache/` (git-tracked - commit what a compile adds) on first compile and the tag points at `/_vendor/<md5(url)>_<name>.<ext>` - a development box exactly like a sealed build, so a `cdn_asset` contributes nothing to the CSP policy anywhere. A declared `integrity` hash is verified at download and a mismatch fails the compile; an unreachable URL fails it too. In a prod mode only the build may download (a miss on a sealed web request throws naming `rsx:build --force`); a development miss is a 404 naming `rsx:cdn_externals:refresh`.
 
 The same localization applies to compiled CSS: a `@import url(https://fonts.googleapis.com/...)` in application SCSS, and the `@font-face` woff2 files the downloaded stylesheet names, are all mirrored and rewritten to `/_vendor/`. A webfont CDN therefore needs nothing whitelisted.
 

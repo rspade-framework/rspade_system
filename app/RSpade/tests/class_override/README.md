@@ -35,7 +35,7 @@ FQCN to the now-renamed `.php` path. Two orthogonal mechanisms (owner ruling
    pass settles, the rebuild validates composer's classmap against the filesystem and,
    if any entry points at a missing file, runs a blocking `composer dump-autoload` to
    regenerate it. Dev-mode / rebuild-only; prod seals already regenerate the composer
-   autoloader in `rsx:prod:build`.
+   autoloader in `rsx:build`.
 
 The two are complementary: the tolerance is the runtime guarantee for the current
 process (whose in-memory classmap is already loaded and cannot be un-staled

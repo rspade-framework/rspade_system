@@ -6,13 +6,18 @@
 is cached on disk, and the tree it owns:
 
 ```
-storage/rsx-tmp/derived/<namespace>/<hash><variant>.<ext>
+tmp/derived/<namespace>/<hash><variant>.<ext>
 ```
 
 **One key scheme.** `<hash>` is `_rsx_file_hash_for_build()`, the framework's single
-file-identity helper - development: absolute path + size + mtime (cheap, local); production
-and debug: the project-RELATIVE path plus the content, so a derived name is identical in two
-byte-identical checkouts and a sealed build stays deterministic. A cache does not get an
+file-identity helper - development: project-relative path + size + mtime (cheap, local);
+production and debug: the project-RELATIVE path plus the content, so a derived name is
+identical in two byte-identical checkouts and a sealed build stays deterministic. The path
+component is relative in BOTH modes because `base_path()` is `<project>/system` and sits
+above symlinks to the application and volatile trees (`system/rsx`, `system/tmp`), so every
+source file has two absolute spellings; folding the absolute one in gave one file two
+identities, and the Phase 7 sweep - whose live set is built from one spelling - then deleted
+live entries written under the other. A cache does not get an
 opinion about this. The one exception is spelled as such: `put_for_hash()` / `get_for_hash()`
 take an EXPLICIT hash, which the PHP reflection cache uses because it already keyed on the
 manifest's own sha1 and that key was right.
@@ -28,7 +33,7 @@ is in no live set, and is called ONCE, from the manifest build's Phase 7, becaus
 only moment the framework holds a complete answer to "which source files still exist".
 Building the manifest just to prune would cost more than the bytes it reclaims. An EMPTY live
 set removes nothing: "I could not work out what is live" and "nothing is live" are different
-statements. `rsx:clean` wipes `rsx-tmp` wholesale and needs no wiring at all.
+statements. `rsx:clean` wipes `tmp` wholesale and needs no wiring at all.
 
 **Writes are atomic.** `put()` goes through `file_put_contents_safe()`, which stages and
 renames, so a reader never sees a half-written entry and a build killed mid-write leaves no

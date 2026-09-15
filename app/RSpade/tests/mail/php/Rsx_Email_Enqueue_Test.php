@@ -11,6 +11,7 @@ use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
@@ -603,7 +604,7 @@ class Rsx_Email_Enqueue_Test extends Rsx_Test_Abstract
     {
         static::__acting_as_site(self::SITE_ID);
 
-        $path = storage_path('rsx-tmp/email_embed_probe_' . uniqid() . '.png');
+        $path = Rsx_Project_Paths::tmp_path('email_embed_probe_' . uniqid() . '.png');
         // A one-pixel PNG, so the file is a real image and not merely bytes with a name.
         file_put_contents_safe($path, base64_decode(
             'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='

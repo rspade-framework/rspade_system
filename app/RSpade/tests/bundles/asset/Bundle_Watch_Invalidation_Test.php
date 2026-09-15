@@ -8,6 +8,7 @@ namespace App\RSpade\Tests\Bundles\Asset;
 
 use RuntimeException;
 use App\RSpade\Core\Bundle\BundleCompiler;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * A bundle's `watch` declaration must be able to invalidate that bundle's own compiled output.
@@ -210,7 +211,7 @@ class Bundle_Watch_Invalidation_Test extends Rsx_Test_Abstract
      */
     protected static function __artifact_contents(string $filename): string
     {
-        return file_get_contents(storage_path('rsx-build/bundles/' . $filename));
+        return file_get_contents(Rsx_Project_Paths::bundles_dir() . '/' . $filename);
     }
 
     /**
@@ -239,12 +240,12 @@ class Bundle_Watch_Invalidation_Test extends Rsx_Test_Abstract
         // '<Bundle>__<hash>.<ext>' for the compiled buckets and 'npm_<Bundle>_<hash>.js' for
         // the npm shim. A glob keyed only to the first scheme leaves the npm files behind.
         $patterns = [
-            'rsx-build/bundles/Watch_Fixture_*',
-            'rsx-build/bundles/npm_Watch_Fixture_*',
+            '/Watch_Fixture_*',
+            '/npm_Watch_Fixture_*',
         ];
 
         foreach ($patterns as $pattern) {
-            foreach (glob(storage_path($pattern)) as $artifact) {
+            foreach (glob(Rsx_Project_Paths::bundles_dir() . $pattern) as $artifact) {
                 if (is_file($artifact)) {
                     unlink($artifact);
                 }

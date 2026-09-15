@@ -1,6 +1,6 @@
 ---
 name: migrations
-description: "RSX database migrations and the column kinds a model declares over them - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, the self-containment rule (no model class and no Type_Ref_Registry - MIGRATION-MODEL-01), automatic schema normalization and audit columns, and the datadir snapshot that auto-rolls-back a failed run (and the three conditions that decide whether it is taken at all). Use when creating or altering any table or column, adding a field to a model, choosing a column type (an enum is BIGINT + $enums, a polymorphic reference is a type-ref pair, rich text is TEXT + $text_types), converting an existing column to a declared text type, creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, or wondering whether it is safe to run migrate."
+description: "RSX database migrations and the column kinds a model declares over them - make:migration:safe, raw SQL enforcement (the Schema builder is prohibited), the forward-only no-rollback philosophy, the self-containment rule (no model class and no Type_Ref_Registry - MIGRATION-MODEL-01), automatic schema normalization and audit columns, and the datadir snapshot that auto-rolls-back a failed run (and the three conditions that decide whether it is taken at all). Use when creating or altering any table or column, adding a field to a model, choosing a column type (an enum is BIGINT + $enums, a polymorphic reference is a type-ref pair, rich text is TEXT + $text_types), converting an existing column to a declared text type, creating or altering a table, adding a column or index, writing or running a migration, troubleshooting a Schema-builder violation or a failed migrate, wondering whether it is safe to run migrate, or deciding where migrate sits in a production deployment (before the build) and what .migration_whitelist, rsx:migrate:check_consistency and migrate.normalize_schema.complete do there."
 ---
 
 # RSX Database Migrations
@@ -140,7 +140,7 @@ DB::statement("UPDATE activities SET eventable_type = {$contact_id} WHERE eventa
 
 Ids are still never hardcoded - the closure resolves or creates the row at replay time, so it is correct on a fresh install and in every environment.
 
-**The one exception** is data seeding that genuinely needs model BEHAVIOUR raw SQL cannot reproduce (a file pipeline, an encryption cast, a factory with side effects). It declares itself in the file docblock, and the rationale is required - a bare marker is itself a violation:
+**An exception is essentially never justified.** A table name and raw SQL always suffice - including for a BACKFILL, which is the case people most often reach for a model to do: SELECT the rows and UPDATE them. The only shape that has ever earned one is data seeding that needs model BEHAVIOUR no SQL can reproduce (bytes that must travel through the file-upload pipeline, a value that must be written through an encryption cast). It declares itself in the file docblock, and the rationale is required - a bare marker is itself a violation:
 
 ```php
 /**
@@ -148,7 +148,9 @@ Ids are still never hardcoded - the closure resolves or creates the row at repla
  */
 ```
 
-Schema work and type-ref lookups are never the exception; convert those.
+Schema work, type-ref lookups and backfills are never the exception; convert those.
+
+**The second hazard, for any migration that does write through a model: on a production host THE MANIFEST CAN BE AHEAD OF THE DATABASE.** A production build bakes every model's column map in at build time, so a deployment that builds before it migrates is running models that know columns the tables do not have yet - and a write through such a model fails on an unknown column, part-way through the run, on the box where a half-applied migration costs the most. Raw SQL against a table name describes the schema AT THAT POINT IN HISTORY and cannot drift.
 
 ---
 
@@ -290,8 +292,15 @@ php artisan migrate
 
 In debug/production mode:
 - No snapshot protection and no rollback
-- Schema normalization still runs
-- Constants and bundles NOT regenerated
+- Schema normalization still runs, and the app hook fires after every pass
+- **NO SOURCE FILE IS WRITTEN.** Constants, model docblocks and bundles are not regenerated - they are SOURCE, committed from the development box that authored the migration - and a missing `.migration_whitelist` is skipped rather than created
+- **`rsx:migrate:check_consistency` runs at the end and ITS EXIT CODE IS THE COMMAND'S**
+
+**Migrate BEFORE the build.** The manifest bakes every model's column map in at BUILD time and the database moves at MIGRATE time, so the recommended deployment order is `migrate` and then `rsx:mode:set prod`. Build-then-migrate leaves the served code believing in columns the tables do not have yet. The consistency check is what catches the disagreement: a manifest column missing from its table is an `[ERROR]` and exits 1, a table column unknown to the manifest is a `[WARNING]` and exits 0, and the repair is `php artisan rsx:build --force`. It runs in a production mode only - a development box rebuilds its manifest from the live schema on the next request, so the comparison would be "consistent" by construction.
+
+**`.migration_whitelist` is SOURCE.** It sits beside the migrations, lists every migration `make:migration:safe` created, and is a STRAY-FILE TRIPWIRE: a migration in the tree that the file does not list aborts the whole run before the database is touched. It is WRITTEN only in development, CONSULTED in every mode when present, and SKIPPED SILENTLY when absent outside development.
+
+**`migrate.normalize_schema.complete` fires after EVERY normalize pass** - once before any migration, once after each individual migration, once at the end. N pending migrations means N+1 firings, and a run with nothing pending fires twice. **Write every handler idempotent**, which it was always required to be. Firing after each pass is what makes an incremental box and a from-zero replay produce the same schema at every step.
 
 Ensure migrations are thoroughly tested in development first.
 
@@ -327,4 +336,4 @@ Violations show clear error messages with remediation advice.
 
 Where a migration FILE lives (framework-core vs template-app directory) is a monorepo concern and does not apply to an application - an app's migrations go in its own migrations directory.
 
-Details: `php artisan rsx:man migrations`, `php artisan rsx:man database_schema_architecture`
+Details: `php artisan rsx:man migrations`, `php artisan rsx:man database_schema_architecture`, `php artisan rsx:man prod` (the deployment order and the consistency check)

@@ -8,6 +8,7 @@ namespace App\RSpade\Tests\Externals\Asset;
 
 use App\RSpade\Core\Externals\Rsx_Externals;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -15,7 +16,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * realm-resolved identifier map into every bundle's tail as Rsx_External_Resources._define(),
  * which is the only thing that makes Rsx.load_external('turnstile') resolvable in the browser.
  *
- * Two properties are asserted against the COMPILED bundles in storage/rsx-build/bundles (dev
+ * Two properties are asserted against the COMPILED bundles in build/bundles (dev
  * JIT keeps them current on this box, per the prod_mode emission-order precedent):
  *
  * - the define call is present, carries the framework's own turnstile declaration, and the
@@ -72,7 +73,7 @@ class Externals_Bundle_Map_Test extends Rsx_Test_Abstract
      */
     protected static function __newest_app_bundle(string $bundle_name): ?string
     {
-        $files = glob(storage_path("rsx-build/bundles/{$bundle_name}__app.*.js"));
+        $files = glob(Rsx_Project_Paths::bundles_dir() . "/{$bundle_name}__app.*.js");
 
         if (empty($files)) {
             return null;

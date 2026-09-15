@@ -492,7 +492,7 @@ SERVER SURFACES
         After auth, the document.preview_rendition chain may override. Framework
         default: SERVE-ONLY, never convert. A PDF blob is served as-is. A convertible
         Office mime (config('rsx.preview.convertible')) is served from
-        storage/rsx-renditions/{blob-hash}.pdf - the rendition the background worker
+        tmp/renditions/{blob-hash}.pdf - the rendition the background worker
         produced, content-addressed so identical bytes convert once - but ONLY when the
         blob is RENDERED; otherwise it 404s with a body naming the render state (never
         render_error). Anything else is 415. Served inline with an immutable one-year
@@ -577,7 +577,7 @@ CONFIGURATION
                                        the text stays searchable and is still returned:
                                        the flag is advice about display, never
                                        authorization.
-        quota_max_bytes        int     LRU cap on storage/rsx-renditions. Default 200 MB.
+        quota_max_bytes        int     LRU cap on tmp/renditions. Default 200 MB.
 
     REMOVED 2026-08-22 - delete any override you carry: rsx.search.timeout,
     rsx.preview.rendition_timeout, rsx.libreoffice.max_concurrent and

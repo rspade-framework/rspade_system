@@ -16,7 +16,7 @@
 | `Manifest_Stub_Rewrite_Test::test_a_no_change_rebuild_rewrites_no_stub` | php | implemented | A no-change rebuild rewrites no generated JS stub - no mtime moves, so no bundle recompiles |
 | restart safety: a bounded restart loop throws naming the last reason | php | not implemented | Needs a build whose passes genuinely fight; W4/W5 own the restart rework's own coverage |
 | `_set_manifest_is_bad()` writes the flag and never a partial index | php | not implemented | Phase 4 (`tests/manifest/` build-out) |
-| `Manifest_Fixture_Build_Test::test_two_builds_of_an_unchanged_tree_are_byte_identical` | php | implemented | No timestamp in the index body, in any mode: two builds of an unchanged tree write identical bytes and the same build key |
+| `Manifest_Fixture_Build_Test::test_two_builds_of_an_unchanged_tree_are_byte_identical` | php | implemented | No timestamp in the index body and a ksorted top-level section map, in any mode: a cold build and the incremental build after it write identical bytes and the same build key |
 | `Manifest_Fixture_Build_Test::test_the_build_writes_both_halves_of_the_index` | php | implemented | The build writes `manifest_index.php` and `manifest_files.php`; a class's method map is in the COLD half, and `file_index` still names it |
 | `Index_Reference_Rule_Test::test_no_top_level_index_duplicates_a_file_record` | php | implemented | THE REFERENCE RULE. No index holds an array that also appears verbatim inside a `files` record |
 | `Index_Reference_Rule_Test::test_hot_index_holds_method_maps_only_for_models_tasks_and_stubs` | php | implemented | The hot index carries no method map nothing on the request path reads |

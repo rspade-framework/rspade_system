@@ -2,11 +2,13 @@
 
 namespace App\RSpade\Commands\Restricted;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use Illuminate\Console\Command;
 
 /**
  * Laravel's `up`, refused - the other half of Down_Command. There is nothing for it
- * to lift: RSpade's window is the storage/rsx-framework flag file, raised and cleared
+ * to lift: RSpade's window is the storage/state flag file, raised and cleared
  * by rsx:maintenance:enable / :disable.
  */
 class Up_Command extends Command

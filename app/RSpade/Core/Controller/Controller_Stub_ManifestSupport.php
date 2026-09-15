@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Controller;
 
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * Emit one JavaScript stub per controller that declares #[Ajax_Endpoint] methods, so
@@ -33,7 +34,7 @@ class Controller_Stub_ManifestSupport extends ManifestSupport_Abstract
      */
     public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
-        $stub_dir = storage_path('rsx-build/js-stubs');
+        $stub_dir = Rsx_Project_Paths::stubs_dir(Rsx_Project_Paths::STUBS_CONTROLLER);
 
         // Create directory if it doesn't exist
         if (!is_dir($stub_dir)) {
@@ -96,8 +97,8 @@ class Controller_Stub_ManifestSupport extends ManifestSupport_Abstract
             // Generate stub filename and paths
             $controller_name = $metadata['class'];
             $stub_filename = static::_sanitize_stub_filename($controller_name) . '.js';
-            $stub_relative_path = 'storage/rsx-build/js-stubs/' . $stub_filename;
-            $stub_full_path = rsx_project_file_path($stub_relative_path);
+            $stub_relative_path = Rsx_Project_Paths::stub_key(Rsx_Project_Paths::STUBS_CONTROLLER, $stub_filename);
+            $stub_full_path = $stub_dir . '/' . $stub_filename;
 
             // Check if stub needs regeneration
             $stub_content = null;
@@ -141,8 +142,8 @@ class Controller_Stub_ManifestSupport extends ManifestSupport_Abstract
             $metadata['js_stub'] = $stub_relative_path;
 
             // Add the stub file itself to the manifest
-            // This is critical because storage/rsx-build/js-stubs is not in scan directories
-            // The stub's own record. Phase 2 strips every `storage/` entry, so it has to be
+            // This is critical because the stub directory is not in scan directories.
+            // The stub's own record. Phase 2 strips every generated entry, so it has to be
             // re-derived each build - but the CONTENT is in hand whenever this build wrote
             // it, so the file is not read a second time to hash bytes we just produced.
             clearstatcache(true, $stub_full_path);
@@ -169,7 +170,7 @@ class Controller_Stub_ManifestSupport extends ManifestSupport_Abstract
                 }
 
                 // Remove from manifest
-                $stub_relative_path = 'storage/rsx-build/js-stubs/' . $filename;
+                $stub_relative_path = Rsx_Project_Paths::stub_key(Rsx_Project_Paths::STUBS_CONTROLLER, $filename);
                 if (isset($manifest_data['data']['files'][$stub_relative_path])) {
                     unset($manifest_data['data']['files'][$stub_relative_path]);
                 }

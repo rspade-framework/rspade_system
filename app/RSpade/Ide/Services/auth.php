@@ -37,11 +37,13 @@ function ide_auth_framework_path($relative_path) {
     return IDE_AUTH_SYSTEM_PATH . '/' . ltrim($relative_path, '/');
 }
 
-// Volatile storage root: <project>/storage once the relocation marker exists (see
-// bin/environment_updates/030_relocate_storage.sh), historic system/storage until then.
-// This gate runs WITHOUT Laravel, so the marker is read directly.
+// User-data storage root. This gate runs WITHOUT Laravel, so the answer comes from the
+// pre-boot resolver - the same one Rsx_Project_Paths delegates to, so the bridge
+// directory a booted process writes is the one this gate reads.
 function ide_auth_storage_path($relative_path = '') {
-    $base = IDE_AUTH_BASE_PATH . '/storage';
+    require_once IDE_AUTH_SYSTEM_PATH . '/bootstrap/rsx_paths.php';
+
+    $base = rsx_paths_storage_root();
     return $relative_path ? $base . '/' . ltrim($relative_path, '/') : $base;
 }
 

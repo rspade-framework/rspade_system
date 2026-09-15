@@ -157,14 +157,22 @@ API REFERENCE
 
     relative_path(string $path, ?string $base = null): string
         The project-logical relative path (manifest keys, framework path
-        constants): base_path()-relative, except that relocated storage paths
-        keep their 'storage/...' spelling.
+        constants): base_path()-relative, except that a path under one of the
+        three volatile roots keeps its logical 'build/...', 'tmp/...' or
+        'storage/...' spelling whatever RSX_TMP_PATH / RSX_STORAGE_PATH
+        resolve to.
 
     rsx_project_file_path(string $relative_path): string
-        The inverse: resolve a project-logical relative path to an absolute one.
-        'storage/...' resolves against the RELOCATED storage root
-        (storage_path()); everything else against base_path(). NEVER join a
-        storage path onto base_path() by hand - base_path() is system/.
+        The inverse: resolve a project-logical relative path to an absolute
+        one. It is an alias of Rsx_Project_Paths::absolute_for(), so a
+        'build/...', 'tmp/...' or 'storage/...' key resolves against the
+        RESOLVED root and everything else against base_path(). NEVER join one
+        of those paths onto base_path() by hand - base_path() is system/.
+
+        Use it to resolve a key you were HANDED (a manifest key, a stored
+        value). Do not hand it a literal: PATH-OWNER-01 flags that, and the
+        named method on Rsx_Project_Paths is what a literal should have been.
+        See rsx:man storage_directories.
 
     file_extension(string $path, bool $double = true): string
         Extension, handling double extensions (.blade.php) when $double.
@@ -345,7 +353,7 @@ EXAMPLES
     Paths that cross a symlink or reach storage:
 
         $manifest_key = relative_path($absolute);            // project-logical
-        $cache_file   = rsx_project_file_path('storage/rsx-tmp/thumbs/' . $key);
+        $cache_file   = Rsx_Project_Paths::tmp_path('thumbs/' . $key);
         $normalized   = rsxrealpath($base . '/../rsx/models');   // does NOT follow links
 
     A validation failure the form renders inline:
@@ -419,8 +427,9 @@ TROUBLESHOOTING
         It followed a symlink (/rsx, system/.env). Use rsxrealpath().
 
     "A storage path resolved into system/."
-        base_path() IS system/. Use storage_path(), or
-        rsx_project_file_path('storage/...').
+        base_path() IS system/. Reach the volatile trees through
+        Rsx_Project_Paths (storage_path(), tmp_path(), build_path() and the
+        named per-entry methods).
 
 SEE ALSO
     rsx:man js_functions        the JavaScript twins of these helpers

@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Status;
@@ -71,7 +72,7 @@ class Cleanup_Service extends Rsx_Service_Abstract
     #[Schedule('0 * * * *')]
     public static function cleanup_temp_directories(Task_Instance $task, array $params = []): array
     {
-        $base_temp_dir = storage_path('rsx-tmp/tasks');
+        $base_temp_dir = Rsx_Project_Paths::tasks_dir();
 
         if (!is_dir($base_temp_dir)) {
             $task->info("Temp directory does not exist: {$base_temp_dir}");

@@ -23,18 +23,19 @@ yarn-error.log
 ._*
 Thumbs.db
 
-# system/storage is NOT ignored, deliberately - and it is not a directory either.
+# system/build is NOT ignored, deliberately - and it is not a directory either.
 #
-# It is a SYMLINK to ../storage, the project-root storage that everything volatile
-# actually lives in. Tracking the symlink is what makes it survive a clone, exactly
-# as system/.env does: Laravel boots from system/, so anything resolving a path
-# under system/storage has to land on the real tree from the first request, before
-# any relocation marker or environment update has run.
+# It is a SYMLINK to <project>/build, where the build outputs live. Tracking the symlink
+# is what makes it survive a clone, exactly as system/.env does: Laravel boots from
+# system/, so anything resolving a path under it has to land on the real tree from the
+# first request, before any environment update has run.
 #
-# The old rules here (/storage/*, plus the cdn-cache exception) ignored the CONTENTS
-# of a real system/storage directory. There is no such directory now; the contents
-# live one level up and are ignored by the project-root .gitignore, which is where
-# that decision belongs.
+# There is no system/storage and no system/tmp. Those two roots are relocatable, and a
+# link cannot promise where a relocated root is; code reaches them through the path
+# owner, which reads the live value.
+#
+# build/'s CONTENTS are ignored one level up, by the project-root .gitignore, which is
+# where that decision belongs.
 
 # Hand-made snapshots of storage/ taken while debugging the clean/build scenarios.
 # Three of these (7,410 files of pure build output - php_reflection JSON, compiled
@@ -64,10 +65,6 @@ _ide_helper.php
 # Cross-filesystem atomic-write staging dirs (file_put_contents_safe / rsx:clean)
 .tmp_*/
 
-# Build artifacts
-/build/cache/
-/build/temp/
-/build/
 /ace_reference/
 .php-cs-fixer.cache
 runonsave_debug.log

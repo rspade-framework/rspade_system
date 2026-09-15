@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Maintenance\Cli;
 
 use App\RSpade\Commands\Database\Db_Rebuild_Provision_Cache_Snapshot_Command;
 use App\RSpade\Core\Framework\Framework_Maintenance;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -38,12 +39,12 @@ class Maintenance_Db_Cache_Guard_Cli_Test extends Rsx_Test_Abstract
     /** A sandbox blob root, so nothing here can name the real store. */
     protected static function __fake_blob_root(): string
     {
-        return storage_path('rsx-tmp/test-db-cache-guard/files');
+        return Rsx_Project_Paths::tmp_path('test-db-cache-guard/files');
     }
 
     protected static function __work_dir(): string
     {
-        return storage_path(Db_Rebuild_Provision_Cache_Snapshot_Command::WORK_DIR_RELATIVE);
+        return Rsx_Project_Paths::db_cache_dir();
     }
 
     protected static function __marker_path(): string
@@ -100,7 +101,7 @@ class Maintenance_Db_Cache_Guard_Cli_Test extends Rsx_Test_Abstract
             }
         }
 
-        $sandbox = storage_path('rsx-tmp/test-db-cache-guard');
+        $sandbox = Rsx_Project_Paths::tmp_path('test-db-cache-guard');
         if (is_dir($sandbox)) {
             rmdir_recursive($sandbox);
         }

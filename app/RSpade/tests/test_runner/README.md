@@ -59,7 +59,7 @@ and asserts the wire shapes, the drain sentinel, the holder map, the exact key s
 is refused without taking the server down.
 
 **The singleton is asserted against itself.** `Runner_Singleton_Test` proves a subprocess
-cannot take `storage/flock/rsx_test_runner.lock` while the run executing the test holds it.
+cannot take `storage/state/flock/rsx_test_runner.lock` while the run executing the test holds it.
 
 Not asserted here, by design: the image build, the zombie sweep, pruning and signal
 teardown. Those are docker lifecycle, they need a daemon and a multi-minute build, and

@@ -552,7 +552,7 @@ the composer layer's transient miss harmless.
     override rename/restore pass settles - validates the classmap against the
     filesystem and, if any entry points at a missing file, runs a blocking
     `composer dump-autoload` to regenerate it. This is dev/rebuild-only work
-    (sealed prod builds never auto-rebuild, and rsx:prod:build already regenerates
+    (sealed prod builds never auto-rebuild, and rsx:build already regenerates
     the composer autoloader). After the dump, composer no longer maps the stale
     FQCN and resolution goes cleanly through PSR-4 miss -> layer 1.
 

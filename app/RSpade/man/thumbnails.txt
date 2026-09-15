@@ -63,9 +63,11 @@ DESCRIPTION
     throughout your application. This prevents users from generating thousands
     of arbitrary-sized thumbnails and polluting your cache.
 
-    Storage Location: storage/rsx-thumbnails/preset/ and .../dynamic/
-    These directories survive rsx:clean and are managed separately via
-    rsx:thumbnails:clean command (schedule this for periodic cleanup).
+    Storage Location: tmp/thumbnails/preset/ and .../dynamic/
+    A REGENERABLE CACHE: every thumbnail derives from a blob that is still in
+    the store, so the tree lives in tmp/, is discarded by rsx:clean, and is
+    re-rendered on demand. rsx:thumbnails:clean sweeps it without a full clean
+    (schedule it for periodic cleanup).
 
 PRESET THUMBNAILS
 
@@ -157,8 +159,8 @@ CACHING BEHAVIOR
 
     Cache Storage
     -------------
-    Preset:  storage/rsx-thumbnails/preset/{preset_name}_{hash}_{ext}.webp
-    Dynamic: storage/rsx-thumbnails/dynamic/{type}_{w}x{h}_{hash}_{ext}.webp
+    Preset:  tmp/thumbnails/preset/{preset_name}_{hash}_{ext}.webp
+    Dynamic: tmp/thumbnails/dynamic/{type}_{w}x{h}_{hash}_{ext}.webp
 
     All thumbnails are WebP format for optimal size/quality balance.
 
@@ -461,7 +463,7 @@ RENDER PIPELINE (non-image files)
     web request that wants the picture.
 
     The state machine lives on the BLOB (_file_storage.render_status_id), because both
-    products of a render - the rendition at storage/rsx-renditions/{hash}.pdf and the
+    products of a render - the rendition at tmp/renditions/{hash}.pdf and the
     thumbnail cache key - are already content-addressed on the blob hash, so N
     attachments sharing one blob share one render.
 
@@ -590,7 +592,7 @@ FUTURE POSSIBILITIES (unbuilt)
 
 FILESYSTEM STRUCTURE
 
-    storage/rsx-thumbnails/
+    tmp/thumbnails/
     +-- preset/
     |   +-- profile_abc123_jpg.webp
     |   +-- profile_def456_png.webp
@@ -665,7 +667,7 @@ TROUBLESHOOTING
     Checks:
     - ImageMagick installed? (php -m | grep imagick)
     - File exists on disk? (check attachment->file_storage->get_full_path())
-    - Directory writable? (storage/rsx-thumbnails/ permissions)
+    - Directory writable? (tmp/thumbnails/ permissions)
     - Check Laravel logs for exceptions
 
     An Office Document Shows the Extension Icon Forever

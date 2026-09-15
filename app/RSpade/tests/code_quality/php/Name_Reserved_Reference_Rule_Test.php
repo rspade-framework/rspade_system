@@ -10,6 +10,7 @@ namespace App\RSpade\Tests\CodeQuality\Php;
 use App\RSpade\CodeQuality\Rules\Convention\NameReservedReference_CodeQualityRule;
 use App\RSpade\CodeQuality\Support\Validation_Ledger;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -50,10 +51,10 @@ class Name_Reserved_Reference_Rule_Test extends Rsx_Test_Abstract
      */
     private static function __run(string $relative_name, string $source, array $metadata = []): array
     {
-        self::$ledger_path = storage_path('rsx-tmp') . '/name_reserved_02_ledger_' . uniqid() . '.php';
+        self::$ledger_path = Rsx_Project_Paths::tmp_path() . '/name_reserved_02_ledger_' . uniqid() . '.php';
         Validation_Ledger::_use_path_for_tests(self::$ledger_path);
 
-        $root = storage_path('rsx-tmp') . '/name_reserved_02_fixture_' . uniqid();
+        $root = Rsx_Project_Paths::tmp_path() . '/name_reserved_02_fixture_' . uniqid();
         $path = $root . '/' . $relative_name;
         ensure_directory(dirname($path));
         file_put_contents($path, $source);
@@ -465,10 +466,10 @@ class Name_Reserved_Reference_Rule_Test extends Rsx_Test_Abstract
      */
     public static function test_the_rule_fingerprint_carries_the_index_hash()
     {
-        $ledger_path = storage_path('rsx-tmp') . '/name_reserved_02_ledger_' . uniqid() . '.php';
+        $ledger_path = Rsx_Project_Paths::tmp_path() . '/name_reserved_02_ledger_' . uniqid() . '.php';
         Validation_Ledger::_use_path_for_tests($ledger_path);
 
-        $root = storage_path('rsx-tmp') . '/name_reserved_02_fixture_' . uniqid();
+        $root = Rsx_Project_Paths::tmp_path() . '/name_reserved_02_fixture_' . uniqid();
         $path = $root . '/rsx/lib/probe_ledger.php';
         ensure_directory(dirname($path));
 

@@ -2,25 +2,25 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Prod\Rsx_Prod_Env;
-use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 use App\RSpade\Core\Rsx;
 use Illuminate\Console\Command;
-use App\RSpade\Core\Console\Rsx_Artisan;
 
 /**
- * Enter sealed prod mode.
+ * Enter a production-like mode.
  *
- * Validates the environment, switches RSX_MODE, runs the build pipeline in an
- * authorized context, and - only on success - writes the seal that marks the
- * build immutable.
+ * Three things, in this order: heal the .env invariant, write the new RSX_MODE, and run
+ * the build. The build is what produces and seals the assets - this command adds nothing
+ * to it, so `rsx:build --force` on a box that is already in prod mode is the same
+ * operation without the mode write.
  */
 class Prod_Enable_Command extends Command
 {
     protected $signature = 'rsx:prod:enable
                             {--debug : Build the debug variant (unminified, sourcemaps, working console_debug)}';
 
-    protected $description = 'Compile a sealed production build and enter prod mode';
+    protected $description = 'Switch to a production-like mode and build the sealed assets';
 
     public function handle(): int
     {
@@ -32,47 +32,34 @@ class Prod_Enable_Command extends Command
         // the single healed file (a drifted real system/.env would swallow it).
         $this->_heal_env();
 
-        $this->info('Entering ' . ($debug ? 'debug' : 'production') . ' mode (sealed build)...');
+        $this->info('Entering ' . $mode . ' mode...');
         $this->newLine();
 
-        // This process is the authorized rebuild context: mark it so, so that both
-        // the seal write and any guarded cache clearing below are permitted even if
-        // a prior seal is still present.
-        Rsx_Prod_Seal::authorize_process();
-
-        // Step 1: Switch mode in .env.
-        $this->line('  [1/3] Setting RSX_MODE=' . $mode . '...');
+        $this->line('  [1/2] Setting RSX_MODE=' . $mode . '...');
         Rsx_Prod_Env::set_mode($mode);
 
-        // Step 2: Clear the old caches (removes any stale build + prior seal).
-        $this->line('  [2/3] Clearing old caches...');
-        Rsx_Prod_Env::clear_laravel_caches();
-        Rsx_Prod_Env::clear_rsx_caches();
-        Rsx_Prod_Seal::_reset_cache();
-
-        // Step 3: Run the build pipeline in a fresh, authorized subprocess.
-        // The subprocess boots reading the RSX_MODE just written to .env (step 1),
-        // and receives its force + authorization as INVOCATION FLAGS - never env
-        // prefixes. --force forces a rebuild in the production-like mode;
-        // --authorized permits the guarded writes while a build is (re)sealed.
-        $this->line('  [3/3] Running build pipeline...');
+        // The build runs in a fresh subprocess, which boots reading the RSX_MODE just
+        // written. --force because a previous seal is exactly what this transition
+        // replaces; the operator already said so by running this command.
+        $this->line('  [2/2] Running the build...');
         $this->newLine();
 
-        $exit_code = Rsx_Artisan::passthru('rsx:prod:build', ['--force', Rsx_Prod_Seal::AUTHORIZED_FLAG]);
+        $exit_code = Rsx_Artisan::passthru('rsx:build', ['--force']);
 
         if ($exit_code !== 0) {
             $this->newLine();
-            $this->error('Build pipeline failed (exit ' . $exit_code . '). No seal was written.');
-            $this->line('The build is NOT sealed; fix the error and run rsx:prod:enable again.');
+            $this->error('The build failed (exit ' . $exit_code . '). No seal was written.');
+            $this->line('RSX_MODE is ' . $mode . ' and this box has nothing to serve until the build succeeds.');
+            $this->line('  Fix the error and run:  php artisan rsx:build --force');
+            $this->line('  Or return to dev:       php artisan rsx:prod:disable');
 
             return 1;
         }
 
-        // Step 4: Seal the build.
-        $seal = Rsx_Prod_Seal::write($mode);
-
         $this->newLine();
-        $this->_print_summary($seal);
+        $this->line('Before deploying the live application, read and verify:');
+        $this->line('  php artisan rsx:man prelaunch_checklist');
+        $this->line('  php artisan rsx:man prod');
 
         return 0;
     }
@@ -86,45 +73,5 @@ class Prod_Enable_Command extends Command
         if ($report['status'] !== 'already_healthy') {
             $this->line('.env symlink invariant restored (status: ' . $report['status'] . ').');
         }
-    }
-
-    /**
-     * Print the post-seal summary (mode, build key, asset count, total size).
-     */
-    private function _print_summary(array $seal): void
-    {
-        $build_root = Rsx_Prod_Seal::_build_root();
-        $total_bytes = 0;
-        foreach ($seal['assets'] as $asset) {
-            $abs = $build_root . '/' . $asset['file'];
-            if (is_file($abs)) {
-                $total_bytes += filesize($abs);
-            }
-        }
-
-        $this->info('[OK] Sealed ' . $seal['rsx_mode'] . ' build');
-        $this->line('     Build key:  ' . $seal['build_key']);
-        $this->line('     Assets:     ' . count($seal['assets']) . ' files, ' . $this->_format_size($total_bytes));
-        $this->line('     Git commit: ' . ($seal['git_commit'] ?? 'unknown'));
-        $this->line('     Sealed at:  ' . $seal['created_at']);
-        $this->newLine();
-        $this->line('Verify at any time:  php artisan rsx:prod:verify');
-        $this->line('Rebuild the assets:  php artisan rsx:prod:refresh');
-        $this->line('Leave prod mode:     php artisan rsx:prod:disable');
-        $this->newLine();
-        $this->line('Before deploying the live application, read and verify:');
-        $this->line('  php artisan rsx:man prelaunch_checklist');
-    }
-
-    private function _format_size(int $bytes): string
-    {
-        if ($bytes < 1024) {
-            return "{$bytes} B";
-        }
-        if ($bytes < 1048576) {
-            return round($bytes / 1024, 1) . ' KB';
-        }
-
-        return round($bytes / 1048576, 2) . ' MB';
     }
 }

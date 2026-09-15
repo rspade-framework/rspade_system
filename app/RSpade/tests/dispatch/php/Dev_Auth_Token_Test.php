@@ -26,9 +26,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * is an argument, not a second implementation - so proving the verifier here proves it
  * for both realms. The last test pins the realm separation itself.
  *
- * Each test points the grant machinery at a throwaway bridge directory under
- * storage/rsx-tmp, so the real storage/rsx-ide-bridge grant (which the live rsx:debug
- * uses) is never touched.
+ * Each test points the grant machinery at a throwaway bridge directory under tmp/, so
+ * the real storage/rsx-ide-bridge grant (which the live rsx:debug uses) is never
+ * touched.
  */
 class Dev_Auth_Token_Test extends Rsx_Test_Abstract
 {
@@ -58,7 +58,7 @@ class Dev_Auth_Token_Test extends Rsx_Test_Abstract
      */
     private static function __fresh_store(): string
     {
-        $relative = 'storage/rsx-tmp/dev_auth_test_' . random_hash(8);
+        $relative = 'tmp/dev_auth_test_' . random_hash(8);
         config([
             'rsx.ide_integration.bridge_path' => $relative,
             'rsx.ide_integration.enabled' => true,

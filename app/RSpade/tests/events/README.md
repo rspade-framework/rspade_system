@@ -20,7 +20,7 @@ The lifecycle events fire from `Manifest::init()` at the very end of initializat
   `{rebuilt: bool}`, mirroring `Manifest::rebuild_occurred()`.
 
 Dev semantics: a rebuild fires on the first request after a source change. Prod semantics:
-a rebuild fires ONCE, inside the authorized `rsx:prod:build` (enable/refresh). Handlers run
+a rebuild fires ONCE, inside `rsx:build`. Handlers run
 INLINE on the boot path - heavy work must go to `Task::dispatch()`.
 
 ## Source under test

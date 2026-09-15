@@ -63,7 +63,7 @@ class Js_Transformer
      * The bundle compiler wants the transformed code as a FILE (it hands the concatenator a
      * path per input), and the cache entry already is that file. Returning it instead of
      * writing a second copy under a name of the compiler's own is what removed 301 loose
-     * `rsx-tmp/babel_<md5 of path>.js` scratch files that nothing ever invalidated.
+     * `tmp/babel_<md5 of path>.js` scratch files that nothing ever invalidated.
      *
      * @param string $file_path Path to JavaScript file
      * @param string $target Target environment (modern, es6, es5)

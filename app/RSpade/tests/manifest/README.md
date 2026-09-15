@@ -11,7 +11,7 @@ here is the build itself.
 ## The seam these tests use
 
 `App\RSpade\Core\Manifest\Manifest_Build` is the build as an object: scan roots (relative
-to `base_path()`), the storage root the index is written to, the mode, and the ONE
+to `base_path()`), the build root the index is written to, the mode, and the ONE
 `Source_Cache` the fixer and the code-quality driver read every file through.
 `Manifest::build()` is the facade's accessor; `Manifest::_use_build_for_tests()` replaces
 it in-process.
@@ -19,13 +19,15 @@ it in-process.
 **These tests do not build in-process.** A manifest build mutates a great deal of global
 state - `Manifest::$data`, the autoloader, generated stubs - and a test process is already
 holding a manifest it needs. So every test here spawns `rsx:manifest:build` in a CHILD
-through `Rsx_Artisan`, pointed at a scratch storage root, and asserts on the index file the
-child wrote. Three framework-INTERNAL flags (the `--_` convention: no `InputOption`,
-stripped from argv pre-boot, invisible to `php artisan list`) make that possible:
+through `Rsx_Artisan`, pointed at a scratch build root and a scratch tmp root beside it,
+and asserts on the index file the child wrote. Framework-INTERNAL flags (the `--_`
+convention: no `InputOption`, stripped from argv pre-boot, invisible to
+`php artisan list`) make that possible:
 
 | Flag | Effect |
 |---|---|
-| `--_manifest-storage-root=<abs>` | Write the index under this root instead of `storage_path()` |
+| `--_rsx-build-root=<abs>` | Write the index under this build root instead of the project's own |
+| `--_rsx-tmp-root=<abs>` | Derive into this tmp root - the generated stubs land there, not in the developer's |
 | `--_manifest-extra-scan-roots=<csv>` | ADD roots to the configured list |
 | `--_manifest-scan-roots=<csv>` | Replace the list outright (test-tree additions included) |
 | `--_manifest-report-peak` | Print `MANIFEST_PEAK_BYTES=<n>` after the summary |
@@ -67,7 +69,7 @@ A gate that fails is a FINDING, never a number to raise. Profile the build
 updates its own index section from the CHANGED and REMOVED sets instead of rebuilding it
 from a pass over the whole file map, and "it produces the same answer" is not something
 prose can check. So each test builds the same fixture tree twice - once INCREMENTALLY
-(build, edit one file, build again in the SAME storage root) and once COLD (the final
+(build, edit one file, build again in the SAME build root) and once COLD (the final
 tree, in a FRESH root) - and compares the two indexes section by section and record by
 record. A module that forgot to drop a stale row, or dropped one it should have kept,
 cannot survive that.

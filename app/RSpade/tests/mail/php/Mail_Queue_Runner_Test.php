@@ -11,6 +11,7 @@ use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use App\RSpade\Core\Models\Email_Recipient_Model;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
@@ -456,7 +457,7 @@ class Mail_Queue_Runner_Test extends Rsx_Test_Abstract
         $recent = static::__queue('Recent');
         $recent->mark_sent('<recent@example.com>', null);
 
-        $maildir = storage_path('rsx-tmp/mail_catcher_probe_' . uniqid());
+        $maildir = Rsx_Project_Paths::tmp_path('mail_catcher_probe_' . uniqid());
         ensure_directory($maildir . '/new');
         ensure_directory($maildir . '/cur');
 
@@ -498,7 +499,7 @@ class Mail_Queue_Runner_Test extends Rsx_Test_Abstract
         static::__acting_as_site(self::SITE_ID);
 
         $previous_maildir = config('rsx.mail.catcher_maildir');
-        config(['rsx.mail.catcher_maildir' => storage_path('rsx-tmp/no_such_catcher_' . uniqid())]);
+        config(['rsx.mail.catcher_maildir' => Rsx_Project_Paths::tmp_path('no_such_catcher_' . uniqid())]);
 
         try {
             $result = Task::internal('Mail_Queue_Service', 'cleanup', ['days' => 30]);

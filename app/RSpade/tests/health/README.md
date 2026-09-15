@@ -75,6 +75,16 @@ missing / wrong / blanket cases are reachable without touching this box's own
 `.gitmodules` or `.git/config`. No submodule is ever cloned: both settings are pure
 configuration.
 
+`Project_Tree_Health_Test` drives the three project-tree rows through
+`Environment_Health_Checks::__tree_row()` against throwaway sandbox paths, because
+`Rsx_Project_Paths::storage_root()` is deliberately NOT redirectable per process (a
+subprocess must share `storage/state` with its parent or their flock files stop excluding
+each other). The mode-dependent rows - which trees are reported, the production read-only
+posture, the log-level warning - use `Rsx::_testing_set_mode()` and Laravel's `config()`
+seam. The uncreatable branch is reached with a regular FILE in the way rather than a
+permission bit, so it holds whoever the suite runs as; the unwritable branch needs a
+permission bit and skips under root, saying so.
+
 ## Fixtures
 
 `Health_Fixture_Probe` carries NO `#[Health_Check]` attribute on purpose: a

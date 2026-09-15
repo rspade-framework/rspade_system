@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use App\Console\Commands\FrameworkDeveloperCommand;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Identifier;
@@ -37,7 +39,7 @@ class Manifest_Stats_Command extends FrameworkDeveloperCommand
         $data = Manifest::get_all();
 
         // Get cache file location for stats
-        $cache_file = storage_path(Manifest::CACHE_FILE);
+        $cache_file = Rsx_Project_Paths::manifest_index_file();
 
         $this->info('RSX Manifest Statistics');
         $this->info('=======================');

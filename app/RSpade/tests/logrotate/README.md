@@ -79,7 +79,7 @@ Invariants the tests exist to hold:
 
 | Surface | Type | Notes |
 |---|---|---|
-| Generation shift, fresh log, mode preservation | php | fixture directory under `storage/rsx-tmp/test-logrotate` |
+| Generation shift, fresh log, mode preservation | php | fixture directory under `tmp/test-logrotate` |
 | Renumbering repair: a shared slot, and gaps | php | mtimes set with `touch()`; asserted by content |
 | The shift moves compressed generations too | php | `.N.gz` -> `.N+1.gz` |
 | A retention shrink prunes the oldest | php | 10 generations, then `days_retention=5` |
@@ -94,5 +94,5 @@ Invariants the tests exist to hold:
 | Schedule registration (`daily at 12:00am`) | - | covered by the tasks concern's scheduler tests; not duplicated here |
 
 **The real `storage/logs` is never rotated by a test.** Every fixture lives under
-`storage/rsx-tmp/test-logrotate/`, and the one test that names the real directory only
+`tmp/test-logrotate/`, and the one test that names the real directory only
 reads a listing of it to prove the disabled task left it alone.

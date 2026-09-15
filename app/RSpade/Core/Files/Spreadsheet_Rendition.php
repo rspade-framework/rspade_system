@@ -9,6 +9,7 @@ use HTMLPurifier;
 use HTMLPurifier_Config;
 use PhpOffice\PhpSpreadsheet\IOFactory;
 use App\RSpade\Core\Files\Spreadsheet_Preview_Window;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * Spreadsheet_Rendition - a workbook previewed as a GRID, not as a print-out.
@@ -114,7 +115,7 @@ class Spreadsheet_Rendition
      * Render a workbook to a self-contained, sanitized HTML file.
      *
      * @param string $source_path Absolute path to the workbook.
-     * @param string $target_path Absolute path to write (…/rsx-renditions/{hash}.html).
+     * @param string $target_path Absolute path to write (…/renditions/{hash}.html).
      * @return void
      * @throws Exception on a workbook that cannot be read or a rendition that cannot be written.
      */
@@ -177,7 +178,7 @@ class Spreadsheet_Rendition
 
         $config = HTMLPurifier_Config::createDefault();
 
-        $cache_dir = storage_path('rsx-tmp/htmlpurifier');
+        $cache_dir = Rsx_Project_Paths::htmlpurifier_dir();
         ensure_directory($cache_dir);
         $config->set('Cache.SerializerPath', $cache_dir);
         $config->set('Cache.SerializerPermissions', null);

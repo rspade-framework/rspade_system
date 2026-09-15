@@ -44,8 +44,9 @@ env and are proven E2E (see AU-E2E below).
 
 Covers the developer-bootstrap heal (`Rsx_Env_Symlink::full_heal` / `boot_heal`).
 Every test builds a throwaway project layout (`<tmp>/.env(.dist)`,
-`<tmp>/system/.env(.dist)`, `<tmp>/storage/rsx-tmp`) and drives the healer at it
-through the path seam; the real .env files are never touched.
+`<tmp>/system/.env(.dist)`) and drives the healer at it through the path seam; the
+real .env files are never touched. The boot stamp is named by the path owner and
+lives in the tmp tree, which is volatile by design.
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
@@ -57,6 +58,7 @@ through the path seam; the real .env files are never touched.
 | EH-06 | boot_heal runs on a stale stamp and refreshes it | php | new key in dist + old stamp | key synced; stamp newer than .env | implemented | 2026-08-23 |
 | EH-07 | a failed copy is loud, never a silent no-op | php | .env path occupied by a directory | throws; no .env left behind | implemented | 2026-08-23 |
 | EH-08 | key sync reaches both files, never overwrites a value, and is idempotent | php | system dist + root dist keys | keys appended; existing values kept; second run adds nothing | implemented | 2026-08-23 |
+| EH-08b | a key travels with the contiguous comment block directly above it; a comment separated by a blank line is a section header and stays behind | php | dist with a documented and an undocumented key | both comment lines land above the key in .env; the header does not; idempotent | implemented | 2026-09-15 |
 | EH-09 | sync precedes validation - a required key arriving via sync does not throw | php | REDIS_HOST only in system dist | no throw; key present in .env | implemented | 2026-08-23 |
 | EH-10 | credential validation names the missing key | php | .env without DB_DATABASE | RuntimeException naming DB_DATABASE | implemented | 2026-08-23 |
 | EH-11 | empty DB_PASSWORD and a passwordless Redis are legal | php | both blank | no throw | implemented | 2026-08-23 |

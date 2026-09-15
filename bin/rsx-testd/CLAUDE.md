@@ -146,7 +146,7 @@ rarely, a downstream developer the reverse. PHP reads
 **A symlink is RECREATED, never COPYed.** `COPY system/rsx /var/www/html/system/rsx`
 DEREFERENCES the link and bakes a second 150 MB copy of the application tree where a six-byte
 link belongs (verified against BuildKit, 2026-09-08). Every symlinked entry - `system/rsx`,
-`system/.env`, `system/storage` - is emitted as one `ln -sfn` in a trailing RUN.
+`system/.env`, `system/build` - is emitted as one `ln -sfn` in a trailing RUN.
 
 **The generator must agree with the filter.** It reads the generated `.dockerignore` and skips
 what that excludes: a COPY of an excluded entry is not a smaller image, it is a build that
@@ -217,7 +217,7 @@ takes the single-`sync_test_schema()` fast path.
    command, then stops supervisor. The command is, IN THIS ORDER:
    1. `php system/artisan rsx:test --framework --_provision-only` -
       `prepare_test_database()` + `ensure_baseline_cache()`: `rspade_test` migrated, the
-      baseline user seeded, and the migration-hash dump under `storage/db_backups` that an
+      baseline user seeded, and the migration-hash dump under `tmp/db_backups` that an
       in-container reset restores from. It runs no tests.
    2. `php system/artisan rsx:manifest:build --clean --_test-run`.
 
@@ -352,7 +352,7 @@ throws and rejects non-object frames, because this process is the only thing tha
 a malformed frame or an oversized frame is refused without taking the server down.
 
 `classes.json` is seeded by PHP longest-first and `shift()` IS the whole dispatch policy: a
-measured duration from `storage/rsx-tmp/test-timings.json` when there is one, else the
+measured duration from `tmp/test-timings.json` when there is one, else the
 `$requires_db_reset` proxy (those carry the re-provision cost), else source size / 100k. It is
 an ordering CACHE and never a deadline; `merge_and_report()` writes the measured durations
 back, so packing self-improves. `requires_db_reset` rides in the row so the queue never has to
@@ -366,7 +366,7 @@ still leaves every finished class on disk.
 ## The result cache - one verdict per build key
 
 A full docker run ends with PHP recording the per-class records and the exit code under
-`storage/rsx-tmp/test-results/framework_<key>.json`, where the key is
+`tmp/test-results/framework_<key>.json`, where the key is
 `Manifest::get_build_key()` (also `php artisan rsx:manifest:get_build_key`: the hash of
 every scanned source file) joined to an ENVIRONMENT FINGERPRINT - a sha1 over the name,
 size and mtime of every file under `system/bin`, `system/node_modules` and
@@ -387,7 +387,7 @@ the key - it narrows METHODS at print time, out of a record that holds every met
 result, so the same class under two filters shares one verdict correctly.
 
 Invalidation is the key itself: edit any scanned file and the next run is live. To force a
-live run without editing anything, delete the record. `rsx:clean` wipes `rsx-tmp/`, so it
+live run without editing anything, delete the record. `rsx:clean` wipes `tmp/`, so it
 wipes the cache too.
 
 While a live run is in progress the queue server prints one line per finished class as the
@@ -434,7 +434,7 @@ container, close the queue, remove the generated `.dockerignore`, exit 1.
 ## The singleton flock
 
 `Rsx_Test_Command::acquire_runner_singleton()` takes a RAW `flock(LOCK_EX)` on
-`storage/flock/rsx_test_runner.lock` at the top of `handle()`, **on BOTH paths** - sequential
+`storage/state/flock/rsx_test_runner.lock` at the top of `handle()`, **on BOTH paths** - sequential
 and docker - and holds it for the process, releasing in a `register_shutdown_function`. It is
 deliberately NOT an `RsxLocks` cluster lock: it must hold across a maintenance window (where
 cluster locks are granted as no-ops) and be taken before any service it depends on is
@@ -448,7 +448,7 @@ After a COMPLETED run, in a try/catch whose failure never costs a reportable run
 every tag of `rspade-test` and `rspade/rspade-server-dev` except the two `:latest`, then
 `docker image prune -f` (dangling), then `docker container prune -f` filtered to our label.
 Deliberately narrow - only those two repositories, only our own label. `prune_run_dirs()` keeps
-the newest 3 `storage/rsx-tmp/test-run-*` directories (their names carry a sortable timestamp)
+the newest 3 `tmp/test-run-*` directories (their names carry a sortable timestamp)
 so a box that runs the suite all day still has the last few post-mortems and nothing older.
 
 ## The test-run allowance

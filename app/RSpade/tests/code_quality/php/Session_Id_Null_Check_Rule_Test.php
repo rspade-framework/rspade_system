@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\CodeQuality\Php;
 
 use App\RSpade\CodeQuality\Rules\PHP\SessionIdNullCheck_CodeQualityRule;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -69,7 +70,7 @@ class Session_Id_Null_Check_Rule_Test extends Rsx_Test_Abstract
      */
     private static function __run(string $source, string $relative_name = 'Sid_Probe.php'): array
     {
-        $dir = storage_path('rsx-tmp') . '/session_id_rule_fixture_' . uniqid();
+        $dir = Rsx_Project_Paths::tmp_path() . '/session_id_rule_fixture_' . uniqid();
         $path = $dir . '/' . $relative_name;
         ensure_directory(dirname($path));
         file_put_contents($path, $source);

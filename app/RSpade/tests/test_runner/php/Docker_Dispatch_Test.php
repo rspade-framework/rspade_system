@@ -287,7 +287,7 @@ class Docker_Dispatch_Test extends Rsx_Test_Abstract
     {
         $framework = self::__invoke_static('results_cache_path', ['framework', 'deadbeef', 'sel1']);
         static::__assert_true(
-            str_ends_with($framework, '/rsx-tmp/test-results/framework_deadbeef_sel1.json'),
+            str_ends_with($framework, '/tmp/test-results/framework_deadbeef_sel1.json'),
             'the path names suite, build key and selector: ' . $framework
         );
 

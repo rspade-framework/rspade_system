@@ -8,6 +8,7 @@ namespace App\RSpade\Tests\ClassOverride\Php;
 
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\Manifest_Indexer;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -51,7 +52,7 @@ class Override_Archive_Guard_Test extends Rsx_Test_Abstract
         $saved_is_bad = Manifest::$_manifest_is_bad;
         $saved_error_log = ini_get('error_log');
 
-        $log_path = storage_path('rsx-tmp/override_guard_log_' . uniqid() . '.txt');
+        $log_path = Rsx_Project_Paths::tmp_path('override_guard_log_' . uniqid() . '.txt');
 
         Manifest::$data = ['data' => ['files' => $files]];
         Manifest::$_needs_manifest_restart = false;

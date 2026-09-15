@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Commands\Migrate;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -56,7 +58,7 @@ class Maint_Migrate extends Command
 {
     use PrivilegedCommandTrait;
 
-    protected $signature = 'migrate {--force} {--seed} {--step} {--path=*} {--framework-only : Run only framework migrations (system/database/migrations)} {--rsx-storage-root= : INTERNAL - test-isolation seam. Roots the file subsystem (blob/thumbnail/rendition store) at this absolute path so a data-seed migration writing blobs stays in the test-scoped store. Set only by rsx:test provisioning; never used in normal migrations. See backlog B-38.}';
+    protected $signature = 'migrate {--force} {--seed} {--step} {--path=*} {--framework-only : Run only framework migrations (system/database/migrations)}';
 
     protected $description = 'Run migrations with automatic snapshot protection in development mode';
 
@@ -77,16 +79,6 @@ class Maint_Migrate extends Command
     #[Replaceable]
     public function handle()
     {
-        // Test-isolation seam (backlog B-38): when the rsx:test provisioning
-        // subprocess passes --rsx-storage-root, root the entire file subsystem there
-        // so a data-seed migration writing blobs (e.g. import_sample_documents) lands
-        // in the test-scoped store, never the shared developer blob store. This is a
-        // per-invocation --flag, not an env var (owner ruling on invocation intent).
-        $storage_root = $this->option('rsx-storage-root');
-        if (!empty($storage_root)) {
-            config(['rsx.files.storage_root' => $storage_root]);
-        }
-
         // SNAPSHOT PROTECTION IS TAKEN ONLY WHERE IT CAN ACTUALLY BE PERFORMED.
         //
         // The mechanism is physical: stop the LOCAL, SUPERVISED mysqld, copy
@@ -419,8 +411,12 @@ class Maint_Migrate extends Command
 
         $this->commit_snapshot();
 
-        // Post-migration source regeneration, which only makes sense where the
-        // source tree is writable and gets edited.
+        // POST-MIGRATION SOURCE REGENERATION - development only, because the generated
+        // bytes are SOURCE a developer commits, not runtime state. Enum constants and
+        // model docblocks are checked in from the box the migration was authored on; a
+        // deployed application receives them with the code. Nothing here is load-bearing
+        // at runtime (the JS model stubs and field_length() come from the manifest build,
+        // not from this step), so a deployment that never runs it is complete.
         if (Rsx::is_development()) {
             $this->info('');
             $this->info('Running post-migration tasks...');
@@ -475,14 +471,29 @@ class Maint_Migrate extends Command
             return 1;
         }
 
-        // In debug/production mode, check manifest consistency with database
-        if (!$is_framework_only) {
+        // THE SEALED BUILD VS THE SCHEMA IT SERVES. In a production mode the manifest was
+        // compiled at build time and the schema has just moved, so the one question left is
+        // whether they still agree; the check itself refuses to run outside a production
+        // mode. Its exit code IS this command's exit code: it reports columns the served
+        // code believes in and the database does not have, which is a site that 500s on the
+        // first request that touches one. That is a failed migrate, not a footnote to a
+        // successful one - a warning here is a warning nobody reads in a deploy log.
+        //
+        // A --framework-only run migrates a schema-only subset, so the application's tables
+        // are legitimately absent and every one of them would be reported.
+        if (!$is_framework_only && Rsx::is_production()) {
             AppServiceProvider::disable_query_echo();
             $this->info('');
+
             $consistency_check_exit = $this->call('rsx:migrate:check_consistency');
+
             if ($consistency_check_exit !== 0) {
-                $this->warn('[WARNING]  Manifest-database consistency check failed.');
-                $this->warn('Source code may be out of sync with database schema.');
+                // The schema change itself succeeded and is committed (DDL auto-commits;
+                // there is no snapshot on this path). The cache still describes the schema
+                // that just moved, so it goes regardless of the verdict.
+                RsxCache::clear();
+
+                return $consistency_check_exit;
             }
         }
 
@@ -592,6 +603,12 @@ class Maint_Migrate extends Command
             return $normalizeExitCode;
         }
 
+        // The application hook follows every framework normalize pass, this one included:
+        // a database restored from the shipped schema cache arrives here with tables the
+        // hook has never seen, and the first migration newer than the cache may read one
+        // of the hook's columns. See fire_post_normalize_hook().
+        $this->fire_post_normalize_hook();
+
         // Use a buffered output to capture migration output
         $bufferedOutput = new BufferedOutput();
 
@@ -682,27 +699,7 @@ class Maint_Migrate extends Command
         // Inside the snapshot window like everything else here, so a failure rolls back.
         $this->apply_type_ref_table_renames();
 
-        // THE POST-NORMALIZATION HOOK - the one seam an application has for "columns every
-        // table of mine must have". Its position is the contract, and every clause of it
-        // matters:
-        //
-        // - The schema is at the framework-normalized tip: every migration has run and the
-        //   POST-migration normalize pass has finished, so a handler sees the final set of
-        //   tables and the framework's own columns already in place.
-        // - It fires BEFORE the initial user and BEFORE the revision dictionary, so a
-        //   handler's columns exist before any row is written and before the dictionary is
-        //   derived from information_schema.
-        // - It is INSIDE the snapshot window (both paths reach it before commit_snapshot()),
-        //   so a throwing handler rolls the whole run back exactly as a normalization
-        //   failure does. That is why nothing here catches: an exception must propagate.
-        //
-        // Handlers run INLINE, in this process. An action event, no payload, no return.
-        Rsx::trigger_action('migrate.normalize_schema.complete', []);
-
-        if (Event_Registry::has_handlers('migrate.normalize_schema.complete')) {
-            $handler_count = count(Event_Registry::get_handlers('migrate.normalize_schema.complete'));
-            $this->info('[OK] migrate.normalize_schema.complete fired (' . $handler_count . ($handler_count === 1 ? ' handler)' : ' handlers)'));
-        }
+        $this->fire_post_normalize_hook();
 
         // THE INITIAL USER - after the FINAL normalize pass, so the schema is at the tip
         // by construction. This is deliberately NOT a migration: it runs model code and,
@@ -731,6 +728,53 @@ class Maint_Migrate extends Command
         }
 
         return $exitCode;
+    }
+
+    /**
+     * THE POST-NORMALIZATION HOOK - the one seam an application has for "columns every
+     * table of mine must have".
+     *
+     * FIRES AFTER EVERY NORMALIZE PASS - all three kinds: the PRE-migration pass, each
+     * per-migration pass in run_migrations_with_normalization(), and the final
+     * POST-migration pass. So a run with N pending migrations fires it N+1 times, and a
+     * run with nothing to migrate fires it twice.
+     *
+     * That is the whole contract, and it exists because the two shapes of history must
+     * produce the same schema at every step. An incremental box runs one or two
+     * migrations per invocation, so by the time the next migration is authored the
+     * hook's columns are already on every table and reading one from a migration works.
+     * A from-zero replay runs the entire chain in ONE invocation; fired only at the end,
+     * the hook would leave every mid-history migration looking at a schema no developer
+     * has ever seen, and a migration that reads a hook-computed column dies with an
+     * unknown-column error hundreds of migrations in (a downstream field report,
+     * 2026-09-15). The framework already re-normalizes after every migration for exactly
+     * this reason; the application hook is the same idea with the same need.
+     *
+     * The other clauses of the position still hold at the final pass: it fires BEFORE the
+     * initial user and BEFORE the revision dictionary, so a handler's columns exist
+     * before any row is written and before the dictionary is derived from
+     * information_schema.
+     *
+     * INSIDE THE SNAPSHOT WINDOW - every call site is reached before commit_snapshot() -
+     * so a throwing handler rolls the whole run back exactly as a normalization failure
+     * does. That is why nothing here catches: an exception must propagate.
+     *
+     * HANDLERS ARE IDEMPOTENT AND CHEAP BY CONTRACT (rsx:man migrations,
+     * POST-NORMALIZATION APP STEPS): they read what is already there and emit only the
+     * difference, so firing per migration costs a few catalog reads per migration and
+     * nothing else. A handler that cannot afford to run per migration is a handler that
+     * was already wrong on a box migrating one table at a time.
+     *
+     * Handlers run INLINE, in this process. An action event, no payload, no return.
+     */
+    protected function fire_post_normalize_hook(): void
+    {
+        Rsx::trigger_action('migrate.normalize_schema.complete', []);
+
+        if (Event_Registry::has_handlers('migrate.normalize_schema.complete')) {
+            $handler_count = count(Event_Registry::get_handlers('migrate.normalize_schema.complete'));
+            $this->info('[OK] migrate.normalize_schema.complete fired (' . $handler_count . ($handler_count === 1 ? ' handler)' : ' handlers)'));
+        }
     }
 
     /**
@@ -1282,14 +1326,27 @@ class Maint_Migrate extends Command
     }
 
     /**
+     * Where each whitelist file lives, and which migration directory it describes.
+     *
+     * A seam, so the whitelist logic is testable without a real .migration_whitelist
+     * anywhere on the box - the same reason configured_database_connection() is one.
+     *
+     * @return array<string,string> [whitelist file => migration directory]
+     */
+    protected function whitelist_locations(): array
+    {
+        return [
+            database_path('migrations/.migration_whitelist') => database_path('migrations'),
+            base_path('rsx/resource/migrations/.migration_whitelist') => base_path('rsx/resource/migrations'),
+        ];
+    }
+
+    /**
      * Check if all pending migrations are whitelisted
      */
     protected function checkMigrationWhitelist(array $paths): bool
     {
-        $whitelistPaths = [
-            database_path('migrations/.migration_whitelist'),
-            base_path('rsx/resource/migrations/.migration_whitelist'),
-        ];
+        $whitelistPaths = array_keys($this->whitelist_locations());
 
         $whitelistedMigrations = [];
         $foundAtLeastOne = false;
@@ -1303,7 +1360,18 @@ class Maint_Migrate extends Command
             }
         }
 
+        // NO WHITELIST ON DISK. The file is a STRAY-FILE TRIPWIRE (every migration in the
+        // tree must be listed), and it is SOURCE that ships with the code from the box the
+        // migrations were authored on. So it is WRITTEN only in development, and CONSULTED
+        // in every mode when it is present - a deployed application keeps the tripwire at
+        // no cost. Absent outside development it is skipped silently: writing it would
+        // mean the framework editing the deployed source tree, which is exactly what a
+        // production install must never do.
         if (!$foundAtLeastOne) {
+            if (!Rsx::is_development()) {
+                return true;
+            }
+
             $this->warn('[WARNING]  No migration whitelist found. Creating one with existing migrations...');
             $this->createInitialWhitelist();
             return true;
@@ -1341,14 +1409,37 @@ class Maint_Migrate extends Command
     }
 
     /**
-     * Create initial whitelist with existing migrations
+     * Create the whitelist files from the migrations already in the tree.
+     *
+     * DEVELOPMENT ONLY. These files are SOURCE: they are committed beside the migrations
+     * they list and a production tree ships them from the development box that authored
+     * them. Writing them anywhere else would have the framework editing a deployed source
+     * tree - on a read-only prod tree that is a hard failure, and on a writable one it is
+     * a file appearing under `system/` and `rsx/` that nobody asked for. The refusal is
+     * loud rather than silent because reaching this method outside development means a
+     * caller asked for the write; the SKIP (absent whitelist, prod mode) is decided by the
+     * caller and says nothing.
      */
     protected function createInitialWhitelist(): void
     {
-        $whitelistLocations = [
-            database_path('migrations/.migration_whitelist') => database_path('migrations'),
-            base_path('rsx/resource/migrations/.migration_whitelist') => base_path('rsx/resource/migrations'),
-        ];
+        if (!Rsx::is_development()) {
+            $this->error('[ERROR] Refusing to create a migration whitelist outside development mode.');
+            $this->info('');
+            $this->info('  .migration_whitelist is SOURCE - it ships with the code, from the');
+            $this->info('  development box that authored the migrations it lists. Writing it here');
+            $this->info('  would mean editing a deployed source tree.');
+            $this->info('');
+            $this->info('  Create it on the development box and commit it:');
+            $this->info('');
+            $this->info('      php artisan migrate');
+            $this->info('');
+            $this->info('  Until then this application migrates normally - a whitelist that is');
+            $this->info('  absent is skipped, and one that is present is enforced, in every mode.');
+
+            return;
+        }
+
+        $whitelistLocations = $this->whitelist_locations();
 
         $totalMigrations = 0;
 
@@ -1525,7 +1616,7 @@ class Maint_Migrate extends Command
 
         if (is_file($uploads_cache)) {
             // Rsx_File_Paths is the ONE resolver for the blob store, so this honours the
-            // test-isolated root that --rsx-storage-root selected earlier in handle().
+            // test-isolated files root the runner passes down as --_rsx-files-root.
             $blob_root = Rsx_File_Paths::blob_root();
             ensure_directory($blob_root);
 
@@ -1666,6 +1757,12 @@ class Maint_Migrate extends Command
                 if ($normalizeExitCode !== 0) {
                     throw new \Exception("Normalization failed after migration: $migrationName");
                 }
+
+                // The application hook follows every framework normalize pass - see
+                // fire_post_normalize_hook(). Not inside the exit-code branch above: the
+                // hook runs when the pass SUCCEEDED, and a non-zero exit has already
+                // thrown.
+                $this->fire_post_normalize_hook();
             }
 
             $currentMigration++;

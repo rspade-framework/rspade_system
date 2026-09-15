@@ -37,9 +37,9 @@ class Manifest_Store
     */
     public static function _get_cache_file_path(): string
     {
-        // Storage-root relative: volatile storage was relocated out of system/ to the
-        // project root, so this must never be derived from base_path(). The ROOT itself
-        // comes from the build, so a test can put an index somewhere of its own.
+        // Build-root relative, never base_path(): the build tree lives at the project
+        // root. The ROOT itself comes from the build, so a test can put an index
+        // somewhere of its own.
         return Manifest::build()->cache_file_path();
     }
 
@@ -66,6 +66,8 @@ class Manifest_Store
     {
         $path = static::_bad_flag_path();
         $directory = dirname($path);
+
+        \App\RSpade\Core\Paths\Rsx_Project_Paths::assert_build_writable($path, 'manifest bad-flag write');
 
         if (!is_dir($directory)) {
             @mkdir($directory, 0755, true);
@@ -169,7 +171,7 @@ class Manifest_Store
     */
     public static function _get_cold_file_path(): string
     {
-        return Manifest::build()->storage_root() . '/' . Manifest::COLD_FILE;
+        return Manifest::build()->build_root() . '/' . Manifest::COLD_FILE;
     }
 
     /**
@@ -261,6 +263,7 @@ class Manifest_Store
         // Ensure directory exists
         $dir = dirname($cache_file);
         if (!is_dir($dir)) {
+            \App\RSpade\Core\Paths\Rsx_Project_Paths::assert_build_writable($dir, 'manifest save');
             mkdir($dir, 0755, true);
         }
 
@@ -305,6 +308,14 @@ class Manifest_Store
         }
 
         Manifest::$data['data']['file_index'] = $file_index;
+
+        // SECTION ORDER IS CONTENT, NOT HISTORY. A cold build inserts the derived sections in
+        // the order the phases produce them; an incremental build starts from the sections the
+        // previous index file happened to carry and re-assigns over them. Both describe the
+        // same tree, so both must emit the same bytes and the same key - the whole point of a
+        // key a cluster can compare. Sorting the top-level section map once here is what makes
+        // the file a function of the tree rather than of the path the build took to it.
+        ksort(Manifest::$data['data']);
 
         Manifest::$data['hash'] = self::_compute_hash(Manifest::$data['data']);
 
@@ -400,6 +411,10 @@ class Manifest_Store
     */
     protected static function _write_php_literal(string $path, array $value, string $header): void
     {
+        // The index is the largest build artifact and the one written by raw stream I/O
+        // rather than the guarded helper, so it states the guard itself.
+        \App\RSpade\Core\Paths\Rsx_Project_Paths::assert_build_writable($path, 'manifest save');
+
         $temp = $path . '.tmp.' . getmypid();
         $handle = fopen($temp, 'wb');
 
@@ -524,11 +539,11 @@ class Manifest_Store
             }
         }
 
-        // Phase-6 stub outputs (controller js-stubs + model js-model-stubs) live under
-        // storage/rsx-build, are recorded as manifest 'files' entries flagged is_stub /
+        // Phase-6 stub outputs (controller js-stubs + model js-model-stubs) live in the
+        // tmp tree, are recorded as manifest 'files' entries flagged is_stub /
         // is_model_stub, and get a fresh mtime every build - so they are DELIBERATELY
         // exempt from both the mtime staleness sweep and the deletion sweep above (the
-        // storage/ skip). That exemption also means their ABSENCE from disk never
+        // generated-key skip). That exemption also means their ABSENCE from disk never
         // invalidates the cache on its own: a fresh-and-valid cache whose stub files (or
         // the whole js-model-stubs dir) went missing after a framework-update recovery or
         // a prune would otherwise stay permanently stub-less, killing the client-side
@@ -816,6 +831,7 @@ class Manifest_Store
     {
         foreach ([Manifest::_get_cache_file_path(), static::_get_cold_file_path()] as $file) {
             if (file_exists($file)) {
+                \App\RSpade\Core\Paths\Rsx_Project_Paths::assert_build_writable($file, 'manifest unlink');
                 @unlink($file);
             }
         }
@@ -829,8 +845,10 @@ class Manifest_Store
      *   - a file contributes its PATH and its sha1 and nothing else, which is why mtime, size
      *     and any absolute path embedded in a reflected method record cannot reach the key;
      *   - the per-file lines are SORTED, so readdir order cannot reach it either;
-     *   - the derived sections are hashed in their stored order, which the producers make
-     *     deterministic (the class maps and the autoloader map are ksorted at build).
+     *   - the derived sections are hashed in their stored order, and _save() ksorts the
+     *     top-level section map before calling this, so a cold build and an incremental one
+     *     hash the same sections in the same order. Within a section the producers make the
+     *     order deterministic (the class maps and the autoloader map are ksorted at build).
      *
      * NO DEEP COPY. The predecessor rebuilt the entire manifest body node by node -
      * ksorting every associative node and running a path rewrite over every string - and

@@ -1,340 +1,434 @@
+STORAGE_DIRECTORIES(7)      RSX Framework Manual      STORAGE_DIRECTORIES(7)
+
 NAME
-    storage_directories - RSX framework storage directory organization
+    storage_directories - The three volatile trees (build/, tmp/, storage/),
+    what lives in each, and what regenerates it
 
 SYNOPSIS
-    What lives under storage/ (the PROJECT-ROOT storage tree), which entries ship
-    in a deployment, and what the maintenance commands (rsx:clean,
-    rsx:prod:export) touch.
+    <project>/build      build outputs - the deployment artifact
+    <project>/tmp        derived caches and runtime scratch
+    <project>/storage    user data and operational state
+    <project>/storage/state   maintenance flag, flock files, update markers
+
+    Overridable in .env (build/ is fixed):
+        RSX_TMP_PATH=   RSX_STORAGE_PATH=
 
 DESCRIPTION
-    Volatile storage lives at <project>/storage - one level ABOVE the Laravel base
-    path (system/). It was relocated out of system/ because that tree is the
-    framework property: ALL of system/ is overwritten by rsx:framework:pull
-    by it, which runtime data has no business being part of. The move is performed
-    once per environment by bin/environment_updates/030_relocate_storage.sh, which
-    drops the marker storage/.rspade_storage_relocated; the bootstrap bridge
-    (system/bootstrap/app.php) reads that marker and calls useStoragePath(), so
-    every storage_path() consumer follows automatically. Pre-boot code (artisan,
-    public/index.php, the updater, the node helpers) reads the same marker
-    directly, falling back to the historic system/storage until it exists.
+    RSpade splits its volatile data into three roots, one level ABOVE the
+    Laravel base path (system/), because the three have different lifetimes
+    and different owners:
 
-    NEVER join a storage path onto base_path(): base_path() is system/. Use
-    storage_path(), or rsx_project_file_path() for a project-logical
-    'storage/...' path (manifest keys keep that historic spelling).
+        build/     PRODUCED BY ONE COMMAND (rsx:build) and read by everything
+                   else. In a production-like mode this is the deployment
+                   artifact and only a build may write it.
+        tmp/       DERIVED. Every byte is regenerable on demand; rsx:clean
+                   empties it without ceremony and nothing is lost. It is
+                   also what Laravel calls its storage path, and what TMPDIR
+                   points at.
+        storage/   OWNED BY THE RUNNING APPLICATION. Uploads, logs,
+                   storage/app, operational state. Never wiped by a build or
+                   a clean, and the one tree to back up.
 
-    The directory groups into three roles:
+    That split is what makes the production read-only posture possible: the
+    web user needs write access to storage/ and tmp/ and needs only READ
+    access to system/, rsx/ and build/. See rsx:man prod.
 
-        PERSISTENT BUILD  artifacts a prod boot needs (rsx-build).
-        RUNTIME STATE     data the running app owns - uploads, logs, update
-                          markers, caches, locks.
-        REGENERABLE CACHE content-addressed caches rebuilt on demand.
+    NEVER hardcode one of these paths, and never join one onto base_path()
+    (base_path() is system/). Every path in every tree has a named method on
+    App\RSpade\Core\Paths\Rsx_Project_Paths, which is the single owner:
+
+        build_root()    tmp_root()    storage_root()    state_root()
+        build_path($r)  tmp_path($r)  storage_path($r)  state_path($r)
+
+    plus a named method per entry (bundles_dir(), seal_file(), logs_dir(),
+    flock_dir(), ...). The code-quality rule PATH-OWNER-01 enforces this: a
+    literal naming one of these trees, a storage_path() with a literal
+    argument, or a raw write primitive aimed at the build root is a finding.
+
+    File-subsystem paths (the blob store, thumbnails, renditions) resolve
+    through App\RSpade\Core\Files\Rsx_File_Paths, which delegates to the same
+    owner.
 
     Nothing here is web-accessible: the web-server docroot points at
-    system/public ONLY, and everything below is reached through framework code
-    (file paths for the file subsystem resolve exclusively through
-    App\RSpade\Core\Files\Rsx_File_Paths - never a hardcoded storage_path()).
+    system/public ONLY.
 
-LIVE TREE (<project>/storage/)
-    rsx-build/        persistent build artifacts (see below).                [SHIP]
-    rsx-tmp/          temporary caches, cleared by rsx:clean.               [omit]
-    rsx-locks/        vestigial scaffold dir; nothing writes to it.        [omit]
-    rsx-framework/    framework self-update markers + the maintenance flag
-                      (its content is the operator reason).                 [omit]
-    flock/            advisory lock FILES: every system lock, plus cluster
-                      locks while maintenance mode is up. Inert when idle.  [omit]
-    rsx-thumbnails/   generated WebP thumbnails (content-addressed).        [omit]
-    rsx-renditions/   cached soffice->PDF renditions (content-addressed).   [omit]
-    rsx-ide-bridge/   IDE bridge local-file grant token + passive guards.   [omit]
-    mail-catcher/     development SMTP catcher Maildir (cur/new/tmp): every
-                      message the local sink accepted, one file each. Pruned by
-                      the mail cleanup task past rsx.mail.retention_days.   [omit]
-    uploads/          the content-addressed file-attachment BLOB STORE
-                      (Rsx_File_Paths::blob_root()).                        [omit]
-    framework/        Laravel cache/, sessions/, testing/, views/.          [omit]
-    app/              Laravel "public"/"temp" local disk roots.             [omit]
-    logs/             laravel.log*, ide-formatter.log, ssr-fpc-errors.log.
-                      Every top-level *.log here is rotated, compressed and
-                      pruned by the framework's own nightly sweep - no OS
-                      logrotate is assumed. rsx:man logrotate.               [omit]
-    db_backups/       mysqldump cache for rsx:test --fresh, keyed by a hash
-                      of all migrations (survives rsx:clean).               [omit]
+THE PATH OVERRIDES
+    Each root's location is read PRE-BOOT, before Laravel exists, by
+    system/bootstrap/rsx_paths.php - a real environment variable first, then
+    the FIRST matching line in the project-root .env (one quote pair
+    stripped), which is phpdotenv's own immutable behaviour, so pre-boot and
+    booted code always agree.
 
-    [SHIP]/[omit] is the deployment posture (see DEPLOYMENT). "omit" entries are
-    either runtime state that must not be copied from a dev box (blob store,
-    logs, ide-bridge, db_backups) or regenerable caches recreated on demand.
+        RSX_TMP_PATH=/var/tmp/rspade
+        RSX_STORAGE_PATH=/mnt/data/rspade-storage
 
-RSX-BUILD DIRECTORY
-    Purpose: persistent build artifacts that survive cache clears and ship to
-    production.
+    Empty or absent means the default beside the code. A value may be
+    absolute or relative to the PROJECT ROOT: './tmp' and 'tmp' both mean
+    <project>/tmp. Relative to the WORKING DIRECTORY it is not - a
+    subprocess does not choose its working directory - and relative to
+    Laravel's base path it is not either.
 
-    Location: storage/rsx-build/
+    build/ HAS NO KEY. It is fixed at <project>/build: the seal, the manifest
+    index and the build key live inside it, and it is deployed beside system/
+    and rsx/ and made read-only with them. Nothing at runtime relocates it.
 
-    Contents:
-        build_key            content-derived manifest hash (the cache key)
+    storage/state is NOT independently overridable - it follows
+    RSX_STORAGE_PATH. The flock files under it are how processes on this box
+    exclude each other, so a subprocess resolving a different state root than
+    its parent would stop excluding anything.
+
+    THE ONE SYMLINK. system/build is a tracked symlink to ../build, for the
+    bash and node helpers that address the tree by name. It can be a constant
+    string because build/ is fixed. bootstrap/rsx_storage_link.php validates
+    it on every boot and repairs a wrong or missing link silently; a REAL
+    directory squatting on that name is refused with the remedy, and a
+    dangling link is accepted - the build creates the tree, boot never does.
+    There is no system/storage and no system/tmp: a link cannot promise where
+    a relocatable root is, and on a sealed box system/ is read-only, so a link
+    left pointing at the old tree could not be repaired.
+
+    THE WRITABILITY CHECK. Right after resolving the roots, both entrypoints
+    assert that this process can write storage/ and tmp/ (created when simply
+    absent) in every mode, and the project root, system/ and build/ in
+    development or inside rsx:build. The refusal names the directory, the
+    user and the chown/chmod that repairs it. rsx:man prod carries the
+    messages.
+
+BUILD TREE (<project>/build)
+    Created by rsx:build and by rsx:clean, and by nothing else. Boot does not
+    create it: a production box with no build tree must fail loud naming the
+    build command, not quietly grow an empty one.
+
         manifest_index.php   the HOT manifest index (a request loads this one)
         manifest_files.php   file metadata not read at request time
-        bundles/             compiled CSS/JS bundles
-        js-stubs/            generated JS stubs for the Internal (Ajax) API
-        js-model-stubs/      generated JS model classes (fetch/enum/relationships)
-        prod_seal.json       sealed-build record (prod/debug modes only)
-        (no cdn-cache/)      the mirrored-externals store is NOT under storage.
-                             It lives at rsx/resource/.cdn-cache/, is git-tracked
-                             and is written by every mode's compile - a source
-                             artifact, not a build output.
+        build_key            content-derived manifest hash (the cache key)
+        bundles/             compiled CSS/JS bundles, vendor/app split
+        laravel/             Laravel's own caches: routes, events, services,
+                             packages, config. Reached through the five cache
+                             getters on App\RSpade\Core\Laravel\Rsx_Application,
+                             so every Laravel consumer follows automatically.
+        views/               compiled Blade. Development compiles JIT into it;
+                             a production build PRECOMPILES every template
+                             (view:cache) so a sealed request never writes.
+        prod_seal.json       the sealed-build record (production-like modes
+                             only). rsx:man app_mode for its format.
 
-    There is NO routes.php / route_metadata.php here. Laravel's route cache (prod
-    only, via optimize:cache) is bootstrap/cache/routes-v7.php, outside storage.
+    THE ONE DIRECTORY BOOT CREATES, and it is Laravel's: in DEVELOPMENT ONLY,
+    bootstrap/app.php creates build/laravel, because Laravel's PackageManifest
+    writes packages.php there during boot and throws when the directory is
+    absent - a fresh development checkout could not otherwise run the build
+    that would create it. A production-like mode creates nothing.
 
-    Immutability under a sealed build (prod modes):
-        When the system is in a prod mode (debug or production) AND a
-        prod_seal.json is present, this directory is a SEALED, IMMUTABLE build
-        artifact. The framework refuses to mutate it from any unauthorized
-        context:
+    The mirrored-externals store is NOT here. It lives at
+    rsx/resource/.cdn-cache/, is git-tracked, and is written by every mode's
+    compile: a source artifact, not a build output.
 
-        - rsx:clean REFUSES while sealed (it will not wipe the deployment's only
-          copy of the assets); it tells you to run rsx:prod:refresh or
-          rsx:prod:disable first.
-        - The low-level write choke points (file_put_contents_safe,
-          rmdir_recursive, browser-storage clear) throw if a write targets this
-          directory from an unauthorized context.
-        - The ONLY way to rewrite the assets is an authorized rebuild -
-          rsx:prod:refresh (in place) or a fresh rsx:prod:enable.
+    IMMUTABILITY. In a production-like mode every framework write into this
+    tree passes Rsx_Project_Paths::assert_build_writable(), which throws
+    unless the process is a BUILD CONTEXT (rsx:build, rsx:clean, and the
+    subprocesses they spawn). The guard keys on the MODE, not on whether a
+    seal is present. It is a guardrail, not a security boundary: rsx:man prod
+    covers the OS-level read-only posture that is.
 
-        prod_seal.json pins the build: build_key, mode, git commit, and a sha256
-        of every asset. rsx:prod:verify recomputes those hashes to detect drift.
-        See app_mode(3) for the full lifecycle.
+TMP TREE (<project>/tmp)
+    Everything derived. rsx:clean empties it wholesale and recreates the
+    skeleton; boot may create the skeleton too.
 
-RSX-TMP DIRECTORY
-    Purpose: temporary files and caches, cleared by rsx:clean.
+    THIS IS ALSO LARAVEL'S STORAGE PATH. useStoragePath() is handed the tmp
+    root, so storage_path() and every package that composes a location from
+    it land here - framework scratch, session files, anything a library
+    persists without asking. That is the right default, because most of what
+    Laravel calls storage is scratch. The persistent exceptions are pinned:
+    the logging channels at <storage>/logs, the local and public filesystem
+    disks at <storage>/app, and the two links below. A package that persists
+    through storage_path() rather than through a Storage disk loses its files
+    on the next rsx:clean; point it at a disk, at
+    Rsx_Project_Paths::app_dir('<name>') for durable data, or at
+    Rsx_Project_Paths::tmp_path('<name>') for a cache. rsx:man prod.
 
-    Location: storage/rsx-tmp/
+        logs -> <storage>/logs      the two persistent links. Created and
+        app  -> <storage>/app       validated by the tmp skeleton on every
+                                    boot and recreated by rsx:clean after its
+                                    wipe, so storage_path('logs') and
+                                    storage_path('app') reach persistent
+                                    storage whoever spells them. A link with
+                                    another target is replaced silently; a
+                                    REAL directory or file on either name is
+                                    fatal, naming what to move and where the
+                                    documentation is.
+        thumbnails/          generated WebP thumbnails (content-addressed),
+                             LRU-swept. rsx:man thumbnails.
+        renditions/          cached soffice->PDF renditions, {blob-hash}.pdf,
+                             plus the self-contained HTML renditions of
+                             spreadsheets. LRU-swept to
+                             config('rsx.preview.quota_max_bytes'). Produced
+                             by the Document_Render_Service background worker
+                             and read by /_preview/pdf/:key and by the
+                             thumbnail pipeline. rsx:man document_search.
+        framework/           whatever Laravel itself composes from
+                             storage_path(), created lazily. Views and the
+                             route/event/package caches are NOT here - those
+                             are build output and are pinned into build/.
 
-    Contents:
-        derived/             THE PER-SOURCE-FILE DERIVED CACHES. One directory per
-                             NAMESPACE, one file per entry, one key scheme for all of
-                             them:
+        derived/             THE PER-SOURCE-FILE DERIVED CACHES. One directory
+                             per NAMESPACE, one file per entry, one key scheme
+                             for all of them:
 
                                  derived/<namespace>/<hash><variant>.<ext>
 
-                             <hash> is _rsx_file_hash_for_build() - the framework's
-                             single file-identity helper (development: path+size+mtime;
-                             production/debug: relative path + content, so a sealed build
-                             is deterministic). <variant> carries everything the artifact
-                             depends on BEYOND the source bytes - a compile target, a
-                             toolchain fingerprint, a parser version - so a toolchain
-                             upgrade retires the entries it invalidates instead of
-                             serving the old tool's work.
+                             <hash> is _rsx_file_hash_for_build() - the
+                             framework's single file-identity helper
+                             (development: path+size+mtime; production/debug:
+                             relative path + content, so a sealed build is
+                             deterministic). <variant> carries everything the
+                             artifact depends on BEYOND the source bytes - a
+                             compile target, a toolchain fingerprint, a parser
+                             version - so a toolchain upgrade retires the
+                             entries it invalidates instead of serving the old
+                             tool's work.
 
-                             A subsystem does NOT invent a directory, a filename scheme
-                             or a staleness test of its own: it calls
-                             App\RSpade\Core\Cache\File_Content_Cache. The namespaces:
+                             A subsystem does NOT invent a directory, a
+                             filename scheme or a staleness test of its own: it
+                             calls App\RSpade\Core\Cache\File_Content_Cache.
+                             The namespaces:
 
-                                 babel/            transformed JS (variant = target +
-                                                   toolchain fingerprint). Also the file
-                                                   the concatenator is handed - the
-                                                   bundle compiler writes no second copy.
+                                 babel/            transformed JS (variant =
+                                                   target + toolchain
+                                                   fingerprint). Also the file
+                                                   the concatenator is handed -
+                                                   the bundle compiler writes
+                                                   no second copy.
                                  js-parser/        parsed-AST metadata
-                                 js-sanitized/     sanitized JS (comments + string
-                                                   contents blanked) for the rules
+                                 js-sanitized/     sanitized JS (comments +
+                                                   string contents blanked) for
+                                                   the rules
                                  code-quality-sanitized/
-                                                   the {content, lines, original_lines}
-                                                   document each rule reads
-                                 jqhtml/           compiled jqhtml templates, both
-                                                   layers: variant `_parsed_pv<ver>` is
-                                                   the parser's raw output and
-                                                   `_compiled_pv<ver>` is that output
-                                                   wrapped for the bundle - the second
-                                                   IS the bundle's input file
-                                 php-reflection/   reflection extracts, keyed by the
-                                                   MANIFEST's own sha1 rather than the
-                                                   build hash (put_for_hash/get_for_hash)
+                                                   the {content, lines,
+                                                   original_lines} document each
+                                                   rule reads
+                                 jqhtml/           compiled jqhtml templates,
+                                                   both layers: variant
+                                                   `_parsed_pv<ver>` is the
+                                                   parser's raw output and
+                                                   `_compiled_pv<ver>` is that
+                                                   output wrapped for the bundle
+                                                   - the second IS the bundle's
+                                                   input file
+                                 php-reflection/   reflection extracts, keyed by
+                                                   the MANIFEST's own sha1
+                                                   rather than the build hash
+                                                   (put_for_hash/get_for_hash)
 
-                             Nothing here expires on a clock. The manifest build's
-                             Phase 7 calls File_Content_Cache::sweep_all() with the union
-                             of every live file's identities - it is the one moment the
-                             framework knows which sources still exist - and rsx:clean
-                             wipes the whole tree anyway.
-        persistent/          caches that survive between builds
-                             validation_ledger.php
-                                 THE PASS LEDGER. One var_export'd array -
-                                 ['version'=>1,'rules'=>[<rule id>=>[<file
-                                 hash>=>1]]] - recording that a file already
-                                 passed an expensive code-quality check. Keyed
-                                 by the file's sha1 (the same hash the manifest
-                                 keys a file by), so a verdict survives a
-                                 manifest clear; written atomically, last writer
-                                 wins. It replaced the per-file `.lintpass` flag
-                                 directories (1254 zero-byte files) and is the
-                                 ONE place a rule banks a verdict - a new rule
-                                 uses it rather than inventing a directory of
-                                 its own - and a rule may NOT create a cache
-                                 directory of its own. Owner:
-                                 CodeQuality/Support/Validation_Ledger.php; see
-                                 rsx:man code_quality.
+                             Nothing here expires on a clock. The manifest
+                             build's Phase 7 calls
+                             File_Content_Cache::sweep_all() with the union of
+                             every live file's identities - the one moment the
+                             framework knows which sources still exist - and
+                             rsx:clean wipes the tree anyway.
+
+        persistent/          caches meant to survive between builds.
+                             validation_ledger.php is THE PASS LEDGER: one
+                             var_export'd array -
+                             ['version'=>1,'rules'=>[<rule id>=>[<file
+                             hash>=>1]]] - recording that a file already passed
+                             an expensive code-quality check. Keyed by the
+                             file's sha1 (the same hash the manifest keys a
+                             file by), so a verdict survives a manifest clear;
+                             written atomically, last writer wins. It is the
+                             ONE place a rule banks a verdict - a rule may NOT
+                             create a cache directory of its own. Owner:
+                             CodeQuality/Support/Validation_Ledger.php; see
+                             rsx:man code_quality.
+
+        js-stubs/            generated JS stubs for the Internal (Ajax) API
+        js-model-stubs/      generated JS model classes (fetch/enum/relations)
+        js-auth-stubs/       generated JS auth-gate stubs
+
+                             These three are COMPILE-TIME INPUTS: the bundle
+                             compiler reads them while compiling and no request
+                             ever touches them, which is why they are derived
+                             caches rather than build output. They are recorded
+                             in the manifest index under LOGICAL keys
+                             (tmp/js-stubs/<name>.js) independent of where
+                             RSX_TMP_PATH points, so two boxes with different
+                             overrides produce identical indexes - and
+                             therefore identical build keys.
+
+        php-fixer/           the PHP fixer's structural memory, one file per
+                             build root, so a fixture build never poisons the
+                             real build's memory
         npm-cache/           npm module resolution cache
         npm-compile/         npm compile scratch
-        (bundle_*.js, scss_*.css, css_bundle_*.css scratch files written by the
-         bundle compiler - one per BUNDLE, not per source file, and therefore
-         not derived-cache entries)
-        test-storage/        test-run file subsystem (blob store + thumbnail and
-                             rendition caches) redirected here by rsx:test so a
-                             test-DB attachment delete never unlinks a blob shared
-                             with the developer database (rsx.files.storage_root,
-                             read by Rsx_File_Paths; backlog B-38)
+        staging/             .tmp_<digits> staging directories for atomic writes
+        laravel-cache/       Laravel's file cache driver, when configured
+        htmlpurifier/        HTMLPurifier's serializer cache
+        tasks/               per-task scratch: $task->get_temp_dir() is
+                             tmp/tasks/task_<id>/
+        build-manager/       the legacy build-manager cache/temp pair
+        mail-catcher/        development SMTP catcher Maildir (cur/new/tmp):
+                             every message the local sink accepted, one file
+                             each. Pruned by the mail cleanup task past
+                             rsx.mail.retention_days.
+        db_cache/            the interrupted-run scratch of
+                             rsx:db:rebuild_provision_cache_snapshot (the live
+                             dump and its .in_progress marker). rsx:man
+                             migrations.
+        db_backups/          mysqldump cache for rsx:test --fresh, keyed by a
+                             hash of all migrations. REGENERABLE, and rsx:clean
+                             now discards it - the next --fresh run re-dumps.
+        test-storage/        the test run's redirected file subsystem (blob
+                             store + thumbnail and rendition caches), so a
+                             test-DB attachment delete never unlinks a blob
+                             shared with the developer database
+        test-results/        per-run result JSON
+        test-run-<id>/       per-run working directories
+        test-timings.json    the timing cache the runner balances workers with
+        env_heal.stamp       the stat the development env heal short-circuits on
+        rsx-formatter-cache.json   the IDE formatter's memory
+        (bundle_*.js, scss_*.css, css_bundle_*.css, npm_import_declarations_*.js
+         scratch written by the bundle compiler - one per BUNDLE, not per
+         source file, and therefore not derived-cache entries)
 
-        THE DAEMON SOCKETS. The node daemons live directly in this directory:
+        THE DAEMON SOCKETS live directly in this directory:
 
             node-service-<random>.sock     (one per live PHP process)
-            ssr-server.sock                + ssr-server.pid, ssr-server.build_key
+            ssr-server.sock                + ssr-server.pid,
+                                             ssr-server.build_key
 
         node-service-<random>.sock is THE node service - one process serving
         every build subsystem (parser, babel, minify, concat, jqhtml, sanitize,
-        quality, scss). It replaced eight per-concern daemons on 2026-09-04.
-
-        The random component makes the socket PRIVATE to the PHP process that
-        spawned it: nobody else can learn the name, so nobody else can kill,
-        rebind or reuse that daemon. Freshness needs no check - a daemon is
-        always spawned from current disk by its own parent, and its lifetime is
-        a subset of that parent's. A daemon left behind by a SIGKILLed parent
-        exits on its own after 120 idle seconds, unlinking its socket. Several
-        of these files at once is NORMAL: it means several PHP processes are
-        live. See Core/JsParsers/CLAUDE.md (Rsx_Node_Service).
-
-        (transient .tmp_<digits> staging dirs from atomic writes)
-
-    Cleared by rsx:clean; recreated automatically. Safe to exclude from deploys.
+        quality, scss). The random component makes the socket PRIVATE to the
+        PHP process that spawned it: nobody else can learn the name, so nobody
+        else can kill, rebind or reuse that daemon. A daemon left behind by a
+        SIGKILLed parent exits on its own after 120 idle seconds, unlinking its
+        socket. Several of these files at once is NORMAL: it means several PHP
+        processes are live. See Core/JsParsers/CLAUDE.md (Rsx_Node_Service).
 
     THE DAEMONS ARE QUIESCED FIRST. rsx:clean calls
     Rsx_Node_Service::quiesce_all() immediately BEFORE wiping this directory,
     and reports the count. Wiping it under a running daemon would strand that
     daemon permanently: it keeps a listener on an unlinked inode that no socket
-    message can ever reach again, and its argv still names the deleted path. So a
-    clean does NOT leave live daemons behind - it kills them, and the next process
-    that needs one spawns it on demand. bin/maintenance-mode.sh enable runs the
-    same sweep in bash for the same reason (a framework update rewrites the server
-    scripts underneath them). See bin/CLAUDE.md for the normative rule.
+    message can ever reach again, and its argv still names the deleted path. So
+    a clean does NOT leave live daemons behind - it kills them, and the next
+    process that needs one spawns it on demand. bin/maintenance-mode.sh enable
+    runs the same sweep in bash for the same reason (a framework update
+    rewrites the server scripts underneath them). See bin/CLAUDE.md for the
+    normative rule.
 
-RSX-LOCKS DIRECTORY
-    Purpose: a vestigial scaffold directory, kept for historical layout only.
+STORAGE TREE (<project>/storage)
+    The application's own data. Never wiped by rsx:clean, never produced by a
+    build, and the one tree that must be backed up.
 
-    Location: storage/rsx-locks/
+        uploads/          the content-addressed file-attachment BLOB STORE
+                          (Rsx_File_Paths::blob_root()). Real user data; NOT
+                          regenerable; never copied into a deployment.
+        logs/             laravel.log*, ide-formatter.log, ssr-fpc-errors.log.
+                          Every top-level *.log here is rotated, compressed and
+                          pruned by the framework's own nightly sweep - no OS
+                          logrotate is assumed. rsx:man logrotate. Reached
+                          from tmp/logs as well.
+        app/              the local and public filesystem disk roots, and
+                          whatever an application persists through them.
+                          Reached from tmp/app as well.
+        rsx-ide-bridge/   IDE bridge local-file grant token + passive guards
+                          (development only).
+        state/            see below.
 
-    NOTHING WRITES HERE. Web-cluster locks are held by a live socket to the
-    rsx-lockd daemon and touch no disk at all; system locks (and cluster locks
-    degraded by maintenance mode) are flock() files under storage/flock/. See
-    rsx:man locks. This directory contains only a .placeholder and is never
-    cleared by rsx:clean.
+    THUMBNAILS AND RENDITIONS ARE NOT HERE. Both are derived from a blob that
+    is still in the store, so both live in tmp/ and a backup of this tree does
+    not include them. Eviction SELF-HEALS: a RENDERED blob whose rendition file
+    is gone is re-queued by whichever consumer noticed, which serves the
+    extension-icon placeholder (thumbnail) or a 404 (rendition endpoint) for
+    that one request while the worker reconverts. A rendition is produced by
+    the background worker, never inside a web request.
 
-RSX-FRAMEWORK DIRECTORY
-    Purpose: DURABLE framework self-update state (mutation markers + the
-    maintenance flag). Not storage/framework/ - that is Laravel's own
-    cache/session/view tree, which is routinely wiped wholesale.
+STATE TREE (<project>/storage/state)
+    Operational state that must survive a clean, a rebuild and a mode switch,
+    and that must be shared by every process on the box.
 
-    Location: storage/rsx-framework/
-
-    Contents:
-        mutations.json    index of framework-authored file mutations (Php_Fixer
-                          use-rewrites, .php.upstream renames, composer classmap
-                          regen, model_codegen regen)
-        shadow/           byte-exact copies of each mutated file's framework-
-                          authored content (the "expected state" the tamper check
-                          diffs against)
+        flock/            advisory lock FILES: every system lock, plus cluster
+                          locks while maintenance mode is up. Inert when idle.
+                          rsx:man locks.
         .maintenance.mode.framework.update
-                          present only while rsx:framework:pull holds the update
-                          window (web + CLI return 503)
+                          present only while maintenance mode is up; its
+                          CONTENT is the operator reason. rsx:man
+                          maintenance_mode.
+        environment_updates_fingerprint
+                          what the environment-update runner has already
+                          applied on this box.
+        .submodule_sync_ok
+                          the submodule sync stamp.
+        updater/          the framework updater's ledger.
 
-    Never cleared by rsx:clean (the markers must survive rebuild cycles; losing
-    them would make legitimate framework churn look like user tampering to
-    rsx:framework:verify). Gitignored; recreated as mutations occur; reset by a
-    successful rsx:framework:pull. See rsx:man rsx_upstream.
+    NOT here: the cached bare clone of the rspade_system distribution repo. It
+    is pure re-derivable data and lives at /tmp/rspade_upstream.git (single
+    source of truth: Framework_Maintenance::upstream_cache_dir()), so a ~100MB
+    git clone never enters a storage backup. Losing it costs one re-clone.
 
-    NOT here: the cached bare clone of the rspade_system distribution repo. It is
-    pure re-derivable data and lives at /tmp/rspade_upstream.git (single source of
-    truth: Framework_Maintenance::upstream_cache_dir()), so a ~100MB git clone
-    never enters a storage backup or export. Losing it costs one re-clone.
+WHAT RSX:CLEAN WIPES
+    php artisan rsx:clean [--silent] [--force]
 
-FILE-SUBSYSTEM & FEATURE CACHES
-    The file attachment subsystem and its caches are content-addressed (keyed on
-    the deduplicated blob hash) and resolved through Rsx_File_Paths:
-
-    uploads/                the BLOB STORE - every uploaded file's deduplicated
-                            bytes (Rsx_File_Paths::blob_root()). Real user data;
-                            never ships in a deployment.
-    rsx-thumbnails/         generated WebP thumbnails (rsx:man thumbnails), LRU-
-                            swept.
-    rsx-renditions/         cached soffice->PDF renditions, {blob-hash}.pdf,
-                            LRU-swept to config('rsx.preview.quota_max_bytes').
-                            Produced by the Document_Render_Service background
-                            worker and read by TWO consumers: /_preview/pdf/:key
-                            for <Document_Preview> (rsx:man document_search) AND
-                            the thumbnail pipeline, which rasterizes page 1 of the
-                            rendition for any Office document (rsx:man thumbnails).
-
-    Thumbnails and renditions are regenerable, but NOT on the next request the way
-    they once were - a rendition is produced by the background worker, never inside
-    a web request. Eviction SELF-HEALS: a RENDERED blob whose rendition file is gone
-    is re-queued by whichever consumer noticed, which serves the extension-icon
-    placeholder (thumbnail) or a 404 (rendition endpoint) for that one request while
-    the worker reconverts. Safe to omit from a deploy; the first request after that
-    queues the work rather than doing it.
-
-    The blob store is NOT regenerable and is dev-local data - it must never be
-    copied into a deployment package.
-
-DEPLOYMENT
-    The one deployment tool is rsx:prod:export. It is a strict WHITELIST: it ships
-    source code + the sealed build artifacts + an env template, and NOTHING else.
-
-    Ships:
-        - system/ (code, vendor, node_modules) minus storage, tests, docs.dev,
-          docs.goals, ace_reference, bin/publish, DebugProxy, *.expect
-        - storage/ - ONLY the sealed build artifacts (rsx-build build_key,
-          manifest_index.php, manifest_files.php, prod_seal.json, bundles/,
-          js-stubs/, js-model-stubs/,
-          cdn-cache/) plus an empty, writable storage skeleton
-        - rsx/ (application) minus tests and resource/research|archive|incomplete
-        - artisan + root composer/package manifests; root vendor/node_modules only
-          if a real app-layer install exists
-        - the project's own .env.dist, copied verbatim, and a system/.env ->
-          ../.env symlink
-
-    NEVER shipped (excluded by the whitelist, automatically): the blob store
-    (uploads/), thumbnails, renditions, rsx-ide-bridge (dev grant token),
-    rsx-framework, db_backups, logs, rsx-tmp, and the real .env. A whitelist means a
-    newly-added runtime directory is left out by default instead of leaking.
-
-    The operator points the web-server docroot at system/public ONLY and populates
-    .env from .env.dist on the target.
-
-MAINTENANCE
-    rsx:clean [--silent]  clears storage/rsx-tmp/ and storage/rsx-build/, and ALSO:
-        - FLUSHES the entire Redis database (Redis backs the cache, realtime
-          pub/sub, and task worker slots - expect all of it to be dropped;
-          locks are NOT in Redis and are unaffected)
-        - removes orphaned .tmp_<digits> atomic-write staging dirs under the tree
+        - quiesces every node daemon bound to the tmp socket directory
+        - empties build/ ENTIRELY (bundles, Laravel caches, compiled views,
+          the manifest index, the seal is removed with the tree)
+        - empties tmp/ ENTIRELY
+        - recreates both roots, empty
+        - FLUSHES the Redis caches - the volatile cache (database 0) and the
+          reduced-volatility cache (database 2, where FPC entries live).
+          Locks (1) and counters (3) are not caches and are not touched.
+        - removes orphaned .tmp_<digits> atomic-write staging directories
         - heals the system/.env -> ../.env symlink first
-        - PRESERVES rsx-locks/ and rsx-framework/
-        - in a DOWNSTREAM app (not this monorepo) also resets the framework
-          framework tree: git reset + checkout of system/ back to its last
-          commit (untracked files untouched). Skipped while a framework update
-          is in flight, which would otherwise revert the update itself.
-        - REFUSES when a sealed prod build is active (prod_seal.json + prod mode):
-          run rsx:prod:refresh or rsx:prod:disable first. This is what makes
-          rsx-build safe to include in a deployment - a stray rsx:clean cannot
-          wipe a sealed deployment.
+        - NEVER touches storage/
+        - in a DOWNSTREAM app (not the framework monorepo) also resets the
+          framework submodule: git reset + checkout of system/ back to its
+          last commit (untracked files untouched). Skipped while a framework
+          update is in flight.
+        - in a production-like mode REFUSES without --force, because
+          discarding the build tree leaves the site unable to serve until
+          rsx:build has rebuilt it.
 
-    rsx:manifest:build    rebuild the two storage/rsx-build/manifest_*.php files.
-    rsx:bundle:compile <name>  rebuild one bundle under rsx-build/bundles/.
+    php artisan rsx:build rebuilds everything a clean discarded. There is no
+    separate command for rebuilding one part of the tree by hand in a
+    production-like mode: rsx:manifest:build refuses there, naming rsx:build
+    --force, and rsx:bundle:compile is stopped by the build-tree write guard.
+    Both are development tools.
 
     NOTE: never restart the web server to "clear locks". A web-cluster lock is
-    held by a live connection to rsx-lockd and is released the instant its holder
-    exits - `node system/bin/rsx-lockd/lockd.js dump` shows exactly who holds
-    what, and force_clear is the deliberate override. This environment also runs
-    with OPcache disabled, so restarts are unnecessary in general.
+    held by a live connection to rsx-lockd and is released the instant its
+    holder exits - `node system/bin/rsx-lockd/lockd.js dump` shows exactly who
+    holds what, and force_clear is the deliberate override.
+
+THE ENVIRONMENT UPDATES
+    An existing install is moved onto this layout by two scripts under
+    system/bin/environment_updates/, which run automatically (framework pull,
+    container start, development rebuild), are self-detecting and idempotent,
+    and are silent on a box already migrated. Contract:
+    system/bin/environment_updates/CLAUDE.md.
+
+        110_relocate_build_tmp.sh   moves the volatile trees apart: the state
+                                    files move with their INODES preserved, so
+                                    a lock held across the move still excludes
+                                    new acquirers; an interrupted database
+                                    snapshot is preserved rather than deleted;
+                                    the old storage/rsx-thumbnails and
+                                    storage/rsx-renditions caches are removed
+                                    (they regenerate under tmp/); the
+                                    system/build link is created.
+        120_remove_storage_tmp_links.sh
+                                    removes the system/storage and system/tmp
+                                    symlinks. A REAL directory or file at
+                                    either path is reported and left alone.
 
 SEE ALSO
-    app_mode      the sealed-build lifecycle that owns rsx-build immutability
-    locks         RsxLocks - cluster locks (rsx-lockd) and flock system locks
-    file_upload   the file subsystem whose blob store lives at storage/uploads
-    document_search  the rendition cache and preview pipeline
-    rsx_upstream  the framework update, whose state lives in rsx-framework
+    rsx:man prod - the read-only posture, the path overrides in deployment
+    rsx:man app_mode - the sealed-build mechanics that own build/
+    rsx:man locks - cluster locks (rsx-lockd) and flock system locks
+    rsx:man file_upload - the file subsystem whose blob store lives in storage/
+    rsx:man document_search - the rendition cache and preview pipeline
+    rsx:man rsx_upstream - the framework update, whose state lives in state/
+    rsx:man logrotate - the nightly log sweep
+
+AUTHOR
+    RSpade Framework
+
+RSpade                       September 2026            STORAGE_DIRECTORIES(7)

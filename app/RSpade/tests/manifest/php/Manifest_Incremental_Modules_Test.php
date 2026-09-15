@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Manifest\Php;
 
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -20,11 +21,11 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * a COLD build of the same tree produces.
  *
  * So each test builds a fixture tree twice - once incrementally (build, edit, build again in
- * the SAME storage root) and once cold (the final tree, in a FRESH storage root) - and
+ * the SAME build root) and once cold (the final tree, in a FRESH build root) - and
  * compares the two indexes section by section. A module that forgot to drop a stale row, or
  * dropped one it should have kept, cannot survive that.
  *
- * Both builds are CHILD processes against scratch storage roots, for the reason
+ * Both builds are CHILD processes against scratch build roots, for the reason
  * Manifest_Fixture_Build_Test documents: replacing Manifest::$data in a process that is
  * using it is not a test, it is a hazard.
  */
@@ -36,11 +37,11 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
     /** The fixture tree, relative to base_path(). */
     private static string $tree = '';
 
-    /** The storage root the INCREMENTAL build writes to (reused across builds). */
-    private static string $incremental_storage = '';
+    /** The build root the INCREMENTAL build writes to (reused across builds). */
+    private static string $incremental_build_root = '';
 
-    /** The storage root the COLD build writes to (fresh). */
-    private static string $cold_storage = '';
+    /** The build root the COLD build writes to (fresh). */
+    private static string $cold_build_root = '';
 
     /**
      * Sections whose value is a function of the tree and must therefore match exactly.
@@ -112,20 +113,22 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
     private static function __make_tree(): void
     {
         static::$tree = 'app/RSpade/temp/manifest_incremental' . getmypid();
-        static::$incremental_storage = storage_path('rsx-tmp/manifest-incremental/' . getmypid() . '/inc');
-        static::$cold_storage = storage_path('rsx-tmp/manifest-incremental/' . getmypid() . '/cold');
+        static::$incremental_build_root = Rsx_Project_Paths::tmp_path('manifest-incremental/' . getmypid() . '/inc');
+        static::$cold_build_root = Rsx_Project_Paths::tmp_path('manifest-incremental/' . getmypid() . '/cold');
 
         static::__remove_tree();
 
-        ensure_directory(static::$incremental_storage);
-        ensure_directory(static::$cold_storage);
+        ensure_directory(static::$incremental_build_root);
+        ensure_directory(static::$cold_build_root);
+        ensure_directory(static::$incremental_build_root . '-tmp');
+        ensure_directory(static::$cold_build_root . '-tmp');
 
         static::__write_tree('before');
     }
 
     private static function __remove_tree(): void
     {
-        foreach ([base_path(static::$tree), dirname(static::$incremental_storage)] as $directory) {
+        foreach ([base_path(static::$tree), dirname(static::$incremental_build_root)] as $directory) {
             if ($directory !== '' && is_dir($directory)) {
                 static::__rmdir_recursive($directory);
             }
@@ -147,21 +150,25 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Build in a child against $storage, and return the index it wrote (both halves).
+     * Build in a child against $build_root, and return the index it wrote (both halves).
+     *
+     * The child derives into a tmp root beside it: the build writes its generated stubs
+     * there, and a fixture build must not regenerate the developer's own.
      */
-    private static function __build(string $storage): array
+    private static function __build(string $build_root): array
     {
         $output = [];
 
         $exit = Rsx_Artisan::run('rsx:manifest:build', [
-            '--_manifest-storage-root=' . $storage,
+            '--_rsx-build-root=' . $build_root,
+            '--_rsx-tmp-root=' . $build_root . '-tmp',
             '--_manifest-extra-scan-roots=' . static::$tree,
         ], $output);
 
         static::__assert_equals(0, $exit, "the fixture build failed:\n" . implode("\n", $output));
 
-        $manifest = include $storage . '/rsx-build/manifest_index.php';
-        $cold_path = $storage . '/rsx-build/manifest_files.php';
+        $manifest = include $build_root . '/manifest_index.php';
+        $cold_path = $build_root . '/manifest_files.php';
 
         if (file_exists($cold_path)) {
             $manifest['data']['files'] = $manifest['data']['files'] + (include $cold_path);
@@ -179,7 +186,7 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
 
         try {
             // 1. Cold, into the incremental root.
-            static::__build(static::$incremental_storage);
+            static::__build(static::$incremental_build_root);
 
             // 2. Edit ONE JS file - and only that file, so the second build's changed set
             //    is exactly one path and every module has to get the rest right from what it
@@ -191,10 +198,10 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
             clearstatcache();
 
             // 3. Incremental, into the SAME root.
-            $incremental = static::__build(static::$incremental_storage);
+            $incremental = static::__build(static::$incremental_build_root);
 
             // 4. Cold, into a fresh root, over the tree as it now stands.
-            $cold = static::__build(static::$cold_storage);
+            $cold = static::__build(static::$cold_build_root);
 
             static::__assert_sections_match($incremental, $cold);
             static::__assert_file_records_match($incremental, $cold);
@@ -220,13 +227,13 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
                 "<Define:Fixture_Inc_Extra>\n    <div class=\"Fixture_Inc_Extra__body\">x</div>\n</Define:Fixture_Inc_Extra>\n"
             );
 
-            static::__build(static::$incremental_storage);
+            static::__build(static::$incremental_build_root);
 
             unlink($absolute . '/fixture_inc_extra.jqhtml');
             clearstatcache();
 
-            $incremental = static::__build(static::$incremental_storage);
-            $cold = static::__build(static::$cold_storage);
+            $incremental = static::__build(static::$incremental_build_root);
+            $cold = static::__build(static::$cold_build_root);
 
             static::__assert_false(
                 isset($incremental['data']['jqhtml']['components']['Fixture_Inc_Extra']),

@@ -534,29 +534,43 @@ FRAMEWORK EVENT CATALOG
     Migrate Events (action)
 
         migrate.normalize_schema.complete (action)
-            Fired from: Maint_Migrate::execute_migrations(), after the POST-migration
-                        migrate:normalize_schema pass has succeeded and query logging
-                        has been switched off, and BEFORE the initial user and the
-                        revision dictionary. Both run paths reach it - the
-                        snapshot-protected one and the bare one - and both reach it
-                        BEFORE commit_snapshot(), so where a snapshot was taken it
-                        still covers whatever a handler does.
+            Fired from: Maint_Migrate::fire_post_normalize_hook(), after EVERY
+                        migrate:normalize_schema pass that succeeded - the
+                        PRE-migration pass, each per-migration pass, and the
+                        POST-migration pass. A run of N pending migrations therefore
+                        fires it N+1 times; a run with nothing to migrate fires it
+                        twice. Both run paths reach every firing - the
+                        snapshot-protected one and the bare one - and all of them
+                        precede commit_snapshot(), so where a snapshot was taken it
+                        still covers whatever a handler does. The FINAL firing is
+                        after the post-migration pass and BEFORE the initial user and
+                        the revision dictionary.
             Data: [] - no payload. A handler that wants to know something about the
                   schema reads it from the database, which is the whole point of the
-                  position: every migration has run and the framework's own
-                  normalization is finished, so the schema is at its final tip.
+                  position: the framework's own normalization for this pass is
+                  finished, so the schema is at the framework-normalized tip.
             Return: ignored (it is an action).
             Use for: an application's own "columns every table must have" pass -
                      provenance columns, tenancy columns, an app-wide index -
                      computed over information_schema instead of maintained as a
                      hand-written per-table migration list, which stops being
                      complete the moment somebody adds a table.
+            WHY EVERY PASS: a migration may READ a column the handler computes. An
+            incremental box runs a migration or two per invocation, so those columns
+            are already everywhere by the time the next migration is authored. A
+            from-zero replay runs the whole chain in ONE invocation, and fired only at
+            the end the hook would leave every mid-history migration facing a schema
+            no developer has ever seen. Firing per pass makes the two histories agree
+            at every step - the same reason the framework re-normalizes after every
+            migration.
             Handlers run INLINE in the migrate process and nothing catches them: a
             throw propagates, which on the snapshot-protected path rolls the entire
             migration back exactly as a normalization failure does. Handlers MUST be
-            idempotent - the event fires on every migrate, including runs with no
-            pending migrations. When at least one handler is registered, migrate
-            prints one line naming the count; with none it says nothing.
+            idempotent AND cheap - read what is there and emit only the difference. On
+            a database at the tip a handler issues no DDL, so the per-pass firings
+            cost a few catalog reads per migration. When at least one handler is
+            registered, migrate prints one line naming the count after each pass; with
+            none it says nothing.
             Write the event name as a LITERAL in #[OnEvent] - never a class constant.
             See: php artisan rsx:man migrations (POST-NORMALIZATION APP STEPS)
 
@@ -645,8 +659,8 @@ FRAMEWORK EVENT CATALOG
         DEV vs PROD semantics: in development a rebuild happens on the FIRST
         request after any source file changes (the auto-rebuild), so rsx.rebuilt
         fires on that request. In debug/production the build is sealed and
-        immutable, so a rebuild only happens ONCE, inside the authorized
-        rsx:prod:build that rsx:prod:enable / rsx:prod:refresh run - that is the
+        immutable, so a rebuild only happens ONCE, inside the build - the one
+        process permitted to write the build tree - that is the
         single place rsx.rebuilt (and rsx.rebuilt.prod) fires in a prod deploy. A
         warm boot that loads a valid cache fires ONLY rsx.ready.
 
@@ -686,8 +700,7 @@ FRAMEWORK EVENT CATALOG
             Fired from: Manifest::init(), same condition as rsx.rebuilt,
                         immediately after it, when in ANY production-like mode
                         (debug OR production; Rsx::is_production() is true). In
-                        practice this fires once, inside the authorized
-                        rsx:prod:build.
+                        practice this fires once, inside rsx:build.
             Data: identical to rsx.rebuilt.
             Use for: deploy-time hooks that must run exactly once per sealed
                      build (warm caches, ping a deploy webhook, prime an index).
@@ -700,6 +713,77 @@ FRAMEWORK EVENT CATALOG
                   false on a warm cache load. Mirrors Manifest::rebuild_occurred().
             Use for: one-time per-process startup wiring that must run on every
                      boot regardless of whether a rebuild happened.
+
+    AN APPLICATION ARTIFACT IN build/
+
+        rsx.rebuilt is where an application generates something OF ITS OWN that
+        belongs with the build: a sitemap, a precomputed lookup table, a
+        compiled data file - anything derived from source that a request should
+        read rather than recompute. It goes under build/app/, through the path
+        owner:
+
+            <?php
+
+            namespace Rsx\Handlers;
+
+            use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
+            /**
+             * Search_Synonyms_Handlers
+             *
+             * The application's synonym table, compiled once per build from the
+             * YAML under rsx/resource/search/ and read on every search request.
+             * It is DERIVED from source, so it belongs in build/ beside the
+             * manifest and the bundles: a prod deploy writes it inside
+             * rsx:build, and development regenerates it on the first request
+             * after the source changes.
+             *
+             * See: php artisan rsx:man event_hooks
+             */
+            class Search_Synonyms_Handlers
+            {
+                /**
+                 * @param array $data {files: array, removed: array}
+                 * @return void
+                 */
+                #[OnEvent('rsx.rebuilt')]
+                public static function compile_synonyms(array $data): void
+                {
+                    $out = Rsx_Project_Paths::build_path('app/search_synonyms.php');
+
+                    ensure_directory(dirname($out));
+
+                    file_put_contents(
+                        $out,
+                        '<?php return ' . var_export(self::__compile(), true) . ';'
+                    );
+                }
+            }
+
+        THE RULES.
+
+        - build_path('app/<name>') and nothing else. build/ is the deployment
+          artifact, so an artifact that ships with the build lives in it; a
+          CACHE the application can rebuild at any moment is tmp_path(), and
+          user data is storage. Never a literal - PATH-OWNER-01 (rsx:man
+          storage_directories).
+        - IN A PROD MODE THE HANDLER RUNS INSIDE rsx:build, which is the only
+          process allowed to write build/. That is the whole reason the artifact
+          is produced here rather than lazily on a request: a sealed runtime
+          would be refused by the build-tree write guard (rsx:man prod).
+        - In development it runs on the first request after a source change, on
+          the boot path, INLINE. Keep it cheap. Heavy work goes to
+          Task::dispatch() - which in a prod mode means it does not happen
+          during the build, so anything the artifact is needed for must be
+          cheap enough to do here.
+        - NEVER WRITE SOURCE from a handler. A handler that writes into rsx/ or
+          system/ dirties the tree for the next request (the scan has already
+          run), and in a prod mode it is writing into a tree that is meant to be
+          read-only.
+        - The reader side is ordinary: require build_path('app/<name>') at the
+          point of use, and fail loud when it is absent - a missing artifact
+          means the box was never built, which is the same diagnosis as a
+          missing bundle.
 
 IMPLEMENTATION DETAILS
 
@@ -1017,3 +1101,5 @@ SEE ALSO
     rsx:man turnstile
     rsx:man manifest_api
     rsx:man coding_standards
+    rsx:man prod - the build tree, and who may write it
+    rsx:man storage_directories - build/, tmp/ and storage/, entry by entry

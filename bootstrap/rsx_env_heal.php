@@ -24,7 +24,7 @@
  * one and only copy of it, which `php artisan rsx:env:heal` runs as well.
  *
  * IN DEVELOPMENT THIS RUNS ON EVERY BOOT, so the common path is one filesystem
- * stat against a stamp under storage/rsx-tmp and nothing else (see boot_heal()).
+ * stat against a stamp in the tmp tree and nothing else (see boot_heal()).
  *
  * Report lines are printed on the CLI only. A web request cannot have framework
  * chatter injected into its response, so there the work is done silently -

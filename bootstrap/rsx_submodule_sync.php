@@ -129,13 +129,15 @@
 })();
 
 /**
- * Where the success record lives: the framework's own durable storage, at
- * <project>/storage - one level above system/, which is a submodule and is
- * replaced wholesale on every update.
+ * Where the success record lives: storage/state, the small tree holding the facts
+ * about this environment's own lifetime. It sits one level above system/, which is a
+ * submodule and is replaced wholesale on every update.
  */
 function rsx_submodule_sync_cache_path(string $project_root, string $system_dir): ?string
 {
-    $dir = $project_root . '/storage/rsx-framework';
+    require_once __DIR__ . '/rsx_paths.php';
+
+    $dir = rsx_paths_state_root();
     if (!is_dir($dir)) {
         return null;
     }

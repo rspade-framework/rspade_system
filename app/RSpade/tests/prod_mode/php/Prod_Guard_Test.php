@@ -6,19 +6,23 @@
 
 namespace App\RSpade\Tests\ProdMode\Php;
 
-use App\RSpade\Core\Prod\Rsx_Prod_Seal;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+use App\RSpade\Core\Prod\Rsx_Build_Context;
+use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Unit coverage for the immutability guard (Rsx_Prod_Seal::assert_mutable) and the
- * authorization mechanism. Uses the is_sealed()/root seams so no real .env or real
- * build root is touched; authorization is granted via authorize_process() (never an
- * env variable - authorization is an invocation parameter) and always cleared by
- * _testing_reset() in a finally block.
+ * The build-tree write guard (Rsx_Project_Paths::assert_build_writable).
  *
- * The rsx:clean sealed-refusal is a direct is_sealed() check in the command;
- * is_sealed() gating is proven here and the full command refusal is exercised by
- * the batch E2E.
+ * The guard keys on the MODE and the build context, never on whether a seal happens to
+ * be on disk: an unsealed production box is a broken deployment, and an arbitrary
+ * command writing into it is how it stays broken. These tests pin exactly that - an
+ * unsealed production mode is guarded, the build context passes, development is a no-op,
+ * and a path outside the build tree is none of the guard's business.
+ *
+ * The build root is redirected with Rsx_Project_Paths::_override(['build' => ...]) so no
+ * real artifact is named, and the mode rides the Rsx::_testing_set_mode() seam (RSX_MODE
+ * in .env is never touched). Every seam is restored in a finally block.
  *
  * Pure logic, no DB.
  */
@@ -26,129 +30,115 @@ class Prod_Guard_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
 
-    // -------------------------------------------------------------------------
-    // Not sealed -> always mutable (the common, cheap path)
-    // -------------------------------------------------------------------------
-
-    public static function test_assert_mutable_passes_when_not_sealed()
+    /**
+     * Run $fn with a throwaway build root and the process mode forced, then restore.
+     */
+    private static function _with(string $mode, callable $fn): void
     {
+        $root = sys_get_temp_dir() . '/rsx_guard_' . bin2hex(random_bytes(8));
+
+        Rsx_Project_Paths::_override(['build' => $root]);
+        Rsx::_testing_set_mode($mode);
+        Rsx_Build_Context::_testing_reset();
+
         try {
-            Rsx_Prod_Seal::_testing_set_sealed(false);
-            // Any path is fine when not sealed - no exception.
-            Rsx_Prod_Seal::assert_mutable('/anything/at/all.txt', 'test');
-            static::__pass();
+            $fn($root);
         } finally {
-            Rsx_Prod_Seal::_testing_reset();
+            Rsx_Build_Context::_testing_reset();
+            Rsx::clear_mode_cache();
+            Rsx_Project_Paths::_clear_overrides();
         }
     }
 
     // -------------------------------------------------------------------------
-    // Sealed + unauthorized -> refuse writes under the build root
+    // Development -> always writable (the JIT mode rebuilds on demand)
     // -------------------------------------------------------------------------
 
-    public static function test_assert_mutable_throws_when_sealed_and_unauthorized()
+    public static function test_development_is_never_guarded()
     {
-        $root = sys_get_temp_dir() . '/rsx_guard_' . bin2hex(random_bytes(8));
-        mkdir($root, 0777, true);
-        try {
-            // Clean slate: no authorization carried over from a prior test.
-            Rsx_Prod_Seal::_testing_reset();
-            Rsx_Prod_Seal::_testing_set_root($root);
-            Rsx_Prod_Seal::_testing_set_sealed(true);
+        self::_with(Rsx::MODE_DEVELOPMENT, function ($root) {
+            Rsx_Project_Paths::assert_build_writable($root . '/bundles/x.js', 'test');
+            static::__pass();
+        });
+    }
 
+    // -------------------------------------------------------------------------
+    // Production without a seal -> STILL guarded (the whole point of the rework)
+    // -------------------------------------------------------------------------
+
+    public static function test_an_unsealed_production_box_is_guarded()
+    {
+        self::_with(Rsx::MODE_PRODUCTION, function ($root) {
+            static::__assert_false(
+                is_file($root . '/prod_seal.json'),
+                'this box has no seal at all - and is guarded anyway'
+            );
+
+            $exception = static::__assert_throws(
+                \RuntimeException::class,
+                fn () => Rsx_Project_Paths::assert_build_writable($root . '/bundles/x.js', 'test-write'),
+                'is a build artifact'
+            );
+
+            static::__assert_contains('rsx:build --force', $exception->getMessage(), 'the refusal names the remedy');
+        });
+    }
+
+    public static function test_debug_mode_is_guarded_too()
+    {
+        self::_with(Rsx::MODE_DEBUG, function ($root) {
             static::__assert_throws(
                 \RuntimeException::class,
-                fn () => Rsx_Prod_Seal::assert_mutable($root . '/bundles/x.js', 'test-write'),
-                'immutable prod build asset'
+                fn () => Rsx_Project_Paths::assert_build_writable($root . '/manifest_index.php', 'test-write'),
+                'is a build artifact'
             );
-        } finally {
-            Rsx_Prod_Seal::_testing_reset();
-            rmdir($root);
-        }
+        });
     }
 
     // -------------------------------------------------------------------------
-    // Sealed + authorized -> permitted (the rebuild path)
+    // The build context is the ONE key
     // -------------------------------------------------------------------------
 
-    public static function test_assert_mutable_passes_when_authorized()
+    public static function test_the_build_context_may_write()
     {
-        $root = sys_get_temp_dir() . '/rsx_guard_' . bin2hex(random_bytes(8));
-        mkdir($root, 0777, true);
-        try {
-            Rsx_Prod_Seal::_testing_set_root($root);
-            Rsx_Prod_Seal::_testing_set_sealed(true);
-            Rsx_Prod_Seal::authorize_process();
+        self::_with(Rsx::MODE_PRODUCTION, function ($root) {
+            Rsx_Build_Context::begin();
 
-            // Authorized: no exception even for a path under the build root.
-            Rsx_Prod_Seal::assert_mutable($root . '/bundles/x.js', 'authorized-write');
+            Rsx_Project_Paths::assert_build_writable($root . '/bundles/x.js', 'build-write');
             static::__pass();
-        } finally {
-            Rsx_Prod_Seal::_testing_reset();
-            rmdir($root);
-        }
+        });
     }
 
     // -------------------------------------------------------------------------
-    // Sealed + unauthorized but path OUTSIDE the build root -> permitted
+    // Scope: the build tree and nothing else
     // -------------------------------------------------------------------------
 
-    public static function test_assert_mutable_ignores_paths_outside_build_root()
+    public static function test_a_path_outside_the_build_tree_is_not_the_guards_business()
     {
-        $root = sys_get_temp_dir() . '/rsx_guard_' . bin2hex(random_bytes(8));
-        mkdir($root, 0777, true);
-        try {
-            Rsx_Prod_Seal::_testing_reset();
-            Rsx_Prod_Seal::_testing_set_root($root);
-            Rsx_Prod_Seal::_testing_set_sealed(true);
-
-            // A path that is not under the build root is not a build asset.
-            Rsx_Prod_Seal::assert_mutable('/var/log/somewhere.txt', 'unrelated-write');
+        self::_with(Rsx::MODE_PRODUCTION, function () {
+            Rsx_Project_Paths::assert_build_writable('/var/log/somewhere.txt', 'unrelated-write');
             static::__pass();
-        } finally {
-            Rsx_Prod_Seal::_testing_reset();
-            rmdir($root);
-        }
+        });
     }
 
     // -------------------------------------------------------------------------
-    // is_authorized requires an explicit authorization (CLI test SAPI already
-    // satisfies the SAPI half; the test process argv carries no --authorized flag)
+    // rsx:clean's own refusal asks the same two questions
     // -------------------------------------------------------------------------
 
-    public static function test_is_authorized_requires_authorization()
+    public static function test_clean_refuses_in_a_production_mode_without_force()
     {
-        try {
-            Rsx_Prod_Seal::_testing_reset();
-            static::__assert_false(
-                Rsx_Prod_Seal::is_authorized(),
-                'no authorization -> not authorized'
-            );
-
-            Rsx_Prod_Seal::authorize_process();
+        self::_with(Rsx::MODE_PRODUCTION, function () {
             static::__assert_true(
-                Rsx_Prod_Seal::is_authorized(),
-                'authorize_process() -> authorized in CLI'
+                Rsx::is_production() && !Rsx_Build_Context::is_active(),
+                'rsx:clean would demand --force'
             );
-        } finally {
-            Rsx_Prod_Seal::_testing_reset();
-        }
-    }
 
-    // -------------------------------------------------------------------------
-    // The rsx:clean guard decision is is_sealed(): prove it flips with the seam.
-    // -------------------------------------------------------------------------
+            Rsx_Build_Context::begin();
 
-    public static function test_clean_guard_decision_follows_is_sealed()
-    {
-        try {
-            Rsx_Prod_Seal::_testing_set_sealed(true);
-            static::__assert_true(Rsx_Prod_Seal::is_sealed(), 'rsx:clean would refuse when sealed');
-
-            Rsx_Prod_Seal::_testing_set_sealed(false);
-            static::__assert_false(Rsx_Prod_Seal::is_sealed(), 'rsx:clean would proceed when not sealed');
-        } finally {
-            Rsx_Prod_Seal::_testing_reset();
-        }
+            static::__assert_true(
+                Rsx_Build_Context::is_active(),
+                'a build cleans without asking - it is the command that rebuilds what it discards'
+            );
+        });
     }
 }

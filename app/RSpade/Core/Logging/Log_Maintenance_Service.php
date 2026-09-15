@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Logging;
 
 use App\RSpade\Core\Logging\Rsx_Logrotate;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Instance;
 
@@ -46,7 +47,7 @@ class Log_Maintenance_Service extends Rsx_Service_Abstract
         $days_uncompressed = (int) config('rsx.logging.rotation.days_uncompressed');
         $days_retention = (int) config('rsx.logging.rotation.days_retention');
 
-        $report = Rsx_Logrotate::rotate(storage_path('logs'), $days_uncompressed, $days_retention);
+        $report = Rsx_Logrotate::rotate(Rsx_Project_Paths::logs_dir(), $days_uncompressed, $days_retention);
 
         $rotated = 0;
         $compressed = 0;

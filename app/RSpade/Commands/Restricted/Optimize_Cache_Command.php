@@ -2,7 +2,9 @@
 
 namespace App\RSpade\Commands\Restricted;
 
-use App\RSpade\Core\Prod\Rsx_Prod_Seal;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
+use App\RSpade\Core\Prod\Rsx_Build_Context;
 use Illuminate\Console\Command;
 
 class Optimize_Cache_Command extends Command
@@ -12,8 +14,7 @@ class Optimize_Cache_Command extends Command
      *
      * @var string
      */
-    protected $signature = 'optimize:cache
-                            {--authorized : Internal: forwarded by rsx:prod:build to mark an authorized prod-build context}';
+    protected $signature = 'optimize:cache';
 
     /**
      * The console command description.
@@ -29,20 +30,18 @@ class Optimize_Cache_Command extends Command
      */
     public function handle()
     {
-        // Allowed ONLY in production, or from an authorized prod-build context
-        // (rsx:prod:build forwards the --authorized invocation flag to this child
-        // when it is itself authorized). This lets the sealed-build pipeline cache
-        // Laravel components even when the app environment is not 'production' (e.g.
-        // a --debug build on a local box), while still blocking ad-hoc dev use.
-        // app()->environment() derives from RSX_MODE - see config/app.php.
-        if (!app()->environment('production') && !Rsx_Prod_Seal::is_authorized()) {
+        // THE BUILD OWNS THESE CACHES. They are build outputs like any other - they land
+        // in build/ and a served request only reads them - so the one context permitted to
+        // write them is the build (rsx:build, which forwards its context to this child).
+        // Running it by hand in development would freeze routes and Blade against a tree
+        // that is still changing, which is the confusion the whole mode exists to avoid.
+        if (!Rsx_Build_Context::is_active()) {
             throw new \RuntimeException(
-                "The optimize:cache command should NEVER be called except in production\n" .
-                "or from an authorized prod-build context (rsx:prod:enable/refresh).\n\n" .
-                "In development mode, all caching should be disabled for proper development workflow.\n" .
-                "Caching in development prevents you from seeing changes immediately and causes confusion.\n\n" .
-                "Current environment: " . app()->environment() . "\n\n" .
-                "If you need to test caching behavior, use a staging environment configured as 'production'."
+                "optimize:cache is part of the build, not a command to run by hand.\n\n" .
+                "It writes the route, event and compiled-view caches into build/, and only a\n" .
+                "build may write there.\n\n" .
+                "  Build everything: php artisan rsx:build --force\n" .
+                '  See:              php artisan rsx:man prod'
             );
         }
 
@@ -51,28 +50,30 @@ class Optimize_Cache_Command extends Command
 
         // NOTE: we deliberately do NOT call cache:clear here. RSX overrides
         // cache:clear to also run rsx:clean, which would wipe the freshly-built
-        // rsx-build assets mid-pipeline. Each *:cache command below clears its own
+        // build assets mid-pipeline. Each *:cache command below clears its own
         // compiled artifact (config:clear, route:clear, ...) before rewriting it,
         // so an explicit up-front clear is both redundant and destructive.
 
-        // NOTE: 'config' and 'views' are intentionally omitted.
+        // NOTE: 'config' is intentionally omitted. Laravel SKIPS loading .env entirely
+        // when a config cache exists, so every runtime env() call falls back to its
+        // default. RSX reads env() pervasively at runtime (RSX_MODE, APP_URL, the email
+        // dev flags, ...), so caching config silently breaks the app - most visibly
+        // Rsx::get_mode(), which would read 'development' on a production box. RSX is
+        // env-at-runtime by design; config caching is a broader incompatibility to
+        // address separately, not here.
         //
-        // - config: Laravel SKIPS loading .env entirely when a config cache exists,
-        //   so every runtime env() call falls back to its default. RSX reads env()
-        //   pervasively at runtime (RSX_MODE, APP_URL, the email dev flags,
-        //   ...), so caching config silently breaks the app - most
-        //   visibly Rsx::get_mode(), which would read 'development' on a sealed
-        //   production box. RSX is env-at-runtime by design; config caching is a
-        //   broader incompatibility to address separately, not here.
-        // - views: RSX renders its view layer through jqhtml at runtime; Laravel's
-        //   view:cache pre-compiles every Blade template and cannot statically
-        //   resolve RSX's component tags.
+        // VIEWS ARE CACHED. RSX's Blade layer is one precompiler plus a handful of
+        // directives, and a jqhtml tag is opaque text to Blade, so every template
+        // compiles ahead of time exactly as Laravel intends. Precompiling is what lets a
+        // production request read build/views without writing to it - a template the
+        // build did not precompile fails loud on a read-only box rather than silently
+        // compiling one.
         //
-        // Route and event caching do NOT skip Dotenv loading, so they are safe and
-        // deliver the real production routing/event startup win.
+        // Route, event and view caching do NOT skip Dotenv loading, so all three are safe.
         $steps = [
             'routes' => 'Routes',
             'events' => 'Events',
+            'views' => 'Views',
         ];
 
         $failed = [];
@@ -128,6 +129,10 @@ class Optimize_Cache_Command extends Command
 
             case 'events':
                 $command = new \Illuminate\Foundation\Console\EventCacheCommand();
+                break;
+
+            case 'views':
+                $command = new \Illuminate\Foundation\Console\ViewCacheCommand();
                 break;
 
             default:

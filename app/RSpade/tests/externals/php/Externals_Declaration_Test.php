@@ -8,6 +8,7 @@ namespace App\RSpade\Tests\Externals\Php;
 
 use RuntimeException;
 use App\RSpade\Core\Externals\Externals_ManifestSupport;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -17,7 +18,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * key whitelist, the URL shape, the realm vocabulary, the readiness forms, and the
  * flat-namespace collision.
  *
- * Fixtures are written under storage/rsx-tmp (never a scanned directory), handed to
+ * Fixtures are written under tmp/ (never a scanned directory), handed to
  * process() as synthetic manifest file entries, and deleted in a finally.
  *
  * Pure logic, no DB.
@@ -29,7 +30,7 @@ class Externals_Declaration_Test extends Rsx_Test_Abstract
     /** Fixture counter - a distinct path per fixture keeps the reader's mtime cache honest. */
     private static int $_fixture_seq = 0;
 
-    private const FIXTURE_DIR = 'rsx-tmp/externals_test';
+    private const FIXTURE_DIR = 'externals_test';
 
     /**
      * Write fixture declaration files, run the support module over them, and return the
@@ -39,7 +40,7 @@ class Externals_Declaration_Test extends Rsx_Test_Abstract
      */
     private static function _build(array $files): array
     {
-        $directory = storage_path(self::FIXTURE_DIR);
+        $directory = Rsx_Project_Paths::tmp_path(self::FIXTURE_DIR);
         ensure_directory($directory);
 
         $relative_paths = [];
@@ -51,7 +52,9 @@ class Externals_Declaration_Test extends Rsx_Test_Abstract
                     $directory . '/' . $name . '.externals.php',
                     "<?php\n\nreturn " . var_export($declarations, true) . ";\n"
                 );
-                $relative_paths[] = '../storage/' . self::FIXTURE_DIR . '/' . $name . '.externals.php';
+                // The support module resolves a manifest key with base_path(), and the tmp
+                // tree sits beside system/ at the project root.
+                $relative_paths[] = '../tmp/' . self::FIXTURE_DIR . '/' . $name . '.externals.php';
             }
 
             $manifest_data = ['data' => ['files' => []]];

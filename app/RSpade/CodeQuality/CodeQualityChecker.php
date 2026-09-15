@@ -10,6 +10,7 @@ use App\RSpade\CodeQuality\Support\Validation_Ledger;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
 use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 class CodeQualityChecker
 {
@@ -71,7 +72,7 @@ class CodeQualityChecker
      */
     protected static function _cleanup_old_npm_bundles(): void
     {
-        $bundle_dir = storage_path('rsx-build/bundles');
+        $bundle_dir = Rsx_Project_Paths::bundles_dir();
 
         // Skip if directory doesn't exist yet
         if (!is_dir($bundle_dir)) {

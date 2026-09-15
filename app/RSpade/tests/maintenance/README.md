@@ -1,6 +1,6 @@
 # Concern: maintenance mode
 
-Maintenance mode is ONE flag file (`storage/rsx-framework/.maintenance.mode.framework.update`)
+Maintenance mode is ONE flag file (`storage/state/.maintenance.mode.framework.update`)
 with two ways in:
 
 - `php artisan rsx:maintenance:enable [--reason=<text>] [--no-services]` / `rsx:maintenance:disable`
@@ -28,7 +28,7 @@ php-fpm, realtime, fpc-proxy, and clears the flag last.
 
 Because rsx-lockd and redis are stopped, two subsystems change behavior for the window:
 
-- `RsxLocks` selects an **flock backend** (`storage/flock/<domain>__<db-scope-md5>__<name>.lock`, all locks
+- `RsxLocks` selects an **flock backend** (`storage/state/flock/<domain>__<db-scope-md5>__<name>.lock`, all locks
   exclusive) chosen from the per-process `RSPADE_MAINT_MODE` snapshot at ACQUISITION time. A
   degraded CLUSTER lock and a SYSTEM lock keep separate files, since the domain names the file.
 - `RsxCache` reads miss silently and writes are dropped with ONE log warning per process;

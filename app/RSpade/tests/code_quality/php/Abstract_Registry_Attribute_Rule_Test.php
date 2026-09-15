@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\CodeQuality\Php;
 
 use App\RSpade\CodeQuality\Rules\Manifest\AbstractRegistryAttribute_CodeQualityRule;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -47,7 +48,7 @@ class Abstract_Registry_Attribute_Rule_Test extends Rsx_Test_Abstract
         bool $on_class,
         bool $with_exception_marker
     ): array {
-        $dir = storage_path('rsx-tmp') . '/abstract_attr_fixture_' . uniqid();
+        $dir = Rsx_Project_Paths::tmp_path() . '/abstract_attr_fixture_' . uniqid();
         ensure_directory($dir);
 
         $marker = '#[' . $attribute_name . ']';

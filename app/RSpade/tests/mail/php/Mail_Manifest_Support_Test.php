@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\Mail\Php;
 
 use App\RSpade\Core\Mail\Email_ManifestSupport;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -45,19 +46,21 @@ class Mail_Manifest_Support_Test extends Rsx_Test_Abstract
     private static array $fixture_roots = [];
 
     /**
-     * Write a fixture email class source and return its path RELATIVE to base_path(),
-     * which is the key shape the manifest's files array uses.
+     * Write a fixture email class source under the tmp tree and return its manifest KEY:
+     * a `tmp/...` key is a logical key the source cache resolves through the path owner,
+     * so the fixture lives in the real tmp root and never as a `tmp` directory beside the
+     * framework tree.
      */
     private static function __write_class(string $class, string $body): string
     {
-        $root = 'storage/rsx-tmp/email_manifest_fixture_' . uniqid();
+        $root = 'tmp/email_manifest_fixture_' . uniqid();
         $relative = $root . '/' . strtolower($class) . '.php';
-        $absolute = base_path($relative);
+        $absolute = Rsx_Project_Paths::absolute_for($relative);
 
         ensure_directory(dirname($absolute));
         file_put_contents_safe($absolute, "<?php\n\nclass {$class} extends Rsx_Email_Abstract\n{\n{$body}\n}\n");
 
-        self::$fixture_roots[] = base_path($root);
+        self::$fixture_roots[] = Rsx_Project_Paths::absolute_for($root);
 
         return $relative;
     }

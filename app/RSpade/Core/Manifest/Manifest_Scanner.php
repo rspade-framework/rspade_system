@@ -7,6 +7,7 @@ use App\RSpade\Core\Cache\File_Content_Cache;
 use App\RSpade\Core\ExtensionRegistry;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Paths;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * Manifest_Scanner - phases 1 and 2 of the build.
@@ -1263,7 +1264,7 @@ class Manifest_Scanner
     /** Where the fixer's structure memory lives for THIS build. */
     private static function _class_structure_path(): string
     {
-        return Manifest::build()->storage_root() . '/' . Manifest::PHP_FIXER_STRUCTURE_FILE;
+        return Rsx_Project_Paths::php_fixer_structure_file();
     }
 
     /**

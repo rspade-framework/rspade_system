@@ -40,6 +40,8 @@
  * no autoloader, no framework and no config: plain filesystem calls only.
  */
 
+require_once __DIR__ . '/rsx_paths.php';
+
 (static function (): void {
     // The overwhelmingly common path in the environment this framework ships:
     // one stat, and out.
@@ -59,13 +61,7 @@
     // This is load-bearing - the test runner exports RSX_MODE=debug to its
     // subprocesses, and reading only the file would gate a test suite that the
     // booted framework would have run in debug.
-    $mode = getenv('RSX_MODE');
-
-    if (!is_string($mode) || trim($mode) === '') {
-        $mode = rsx_container_gate_read_env_file(dirname(__DIR__, 2) . '/.env', 'RSX_MODE');
-    }
-
-    $mode = strtolower(trim((string) $mode));
+    $mode = strtolower(trim(rsx_paths_env_value('RSX_MODE')));
 
     // The alias get_mode() normalizes. An unrecognized value is NOT rejected here:
     // validation belongs to get_mode(), which throws a better error than a
@@ -81,52 +77,6 @@
 
     rsx_container_gate_refuse();
 })();
-
-/**
- * Read one key from a .env file, without phpdotenv (which is not loaded yet).
- *
- * Deliberately minimal: the FIRST occurrence wins, matching the parser that will
- * read this file later, and only the two quoting forms a mode value can plausibly
- * carry are unwrapped. It is not a general .env parser and must not grow into one.
- */
-function rsx_container_gate_read_env_file(string $path, string $key): string
-{
-    if (!is_file($path) || !is_readable($path)) {
-        return '';
-    }
-
-    $lines = preg_split('/\R/', (string) @file_get_contents($path));
-
-    foreach ($lines as $line) {
-        $line = trim($line);
-
-        if ($line === '' || $line[0] === '#') {
-            continue;
-        }
-
-        $equals = strpos($line, '=');
-
-        if ($equals === false || trim(substr($line, 0, $equals)) !== $key) {
-            continue;
-        }
-
-        $value = trim(substr($line, $equals + 1));
-
-        // Strip a matched pair of surrounding quotes, nothing cleverer.
-        if (strlen($value) >= 2) {
-            $first = $value[0];
-            $last = $value[strlen($value) - 1];
-
-            if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
-                $value = substr($value, 1, -1);
-            }
-        }
-
-        return $value;
-    }
-
-    return '';
-}
 
 /**
  * Print the refusal and exit.

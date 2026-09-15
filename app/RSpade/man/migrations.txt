@@ -127,17 +127,33 @@ MIGRATION RULES
        Ids are still never hardcoded: the closure resolves or creates the row at
        replay time, so it is correct on a fresh install and in every environment.
 
-       THE ONE EXCEPTION is data seeding that genuinely needs model BEHAVIOUR raw SQL
-       cannot reproduce - a file pipeline, an encryption cast, a factory with side
-       effects. That migration is knowingly coupled to code that may be deleted, and
-       says so in its docblock:
+       AN EXCEPTION IS ESSENTIALLY NEVER JUSTIFIED. A table name and raw SQL always
+       suffice - including for a BACKFILL, which is the case people most often reach
+       for a model to do. SELECT the rows and UPDATE them; a migration has the whole
+       of SQL and the rows are just rows. The only shape that has ever earned an
+       exception is data seeding that needs model BEHAVIOUR no SQL can reproduce -
+       bytes that must travel through the file-upload pipeline, a value that must be
+       written through an encryption cast.
+
+       THE SECOND HAZARD, for any migration that does write through a model: on a
+       production host THE MANIFEST CAN BE AHEAD OF THE DATABASE. A production build
+       bakes every model's column map in at build time, so a deployment that builds
+       before it migrates is running models that know columns the tables do not have
+       yet. A write through such a model fails on an unknown column, part-way through
+       the run, on the box where a half-applied migration costs the most. Raw SQL
+       against a table name describes the schema AT THAT POINT IN HISTORY and cannot
+       drift. (rsx:migrate:check_consistency reports the same disagreement after a
+       production migrate; see rsx:man prod.)
+
+       A migration that needs model behaviour anyway says so in its docblock, and the
+       rationale owns both hazards:
 
            /**
             * @MIGRATION-MODEL-01-EXCEPTION <why raw SQL cannot do this>
             */
 
        The rationale is REQUIRED - a bare marker is itself a violation of the rule.
-       Schema work and type-ref lookups are never the exception; convert those.
+       Schema work, type-ref lookups and backfills are never the exception.
 
        Enforced by php artisan rsx:check, severity high. The rule reads the migration
        runner's own file list, so every migration directory and nested subdirectory is
@@ -171,14 +187,14 @@ AUTOMATIC NORMALIZATION
        3. Indexes Added:
           - INDEX on created_at
           - INDEX on updated_at
-          - INDEX on site_id (for models extending Rsx_Site_Model_Abstract)
-          - INDEX on id+version (for Versionable models)
+          - INDEX order_idx on an `order` column, with its auto-increment triggers
 
-       4. Model-Specific Columns:
-          - site_id BIGINT - for models extending Rsx_Site_Model_Abstract
-          - version INT(11) DEFAULT 1 - for Versionable/Ajaxable models
+          Normalization is DATABASE-DRIVEN: it reads SHOW TABLES and
+          information_schema and consults no model and no manifest. A column
+          that belongs to one model rather than to every table - site_id, a
+          version counter - is declared by that table's own migration.
 
-       5. Precision Upgrades:
+       4. Precision Upgrades:
           - All DATETIME/TIMESTAMP columns -> precision (3) for milliseconds
 
        This means you can write simpler migrations and let the system handle the
@@ -187,18 +203,36 @@ AUTOMATIC NORMALIZATION
        column exactly.
 
    POST-NORMALIZATION APP STEPS
-       normalize_schema runs TWICE in a migrate - once after each individual
-       migration, and once at the end over the whole schema. The app hook hangs off
-       the SECOND one, the POST-migration pass: when that pass succeeds, migrate
-       fires the action event
+       normalize_schema runs REPEATEDLY in a migrate: once before any migration, once
+       after each individual migration, and once at the end over the whole schema.
+       After EVERY ONE of those passes - all three kinds - migrate fires the action
+       event
 
            migrate.normalize_schema.complete
 
-       with no payload, from Maint_Migrate::execute_migrations(), before the initial
-       user and before the revision dictionary. The schema is therefore at its final
-       framework-normalized tip, and the run is still inside the migration window -
-       where a snapshot was taken, it still covers whatever a handler does, so a
-       handler that throws rolls the whole migration back.
+       with no payload, from Maint_Migrate::fire_post_normalize_hook(). A run with N
+       pending migrations therefore fires it N+1 times, and a run with nothing to
+       migrate fires it twice.
+
+       WHY EVERY PASS, and not only the last one. A migration may read a column the
+       hook computes, and the two shapes of history must agree about when that column
+       exists. An incremental box runs one or two migrations per invocation, so by the
+       time the next migration is authored the hook's columns are already on every
+       table and reading one works. A from-zero replay - a fresh install, a test
+       database, rsx:db:rebuild_provision_cache_snapshot - runs the entire chain in
+       ONE invocation: fired only at the end, the hook would leave every mid-history
+       migration looking at a schema no developer has ever seen, and the migration
+       that reads a hook-computed column dies with an unknown-column error hundreds of
+       migrations in. Firing after every pass makes an incremental box and a from-zero
+       replay produce the same schema at every step. It is the same reason the
+       FRAMEWORK re-normalizes after every migration.
+
+       The rest of the position is unchanged, and matters at the final pass: the event
+       fires after the POST-migration normalize, so the schema is at its final
+       framework-normalized tip, and BEFORE the initial user and the revision
+       dictionary. The run is still inside the migration window - where a snapshot was
+       taken, it still covers whatever a handler does, so a handler that throws rolls
+       the whole migration back.
 
        An application uses it for its own "columns every table of mine must have"
        pass, computed instead of listed. A hand-maintained per-table migration list
@@ -272,9 +306,13 @@ AUTOMATIC NORMALIZATION
 
        Rules for a handler on this event:
 
-       - IDEMPOTENT BY CONSTRUCTION. It runs on every migrate, including a run with
-         nothing to migrate. Read what is already there (information_schema, raw SQL)
-         and emit only the difference; never assume a previous run's state.
+       - IDEMPOTENT BY CONSTRUCTION, AND CHEAP. It runs after every normalize pass -
+         N+1 times in a run of N migrations, and twice in a run with nothing to
+         migrate. Read what is already there (information_schema, raw SQL) and emit
+         only the difference; never assume a previous run's state. On a database
+         already at the tip a handler issues no DDL, so the cost of the extra firings
+         is a few catalog reads per migration. A handler that cannot afford that was
+         already wrong on a box migrating one table at a time.
        - ONE ALTER TABLE per table. Collect every clause for a table and issue them
          together - a table rebuild is expensive and there is no reason to pay for it
          more than once per table per run.
@@ -288,7 +326,7 @@ AUTOMATIC NORMALIZATION
          long; that is the handler's own cost to own.
 
        When at least one handler is registered, migrate prints one line naming the
-       count. With none, it says nothing. The full event entry, with the position
+       count, after each pass. With none, it says nothing. The full event entry, with the position
        contract, is rsx:man event_hooks (FRAMEWORK EVENT CATALOG, Migrate Events).
 
 VALIDATION SYSTEM
@@ -393,11 +431,62 @@ MIGRATION WORKFLOW
        In these modes:
        - No snapshot protection and no automatic rollback
        - Migrations run directly against the database
-       - Schema normalization still runs
-       - Constants and bundles are NOT regenerated (already done in development)
+       - Schema normalization still runs, and the app hook fires after every pass
+       - NO SOURCE FILE IS WRITTEN. Constants and bundles are not regenerated (they
+         are source, committed from the development box that authored the migration),
+         and a missing .migration_whitelist is skipped rather than created
+       - rsx:migrate:check_consistency runs at the end and ITS EXIT CODE IS THE
+         COMMAND'S (see MANIFEST CONSISTENCY below)
 
        Ensure migrations are thoroughly tested in development before running in
        debug/production modes.
+
+   The Migration Whitelist
+       .migration_whitelist sits beside the migrations in each migration directory
+       and lists every migration make:migration:safe has created. It is a STRAY-FILE
+       TRIPWIRE: if the tree holds a migration the file does not list, the whole run
+       aborts before touching the database, because a hand-created migration is how
+       timestamp collisions get in.
+
+       It is SOURCE. It is committed beside the migrations it lists and ships with the
+       code, so:
+
+       - It is WRITTEN only in development. createInitialWhitelist() refuses outside
+         development mode and says why: writing it anywhere else would mean the
+         framework editing a deployed source tree.
+       - It is CONSULTED in EVERY mode when present. A deployed application keeps the
+         tripwire at no cost.
+       - It is SKIPPED SILENTLY when absent outside development. An application that
+         never had one migrates exactly as it always did.
+
+   Manifest Consistency (production modes)
+       A production build bakes every model's column map into the manifest at BUILD
+       time; the database moves at MIGRATE time. Those are separate deployment steps
+       an operator can run in either order, so after a production migrate
+
+           php artisan rsx:migrate:check_consistency
+
+       compares the two and migrate PROPAGATES ITS EXIT CODE - a build that no longer
+       matches its schema is a failed migrate, not a footnote to a successful one.
+
+       It refuses to run outside a production mode (a development box rebuilds its
+       manifest from the live schema on the next request, so the comparison is
+       "consistent" by construction) and refuses when there is no manifest at all.
+
+       The two findings are NOT symmetric:
+
+       - A manifest column MISSING FROM ITS TABLE is an [ERROR] and exits 1. Served
+         code believes that column exists, and the first request touching it is a 500.
+       - A table column UNKNOWN TO THE MANIFEST is a [WARNING] and exits 0. The
+         database is merely ahead of the build; nothing served reads the column.
+
+       Every table is walked and every discrepancy printed before the exit code is
+       decided. Columns are compared BY THEIR SOURCE TABLE, so a class-table-inheritance
+       base model - whose manifest columns span its detail tables - is compared only
+       against its own table, and each detail model is walked as its own row.
+
+       The repair is `php artisan rsx:build --force`. The ordering that avoids it is
+       migrate BEFORE the mode switch; see rsx:man prod.
 
    Framework-Only Migrations
        To run only framework migrations (system/database/migrations):
@@ -502,7 +591,7 @@ THE SCHEMA CACHE
                   mechanism: task workers are killed, then realtime, fpc-proxy,
                   php-fpm, rsx-lockd and redis stop. MySQL deliberately does not.
            [2/7]  Dump the live database to
-                  storage/rsx-tmp/db_cache/live_db.sql.gz, and MOVE the blob store
+                  tmp/db_cache/live_db.sql.gz, and MOVE the blob store
                   to its sibling <blob_root>_tmp, leaving an empty store behind.
            [3/7]  DROP and CREATE the database.
            [4/7]  migrate, with --_no-initial-user (the cache carries no account)
@@ -532,7 +621,7 @@ THE SCHEMA CACHE
        re-runnable for exactly as long as the dump is still on disk.
 
        EXISTING BACKUPS ARE NEVER OVERWRITTEN. A backup already sitting in
-       storage/rsx-tmp/db_cache/ was left by an interrupted run and holds the LIVE
+       tmp/db_cache/ was left by an interrupted run and holds the LIVE
        data; whatever is in the database and blob store now is that run's build
        residue. So the command prints that it found them, uses them as the restore
        source, and takes only the MISSING half - the two halves are independent.
@@ -545,8 +634,8 @@ THE SCHEMA CACHE
        rsx:db:rebuild_provision_cache_snapshot completes the restore from exactly those backups.
 
        MAINTENANCE MODE STAYS DOWN WHILE A BACKUP EXISTS. php artisan
-       rsx:maintenance:disable REFUSES while storage/rsx-tmp/db_cache/live_db.sql.gz
-       or the blob backup named by storage/rsx-tmp/db_cache/.in_progress is present -
+       rsx:maintenance:disable REFUSES while tmp/db_cache/live_db.sql.gz
+       or the blob backup named by tmp/db_cache/.in_progress is present -
        bringing php-fpm up over cache-build scratch data would serve an application
        that has lost its data. Step 7 deletes the backups BEFORE it lowers the
        window, so the refusal is already false on the happy path and no override
@@ -900,6 +989,9 @@ DEBUGGING
        - "Duplicate column" - Check if column already exists before adding
 
 SEE ALSO
+       rsx:man prod - The deployment order migrate belongs in, the manifest
+                                  consistency check, and what a production-mode
+                                  migrate never writes
        rsx:man maintenance_mode - The window rsx:db:rebuild_provision_cache_snapshot and
                                   rsx:database_and_storage_reset raise, and the
                                   disable refusal that protects an interrupted build

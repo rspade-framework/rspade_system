@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\CodeQuality\Php;
 
 use App\RSpade\CodeQuality\Rules\Convention\NameReservedPrefix_CodeQualityRule;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -36,7 +37,7 @@ class Name_Reserved_Prefix_Rule_Test extends Rsx_Test_Abstract
      */
     private static function __run(string $relative_name, string $source): array
     {
-        $root = storage_path('rsx-tmp') . '/name_reserved_01_fixture_' . uniqid();
+        $root = Rsx_Project_Paths::tmp_path() . '/name_reserved_01_fixture_' . uniqid();
         $path = $root . '/' . $relative_name;
         ensure_directory(dirname($path));
         file_put_contents($path, $source);

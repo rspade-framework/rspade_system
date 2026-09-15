@@ -65,7 +65,7 @@ TWO KINDS OF LOCK
         doubt, this is the one you want.
 
     SYSTEM LOCK (RsxLocks::SYSTEM_LOCK)
-        THIS BOX ONLY, backed by flock() over files in storage/flock/, and
+        THIS BOX ONLY, backed by flock() over files in storage/state/flock/, and
         EXCLUSIVE ONLY - there is no such thing as a system READ lock, and
         asking for one is a shouldnt_happen. Use it only where the contended
         resource is genuinely local: build artifacts on local disk, a local

@@ -9,7 +9,7 @@ in app/70 and must NEVER appear in shared/. -->
 **URL**: https://rspade.framework.dev.hanson.xyz/ (user URLs) | http://localhost/ (curl/testing)
 **DB**: MySQL (rspade/rspadepass) | **Dir**: `/var/www/html` | **PHP**: 8.4
 
-**Literal paths here** (the shared fragments state these path-relatively): `base_path()` = `/var/www/html/system`, so `base_path() . '/bin/script.js'` = `/var/www/html/system/bin/script.js`; `/rsx` in framework code = `/var/www/html/system/rsx`, a symlink to `/var/www/html/rsx`. CLI interfaces live in `/system/app/RSpade/Commands/`, business logic in `/system/app/RSpade/Core/{Feature}/`, framework config in `/system/config/`, user overrides in `/rsx/resource/config/`.
+**Literal paths here** (the shared fragments state these path-relatively): `base_path()` = `/var/www/html/system`, so `base_path() . '/bin/script.js'` = `/var/www/html/system/bin/script.js`; `/rsx` in framework code = `/var/www/html/system/rsx`, a symlink to `/var/www/html/rsx`. CLI interfaces live in `/system/app/RSpade/Commands/`, business logic in `/system/app/RSpade/Core/{Feature}/`, framework config in `/system/config/`, user overrides in `/rsx/resource/config/`. The three volatile roots are `/var/www/html/{build,tmp,storage}`; `build/` is fixed there and `tmp`/`storage` move with `RSX_TMP_PATH`/`RSX_STORAGE_PATH` in `.env`, always reached through `Rsx_Project_Paths` and never as literals. `/var/www/html/tmp` is also Laravel's storage path and `TMPDIR`; `system/build` is the only tree symlink.
 
 ### Framework dependencies
 

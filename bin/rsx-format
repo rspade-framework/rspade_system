@@ -49,7 +49,8 @@ class FormatterRouter
     {
         $this->formatters_dir = __DIR__ . DIRECTORY_SEPARATOR . 'formatters';
         $this->project_root = dirname(__DIR__);
-        $this->cache_file = $this->project_root . DIRECTORY_SEPARATOR . 'storage' . DIRECTORY_SEPARATOR . '.rsx-formatter-cache.json';
+        require_once $this->project_root . DIRECTORY_SEPARATOR . 'bootstrap' . DIRECTORY_SEPARATOR . 'rsx_paths.php';
+        $this->cache_file = rsx_paths_tmp_root() . DIRECTORY_SEPARATOR . 'rsx-formatter-cache.json';
         
         // Ensure cache directory exists
         $cache_dir = dirname($this->cache_file);

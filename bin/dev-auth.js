@@ -45,7 +45,8 @@ const crypto = require('crypto');
  * parser scans tests/ and rejects module.exports there (bundle files are concatenated,
  * not required) - system/bin/ is the tree's home for node modules that ARE required.
  */
-const PROJECT_ROOT = path.resolve(__dirname, '../..');
+// The volatile-tree roots, resolved exactly as PHP resolves them.
+const rsx_paths = require(path.join(__dirname, 'lib', 'rsx_paths.js'));
 
 /** Must match App\RSpade\Core\Debug\Dev_Auth_Token::LIFETIME_SECONDS. */
 const LIFETIME_SECONDS = 60;
@@ -60,7 +61,7 @@ const ACTIVE_GRANTS = 2;
  * @returns {string[]}
  */
 function active_secrets() {
-    const dir = path.join(PROJECT_ROOT, 'storage/rsx-ide-bridge');
+    const dir = path.join(rsx_paths.storage_root(), 'rsx-ide-bridge');
     let entries;
     try {
         entries = fs.readdirSync(dir);

@@ -790,7 +790,7 @@ SUBSYSTEM PRIMERS
     rebuild happens on the poison flag, a missing cache, or --clean. Force
     one after editing the manifest itself or the bundle compiler.
 
-    THE CACHE. storage/rsx-build/manifest_index.php (plus manifest_files.php
+    THE CACHE. build/manifest_index.php (plus manifest_files.php
     for the metadata a request never reads) - a compact PHP-literal array
     loaded with include, under the PROJECT's storage directory, one level
     above the Laravel base path, never derived from base_path(). Siblings in
@@ -951,7 +951,7 @@ SUBSYSTEM PRIMERS
     An Ajax endpoint is a public static method with #[Ajax_Endpoint] and its
     mandatory #[Auth]. There is no route, no URL and no wiring, because the
     manifest GENERATES A JAVASCRIPT STUB for every controller that has at
-    least one. The stubs are written to storage/rsx-build/js-stubs/, one file
+    least one. The stubs are written to tmp/js-stubs/, one file
     per controller, and injected back into the manifest as real file entries
     (that directory is not scanned). Each generated method is a one-liner
     that calls the framework Ajax client with a HARDCODED literal path, and
@@ -1043,7 +1043,7 @@ SUBSYSTEM PRIMERS
       Core/Controller/Controller_BundleIntegration.php,
       Core/Database/Orm_Controller.php, Core/Js/Ajax.js,
       Core/Js/Rsx_Jq_Helpers.js, Core/Js/Rsx_Js_Model.js,
-      storage/rsx-build/js-stubs/ (the generated output).
+      tmp/js-stubs/ (the generated output).
       Skills: rspade:ajax-error-handling, rspade:model-fetch.
 
   4. SESSIONS, CSRF AND THE PORTAL REALM
@@ -1130,9 +1130,11 @@ SUBSYSTEM PRIMERS
     have one: two tenants uploading the same file get one blob.
 
     CONTENT ADDRESSING. Rsx_File_Paths is the single choke point for every
-    on-disk path: a storage root (config-overridable for test isolation
-    only), then uploads/, rsx-thumbnails/ and rsx-renditions/ beneath it. A
-    blob lives at uploads/<hash[0:2]>/<hash[2:4]>/<hash>, and the path is
+    on-disk path: the blob store at <storage>/uploads (a root the test runner
+    redirects, and nothing else does), and the two derived caches at
+    tmp/thumbnails and tmp/renditions, which follow tmp/ and sit outside that
+    isolation because a run has nothing to lose in a cache it can regenerate.
+    A blob lives at uploads/<hash[0:2]>/<hash[2:4]>/<hash>, and the path is
     DERIVED every call - never persisted. Ingest hashes with sha256, and on a
     hash hit compares byte by byte; a genuine collision increments the hash
     as a base-16 number and retries. A row whose file has gone missing is
@@ -1201,7 +1203,7 @@ SUBSYSTEM PRIMERS
     file.thumbnail.authorize gate; download and inline require that gate AND
     a download gate. Routes are /_thumbnail/preset/:key/:preset_name and
     /_thumbnail/dynamic/:key/:type/:width/:height?, plus an extension-icon
-    route. Cached output is WebP under rsx-thumbnails/{preset,dynamic}/,
+    route. Cached output is WebP under tmp/thumbnails/{preset,dynamic}/,
     keyed by hash, with a long immutable max-age and an LRU quota per tier.
 
     THE FIRST BRANCH IS RENDER STATE, NOT THE CACHE. A blob that is PENDING
@@ -1538,7 +1540,7 @@ SUBSYSTEM PRIMERS
     on the input SET and never on resolution order. A missing input file is
     an impossible-condition assertion, not a skipped entry.
 
-    OUTPUT lands in storage/rsx-build/bundles/ as
+    OUTPUT lands in build/bundles/ as
     <Bundle_Name>__<vendor|app>.<8 hex>.<js|css>; identical vendor input sets
     across different bundles produce the SAME filename and are shared. Files
     are served from /_compiled/ with a long immutable cache header, and a
@@ -1546,7 +1548,7 @@ SUBSYSTEM PRIMERS
     missing artifact is a build problem and must be loud. Inspect with
     rsx:bundle:show and rsx:bundle:compile (which refuses in-process
     invocation); watch the BUNDLE, BUNDLE_SORT, JQHTML and RPC debug
-    channels; intermediates are readable under storage/rsx-tmp/.
+    channels; intermediates are readable under tmp/.
 
     THE PIPELINE IS ONE METHOD, not a set of stage classes: the sealed-build
     short circuit; prepend required bundles; resolve the bundle tree; split
@@ -1562,7 +1564,7 @@ SUBSYSTEM PRIMERS
     THE NODE SERVICE. Parsing and transformation would otherwise spawn a
     Node process per file - over a thousand per build. Instead there is ONE
     long-running Node service speaking LINE-DELIMITED JSON over a UNIX DOMAIN
-    SOCKET in storage/rsx-tmp/, serving eight subsystems: the JS metadata
+    SOCKET in tmp/, serving eight subsystems: the JS metadata
     parser, babel, the minifier, the concatenator, sass, the jqhtml template
     compiler, and two for the code-quality checker. A method is named
     '<prefix>.<method>'; the service itself also implements ping, introspect
@@ -1692,7 +1694,7 @@ SUBSYSTEM PRIMERS
 
     Downloading is a BUILD activity: development web requests, any CLI, and the
     build itself may download; a SEALED WEB REQUEST NEVER DOES, and a miss
-    throws naming the file, the store and rsx:prod:refresh. The store is
+    throws naming the file, the store and rsx:build --force. The store is
     URL-keyed and never self-expires - rsx:cdn_externals:refresh is the one
     expiry, and it refuses on a sealed host.
 

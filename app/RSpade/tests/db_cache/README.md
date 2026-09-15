@@ -33,13 +33,20 @@ the safety, expressed as pure functions and driven by the real code paths:
 | Never overwrite an existing live backup | `Db_Rebuild_Provision_Cache_Snapshot_Command::backup_decision()` | `php/Db_Cache_Backup_Overwrite_Test` |
 
 The one part of the command that IS driven for real is its refusal: a subprocess with
-`RSX_MODE=debug` exits 1 before `handle()` resolves a single path, so the assertion that
-nothing moved is made against the live box
+`RSX_MODE=debug` exits 1 without ever entering `handle()`, so the assertion that nothing
+moved is made against the live box
 (`cli/Db_Cache_Restore_Cli_Test::test_the_build_refuses_outside_development_and_touches_nothing`).
+On a development box that child is an UNSEALED production-like box, so the refusal it
+carries is the manifest seal gate's (`Manifest::UNSEALED_BUILD_MESSAGE`), which runs before
+any command handler; the command's own "DEVELOPMENT mode only" refusal is what a SEALED
+debug box prints. Either way the command touches nothing.
 
 The restore half IS exercised end to end, against the TEST database, with the cache
 artifacts written into a sandbox named by the internal `--_cache-dir` flag - so no test
-ever writes into the shipped `rsx/resource/db`.
+ever writes into the shipped `rsx/resource/db`. Those migrate children run in DEVELOPMENT
+mode with `--_no-snapshot`: the restore is mode-independent, that flag selects the path
+that regenerates no constants and no bundles, and a production-like child could not boot
+on a box with no seal.
 
 The maintenance-disable refusal that protects an interrupted build lives with the
 maintenance concern: `maintenance/cli/Maintenance_Db_Cache_Guard_Cli_Test`.

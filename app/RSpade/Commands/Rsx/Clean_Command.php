@@ -7,10 +7,14 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use Illuminate\Console\Command;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;
 use App\RSpade\Core\Cache\RsxCache;
+use App\RSpade\Core\Prod\Rsx_Build_Context;
+use App\RSpade\Core\Rsx;
 
 class Clean_Command extends Command
 {
@@ -19,7 +23,7 @@ class Clean_Command extends Command
      *
      * @var string
      */
-    protected $signature = 'rsx:clean {--silent : Suppress all output except errors} {--force : Accepted for compatibility; the system/ reset is unconditional and needs no override}';
+    protected $signature = 'rsx:clean {--silent : Suppress all output except errors} {--force : Required in a production-like mode: discarding the build tree takes the site down until rsx:build rebuilds it}';
 
     /**
      * Framework-internal flag (the `--_` convention - argv-stripped pre-boot, declared as no
@@ -48,16 +52,35 @@ class Clean_Command extends Command
         // Prevent being called via $this->call() - must use passthru for fresh process
         $this->prevent_call_from_another_command();
 
-        // Refuse to wipe a sealed prod build. rsx-build is an immutable deployment
-        // artifact while sealed - clearing it would leave the app unable to serve.
-        if (\App\RSpade\Core\Prod\Rsx_Prod_Seal::is_sealed()) {
-            $this->error('System is in prod mode (sealed build).');
-            $this->line('  Run rsx:prod:refresh to rebuild the assets, or rsx:prod:disable first.');
+        // In a production-like mode the build tree is what the site serves, so discarding
+        // it takes the site down until rsx:build has rebuilt it. That is a legitimate
+        // operator action - it is how a corrupt build is recovered - but never an
+        // incidental one, so it is stated with --force. The build itself needs no flag:
+        // cleaning is the first thing it does.
+        if (Rsx::is_production() && !$this->option('force') && !Rsx_Build_Context::is_active()) {
+            $this->error('Refusing to clean a ' . Rsx::get_mode() . ' build tree without --force.');
+            $this->line('  Discarding it leaves the site unable to serve until it is rebuilt.');
+            $this->line('  Rebuild instead:      php artisan rsx:build --force');
+            $this->line('  Clean anyway:         php artisan rsx:clean --force');
+            $this->line('  Return to development: php artisan rsx:prod:disable');
 
             return 1;
         }
 
         $silent = $this->option('silent');
+
+        // PREFLIGHT. Both roots have to be writable before anything is destroyed: a clean
+        // that empties one tree and then discovers it cannot recreate the other has already
+        // done the damage.
+        $unwritable = $this->unwritable_roots();
+        if (!empty($unwritable)) {
+            $this->error('Cannot clean - these directories are not writable by this user:');
+            foreach ($unwritable as $line) {
+                $this->line('  ' . $line);
+            }
+
+            return 1;
+        }
 
         // Restore the .env symlink invariant before anything else. A drifted
         // system/.env (materialized into a real file by a deploy/clone) would make
@@ -98,14 +121,19 @@ class Clean_Command extends Command
 
         $cleaned_items = [];
 
-        // 1. Clear rsx-build directory recursively - EVERYTHING
-        $build_path = storage_path('rsx-build');
+        // THIS PROCESS IS NOW A BUILD CONTEXT. Everything below rewrites the build tree,
+        // which is exactly what the guard exists to stop happening by accident - so the
+        // command that owns the wipe declares itself rather than reaching around the guard.
+        Rsx_Build_Context::begin();
+
+        // 1. Clear the build tree recursively - EVERYTHING
+        $build_path = Rsx_Project_Paths::build_root();
         if (is_dir($build_path)) {
             $this->clear_directory($build_path);
             $cleaned_items[] = '[OK] Build storage cleaned';
         }
 
-        // 2. Clear rsx-tmp directory recursively - EVERYTHING
+        // 2. Clear the tmp tree recursively - EVERYTHING
         //
         //    REAP BEFORE THE WIPE. Every node daemon - the node service, the SSR server,
         //    and any stray left over from an older framework release - lives on a unix
@@ -129,11 +157,17 @@ class Clean_Command extends Command
             $cleaned_items[] = '[OK] Node daemons quiesced (' . $quiesced . ')';
         }
 
-        $tmp_path = storage_path('rsx-tmp');
+        $tmp_path = Rsx_Project_Paths::tmp_root();
         if (is_dir($tmp_path)) {
             $this->clear_directory($tmp_path);
             $cleaned_items[] = '[OK] Temp storage cleaned';
         }
+
+        // Both roots come back empty rather than absent: every later consumer expects the
+        // skeleton to be there, and an absent build root is the production "not built"
+        // signal, not a development one.
+        Rsx_Project_Paths::ensure_build_tree();
+        Rsx_Project_Paths::ensure_tmp_tree();
 
         // 3. Sweep orphaned cross-filesystem staging directories (.tmp_<n>)
         //    left behind by file_put_contents_safe() if a process died mid-write.
@@ -155,8 +189,6 @@ class Clean_Command extends Command
         RsxCache::clear();
         RsxCache::clear_reduced_volatility();
         $cleaned_items[] = '[OK] Redis caches cleared (volatile + reduced-volatility)';
-
-        // Note: We never clear rsx-locks directory as it contains active lock files
 
         // 5. Downstream apps only: reset the framework submodule to its own HEAD.
         //    system/ is a git submodule - a checkout of the framework's repository. ALL of
@@ -193,6 +225,29 @@ class Clean_Command extends Command
     }
 
     /**
+     * The volatile roots this command must be able to empty and recreate.
+     *
+     * A root that does not exist yet is judged by its parent: that is where the mkdir
+     * will happen.
+     *
+     * @return array<int, string> One human-readable line per unwritable root; empty when all good.
+     */
+    protected function unwritable_roots()
+    {
+        $problems = [];
+
+        foreach ([Rsx_Project_Paths::build_root(), Rsx_Project_Paths::tmp_root()] as $root) {
+            $target = is_dir($root) ? $root : dirname($root);
+
+            if (!is_dir($target) || !is_writable($target)) {
+                $problems[] = $root . (is_dir($root) ? '' : ' (its parent ' . dirname($root) . ')');
+            }
+        }
+
+        return $problems;
+    }
+
+    /**
      * Reset the framework submodule to its own HEAD, discarding everything local.
      *
      * system/ is a git submodule - a checkout of the framework's repository, replaced
@@ -209,9 +264,8 @@ class Clean_Command extends Command
      * two repositories have to be addressed separately.
      *
      * -x on the clean is deliberate: ignored files under system/ are framework build
-     * residue, not developer content. The one thing that survives is what lives OUTSIDE
-     * the submodule - storage/ is one level up, reached through the system/storage symlink
-     * that the reset restores rather than removes.
+     * residue, not developer content. What survives is everything OUTSIDE the submodule:
+     * the three volatile trees live one level up, at the project root.
      *
      * Git environment variables are stripped from the subprocesses: rsx:clean may be
      * invoked from inside a git hook, where git exports GIT_DIR / GIT_INDEX_FILE and would
@@ -345,10 +399,21 @@ class Clean_Command extends Command
         );
 
         foreach ($files as $file) {
+            // A SYMLINK IS REMOVED AS THE LINK, never followed. tmp/ carries two links
+            // into persistent storage (tmp/logs, tmp/app), and getRealPath() on either
+            // answers with the directory they point AT - so resolving here would aim the
+            // wipe at the application's logs. The iterator does not descend into a
+            // symlinked directory, so removing the link itself is the whole job.
+            if ($file->isLink()) {
+                unlink($file->getPathname());
+
+                continue;
+            }
+
             if ($file->isDir()) {
-                rmdir($file->getRealPath());
+                rmdir($file->getPathname());
             } else {
-                unlink($file->getRealPath());
+                unlink($file->getPathname());
             }
         }
     }
@@ -357,8 +422,8 @@ class Clean_Command extends Command
     /**
      * Remove orphaned ".tmp_<digits>" staging directories from the code tree.
      *
-     * file_put_contents_safe() creates these alongside a destination only when
-     * rsx-tmp is on a different filesystem, and removes them immediately. This
+     * file_put_contents_safe() creates these alongside a destination only when the
+     * staging directory is on a different filesystem, and removes them immediately. This
      * sweep cleans up any left behind by a process that died mid-write. Heavy
      * and symlinked directories are pruned to keep the scan bounded.
      *

@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use App\Console\Commands\FrameworkDeveloperCommand;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
 use App\RSpade\Core\Framework\Framework_Maintenance;
@@ -102,24 +104,20 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
             return 0;
         }
 
-        // Check if in production mode with existing manifest
-        if (config('app.env') === 'production') {
-            $manifest_file = storage_path(Manifest::CACHE_FILE);
+        // In a production-like mode the manifest is one artifact of a build, not a thing
+        // to produce on its own: a fresh index beside stale bundles and a stale seal is a
+        // box that verifies as drifted and serves mismatched assets.
+        if (Rsx::is_production()) {
+            $this->error('The manifest is part of the build in ' . Rsx::get_mode() . ' mode.');
+            $this->line('');
+            $this->line('Building it alone would leave the bundles and the seal describing a');
+            $this->line('different tree. Build everything instead:');
+            $this->line('');
+            $this->line('  php artisan rsx:build --force');
+            $this->line('');
+            $this->line('See: php artisan rsx:man prod');
 
-            if (file_exists($manifest_file)) {
-                $file_age = time() - filemtime($manifest_file);
-
-                // If manifest exists and is older than 5 seconds, block rebuild
-                if ($file_age > 5) {
-                    $this->error('Production manifest rebuild blocked');
-                    $this->line('');
-                    $this->line('The manifest file exists in production and is ' . round($file_age / 60, 1) . ' minutes old.');
-                    $this->line('Rebuilding the manifest in production is not permitted without explicit confirmation.');
-                    $this->line('');
-                    $this->line('Use --force flag to override this protection and rebuild anyway.');
-                    return 1;
-                }
-            }
+            return 1;
         }
 
         $start_time = microtime(true);
@@ -263,12 +261,12 @@ class Manifest_Build_Command extends FrameworkDeveloperCommand
     /**
     * Where the "these environment-update scripts have been applied" stamp lives.
     *
-    * storage/rsx-framework/ is the framework's own operational state (the updater ledger,
-    * the maintenance flag) - deliberately not storage/framework/, which is Laravel's.
+    * storage/state/ is the framework's own operational state - the updater ledger, the
+    * maintenance flag, the flock files.
     */
     private static function __environment_updates_stamp_path(): string
     {
-        return storage_path('rsx-framework/environment_updates_fingerprint');
+        return Rsx_Project_Paths::env_updates_fingerprint_file();
     }
 
     /**

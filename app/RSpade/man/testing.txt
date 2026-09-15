@@ -303,7 +303,7 @@ THE TEST DATABASE
 
     File storage is redirected too. The whole file subsystem (blob store,
     thumbnail cache, rendition cache) is pointed at
-    storage/rsx-tmp/test-storage for the run, so a model-layer attachment delete
+    tmp/test-storage for the run, so a model-layer attachment delete
     against the test database cannot unlink a blob the developer database also
     references.
 
@@ -321,7 +321,7 @@ THE TEST DATABASE
 
     --fresh drops and recreates the test database, then provisions it:
 
-        - A mysqldump cache lives in storage/db_backups/test-db-cache, keyed by
+        - A mysqldump cache lives in tmp/db_backups/test-db-cache, keyed by
           a hash of every migration file's content plus the MySQL server version
           and a cache-format version. When that hash matches, the baseline is
           RESTORED from the dump instead of re-running every migration.
@@ -329,8 +329,9 @@ THE TEST DATABASE
           development-mode snapshot machinery - which operates on the whole
           MySQL instance - never fires for a test schema sync) and the result is
           cached under the new hash.
-        - The cache directory is under storage/db_backups, so it survives
-          rsx:clean.
+        - The cache directory is under tmp/, so rsx:clean discards it: the next
+          --fresh run re-dumps instead of restoring. It is a cache, and the
+          cost of losing it is one migration run.
         - A corrupt cached dump is discarded and a full migration runs; caching
           is best effort and never fails a run.
 
@@ -448,7 +449,7 @@ DOCKER-ACCELERATED TESTING
     VERDICT REPLAYS ONLY FOR THAT SAME SUBSET and can never stand in for the
     suite. Any edit to a scanned file changes the build key and the next run is
     live; deleting
-    storage/rsx-tmp/test-results/<suite>_<key>_<selector>.json forces one.
+    tmp/test-results/<suite>_<key>_<selector>.json forces one.
     While a live run is in progress one line per finished class streams as it
     completes; the full report follows at the end.
 

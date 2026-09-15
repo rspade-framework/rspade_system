@@ -33,7 +33,7 @@ B="$V2_SHA"
 # =============================================================================
 PROJECT="$FX_ROOT/project"
 rm -rf "$PROJECT"
-mkdir -p "$PROJECT/rsx/resource" "$PROJECT/storage/rsx-framework"
+mkdir -p "$PROJECT/rsx/resource" "$PROJECT/storage/state"
 (
     cd "$PROJECT" || exit 1
     git init -q && git config user.email t@t && git config user.name test

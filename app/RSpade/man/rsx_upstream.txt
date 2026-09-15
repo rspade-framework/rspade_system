@@ -270,7 +270,7 @@ TROUBLESHOOTING
         You are in the monorepo. Use ordinary git.
 
     "Framework updates require development mode"
-        A sealed build. Pull in development, then rsx:prod:refresh.
+        A sealed build. Pull in development, then rsx:build --force.
 
     "system/ is not a git submodule, and this is not the RSpade container"
         A project that predates the submodule model. Convert it in the

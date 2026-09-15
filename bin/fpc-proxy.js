@@ -60,15 +60,10 @@ const FPC_REDIS_DB = 2;
 // keys from accumulating forever (Redis defaults to noeviction).
 const FPC_TTL_MINS = (process.env.FPC_TTL_MINS === 'null' || process.env.FPC_TTL_MINS === undefined) ? 0 : parseInt(process.env.FPC_TTL_MINS, 10) || 0;
 
-// Volatile storage root: <project>/storage once the relocation marker exists (written by
-// system/bin/environment_updates/030_relocate_storage.sh), historic system/storage before
-// that. Mirrors the PHP bootstrap bridge; TRANSITIONAL fallback.
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const STORAGE_ROOT = fs.existsSync(path.resolve(PROJECT_ROOT, 'storage/.rspade_storage_relocated'))
-    ? path.resolve(PROJECT_ROOT, 'storage')
-    : path.resolve(__dirname, '../storage');
+// The volatile-tree roots, resolved exactly as PHP resolves them.
+const rsx_paths = require(path.join(__dirname, 'lib', 'rsx_paths.js'));
 
-const BUILD_KEY_PATH = path.join(STORAGE_ROOT, 'rsx-build/build_key');
+const BUILD_KEY_PATH = path.join(rsx_paths.build_root(), 'build_key');
 const SESSION_COOKIE_NAME = 'rsx';
 
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ Type: php. Last updated: 2026-06-16.
 |----|---------|-------|----------|--------|
 | fs-01 | writes full content, returns byte count | write 12 bytes | returns 12, content readable | implemented |
 | fs-02 | overwrite preserves permissions | 0600 file overwritten | new content, mode still 0600 | implemented |
-| fs-03 | same-filesystem detection | rsx-tmp vs base_path | true | implemented |
+| fs-03 | same-filesystem detection | tmp vs base_path | true | implemented |
 | fs-04 | cross-fs write leaves no staging dir | dest on /dev/shm | content written, no .tmp_* left | implemented |
 
 ## Planned

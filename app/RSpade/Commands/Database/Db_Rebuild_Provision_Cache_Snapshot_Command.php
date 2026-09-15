@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Commands\Database;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use App\RSpade\Commands\Migrate\Maint_Migrate;
 use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
@@ -79,9 +81,7 @@ class Db_Rebuild_Provision_Cache_Snapshot_Command extends Command
     /** Default (shipped) location of the cache, relative to the PROJECT root. */
     public const CACHE_DIR_RELATIVE = 'rsx/resource/db';
 
-    /** Where the live backup and the in-progress marker live, relative to the storage root. */
-    public const WORK_DIR_RELATIVE = 'rsx-tmp/db_cache';
-
+    /** Basenames of the live backup and the in-progress marker inside the db-cache dir. */
     public const LIVE_DUMP_FILE = 'live_db.sql.gz';
     public const MARKER_FILE = '.in_progress';
 
@@ -640,7 +640,7 @@ class Db_Rebuild_Provision_Cache_Snapshot_Command extends Command
 
     protected function __resolve_paths(): void
     {
-        $this->work_dir = storage_path(self::WORK_DIR_RELATIVE);
+        $this->work_dir = Rsx_Project_Paths::db_cache_dir();
         $this->live_dump_path = $this->work_dir . '/' . self::LIVE_DUMP_FILE;
         $this->marker_path = $this->work_dir . '/' . self::MARKER_FILE;
 

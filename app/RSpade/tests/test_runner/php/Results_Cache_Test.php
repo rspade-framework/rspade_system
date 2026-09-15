@@ -4,6 +4,7 @@ namespace App\RSpade\Tests\TestRunner\Php;
 
 use ReflectionMethod;
 use App\RSpade\Commands\Rsx\Rsx_Test_Command;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Support\Rsx_Fingerprint;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -41,7 +42,7 @@ class Results_Cache_Test extends Rsx_Test_Abstract
 
     protected static function __scratch_path(): string
     {
-        $dir = storage_path('rsx-tmp/test-results');
+        $dir = Rsx_Project_Paths::test_results_dir();
         ensure_directory($dir);
 
         return $dir . '/probe_' . bin2hex(random_bytes(6)) . '.json';
@@ -115,7 +116,7 @@ class Results_Cache_Test extends Rsx_Test_Abstract
     }
     public static function test_the_environment_fingerprint_follows_name_size_and_mtime()
     {
-        $dir = storage_path('rsx-tmp/test-results/fp_probe_' . bin2hex(random_bytes(4)));
+        $dir = Rsx_Project_Paths::test_results_dir() . '/fp_probe_' . bin2hex(random_bytes(4));
         ensure_directory($dir . '/sub');
         try {
             file_put_contents($dir . '/a.txt', 'aaa');

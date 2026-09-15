@@ -10,6 +10,7 @@ namespace App\RSpade\Tests\CodeQuality\Php;
 use App\RSpade\CodeQuality\CodeQualityChecker;
 use App\RSpade\CodeQuality\Rules\Blade\EmailTemplate_CodeQualityRule;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -59,7 +60,7 @@ class Email_Template_Rule_Test extends Rsx_Test_Abstract
      */
     private static function __run(string $source, string $relative_name = 'emails/probe.blade.php'): array
     {
-        $root = storage_path('rsx-tmp') . '/email_template_01_fixture_' . uniqid();
+        $root = Rsx_Project_Paths::tmp_path() . '/email_template_01_fixture_' . uniqid();
         $path = $root . '/rsx/' . $relative_name;
         ensure_directory(dirname($path));
         file_put_contents($path, $source);

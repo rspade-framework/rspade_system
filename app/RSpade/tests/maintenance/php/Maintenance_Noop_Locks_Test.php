@@ -11,6 +11,7 @@ use RuntimeException;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\RsxLocks;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -63,7 +64,7 @@ class Maintenance_Noop_Locks_Test extends Rsx_Test_Abstract
             );
 
             // The path the flock backend WOULD have used. Nothing may appear there.
-            $flock_path = storage_path('flock/cluster__rsxtest_noop_name.lock');
+            $flock_path = Rsx_Project_Paths::flock_dir() . '/cluster__rsxtest_noop_name.lock';
             static::__assert_false(
                 file_exists($flock_path),
                 'a maintenance grant must not create a lock file at ' . $flock_path
@@ -81,7 +82,7 @@ class Maintenance_Noop_Locks_Test extends Rsx_Test_Abstract
     public static function test_another_process_is_not_blocked()
     {
         $token = RsxLocks::named_write_lock('rsxtest_noop_excl', 5);
-        $path = storage_path('flock/cluster__rsxtest_noop_excl.lock');
+        $path = Rsx_Project_Paths::flock_dir() . '/cluster__rsxtest_noop_excl.lock';
 
         try {
             $script = '$h = fopen(' . var_export($path, true) . ', "c");'
@@ -175,7 +176,7 @@ class Maintenance_Noop_Locks_Test extends Rsx_Test_Abstract
         // Build THIS run's exact flock path from the same scope token the lock uses, rather
         // than globbing - flock files are never cleaned and a parallel worker on another
         // database leaves a sibling file under a different scope.
-        $path = storage_path('flock/system__' . Rsx_Connection_Scope::token() . '__rsxtest_noop_system.lock');
+        $path = Rsx_Project_Paths::flock_dir() . '/system__' . Rsx_Connection_Scope::token() . '__rsxtest_noop_system.lock';
 
         try {
             static::__assert_true(
@@ -212,7 +213,7 @@ class Maintenance_Noop_Locks_Test extends Rsx_Test_Abstract
             static::__assert_true(str_starts_with($system, 'flock:'), 'system -> flock');
             static::__assert_true(str_starts_with($cluster, 'maint:'), 'cluster -> no-op');
             static::__assert_false(
-                file_exists(storage_path('flock/cluster__rsxtest_noop_domain.lock')),
+                file_exists(Rsx_Project_Paths::flock_dir() . '/cluster__rsxtest_noop_domain.lock'),
                 'the cluster grant must not create a file next to the system one'
             );
         } finally {
@@ -242,7 +243,7 @@ class Maintenance_Noop_Locks_Test extends Rsx_Test_Abstract
         try {
             RsxLocks::force_clear_lock(RsxLocks::CLUSTER_LOCK, 'rsxtest_noop_forceclear');
             static::__assert_false(
-                file_exists(storage_path('flock/cluster__rsxtest_noop_forceclear.lock')),
+                file_exists(Rsx_Project_Paths::flock_dir() . '/cluster__rsxtest_noop_forceclear.lock'),
                 'force_clear must not create the file it would have unlinked'
             );
 
@@ -263,7 +264,7 @@ class Maintenance_Noop_Locks_Test extends Rsx_Test_Abstract
         // Pre-hold the SCOPED flock file this name resolves to (built from the same scope
         // token the lock uses). The real attempt below opens a second descriptor on that
         // same file and blocks - the timeout under test.
-        $path = storage_path('flock/system__' . Rsx_Connection_Scope::token() . '__rsxtest_noop_timeout.lock');
+        $path = Rsx_Project_Paths::flock_dir() . '/system__' . Rsx_Connection_Scope::token() . '__rsxtest_noop_timeout.lock';
 
         $handle = fopen($path, 'c');
         flock($handle, LOCK_EX);

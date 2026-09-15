@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Tests\Filesystem\Php;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -20,7 +21,7 @@ class File_Put_Contents_Safe_Test extends Rsx_Test_Abstract
 
     public static function test_writes_full_content_and_returns_byte_count()
     {
-        $f = storage_path('rsx-tmp/fpcs_fw_' . random_hash(8) . '.txt');
+        $f = Rsx_Project_Paths::tmp_path('fpcs_fw_' . random_hash(8) . '.txt');
         @unlink($f);
 
         $bytes = file_put_contents_safe($f, 'hello-atomic');
@@ -33,7 +34,7 @@ class File_Put_Contents_Safe_Test extends Rsx_Test_Abstract
 
     public static function test_overwrite_preserves_permissions()
     {
-        $f = storage_path('rsx-tmp/fpcs_fw_perm_' . random_hash(8) . '.txt');
+        $f = Rsx_Project_Paths::tmp_path('fpcs_fw_perm_' . random_hash(8) . '.txt');
         file_put_contents($f, 'old');
         chmod($f, 0600);
 
@@ -47,14 +48,14 @@ class File_Put_Contents_Safe_Test extends Rsx_Test_Abstract
 
     public static function test_same_filesystem_detection()
     {
-        static::__assert_true(_paths_on_same_filesystem(storage_path('rsx-tmp'), base_path()));
+        static::__assert_true(_paths_on_same_filesystem(Rsx_Project_Paths::tmp_path(), base_path()));
     }
 
     public static function test_cross_filesystem_write_leaves_no_staging_dir()
     {
         // /dev/shm is tmpfs - a distinct filesystem from the app tree - which
         // exercises the .tmp_<n> staging branch. Skip if it isn't available.
-        if (!is_dir('/dev/shm') || _paths_on_same_filesystem('/dev/shm', storage_path('rsx-tmp'))) {
+        if (!is_dir('/dev/shm') || _paths_on_same_filesystem('/dev/shm', Rsx_Project_Paths::tmp_path())) {
             static::__skip('/dev/shm not available as a distinct filesystem');
 
             return;

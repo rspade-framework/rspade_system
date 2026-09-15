@@ -6,6 +6,7 @@ use App\RSpade\Core\Database\Model_Fetch_Lineage;
 use App\RSpade\Core\Database\Model_Lineage_Fingerprint;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Manifest\ManifestSupport_Abstract;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * Emit one JavaScript stub per ORM model - enum constants, relationship methods, detail
@@ -41,7 +42,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
      */
     public static function process(array &$manifest_data, array $changed_files, array $removed_files): void
     {
-        $stub_dir = storage_path('rsx-build/js-model-stubs');
+        $stub_dir = Rsx_Project_Paths::stubs_dir(Rsx_Project_Paths::STUBS_MODEL);
 
         // Create directory if it doesn't exist
         if (!is_dir($stub_dir)) {
@@ -93,8 +94,8 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             $stub_class_name = 'Base_' . $class_name;
             $stub_filename = static::_sanitize_model_stub_filename($stub_class_name) . '.js';
 
-            $stub_relative_path = 'storage/rsx-build/js-model-stubs/' . $stub_filename;
-            $stub_full_path = rsx_project_file_path($stub_relative_path);
+            $stub_relative_path = Rsx_Project_Paths::stub_key(Rsx_Project_Paths::STUBS_MODEL, $stub_filename);
+            $stub_full_path = $stub_dir . '/' . $stub_filename;
 
             // Check if stub needs regeneration
             $stub_content = null;
@@ -215,7 +216,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
                 }
 
                 // Remove from manifest
-                $stub_relative_path = 'storage/rsx-build/js-model-stubs/' . $filename;
+                $stub_relative_path = Rsx_Project_Paths::stub_key(Rsx_Project_Paths::STUBS_MODEL, $filename);
                 if (isset($manifest_data['data']['files'][$stub_relative_path])) {
                     unset($manifest_data['data']['files'][$stub_relative_path]);
                 }

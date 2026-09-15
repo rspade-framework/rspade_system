@@ -17,7 +17,7 @@
 **NEVER run build/compile commands.** FORBIDDEN unless explicitly instructed:
 - `npm run compile` / `npm run build` - they don't exist
 - `bin/publish` - for releases, not testing
-- `rsx:bundle:compile` / `rsx:manifest:build` / `rsx:clean` - automatic
+- `rsx:build` / `rsx:clean` / `rsx:bundle:compile` / `rsx:manifest:build` - automatic
 - ANY "build", "compile", or "publish" command
 
 **NEVER run `rsx:clean` or a `--clean` flag** - caches auto-invalidate. The only exceptions: when explicitly asked, or after modifying `Manifest.php` or the bundle compiler.

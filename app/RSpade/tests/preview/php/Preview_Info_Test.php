@@ -64,7 +64,7 @@ class Preview_Info_Test extends Rsx_Test_Abstract
         $storage->hash = 'abc123def456';
 
         // Resolve the expected root through the choke point so this holds in both default mode
-        // and under the test run's rsx.files.storage_root override (B-38 isolation).
+        // and under the test run's files-root override (B-38 isolation).
         static::__assert_equals(
             Rsx_File_Paths::renditions_root() . '/abc123def456.pdf',
             File_Preview_Controller::rendition_cache_path($storage),

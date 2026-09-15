@@ -8,6 +8,7 @@
 namespace App\RSpade\Tests\Manifest\Php;
 
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -18,7 +19,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * against except the index the developer was already using, and no way to say what an
  * incremental rebuild actually re-parsed.
  *
- * Every build here happens in a CHILD process against a scratch storage root, and the
+ * Every build here happens in a CHILD process against a scratch build root, and the
  * assertion is made against the index file the child wrote. In-process would mean
  * replacing `Manifest::$data` (and the autoloader behind it) inside a test process that is
  * using it.
@@ -31,8 +32,17 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
     /** The fixture tree, relative to base_path(). Under temp/ so the index can name it. */
     private static string $tree = '';
 
-    /** Absolute path of the scratch storage root the child writes its index to. */
-    private static string $storage = '';
+    /** Absolute path of the scratch build root the child writes its index to. */
+    private static string $build_root = '';
+
+    /**
+     * Absolute path of the scratch TMP root the child derives into.
+     *
+     * The build writes its index into the build root and its generated stubs into the
+     * tmp root, so a fixture build that named only the first would regenerate the
+     * developer's own stubs as a side effect.
+     */
+    private static string $scratch_tmp = '';
 
     /**
      * A fixture tree of one file of every kind the build indexes differently.
@@ -69,19 +79,21 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Write the fixture tree and the scratch storage root.
+     * Write the fixture tree and the scratch build root.
      */
     private static function __make_tree(): void
     {
         // The pid keeps two concurrent runs (the docker workers) out of each other's tree.
         static::$tree = 'app/RSpade/temp/manifest_fixture' . getmypid();
-        static::$storage = storage_path('rsx-tmp/manifest-test/' . getmypid());
+        static::$build_root = Rsx_Project_Paths::tmp_path('manifest-test/' . getmypid() . '/build');
+        static::$scratch_tmp = Rsx_Project_Paths::tmp_path('manifest-test/' . getmypid() . '/tmp');
 
         static::__remove_tree();
 
         $absolute = base_path(static::$tree);
         ensure_directory($absolute);
-        ensure_directory(static::$storage);
+        ensure_directory(static::$build_root);
+        ensure_directory(static::$scratch_tmp);
 
         foreach (static::__fixture_files() as $name => $contents) {
             file_put_contents($absolute . '/' . $name, $contents);
@@ -94,8 +106,8 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
             static::__rmdir_recursive(base_path(static::$tree));
         }
 
-        if (static::$storage !== '' && is_dir(static::$storage)) {
-            static::__rmdir_recursive(static::$storage);
+        if (static::$build_root !== '' && is_dir(dirname(static::$build_root))) {
+            static::__rmdir_recursive(dirname(static::$build_root));
         }
     }
 
@@ -123,7 +135,8 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
         $output = [];
 
         $exit = Rsx_Artisan::run('rsx:manifest:build', [
-            '--_manifest-storage-root=' . static::$storage,
+            '--_rsx-build-root=' . static::$build_root,
+            '--_rsx-tmp-root=' . static::$scratch_tmp,
             '--_manifest-extra-scan-roots=' . static::$tree,
         ], $output);
 
@@ -133,11 +146,11 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
             "the fixture build failed:\n" . implode("\n", $output)
         );
 
-        $path = static::$storage . '/rsx-build/manifest_index.php';
+        $path = static::$build_root . '/manifest_index.php';
 
         static::__assert_true(
             file_exists($path),
-            'the child wrote its index to the scratch storage root (' . $path . ')'
+            'the child wrote its index to the scratch build root (' . $path . ')'
         );
 
         $manifest = include $path;
@@ -147,7 +160,7 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
         // the same view Manifest::get_all() gives a caller. The hot/cold contract itself is
         // asserted by test_the_build_writes_both_halves_of_the_index and by
         // Manifest_Cold_Isolation_Test.
-        $cold_path = static::$storage . '/rsx-build/manifest_files.php';
+        $cold_path = static::$build_root . '/manifest_files.php';
 
         if (file_exists($cold_path)) {
             $manifest['data']['files'] = $manifest['data']['files'] + (include $cold_path);
@@ -360,6 +373,12 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
      * function of the tree and nothing else. That is what makes two builds comparable at all,
      * and it is the property a cluster keys on - `rsx:prod:verify` compares asset hashes, so
      * a wall-clock stamp in the body would make every host disagree with every other.
+     *
+     * The first build here is COLD (the scratch build root was just created) and the second is
+     * INCREMENTAL, so the pair also covers section ORDER: a cold build inserts the derived
+     * sections as the phases produce them, an incremental one starts from what the previous
+     * index carried, and _save() ksorts the top-level map so neither path can reach the bytes
+     * or the key.
      */
     public static function test_two_builds_of_an_unchanged_tree_are_byte_identical()
     {
@@ -369,28 +388,28 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
             static::__build();
 
             $first = [
-                'index' => file_get_contents(static::$storage . '/rsx-build/manifest_index.php'),
-                'files' => file_get_contents(static::$storage . '/rsx-build/manifest_files.php'),
-                'key' => file_get_contents(static::$storage . '/rsx-build/build_key'),
+                'index' => file_get_contents(static::$build_root . '/manifest_index.php'),
+                'files' => file_get_contents(static::$build_root . '/manifest_files.php'),
+                'key' => file_get_contents(static::$build_root . '/build_key'),
             ];
 
             static::__build();
 
             static::__assert_equals(
                 $first['index'],
-                file_get_contents(static::$storage . '/rsx-build/manifest_index.php'),
+                file_get_contents(static::$build_root . '/manifest_index.php'),
                 'the hot index is byte-identical across two builds of an unchanged tree'
             );
 
             static::__assert_equals(
                 $first['files'],
-                file_get_contents(static::$storage . '/rsx-build/manifest_files.php'),
+                file_get_contents(static::$build_root . '/manifest_files.php'),
                 'the cold index is byte-identical across two builds of an unchanged tree'
             );
 
             static::__assert_equals(
                 $first['key'],
-                file_get_contents(static::$storage . '/rsx-build/build_key'),
+                file_get_contents(static::$build_root . '/build_key'),
                 'the build key is stable across two builds of an unchanged tree'
             );
         } finally {
@@ -408,7 +427,7 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
         try {
             $manifest = static::__build();
 
-            $cold_path = static::$storage . '/rsx-build/manifest_files.php';
+            $cold_path = static::$build_root . '/manifest_files.php';
 
             static::__assert_true(file_exists($cold_path), 'the cold half was written');
 
@@ -420,7 +439,7 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
             );
 
             // Read the HOT file directly - __build() returns the union.
-            $hot = include static::$storage . '/rsx-build/manifest_index.php';
+            $hot = include static::$build_root . '/manifest_index.php';
 
             static::__assert_false(
                 isset($hot['data']['files'][static::$tree . '/fixture_widget.php']),
@@ -459,7 +478,8 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
         $output = [];
 
         $exit = Rsx_Artisan::run('rsx:manifest:build', [
-            '--_manifest-storage-root=' . storage_path('rsx-tmp/manifest-test/absent' . getmypid()),
+            '--_rsx-build-root=' . Rsx_Project_Paths::tmp_path('manifest-test/absent' . getmypid() . '/build'),
+            '--_rsx-tmp-root=' . Rsx_Project_Paths::tmp_path('manifest-test/absent' . getmypid() . '/tmp'),
             '--_manifest-extra-scan-roots=' . $absent,
         ], $output);
 

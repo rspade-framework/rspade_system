@@ -11,6 +11,7 @@ use RuntimeException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -129,10 +130,10 @@ class Sys_Panel_Published_Route_Test extends Rsx_Test_Abstract
         static::__assert_not_empty($app_js, "{$bundle_name} produced no app JS bundle");
 
         // compile() answers the OUTPUT FILENAME; the build artifacts live under
-        // storage/rsx-build/bundles/, which storage_path() resolves.
+        // the build tree's bundles directory, which the path owner resolves.
         $absolute = str_starts_with($app_js, '/')
             ? $app_js
-            : storage_path('rsx-build/bundles/' . basename($app_js));
+            : Rsx_Project_Paths::bundles_dir() . '/' . basename($app_js);
 
         static::__assert_true(file_exists($absolute), "compiled bundle missing at {$absolute}");
 

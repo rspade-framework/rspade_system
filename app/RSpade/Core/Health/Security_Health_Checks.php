@@ -8,6 +8,7 @@
 namespace App\RSpade\Core\Health;
 
 use Illuminate\Support\Facades\Http;
+use App\RSpade\Core\Ide\Ide_Bridge_Token;
 
 /**
  * Security_Health_Checks - active web-exposure probes for rsx:health.
@@ -189,11 +190,12 @@ class Security_Health_Checks
      */
     private static function __probe_bridge(string $base): array
     {
+        // The DIRECTORY comes from the token minter - one resolution, so a probe can
+        // never report on a path nothing writes. The configured key is still what the
+        // URL spellings below are built from: that is the shape a misconfigured docroot
+        // would expose.
         $bridge_rel = trim((string) config('rsx.ide_integration.bridge_path', 'storage/rsx-ide-bridge'), '/');
-        // Resolved the same way Ide_Bridge_Token::bridge_dir() does: the configured path is
-        // relative to the directory CONTAINING storage/, and volatile storage may have been
-        // relocated out of system/ to the project root.
-        $bridge_dir = dirname(storage_path()) . '/' . $bridge_rel;
+        $bridge_dir = Ide_Bridge_Token::bridge_dir();
         if (!is_dir($bridge_dir)) {
             return [
                 'label' => 'IDE bridge dir exposure',
@@ -210,9 +212,9 @@ class Security_Health_Checks
         try {
             file_put_contents_safe($marker_path, $marker_body);
 
-            // Whatever the layout (project-root storage/ or the historic system/storage),
-            // a misconfigured docroot at system/ serves /storage/..., one at the project
-            // root serves /system/storage/... - probe both spellings either way.
+            // A misconfigured docroot at the framework tree serves /<key>/..., one at
+            // the project root serves /system/<key>/... - probe both spellings, because
+            // which one is exposed depends on the mistake, not on the layout.
             $candidates = [
                 $base . '/' . $bridge_rel . '/' . $marker_name,
                 $base . '/system/' . $bridge_rel . '/' . $marker_name,

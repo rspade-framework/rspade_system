@@ -8,7 +8,6 @@
 namespace App\RSpade\Commands\Migrate;
 
 use App\Providers\AppServiceProvider;
-use App\RSpade\Core\Manifest\Manifest;
 use Exception;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
@@ -28,7 +27,6 @@ use Illuminate\Support\Facades\Schema;
  * - Adds indexes on created_at and updated_at columns
  * - Adds the deletion audit pair deleted_by_id/deleted_by_type to tables that soft-delete
  *   (deleted_at), converging the earlier bare `deleted_by` spelling by rename
- * - Adds trait-specific columns (site_id for Siteable, version for Versionable/Ajaxable)
  *
  * Drift correction (legacy* tables only):
  * - Converts tables to UTF8MB4 character set if not already converted
@@ -148,46 +146,6 @@ class Migrate_Normalize_Schema_Command extends Command
         return Schema::hasColumn($tableName, $columnName);
     }
 
-    /**
-     * Check if a model uses a specific trait
-     *
-     * @param string $modelClass The full class name of the model
-     * @param string $traitName The trait to check for
-     * @return bool True if the model uses the trait
-     */
-    private function modelUsesTrait($modelClass, $traitName)
-    {
-        // Fail loud - let PHP throw error if class doesn't exist
-        $traits = class_uses_recursive($modelClass);
-
-        return isset($traits[$traitName]);
-    }
-
-    /**
-     * Get all model classes that use a specific trait
-     *
-     * @param string $traitName The trait to search for
-     * @return array Array of model class names
-     */
-    private function getModelsUsingTrait($traitName)
-    {
-        $models = [];
-
-        // Use Manifest to find all model classes
-        $all_models = Manifest::php_get_extending('Rsx_Model_Abstract');
-
-        foreach ($all_models as $model_info) {
-            $modelClass = $model_info['fqcn'];
-
-            // Check if this model uses the specified trait
-            if ($this->modelUsesTrait($modelClass, $traitName)) {
-                $models[] = $modelClass;
-            }
-        }
-
-        return $models;
-    }
-
     public function handle()
     {
         echo $this->signature . "\n";
@@ -232,35 +190,6 @@ class Migrate_Normalize_Schema_Command extends Command
             // is framework-owned with a fixed schema and must never receive audit columns.
             $excludedTables = ['_migrations'];
             $tables = DB::select('SHOW TABLES');
-
-            // Get models using our traits
-            $siteableModels = $this->getModelsUsingTrait('App\\Models\\Traits\\Siteable');
-            $versionableModels = $this->getModelsUsingTrait('App\\Models\\Traits\\Versionable');
-            $ajaxableModels = $this->getModelsUsingTrait('App\\Models\\Traits\\Ajaxable');
-
-            // Map models to their tables
-            $siteableTables = [];
-            $versionableTables = [];
-            $ajaxableTables = [];
-
-            foreach ($siteableModels as $model) {
-                $instance = new $model();
-                $siteableTables[] = $instance->getTable();
-            }
-
-            foreach ($versionableModels as $model) {
-                $instance = new $model();
-                $versionableTables[] = $instance->getTable();
-            }
-
-            foreach ($ajaxableModels as $model) {
-                $instance = new $model();
-                $ajaxableTables[] = $instance->getTable();
-            }
-
-            $this->info('Found ' . count($siteableTables) . ' Siteable models, ' .
-                       count($versionableTables) . ' Versionable models, and ' .
-                       count($ajaxableTables) . ' Ajaxable models.');
 
             foreach ($tables as $table) {
                 $tableName = array_values((array) $table)[0];
@@ -338,36 +267,6 @@ class Migrate_Normalize_Schema_Command extends Command
                         || Schema::hasColumn($tableName, 'deleted_by')
                         || Schema::hasColumn($tableName, 'deleted_by_id')) {
                         $this->normalizeAuditColumns($tableName, 'deleted_by');
-                    }
-
-                    // Handle specific trait requirements
-
-                    // Siteable trait - ensure site_id column exists
-                    if (in_array($tableName, $siteableTables) && !$this->__column_exists_or_pending($tableName, 'site_id')) {
-                        $this->__add_column($tableName, 'site_id', "ADD COLUMN site_id INT(11) NOT NULL");
-
-                        // Add index on site_id
-                        if (!$this->columnHasIndex($tableName, 'site_id')) {
-                            $this->__add_index($tableName, 'site_id', "ADD INDEX site_id(site_id)");
-                        }
-                    }
-
-                    // Versionable trait - ensure version column exists
-                    if (in_array($tableName, $versionableTables) && !$this->__column_exists_or_pending($tableName, 'version')) {
-                        $this->__add_column($tableName, 'version', "ADD COLUMN version INT(11) NOT NULL DEFAULT 1");
-
-                        // Add index on id+version
-                        if (!$this->indexExists($tableName, 'id_version')) {
-                            $this->__add_index($tableName, 'id_version', "ADD INDEX id_version(id, version)");
-                        }
-                    }
-
-                    // Ajaxable trait - ensure version column for cache invalidation
-                    // (__column_exists_or_pending: a model that is BOTH Versionable and Ajaxable
-                    // already queued this ADD above, and a duplicate clause in one statement is an
-                    // error where a duplicate STATEMENT was merely a no-op read away.)
-                    if (in_array($tableName, $ajaxableTables) && !$this->__column_exists_or_pending($tableName, 'version')) {
-                        $this->__add_column($tableName, 'version', "ADD COLUMN version INT(11) NOT NULL DEFAULT 1");
                     }
 
                     // Order column normalization

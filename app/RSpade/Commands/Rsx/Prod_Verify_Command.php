@@ -21,8 +21,9 @@ class Prod_Verify_Command extends Command
     public function handle(): int
     {
         if (!Rsx_Prod_Seal::exists()) {
-            $this->error('No seal present - the system is not in sealed prod mode.');
-            $this->line('  Compile and seal a build with: php artisan rsx:prod:enable');
+            $this->error('No seal present - this box has no production build to verify.');
+            $this->line('  Enter a production mode: php artisan rsx:prod:enable');
+            $this->line('  Rebuild in place:        php artisan rsx:build --force');
 
             return 1;
         }

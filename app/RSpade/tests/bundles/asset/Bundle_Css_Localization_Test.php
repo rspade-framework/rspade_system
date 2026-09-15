@@ -8,6 +8,7 @@ namespace App\RSpade\Tests\Bundles\Asset;
 
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Bundle\Cdn_Cache;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * A compiled bundle stylesheet reaches no external host.
@@ -51,7 +52,7 @@ class Bundle_Css_Localization_Test extends Rsx_Test_Abstract
 
     protected static function __scratch_store(): string
     {
-        return storage_path('rsx-tmp/bundle_css_localization_test-temp');
+        return Rsx_Project_Paths::tmp_path('bundle_css_localization_test-temp');
     }
 
     /**
@@ -129,7 +130,7 @@ class Bundle_Css_Localization_Test extends Rsx_Test_Abstract
 
     protected static function __artifact_contents(string $filename): string
     {
-        return file_get_contents(storage_path('rsx-build/bundles/' . $filename));
+        return file_get_contents(Rsx_Project_Paths::bundles_dir() . '/' . $filename);
     }
 
     protected static function __remove_tree(string $root): void
@@ -159,7 +160,7 @@ class Bundle_Css_Localization_Test extends Rsx_Test_Abstract
         static::__remove_tree(base_path(static::FIXTURE_RELATIVE));
         static::__remove_tree(static::__scratch_store());
 
-        foreach (glob(storage_path('rsx-build/bundles/Cdn_Fixture_*')) as $artifact) {
+        foreach (glob(Rsx_Project_Paths::bundles_dir() . '/Cdn_Fixture_*') as $artifact) {
             if (is_file($artifact)) {
                 unlink($artifact);
             }

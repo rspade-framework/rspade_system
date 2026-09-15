@@ -104,8 +104,12 @@ class Source_Cache
 
         $value = '';
 
-        if (is_file($path) && is_readable($path)) {
-            $read = file_get_contents($path);
+        // A manifest KEY is project-logical (`rsx/...`, `app/RSpade/...`, `tmp/...`): it
+        // is resolved through the path owner, never against the working directory.
+        $file = \App\RSpade\Core\Naming\Rsx_Paths::absolute($path);
+
+        if (is_file($file) && is_readable($file)) {
+            $read = file_get_contents($file);
             $value = $read === false ? '' : $read;
         }
 

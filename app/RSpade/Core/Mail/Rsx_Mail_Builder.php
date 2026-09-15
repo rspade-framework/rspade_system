@@ -15,6 +15,7 @@ use App\RSpade\Core\Mail\Rsx_Mail_Text;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Integrations\Scss\Scss_BundleProcessor;
 
 /**
@@ -164,7 +165,7 @@ class Rsx_Mail_Builder
      * an app could never remove a framework rule it did not want.
      *
      * Compiled through the same node-sass step the bundle build uses and cached under
-     * storage/rsx-tmp by the SOURCE's content hash: edit the stylesheet and the next
+     * the tmp tree by the SOURCE's content hash: edit the stylesheet and the next
      * message compiles, touch nothing and nothing recompiles.
      */
     public static function compiled_css(): string
@@ -176,7 +177,7 @@ class Rsx_Mail_Builder
             throw new \RuntimeException("Could not read the email stylesheet at {$source}.");
         }
 
-        $cache_file = storage_path('rsx-tmp/email_css_' . hash('sha256', $scss) . '.css');
+        $cache_file = Rsx_Project_Paths::tmp_path('email_css_' . hash('sha256', $scss) . '.css');
 
         if (is_file($cache_file)) {
             return (string) file_get_contents($cache_file);
@@ -184,7 +185,7 @@ class Rsx_Mail_Builder
 
         // The node compile step writes its script next to the INPUT file, so the input
         // is a copy in a directory we own rather than the stylesheet where it lives.
-        $work_dir = storage_path('rsx-tmp/email_css_build_' . random_hash());
+        $work_dir = Rsx_Project_Paths::tmp_path('email_css_build_' . random_hash());
         ensure_directory($work_dir);
 
         try {

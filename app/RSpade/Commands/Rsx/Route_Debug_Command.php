@@ -13,6 +13,7 @@ use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Debug\Dev_Auth_Token;
 use App\RSpade\Core\Ide\Ide_Bridge_Token;
 use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Portal\Portal_User_Model;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
@@ -584,7 +585,7 @@ class Route_Debug_Command extends Command
         }
 
         // Pass Laravel log path as environment variable
-        $laravel_log_path = storage_path('logs/laravel.log');
+        $laravel_log_path = Rsx_Project_Paths::logs_dir() . '/laravel.log';
 
         $env = array_merge($_ENV, [
             'LARAVEL_LOG_PATH' => $laravel_log_path

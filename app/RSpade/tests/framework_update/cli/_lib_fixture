@@ -22,6 +22,7 @@
 # =============================================================================
 
 REAL_SCRIPT="/var/www/html/system/bin/framework-pull-upstream.sh.dist"
+REAL_PATHS_LIB="/var/www/html/system/bin/lib/rsx_paths.sh"
 REAL_ARTISAN="/var/www/html/system/artisan"
 
 FX_ROOT=""
@@ -118,7 +119,7 @@ if (\$sub === 'rsx:manifest:build') {
     // overrides, use-header rewrites) into the downstream mutation-marker store. t9
     // proves this ledger SURVIVES the update - reset_store must run BEFORE the
     // rebuild, not after (B-49).
-    \$store = \$dir . '/storage/rsx-framework';
+    \$store = \$dir . '/storage/state';
     @mkdir(\$store . '/shadow', 0777, true);
     file_put_contents(\$store . '/mutations.json', '{"version":1,"entries":{"__sentinel__":{"mechanism":"file_write","state":"present"}}}');
     file_put_contents(\$store . '/shadow/__sentinel__', "sentinel shadow bytes\n");
@@ -134,9 +135,13 @@ PHP
 # Populate a v1 mini system tree at $1.
 fx_make_tree_v1() {
     local sys="$1"
-    mkdir -p "$sys/app/RSpade" "$sys/bin" "$sys/three_way"
+    mkdir -p "$sys/app/RSpade" "$sys/bin/lib" "$sys/three_way"
     cp "$REAL_SCRIPT" "$sys/bin/framework-pull-upstream.sh.dist"
     chmod +x "$sys/bin/framework-pull-upstream.sh.dist"
+
+    # The updater sources the path library to resolve the volatile-tree roots, so the
+    # fake framework tree carries the real one.
+    cp "$REAL_PATHS_LIB" "$sys/bin/lib/rsx_paths.sh"
 
     # A flag-only maintenance-mode.sh, TRACKED IN THE FAKE UPSTREAM so it survives the
     # submodule reset every update performs. A test that writes it into the project's
@@ -149,7 +154,7 @@ fx_make_tree_v1() {
 #!/bin/bash
 # Test stub: the flag half of maintenance mode, with no service control.
 PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-FLAG="$PROJECT_ROOT/storage/rsx-framework/.maintenance.mode.framework.update"
+FLAG="$PROJECT_ROOT/storage/state/.maintenance.mode.framework.update"
 mkdir -p "$(dirname "$FLAG")"
 case "$1" in
     enable)  printf 'framework update in progress\nmode=development\n' > "$FLAG" ;;
@@ -301,8 +306,9 @@ fx_build_downstream() {
     local ver="${1:-v1}"
     PROJECT="$FX_ROOT/project"
     rm -rf "$PROJECT"
-    # storage/ lives at the PROJECT ROOT, one level above the submodule.
-    mkdir -p "$PROJECT/rsx/resource" "$PROJECT/storage/rsx-framework"
+    # storage/ lives at the PROJECT ROOT, one level above the submodule; storage/state
+    # holds the maintenance flag and the updater's own ledger.
+    mkdir -p "$PROJECT/rsx/resource" "$PROJECT/storage/state"
 
     local sha="$V1_SHA"
     [ "$ver" = "v2" ] && sha="$V2_SHA"

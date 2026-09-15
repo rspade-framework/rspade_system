@@ -6,6 +6,7 @@ use Exception;
 use JsonSerializable;
 use Log;
 use stdClass;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -72,7 +73,7 @@ class Debugger
         console_debug('DEV_MODE', 'Rotating logs');
 
         // Rotate Laravel log
-        static::__rotate_file(storage_path('logs/laravel.log'), $keep_versions);
+        static::__rotate_file(Rsx_Project_Paths::logs_dir() . '/laravel.log', $keep_versions);
 
         // Rotate nginx logs
         static::__rotate_file('/var/log/nginx/access.log', $keep_versions);

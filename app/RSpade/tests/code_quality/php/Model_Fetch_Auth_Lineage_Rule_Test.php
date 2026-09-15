@@ -10,6 +10,7 @@ namespace App\RSpade\Tests\CodeQuality\Php;
 use App\RSpade\CodeQuality\Rules\PHP\ModelFetchAuthCheck_CodeQualityRule;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -48,7 +49,7 @@ class Model_Fetch_Auth_Lineage_Rule_Test extends Rsx_Test_Abstract
 
     private static function __write_fixture(string $source): string
     {
-        $dir = storage_path('rsx-tmp') . '/auth_lineage_fixture_' . uniqid();
+        $dir = Rsx_Project_Paths::tmp_path() . '/auth_lineage_fixture_' . uniqid();
         ensure_directory($dir);
 
         $path = $dir . '/fixture.php';

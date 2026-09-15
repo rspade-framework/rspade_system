@@ -11,6 +11,7 @@ use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use App\RSpade\Core\Bundle\Cdn_Cache;
 use App\RSpade\Core\Dispatch\AssetHandler;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -24,7 +25,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * name the naming rule could never have produced (a traversal, an old-shape name) is refused
  * before the filesystem is touched; and a MISS names the remedy that fits the mode -
  * rsx:cdn_externals:refresh in development (the compile that names the file never ran here),
- * rsx:prod:refresh in a sealed build (the mirror is incomplete, which is a broken build).
+ * rsx:build --force in a production build (the mirror is incomplete, which is a broken build).
  *
  * No DB, no network.
  */
@@ -38,7 +39,7 @@ class Vendor_Route_Test extends Rsx_Test_Abstract
 
     private static function __scratch_dir(): string
     {
-        return storage_path('rsx-tmp/vendor_route_test-temp');
+        return Rsx_Project_Paths::tmp_path('vendor_route_test-temp');
     }
 
     public static function setup()
@@ -142,7 +143,7 @@ class Vendor_Route_Test extends Rsx_Test_Abstract
                 'Missing mirrored external asset'
             );
 
-            static::__assert_contains('rsx:prod:refresh', $exception->getMessage());
+            static::__assert_contains('rsx:build --force', $exception->getMessage());
         } finally {
             Rsx::clear_mode_cache();
         }

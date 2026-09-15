@@ -27,7 +27,7 @@ class Db_Reset_Refusal_Test extends Rsx_Test_Abstract
     protected static $use_database_transactions = false;
 
     /** The roots the refusal quotes; arbitrary here, because the text is pure. */
-    private const ROOTS = ['/srv/app/storage/uploads', '/srv/app/storage/rsx-thumbnails', '/srv/app/storage/rsx-renditions'];
+    private const ROOTS = ['/srv/app/storage/uploads', '/srv/app/tmp/thumbnails', '/srv/app/tmp/renditions'];
 
     // ---------------------------------------------------------------------------------
     // THE GATE

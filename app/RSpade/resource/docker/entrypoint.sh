@@ -226,8 +226,8 @@ fi
 # 4b. Environment updates
 # -----------------------------------------------------------------------------
 # system/bin/environment_updates/*.sh make the surrounding environment correct:
-# they relocate volatile storage out of system/ to <project>/storage, install the
-# git pre-commit guard, wire the Claude Code status line, and so on.
+# they move the volatile trees into their current layout, wire the Claude Code
+# status line and skills, repair tracked symlinks, and so on.
 #
 # WHY THE CONTAINER HAS TO RUN THEM. Their triggers are a framework update and a
 # successful manifest build - both of which assume an environment that has
@@ -237,11 +237,11 @@ fi
 # The container start is the one moment guaranteed to happen before anything else
 # in a new project, which makes it the right place to ask.
 #
-# BEFORE SUPERVISOR, and before the storage preparation below, on purpose. The
-# storage relocation MOVES the tree every service is about to open files in;
-# doing that underneath running services is how you get processes holding
-# deleted paths. Ordering it here also means the ownership pass below applies to
-# the final location rather than one we are about to abandon.
+# BEFORE SUPERVISOR, and before the storage preparation below, on purpose. A
+# relocation MOVES trees that every service is about to open files in - sockets
+# included; doing that underneath running services is how you get processes
+# holding deleted paths. Ordering it here also means the ownership pass below
+# applies to the final locations rather than ones we are about to abandon.
 #
 # The scripts are idempotent and silent when already applied (their published
 # contract), so on every boot after the first this prints nothing. Failures are
@@ -255,8 +255,25 @@ fi
 # -----------------------------------------------------------------------------
 # 5. Writable storage
 # -----------------------------------------------------------------------------
-mkdir -p storage/rsx-build storage/rsx-tmp storage/flock storage/rsx-framework storage/logs \
-         storage/mail-catcher 2>/dev/null || true
+# storage/ holds user data and process state; tmp/ holds derived caches. build/ is
+# NOT created here: it holds build outputs, and a missing one must fail loud naming
+# the build command rather than quietly appearing empty.
+#
+# The roots come from the path library, so an RSX_STORAGE_PATH or RSX_TMP_PATH in the
+# project's .env is honoured here exactly as PHP honours it, and every process started
+# below inherits the same absolutes.
+#
+# TMPDIR is NOT among them: PHP sets it for its own processes in the first lines of both
+# entrypoints, while mysqld reads TMPDIR too and refuses to start when it points at a
+# directory the database user cannot write.
+if [ "$HAS_FRAMEWORK" = 1 ] && [ -f "$APP_DIR/system/bin/lib/rsx_paths.sh" ]; then
+    RSX_PATHS_PROJECT_ROOT_DIR="$APP_DIR"
+    . "$APP_DIR/system/bin/lib/rsx_paths.sh"
+    rsx_export_paths
+    mkdir -p "$(rsx_storage_root)/logs" "$(rsx_state_root)/flock" "$(rsx_tmp_root)" 2>/dev/null || true
+else
+    mkdir -p storage/logs storage/state storage/state/flock tmp 2>/dev/null || true
+fi
 
 # -----------------------------------------------------------------------------
 # 5b. PUID / PGID - run the application as YOUR user
@@ -346,6 +363,7 @@ if [ -n "${PUID:-}" ]; then
         -exec chown -R "${APP_USER}:${APP_GROUP}" {} + 2>/dev/null \
         || warn "could not chown storage/ to ${APP_USER}"
     chown "${APP_USER}:${APP_GROUP}" storage 2>/dev/null || true
+    chown -R "${APP_USER}:${APP_GROUP}" build tmp 2>/dev/null || true
     [ -f "$APP_DIR/.env" ] && chown "${APP_USER}:${APP_GROUP}" "$APP_DIR/.env" 2>/dev/null
 
     say "Running the application as ${APP_USER} (uid ${PUID}, gid ${APP_GID})."
@@ -357,6 +375,7 @@ elif [ "$TARGET" = "prod" ]; then
         -exec chown -R www-data:www-data {} + 2>/dev/null \
         || warn "Could not chown storage/ to www-data"
     chown www-data:www-data storage 2>/dev/null || true
+    chown -R www-data:www-data build tmp 2>/dev/null || true
 fi
 
 # -----------------------------------------------------------------------------

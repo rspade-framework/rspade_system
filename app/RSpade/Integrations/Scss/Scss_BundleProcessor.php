@@ -4,6 +4,7 @@ namespace App\RSpade\Integrations\Scss;
 
 use App\RSpade\CodeQuality\Support\FileSanitizer;
 use App\RSpade\Core\Bundle\BundleProcessor_Abstract;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Integrations\Scss\Scss_Compiler;
 
 /**
@@ -75,7 +76,7 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
 
         // Generate cache key based on all SCSS files
         $cache_key = static::_get_scss_cache_key($scss_files);
-        $temp_file = storage_path('rsx-tmp/scss_' . $cache_key . '.css');
+        $temp_file = Rsx_Project_Paths::tmp_path('scss_' . $cache_key . '.css');
 
         // Check if we already have compiled output
         $needs_compile = !file_exists($temp_file);
@@ -96,7 +97,7 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
             console_debug('BUNDLE', 'Compiling ' . count($scss_files) . ' SCSS files');
 
             // Create temp directory for compilation
-            $compile_dir = storage_path('rsx-tmp/scss_compile_' . uniqid());
+            $compile_dir = Rsx_Project_Paths::tmp_path('scss_compile_' . uniqid());
             if (!is_dir($compile_dir)) {
                 mkdir($compile_dir, 0755, true);
             }
@@ -255,7 +256,7 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
         static::$scss_files = [];
         
         // Create temp directory for compilation
-        static::$temp_dir = storage_path('rsx-tmp/scss_' . uniqid());
+        static::$temp_dir = Rsx_Project_Paths::tmp_path('scss_' . uniqid());
         if (!is_dir(static::$temp_dir)) {
             mkdir(static::$temp_dir, 0755, true);
         }

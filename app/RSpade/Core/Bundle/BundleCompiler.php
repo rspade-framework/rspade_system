@@ -17,6 +17,7 @@ use App\RSpade\Core\Externals\Rsx_Externals;
 use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Identifier;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -147,7 +148,7 @@ class BundleCompiler
 
     /**
     * Mapping from babel-transformed files to their original source files
-    * ['storage/rsx-tmp/derived/babel/<hash>_<target>_<fingerprint>.js' => 'app/RSpade/Core/Js/SomeFile.js']
+    * ['tmp/derived/babel/<hash>_<target>_<fingerprint>.js' => 'app/RSpade/Core/Js/SomeFile.js']
     */
     protected array $babel_file_mapping = [];
 
@@ -157,9 +158,45 @@ class BundleCompiler
     protected ?string $bundle_build_lock = null;
 
     /**
+    * How many compiles are in flight in THIS process.
+    *
+    * A compile reads the derived-cache tree from the moment it resolves its file list to
+    * the moment the concatenator has opened the last input, so nothing in this process may
+    * PRUNE that tree in between. The bundle build lock excludes other processes but cannot
+    * express this: RsxLocks is reentrant by design, so a nested acquire inside a compile is
+    * granted immediately and excludes nobody. The counter is what the sweep asks instead.
+    *
+    * It is a counter rather than a flag because a compile can legitimately nest - resolving
+    * a bundle include reaches the manifest, and in development that can rebuild it.
+    */
+    protected static int $compiles_in_flight = 0;
+
+    /**
+    * Is a bundle compile reading the derived-cache tree in this process right now?
+    */
+    public static function is_compiling(): bool
+    {
+        return static::$compiles_in_flight > 0;
+    }
+
+    /**
     * Compile a bundle
     */
     public function compile(string $bundle_class, array $options = []): array
+    {
+        static::$compiles_in_flight++;
+
+        try {
+            return $this->__compile($bundle_class, $options);
+        } finally {
+            static::$compiles_in_flight--;
+        }
+    }
+
+    /**
+    * The compile itself. Runs with this process marked as reading the derived-cache tree.
+    */
+    protected function __compile(string $bundle_class, array $options = []): array
     {
         $this->bundle_name = $this->_get_bundle_name($bundle_class);
         $this->is_production = Rsx::is_production();
@@ -179,12 +216,9 @@ class BundleCompiler
             }
 
             // In production-like modes, don't auto-rebuild - error instead
-            $rebuild_command = \App\RSpade\Core\Prod\Rsx_Prod_Seal::is_sealed()
-                ? 'rsx:prod:refresh'
-                : 'rsx:prod:build';
             throw new RuntimeException(
                 "Bundle '{$this->bundle_name}' not compiled for production mode. " .
-                "Run: php artisan {$rebuild_command}"
+                'Run: php artisan rsx:build --force'
             );
         }
 
@@ -250,7 +284,7 @@ class BundleCompiler
                 $cache_key = $this->cache_keys[$type] ?? null;
                 if ($cache_key) {
                     $short_key = substr($cache_key, 0, 8);
-                    $bundle_dir = storage_path('rsx-build/bundles');
+                    $bundle_dir = Rsx_Project_Paths::bundles_dir();
                     $js_file = "{$this->bundle_name}__{$type}.{$short_key}.js";
                     $css_file = "{$this->bundle_name}__{$type}.{$short_key}.css";
                     if (file_exists("{$bundle_dir}/{$js_file}")) {
@@ -481,7 +515,7 @@ class BundleCompiler
     */
     protected function _check_production_cache(): ?array
     {
-        $bundle_dir = storage_path('rsx-build/bundles');
+        $bundle_dir = Rsx_Project_Paths::bundles_dir();
 
         // Look for split vendor/app files (the output format)
         $vendor_js_pattern = "{$bundle_dir}/{$this->bundle_name}__vendor.*.js";
@@ -1276,7 +1310,7 @@ class BundleCompiler
     */
     protected function _get_cached_bundle(string $cache_key, string $type): ?array
     {
-        $bundle_dir = storage_path('rsx-build/bundles');
+        $bundle_dir = Rsx_Project_Paths::bundles_dir();
         // The cache key is used as part of the filename hash
         // Look for files with the specific type and hash
         $short_key = substr($cache_key, 0, 8);
@@ -1377,7 +1411,7 @@ class BundleCompiler
     protected function _write_temp_file(string $content, string $extension): string
     {
         $hash = substr(md5($content), 0, 8);
-        $path = storage_path('rsx-tmp/bundle_' . $this->bundle_name . '_' . $hash . '.' . $extension);
+        $path = Rsx_Project_Paths::tmp_path('bundle_' . $this->bundle_name . '_' . $hash . '.' . $extension);
         file_put_contents_safe($path, $content);
 
         return $path;
@@ -1745,7 +1779,7 @@ class BundleCompiler
 
         // Use content hash for idempotent file naming, with recognizable prefix for detection
         $hash = substr(md5($content), 0, 8);
-        $temp_file = storage_path('rsx-tmp/bundle_generated_models_' . $this->bundle_name . '_' . $hash . '.js');
+        $temp_file = Rsx_Project_Paths::tmp_path('bundle_generated_models_' . $this->bundle_name . '_' . $hash . '.js');
         file_put_contents_safe($temp_file, $content);
 
         console_debug('BUNDLE', 'Generated ' . count($generated_classes) . ' concrete model classes');
@@ -1808,16 +1842,14 @@ class BundleCompiler
                 continue;
             }
 
-            // Skip ALL temp files - they won't be in manifest
-            // Babel and other transformations should have been applied to original files
-            if (str_contains($file, 'storage/rsx-tmp/')) {
-                $non_class_files[] = $file;
-                continue;
-            }
-
+            // GENERATED STUBS ARE CLASSIFIED BEFORE THE BLANKET TEMP SKIP. They live in the
+            // tmp tree with every other derived artifact, but they are real class
+            // declarations that the dependency sort has to see - misread as anonymous temp
+            // files they land ahead of the base class they extend, and the bundle throws
+            // "Cannot access X before initialization" in the browser.
+            //
             // Check if this is a JS stub file (not in manifest, needs parsing)
-            // Stub files are in storage/rsx-build/js-stubs/ or storage/rsx-build/js-model-stubs/
-            if (str_contains($file, 'storage/rsx-build/js-stubs/') || str_contains($file, 'storage/rsx-build/js-model-stubs/')) {
+            if (Rsx_Project_Paths::is_stub_file($file)) {
                 // Use simple regex extraction - stub files have known format and can't use
                 // the strict JS parser (stubs may have code after class declaration)
                 $stub_content = file_get_contents($file);
@@ -1835,6 +1867,13 @@ class BundleCompiler
                 } else {
                     $non_class_files[] = $file;
                 }
+                continue;
+            }
+
+            // Skip ALL other temp files - they won't be in manifest.
+            // Babel and other transformations should have been applied to original files
+            if (Rsx_Project_Paths::is_under_tmp($file)) {
+                $non_class_files[] = $file;
                 continue;
             }
 
@@ -2189,9 +2228,10 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
     protected function _compile_outputs(array $types_to_compile = []): array
     {
         $outputs = [];
-        $bundle_dir = storage_path('rsx-build/bundles');
+        $bundle_dir = Rsx_Project_Paths::bundles_dir();
 
         if (!is_dir($bundle_dir)) {
+            Rsx_Project_Paths::assert_build_writable($bundle_dir, 'bundle output directory');
             mkdir($bundle_dir, 0755, true);
         }
 
@@ -2276,6 +2316,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
             foreach ($old_files as $file) {
                 // Don't delete files with current hash
                 if (strpos($file, ".{$hash}.") === false) {
+                    Rsx_Project_Paths::assert_build_writable($file, 'stale bundle removal');
                     unlink($file);
                 }
             }
@@ -2329,7 +2370,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                 if ($concrete_models_file) {
                     $last_stub_index = null;
                     foreach ($files['js'] as $i => $f) {
-                        if (str_contains($f, 'storage/rsx-build/js-model-stubs/')) {
+                        if (str_starts_with(Rsx_Project_Paths::key_for($f), Rsx_Project_Paths::stub_key(Rsx_Project_Paths::STUBS_MODEL, ''))) {
                             $last_stub_index = $i;
                         }
                     }
@@ -2536,7 +2577,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
 
         // Generate bundle filename for this specific bundle
         $bundle_filename = "npm_{$this->bundle_name}_{$cache_key}.js";
-        $bundle_path = storage_path("rsx-build/bundles/{$bundle_filename}");
+        $bundle_path = Rsx_Project_Paths::bundles_dir() . '/' . $bundle_filename;
 
         // Check if bundle already exists
         if (file_exists($bundle_path)) {
@@ -2550,6 +2591,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         // Create storage directory if needed
         $bundle_dir = dirname($bundle_path);
         if (!is_dir($bundle_dir)) {
+            Rsx_Project_Paths::assert_build_writable($bundle_dir, 'npm bundle directory');
             mkdir($bundle_dir, 0755, true);
         }
 
@@ -2609,7 +2651,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         }
 
         // Write entry file to temp location
-        $temp_dir = storage_path('rsx-tmp/npm-compile');
+        $temp_dir = Rsx_Project_Paths::npm_compile_dir();
         if (!is_dir($temp_dir)) {
             mkdir($temp_dir, 0755, true);
         }
@@ -2628,8 +2670,8 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
 
         // NODE_PATH pins module resolution at the framework's node_modules. esbuild resolves
         // bare imports by walking UP from the ENTRY file, and the entry lives in
-        // storage/rsx-tmp/npm-compile - which is at the PROJECT ROOT since storage was
-        // relocated out of system/, so that walk never reaches system/node_modules.
+        // the npm-compile directory - which is at the PROJECT ROOT, so that walk never
+        // reaches system/node_modules.
         $esbuild_cmd = sprintf(
             'NODE_PATH=%s %s %s --bundle --format=iife --target=es2020 --outfile=%s 2>&1',
             escapeshellarg(base_path('node_modules')),
@@ -2680,7 +2722,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         // Generate cache key from NPM includes
         $cache_key = md5(serialize($this->npm_includes));
         $filename = "npm_import_declarations_{$cache_key}.js";
-        $file_path = storage_path("rsx-tmp/{$filename}");
+        $file_path = Rsx_Project_Paths::tmp_path($filename);
 
         // Check if already generated
         if (file_exists($file_path)) {
@@ -2728,7 +2770,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
             }
 
             // Write config to temp file
-            $config_file = storage_path('rsx-tmp/bundle_config_' . $this->bundle_name . '.js');
+            $config_file = Rsx_Project_Paths::tmp_path('bundle_config_' . $this->bundle_name . '.js');
             file_put_contents_safe($config_file, implode("\n", $config_content) . "\n");
             $files_to_concat[] = $config_file;
         }
@@ -2745,8 +2787,8 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
             foreach ($files as $file) {
                 // Skip temp files, already processed files, and CDN cache files
                 // CDN files are third-party production code - don't transform them
-                if (str_contains($file, 'storage/rsx-tmp/') ||
-                    str_contains($file, 'storage/rsx-build/') ||
+                if (Rsx_Project_Paths::is_under_tmp($file) ||
+                    Rsx_Project_Paths::is_under_build($file) ||
                     str_contains($file, '.cdn-cache/')) {
                     continue;
                 }
@@ -2755,7 +2797,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                 //
                 // THE CACHE ENTRY IS THE FILE WE HAND THE CONCATENATOR. This used to take
                 // the transformed CODE and write a second copy to
-                // `rsx-tmp/babel_<md5 of the source PATH>.js` - a name that never changed
+                // `tmp/babel_<md5 of the source PATH>.js` - a name that never changed
                 // when the source did, so those 301 files were never invalidated and never
                 // read as a cache either: they were overwritten on every compile and lived
                 // forever. The transform cache already holds exactly these bytes under a
@@ -2789,7 +2831,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
         // argument is capped at 131072 bytes - so a large enough bundle could not be
         // spelled on a command line at all, and every build failed from that point on. See
         // the Concatenator docblock for the incident.
-        $output_file = storage_path('rsx-tmp/bundle_output_' . $this->bundle_name . '.js');
+        $output_file = Rsx_Project_Paths::tmp_path('bundle_output_' . $this->bundle_name . '.js');
 
         $concat_files = [];
         foreach ($files_to_concat as $file) {
@@ -2836,7 +2878,7 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
     {
         // Concatenate over the concat RPC daemon (see _compile_js_files() for why the file
         // list travels in a socket payload rather than on argv).
-        $output_file = storage_path('rsx-tmp/css_bundle_' . $this->bundle_name . '.css');
+        $output_file = Rsx_Project_Paths::tmp_path('css_bundle_' . $this->bundle_name . '.css');
 
         $concat_files = [];
         foreach ($files as $file) {
@@ -2951,8 +2993,33 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
 
         // Analyze each JavaScript file for class information
         foreach ($js_files as $file) {
-            // Skip most temp files, but handle auto-generated model classes
-            if (str_contains($file, 'storage/rsx-tmp/')) {
+            // Generated auth check mirrors declare NO class - they are trailing-statement
+            // attachments onto the Permission / Portal_Permission classes, which are
+            // already registered from their own Core/Js source files. Nothing to define.
+            if (str_starts_with(Rsx_Project_Paths::key_for($file), Rsx_Project_Paths::stub_key(Rsx_Project_Paths::STUBS_AUTH, ''))) {
+                continue;
+            }
+
+            // GENERATED STUBS ARE CLASSIFIED BEFORE THE BLANKET TEMP SKIP - they live in
+            // the tmp tree, but they declare the classes the dependency sort orders on.
+            //
+            // Check if this is a JS stub file (not in PHP manifest, needs direct parsing)
+            if (Rsx_Project_Paths::is_stub_file($file)) {
+                $stub_content = file_get_contents($file);
+                $stub_metadata = $this->_extract_stub_class_info($stub_content);
+
+                if (!empty($stub_metadata['class'])) {
+                    $class_definitions[$stub_metadata['class']] = [
+                        'name' => $stub_metadata['class'],
+                        'extends' => $stub_metadata['extends'],
+                        'decorators' => null,  // Stubs don't have method decorators
+                    ];
+                }
+                continue;
+            }
+
+            // Skip other temp files, but handle auto-generated model classes
+            if (Rsx_Project_Paths::is_under_tmp($file)) {
                 // Check if this is the auto-generated model classes file
                 if (str_contains($file, 'bundle_generated_models_')) {
                     // Parse simple class declarations: class Foo extends Bar {}
@@ -2966,29 +3033,6 @@ implode("\n", array_map(fn ($f) => '    - ' . str_replace(base_path() . '/', '',
                             ];
                         }
                     }
-                }
-                continue;
-            }
-
-            // Generated auth check mirrors declare NO class - they are trailing-statement
-            // attachments onto the Permission / Portal_Permission classes, which are
-            // already registered from their own Core/Js source files. Nothing to define.
-            if (str_contains($file, Auth_BundleIntegration::STUB_DIR . '/')) {
-                continue;
-            }
-
-            // Check if this is a JS stub file (not in PHP manifest, needs direct parsing)
-            // Stub files are in storage/rsx-build/js-stubs/ or storage/rsx-build/js-model-stubs/
-            if (str_contains($file, 'storage/rsx-build/js-stubs/') || str_contains($file, 'storage/rsx-build/js-model-stubs/')) {
-                $stub_content = file_get_contents($file);
-                $stub_metadata = $this->_extract_stub_class_info($stub_content);
-
-                if (!empty($stub_metadata['class'])) {
-                    $class_definitions[$stub_metadata['class']] = [
-                        'name' => $stub_metadata['class'],
-                        'extends' => $stub_metadata['extends'],
-                        'decorators' => null,  // Stubs don't have method decorators
-                    ];
                 }
                 continue;
             }

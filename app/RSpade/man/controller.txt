@@ -197,7 +197,7 @@ API_INTERNAL ATTRIBUTE
 
 JAVASCRIPT STUB GENERATION
     Controllers with Ajax_Endpoint methods get stubs in
-    storage/rsx-build/js-stubs/ControllerName.js:
+    tmp/js-stubs/ControllerName.js:
 
         class User_Controller {
             static async search(...args) {
@@ -392,7 +392,7 @@ TROUBLESHOOTING
     JavaScript stub missing:
         - Ensure Ajax_Endpoint attribute present
         - Rebuild manifest: php artisan rsx:manifest:build
-        - Check storage/rsx-build/js-stubs/
+        - Check tmp/js-stubs/
 
     Authentication issues:
         - Confirm the surface's #[Auth] names the checks you expect

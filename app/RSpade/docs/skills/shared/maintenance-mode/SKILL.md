@@ -10,7 +10,7 @@ php artisan rsx:maintenance:enable --reason="database surgery"
 php artisan rsx:maintenance:disable
 ```
 
-One flag file (`storage/rsx-framework/.maintenance.mode.framework.update`) whose **content is your reason**. Both commands are **intercepted PRE-BOOT in `system/artisan`** and shell out to `system/bin/maintenance-mode.sh`, which is why they work on a broken tree, can never be refused by the gate they control, and appear in no `php artisan list`. Both are idempotent.
+One flag file (`storage/state/.maintenance.mode.framework.update`) whose **content is your reason**. Both commands are **intercepted PRE-BOOT in `system/artisan`** and shell out to `system/bin/maintenance-mode.sh`, which is why they work on a broken tree, can never be refused by the gate they control, and appear in no `php artisan list`. Both are idempotent.
 
 `--no-services` does the flag half only (no supervisorctl, no task kill).
 
@@ -60,7 +60,7 @@ The flag goes up before anything stops because **a process booting into the wind
 
 Disable is **stateless**: it starts whichever of the five units exist, with no record of what enable stopped - so a unit you had deliberately stopped beforehand gets started. Deliberate; determinism beats a state file that can go stale.
 
-**The node RPC helpers are a special case.** The build helpers (js-parser, js-transformer, minify, jqhtml-compile, js-sanitizer, js-code-quality) and ssr-server are spawned on demand by whatever PHP process needed one, then abandoned to PID 1 - **no `supervisorctl stop` reaches them**, and stopping php-fpm kills the workers, never the daemons they left behind. They are found by `pgrep -f -- '--socket=<storage>/rsx-tmp/'` and TERM/settle/KILLed. They must die because a maintenance window is by definition the moment the code under them changes. **Disable does not restart them**, deliberately: they hold no state, the next process that needs one spawns it, and that is what guarantees the post-window daemon runs post-window code.
+**The node RPC helpers are a special case.** The build helpers (js-parser, js-transformer, minify, jqhtml-compile, js-sanitizer, js-code-quality) and ssr-server are spawned on demand by whatever PHP process needed one, then abandoned to PID 1 - **no `supervisorctl stop` reaches them**, and stopping php-fpm kills the workers, never the daemons they left behind. They are found by `pgrep -f -- '--socket=<tmp>/'` and TERM/settle/KILLed. They must die because a maintenance window is by definition the moment the code under them changes. **Disable does not restart them**, deliberately: they hold no state, the next process that needs one spawns it, and that is what guarantees the post-window daemon runs post-window code.
 
 ---
 

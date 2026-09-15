@@ -103,7 +103,7 @@ RSX:DOCUMENTS:STATUS
         | Unsupported           | 10    |
         +-----------------------+-------+
 
-        PDF rendition cache (storage/rsx-renditions):
+        PDF rendition cache (tmp/renditions):
         +--------+---------------------------------------+
         | Metric | Value                                 |
         +--------+---------------------------------------+

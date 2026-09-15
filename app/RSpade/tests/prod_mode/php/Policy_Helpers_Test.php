@@ -153,6 +153,29 @@ class Policy_Helpers_Test extends Rsx_Test_Abstract
     }
 
     // -------------------------------------------------------------------------
+    // The build-authorization machinery was DELETED. There is ONE build context
+    // (Rsx_Build_Context), recognised from argv and carried to subprocesses as an
+    // internal flag - no in-process force switch, no command allowlist.
+    // -------------------------------------------------------------------------
+
+    public static function test_the_force_build_switch_is_gone()
+    {
+        static::__assert_false(
+            property_exists(Manifest::class, '_force_build'),
+            'Manifest::$_force_build must not exist - the build context is the only build authorization'
+        );
+    }
+
+    public static function test_the_safe_command_allowlist_is_gone()
+    {
+        static::__assert_false(
+            method_exists(Manifest::class, '_is_safe_command'),
+            '_is_safe_command() must not exist - a command either produces the build or does not '
+            . 'need the manifest at all'
+        );
+    }
+
+    // -------------------------------------------------------------------------
     // _should_merge_bundles was DELETED (merging is BACKLOG, not implemented).
     // -------------------------------------------------------------------------
 

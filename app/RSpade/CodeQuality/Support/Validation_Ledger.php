@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Support;
 
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * The ONE store of "this file already passed this check".
@@ -16,7 +17,7 @@ use App\RSpade\Core\Manifest\Manifest;
  *
  * This class is that memory, once, for every rule: ONE var_export'd PHP array at
  *
- *     storage/rsx-tmp/persistent/validation_ledger.php
+ *     tmp/persistent/validation_ledger.php
  *
  * shaped
  *
@@ -330,11 +331,7 @@ class Validation_Ledger
             return static::$path_override;
         }
 
-        if (function_exists('storage_path')) {
-            return storage_path('rsx-tmp/persistent/validation_ledger.php');
-        }
-
-        return '/var/www/html/storage/rsx-tmp/persistent/validation_ledger.php';
+        return Rsx_Project_Paths::validation_ledger_file();
     }
 
     /**

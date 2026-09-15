@@ -1,33 +1,35 @@
 APP_MODE(3)                 RSX Framework Manual                 APP_MODE(3)
 
 NAME
-    app_mode - Application execution modes and the sealed production build
+    app_mode - Application execution modes and the mechanics of a sealed build
 
 SYNOPSIS
     Environment (.env):
         RSX_MODE=development|debug|production
 
-    Lifecycle commands:
+    Mode transitions:
         php artisan rsx:prod:enable [--debug]
-        php artisan rsx:prod:refresh [--debug]
         php artisan rsx:prod:disable
-        php artisan rsx:prod:verify
-
-    Convenience alias (delegates to the above):
         php artisan rsx:mode:set dev|debug|prod
 
-    Build engine + packaging:
-        php artisan rsx:prod:build [--force] [--authorized]
-        php artisan rsx:prod:export [--path=./rsx-export]
+    The build:
+        php artisan rsx:build [--force]
+        php artisan rsx:clean [--force]
+        php artisan rsx:prod:verify
 
-    CDN externals mirror (development only):
+    CDN externals mirror:
         php artisan rsx:cdn_externals:refresh
+
+    DEPLOYING is a separate topic with its own page: rsx:man prod carries the
+    deployment recipes, the read-only posture, the administration levers and
+    the error catalog. This page is the mechanics underneath them.
 
 DESCRIPTION
     RSpade runs in one of three modes. RSX_MODE (read from the project-root
-    .env, and written only by rsx:mode:set) is the SINGLE source of truth for
-    the mode. Laravel's app.env and app.debug are DERIVED from it in
-    config/app.php; the APP_ENV and APP_DEBUG env keys are not read anywhere.
+    .env, and written only by the mode-transition commands) is the SINGLE
+    source of truth for the mode. Laravel's app.env and app.debug are DERIVED
+    from it in config/app.php; the APP_ENV and APP_DEBUG env keys are not read
+    anywhere.
 
         RSX_MODE       app.env      app.debug
         development    local        true
@@ -52,11 +54,10 @@ DESCRIPTION
 
     debug and production ("prod modes")
         Both are SEALED builds. A sealed build is compiled ONCE by an
-        explicit command (rsx:prod:enable / rsx:prod:refresh) and then
-        treated as IMMUTABLE. The framework will NOT auto-rebuild the
-        manifest or JIT-compile a bundle in a prod mode; if a build artifact
-        is missing it fails loud instead of silently degrading to JIT
-        compilation.
+        explicit command - rsx:build - and then treated as IMMUTABLE. The
+        framework will NOT auto-rebuild the manifest or JIT-compile a bundle
+        in a prod mode; if a build artifact is missing it fails loud instead
+        of silently degrading to JIT compilation.
 
         debug is a production-like LOCAL test build: unminified, sourcemaps
         survive, console_debug() still works. Use it to reproduce a
@@ -65,12 +66,12 @@ DESCRIPTION
         production (strict prod) is the fully optimized deployment build:
         minified, sourcemaps gone, console_debug() stripped from the output.
 
-    The word "sealed" is literal: rsx:prod:enable writes a seal file that
-    pins the exact build on disk, and the framework then refuses obviously
-    wrong mutations of the build assets (see GUARDS). Two byte-identical
-    codebases produce byte-identical build assets (see DETERMINISM), which
-    is what makes a sealed build safe to compile once and distribute across
-    a cluster.
+    The word "sealed" is literal: the build writes a seal file that pins the
+    exact build on disk, and the framework then refuses to write a build
+    artifact from anything but a build (see GUARDS). Two byte-identical
+    codebases produce byte-identical build assets (see DETERMINISM CONTRACT),
+    which is what makes a sealed build safe to compile once and distribute
+    across a cluster.
 
 MODE COMPARISON
     Behavior                    development  debug        production
@@ -81,80 +82,112 @@ MODE COMPARISON
     Inline sourcemaps survive   Yes          Yes          No
     console_debug() in browser  Yes          Yes          No (stripped)
     Debug block in window.rsxapp Yes         Yes          No
-    CDN assets                  External URL Cached local Cached local
+    CDN assets                  Mirrored     Mirrored     Mirrored
     Sealed / immutable build    No           Yes          Yes
     Error if artifacts missing  No           Yes          Yes
 
     Note the two things that are NOT true of any mode: nothing merges the
     per-bundle JS/CSS into a single file (bundles are always the vendor/app
-    split), and nothing inlines CDN assets into a bundle. See CDN ASSET
-    HANDLING and BUNDLE OUTPUT.
+    split), and nothing inlines mirrored assets into a bundle. See EXTERNAL
+    ASSET MIRRORING and BUNDLE OUTPUT.
 
-THE SEALED BUILD LIFECYCLE
-    A prod build has an explicit lifecycle managed by four commands. Each is
-    a thin, single-purpose entry point; the actual compilation is one shared
-    engine (rsx:prod:build).
-
+THE MODE TRANSITIONS
     rsx:prod:enable [--debug]
-        Compile a fresh sealed build and enter prod mode. Without --debug it
-        builds strict production; with --debug it builds the debug variant.
+        Heal the .env symlink invariant (see ENV FILE INVARIANT), write
+        RSX_MODE, then run `rsx:build --force` in a fresh subprocess - which
+        boots reading the RSX_MODE just written. Without --debug it builds
+        strict production; with --debug it builds the debug variant.
 
-        Steps:
-        1. Heal the .env symlink invariant (see ENV FILE INVARIANT).
-        2. Validate the environment (strict prod only - see ENVIRONMENT
-           VALIDATION). --debug skips the hard check (warn-only).
-        3. Set RSX_MODE in .env and sync it into the running process so the
-           spawned build subprocess inherits the right mode.
-        4. Clear the old Laravel + rsx caches (and any prior seal).
-        5. Run the build pipeline in an AUTHORIZED subprocess
-           (rsx:prod:build --force --authorized).
-        6. On success ONLY, write the seal. A failed pipeline leaves the
-           system unsealed - fix the error and run enable again.
+        The build is what produces and seals the assets; this command adds
+        nothing to it. `rsx:build --force` on a box already in a prod mode is
+        the same operation without the mode write - which is why there is no
+        separate "refresh" command.
 
-    rsx:prod:refresh [--debug]
-        Rebuild the sealed assets in place. Requires an existing seal (if
-        there is none it tells you to run rsx:prod:enable). Re-runs the
-        pipeline and rewrites the seal. It PRESERVES the mode the build was
-        sealed for unless --debug is given, which flips the sealed build to
-        the debug variant. This is the command to run after pulling new code
-        onto a prod box.
+        A failed build leaves the box unsealed. The message says so, and says
+        the box has nothing to serve until the build succeeds.
 
     rsx:prod:disable
-        Leave prod mode and return to development. Removes the seal FIRST
-        (so the following cache clears are not blocked by the immutability
-        guard), sets RSX_MODE=development, clears the prod caches, restores
-        the DEVELOPMENT composer autoloader (a plain, non-authoritative
-        dump - a strict-prod build leaves a classmap-authoritative autoloader
-        that must be undone so new/renamed classes resolve again), and
-        pre-warms the dev bundle JIT. Idempotent: safe to run when not
-        sealed.
+        Heal the .env invariant, remove the seal, write
+        RSX_MODE=development, run rsx:clean, restore the DEVELOPMENT composer
+        autoloader (a plain, non-authoritative dump - a strict-prod build
+        leaves a classmap-authoritative autoloader that must be undone so
+        new and renamed classes resolve again), then run rsx:build.
+        Idempotent: safe to run on a box already in development.
+
+    rsx:mode:set dev|debug|prod
+        Kept for muscle memory. A thin delegator so there is exactly ONE
+        implementation of each transition:
+            dev, development  -> rsx:prod:disable
+            debug             -> rsx:prod:enable --debug
+            prod, production  -> rsx:prod:enable
 
     rsx:prod:verify
         The cluster / CI tool. Requires a seal. Recomputes the sha256 of
         every sealed asset, checks the build_key on disk against the seal,
         and reports OPcache posture (advisory only). Prints a table and
-        exits 0 when the build matches the seal, 1 otherwise. Run it in a
-        deploy health check. (It carries no environment-sanity rows: app.env
-        and app.debug derive from RSX_MODE, so nothing can disagree with the
-        seal except the mode itself, which the drift check already reports.)
+        exits 0 when the build matches the seal, 1 otherwise. (It carries no
+        environment-sanity rows: app.env and app.debug derive from RSX_MODE,
+        so nothing can disagree with the seal except the mode itself, which
+        the drift check already reports.)
 
     rsx:cdn_externals:refresh
         The ONE expiry for the CDN externals mirror (rsx/resource/.cdn-cache/):
-        it empties the store, clears the compiled bundle caches, re-mirrors every
-        declaration and recompiles, so every mirrored asset is re-fetched.
-        Refused on a sealed host - there the mirror is the copy the build
-        shipped with, and rsx:prod:refresh is the command that rebuilds it.
+        it delegates the wipe to rsx:clean and the rebuild to rsx:build, so
+        every mirrored asset is re-fetched and every bundle recompiled.
 
-    rsx:mode:set dev|debug|prod
-        Kept for muscle memory. It is a thin delegator so there is exactly
-        ONE implementation of each transition:
-            dev, development  -> rsx:prod:disable
-            debug             -> rsx:prod:enable --debug
-            prod, production  -> rsx:prod:enable
+THE BUILD
+    rsx:build is the only command that produces what the site serves. There
+    is no second build path and no build mode.
+
+    In DEVELOPMENT it does what a page would otherwise do for itself on first
+    request - the manifest and every bundle - and nothing else. It seals
+    nothing.
+
+    In a PROD MODE the pipeline is fixed and complete:
+
+        1. preflight   build/ and tmp/ writable, checked before anything is
+                       destroyed. A build that discovers halfway through that
+                       it cannot write has already destroyed what it was
+                       replacing.
+        2. rsx:clean   a build starts from nothing, or it is not
+                       reproducible. Spawned as a subprocess carrying the
+                       build context.
+        3. manifest    the index every later step reads.
+        4. externals   every declared external mirrored, so the artifact is
+                       self-contained. One console line per download naming
+                       the URL; silence for a file already verified present;
+                       anything unfetchable FAILS the build.
+        5. bundles     every module bundle, minified in strict production.
+        6. composer    optimized autoloader; --classmap-authoritative in
+                       strict production. This runs BEFORE the Laravel caches
+                       because composer's post-autoload-dump hook clears
+                       Laravel's compiled files. The discovery step
+                       (package:discover) is run IN THIS PROCESS rather than
+                       through composer's hook, which would spawn a bare
+                       artisan that the seal gate refuses mid-build.
+        7. laravel     route, event and VIEW caches, all into build/.
+                       Precompiling Blade is what lets a served request read
+                       the build tree without writing to it; a template that
+                       fails to precompile fails the build.
+        8. the seal    written LAST and only on success.
+
+    It refuses without --force when a seal is already present:
+
+        A sealed production build is already present.
+          Rebuilding replaces what this box is serving right now.
+          Run it deliberately: php artisan rsx:build --force
+
+    rsx:clean owns every wipe: it quiesces the node daemons, empties build/
+    and tmp/ (Laravel's caches and compiled views included), flushes the
+    Redis caches, sweeps orphaned atomic-write staging directories, and
+    recreates the two empty roots. In a prod mode it requires --force.
+
+    Both commands check writability before touching anything and refuse with
+    nothing changed.
 
 THE SEAL FILE
     Location:
-        storage/rsx-build/prod_seal.json
+        build/prod_seal.json
 
     The seal is the on-disk record of a compiled build. It is JSON:
 
@@ -204,7 +237,7 @@ THE DEBUG VARIANT
           bundle.
 
     Everything else matches production: it is a sealed, immutable build with
-    no auto-rebuild, and CDN assets are cached locally. Build it with
+    no auto-rebuild, and external assets are mirrored locally. Build it with
     rsx:prod:enable --debug (or rsx:mode:set debug).
 
 STRICT PRODUCTION
@@ -228,18 +261,15 @@ STRICT PRODUCTION
 ENVIRONMENT VALIDATION
     There is none, and there is nothing to validate. app.env and app.debug
     derive from RSX_MODE (see DESCRIPTION), so setting RSX_MODE=production IS
-    setting the production environment with debug off. rsx:prod:enable used
-    to refuse unless APP_ENV=production and APP_DEBUG=false; those checks
-    became tautological and were removed, along with the matching
-    rsx:prod:verify rows and the rsx:health "production but APP_DEBUG=true"
-    warning.
+    setting the production environment with debug off.
 
 DETERMINISM CONTRACT
     A sealed build is deterministic: two byte-identical codebases, checked
-    out at DIFFERENT absolute paths, produce an IDENTICAL build_key and
-    IDENTICAL bundle filenames, byte-for-byte. This is what lets a build be
+    out at DIFFERENT paths, produce an IDENTICAL build_key and IDENTICAL
+    bundle filenames, byte-for-byte. This is what lets a build be
     compiled once and trusted across a cluster (or cached by CI keyed on the
-    build_key).
+    build_key), and it is what makes the CI-artifact and container-image
+    recipes in rsx:man prod honest.
 
     How it holds:
 
@@ -248,18 +278,29 @@ DETERMINISM CONTRACT
        the file's PROJECT-RELATIVE path plus its CONTENT (sha512), never the
        absolute path and never disk timestamps. The same logical file at two
        different checkout locations therefore hashes identically. (The
-       development branch still uses a fast absolute-path + size + mtime
-       hash - it only needs to notice local edits, and is deliberately not
-       portable.)
+       development branch still uses a fast project-relative-path + size +
+       mtime hash - it only needs to notice local edits, and is deliberately
+       not portable. The path is relative there too: base_path() sits above
+       symlinks to the application and volatile trees, so an absolute path
+       would give one file two identities.)
 
     2. The manifest hash excludes per-file mtime/size. Those still live in
        the cache file (dev change-detection needs them) but are OUT of the
        hashed projection. The prod cache file also drops the "generated"
-       timestamp and its comment (that timestamp moved to the seal). So the
-       the manifest index produced by two identical checkouts is byte-stable,
+       timestamp and its comment (that timestamp moved to the seal). The
+       top-level SECTION map is ksorted at save, so a cold build and an
+       incremental one emit the same sections in the same order rather than
+       in the order each happened to produce or inherit them. So the
+       manifest index produced by two identical checkouts is byte-stable,
        and build_key (the manifest hash) is content-derived.
 
-    3. Bundle filenames are {Bundle}__{app|vendor}.{hash8}.{ext}, where the
+    3. Generated-file keys in the manifest index are LOGICAL, not absolute.
+       A generated stub is recorded as tmp/js-stubs/<name>.js whatever
+       RSX_TMP_PATH resolves to on the building box, so two boxes with
+       different tmp roots produce identical indexes and identical build
+       keys.
+
+    4. Bundle filenames are {Bundle}__{app|vendor}.{hash8}.{ext}, where the
        hash8 derives from the same relative-path + content inputs (plus the
        committed lockfile content hashes and npm declarations, already
        deterministic). Minified output is reproducible given the pinned,
@@ -272,51 +313,52 @@ DETERMINISM CONTRACT
 GUARDS
     A sealed build is protected by developer GUARDRAILS - not a security
     boundary (see WHAT THE GUARDS DO NOT COVER). They exist to stop a
-    developer from accidentally diverging or destroying the immutable build.
+    developer from accidentally diverging or destroying the build.
 
-    Only an AUTHORIZED rebuild context may write the build assets while
-    sealed. Authorization is an INVOCATION parameter and travels as a --flag
-    (--authorized, read from argv by a boot-safe helper) or an explicit
-    in-process call (enable/refresh mark themselves). It is NEVER an
-    environment variable. A web request, a plain artisan command, or a
-    tinker session can therefore never write build assets while sealed.
+    Permission to write the build tree is a property of the PROCESS - the
+    BUILD CONTEXT - not of a flag anybody can pass or an environment
+    variable. rsx:build declares itself a build context from the first line
+    of boot (recognised from argv, so it holds before any handler runs) and
+    carries it to every subprocess as a framework-internal flag; rsx:clean
+    declares one too, because discarding the tree is its job. A web request,
+    a plain artisan command or a tinker session is never a build context.
 
     The guards:
 
-        rsx:clean refuses while sealed.
-            "System is in prod mode (sealed build). Run rsx:prod:refresh to
-            rebuild the assets, or rsx:prod:disable first." It refuses BEFORE
-            deleting anything - it will not wipe the deployment's only copy
-            of the assets.
+        Every framework write into build/ passes Rsx_Project_Paths::
+        assert_build_writable(). In a prod mode, outside a build context, it
+        throws:
+            "<context>: '<path>' is a build artifact, and only a build may
+            write it."
+        It keys on the MODE, not on whether a seal happens to be present -
+        an unsealed production box is a broken deployment, and letting an
+        arbitrary command write into it is how it stays broken. In
+        development it is a no-op.
 
-        rsx:prod:build refuses while sealed unless authorized.
-            A plain invocation is turned away and pointed at rsx:prod:refresh.
+        Manifest::init() refuses to boot in a prod mode when the manifest
+        index or the seal is missing:
+            "This production build is unsealed. Run: php artisan rsx:build
+            --force. See rsx:man prod."
+        The exceptions are the commands that repair the box - rsx:build and
+        its children, the mode transitions, rsx:clean, rsx:man, and the bare
+        introspection invocations.
 
-        The manifest and bundle compiler refuse to rebuild while sealed
-        unless authorized, and their "artifact missing" errors name
-        rsx:prod:refresh.
+        rsx:clean and rsx:build refuse without --force in a prod mode.
 
-        Write/delete choke points assert immutability. The shared low-level
-        write helpers (file_put_contents_safe, rmdir_recursive, and the
-        browser-storage helper clear) call Rsx_Prod_Seal::assert_mutable()
-        when the target is under storage/rsx-build. When sealed + not
-        authorized, the write throws:
-            "...is an immutable prod build asset (sealed prod mode); rebuild
-            via rsx:prod:refresh."
-        The check short-circuits cheaply when not sealed (the common path),
-        so it costs nothing in dev.
+        Only the build phase may download an external asset into the mirror
+        in a prod mode.
 
-    The ONLY sanctioned way to change a sealed build is rsx:prod:refresh
-    (rebuild in place) or rsx:prod:disable (leave prod mode).
+    The ONLY sanctioned way to change a sealed build is to run the build
+    again (rsx:build --force) or to leave the mode (rsx:prod:disable).
 
 WHAT THE GUARDS DO NOT COVER
     The guards are guardrails, not a security boundary. They intercept the
     framework's OWN write paths. They do NOT (and cannot) stop a developer
     or process that goes around the framework:
 
-        - Raw filesystem meddling: `rm -rf storage/rsx-build`, editing a
-          bundle file by hand, `cp` over manifest_index.php. Nothing at the
-          framework layer sees these.
+        - Raw filesystem meddling: `rm -rf build/`, editing a bundle file by
+          hand, `cp` over manifest_index.php. Nothing at the framework layer
+          sees these.
         - Direct database writes (DB::table()->update(), raw SQL) or manual
           data changes.
 
@@ -327,46 +369,17 @@ WHAT THE GUARDS DO NOT COVER
     rsx:prod:verify is the backstop that DETECTS such drift after the fact
     (recomputed asset hashes will not match the seal).
 
-BUILD ENGINE AND CACHES
-    rsx:prod:build is the shared pipeline that enable/refresh/export drive.
-    It is not normally run by hand (while sealed it refuses without
-    --authorized). Its steps:
-
-        1. Rebuild the manifest (forced).
-        2. Compile every module bundle (forced). The minify RPC server is
-           restarted before and shut down after (minification itself only
-           runs in strict production; the debug variant compiles unminified).
-        3. Optimize the composer autoloader (composer dump-autoload
-           --optimize; strict production adds --classmap-authoritative,
-           which pins the system/ PSR-4 tree). This runs BEFORE the Laravel
-           caches because composer's post-dump hook clears Laravel's
-           compiled files.
-        4. Build Laravel caches via `optimize:cache` - run LOUD (a non-zero
-           exit fails the build). Authorization is forwarded to that child
-           as the --authorized flag, never via env inheritance.
-
-    optimize:cache reality (IMPORTANT):
-        RSpade's config layer reads deployment facts through env() at
-        runtime. Laravel's config:cache and view:cache FREEZE env() (a
-        cached config returns null for any later env() call), which is
-        incompatible with how RSpade config works. Those two caches are
-        therefore DROPPED from optimize:cache. Only route and event caching
-        run. Do NOT reintroduce config:cache / view:cache expecting them to
-        help - they would break runtime config resolution. (A dedicated
-        config()-migration or a Dotenv-override design is the future path;
-        see the framework BACKLOG.)
-
-    --skip-laravel-cache skips step 4 entirely (used by the determinism
-    harness so a cache build cannot perturb the asset comparison).
+    The OS-level answer is the read-only posture in rsx:man prod: system/,
+    rsx/ and build/ owned by the deploy user and read-only to the web user.
 
 BUNDLE OUTPUT
     Bundles are ALWAYS emitted as a vendor/app split, in every mode:
-        bundles/{Bundle}__app.{hash8}.{js|css}
-        bundles/{Bundle}__vendor.{hash8}.{js|css}
+        build/bundles/{Bundle}__app.{hash8}.{js|css}
+        build/bundles/{Bundle}__vendor.{hash8}.{js|css}
 
     There is no single-file merge. Merging all of a bundle's JS (or CSS)
     into one file is a deferred idea, not a current behavior - do not expect
-    a merged app.js/app.css. (Tracked in the framework BACKLOG.)
+    a merged app.js/app.css.
 
     The emission ORDER inside a bundle is a load-bearing contract:
     files are emitted in declared include order, class stubs sit at their
@@ -395,22 +408,24 @@ EXTERNAL ASSET MIRRORING
     THE STORE
         rsx/resource/.cdn-cache/, one flat directory of files named
         <md5(url)>_<safe basename>.<ext> and served from
-        /_vendor/<that filename>. It is COMMITTED TO GIT - not under storage/ -
-        so it survives rsx:clean and mode switches, and CI builds are
-        reproducible. It is URL-keyed: a present file is by definition the
-        right file, nothing expires on its own, and a compile only ever ADDS.
-        Commit the files a compile adds; git status shows them.
+        /_vendor/<that filename>. It is COMMITTED TO GIT - not under a
+        volatile tree - so it survives rsx:clean and mode switches, and CI
+        builds are reproducible. It is URL-keyed: a present file is by
+        definition the right file, nothing expires on its own, and a compile
+        only ever ADDS. Commit the files a compile adds; git status shows
+        them.
 
     WHO DOWNLOADS
-        Development web requests, any CLI invocation, and the production build
-        (its explicit "[2/5] Mirroring external assets" step, then the
-        compile). Externals need that dedicated step because nothing renders
-        them at build time - the client loads them at runtime by identifier.
+        Development web requests, any development CLI invocation, and the
+        build's own "Mirroring external assets" step. Externals need that
+        dedicated step because nothing renders them at build time - the
+        client loads them at runtime by identifier.
 
-        A SEALED WEB REQUEST NEVER DOWNLOADS. A miss while sealed THROWS,
-        naming the file, the store directory and rsx:prod:refresh. A miss in
-        development is a 404 naming rsx:cdn_externals:refresh (the compile
-        that names the file never ran on this box, or the store was emptied).
+        IN A PROD MODE ONLY THE BUILD MAY DOWNLOAD. A sealed web request
+        never does: a miss THROWS, naming the file, the store directory and
+        rsx:build. A miss in development is a 404 naming
+        rsx:cdn_externals:refresh (the compile that names the file never ran
+        on this box, or the store was emptied).
 
     FAILING LOUD
         An unfetchable reference FAILS THE COMPILE, naming the URL - a
@@ -420,10 +435,8 @@ EXTERNAL ASSET MIRRORING
         now fails too, rather than shipping un-optimized CSS.
 
     THE ONE EXPIRY
-        php artisan rsx:cdn_externals:refresh - empties the store, clears the
-        compiled bundle caches, mirrors the declared externals and compiles
-        EVERY bundle (which is what makes the store complete). It REFUSES on a
-        sealed host; there the rebuild command is rsx:prod:refresh.
+        php artisan rsx:cdn_externals:refresh - empties the store and
+        rebuilds, which is what makes the store complete again.
 
     CSP
         A mirrored asset contributes NOTHING to the policy in any mode: it is
@@ -450,24 +463,20 @@ WINDOW.RSXAPP ACROSS MODES
 
 ENV FACTS VS INVOCATION FLAGS
     RSX_MODE is a deployment ENVIRONMENT fact and lives in .env. It is NOT
-    an invocation parameter. When a prod-mode command spawns a build
+    an invocation parameter. When a mode-transition command spawns the build
     subprocess, it writes RSX_MODE to .env FIRST and also syncs the value
     into the running process (putenv + $_ENV + $_SERVER + the mode cache) so
     the child - which inherits the parent's environment and whose Dotenv
     will not override an already-set var - boots on the correct mode. Without
     that sync an enable launched from a development parent would spawn a
-    build that runs unminified/unstripped, and a disable launched from a
-    production parent would throw "Manifest not built for production mode"
-    while pre-warming dev.
+    build that runs unminified and unstripped.
 
-    Per-invocation intent is a --flag, never an env prefix:
-        - Force a rebuild:  --force
-        - Authorize a sealed rebuild:  --authorized
-    Do NOT prefix invocations with KEY=VALUE. This is an owner ruling; see
-    the CLI invocation parameters note in Core/CLAUDE.md.
+    Per-invocation intent is a --flag, never an env prefix. Do NOT prefix
+    invocations with KEY=VALUE. This is an owner ruling; see the CLI
+    invocation parameters note in Core/CLAUDE.md.
 
-        WRONG:  RSX_FORCE_BUILD=1 php artisan rsx:prod:build
-        RIGHT:  php artisan rsx:prod:build --force
+        WRONG:  SOMETHING=1 php artisan rsx:build
+        RIGHT:  php artisan rsx:build --force
 
 ENV FILE PREPARATION (.env.dist -> .env)
     .env is LOCAL configuration and is never distributed. .env.dist at the
@@ -513,8 +522,7 @@ ENV FILE PREPARATION (.env.dist -> .env)
     behind rsx:env:heal, both entrypoints pre-boot (via
     bootstrap/rsx_env_heal.php) and the container entrypoint. Development runs
     it on every boot; the cost when nothing has changed is one stat against
-    storage/rsx-tmp/env_heal.stamp. Outside development it runs only when .env
-    is absent.
+    tmp/env_heal.stamp. Outside development it runs only when .env is absent.
 
 ENV FILE INVARIANT (.env SYMLINK HEALER)
     RSX_MODE, and every other configuration key, is read from ONE
@@ -551,78 +559,32 @@ ENV FILE INVARIANT (.env SYMLINK HEALER)
     (system/.env.replaced_by_healer; gitignored).
 
     It runs automatically after every framework pull, at the start of
-    rsx:clean (unsealed path), and FIRST in every prod-mode transition
-    (enable / refresh / disable) so the RSX_MODE write lands in the single
-    healed file.
-
-DEPLOYMENT WORKFLOW
-    Typical flow:
-
-    1. Develop (RSX_MODE=development). Changes are live on save.
-
-    2. Reproduce a prod-specific issue locally:
-           php artisan rsx:prod:enable --debug
-       Readable, sealed build with working console_debug. Return with
-       rsx:prod:disable.
-
-    3. On the production host:
-           php artisan rsx:prod:enable
-       Compiles + seals the strict build.
-
-    4. Verify:
-           php artisan rsx:prod:verify
-
-    5. After pulling new code onto the prod host, rebuild in place:
-           php artisan rsx:prod:refresh
-
-    6. Package a deployable elsewhere:
-           php artisan rsx:prod:export
-       Runs the (authorized) build and copies system/, rsx/, node_modules/,
-       vendor/, storage/rsx-build/, and root *.json into the export dir.
-       Excludes .env, storage/app, storage/logs,
-       storage/framework/{cache,sessions,views}, storage/rsx-tmp, tests, and
-       VCS/IDE dirs. The destination host must
-       supply its own .env.
-
-    7. Return to development:
-           php artisan rsx:prod:disable
+    rsx:clean, and FIRST in every mode transition so the RSX_MODE write lands
+    in the single healed file.
 
 ERROR HANDLING
     In prod modes, missing build artifacts fail loud rather than triggering
-    a JIT rebuild:
+    a JIT rebuild. The full error catalog, with remedies, is in rsx:man prod.
+    The two most common:
 
-        "Manifest not built for production mode"
-            The manifest cache is missing/invalid while sealed.
-            Fix: php artisan rsx:prod:refresh
+        "This production build is unsealed."
+            The manifest index or the seal is missing.
+            Fix: php artisan rsx:build --force
 
         "Bundle 'X' not compiled for production mode"
             A bundle is missing while sealed.
-            Fix: php artisan rsx:prod:refresh
-
-        "System is in prod mode (sealed build)."
-            You ran rsx:clean (or a plain rsx:prod:build) while sealed.
-            Fix: rsx:prod:refresh to rebuild, or rsx:prod:disable to leave.
-
-        "...is an immutable prod build asset (sealed prod mode)"
-            An unauthorized context tried to write under storage/rsx-build.
-            This is the immutability guard doing its job.
-
-GITIGNORE
-    Add to .gitignore:
-        /rsx-export/
-
-    Each deployment generates a fresh export; it should not be committed.
-    (rsx/resource/.cdn-cache/, by contrast, IS committed - it is a source
-    artifact, written by every mode's compile and reviewed like any other
-    source. Commit what a compile adds.)
+            Fix: php artisan rsx:build --force
 
 SEE ALSO
-    rsx:man bundle_api
-    rsx:man manifest_api
-    rsx:man storage_directories
-    rsx:man config_rsx
+    rsx:man prod - deployment recipes, the read-only posture, administration
+    rsx:man storage_directories - the build/, tmp/ and storage/ trees
+    rsx:man bundle_api - bundle definitions and compiled output
+    rsx:man manifest_api - what the manifest index holds
+    rsx:man config_rsx - configuration tiers and the .env contract
+    skill rspade:application-modes-deployment - when to reach for which
+                       command, and diagnosing a refusal
 
 AUTHOR
     RSpade Framework
 
-RSpade                          July 2026                        APP_MODE(3)
+RSpade                       September 2026                      APP_MODE(3)

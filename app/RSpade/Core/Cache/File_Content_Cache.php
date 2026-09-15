@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Core\Cache;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 /**
  * The ONE way a per-source-file DERIVED ARTIFACT is cached on disk.
  *
@@ -20,13 +22,17 @@ namespace App\RSpade\Core\Cache;
  *
  * This class is that memory, once, for all of them:
  *
- *     storage/rsx-tmp/derived/<namespace>/<hash><variant>.<ext>
+ *     tmp/derived/<namespace>/<hash><variant>.<ext>
  *
  * ONE KEY SCHEME. <hash> is `_rsx_file_hash_for_build($source_path)` - the framework's
- * single file-identity helper, which branches on RSX_MODE exactly once (development:
- * path + size + mtime, cheap and local; production/debug: the project-RELATIVE path plus
- * the content, so a derived name is identical in two byte-identical checkouts and a sealed
- * build stays deterministic). A cache does not get an opinion about this: if it needs a
+ * single file-identity helper, which branches on RSX_MODE exactly once (development: the
+ * project-RELATIVE path + size + mtime, cheap and local; production/debug: the
+ * project-RELATIVE path plus the content, so a derived name is identical in two
+ * byte-identical checkouts and a sealed build stays deterministic). The path component is
+ * relative in both branches for the same reason: `base_path()` sits above symlinks to the
+ * application and volatile trees, so an absolute path would give one file two identities
+ * and the sweep - whose live set is built from one spelling - would delete the entries
+ * written under the other. A cache does not get an opinion about this: if it needs a
  * different identity it passes an explicit hash through the `*_for_hash()` twins (the
  * reflection cache does - it is keyed by the manifest's own sha1, which it already had).
  *
@@ -47,16 +53,17 @@ namespace App\RSpade\Core\Cache;
  * SWEEPING. Nothing here expires on a clock. `sweep($namespace, $live_hashes)` removes the
  * entries whose hash is not in a live set, and is called by whoever ALREADY has the
  * manifest - the manifest build's own Phase 7 - because building the manifest just to
- * prune would cost more than the bytes it reclaims. `rsx:clean` wipes rsx-tmp wholesale
- * and needs no wiring at all.
+ * prune would cost more than the bytes it reclaims. `rsx:clean` wipes the tmp tree wholesale
+ * and needs no wiring at all. A live set is a MANIFEST index, and a build subsystem may
+ * legitimately derive from a file the manifest does not track, so the caller is responsible
+ * for excluding every reader of the tree while it prunes: Phase 7 does that by standing down
+ * unless it holds the bundle build lock.
  *
  * See: rsx:man storage_directories, rsx:man code_quality.
  */
 class File_Content_Cache
 {
     /** Root of the derived tree, relative to the storage directory. */
-    private const ROOT = 'rsx-tmp/derived';
-
     /**
      * The identity of a source file, for cache-key purposes.
      *
@@ -91,7 +98,7 @@ class File_Content_Cache
      */
     public static function namespace_dir(string $namespace): string
     {
-        $directory = storage_path(self::ROOT . '/' . static::__sanitize($namespace));
+        $directory = Rsx_Project_Paths::derived_dir(static::__sanitize($namespace));
 
         if (!is_dir($directory)) {
             @mkdir($directory, 0755, true);
@@ -208,7 +215,7 @@ class File_Content_Cache
             return 0;
         }
 
-        $directory = storage_path(self::ROOT . '/' . static::__sanitize($namespace));
+        $directory = Rsx_Project_Paths::derived_dir(static::__sanitize($namespace));
 
         if (!is_dir($directory)) {
             return 0;
@@ -250,7 +257,7 @@ class File_Content_Cache
      */
     public static function sweep_all(array $live_hashes): int
     {
-        $root = storage_path(self::ROOT);
+        $root = Rsx_Project_Paths::derived_dir();
 
         if (!is_dir($root) || empty($live_hashes)) {
             return 0;
@@ -270,7 +277,7 @@ class File_Content_Cache
      */
     public static function clear(string $namespace): void
     {
-        $directory = storage_path(self::ROOT . '/' . static::__sanitize($namespace));
+        $directory = Rsx_Project_Paths::derived_dir(static::__sanitize($namespace));
 
         if (!is_dir($directory)) {
             return;

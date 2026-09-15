@@ -84,19 +84,20 @@ system the program runs in (`RSX_MODE`, `APP_URL`, `DB_*`, `REDIS_HOST`). It is
 NOT a channel for telling a single invocation what to do. The owner has expressed
 explicit displeasure at env-as-params; it must not reappear.
 
-- WRONG: `RSX_FORCE_BUILD=1 RSX_PROD_BUILD_AUTHORIZED=1 php artisan rsx:prod:build`
-- RIGHT: `php artisan rsx:prod:build --force --authorized`
+- WRONG: `RSX_FORCE_BUILD=1 php artisan rsx:build`
+- RIGHT: `php artisan rsx:build --force`
 
 **Passing state to a subprocess:** write the deployment fact to `.env` FIRST, then
-invoke — the child boots reading `.env` (e.g. the prod-mode commands set `RSX_MODE`
-before spawning `rsx:prod:build`, so no `RSX_MODE=` prefix is needed). Per-invocation
-intent (force, authorization) rides as `--flags`; to reach a grandchild, forward the
-flag explicitly (rsx:prod:build passes `--authorized` on to its `optimize:cache`
-child) — never rely on env inheritance.
+invoke — the child boots reading `.env` (e.g. the mode commands set `RSX_MODE` before
+spawning `rsx:build`, so no `RSX_MODE=` prefix is needed). Per-invocation intent rides
+as `--flags`; to reach a grandchild, forward the flag explicitly (`rsx:build` passes
+`--_build-context` on to its `rsx:clean` and `optimize:cache` children) — never rely on
+env inheritance.
 
-**Boot-time flag detection:** pre-handler code (Manifest boot, seal authorization)
+**Boot-time flag detection:** pre-handler code (Manifest boot, the build-tree guard)
 runs before any command's `handle()`, so it cannot use `$this->option()`. The
-sanctioned channel is argv inspection — `Manifest::__cli_has_flag('--flag')` (the same
-technique `Manifest::_is_safe_command()` uses to read the command name). Programmatic
-in-process authorization is `Rsx_Prod_Seal::authorize_process()`. Neither ever reads
-an env var for invocation intent.
+sanctioned channel is argv inspection — `Manifest::__cli_has_flag('--flag')` for a
+flag, `Rsx_Internal_Flags` for the `--_` ones the pre-boot strip lifted, and
+`$_SERVER['argv'][1]` for the command name (which is how `Rsx_Build_Context` recognises
+`rsx:build` from the first line of boot). Programmatic in-process declaration is
+`Rsx_Build_Context::begin()`. None of them ever reads an env var for invocation intent.

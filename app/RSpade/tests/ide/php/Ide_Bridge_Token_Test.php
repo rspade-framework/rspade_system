@@ -15,9 +15,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * Framework test for Ide_Bridge_Token - the local-file grant for the IDE bridge
  * (app/RSpade/Core/Ide/Ide_Bridge_Token.php).
  *
- * Each test points the token machinery at a throwaway bridge directory under
- * storage/rsx-tmp (via the rsx.ide_integration.bridge_path config the class reads),
- * so the real storage/rsx-ide-bridge grant is never touched. The suite runs in
+ * Each test points the token machinery at a throwaway bridge directory under tmp/
+ * (via the rsx.ide_integration.bridge_path config the class reads), so the real
+ * storage/rsx-ide-bridge grant is never touched. The suite runs in
  * development mode (the box default), which is what gates ensure().
  */
 class Ide_Bridge_Token_Test extends Rsx_Test_Abstract
@@ -40,12 +40,12 @@ class Ide_Bridge_Token_Test extends Rsx_Test_Abstract
     /**
      * Create a fresh, empty bridge directory and point the config at it. Returns the
      * absolute path. The class resolves its dir against the directory CONTAINING
-     * storage/ (dirname(storage_path()) - volatile storage lives at the project root),
-     * so the config value stays a 'storage/...'-prefixed path.
+     * storage/ (dirname(storage_path()) - the volatile trees live at the project root),
+     * so the config value stays a project-root-relative path.
      */
     private static function __fresh_bridge(): string
     {
-        $relative = 'storage/rsx-tmp/ide_bridge_test_' . random_hash(8);
+        $relative = 'tmp/ide_bridge_test_' . random_hash(8);
         config([
             'rsx.ide_integration.bridge_path' => $relative,
             'rsx.ide_integration.enabled' => true,

@@ -141,9 +141,9 @@ function rmdir_recursive($dir, $delete_self = true, $ignore_dirs = [])
         return false;
     }
 
-    // Guardrail: refuse to recursively delete a sealed prod build asset from an
-    // unauthorized context. Short-circuits instantly when not sealed.
-    \App\RSpade\Core\Prod\Rsx_Prod_Seal::assert_mutable($dir, 'rmdir_recursive');
+    // Guardrail: in a production-like mode the build tree may only be rewritten by a
+    // build. Short-circuits instantly in development.
+    \App\RSpade\Core\Paths\Rsx_Project_Paths::assert_build_writable($dir, 'rmdir_recursive');
 
     $items = new \RecursiveIteratorIterator(
         new \RecursiveDirectoryIterator($dir, \RecursiveDirectoryIterator::SKIP_DOTS),
@@ -560,8 +560,8 @@ function _paths_on_same_filesystem($path_a, $path_b)
  * sees either the complete old file or the complete new file - never a
  * truncation.
  *
- * The temp file is staged under storage/rsx-tmp (the temp directory wiped by
- * rsx:clean) when that lives on the same filesystem as the destination. When it
+ * The temp file is staged in the framework's staging directory (under tmp/, wiped
+ * by rsx:clean) when that lives on the same filesystem as the destination. When it
  * does NOT - rename across devices is non-atomic - the temp file is instead
  * staged in a throwaway ".tmp_<10 digits>" directory created alongside the
  * destination (same filesystem, so the rename stays atomic), which is removed
@@ -579,9 +579,9 @@ function _paths_on_same_filesystem($path_a, $path_b)
  */
 function file_put_contents_safe($file, $content)
 {
-    // Guardrail: refuse to overwrite a sealed prod build asset from an
-    // unauthorized context. Short-circuits instantly when not sealed.
-    \App\RSpade\Core\Prod\Rsx_Prod_Seal::assert_mutable($file, 'file_put_contents_safe');
+    // Guardrail: in a production-like mode the build tree may only be rewritten by a
+    // build. Short-circuits instantly in development.
+    \App\RSpade\Core\Paths\Rsx_Project_Paths::assert_build_writable($file, 'file_put_contents_safe');
 
     // WRITE THROUGH SYMLINKS: rename(2) over a symlink would REPLACE the link
     // itself with a regular file, silently destroying it. That is never what a
@@ -606,17 +606,17 @@ function file_put_contents_safe($file, $content)
 
     $dest_dir = dirname($file);
 
-    // Prefer staging in rsx-tmp (wiped by rsx:clean). If it is on a different
+    // Prefer the staging directory (wiped by rsx:clean). If it is on a different
     // filesystem than the destination, rename(2) would be non-atomic - so stage
     // in a throwaway .tmp_<n> directory alongside the destination instead, which
     // is removed recursively once we are done.
-    $rsx_tmp = storage_path('rsx-tmp');
-    ensure_directory($rsx_tmp);
+    $staging = \App\RSpade\Core\Paths\Rsx_Project_Paths::staging_dir();
+    ensure_directory($staging);
 
-    $stage_dir = $rsx_tmp;
+    $stage_dir = $staging;
     $cleanup_dir = null;
 
-    if (!_paths_on_same_filesystem($rsx_tmp, $dest_dir)) {
+    if (!_paths_on_same_filesystem($staging, $dest_dir)) {
         $cleanup_dir = $dest_dir . '/.tmp_' . random_int(1000000000, 9999999999);
         ensure_directory($cleanup_dir);
         $stage_dir = $cleanup_dir;
@@ -659,10 +659,11 @@ function file_put_contents_safe($file, $content)
  * Get relative path from base path
  *
  * Project-logical paths (manifest keys, framework path constants) are base_path()-relative
- * with ONE exception: volatile storage was relocated out of the framework tree to
- * <project>/storage, yet its entries keep the historic 'storage/...' spelling so manifest
- * keys, prod build hashing and every str_starts_with('storage/') classifier stay stable.
- * rsx_project_file_path() is the inverse of this function.
+ * with ONE exception: the three volatile trees live at the project root and are
+ * relocatable, so a path inside one of them reduces to its LOGICAL key -
+ * 'build/...', 'tmp/...', 'storage/...' - which is the same string on every box
+ * whatever the roots resolve to. That is what keeps manifest keys and build hashes
+ * identical across installs. rsx_project_file_path() is the inverse of this function.
  *
  * @param string $path Full path
  * @param string|null $base Base path (defaults to base_path())
@@ -673,9 +674,9 @@ function relative_path($path, $base = null)
     if ($base === null) {
         $base = base_path();
 
-        $storage_root = rtrim(storage_path(), '/') . '/';
-        if (str_starts_with($path, $storage_root)) {
-            return 'storage/' . substr($path, strlen($storage_root));
+        $key = \App\RSpade\Core\Paths\Rsx_Project_Paths::key_for($path);
+        if ($key !== $path) {
+            return $key;
         }
     }
 
@@ -691,19 +692,19 @@ function relative_path($path, $base = null)
 /**
  * Resolve a project-logical relative path to an absolute filesystem path.
  *
- * The inverse of relative_path(): 'storage/...' resolves against the RELOCATED storage
- * root (storage_path()), everything else against base_path(). Use this - never bare
- * base_path() - for anything under storage/: build artifacts, generated js-stubs, RPC
- * sockets, parser caches. Before the relocation both spellings resolved identically, so
- * this is also correct on a not-yet-migrated environment.
+ * The inverse of relative_path(): a key naming one of the three volatile trees
+ * ('build/...', 'tmp/...', 'storage/...') resolves through the path owner, which knows
+ * where each root actually is; everything else resolves against base_path().
  *
  * @param string $relative_path Project-logical relative path
  * @return string Absolute path
  */
 function rsx_project_file_path(string $relative_path): string
 {
-    if (str_starts_with($relative_path, 'storage/')) {
-        return storage_path(substr($relative_path, strlen('storage/')));
+    $owned = \App\RSpade\Core\Paths\Rsx_Project_Paths::absolute_for($relative_path);
+
+    if ($owned !== null) {
+        return $owned;
     }
 
     return base_path($relative_path);
@@ -1017,7 +1018,7 @@ function shell_exec_pretty($command, $real_time = true, $throw_on_error = false)
     if ($real_time) {
         // Use passthru() for real-time output without proc_open() pipe buffer issues
         // Redirect to temp file to capture output for return value
-        $temp_file = storage_path('rsx-tmp/shell_exec_pretty_' . uniqid() . '.txt');
+        $temp_file = \App\RSpade\Core\Paths\Rsx_Project_Paths::scratch_file('shell_exec_pretty', 'txt');
 
         // Use script command wrapper to show real-time output AND capture to file
         // passthru() shows output but doesn't capture it, so we use tee to do both
@@ -1478,7 +1479,7 @@ function safe_html(string $html): string
         $config = HTMLPurifier_Config::createDefault();
 
         // Cache serialized definitions for performance
-        $cache_dir = storage_path('rsx-tmp/htmlpurifier');
+        $cache_dir = \App\RSpade\Core\Paths\Rsx_Project_Paths::htmlpurifier_dir();
         if (!is_dir($cache_dir)) {
             mkdir($cache_dir, 0755, true);
         }
@@ -1506,9 +1507,11 @@ function safe_html(string $html): string
  *
  * Strategy is selected by RSX_MODE (via Rsx::is_production()), the single mode switch:
  *
- * - Development mode: a fast hash of the ABSOLUTE path + size + mtime. This is a
- *   local JIT fast path - it never leaves the machine and only needs to notice
- *   that a file on this disk changed.
+ * - Development mode: a fast hash of the PROJECT-RELATIVE path + size + mtime. This
+ *   is a local JIT fast path - it never leaves the machine and only needs to notice
+ *   that a file on this disk changed. The path is relative for the same reason it is
+ *   in the production path: one file must not get two identities because it was
+ *   reached through the `system/rsx` symlink rather than the project mount.
  *
  * - Production/debug mode: a content-based hash of the PROJECT-RELATIVE path +
  *   full file contents. This is the DETERMINISM CONTRACT for sealed prod builds:
@@ -1538,10 +1541,20 @@ function _rsx_file_hash_for_build($file_path)
 }
 
 /**
- * Development fast path: metadata-only hash (absolute path + size + mtime).
+ * Development fast path: metadata-only hash (project-relative path + size + mtime).
  *
  * Intentionally NON-deterministic across machines/checkouts - it exists purely so
  * local JIT rebuilds notice a changed file cheaply without reading its contents.
+ *
+ * THE PATH COMPONENT IS PROJECT-RELATIVE, exactly as the content path's is, and that is
+ * load-bearing rather than tidiness: an application file has TWO absolute spellings
+ * (`<project>/system/rsx/x.js` through the `system/rsx` symlink, `<project>/rsx/x.js`
+ * through the real mount), and hashing the absolute path gave one file two identities.
+ * Every derived-cache entry is keyed by this hash while the sweep's live set is built
+ * from one spelling only, so an entry written under the other spelling matched nothing
+ * live and the next sweep deleted it - including out from under a compile that had just
+ * been handed its path, which surfaced as "Input file not found: tmp/derived/...".
+ * One file, one identity, in every process and every mode.
  *
  * @param string $file_path Absolute path to the file
  * @return string
@@ -1549,7 +1562,7 @@ function _rsx_file_hash_for_build($file_path)
 function _rsx_file_hash_fast(string $file_path): string
 {
     return md5(json_encode([
-        'path' => $file_path,
+        'path' => _rsx_relative_build_path($file_path),
         'size' => filesize($file_path),
         'mtime' => filemtime($file_path),
     ]));

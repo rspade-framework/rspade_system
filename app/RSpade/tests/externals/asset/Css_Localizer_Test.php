@@ -7,6 +7,7 @@
 namespace App\RSpade\Tests\Externals\Asset;
 
 use App\RSpade\Core\Bundle\Cdn_Cache;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -54,7 +55,7 @@ class Css_Localizer_Test extends Rsx_Test_Abstract
 
     private static function __root(): string
     {
-        return storage_path('rsx-tmp/css_localizer_test-temp');
+        return Rsx_Project_Paths::tmp_path('css_localizer_test-temp');
     }
 
     private static function __src(string $name = ''): string

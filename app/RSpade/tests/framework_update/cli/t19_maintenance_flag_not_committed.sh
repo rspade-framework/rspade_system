@@ -23,14 +23,14 @@ trap fx_cleanup EXIT
 fx_init
 fx_build_upstream
 
-FLAG_REL="storage/rsx-framework/.maintenance.mode.framework.update"
+FLAG_REL="storage/state/.maintenance.mode.framework.update"
 
 # =============================================================================
 # Phase 1: a LIVE flag is never swept into the commit
 # =============================================================================
 fx_build_downstream v1
 
-mkdir -p "$PROJECT/storage/rsx-framework"
+mkdir -p "$PROJECT/storage/state"
 printf 'framework update in progress\n' > "$PROJECT/$FLAG_REL"
 
 fx_run_pull --no-rebuild --yes

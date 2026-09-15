@@ -29,7 +29,7 @@ fx_run_pull --no-rebuild --yes
 # window survive the reset every update performs. The flag-only maintenance-mode.sh is
 # shipped by the fixture INSIDE the fake upstream (see fx_make_tree_v1): writing it into
 # the project's system/ here would put it in a checkout that `git clean -fdx` empties.
-FLAG_DIR="$PROJECT/storage/rsx-framework"
+FLAG_DIR="$PROJECT/storage/state"
 mkdir -p "$FLAG_DIR"
 
 # fx_run_pull minus --no-service-control: the adoption is gated on service control,

@@ -20,17 +20,40 @@ define('LARAVEL_START', microtime(true));
 |
 */
 
+/*
+|--------------------------------------------------------------------------
+| Path Resolver
+|--------------------------------------------------------------------------
+|
+| The three volatile roots - build/, tmp/, storage/ - and the state directory
+| inside storage. Required FIRST, before any guard, because every guard below
+| addresses one of them, and exported into the environment so every spawned
+| child resolves the same absolutes instead of re-deriving them. The export also
+| sets TMPDIR, which PHP answers sys_get_temp_dir() with and caches for the life
+| of the process, so nothing may run before it.
+|
+| Then the writability check: storage/ and tmp/ in every mode, plus build/,
+| system/ and the project root wherever something is expected to write them.
+|
+*/
+
+require_once __DIR__ . '/../bootstrap/rsx_paths.php';
+rsx_paths_export();
+rsx_paths_assert_trees_writable();
+
 require __DIR__ . '/../bootstrap/rsx_env_link.php';
 
 /*
 |--------------------------------------------------------------------------
-| Storage Link Guard
+| Build Link Guard
 |--------------------------------------------------------------------------
 |
-| system/storage must be a symlink to ../storage - the project-root tree holding
-| every piece of volatile state. system/ is a submodule and is replaced wholesale
-| on update, so nothing durable can live inside it. Creates ../storage when
-| absent; refuses when the link itself is wrong.
+| system/build must be a symlink to ../build - the project-root tree holding the
+| build outputs. system/ is a submodule and is replaced wholesale on update, so
+| nothing volatile can live inside it. The link is repaired silently; the target
+| is never created here, because a missing build must fail loud naming the build
+| command. tmp/ and storage/ have no link: they are relocatable, and code reaches
+| them through the path owner.
 |
 */
 
@@ -146,19 +169,18 @@ if (str_starts_with($request_path, '/_ide/service')) {
 
 /*
 |--------------------------------------------------------------------------
-| Storage Root (pre-boot)
+| State Root (pre-boot)
 |--------------------------------------------------------------------------
 |
-| Volatile storage lives at <project>/storage once the relocation marker exists
-| (written by bin/environment_updates/030_relocate_storage.sh); before that it is
-| the historic system/storage. This runs before Laravel boots, so storage_path()
-| is unavailable and the marker is read directly - the same resolution used by
-| bootstrap/app.php, artisan and the updater. No marker, no fallback: the
-| framework ships system/storage as a symlink to this directory.
+| storage/state holds the small facts about the environment's own lifetime -
+| the maintenance flag, the flock files, the updater's ledger. Everything below
+| runs BEFORE Laravel boots, so the answer comes from the pre-boot resolver
+| required at the top of this file, which is the same answer
+| App\RSpade\Core\Paths\Rsx_Project_Paths gives a booted process.
 |
 */
 
-$__rsx_storage = __DIR__ . '/../../storage';
+$__rsx_state = rsx_paths_state_root();
 
 
 /*
@@ -177,7 +199,7 @@ $__rsx_storage = __DIR__ . '/../../storage';
 |
 */
 
-$__rsx_maint_flag = $__rsx_storage . '/rsx-framework/.maintenance.mode.framework.update';
+$__rsx_maint_flag = $__rsx_state . '/.maintenance.mode.framework.update';
 define('RSPADE_MAINT_MODE', file_exists($__rsx_maint_flag));
 
 if (RSPADE_MAINT_MODE) {

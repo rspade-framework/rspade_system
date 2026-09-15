@@ -46,7 +46,7 @@ FX_OUT="$(cd "$PROJECT" && RSPADE_FRAMEWORK_COMMIT=1 \
     || fx_fail "the proxy reset the submodule during a framework commit"
 
 # ---- 3. The update's maintenance window is up -> same. ------------------------------
-mkdir -p "$PROJECT/storage/rsx-framework"
+mkdir -p "$PROJECT/storage/state"
 printf 'framework update in progress\nmode=development\n' > "$(fx_maint_flag)"
 FX_OUT="$(cd "$PROJECT" && bash "$PROJECT/system/bin/rsx-git.sh" checkout -q master 2>&1)"
 [ "$(fx_actual_revision)" = "$ahead" ] \

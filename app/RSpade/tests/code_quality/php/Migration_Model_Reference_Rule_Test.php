@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\CodeQuality\Php;
 
 use App\RSpade\CodeQuality\Rules\Database\MigrationModelReference_CodeQualityRule;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -37,7 +38,7 @@ class Migration_Model_Reference_Rule_Test extends Rsx_Test_Abstract
      */
     private static function __run(string $source): array
     {
-        $dir = storage_path('rsx-tmp') . '/migration_model_fixture_' . uniqid();
+        $dir = Rsx_Project_Paths::tmp_path() . '/migration_model_fixture_' . uniqid();
         $path = $dir . '/2026_01_01_000000_probe_migration.php';
         ensure_directory($dir);
         file_put_contents($path, $source);

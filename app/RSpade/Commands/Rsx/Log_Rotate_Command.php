@@ -3,6 +3,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Logging\Rsx_Logrotate;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use Illuminate\Console\Command;
 
 /**
@@ -35,7 +36,7 @@ class Log_Rotate_Command extends Command
 
     public function handle(): int
     {
-        $directory = $this->option('directory') ?: storage_path('logs');
+        $directory = $this->option('directory') ?: Rsx_Project_Paths::logs_dir();
 
         $days_uncompressed = $this->option('days-uncompressed') !== null
             ? (int) $this->option('days-uncompressed')

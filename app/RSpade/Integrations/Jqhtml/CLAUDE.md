@@ -2,7 +2,7 @@
 
 ## Overview
 JQHTML template compilation runs over the ONE node service (`Rsx_Node_Service`, on this
-process's private `storage/rsx-tmp/node-service-<random>.sock`) rather than spawning a
+process's private `tmp/node-service-<random>.sock`) rather than spawning a
 Node.js process for each `.jqhtml` file during bundle builds. `JqhtmlWebpackCompiler` owns marshaling and its
 mtime cache; it owns NO lifecycle.
 
@@ -46,7 +46,7 @@ $compiler->compile_files($paths);
 
 ## Cache Integration
 Cache checked before RPC call - only uncached or stale templates sent to server for compilation.
-Cache location: `storage/rsx-tmp/derived/jqhtml/`, through
+Cache location: `tmp/derived/jqhtml/`, through
 `App\RSpade\Core\Cache\File_Content_Cache`. There is no private cleanup pass: the manifest
 build's Phase 7 sweep removes entries whose template (or parser version) is gone.
 

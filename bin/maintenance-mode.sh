@@ -79,15 +79,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SYSTEM_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_ROOT="$(dirname "$SYSTEM_DIR")"
 
-# Volatile storage: <project>/storage, one level above system/. Same single answer
-# bootstrap/app.php, artisan and the updater give - system/storage is a symlink to
-# it, so there is nothing to choose between.
-storage_base() {
-    printf '%s' "$PROJECT_ROOT/storage"
-}
+# The volatile-tree roots, resolved exactly as PHP resolves them.
+RSX_PATHS_PROJECT_ROOT_DIR="$PROJECT_ROOT"
+. "$SYSTEM_DIR/bin/lib/rsx_paths.sh"
 
-# Mirrors App\RSpade\Core\Framework\Framework_Maintenance::FLAG_RELATIVE.
-FLAG="$(storage_base)/rsx-framework/.maintenance.mode.framework.update"
+# Mirrors App\RSpade\Core\Paths\Rsx_Project_Paths::maintenance_flag_file().
+FLAG="$(rsx_state_root)/.maintenance.mode.framework.update"
 
 # The application mode, read straight out of the project .env with plain string ops - this
 # script runs pre-boot and has no Laravel to ask. Defaults to production: an unreadable or
@@ -182,17 +179,6 @@ start_unit() {
 # "still waiting for rsx-lockd" beats a silent deadline that admits traffic to a
 # daemon that never came up. Ctrl-C is always available and the flag stays raised.
 # -----------------------------------------------------------------------------
-env_value() {
-    local key="$1" fallback="$2" env_file="$PROJECT_ROOT/.env" line
-    [ -f "$env_file" ] || { printf '%s' "$fallback"; return 0; }
-    line="$(grep -m1 -E "^[[:space:]]*${key}[[:space:]]*=" "$env_file" 2>/dev/null)" || true
-    [ -n "$line" ] || { printf '%s' "$fallback"; return 0; }
-    line="${line#*=}"
-    line="$(printf '%s' "$line" | tr -d '"'"'" | tr -d '[:space:]')"
-    [ -n "$line" ] || { printf '%s' "$fallback"; return 0; }
-    printf '%s' "$line"
-}
-
 # One ping. 0 = the daemon answered ok.
 lockd_answers_ping() {
     local host="$1" port="$2" reply=''
@@ -274,7 +260,7 @@ do_enable() {
     # any stray left behind by an older framework release. There is deliberately no
     # well-known node-service socket name to match on: each daemon's is private to
     # the process that spawned it, which is exactly why the match below is on the
-    # socket DIRECTORY. Each holds a unix socket under <storage>/rsx-tmp/ and
+    # socket DIRECTORY. Each holds a unix socket under the tmp root and
     # each took that absolute path as an argv argument at spawn time. They are PID-1
     # ORPHANS - spawned with Symfony Process::start() and then abandoned - so NO
     # supervisorctl stop reaches them: stopping php-fpm takes down the workers, never
@@ -286,7 +272,7 @@ do_enable() {
     # without editing anything here.
     #
     # This is the bash twin of Rsx_Node_Service::quiesce_all() (the PHP side,
-    # called by rsx:clean before it wipes rsx-tmp). Both exist to satisfy the rule
+    # called by rsx:clean before it wipes the tmp tree). Both exist to satisfy the rule
     # in bin/CLAUDE.md: any framework operation that changes a socket or state
     # directory must reap the daemons bound to the previous one. A maintenance
     # window is exactly that operation - a framework update rewrites the service
@@ -300,10 +286,10 @@ do_enable() {
     #
     # Best-effort like the task kill above, and NO TIMEOUT: TERM, one settle pass,
     # then whatever is still there goes. Same reaper pattern as
-    # bin/environment_updates/030_relocate_storage.sh.
+    # bin/environment_updates/110_relocate_build_tmp.sh.
     # -------------------------------------------------------------------------
     if command -v pgrep >/dev/null 2>&1; then
-        rpc_orphans="$(pgrep -f -- "--socket=$(storage_base)/rsx-tmp/" 2>/dev/null || true)"
+        rpc_orphans="$(pgrep -f -- "--socket=$(rsx_tmp_root)/" 2>/dev/null || true)"
         if [ -n "$rpc_orphans" ]; then
             rpc_count="$(printf '%s\n' "$rpc_orphans" | grep -c .)"
             printf '%s\n' "$rpc_orphans" | xargs -r kill 2>/dev/null || true
@@ -350,7 +336,7 @@ do_enable() {
 # The blob root is not derivable pre-boot, so the command writes it into the marker
 # file at the very start and removes the marker only once no backup remains.
 # -----------------------------------------------------------------------------
-DB_CACHE_DIR="$(storage_base)/rsx-tmp/db_cache"
+DB_CACHE_DIR="$(rsx_tmp_root)/db_cache"
 DB_CACHE_MARKER="$DB_CACHE_DIR/.in_progress"
 DB_CACHE_LIVE_DUMP="$DB_CACHE_DIR/live_db.sql.gz"
 

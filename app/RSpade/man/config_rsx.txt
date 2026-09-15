@@ -413,7 +413,7 @@ JAVASCRIPT
             'target' => env('BABEL_TARGET', 'modern'),  # modern|es6|es5
         ],
         # There is no babel cache_dir setting. Every per-source-file derived
-        # cache lives under storage/rsx-tmp/derived/<namespace>/ and is
+        # cache lives under tmp/derived/<namespace>/ and is
         # addressed through App\RSpade\Core\Cache\File_Content_Cache.
         # rsx:man storage_directories.
         'decorators' => true,
@@ -464,13 +464,15 @@ FILE SUBSYSTEM
                their handlers in user config.
 
     'files' => [
-        'storage_root' => null,               # test-isolation root override
         'document_mime_by_extension' => [...], # ext => canonical mime
     ]
 
-    storage_root                Absolute root for the file subsystem;
-                                null = storage_path(). Set only by the test
-                                runner - never in a real deployment.
+    THE FILE SUBSYSTEM'S ROOTS ARE NOT CONFIGURED HERE. The blob store follows
+    the storage root (Rsx_Project_Paths::files_root(), redirected for a test
+    run by the internal --_rsx-files-root flag and by nothing else); the
+    thumbnail and rendition caches follow the tmp root. See rsx:man
+    storage_directories.
+
     document_mime_by_extension  Extension => mime map that drives PROCESSING
                                 (viewer/rendition/extractor/thumbnail routing),
                                 NOT serving. Extension wins over the byte sniff
@@ -666,7 +668,7 @@ MAIL AND SMS
             'address_whitelist' => env('EMAIL_DEV_EMAIL_ADDRESS_WHITELIST', ''),
             'domain_whitelist' => env('EMAIL_DEV_EMAIL_DOMAIN_WHITELIST', ''),
         ],
-        'catcher_maildir' => storage_path('mail-catcher'),
+        'catcher_maildir' => Rsx_Project_Paths::mail_catcher_dir(),
         'dkim_selector' => null,        # set = rsx:health looks up the DKIM TXT
     ]
 

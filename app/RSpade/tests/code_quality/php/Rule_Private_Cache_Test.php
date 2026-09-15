@@ -25,7 +25,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *     `Validation_Ledger` - ONE var_export'd array, keyed by the manifest's file hash;
  *   - a derived FILE (a sanitized copy, a parse tree) goes through
  *     `App\RSpade\Core\Cache\File_Content_Cache`, which owns
- *     `storage/rsx-tmp/derived/<namespace>/`.
+ *     `tmp/derived/<namespace>/`.
  *
  * THE SECOND HALF IS PARSING. A rule that read its own file, tokenized it, or built its own
  * nikic parser kept the result in a static array for the life of the process, and those
@@ -112,16 +112,18 @@ class Rule_Private_Cache_Test extends Rsx_Test_Abstract
     /**
      * The forbidden calls appearing in one file, as "file:line  spelling" rows.
      *
-     * Comments are blanked first (bodies replaced with spaces, line numbers preserved), so
-     * this reads CODE only - a docblock explaining why a rule does NOT call storage_path()
-     * is not a violation of that same sentence.
+     * Comments AND string literals are blanked first (bodies replaced with spaces, line
+     * numbers preserved), so this reads CODE only. A docblock explaining why a rule does NOT
+     * call storage_path() is not a violation of that same sentence, and neither is a rule
+     * whose own pattern strings or remediation text name the calls it forbids - PATH-OWNER-01
+     * is exactly that rule.
      *
      * @return array<int,string>
      */
     private static function __hits(string $path): array
     {
         $source = file_get_contents($path);
-        $code = static::__blank_php_comments($source);
+        $code = static::__blank_php_comments_and_strings($source);
         $lines = explode("\n", $code);
 
         $relative = str_replace(base_path() . '/', '', $path);
@@ -149,16 +151,27 @@ class Rule_Private_Cache_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Replace every comment body with spaces, keeping line breaks so line numbers still
-     * address the original file.
+     * Replace every comment body and every string literal with spaces, keeping line breaks so
+     * line numbers still address the original file.
+     *
+     * A token scan rather than a regex over the raw bytes, for the same reason the rules
+     * themselves tokenize: `storage_path(` inside a quoted string is TEXT, and a scan that
+     * cannot tell text from code reports the rule that documents a call as making it.
      */
-    private static function __blank_php_comments(string $source): string
+    private static function __blank_php_comments_and_strings(string $source): string
     {
+        $blanked = [
+            T_COMMENT,
+            T_DOC_COMMENT,
+            T_CONSTANT_ENCAPSED_STRING,
+            T_ENCAPSED_AND_WHITESPACE,
+        ];
+
         $out = '';
 
         foreach (token_get_all($source) as $token) {
             if (is_array($token)) {
-                if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
+                if (in_array($token[0], $blanked, true)) {
                     $out .= preg_replace('/[^\n]/', ' ', $token[1]);
 
                     continue;

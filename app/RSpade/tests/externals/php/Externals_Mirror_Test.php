@@ -6,11 +6,10 @@
 
 namespace App\RSpade\Tests\Externals\Php;
 
-use ReflectionClass;
 use RuntimeException;
-use App\RSpade\Commands\Rsx\Prod_Export_Command;
 use App\RSpade\Core\Bundle\Cdn_Cache;
 use App\RSpade\Core\Externals\Rsx_Externals;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -46,7 +45,7 @@ class Externals_Mirror_Test extends Rsx_Test_Abstract
      */
     private static function __scratch_dir(): string
     {
-        return storage_path('rsx-tmp/externals_mirror_test-temp');
+        return Rsx_Project_Paths::tmp_path('externals_mirror_test-temp');
     }
 
     public static function setup()
@@ -169,33 +168,26 @@ class Externals_Mirror_Test extends Rsx_Test_Abstract
     // The build-vs-request download guard
     // -------------------------------------------------------------------------
 
-    public static function test_a_request_time_miss_in_a_sealed_mode_is_refused()
+    public static function test_only_the_build_may_download_in_a_production_mode()
     {
         static::__assert_false(
-            Cdn_Cache::_download_is_permitted(false, true, false),
-            'a web request serving a sealed build never downloads - the mirror is the build'
+            Cdn_Cache::_download_is_permitted(true, false),
+            'a production-mode process that is not the build never downloads - the mirror is '
+            . 'a source artifact and the build is what populates it'
         );
-    }
 
-    public static function test_the_build_pipeline_and_the_cli_may_download()
-    {
         static::__assert_true(
-            Cdn_Cache::_download_is_permitted(false, true, true),
+            Cdn_Cache::_download_is_permitted(true, true),
             'the build phase marker is what populates the mirror'
-        );
-
-        static::__assert_true(
-            Cdn_Cache::_download_is_permitted(true, true, false),
-            'every CLI entry into the compiler is a build or a developer workflow'
         );
     }
 
     public static function test_development_downloads_at_request_time()
     {
         static::__assert_true(
-            Cdn_Cache::_download_is_permitted(false, false, false),
+            Cdn_Cache::_download_is_permitted(false, false),
             'development populates the mirror on demand - a dev box is a real box, and it '
-            . 'serves the same /_vendor/ files a sealed build does'
+            . 'serves the same /_vendor/ files a production build does'
         );
     }
 
@@ -203,7 +195,7 @@ class Externals_Mirror_Test extends Rsx_Test_Abstract
     {
         static::__assert_false(
             Cdn_Cache::$_build_phase,
-            'nothing but rsx:prod:build may leave the build-phase marker set'
+            'nothing but rsx:build may leave the build-phase marker set'
         );
     }
 
@@ -308,18 +300,4 @@ class Externals_Mirror_Test extends Rsx_Test_Abstract
         static::__assert_equals([], glob(static::__scratch_dir() . '/*'), 'the store is empty');
     }
 
-    // -------------------------------------------------------------------------
-    // The mirror ships inside rsx/, never as a storage build artifact
-    // -------------------------------------------------------------------------
-
-    public static function test_the_export_no_longer_carries_a_phantom_storage_cdn_cache()
-    {
-        $reflection = new ReflectionClass(Prod_Export_Command::class);
-        $dirs = $reflection->getConstant('SEALED_BUILD_DIRS');
-
-        static::__assert_false(
-            in_array('rsx-build/cdn-cache', $dirs, true),
-            'the mirror lives in rsx/resource/.cdn-cache (copied with the rsx tree), never under storage'
-        );
-    }
 }

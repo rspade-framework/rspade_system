@@ -185,33 +185,11 @@ function rsx_first_run_write_env_value(string $path, string $key, string $value)
     $root_env = $system_dir . '/../.env';
 
     // ------------------------------------------------------------------
-    // Read the environment file directly. Dotenv has not run yet.
+    // Read the environment file directly. Dotenv has not run yet, so the shared
+    // pre-boot resolver answers - FIRST occurrence wins, which is what phpdotenv
+    // and therefore every booted consumer will see.
     // ------------------------------------------------------------------
-    $read_env_value = static function (string $path, string $key): ?string {
-        if (!is_file($path)) {
-            return null;
-        }
-
-        $lines = @file($path, FILE_IGNORE_NEW_LINES);
-        if ($lines === false) {
-            return null;
-        }
-
-        $found = null;
-        foreach ($lines as $line) {
-            if (strncmp($line, $key . '=', strlen($key) + 1) !== 0) {
-                continue;
-            }
-            $value = trim(substr($line, strlen($key) + 1));
-            // Last non-empty definition wins - a file can carry a blank
-            // template line plus a real one appended later.
-            if ($value !== '') {
-                $found = $value;
-            }
-        }
-
-        return $found;
-    };
+    require_once __DIR__ . '/rsx_paths.php';
 
     // Creating .env is not this file's job: bootstrap/rsx_env_heal.php runs first
     // and is the ONE implementation of it (from the project-root .env.dist, and
@@ -222,7 +200,7 @@ function rsx_first_run_write_env_value(string $path, string $key, string $value)
         return;
     }
 
-    $app_url = $read_env_value($root_env, 'APP_URL');
+    $app_url = rsx_paths_env_value('APP_URL');
 
     // Already configured: the overwhelmingly common path, one file read.
     if ($app_url !== null && $app_url !== '') {
@@ -231,7 +209,7 @@ function rsx_first_run_write_env_value(string $path, string $key, string $value)
 
     // Development only. An unset RSX_MODE defaults to development, matching
     // the framework's own default.
-    $mode = strtolower((string) ($read_env_value($root_env, 'RSX_MODE') ?? 'development'));
+    $mode = strtolower(rsx_paths_env_value('RSX_MODE'));
     if ($mode !== 'development' && $mode !== 'dev') {
         return;
     }

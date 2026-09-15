@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Manifest;
 use App\RSpade\Core\Cache\RsxCache;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Paths;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Support\Rsx_Fingerprint;
 
@@ -858,12 +859,12 @@ class Manifest_Indexer
     * rebuilds (this whole pipeline is rebuild-only; a no-change dev request loads cache
     * and never reaches here) and MUST NOT be cache-skipped beyond that gating.
     *
-    * DEV-MODE ONLY concern: prod/sealed builds never auto-rebuild, and rsx:prod:build
-    * already regenerates the composer autoloader (Prod_Build_Command step 3). The
+    * DEV-MODE ONLY concern: prod/sealed builds never auto-rebuild, and rsx:build
+    * already regenerates the composer autoloader (its composer step). The
     * validator simply runs wherever the override pass runs (dev rebuild +
     * framework:pull-triggered rebuild); no special prod handling is needed. It writes
-    * only into vendor/composer (via the composer subprocess) and a rsx-tmp temp file
-    * (via exec_safe) - never under rsx-build - so the sealed-build write-choke guards
+    * only into vendor/composer (via the composer subprocess) and a tmp-tree temp file
+    * (via exec_safe) - never into the build tree - so the sealed-build write-choke guards
     * are not engaged.
     *
     * @param string|null $classmap_path Absolute path to autoload_classmap.php.
@@ -925,7 +926,7 @@ class Manifest_Indexer
     */
     public static function _run_composer_dump(array $stale): void
     {
-        // Mirror Prod_Build_Command::_composer_available(): a missing composer binary
+        // Mirror the build's own composer probe: a missing composer binary
         // is not a hard failure - the Autoloader warning carve-out covers runtime, and
         // failing loud on every rebuild would break dev entirely.
         $composer_path = trim((string) @shell_exec('bash -c ' . escapeshellarg('command -v composer 2>/dev/null')));

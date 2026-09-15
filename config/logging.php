@@ -1,5 +1,14 @@
 <?php
 
+/*
+| LOGS ARE PERSISTENT AND ARE PINNED HERE.
+|
+| Laravel's storage path is the tmp tree - derived state, wiped by rsx:clean - so a
+| channel spelled storage_path('logs/...') would put the application's log history in
+| a disposable directory. Every channel below names the path owner's logs_dir()
+| instead, which is <storage>/logs.
+*/
+
 use Monolog\Handler\NullHandler;
 use Monolog\Handler\StreamHandler;
 use Monolog\Handler\SyslogUdpHandler;
@@ -59,13 +68,13 @@ return [
 
         'single' => [
             'driver' => 'single',
-            'path' => storage_path('logs/laravel.log'),
+            'path' => App\RSpade\Core\Paths\Rsx_Project_Paths::logs_dir() . '/laravel.log',
             'level' => env('LOG_LEVEL', 'debug'),
         ],
 
         'daily' => [
             'driver' => 'daily',
-            'path' => storage_path('logs/laravel.log'),
+            'path' => App\RSpade\Core\Paths\Rsx_Project_Paths::logs_dir() . '/laravel.log',
             'level' => env('LOG_LEVEL', 'debug'),
             'days' => 14,
         ],
@@ -115,7 +124,7 @@ return [
         ],
 
         'emergency' => [
-            'path' => storage_path('logs/laravel.log'),
+            'path' => App\RSpade\Core\Paths\Rsx_Project_Paths::logs_dir() . '/laravel.log',
         ],
     ],
 

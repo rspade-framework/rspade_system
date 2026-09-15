@@ -1,0 +1,365 @@
+ONE BUILD COMMAND, AND THREE VOLATILE TREES INSTEAD OF ONE
+Date: 2026-09-15
+
+IF YOU DO NOTHING: every deploy script, backup job, nginx/docker config or CI step that
+    calls `php artisan rsx:prod:refresh`, `rsx:prod:build` or `rsx:prod:export`, or that
+    names a path under `storage/rsx-build`, `storage/rsx-tmp`, `storage/rsx-framework`,
+    `storage/flock`, `storage/db_backups` or `storage/mail-catcher`, addresses a command
+    or a directory that no longer exists - and a production deploy that relied on
+    `rsx:prod:refresh` leaves the host serving the build it had before the pull.
+
+    Four more, from the same split:
+    - A script that reads `system/storage/...` or `system/tmp/...` addresses a path that
+      no longer exists. Only `system/build` and `system/rsx` remain.
+    - `storage_path()` now means the TMP tree for application code. A file your code
+      persists through it is discarded by the next `rsx:clean` unless it went through a
+      `Storage` disk or `Rsx_Project_Paths::app_dir()`. `storage_path('logs')` and
+      `storage_path('app')` still land in persistent storage, through two symlinks
+      inside `tmp/`.
+    - A backup or rsync rule naming `storage/rsx-thumbnails` or `storage/rsx-renditions`
+      now backs up nothing: both caches moved to `tmp/`, where they belong - they are
+      regenerable from blobs that are still in the store.
+    - A php-fpm pool, supervisor program or cron line YOU wrote that starts PHP without
+      `TMPDIR` leaves third-party scratch outside the project (and a `php.ini` that sets
+      `sys_temp_dir` overrides `TMPDIR` entirely). The `PHP temp dir` row of
+      `rsx:health` WARNs.
+
+SUMMARY
+    Two changes land together, and both are about the same thing: making a production
+    box serve a BUILD ARTIFACT that one command produces and nothing else writes.
+
+    1. `php artisan rsx:build` is now the one and only build. `rsx:prod:build`,
+       `rsx:prod:refresh` and `rsx:prod:export` are gone.
+
+    2. The volatile data that all lived under `storage/` is split into three roots -
+       `build/`, `tmp/` and `storage/` - so a production host can make the first one
+       read-only to the web user alongside `system/` and `rsx/`.
+
+    The on-disk move happens by itself: the environment update
+    `110_relocate_build_tmp.sh` runs on the framework pull and migrates an existing
+    install, preserving inodes so a held lock still excludes, and preserving an
+    interrupted database snapshot rather than deleting it. There is NOTHING to move by
+    hand.
+
+    What you must change is everything OUTSIDE the codebase that named the old commands
+    or the old paths, plus a small number of framework seams application or test code may
+    have called.
+
+THE CHANGE
+
+    RETIRED COMMANDS AND FLAGS
+
+        php artisan rsx:prod:build        gone  -> php artisan rsx:build [--force]
+        php artisan rsx:prod:refresh      gone  -> php artisan rsx:build --force
+        php artisan rsx:prod:export       gone  -> see DEPLOYING, below
+        optimize:cache --authorized       gone  (it runs only inside rsx:build now)
+
+        Still present, unchanged in name: rsx:prod:enable [--debug],
+        rsx:prod:disable, rsx:prod:verify, rsx:mode:set, rsx:clean, migrate.
+
+    NEW REFUSALS
+
+        - `rsx:build` refuses without `--force` when a seal is already present.
+        - `rsx:clean` refuses without `--force` in debug or production mode.
+        - An UNSEALED production-like box refuses EVERYTHING except the build and the
+          mode-transition commands, with:
+              This production build is unsealed. Run: php artisan rsx:build --force.
+              See rsx:man prod.
+        - Only the build may write under `build/` or download into
+          `rsx/resource/.cdn-cache/` in a production-like mode.
+
+    THE DIRECTORY MOVE
+
+        storage/rsx-build/manifest_index.php    ->  build/manifest_index.php
+        storage/rsx-build/manifest_files.php    ->  build/manifest_files.php
+        storage/rsx-build/build_key             ->  build/build_key
+        storage/rsx-build/bundles/              ->  build/bundles/
+        storage/rsx-build/prod_seal.json        ->  build/prod_seal.json
+        system/bootstrap/cache/*.php            ->  build/laravel/
+        storage/framework/views/                ->  build/views/
+
+        storage/rsx-build/js-stubs/             ->  tmp/js-stubs/
+        storage/rsx-build/js-model-stubs/       ->  tmp/js-model-stubs/
+        storage/rsx-tmp/**                      ->  tmp/**   (no rsx-tmp level)
+        storage/db_backups/                     ->  tmp/db_backups/
+        storage/mail-catcher/                   ->  tmp/mail-catcher/
+        storage/framework/cache/                ->  tmp/laravel-cache/
+
+        storage/rsx-framework/*                 ->  storage/state/*
+        storage/flock/                          ->  storage/state/flock/
+        storage/rsx-locks/                      ->  deleted (nothing ever wrote to it)
+
+        storage/rsx-thumbnails/                 ->  tmp/thumbnails/
+        storage/rsx-renditions/                 ->  tmp/renditions/
+
+        storage/{uploads,logs,app,rsx-ide-bridge}
+                                                ->  unchanged
+
+        `system/build` is a tracked symlink to `../build`, for the bash and node helpers
+        that address that tree by name. There is no `system/storage` and no `system/tmp`:
+        a link cannot promise where a relocatable root is, and on a sealed box `system/`
+        is read-only, so a link left pointing at the old tree could not be repaired.
+
+        `build/` is FIXED at `<project>/build` and has no environment key: the seal, the
+        manifest index and the build key live in it, and it is deployed and made
+        read-only beside `system/` and `rsx/`. The other two roots are relocatable in
+        .env, each taking an absolute path or one relative to the PROJECT ROOT:
+
+            RSX_TMP_PATH=
+            RSX_STORAGE_PATH=
+
+        LARAVEL'S STORAGE PATH IS THE TMP ROOT. Most of what Laravel calls storage is
+        scratch, so `storage_path()` and every package that composes a location from it
+        now land in the disposable tree. The persistent exceptions are pinned: the
+        logging channels at `<storage>/logs`, the `local` and `public` filesystem disks
+        at `<storage>/app`, and the two symlinks `tmp/logs` and `tmp/app` that send those
+        two lazy spellings back into storage. The tmp skeleton creates and validates both
+        on every boot and `rsx:clean` recreates them.
+
+        THE TREES ARE CHECKED AT BOOT. `storage/` and `tmp/` must exist (created when
+        simply absent) and be writable in every mode; the project root, `system/` and
+        `build/` are checked additionally in development and inside `rsx:build`, and
+        never in a sealed production runtime, where read-only is the recommended posture.
+        A failure refuses at boot naming the directory, the process user and the
+        chown/chmod that repairs it.
+
+THE FIX
+    All of this arrives automatically via the submodule, and the environment update
+    performs the on-disk move. Nothing in this section is for you to copy.
+
+    `rsx:build` in a production-like mode runs: preflight (build/ and tmp/ writable, or
+    it refuses with nothing changed), `rsx:clean --force`, manifest, mirror externals,
+    bundles, optimized composer autoloader, Laravel route/event/view caches, then the
+    seal - written last and only on success.
+
+    Permission to write the build tree is now a property of the PROCESS (a "build
+    context", recognised from argv and inherited by subprocesses), not a flag, which is
+    why `--authorized` is gone.
+
+ACTION REQUIRED
+
+    1. AUDIT YOUR DEPLOY SCRIPTS for the retired commands.
+
+           grep -rn 'rsx:prod:refresh\|rsx:prod:build\|rsx:prod:export' \
+               your-deploy-scripts/ .github/ .gitlab-ci.yml Makefile
+
+       The recommended deployment is now:
+
+           php artisan rsx:maintenance:enable --reason="deploying <version>"
+           git pull
+           php artisan migrate
+           php artisan rsx:mode:set prod      # a reseal on an already-sealed box
+           php artisan rsx:prod:verify
+           php artisan rsx:maintenance:disable
+
+       MIGRATE COMES BEFORE THE BUILD. The manifest bakes every model's column map in
+       at build time; the database moves at migrate time. If your script builds first,
+       reorder it.
+
+       First install on an empty database needs the build twice, because the first one
+       has no schema to compile against:
+
+           php artisan rsx:build --force
+           php artisan migrate
+           php artisan rsx:build --force
+
+    2. AUDIT EVERY CONFIG AND SCRIPT THAT NAMES A MOVED PATH - backup jobs, rsync
+       excludes, nginx and Apache config, Dockerfiles and compose volumes, supervisor
+       units, monitoring checks, log shippers, cron entries:
+
+           grep -rnE 'storage/(rsx-build|rsx-tmp|rsx-framework|flock|db_backups)' \
+               /etc/nginx /etc/supervisor docker/ deploy/ .
+           grep -rnE 'storage/(mail-catcher|framework|rsx-thumbnails|rsx-renditions)' \
+               /etc/nginx /etc/supervisor docker/ deploy/ .
+           grep -rnE 'system/(storage|tmp)' \
+               /etc/nginx /etc/supervisor docker/ deploy/ .
+
+       The most common two:
+
+           - A BACKUP that copied `storage/` wholesale now also wants nothing new: the
+             data still lives there. But a backup that EXCLUDED `storage/rsx-tmp` by
+             name is now excluding nothing, and a backup that INCLUDED
+             `storage/rsx-build` is now backing up nothing.
+           - A DOCKER VOLUME mounted at `storage/` no longer covers the build tree or
+             the caches. Mount `storage/` and `tmp/` as volumes; `build/` belongs to the
+             image or the deploy user.
+
+    3. ADD THE TWO GITIGNORE RULES to your application's own `.gitignore`:
+
+           /build/*
+           /tmp/*
+
+       And remove `/rsx-export/` if you have it - `rsx:prod:export` is gone.
+
+    4. REPLACE `config('rsx.files.storage_root')`. The config key is deleted. Anything
+       that redirected the FILE SUBSYSTEM (a test harness, a fixture) now uses the path
+       owner's seam:
+
+           // before
+           config(['rsx.files.storage_root' => $dir]);
+
+           // after
+           use App\RSpade\Core\Paths\Rsx_Project_Paths;
+           Rsx_Project_Paths::_override(['files' => $dir]);
+           // ... and Rsx_Project_Paths::_clear_overrides(); when done
+
+       The internal flags `--_manifest-storage-root=` and `migrate
+       --rsx-storage-root=` are likewise gone; `--_rsx-build-root=`,
+       `--_rsx-tmp-root=` and `--_rsx-files-root=` replace them.
+
+    5. STOP WRITING VOLATILE PATHS AS LITERALS. Every path in the three trees has a
+       named method on the one owner, and the new `PATH-OWNER-01` rule (`rsx:check`,
+       high) flags a literal, a `storage_path()` with a literal argument, and
+       `rsx_project_file_path()` or `base_path()` handed one:
+
+           use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
+           Rsx_Project_Paths::build_root()          // <project>/build
+           Rsx_Project_Paths::tmp_root()            // <project>/tmp
+           Rsx_Project_Paths::storage_root()        // <project>/storage
+           Rsx_Project_Paths::state_root()          // <project>/storage/state
+
+           Rsx_Project_Paths::tmp_path('my-thing')  // joiners
+           Rsx_Project_Paths::storage_path('...')
+           Rsx_Project_Paths::state_path('...')
+
+           Rsx_Project_Paths::bundles_dir()         // named per-entry methods
+           Rsx_Project_Paths::logs_dir()
+           Rsx_Project_Paths::flock_dir()
+           Rsx_Project_Paths::tasks_dir()
+
+       Run `php artisan rsx:check` and fix what it names. The reason is not tidiness:
+       the roots are relocatable, so a literal addresses nothing on a box that moved
+       one.
+
+       These framework symbols are gone and have no replacement other than the owner:
+       `Manifest::CACHE_FILE` / `COLD_FILE` are now BASENAMES,
+       `Manifest::PHP_FIXER_STRUCTURE_FILE`, `Rsx_Storage_Helper`,
+       `Auth_BundleIntegration::STUB_DIR`, `Rsx_Node_Service::SOCKET_DIR`,
+       `File_Content_Cache::ROOT`, `Rsx_Prod_Seal::assert_mutable()`,
+       `is_authorized()`, `authorize_process()`, `AUTHORIZED_FLAG`,
+       `_testing_set_root()`, `Rsx_Prod_Env::clear_laravel_caches()`,
+       `clear_rsx_caches()`, `Manifest::$_force_build`, `Manifest::_is_safe_command()`.
+       The build-tree write guard is `Rsx_Project_Paths::assert_build_writable()` and
+       the build-root test seam is `Rsx_Project_Paths::_override(['build' => ...])`.
+
+    6. CHECK YOUR `migrate.normalize_schema.complete` HANDLERS ARE IDEMPOTENT. The
+       event now fires after EVERY schema-normalization pass - once before any
+       migration, once after each individual migration, once at the end - so a run with
+       N pending migrations fires it N+1 times and a run with nothing pending fires it
+       twice. Handlers were always required to be idempotent; this is the change that
+       makes a non-idempotent one show.
+
+       The reason is a from-zero replay: a fresh install, a test database or a schema
+       cache rebuild runs the entire migration chain in ONE invocation, and firing only
+       at the end would leave every mid-history migration looking at a schema no
+       developer has ever seen.
+
+    7. EXPECT A PRODUCTION `migrate` TO FAIL WHEN THE BUILD AND THE SCHEMA DISAGREE.
+       `rsx:migrate:check_consistency` runs at the end of a production-mode migrate and
+       `migrate` now PROPAGATES its exit code instead of demoting it to a warning. A
+       manifest column missing from its table is an error and exits 1; a table column
+       unknown to the manifest is a warning and exits 0. The repair is `php artisan
+       rsx:build --force`, and the ordering that avoids it is migrate before the build.
+
+       The same command now REFUSES to run in development (the manifest there is
+       rebuilt from the live schema on the next request, so the answer would be
+       "consistent" by construction) and refuses when there is no manifest at all. If
+       you call it from a script, that script must only call it in a production mode.
+
+    8. DO NOT RUN `composer install` BY HAND ON AN UNSEALED PRODUCTION BOX. Its
+       post-autoload-dump hook spawns a bare `php artisan package:discover`, which is
+       not a build context, and the seal gate refuses it - composer reports that as a
+       failed dump. `rsx:build` dumps the optimized autoloader itself, inside the build
+       context, and the recommended order never needs a manual composer run.
+
+    9. ADOPT THE READ-ONLY POSTURE, or decide not to. On a production host:
+
+           system/   read-only to the web user   (framework source)
+           rsx/      read-only to the web user   (application source)
+           build/    read-only to the web user   (the build artifact)
+           storage/  WRITABLE by the web user
+           tmp/      WRITABLE by the web user
+
+       Own the first three with the deploy user that runs `rsx:build`. `rsx:health`
+       reports where the box stands as INFO rows in a production mode - run it AS THE
+       SERVING USER, or it reports root's access and tells you nothing. It is a
+       posture, not a requirement; a box that has not adopted it works.
+
+   10. STOP PERSISTING THROUGH `storage_path()`. Laravel's storage path is the TMP root,
+       so anything your code or a package writes through it is discarded by the next
+       `rsx:clean`. Move a durable file onto a `Storage` disk (the `local` and `public`
+       disks are rooted in persistent storage) or onto the owner:
+
+           // before - lost on the next clean
+           file_put_contents(storage_path('vendor-reports/' . $name), $bytes);
+
+           // after
+           use App\RSpade\Core\Paths\Rsx_Project_Paths;
+           $dir = Rsx_Project_Paths::app_dir('vendor-reports');
+           file_put_contents($dir . '/' . $name, $bytes);
+
+       A CACHE is the other answer and is the common case:
+       `Rsx_Project_Paths::tmp_path('my-cache')` says out loud that losing it costs a
+       recompute. `storage_path('logs')` and `storage_path('app')` need no change - the
+       two symlinks inside `tmp/` keep them persistent.
+
+   11. SET `TMPDIR` WHERE YOU START PHP YOURSELF. The framework sets it to the tmp root
+       in every process it starts, so nothing inside RSpade needs attention. A php-fpm
+       pool, a supervisor program or a cron line in YOUR deployment starts PHP itself:
+       give it `TMPDIR=<project>/tmp` (or the value of `RSX_TMP_PATH`), or a plain
+       composer library's scratch files land in `/tmp`. PHP answers `sys_get_temp_dir()`
+       once per process and caches it, and a `php.ini` `sys_temp_dir` wins over the
+       environment. Confirm with the `PHP temp dir` row of `php artisan rsx:health`, run
+       as the serving user.
+
+DEPLOYING
+    `rsx:prod:export` is retired, and `rsx:man prod` carries three recipes in its place:
+    building on the host (the recommended one, above), producing a CI artifact against a
+    throwaway database, and baking the build into a container image. All three rely on
+    the determinism contract - two byte-identical codebases produce an identical
+    build_key and byte-identical bundle filenames whatever path they sit at - and
+    `rsx:prod:verify` on the host is what proves the artifact arrived intact.
+
+    The exclude list for an artifact you package yourself:
+
+        --exclude=./storage --exclude=./tmp --exclude=./.env --exclude=./.git
+
+WHAT ELSE CHANGED THAT YOU DO NOT HAVE TO ACT ON
+    - A downstream `migrate` no longer rewrites model docblocks or enum constants under
+      `system/`. The reported field symptom - a deployed submodule going dirty after a
+      migrate - is gone.
+    - `.migration_whitelist` is never CREATED outside development. It is still consulted
+      in every mode when present, and skipped silently when absent.
+    - `migrate:normalize_schema` no longer prints "Found N Siteable models" and no
+      longer adds `site_id`/`version` from a trait scan - those branches had matched
+      nothing for a year. `site_id` is the migration's to declare.
+    - `optimize:cache` now caches compiled Blade as well as routes and events, into
+      `build/views`. A template that fails to precompile fails the build, which is the
+      point: a sealed request then never compiles a template.
+    - Development boot creates exactly one build directory, `build/laravel`, because
+      Laravel's PackageManifest writes its package manifest there during boot. A
+      production-like mode creates nothing.
+
+VERIFICATION
+    On a development box:
+
+        php artisan rsx:check                 # PATH-OWNER-01 clean
+        php artisan rsx:health                # storage/ and tmp/ writable;
+                                              # tmp/logs link, tmp/app link, PHP temp dir
+        ls build tmp storage                  # the three trees, nothing under
+                                              # storage/rsx-build or storage/rsx-tmp
+        git status --porcelain | grep -E '^\?\? (build|tmp)/'   # empty
+
+    On a production host, after a deploy:
+
+        php artisan rsx:prod:verify           # exit 0, assets match the seal
+        php artisan rsx:health                # exit 0; read the INFO posture rows
+        curl -sI https://<host>/              # 200
+
+    And prove the guarantee the artifact is for: touch a marker file, serve some
+    traffic, and confirm nothing under `build/`, `system/` or `rsx/` is newer than it.
+
+        touch /tmp/marker
+        # ... serve requests, run migrate, run rsx:health ...
+        find build system rsx -newer /tmp/marker -type f      # no output

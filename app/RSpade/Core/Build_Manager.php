@@ -8,28 +8,26 @@
 namespace App\RSpade\Core;
 
 use Illuminate\Support\Facades\File;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 class Build_Manager
 {
     /**
-     * Base paths for different artifact types
-     */
-    protected const PATHS = [
-        'build' => 'build',
-        'cache' => 'build/cache',
-        'temp' => 'build/temp',
-    ];
-
-    /**
      * Get the full path for a build artifact
      *
-     * @param string $path Relative path within build directory
+     * Everything here is a DERIVED cache - route-pattern maps and reflection results,
+     * written at request time and regenerated whenever they are missing - so it lives
+     * under tmp/, not under the build tree the production seal covers.
+     *
+     * @param string $path Relative path within the artifact directory
      * @param string $type Type of artifact ('build', 'cache', 'temp')
      * @return string
      */
     public static function path($path = '', $type = 'build')
     {
-        $base = base_path(self::PATHS[$type] ?? self::PATHS['build']);
+        $base = Rsx_Project_Paths::build_manager_dir(
+            in_array($type, ['cache', 'temp'], true) ? $type : 'build'
+        );
 
         if (empty($path)) {
             return $base;

@@ -68,7 +68,7 @@ CACHE BEHAVIOR
         fpc:{build_key}:{sha1(path?sorted_query_params)}
 
     The build key is the manifest hash, written to
-    storage/rsx-build/build_key during manifest save. When any file
+    build/build_key during manifest save. When any file
     changes trigger a manifest rebuild, the build key changes and all FPC
     entries are effectively invalidated: new requests compute new cache keys,
     so the old entries are simply never read again. Those orphaned entries
@@ -290,7 +290,7 @@ FILES
     system/bin/fpc-proxy.js                     Node.js proxy server
     system/app/RSpade/Core/FPC/Rsx_FPC.php      PHP cache utility
     system/supervisor/fpc-proxy.conf            Supervisor config
-    storage/rsx-build/build_key          Build key file
+    build/build_key          Build key file
     system/app/RSpade/tests/fpc/                Integration tests
 
 SEE ALSO

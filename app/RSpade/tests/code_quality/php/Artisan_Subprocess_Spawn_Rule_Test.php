@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\CodeQuality\Php;
 
 use App\RSpade\CodeQuality\Rules\PHP\ArtisanSubprocessSpawn_CodeQualityRule;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 // @ARTISAN-SPAWN-01-EXCEPTION - this file's fixtures are SOURCE STRINGS describing the banned
@@ -50,7 +51,7 @@ class Artisan_Subprocess_Spawn_Rule_Test extends Rsx_Test_Abstract
             . $body
             . "    }\n}\n";
 
-        $dir = storage_path('rsx-tmp') . '/artisan_spawn_fixture_' . uniqid();
+        $dir = Rsx_Project_Paths::tmp_path() . '/artisan_spawn_fixture_' . uniqid();
         $path = $dir . '/' . $relative_name;
         ensure_directory(dirname($path));
         file_put_contents($path, $source);

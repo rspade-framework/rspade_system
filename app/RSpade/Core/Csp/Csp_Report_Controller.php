@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Csp;
 
 use Illuminate\Http\Request;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
@@ -96,7 +97,7 @@ class Csp_Report_Controller extends Rsx_Controller_Abstract
             'user_agent' => (string) $request->header('User-Agent', ''),
         ], $payload), JSON_UNESCAPED_SLASHES);
 
-        $directory = storage_path('logs');
+        $directory = Rsx_Project_Paths::logs_dir();
         ensure_directory($directory);
 
         file_put_contents($directory . '/' . self::LOG_FILENAME, $line . "\n", FILE_APPEND);

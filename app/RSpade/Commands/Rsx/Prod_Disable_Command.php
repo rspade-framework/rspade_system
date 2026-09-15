@@ -2,24 +2,24 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Console\Rsx_Artisan;
 use App\RSpade\Core\Prod\Rsx_Prod_Env;
 use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 use App\RSpade\Core\Rsx;
 use Illuminate\Console\Command;
-use App\RSpade\Core\Console\Rsx_Artisan;
 
 /**
- * Leave prod mode and return to development.
+ * Leave a production-like mode and return to development.
  *
- * Removes the seal FIRST (so the subsequent cache clears are not blocked by the
- * immutability guard), switches RSX_MODE back to development, clears caches, and
- * pre-warms the dev bundle JIT. Idempotent: safe to run when not sealed.
+ * Removes the seal, writes RSX_MODE=development, discards the production build tree, and
+ * builds the development one in its place. Idempotent: safe to run on a box that is
+ * already in development.
  */
 class Prod_Disable_Command extends Command
 {
     protected $signature = 'rsx:prod:disable';
 
-    protected $description = 'Leave sealed prod mode and return to development';
+    protected $description = 'Return to development mode and build the development assets';
 
     public function handle(): int
     {
@@ -30,37 +30,33 @@ class Prod_Disable_Command extends Command
             $this->line('.env symlink invariant restored (status: ' . $env_report['status'] . ').');
         }
 
-        $was_sealed = Rsx_Prod_Seal::exists();
-
-        if ($was_sealed) {
-            $this->info('Leaving prod mode (removing seal)...');
-        } else {
-            $this->info('Returning to development mode...');
-        }
+        $this->info('Returning to development mode...');
         $this->newLine();
 
-        // Step 1: Remove the seal first so nothing downstream is guarded.
-        $this->line('  [1/5] Removing seal...');
+        // The seal goes first: while it is on disk this box claims to have a production
+        // build to serve, and every step below is dismantling exactly that.
+        $this->line('  [1/4] Removing the seal...');
         Rsx_Prod_Seal::clear();
 
-        // Step 2: Switch mode back to development.
-        $this->line('  [2/5] Setting RSX_MODE=development...');
+        $this->line('  [2/4] Setting RSX_MODE=development...');
         Rsx_Prod_Env::set_mode(Rsx::MODE_DEVELOPMENT);
 
-        // Step 3: Clear the prod caches.
-        $this->line('  [3/5] Clearing caches...');
-        Rsx_Prod_Env::clear_laravel_caches();
-        Rsx_Prod_Env::clear_rsx_caches();
+        // A fresh subprocess, which boots in development and therefore needs no --force:
+        // the whole build tree is about to be rebuilt anyway.
+        $this->line('  [3/4] Discarding the production build...');
+        $clean_exit = Rsx_Artisan::passthru('rsx:clean', ['--silent', Clean_Command::FLAG_NO_SYSTEM_RESET]);
+        if ($clean_exit !== 0) {
+            $this->error('rsx:clean failed (exit ' . $clean_exit . ').');
 
-        // Step 4: Restore the development composer autoloader. A strict-production
-        // build ran `composer dump-autoload --optimize --classmap-authoritative`,
-        // which pins the system/ PSR-4 tree to a frozen classmap and FORBIDS the
-        // filesystem fallback - so a class added or renamed after that dump would
-        // not be found until the next dump. Returning to development must undo that:
-        // a plain --optimize dump (NON-authoritative) rebuilds the classmap while
-        // restoring the filesystem fallback dev relies on. --classmap-authoritative
-        // is deliberately omitted here.
-        $this->line('  [4/5] Restoring development composer autoloader...');
+            return 1;
+        }
+
+        // Restore the development composer autoloader. A strict-production build ran
+        // `composer dump-autoload --optimize --classmap-authoritative`, which pins the
+        // system/ PSR-4 tree to a frozen classmap and FORBIDS the filesystem fallback - so
+        // a class added or renamed after that dump would not be found until the next dump.
+        // A plain --optimize dump rebuilds the classmap while restoring the fallback
+        // development relies on; --classmap-authoritative is deliberately omitted.
         if ($this->_composer_available()) {
             passthru(
                 'bash -c ' . escapeshellarg('cd ' . escapeshellarg(base_path()) . ' && composer dump-autoload --optimize --no-interaction'),
@@ -73,14 +69,13 @@ class Prod_Disable_Command extends Command
             $this->warn('      composer not found on PATH - skipping autoloader restore.');
         }
 
-        // Step 5: Pre-warm the dev bundle JIT in a fresh dev-mode subprocess. The
-        // subprocess boots reading the RSX_MODE=development just written to .env
-        // (step 2), so no env prefix is needed - invocation carries no env params.
-        $this->line('  [5/5] Pre-warming development build...');
+        $this->line('  [4/4] Building the development assets...');
         $this->newLine();
-        $exit_code = Rsx_Artisan::passthru('rsx:bundle:compile');
+        $exit_code = Rsx_Artisan::passthru('rsx:build');
         if ($exit_code !== 0) {
-            $this->warn('Bundle pre-warm reported warnings, but development mode is active.');
+            $this->error('The development build failed (exit ' . $exit_code . ').');
+
+            return 1;
         }
 
         $this->newLine();

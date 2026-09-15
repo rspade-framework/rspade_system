@@ -17,6 +17,26 @@ PHP-PARENT-CHAIN-01 (ParentCallChain_CodeQualityRule), via `Parent_Call_Chain_Ru
 | PCC-WRONG-NAME | `parent::other()` does NOT satisfy a requirement to call `parent::this()` | php | fixture calling a different parent method | 1 violation | implemented | 2026-08-03 |
 | PCC-EXCEPTION-MARKER | `@PHP-PARENT-CHAIN-01-EXCEPTION` suppresses a flagged edge case | php | fixture with the exception marker | 0 violations | implemented | 2026-08-03 |
 
+PATH-OWNER-01 (PathOwner_CodeQualityRule), via `Path_Owner_Rule_Test`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| PO-RETIRED-DIR | a retired directory name is reported wherever it appears | php | fixtures naming the three retired trees | 1+ violation each | implemented | 2026-09-15 |
+| PO-RETIRED-KEY-AND-LINK | the retired build key and the retired `system/` links are reported, and the key is described as a KEY rather than a directory | php | fixtures naming each | 1+ violation each; "environment key" in the message | implemented | 2026-09-15 |
+| PO-RETIRED-CACHE | the thumbnail and rendition caches moved into tmp/ under new names | php | fixture naming the old cache | 1+ violation | implemented | 2026-09-15 |
+| PO-STORAGE-PATH-LITERAL | a literal argument to the storage-path helper fires on its own - it is the shape that survives a relocation silently | php | fixture | 1+ violation, message says "literal" | implemented | 2026-09-15 |
+| PO-BASE-PATH-TREE | a base-path call naming a volatile tree fires; one naming source does not | php | two fixtures | 1+ / 0 | implemented | 2026-09-15 |
+| PO-RELATIVE-LITERAL | a `./tree` or `../tree` literal fires: a relative path resolves against a working directory no framework process chooses | php | six fixtures | 1+ violation each | implemented | 2026-09-15 |
+| PO-ROOT-CONCATENATION | a tree name concatenated onto a root expression fires in PHP, bash and node | php | base_path(), __DIR__, $PROJECT_ROOT, path.join | 1+ violation each | implemented | 2026-09-15 |
+| PO-LOGICAL-KEY | a LOGICAL key (`tmp/js-stubs/x.js`) is not a path literal and does not fire | php | fixture using absolute_for() and a key in an array | 0 violations | implemented | 2026-09-15 |
+| PO-BUILD-WRITE | a raw write primitive aimed at a build-root-derived path fires outside the allow-list, and a READ does not | php | two fixtures | 1+ / 0 | implemented | 2026-09-15 |
+| PO-OWNER-CLEAN | a path taken from the owner is clean | php | fixture of owner calls | 0 violations | implemented | 2026-09-15 |
+| PO-ALLOW-LIST | the allow-list exempts the files that legitimately produce build outputs | php | the same write at three paths | 1+ / 0 / 0 | implemented | 2026-09-15 |
+| PO-DOC-TREES | documentation trees are not scanned | php | fixture under man/ and vendor/ | 0 violations | implemented | 2026-09-15 |
+| PO-EXCEPTION | the exception comment suppresses on the line and on the line above | php | two fixtures | 0 violations each | implemented | 2026-09-15 |
+| PO-NOT-FATAL | the rule reports rather than failing the build, at high severity | php | the rule object | id, severity, not manifest-fatal | implemented | 2026-09-15 |
+| PO-REMEDIATION | the remediation names the owner methods agents are told to trust | php | one violation | the method table is present | implemented | 2026-09-15 |
+
 JS-EVAL-01 (EvalUsage_CodeQualityRule), via `Eval_Usage_Rule_Test`.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
@@ -324,7 +344,7 @@ PHP-INTERNAL-01 and JS-INTERNAL-01, both of which were structurally dead.
 ## The validation ledger (Validation_Ledger_Test)
 
 `App\RSpade\CodeQuality\Support\Validation_Ledger` - ONE var_export'd array at
-`storage/rsx-tmp/persistent/validation_ledger.php` recording that a file already passed an
+`tmp/persistent/validation_ledger.php` recording that a file already passed an
 expensive check. It replaced 1254 zero-byte `.lintpass` flag files, so the rows are the
 properties a flag file gave for free. Every row runs against a throwaway ledger file
 (`_use_path_for_tests`), so the box's own memo is never touched.

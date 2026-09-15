@@ -10,6 +10,7 @@ use App\RSpade\CodeQuality\Support\Validation_Ledger;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Paths;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 /**
  * THE DRIVER OWNS THE PASS; A RULE ONLY CHECKS.
@@ -488,7 +489,7 @@ class Manifest_Rule_Driver
             }
 
             // A GENERATED STUB COUNTS AS ITS SOURCE. The model and controller stub
-            // generators write a `.js` file under `storage/rsx-build/`, which is not in a
+            // generators write a `.js` file into the tmp tree, which is not in a
             // test tree by path but exists only because a fixture does - so a fixture
             // arriving added ~30 rows to `files:*` and `files:*.js` and moved every digest
             // that reads them.

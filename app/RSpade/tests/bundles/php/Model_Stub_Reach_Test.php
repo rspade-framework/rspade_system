@@ -37,7 +37,7 @@ class Model_Stub_Reach_Test extends Rsx_Test_Abstract
     private const JS_MODEL = 'app/RSpade/Core/Files/File_Attachment_Model.js';
 
     // A stub path (relative to the project root) guaranteed not to exist on disk.
-    private const MISSING_STUB = 'storage/rsx-build/js-model-stubs/base-does-not-exist-xyzzy-model.js';
+    private const MISSING_STUB = 'tmp/js-model-stubs/base-does-not-exist-xyzzy-model.js';
 
     /**
      * BUNDLE-STUB-01 - A JS model class alone in the file set pulls its stub in.
@@ -177,11 +177,11 @@ class Model_Stub_Reach_Test extends Rsx_Test_Abstract
         ];
     }
 
-    // A real file under storage/rsx-tmp, addressed by its project-logical path (storage
-    // lives at the project root, NOT under base_path()).
+    // A real file under tmp/, addressed by its project-logical path (the tmp tree lives
+    // at the project root, NOT under base_path()).
     private static function __make_temp_stub(): string
     {
-        $rel = 'storage/rsx-tmp/model_stub_reach_test_' . uniqid() . '.js';
+        $rel = 'tmp/model_stub_reach_test_' . uniqid() . '.js';
         file_put_contents(rsx_project_file_path($rel), "class Base_File_Attachment_Model {}\n");
 
         return $rel;

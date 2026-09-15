@@ -98,7 +98,7 @@ class Documents_Status_Command extends Command
      */
     private function __print_renditions(array $renditions): void
     {
-        $this->line('PDF rendition cache (storage/rsx-renditions):');
+        $this->line('PDF rendition cache (tmp/renditions):');
 
         if (empty($renditions['exists'])) {
             $this->table(['Metric', 'Value'], [['Directory', 'not created yet (nothing rendered)']]);

@@ -81,7 +81,7 @@ class Search_Filter_Chain_Test extends Rsx_Test_Abstract
     public static function test_non_marker_path_declines()
     {
         $result = Rsx::trigger_resolve('document.extract_text', [
-            'path' => '/var/www/html/system/storage/uploads/ab/cd/abcd0123456789',
+            'path' => '/var/www/html/storage/uploads/ab/cd/abcd0123456789',
             'mime' => 'application/pdf',
             'storage' => null,
         ]);

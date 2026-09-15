@@ -14,7 +14,7 @@
 | RWL-05 | Reentrancy is client-side: nested acquire returns the same token, releases unwind | php | two acquires, two releases | same token; held until the final release | implemented | 2026-08-10 |
 | RWL-06 | `release_lock()` reports whether it was still held | php | unknown token / double release / force_clear'd lock | false, false, false; true for a genuine hold | implemented | 2026-08-10 |
 | RWL-07 | `force_clear_lock()` drops the holder and frees the lock | php | held lock + force_clear | writer_active false | implemented | 2026-08-10 |
-| SYS-01 | A system lock is flock-backed, exclusive, and its file is domain-named | php | `system_lock('x')` | `flock:` token; `storage/flock/system__<db-scope-md5>__x.lock`; another process is BLOCKED | implemented | 2026-08-10 |
+| SYS-01 | A system lock is flock-backed, exclusive, and its file is domain-named | php | `system_lock('x')` | `flock:` token; `storage/state/flock/system__<db-scope-md5>__x.lock`; another process is BLOCKED | implemented | 2026-08-10 |
 | SYS-02 | There is no system READ lock | php | `get_lock(SYSTEM_LOCK, x, READ)` | throws "System locks are exclusive only" | implemented | 2026-08-10 |
 | SYS-03 | System and cluster locks of the same name are independent | php | both, same name | distinct tokens/backends; only the cluster one reaches the daemon | implemented | 2026-08-10 |
 | API-01 | Every timeout argument defaults to null (wait forever) | php | reflection over the 8 public entry points | each `?int $timeout = null` | implemented | 2026-08-10 |

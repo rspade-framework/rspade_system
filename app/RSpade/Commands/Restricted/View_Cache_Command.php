@@ -18,7 +18,7 @@ class View_Cache_Command extends Command
      *
      * @var string
      */
-    protected $description = '[RESTRICTED] Use optimize:cache instead to cache all Laravel components';
+    protected $description = '[RESTRICTED] Compiled views are a build output - use rsx:build';
 
     /**
      * Hide this command from artisan list
@@ -36,11 +36,12 @@ class View_Cache_Command extends Command
     {
         $this->error('This command has been restricted in RSX.');
         $this->line('');
-        $this->info('Please use the following command instead:');
-        $this->line('  php artisan optimize:cache');
+        $this->info('Compiled views are a build output. Build them with:');
+        $this->line('  php artisan rsx:build --force');
         $this->line('');
-        $this->comment('The optimize:cache command will cache all Laravel components including views.');
-        
+        $this->comment('rsx:build precompiles every Blade template into build/views, along with the');
+        $this->comment('manifest, the bundles and the route/event caches.');
+
         return 1;
     }
 }

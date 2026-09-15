@@ -143,11 +143,11 @@ Retention: whole rows (attachments cascade) deleted after `rsx.mail.retention_da
 
 The **dev-site layer** is separate, keyed on the hostname containing `.dev.`, and applies **in `live` mode only**: address whitelist -> domain whitelist -> catchall (`dev_original_to` records the real address) -> otherwise the row is written **Suppressed at enqueue** with `"dev site: no whitelist match and no catchall"`. No other mode can reach a real person, so gating there would just hide a developer's own mail.
 
-The dev container runs `system/bin/mail_catcher.py` as `[program:mail-catcher]` on `127.0.0.1:1025`, SMTP only, no web UI, writing `storage/mail-catcher/`. **It advertises itself** — its greeting is `220 <host> aiosmtpd <version> (RSpade dev mail catcher)`, and `aiosmtpd` mode refuses any connection whose greeting does not say `aiosmtpd` (something else on that port could be a real relay). aiosmtpd's own CLI says `Python SMTP <version>` and has no flag for it, which is why the catcher is a module.
+The dev container runs `system/bin/mail_catcher.py` as `[program:mail-catcher]` on `127.0.0.1:1025`, SMTP only, no web UI, writing `tmp/mail-catcher/`. **It advertises itself** — its greeting is `220 <host> aiosmtpd <version> (RSpade dev mail catcher)`, and `aiosmtpd` mode refuses any connection whose greeting does not say `aiosmtpd` (something else on that port could be a real relay). aiosmtpd's own CLI says `Python SMTP <version>` and has no flag for it, which is why the catcher is a module.
 
 ```bash
 php artisan rsx:mail:test you@example.com          # --email=Some_Email, --json
-cat "$(ls -t storage/mail-catcher/new/* | head -1)"
+cat "$(ls -t tmp/mail-catcher/new/* | head -1)"
 ```
 
 `rsx:mail:test` drains synchronously and reports the row's real status (exit 0 on Sent, Suppressed, or Pending under `disabled` — where it does not drain at all). `rsx:health` carries **Mail delivery**, **Mail transport** and **Mail sender domain** rows.

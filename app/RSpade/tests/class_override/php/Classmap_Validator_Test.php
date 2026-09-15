@@ -7,6 +7,7 @@
 namespace App\RSpade\Tests\ClassOverride\Php;
 
 use App\RSpade\Core\Manifest\Manifest_Indexer;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -31,7 +32,7 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
      */
     private static function __write_classmap_fixture(array $map): string
     {
-        $path = storage_path('rsx-tmp/classmap_fixture_' . uniqid() . '.php');
+        $path = Rsx_Project_Paths::tmp_path('classmap_fixture_' . uniqid() . '.php');
         $lines = ["<?php", "", "return ["];
         foreach ($map as $fqcn => $file) {
             $lines[] = '    ' . var_export($fqcn, true) . ' => ' . var_export($file, true) . ',';
@@ -50,7 +51,7 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
     public static function test_detects_single_stale_entry()
     {
         $present = __FILE__; // a file guaranteed to exist
-        $missing = storage_path('rsx-tmp/definitely_missing_' . uniqid() . '.php');
+        $missing = Rsx_Project_Paths::tmp_path('definitely_missing_' . uniqid() . '.php');
 
         $fixture = static::__write_classmap_fixture([
             'App\\Present_One' => $present,
@@ -91,7 +92,7 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
     // Stale classmap -> the dump runner IS invoked, with the stale entries.
     public static function test_validate_invokes_dump_when_stale()
     {
-        $missing = storage_path('rsx-tmp/definitely_missing_' . uniqid() . '.php');
+        $missing = Rsx_Project_Paths::tmp_path('definitely_missing_' . uniqid() . '.php');
         $fixture = static::__write_classmap_fixture([
             'App\\Present_One' => __FILE__,
             'App\\Gone_Model'  => $missing,
@@ -146,7 +147,7 @@ class Classmap_Validator_Test extends Rsx_Test_Abstract
         };
 
         try {
-            Manifest_Indexer::_validate_composer_classmap(storage_path('rsx-tmp/no_such_classmap_' . uniqid() . '.php'));
+            Manifest_Indexer::_validate_composer_classmap(Rsx_Project_Paths::tmp_path('no_such_classmap_' . uniqid() . '.php'));
             static::__assert_false($invoked, 'A missing classmap must be a silent no-op');
         } finally {
             Manifest_Indexer::$_composer_dump_runner = $saved;

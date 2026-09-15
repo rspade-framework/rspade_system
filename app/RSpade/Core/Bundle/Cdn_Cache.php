@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Bundle;
 
 use RuntimeException;
 use App\RSpade\Core\Externals\Rsx_Externals;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -33,18 +34,18 @@ use App\RSpade\Core\Rsx;
  *
  * THE PERMISSION PREDICATE  (_download_is_permitted(); pure)
  *
- *     $build_phase || $is_cli || !$is_sealed_mode
+ *     $build_phase || !$is_sealed_mode
  *
- * Downloading is a BUILD activity, never a request-time one. A sealed build serves every
- * mirrored asset from /_vendor/, so a cache MISS while serving a page means the mirror was
- * never populated (or was deleted) - a broken build, which must fail LOUD rather than
- * silently curl the internet from a web worker. CLI is permitted regardless: every CLI
- * entry into the compiler is a build or a developer workflow, and the hole this guard
- * closes is the WEB one.
+ * Downloading is a BUILD activity. In development every process populates the store on
+ * demand, because a development box compiles on demand. In a production-like mode ONLY
+ * the build may download: the store is a git-tracked SOURCE artifact, and a cache miss
+ * anywhere else - a web request, a task, an ad-hoc artisan command - means the build that
+ * was supposed to mirror the file did not, which must fail LOUD instead of silently
+ * curling the internet into the source tree.
  *
  * SEAMS
  *
- * - $_build_phase        the explicit build-pipeline marker (rsx:prod:build sets it).
+ * - $_build_phase        the explicit build-pipeline marker (rsx:build sets it).
  * - $_testing_cache_dir  redirects the whole store at a scratch directory.
  * - $_testing_fetcher    callable(string $url): string|false standing in for the network.
  *
@@ -253,13 +254,12 @@ class Cdn_Cache
     /**
      * May a cache miss be resolved by downloading? PURE - the decision, no I/O.
      *
-     * @param bool $is_cli         PHP_SAPI === 'cli' - a build or developer workflow
      * @param bool $is_sealed_mode Rsx::is_production() - debug or strict production
      * @param bool $build_phase    the explicit build-pipeline marker
      */
-    public static function _download_is_permitted(bool $is_cli, bool $is_sealed_mode, bool $build_phase): bool
+    public static function _download_is_permitted(bool $is_sealed_mode, bool $build_phase): bool
     {
-        return $build_phase || $is_cli || !$is_sealed_mode;
+        return $build_phase || !$is_sealed_mode;
     }
 
     /**
@@ -288,7 +288,7 @@ class Cdn_Cache
      */
     private static function _assert_download_permitted(string $url, string $filename): void
     {
-        if (self::_download_is_permitted(PHP_SAPI === 'cli', Rsx::is_production(), self::$_build_phase)) {
+        if (self::_download_is_permitted(Rsx::is_production(), self::$_build_phase)) {
             return;
         }
 
@@ -296,8 +296,8 @@ class Cdn_Cache
             "Missing mirrored external asset: {$filename}\n" .
             "  Source: {$url}\n" .
             "  This build serves external assets from its own /_vendor/ mirror, and this file is\n" .
-            '  not in ' . self::DIR . ". A sealed build never downloads at request time.\n" .
-            '  Remedy: php artisan rsx:prod:refresh'
+            '  not in ' . self::DIR . ". A production build never downloads outside the build.\n" .
+            '  Remedy: php artisan rsx:build --force'
         );
     }
 
@@ -403,7 +403,7 @@ class Cdn_Cache
      */
     public static function _localize_css(string $css, string $base_url): string
     {
-        $tmp_dir = storage_path('rsx-tmp');
+        $tmp_dir = Rsx_Project_Paths::tmp_root();
         ensure_directory($tmp_dir);
         ensure_directory(self::get_cache_directory());
 
@@ -423,7 +423,7 @@ class Cdn_Cache
             '--user-agent', self::user_agent(),
         ];
 
-        if (!self::_download_is_permitted(PHP_SAPI === 'cli', Rsx::is_production(), self::$_build_phase)) {
+        if (!self::_download_is_permitted(Rsx::is_production(), self::$_build_phase)) {
             $arguments[] = '--no-download';
         }
 

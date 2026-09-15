@@ -7,14 +7,14 @@
 
 namespace App\RSpade\Tests\Manifest\Php;
 
-use App\RSpade\Core\Auth\Auth_BundleIntegration;
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * A REBUILD THAT CHANGES NOTHING REWRITES NO STUB.
  *
- * The three stub generators emit into storage/rsx-build/js-*-stubs/, and those files are
+ * The three stub generators emit into tmp/js-*-stubs/, and those files are
  * BUNDLE INPUTS: a write that changes not one byte still moves the mtime, and a moved mtime
  * recompiles every bundle that carries the stub. Model stubs were rewritten unconditionally
  * on every build; controller stubs were gated on a hash that folded in the generator file
@@ -36,9 +36,9 @@ class Manifest_Stub_Rewrite_Test extends Rsx_Test_Abstract
     private static function __stub_mtimes(): array
     {
         $directories = [
-            storage_path('rsx-build/js-stubs'),
-            storage_path('rsx-build/js-model-stubs'),
-            rsx_project_file_path(Auth_BundleIntegration::STUB_DIR),
+            Rsx_Project_Paths::stubs_dir(Rsx_Project_Paths::STUBS_CONTROLLER),
+            Rsx_Project_Paths::stubs_dir(Rsx_Project_Paths::STUBS_MODEL),
+            Rsx_Project_Paths::stubs_dir(Rsx_Project_Paths::STUBS_AUTH),
         ];
 
         $test_tree_stubs = static::__test_tree_stub_filenames();

@@ -7,6 +7,8 @@
 
 namespace App\RSpade\Commands\Rsx;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\File;
 
@@ -201,32 +203,19 @@ class Install_Dependencies_Command extends Command
             'rsx/styles' => 'SCSS/LESS files',
             'app/RSpade/Scripts/Parsers' => 'Parser scripts',
             'app/RSpade/Scripts/Parsers/node_modules' => 'npm packages',
-            'storage/rsx-build' => 'RSX build artifacts',
-            'storage/rsx-tmp' => 'RSX temporary files',
-            'storage/rsx-locks' => 'RSX lock files'
+            'build' => 'RSX build artifacts',
+            'tmp' => 'RSX temporary files',
         ];
         
         foreach ($directories as $dir => $description) {
-            // rsx_project_file_path: 'storage/...' entries follow the RELOCATED storage
-            // root (project level), everything else stays base_path()-relative.
+            // rsx_project_file_path: a key naming one of the three volatile trees follows
+            // its resolved root, everything else stays base_path()-relative.
             $path = rsx_project_file_path($dir);
             if (!File::isDirectory($path)) {
                 File::makeDirectory($path, 0755, true);
                 $this->line("  [OK] Created: $dir ($description)");
             } else {
                 $this->line("  - Exists: $dir");
-            }
-        }
-        
-        // Set permissions on storage directories
-        $this->line('');
-        $this->info('Setting permissions...');
-        
-        $storage_dir = storage_path('rsx');
-        if (File::isDirectory($storage_dir)) {
-            $result = shell_exec_pretty("chmod -R 775 $storage_dir", false, false);
-            if ($result['exit_code'] === 0) {
-                $this->line('  [OK] Storage permissions set');
             }
         }
     }

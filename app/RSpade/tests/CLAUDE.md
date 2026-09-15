@@ -145,17 +145,25 @@ web request never carries argv, so the guardrail is intact for what it protects.
 ## File-storage isolation
 
 A test run relocates the ENTIRE file subsystem - the content-addressed blob store,
-the thumbnail cache, and the rendition cache - to `storage/rsx-tmp/test-storage`
-(mirroring the DB swap). The runner sets the internal `rsx.files.storage_root`
-config, which `App\RSpade\Core\Files\Rsx_File_Paths` reads, and passes it to the
-migrate-provisioning subprocess via `migrate --rsx-storage-root` so seed migrations
-that write blobs (the template app's `import_sample_documents`) stay isolated too.
-Without this, a test-DB attachment delete unlinks a shared disk file and can destroy
-a developer-database blob whose bytes match (backlog B-38). The test root persists
-across runs like the dump cache and is wiped by `rsx:clean`. Tests never touch the
-real store; any file-subsystem code you write must resolve its disk paths through
-`Rsx_File_Paths` (never `storage_path('uploads'|'rsx-thumbnails'|'rsx-renditions')`
-directly), or it reopens the hole.
+the thumbnail cache, and the rendition cache - to `tmp/test-storage` (mirroring the
+DB swap). The runner calls `Rsx_Project_Paths::_override(['files' => ...])`, which
+`App\RSpade\Core\Files\Rsx_File_Paths` reads through `files_root()`, and forwards it
+to the migrate-provisioning subprocess as the internal flag `--_rsx-files-root` so
+seed migrations that write blobs (the template app's `import_sample_documents`) stay
+isolated too. Without this, a test-DB attachment delete unlinks a shared disk file
+and can destroy a developer-database blob whose bytes match (backlog B-38). The test
+root persists across runs like the dump cache and is wiped by `rsx:clean`. Tests
+never touch the real store; any file-subsystem code you write must resolve its disk
+paths through `Rsx_File_Paths` (never a hand-composed `uploads` / `thumbnails` /
+`renditions` path), or it reopens the hole. The thumbnail and rendition caches follow
+`tmp/` rather than the files root: they are regenerable from blobs that are still in
+the store, so a run has nothing to protect in them.
+
+That override belongs to the RUN, so `Rsx_Test_Abstract::run()` snapshots the path-owner
+override set at the first class and restores it at every class boundary, exactly as it
+restores the boot session context. A class is free to redirect a root inside its own body
+(`_override(['build' => ...])`) and to end with a bare `_clear_overrides()`; the run's
+isolation is back before the next class starts.
 
 ## Waiting for something (the contention principle)
 
@@ -206,7 +214,7 @@ failing prints ONE line and the run continues sequentially in this process - nev
 gate and the host capabilities the nested daemon needs: `rsx:man testing`.
 
 **A docker run is cached by manifest build key + environment fingerprint + selector**
-(`storage/rsx-tmp/test-results/<suite>_<key>_<selector>.json`; the fingerprint covers
+(`tmp/test-results/<suite>_<key>_<selector>.json`; the fingerprint covers
 `system/bin`, `node_modules` and the docker resource dir, the selector the suite and the
 normalised class list): a repeat of the SAME run with no scanned file changed replays the
 recorded verdict, pass or fail, and says so - and a subset's verdict is never replayed for

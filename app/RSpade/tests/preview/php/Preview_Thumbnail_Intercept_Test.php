@@ -60,7 +60,7 @@ class Preview_Thumbnail_Intercept_Test extends Rsx_Test_Abstract
 
         $bytes = File_Attachment_Controller::_render_thumbnail_data(
             $attachment,
-            '/var/www/html/system/storage/uploads/ab/cd/abcd0123456789',
+            '/var/www/html/storage/uploads/ab/cd/abcd0123456789',
             'fit',
             64,
             64

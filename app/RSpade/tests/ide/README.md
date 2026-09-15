@@ -5,8 +5,7 @@ The 2026-07-29 security rework replaced the old unauthenticated `auth/create`
 mint + request-signing scheme with a **local-file grant** (an unguessable
 `ide-grant-*.token` written outside the docroot; the IDE presents its contents as
 `X-Ide-Token`, verified constant-time), removed the `exec`/`command` execution
-surface (replaced by a narrow `refactor` allowlist), and rewrote `rsx:prod:export`
-from a blacklist to a strict whitelist.
+surface (replaced by a narrow `refactor` allowlist).
 
 ## Source under test
 
@@ -22,7 +21,6 @@ from a blacklist to a strict whitelist.
 - `app/RSpade/Ide/Services/handler.php` - service router + `handle_refactor_service`
   exact-match allowlist (`rsx:refactor:rename_php_class`,
   `rename_php_class_function`, `sort_php_class_functions`).
-- `app/RSpade/Commands/Rsx/Prod_Export_Command.php` - whitelist exporter.
 - `app/RSpade/Core/Health/Security_Health_Checks.php` - the `Web Exposure`
   health check (probes own APP_URL for served `.env` / `.git` / bridge dir).
 - `app/RSpade/Core/Providers/Rsx_Framework_Provider.php` - `ensure_ide_bridge_token()`.
@@ -31,13 +29,12 @@ from a blacklist to a strict whitelist.
 
 - `vs_code_extension` - the extension + grant model + endpoint list.
 - `health` - the `Web Exposure` check.
-- `storage_directories` - `storage/rsx-ide-bridge/` + the export whitelist.
+- `storage_directories` - `storage/rsx-ide-bridge/`.
 
 ## Testable surface (by type)
 
 - **php** (implemented): `Ide_Bridge_Token` create/guards/retired-artifact
-  cleanup/idempotency/`current_token`; `Prod_Export_Command::_is_excluded`
-  whitelist predicate (secrets/runtime state excluded, source shipped).
+  cleanup/idempotency/`current_token`.
 - **http** (manual / deferred): `auth.php` reject-without-token (401), accept
   matching `X-Ide-Token`, loopback bypass, prod hard-off; `handle_refactor_service`
   allowlist reject of a non-allowed command. These run in a pre-boot standalone

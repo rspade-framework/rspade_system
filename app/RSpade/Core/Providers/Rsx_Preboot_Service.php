@@ -5,6 +5,8 @@ namespace App\RSpade\Core\Providers;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
+use App\RSpade\Core\Rsx;
 
 /**
  * Rsx_Preboot_Service - Pre-bootstrap debug and development tooling
@@ -52,8 +54,10 @@ class Rsx_Preboot_Service
      */
     public static function init(): void
     {
-        // Handle force rebuild if enabled
-        if (env('FORCE_REBUILD_EVERY_REQUEST', false)) {
+        // Handle force rebuild if enabled. DEVELOPMENT ONLY: it discards the build tree
+        // on the first init of a process, which in a production-like mode would delete
+        // the deployment artifact the very request that is running needs.
+        if (Rsx::is_development() && env('FORCE_REBUILD_EVERY_REQUEST', false)) {
             // Clear build cache on first init
             static::__clear_build_cache_once();
         }
@@ -73,8 +77,8 @@ class Rsx_Preboot_Service
     /**
      * Clear build cache once per session
      *
-     * Removes all files in storage/rsx-build/* and storage/rsx-tmp/* when FORCE_REBUILD_EVERY_REQUEST is enabled,
-     * but only once per PHP process to avoid repeated clearing.
+     * Removes all files in the build and tmp trees when FORCE_REBUILD_EVERY_REQUEST is
+     * enabled in development, but only once per PHP process to avoid repeated clearing.
      */
     protected static function __clear_build_cache_once(): void
     {
@@ -86,8 +90,8 @@ class Rsx_Preboot_Service
         static::$build_cache_cleared = true;
 
         // Clear both build and tmp directories
-        $rsx_build = storage_path('rsx-build');
-        $rsx_tmp = storage_path('rsx-tmp');
+        $rsx_build = Rsx_Project_Paths::build_root();
+        $rsx_tmp = Rsx_Project_Paths::tmp_root();
 
         // Clear build directory if exists
         if (is_dir($rsx_build)) {
@@ -198,7 +202,7 @@ class Rsx_Preboot_Service
      */
     protected static function __acquire_file_lock(): void
     {
-        $lock_file = storage_path('framework/debug_sequential.lock');
+        $lock_file = Rsx_Project_Paths::tmp_path('debug_sequential.lock');
 
         // Ensure directory exists
         $dir = dirname($lock_file);

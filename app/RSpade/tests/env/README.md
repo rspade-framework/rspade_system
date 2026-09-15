@@ -40,7 +40,7 @@ curl / `rsx:debug` testing channel). A loopback-VALUED APP_URL is NOT exempt.
 - `app/RSpade/Core/Prod/Rsx_Env_Symlink.php` (the heal, not the symlink half)
   - `full_heal()` - .env.dist required, .env created from the ROOT dist, symlink
     invariant, development-only key sync, credential validation, APP_KEY.
-  - `boot_heal()` - the pre-boot entry: the storage/rsx-tmp stamp short-circuit,
+  - `boot_heal()` - the pre-boot entry: the tmp-tree stamp short-circuit,
     and the "development runs every boot, other modes only when .env is absent"
     rule. Called from `bootstrap/rsx_env_heal.php` (both entrypoints + the
     container entrypoint).

@@ -729,7 +729,7 @@ return [
             'target' => env('BABEL_TARGET', 'modern'),
 
             // There is no cache_dir here. Every per-source-file derived cache lives under
-            // storage/rsx-tmp/derived/<namespace>/ and is addressed through
+            // tmp/derived/<namespace>/ and is addressed through
             // App\RSpade\Core\Cache\File_Content_Cache - one location, not a setting.
         ],
 
@@ -872,8 +872,8 @@ return [
     | (developer-defined) and dynamic thumbnails (ad-hoc sizes).
     |
     | Storage Structure:
-    | - storage/rsx-thumbnails/preset/  - Named preset thumbnails
-    | - storage/rsx-thumbnails/dynamic/ - Dynamic ad-hoc thumbnails
+    | - tmp/thumbnails/preset/  - Named preset thumbnails
+    | - tmp/thumbnails/dynamic/ - Dynamic ad-hoc thumbnails
     |
     | Quota Management:
     | - Preset thumbnails: Enforced via scheduled rsx:thumbnails:clean task
@@ -943,26 +943,7 @@ return [
         'allowed_extensions' => [],
     ],
 
-    /*
-    |--------------------------------------------------------------------------
-    | File Subsystem Storage Root (INTERNAL - test isolation only)
-    |--------------------------------------------------------------------------
-    |
-    | Absolute path that ROOTS the entire file subsystem - the content-addressed
-    | blob store, the thumbnail cache, and the rendition cache - when set. All of
-    | those paths resolve through App\RSpade\Core\Files\Rsx_File_Paths, which reads
-    | this key.
-    |
-    | Normal deployments NEVER set this: it defaults to null and Rsx_File_Paths
-    | falls back to storage_path(), so default-mode paths are byte-identical to the
-    | historic layout. It exists solely so the test runner (Rsx_Test_Command) can
-    | point file writes at storage/rsx-tmp/test-storage during a run - otherwise a
-    | test-DB attachment delete could unlink a blob shared with the developer
-    | database (backlog B-38). Runner-set via config(), not an env var.
-    |
-    */
     'files' => [
-        'storage_root' => null,
 
         /*
         | Maximum size of a single uploaded file, IN BYTES. Enforced by
@@ -1182,7 +1163,7 @@ return [
     |   LibreOffice (fnmatch globs). This list is also what makes a new attachment queue
     |   its blob for rendering. A convertible mime is only converted when
     |   rsx.libreoffice.enabled is true; otherwise the rendition endpoint returns 415.
-    | - quota_max_bytes: LRU cap (bytes) on storage/rsx-renditions, enforced by the
+    | - quota_max_bytes: LRU cap (bytes) on tmp/renditions, enforced by the
     |   File_Rendition_Service scheduled cleanup task (oldest mtime evicted first).
     |
     */
@@ -2012,7 +1993,7 @@ return [
 
         // Where the development SMTP catcher writes its Maildir. Read by
         // rsx:mail:test and pruned by the retention cleanup when it exists.
-        'catcher_maildir' => storage_path('mail-catcher'),
+        'catcher_maildir' => \App\RSpade\Core\Paths\Rsx_Project_Paths::mail_catcher_dir(),
 
         // Set to the DKIM selector this domain publishes to have rsx:health look
         // up the corresponding TXT record. Null = no DKIM check.

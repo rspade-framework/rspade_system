@@ -9,6 +9,7 @@ namespace App\RSpade\Tests\JsTransform\Php;
 
 use App\RSpade\Core\JsParsers\Rpc_Startup_Diagnostics;
 use App\RSpade\Core\JsParsers\Rsx_Node_Service;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -67,7 +68,7 @@ class Rpc_Startup_Diagnostics_Test extends Rsx_Test_Abstract
 
             return Rpc_Startup_Diagnostics::failure_message(
                 Rsx_Node_Service::LABEL,
-                $socket ?? storage_path('rsx-tmp/does-not-exist.sock'),
+                $socket ?? Rsx_Project_Paths::sockets_dir() . '/does-not-exist.sock',
                 $script ?? Rsx_Node_Service::entry_script_path(),
                 10000,
                 $process
@@ -154,7 +155,7 @@ class Rpc_Startup_Diagnostics_Test extends Rsx_Test_Abstract
      */
     public static function test_a_stale_socket_is_diagnosed_as_a_stale_socket()
     {
-        $socket = storage_path('rsx-tmp/rpc-diagnostics-probe.sock');
+        $socket = Rsx_Project_Paths::sockets_dir() . '/rpc-diagnostics-probe.sock';
         @mkdir(dirname($socket), 0755, true);
         file_put_contents($socket, '');
 

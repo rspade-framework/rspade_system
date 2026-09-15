@@ -135,7 +135,7 @@ CDN ASSETS
     from our own origin. An unreachable URL fails the compile naming it.
 
     A sealed web request never downloads: a missing mirror file THROWS naming
-    the file and rsx:prod:refresh. In development the same miss is a 404 naming
+    the file and rsx:build --force. In development the same miss is a 404 naming
     rsx:cdn_externals:refresh.
     See: php artisan rsx:man csp, php artisan rsx:man external_resources
 
@@ -760,7 +760,7 @@ REQUIRED BUNDLES
     - jqhtml (if .jqhtml files present)
 
 FILE ORGANIZATION
-    storage/rsx-build/bundles/
+    build/bundles/
     +-- Dashboard__vendor.abc123.js
     +-- Dashboard__vendor.abc123.css
     +-- Dashboard__app.def456.js

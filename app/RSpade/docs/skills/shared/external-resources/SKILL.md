@@ -62,7 +62,7 @@ Identifiers are one **flat namespace**, `lowercase_with_underscores`. A duplicat
 
 The store is `rsx/resource/.cdn-cache/`: URL-keyed, **git-tracked, a source artifact**. A present file is the right file, nothing self-expires, a compile only ever ADDS - **commit the files a compile adds** (`git status` shows them).
 
-**Who downloads**: development web requests, any CLI, and the production build (`[2/5] Mirroring external assets`, then the compile). A **sealed web request never downloads** - a miss throws naming the file, the store and `rsx:prod:refresh`. A **development** miss is a 404 naming `rsx:cdn_externals:refresh`.
+**Who downloads**: development web requests, any development CLI invocation, and the build's own "Mirroring external assets" step. In a prod mode **only the build phase may download** - a miss on a sealed web request throws naming the file, the store and `rsx:build --force`. A **development** miss is a 404 naming `rsx:cdn_externals:refresh`.
 
 **Fails loud**: an unfetchable URL fails the compile naming it; a stylesheet's unreachable `@import`/`url()` fails it with a JSON failure list (`Failed to localize external references`); a declared `integrity` hash is verified at download in every mode and a mismatch throws. The `integrity` ATTRIBUTE is emitted only for `mirror:false` (a mirrored asset is same-origin).
 

@@ -15,6 +15,7 @@ use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -674,7 +675,7 @@ class AssetHandler
         $extension = $matches[4];
 
         // Build full path to file
-        $file_path = storage_path("rsx-build/bundles/{$filename}");
+        $file_path = Rsx_Project_Paths::bundles_dir() . '/' . $filename;
 
         // In development mode, compile bundle on-the-fly if it doesn't exist
         if (Rsx::is_development() && !file_exists($file_path)) {
@@ -765,7 +766,7 @@ class AssetHandler
                     "  Expected in: " . \App\RSpade\Core\Bundle\Cdn_Cache::get_cache_directory() . "\n" .
                     "  This build serves external assets from its own /_vendor/ mirror and never\n" .
                     "  downloads at request time.\n" .
-                    '  Remedy: php artisan rsx:prod:refresh'
+                    '  Remedy: php artisan rsx:build --force'
                 );
             }
 

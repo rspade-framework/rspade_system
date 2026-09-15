@@ -18,7 +18,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 // The gate runs before any lock exists, so there is no lock-inheritance hazard to guard against.
 
 /**
- * The framework-update maintenance gate: a flag file under storage/rsx-framework that makes every
+ * The framework-update maintenance gate: a flag file under storage/state that makes every
  * `php artisan` command exit 503 - EXCEPT commands bearing the internal override the pull passes
  * to its own sub-calls (which is stripped from argv pre-boot). Enforcement is inline in
  * system/artisan; these tests exercise the helper API + the real subprocess gate.
@@ -27,11 +27,11 @@ class Framework_Maintenance_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
 
-    public static function test_flag_path_is_under_storage_rsx_framework()
+    public static function test_flag_path_is_under_storage_state()
     {
         $path = Framework_Maintenance::flag_path();
         static::__assert_true(
-            str_ends_with($path, 'storage/rsx-framework/.maintenance.mode.framework.update'),
+            str_ends_with($path, 'storage/state/.maintenance.mode.framework.update'),
             "unexpected flag path: {$path}"
         );
     }

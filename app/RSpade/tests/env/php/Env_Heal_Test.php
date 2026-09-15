@@ -7,6 +7,7 @@
 namespace App\RSpade\Tests\Env\Php;
 
 use RuntimeException;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Prod\Rsx_Env_Symlink;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -18,9 +19,10 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * Every test builds a throwaway project layout in a temp directory and points
  * the healer at it through the path seam, so the real .env files are never
  * touched. The layout mirrors the real one exactly - <tmp>/.env(.dist) is the
- * project root, <tmp>/system/.env(.dist) is the framework's side, and
- * <tmp>/storage/rsx-tmp holds the boot stamp - because the class derives every
- * one of those paths from the two it is given.
+ * project root and <tmp>/system/.env(.dist) is the framework's side - because the
+ * class derives both dist paths from the two it is given. The boot stamp is the one
+ * path it does NOT derive: it is named by the path owner and lives in the tmp tree,
+ * which is volatile by design, so losing or dirtying it costs exactly one heal.
  *
  * The symlink invariant itself is covered by prod_mode/php/Env_Symlink_Test.
  *
@@ -228,7 +230,7 @@ class Env_Heal_Test extends Rsx_Test_Abstract
             // One heal writes the stamp; nothing has changed since.
             Rsx_Env_Symlink::full_heal();
             static::__assert_true(
-                is_file($tmp . '/storage/rsx-tmp/env_heal.stamp'),
+                is_file(Rsx_Project_Paths::env_heal_stamp_file()),
                 'the heal wrote its stamp'
             );
 
@@ -253,7 +255,7 @@ class Env_Heal_Test extends Rsx_Test_Abstract
             symlink('../.env', $system_env);
 
             Rsx_Env_Symlink::full_heal();
-            $stamp = $tmp . '/storage/rsx-tmp/env_heal.stamp';
+            $stamp = Rsx_Project_Paths::env_heal_stamp_file();
 
             // .env.dist grows a key IN THE SAME SECOND as the heal that preceded
             // it - the exact case an mtime comparison cannot see.
@@ -359,6 +361,61 @@ class Env_Heal_Test extends Rsx_Test_Abstract
 
             static::__assert_equals('127.0.0.1', self::_read_key($root_env, 'REDIS_HOST'), 'arrived via the sync');
             static::__assert_true(in_array('REDIS_HOST', $report['synced_keys']['root_env'], true), 'reported');
+        } finally {
+            Rsx_Env_Symlink::_testing_reset();
+            self::_rmtree($tmp);
+        }
+    }
+
+    /**
+     * A key travels with the comment block that introduces it.
+     *
+     * A key copied downstream on its own arrives as a bare name in an alphabet soup: the
+     * lines above it in .env.dist are what say what it is for and what a value means. The
+     * run must END on the line directly above the key - a comment separated by a blank
+     * line is a section header belonging to the file, not to that key.
+     */
+    public static function test_key_sync_carries_the_comment_block_above_a_key()
+    {
+        [$tmp, $system_env, $root_env] = self::_make_layout();
+        try {
+            file_put_contents(
+                $tmp . '/.env.dist',
+                self::DIST
+                . "# The tmp tree. Absolute, or relative to the project root.\n"
+                . "# Empty means <project>/tmp.\n"
+                . "DOCUMENTED_KEY=./tmp\n"
+                . "\n"
+                . "# A section header, not this key's documentation.\n"
+                . "\n"
+                . "UNDOCUMENTED_KEY=1\n"
+            );
+            file_put_contents($root_env, "APP_KEY=base64:kept\n" . self::DIST);
+            symlink('../.env', $system_env);
+
+            $report = Rsx_Env_Symlink::full_heal();
+
+            static::__assert_true(in_array('DOCUMENTED_KEY', $report['synced_keys']['root_env'], true), 'the key arrived');
+
+            $env = file_get_contents($root_env);
+
+            static::__assert_contains(
+                "# The tmp tree. Absolute, or relative to the project root.\n"
+                . "# Empty means <project>/tmp.\n"
+                . 'DOCUMENTED_KEY=./tmp',
+                $env,
+                'both comment lines arrived, in order, directly above the key'
+            );
+
+            static::__assert_true(
+                !str_contains($env, "# A section header, not this key's documentation.\nUNDOCUMENTED_KEY=1"),
+                'a comment separated by a blank line belongs to the file, not to the key'
+            );
+            static::__assert_equals('1', self::_read_key($root_env, 'UNDOCUMENTED_KEY'), 'the undocumented key still arrived');
+
+            // Re-running adds nothing: the keys are present now, comments and all.
+            $second = Rsx_Env_Symlink::full_heal();
+            static::__assert_count(0, $second['synced_keys']['root_env'], 'idempotent');
         } finally {
             Rsx_Env_Symlink::_testing_reset();
             self::_rmtree($tmp);

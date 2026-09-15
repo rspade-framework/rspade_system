@@ -18,7 +18,7 @@ class Config_Cache_Command extends Command
      *
      * @var string
      */
-    protected $description = '[RESTRICTED] Use optimize:cache instead to cache all Laravel components';
+    protected $description = '[RESTRICTED] RSX never caches config - it reads env() at runtime';
 
     /**
      * Hide this command from artisan list
@@ -36,10 +36,12 @@ class Config_Cache_Command extends Command
     {
         $this->error('This command has been restricted in RSX.');
         $this->line('');
-        $this->info('Please use the following command instead:');
-        $this->line('  php artisan optimize:cache');
+        $this->info('RSX is env-at-runtime by design, so the config cache is never built:');
+        $this->comment('Laravel skips .env entirely when one exists, and every runtime env() call');
+        $this->comment('would fall back to its default - RSX_MODE included.');
         $this->line('');
-        $this->comment('The optimize:cache command will cache all Laravel components including configuration.');
+        $this->info('Everything the site serves is built by:');
+        $this->line('  php artisan rsx:build --force');
         
         return 1;
     }

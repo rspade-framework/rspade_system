@@ -222,9 +222,10 @@ function parse_args() {
 (async () => {
     const options = parse_args();
 
-    // Storage may live at the project root (relocation marker) or the historic
-    // system/storage; resolve from this script's own location, not a hardcoded path.
-    const project_root = path.resolve(__dirname, '..', '..');
+    // The path library answers for every volatile root, honouring an RSX_STORAGE_PATH
+    // in the project's .env exactly as PHP does.
+    const rsx_paths = require('./lib/rsx_paths.js');
+    const project_root = rsx_paths.project_root();
 
     // Browse the APP_URL host (DNS-mapped to loopback via a Chromium resolver rule)
     // rather than a literal localhost, so everything that keys on the request host -
@@ -252,10 +253,8 @@ function parse_args() {
         route = '/_portal' + route;
     }
     const fullUrl = baseUrl + route;
-    const storage_root = fs.existsSync(path.join(project_root, 'storage', '.rspade_storage_relocated'))
-        ? path.join(project_root, 'storage')
-        : path.join(project_root, 'system', 'storage');
-    const laravel_log_path = process.env.LARAVEL_LOG_PATH || path.join(storage_root, 'logs', 'laravel.log');
+    const laravel_log_path = process.env.LARAVEL_LOG_PATH
+        || path.join(rsx_paths.storage_root(), 'logs', 'laravel.log');
     
     // Launch browser (always headless)
     const browser = await chromium.launch({

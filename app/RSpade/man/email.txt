@@ -256,7 +256,7 @@ STYLING
         Core/Mail/resource/email.scss                  the framework default otherwise
 
     It is compiled through the same node sass step the bundle build uses, cached under
-    storage/rsx-tmp by the SOURCE's content hash, then INLINED onto the elements and ALSO
+    tmp by the SOURCE's content hash, then INLINED onto the elements and ALSO
     injected as a <style> block in <head>. Both, deliberately: inlining is what actually
     styles the message (Gmail and most of Outlook's history strip <style> outright), but a
     media query cannot be inlined onto anything.
@@ -506,7 +506,7 @@ THE DEVELOPMENT CATCHER
 
     The dev container runs system/bin/mail_catcher.py as [program:mail-catcher] under
     supervisor: SMTP only, 127.0.0.1:1025, NO web UI and no HTTP listener of any kind,
-    writing a Maildir at storage/mail-catcher (config rsx.mail.catcher_maildir). It accepts
+    writing a Maildir at tmp/mail-catcher (config rsx.mail.catcher_maildir). It accepts
     every recipient.
 
     IT ADVERTISES ITSELF, AND THAT IS PART OF THE CONTRACT. Its SMTP greeting is
@@ -532,7 +532,7 @@ THE DEVELOPMENT CATCHER
 
     Read the last message it caught:
 
-        cat "$(ls -t storage/mail-catcher/new/* | head -1)"
+        cat "$(ls -t tmp/mail-catcher/new/* | head -1)"
 
     Each file carries the delivery's X-Peer, X-MailFrom and X-RcptTo alongside the message's
     own headers, so the envelope is readable next to the content. `rsx:mail:test` prints the
@@ -600,7 +600,7 @@ CONFIGURATION
         dev_site.catchall_address       EMAIL_DEV_CATCHALL_ADDRESS       ''
         dev_site.address_whitelist      EMAIL_DEV_EMAIL_ADDRESS_WHITELIST ''
         dev_site.domain_whitelist       EMAIL_DEV_EMAIL_DOMAIN_WHITELIST  ''
-        catcher_maildir                 -                                storage/mail-catcher
+        catcher_maildir                 -                                tmp/mail-catcher
         dkim_selector                   -                                null
 
     encryption maps onto the two knobs that exist: '' is explicitly OFF (auto_tls=false, so

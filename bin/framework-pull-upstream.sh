@@ -161,7 +161,7 @@ cleanup() {
             }
         else
             # The tree lost the script mid-run: never leave a box stuck in 503.
-            rm -f "$(storage_base)/rsx-framework/.maintenance.mode.framework.update" 2>/dev/null || true
+            rm -f "$STORE_DIR/.maintenance.mode.framework.update" 2>/dev/null || true
             err "Maintenance script missing; the flag was cleared but services were NOT restarted."
         fi
     fi
@@ -212,13 +212,10 @@ HELP
 }
 
 # =============================================================================
-# storage_base / derive_paths - everything from the script's own location, never
-# the caller's cwd.
+# derive_paths - everything from the script's own location, never the caller's
+# cwd. The volatile-tree roots come from bin/lib/rsx_paths.sh, so this script and
+# every other reader agree about where the state directory is.
 # =============================================================================
-storage_base() {
-    printf '%s' "$PROJECT_ROOT/storage"
-}
-
 derive_paths() {
     # After the relocation below this script no longer sits inside the tree it is
     # updating, so its own path cannot locate the project. The pre-relocation run
@@ -233,7 +230,10 @@ derive_paths() {
         PROJECT_ROOT="$(dirname "$SYSTEM_DIR")"
     fi
 
-    STORE_DIR="$(storage_base)/rsx-framework"
+    RSX_PATHS_PROJECT_ROOT_DIR="$PROJECT_ROOT"
+    . "$SYSTEM_DIR/bin/lib/rsx_paths.sh"
+
+    STORE_DIR="$(rsx_state_root)"
     HISTORY_FILE="$PROJECT_ROOT/rsx/resource/framework_update_history.dat"
 
     # cwd immunity: anchor the process at PROJECT_ROOT and keep it there. artisan
@@ -332,7 +332,7 @@ run_gates() {
         say "  match what it was built from."
         say ""
         say "  Pull in a development environment, then rebuild the sealed build from the"
-        say "  reviewed result:  php artisan rsx:prod:refresh"
+        say "  reviewed result:  php artisan rsx:build --force"
         exit 1
     fi
 }

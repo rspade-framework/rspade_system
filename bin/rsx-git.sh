@@ -66,6 +66,10 @@ SYSTEM_DIR="$(dirname "$SCRIPT_DIR")"
 PROJECT_ROOT="$(dirname "$SYSTEM_DIR")"
 SUBMODULE_PATH="$(basename "$SYSTEM_DIR")"
 
+# The volatile-tree roots, resolved exactly as PHP resolves them.
+RSX_PATHS_PROJECT_ROOT_DIR="$PROJECT_ROOT"
+. "$SYSTEM_DIR/bin/lib/rsx_paths.sh"
+
 # THE CALLER'S CWD IS ALREADY GONE BY THE TIME WE RUN, AND IT IS NOT system/.
 #
 # system/artisan does `chdir(__DIR__)` before anything else, so every
@@ -160,8 +164,9 @@ command -v git >/dev/null 2>&1 || bail_to_git
 if [ "${RSPADE_FRAMEWORK_UPDATE:-0}" = "1" ] || [ "${RSPADE_FRAMEWORK_COMMIT:-0}" = "1" ]; then
     exec git "${ARGS[@]}"
 fi
-if [ -f "$PROJECT_ROOT/storage/rsx-framework/.maintenance.mode.framework.update" ] \
-    && [ "$(head -n1 "$PROJECT_ROOT/storage/rsx-framework/.maintenance.mode.framework.update" 2>/dev/null)" = "framework update in progress" ]; then
+RSX_MAINT_FLAG="$(rsx_state_root)/.maintenance.mode.framework.update"
+if [ -f "$RSX_MAINT_FLAG" ] \
+    && [ "$(head -n1 "$RSX_MAINT_FLAG" 2>/dev/null)" = "framework update in progress" ]; then
     exec git "${ARGS[@]}"
 fi
 

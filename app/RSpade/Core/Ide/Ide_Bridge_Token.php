@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Core\Ide;
 
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -77,10 +78,14 @@ class Ide_Bridge_Token
      */
     public static function bridge_dir(): string
     {
-        // The configured path is written relative to the directory CONTAINING storage/
-        // (historically base_path()); volatile storage now lives at <project>/storage, so
-        // resolve against the parent of the RESOLVED storage root instead of base_path().
-        return dirname(storage_path()) . '/' . ltrim(config('rsx.ide_integration.bridge_path', 'storage/rsx-ide-bridge'), '/');
+        // The configured path is a PROJECT-LOGICAL key ('storage/rsx-ide-bridge'), so it
+        // resolves through the path owner - which knows where each volatile tree actually
+        // is. A key naming none of the three is resolved against the project root, which is
+        // what a configured path outside them means.
+        $configured = ltrim((string) config('rsx.ide_integration.bridge_path', 'storage/rsx-ide-bridge'), '/');
+
+        return Rsx_Project_Paths::absolute_for($configured)
+            ?? rsx_paths_project_root() . '/' . $configured;
     }
 
     /**

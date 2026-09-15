@@ -2,7 +2,7 @@
 
 ## MAINTENANCE MODE & HEALTH
 
-`php artisan rsx:maintenance:enable --reason="database surgery"` takes the app down; `rsx:maintenance:disable` brings it back. **ONE flag file** (its CONTENT being the operator reason), raised by these two commands and by `rsx:framework:pull`. Both are intercepted PRE-BOOT and shell out, so they are **immune to their own gate and work on a broken tree** — a flag left stuck by a crash is cleared by simply running disable. Enable stops services in a load-bearing order (flag first, then task workers, then realtime/fpc/php-fpm/rsx-lockd, redis LAST); disable reverses it.
+`php artisan rsx:maintenance:enable --reason="database surgery"` takes the app down; `rsx:maintenance:disable` brings it back. **ONE flag file** at `storage/state/.maintenance.mode.framework.update` (its CONTENT being the operator reason), raised by these two commands and by `rsx:framework:pull`. Both are intercepted PRE-BOOT and shell out, so they are **immune to their own gate and work on a broken tree** — a flag left stuck by a crash is cleared by simply running disable. Enable stops services in a load-bearing order (flag first, then task workers, then realtime/fpc/php-fpm/rsx-lockd, redis LAST); disable reverses it.
 
 **The gate is allow-most-deny-some — it stops AUTOMATION, not humans.** Blocked: `rsx:task:process`/`rsx:task:worker`; blocked without `--force`: `rsx:task:run`. **Everything else runs normally**, `migrate` included. Web requests get **503 + Retry-After quoting the reason** while PHP still runs; **once php-fpm is stopped the web server answers its own 502** — both mean "down".
 

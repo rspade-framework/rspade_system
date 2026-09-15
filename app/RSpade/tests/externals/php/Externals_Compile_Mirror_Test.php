@@ -10,6 +10,7 @@ use ReflectionMethod;
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Bundle\Cdn_Cache;
 use App\RSpade\Core\Externals\Rsx_Externals;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
@@ -41,7 +42,7 @@ class Externals_Compile_Mirror_Test extends Rsx_Test_Abstract
 
     private static function __scratch_dir(): string
     {
-        return storage_path('rsx-tmp/externals_compile_mirror_test-temp');
+        return Rsx_Project_Paths::tmp_path('externals_compile_mirror_test-temp');
     }
 
     public static function setup()

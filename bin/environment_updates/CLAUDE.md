@@ -31,10 +31,9 @@ must tolerate being run by any of them:
 4. **Container start** — the docker entrypoint's step 4b, before supervisor. This is the
    FIRST-BOOT trigger, and it exists because the other three all presuppose an environment
    that has already been used: a freshly cloned project has had no pull, no build and no
-   commit, so it ran with none of these applied (most visibly with storage never relocated,
-   which leaves the blob store and logs inside the framework-owned `system/` tree). It runs
-   before supervisor because `030` MOVES the tree the helper daemons hold sockets in, and
-   takes no `ENVIRONMENT_UPDATES` lock because nothing else in the container is alive yet.
+   commit, so it ran with none of these applied. It runs before supervisor because `110`
+   MOVES the tree the helper daemons hold sockets in, and takes no `ENVIRONMENT_UPDATES`
+   lock because nothing else in the container is alive yet.
 5. **`rsx:git pull` / `merge`** — after an operation that succeeded and moved HEAD, the git
    proxy runs `post-update.sh --quiet` (downstream only; the monorepo path is inert). It
    exists because `rsx/resource/` is manifest-ignored: a pull whose only change is a
@@ -209,6 +208,31 @@ signal over inferring from side effects.
   (`rspade-framework/rspade`, or the internal `rspade_project`) is a no-op, since a checkout
   of the starter is not a project yet. The write is atomic (temp + `mv`) and verified.
   `README.md` is TRACKED, so the informational line asks for the commit.
+
+- `110_relocate_build_tmp.sh` — moves an existing install onto the three-tree layout:
+  `build/` (build outputs), `tmp/` (derived caches and runtime temp) and `storage/`
+  (user data plus `storage/state`). BOTH contexts. It reaps the node daemons bound to
+  the old socket directory first (their socket path is argv, fixed at spawn), MOVES the
+  state files rather than copying them (`mv` within one filesystem preserves the inode,
+  so a held `flock()` still excludes an acquirer of the new path), PRESERVES an
+  interrupted database snapshot into `tmp/db_cache` and says so, carries `db_backups/`,
+  `mail-catcher/` and the formatter cache into `tmp/`, and deletes the trees that
+  regenerate wholesale (including the thumbnail and rendition caches, which now live in
+  `tmp/` and re-render on demand). It then installs `system/build` as a symlink —
+  replacing the old two-child `cache/`+`temp/` artifact cache that squatted there, and
+  reporting-and-skipping anything else real. It NEVER creates `build/` itself: build
+  outputs are produced by the build, and a missing tree must fail loud naming it.
+  Applied-detection is the absence of every old directory plus a real `storage/state`
+  and a correct `system/build` link.
+
+- `120_remove_storage_tmp_links.sh` — removes the `system/storage` and `system/tmp`
+  symlinks an earlier layout installed. BOTH contexts. `build/` keeps its link because it
+  is FIXED at `<project>/build`; the other two roots are relocatable (`RSX_STORAGE_PATH`,
+  `RSX_TMP_PATH`) and a link cannot promise where a relocated root is — on a sealed box
+  `system/` is read-only, so a link left pointing at the old tree could not be repaired.
+  Code reaches both roots through `Rsx_Project_Paths`, which reads the live value. Only a
+  SYMLINK is removed; a real directory or file at either path is reported to stderr and
+  left alone. Applied-detection is the absence of both paths.
 
 - `100_breaking_changes_manifest_rename.sh` — carries the app's breaking-changes
   fulfillment record across the 2026-09-04 rename

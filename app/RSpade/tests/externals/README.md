@@ -44,7 +44,7 @@ file is by definition the right file, the compile only ever ADDS, and no code pa
 deletes. `php artisan rsx:cdn_externals:refresh` is the ONE way to move it forward -
 EMPTY IT AND RE-RUN EVERY PRODUCER (clear the store, clear the compiled bundle caches so
 the CSS localize pass re-runs, re-mirror every declaration, recompile every bundle). It
-refuses on a sealed host, where the mirror is the copy that shipped and `rsx:prod:refresh`
+refuses on a sealed host, where the mirror is the copy that shipped and `rsx:build --force`
 is the command. There is no partial `--url` mode: nothing records which stylesheet pulled
 in which font, so a partial refresh could not follow the nested files a localized
 stylesheet owns.
@@ -118,7 +118,7 @@ Behavior of record: `php artisan rsx:man external_resources`.
 ## Residual untested surface
 
 The NETWORK half is not exercised: tests never reach the internet, and proving the
-request-time refusal end to end would mean sealing this box. What IS pinned is everything
+request-time refusal end to end would mean putting this box in a production mode. What IS pinned is everything
 that can silently disagree - the filename both halves compute, the store's write/hit
 behaviour through the `$_testing_fetcher` seam, and the guard's pure decision function
 (`Cdn_Cache::_download_is_permitted`). The AssetHandler branch that turns a missing

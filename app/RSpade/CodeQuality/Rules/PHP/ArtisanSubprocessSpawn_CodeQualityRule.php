@@ -126,7 +126,7 @@ framework test run for twelve hours on 2026-08-11.";
 THE COMMAND NAME AND ITS ARGUMENTS ARE SEPARATE:
 Pass argv tokens as an array; Rsx_Artisan escapes each one. Do not build a command string.
 
-    Rsx_Artisan::passthru('rsx:prod:build', ['--force', '--authorized']);
+    Rsx_Artisan::passthru('rsx:build', ['--force']);
 
 SYNCHRONOUS PROPAGATES, ASYNCHRONOUS DOES NOT:
 passthru() and run() always hand this process's lock group to the child, because the

@@ -2,7 +2,7 @@
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
-| DC-01 | The path is `derived/<namespace>/<hash><variant>.<ext>`, and a separator in a variant cannot escape the namespace directory | php | source file + variant `_modern_abc`, then `_../../etc` | `<hash>_modern_abc.js` under `rsx-tmp/derived/<ns>/`; no `..` in the escaped form | implemented | 2026-09-07 |
+| DC-01 | The path is `derived/<namespace>/<hash><variant>.<ext>`, and a separator in a variant cannot escape the namespace directory | php | source file + variant `_modern_abc`, then `_../../etc` | `<hash>_modern_abc.js` under `tmp/derived/<ns>/`; no `..` in the escaped form | implemented | 2026-09-07 |
 | DC-02 | put/get/forget roundtrip: what was stored comes back byte for byte, what was forgotten is gone | php | store `DERIVED-B` | miss -> hit -> miss | implemented | 2026-09-07 |
 | DC-03 | The `*_for_hash` twins address an entry under an EXPLICIT hash (the shape the reflection cache uses) | php | `put_for_hash('a-manifest-sha1', ...)` | read back; unknown hash misses | implemented | 2026-09-07 |
 | DC-04 | A CHANGED source misses - the derived NAME moves with the file, so there is no staleness comparison to get wrong | php | rewrite content and bump mtime | `get()` returns null | implemented | 2026-09-07 |
@@ -11,3 +11,5 @@
 | DC-07 | `sweep()` removes only entries whose hash is in no live set, keeps EVERY variant of a live hash, and treats an empty live set as "unknown" | php | one live + one dead source, three entries | 0 removed for `[]`; 1 removed for `[live]`; both live variants survive | implemented | 2026-09-07 |
 | DC-08 | A partial write is never visible - the entry is REPLACED by rename, not truncated in place | php | 200KB artifact overwritten by a different 200KB artifact | inode changes; full new content, no truncated tail | implemented | 2026-09-07 |
 | DC-09 | The manifest build's Phase 7 sweep removes entries for files the manifest no longer knows | php | delete a source, rebuild | entry gone from every namespace | planned - needs a full-rebuild harness | 2026-09-07 |
+| DC-10 | One file has ONE build identity: the two absolute spellings `base_path()` sits above (`system/tmp`, `system/rsx`) hash the same | php | one scratch file, both spellings | identical `_rsx_file_hash_for_build()` | implemented | 2026-09-15 |
+| DC-11 | An entry written under one spelling is read - and kept alive by the sweep - under the other | php | `put()` via `base_path()`, `get()`/`sweep()` via the project mount | hit; 0 removed; the entry survives | implemented | 2026-09-15 |
