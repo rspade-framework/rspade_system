@@ -1806,11 +1806,11 @@ class Manifest
         // =======================================================
         console_debug('MANIFEST', 'Phase 2: Parse Metadata - Processing ' . count($files_to_process) . ' files');
 
-        // Filter out storage files from the manifest
+        // A file under a generated tree is never a source file, whatever the scan found.
         static::$data['data']['files'] = array_filter(
             static::$data['data']['files'],
             function ($key) {
-                return !str_starts_with($key, 'storage/');
+                return !\App\RSpade\Core\Paths\Rsx_Project_Paths::is_generated_key($key);
             },
             ARRAY_FILTER_USE_KEY
         );

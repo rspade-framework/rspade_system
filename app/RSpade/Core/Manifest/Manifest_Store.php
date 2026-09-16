@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Manifest;
 use App\RSpade\Core\Kernels\ManifestKernel;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Naming\Rsx_Paths;
+use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -524,8 +525,12 @@ class Manifest_Store
         $existing_files = array_flip($files);
 
         foreach (array_keys(Manifest::$data['data']['file_index'] ?? []) as $cached_file) {
-            // Skip storage files - they're not part of the manifest
-            if (str_starts_with($cached_file, 'storage/')) {
+            // A generated entry (a stub under the tmp tree, a build output) is recorded in
+            // the index but never returned by the source scan, so its absence from the scan
+            // says nothing about staleness. The owner's predicate decides what is generated;
+            // a directory-name literal here is what made every boot rebuild once the
+            // stub trees moved.
+            if (Rsx_Project_Paths::is_generated_key($cached_file)) {
                 continue;
             }
             if (!isset($existing_files[$cached_file])) {

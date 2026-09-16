@@ -60,3 +60,5 @@ own universal step), and the same probe under a raised window leaves it untouche
 idempotent-silent / commit-fires-a-detached-stub / foreign-hook-skipped / monorepo no-op) run
 against a throwaway git repo with a stub `post-update.sh`; it is not a standing test because a
 real one would have to write into `.git/hooks`.
+| M-30 | Every helper `maintenance-mode.sh` calls in command position is a function the script or `bin/lib/rsx_paths.sh` defines - an undefined helper in a pre-boot script is a silent empty string, not a fatal (a downstream field report, 2026-09-15: `env_value` vs `rsx_env_value` left boxes hung in maintenance) | cli | static scan of the script | no undefined helper | implemented | 2026-09-16 |
+| M-31 | `wait_for_lockd` refuses an empty host or port before its first attempt instead of looping with no deadline against an address that cannot exist | cli | script source | the refusal message present | implemented | 2026-09-16 |

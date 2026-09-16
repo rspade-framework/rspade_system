@@ -47,4 +47,5 @@ that only regroups data already in the manifest derives its section in full, eve
 | mds-02 | the other request-serving sections rebuild too | `portal_routes` and `auth` emptied, both portal modules plus Auth rebuilt | both counts return - an empty surfaces map is what turned the outage into a 500 once routes were back | implemented |
 | mds-03 | the request-serving modules derive in FULL | Route, Portal_Route, Spa, Auth | each is a `Full_ManifestSupport_Abstract` - a named list, so moving one back onto the changed set has to delete this line | implemented |
 | mds-04 | every registered module declares a kind | `config('rsx.manifest_support')` | each extends a support base | implemented |
-
+| `Manifest_Boot_Is_Idle_Test::test_the_index_records_generated_entries_the_owner_recognises` | php | implemented | The index records generated (stub) entries and the path owner classifies every one of them as generated, so the exemption below is exercised on this tree |
+| `Manifest_Boot_Is_Idle_Test::test_a_child_boot_does_not_rewrite_the_index` | php | implemented | A boot in a child process on an unchanged tree leaves the index file's mtime untouched - a generated entry absent from the source scan is not a deleted file |

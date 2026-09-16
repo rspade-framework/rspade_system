@@ -206,8 +206,15 @@ wait_for_lockd() {
     # No rsx-lockd on this box (a single-node install may not run one) - nothing to wait for.
     [ -n "$unit" ] || return 0
 
-    host="$(env_value LOCK_SERVER_HOST 127.0.0.1)"
-    port="$(env_value LOCK_SERVER_PORT 6210)"
+    host="$(rsx_env_value LOCK_SERVER_HOST 127.0.0.1)"
+    port="$(rsx_env_value LOCK_SERVER_PORT 6210)"
+
+    # A wait with no deadline is the documented contract; a wait against an address that
+    # cannot exist is a hang. Refuse the malformed case before the first attempt.
+    if [ -z "$host" ] || [ -z "$port" ]; then
+        echo "[ERROR] rsx-lockd address is incomplete (host='${host}' port='${port}'); set LOCK_SERVER_HOST and LOCK_SERVER_PORT in .env" >&2
+        return 1
+    fi
 
     while ! lockd_answers_ping "$host" "$port"; do
         sleep 1
