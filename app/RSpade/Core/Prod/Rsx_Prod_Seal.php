@@ -26,7 +26,9 @@ use App\RSpade\Core\Rsx;
  *
  * The seal is a STATE RECORD, not a permission: what may write the build tree is
  * Rsx_Project_Paths::assert_build_writable(), which keys on the mode and the build
- * context, so an unsealed production box is guarded exactly like a sealed one.
+ * context, so an unsealed production box is guarded exactly like a sealed one. The
+ * guard also reads this file fresh from disk, so a process that memoized development
+ * mode before the seal was written is refused as well.
  *
  * The seal file lives inside the build root, and asset paths are stored relative to
  * it, so the seal is self-contained and location-independent.

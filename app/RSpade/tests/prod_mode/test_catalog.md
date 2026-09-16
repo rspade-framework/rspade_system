@@ -46,9 +46,10 @@ One row per test worth having (implemented AND not). Status is one of
 
 ## Prod_Guard_Test (php)
 
-The build-tree write guard keys on the MODE and the build context, never on the presence
-of a seal file. Build root redirected with `Rsx_Project_Paths::_override(['build' => ...])`,
-mode via `Rsx::_testing_set_mode()`.
+The build-tree write guard keys on the MODE and the build context (a seal is not required
+for it to refuse) and also on a seal present on disk (a process that memoized development
+before the seal was written is refused). Build root redirected with
+`Rsx_Project_Paths::_override(['build' => ...])`, mode via `Rsx::_testing_set_mode()`.
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
@@ -58,6 +59,7 @@ mode via `Rsx::_testing_set_mode()`.
 | GUARD-04 | the build context is the one key | php | production mode + `Rsx_Build_Context::begin()` | no throw | implemented | 2026-09-15 |
 | GUARD-05 | a path outside the build tree is not the guard's business | php | production mode, external path | no throw | implemented | 2026-09-15 |
 | GUARD-06 | rsx:clean's refusal asks the same two questions (prod mode, not a build) | php | mode + context seams | demands --force, then does not | implemented | 2026-09-15 |
+| GUARD-07 | a seal on disk guards a process that read development at boot (a request outliving rsx:mode:set prod) | php | development mode, seal file in the build root | RuntimeException naming the sealed tree and `rsx:build --force` | implemented | 2026-09-16 |
 
 ## Seal_Gate_Test (php)
 
@@ -99,6 +101,20 @@ by accident, and a predicate test cannot see that.
 | WGUARD-07 | `ensure_build_tree()` never grows an empty tree in production | php | production, missing root | throws; root still missing | implemented | 2026-09-15 |
 | WGUARD-08 | the build creates the four directories it needs | php | production + build context | root, bundles, laravel, views | implemented | 2026-09-15 |
 | WGUARD-09 | development creates the tree without ceremony | php | development, missing root | bundles created | implemented | 2026-09-15 |
+
+## View_Precompile_Test (php)
+
+The build's views phase compiles exactly what a served request can render - the manifest's
+Blade views plus `config('view.paths')` - each at the path the view finder answers for its
+name (an rsx:: view through the `system/rsx` hint, never its real path). Reads the running
+manifest and finder, no DB.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| VIEWS-01 | every manifest Blade view is in the set, resolves, and is compiled exactly once | php | `Optimize_Cache_Command::view_names()` | one resolved name per `blade_views` entry | implemented | 2026-09-16 |
+| VIEWS-02 | nothing under a framework-ignored `resource/` directory is compiled (the reference app extends layouts an application need not declare) | php | the set, resolved | no path contains `/resource/` | implemented | 2026-09-16 |
+| VIEWS-03 | the framework views rendered by name are in the set | php | the set | `errors.rsx_error`, `mail.unsubscribe` present | implemented | 2026-09-16 |
+| VIEWS-04 | an rsx:: view is located at the hint spelling, the compiled file's identity | php | every rsx:: name | path starts with `base_path('rsx')` | implemented | 2026-09-16 |
 
 ## cli/prod_lifecycle.sh (cli, bash)
 

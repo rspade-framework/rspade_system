@@ -152,7 +152,7 @@ Consequences worth internalizing:
 
 Permission to write the build tree is a property of the PROCESS - the **build context** - not of a flag anybody can pass and never of an environment variable. `rsx:build` declares itself one from the first line of boot (recognised from argv) and carries it to its subprocesses as a framework-internal flag; `rsx:clean` declares one too. A web request, a plain artisan command or a tinker session is never a build context.
 
-The guard keys on the MODE, not on whether a seal happens to be on disk: an unsealed production box is a broken deployment, and letting arbitrary commands write into it is how it stays broken.
+The guard keys on the MODE first, so a seal is not required for it to refuse: an unsealed production box is a broken deployment, and letting arbitrary commands write into it is how it stays broken. A seal on disk refuses the write as well, whatever mode the process read at boot - a web request that began under development and is still running after `rsx:mode:set prod` wrote the seal would otherwise compile with development semantics into the sealed tree.
 
 They stop the framework's OWN write paths, and they do not (and cannot) stop somebody who goes around them: `rm -rf build/`, editing a bundle by hand, `cp` over `manifest_index.php`, `DB::table()->update()`. **The analogy is the realtime model layer**: `save()`/`delete()` emit change frames, a raw `DB::table()` write emits nothing, by design. `rsx:prod:verify` is the backstop that DETECTS such drift afterwards - it never prevents it. The OS-level answer is the read-only posture.
 

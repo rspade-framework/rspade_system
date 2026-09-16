@@ -75,6 +75,7 @@ Batch 2 (seal + guards):
 | Clean_Command production refusal without --force | php/cli | Batch 2 |
 | Seal gate: which boxes refuse, and who is exempt | php | implemented (Seal_Gate_Test) |
 | The guard as its three writers call it | php | implemented (Write_Guard_Test) |
+| The views phase: the manifest's Blade views plus resources/views, at the finder's path | php | implemented (View_Precompile_Test) |
 | console_debug strip (pure_funcs in strict prod) | asset | Batch 3 (unit on option builder); full strip proven by E2E grep |
 | enable/disable/verify lifecycle, unseal and repair | cli | implemented (cli/prod_lifecycle.sh) - a REAL round trip on this box; the EXIT trap returns it to development |
 | Read-only build/, system/, rsx/ while serving | cli | implemented (cli/prod_readonly.sh) - complete only when the test user is unprivileged; see the script header |

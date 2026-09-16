@@ -109,7 +109,9 @@ BUILD TREE (<project>/build)
                              so every Laravel consumer follows automatically.
         views/               compiled Blade. Development compiles JIT into it;
                              a production build PRECOMPILES every template
-                             (view:cache) so a sealed request never writes.
+                             a request can render - the manifest's Blade views
+                             plus resources/views, each at the path the view
+                             finder answers - so a sealed request never writes.
         prod_seal.json       the sealed-build record (production-like modes
                              only). rsx:man app_mode for its format.
 
@@ -126,8 +128,10 @@ BUILD TREE (<project>/build)
     IMMUTABILITY. In a production-like mode every framework write into this
     tree passes Rsx_Project_Paths::assert_build_writable(), which throws
     unless the process is a BUILD CONTEXT (rsx:build, rsx:clean, and the
-    subprocesses they spawn). The guard keys on the MODE, not on whether a
-    seal is present. It is a guardrail, not a security boundary: rsx:man prod
+    subprocesses they spawn). The guard keys on the MODE (a seal is not
+    required for it to refuse) and ALSO on a seal present on disk, so a
+    process that memoized development mode before the seal was written is
+    refused too. It is a guardrail, not a security boundary: rsx:man prod
     covers the OS-level read-only posture that is.
 
 TMP TREE (<project>/tmp)

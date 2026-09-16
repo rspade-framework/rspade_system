@@ -330,10 +330,15 @@ GUARDS
         throws:
             "<context>: '<path>' is a build artifact, and only a build may
             write it."
-        It keys on the MODE, not on whether a seal happens to be present -
-        an unsealed production box is a broken deployment, and letting an
-        arbitrary command write into it is how it stays broken. In
-        development it is a no-op.
+        It keys on the MODE first, so a seal is not required for it to
+        refuse - an unsealed production box is a broken deployment, and
+        letting an arbitrary command write into it is how it stays broken.
+        A seal ON DISK refuses the write as well, whatever mode the process
+        read at boot: the mode is memoized per process, and a web request
+        that began under development and is still running after
+        rsx:mode:set prod wrote the seal would otherwise compile with
+        development semantics into the sealed tree (the refusal says so).
+        In development with no seal on disk it is a no-op.
 
         Manifest::init() refuses to boot in a prod mode when the manifest
         index or the seal is missing:

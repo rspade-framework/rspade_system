@@ -539,10 +539,18 @@ class Rsx_Project_Paths
      * Refuse a write into the build tree from anything but a build.
      *
      * In a production-like mode the build tree is a deployment artifact: one command
-     * produces it and everything else reads it. So the guard keys on the MODE, not on
-     * whether a seal happens to be on disk - an unsealed production box is a broken
+     * produces it and everything else reads it. So the guard keys on the MODE first, and
+     * a seal is not required for it to refuse - an unsealed production box is a broken
      * deployment, and letting an arbitrary command write into it is how it stays
-     * broken. In development the whole tree is rebuilt on demand and this is a no-op.
+     * broken.
+     *
+     * A seal ON DISK refuses the write too, whatever mode this process read at boot.
+     * The mode is memoized per process, and a process outlives a mode switch: a web
+     * request that began under development and is still running when rsx:mode:set prod
+     * has written the seal would otherwise compile with development semantics into the
+     * tree the seal describes. The seal is stat'd fresh for that reason; it is present
+     * only while a prod build is on disk (leaving production removes it before anything
+     * else), so in development with no seal this is a no-op.
      *
      * A guardrail, not a security boundary: a raw `rm` still does what it says, and
      * rsx:prod:verify is what detects the drift afterwards.
@@ -553,10 +561,6 @@ class Rsx_Project_Paths
      */
     public static function assert_build_writable(string $path, string $context): void
     {
-        if (!\App\RSpade\Core\Rsx::is_production()) {
-            return;
-        }
-
         if (\App\RSpade\Core\Prod\Rsx_Build_Context::is_active()) {
             return;
         }
@@ -565,11 +569,34 @@ class Rsx_Project_Paths
             return;
         }
 
+        $mode_guards = \App\RSpade\Core\Rsx::is_production();
+        if (!$mode_guards && !self::_seal_on_disk()) {
+            return;
+        }
+
+        $why = $mode_guards
+            ? ''
+            : "  This process read development mode at boot, but the build tree is sealed:\n"
+              . "  the box changed mode after this process started.\n";
+
         throw new \RuntimeException(
             "{$context}: '{$path}' is a build artifact, and only a build may write it.\n"
+            . $why
             . "  Rebuild:  php artisan rsx:build --force\n"
             . '  See:      php artisan rsx:man prod'
         );
+    }
+
+    /**
+     * Is a seal present in the build tree right now? Bypasses PHP's stat cache: the
+     * caller may be a process that has been running since before the seal was written.
+     */
+    private static function _seal_on_disk(): bool
+    {
+        $seal = \App\RSpade\Core\Prod\Rsx_Prod_Seal::_seal_path();
+        clearstatcache(true, $seal);
+
+        return is_file($seal);
     }
 
     // -----------------------------------------------------------------------

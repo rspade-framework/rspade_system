@@ -14,11 +14,14 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 /**
  * The build-tree write guard (Rsx_Project_Paths::assert_build_writable).
  *
- * The guard keys on the MODE and the build context, never on whether a seal happens to
- * be on disk: an unsealed production box is a broken deployment, and an arbitrary
- * command writing into it is how it stays broken. These tests pin exactly that - an
- * unsealed production mode is guarded, the build context passes, development is a no-op,
- * and a path outside the build tree is none of the guard's business.
+ * The guard keys on the MODE and the build context, and a seal is not required for it
+ * to refuse: an unsealed production box is a broken deployment, and an arbitrary
+ * command writing into it is how it stays broken. A seal ON DISK refuses too, whatever
+ * mode the process memoized at boot - a request that outlives rsx:mode:set prod must
+ * not compile into the sealed tree. These tests pin exactly that - an unsealed
+ * production mode is guarded, a sealed tree guards a development process, the build
+ * context passes, development with no seal is a no-op, and a path outside the build
+ * tree is none of the guard's business.
  *
  * The build root is redirected with Rsx_Project_Paths::_override(['build' => ...]) so no
  * real artifact is named, and the mode rides the Rsx::_testing_set_mode() seam (RSX_MODE
@@ -92,6 +95,32 @@ class Prod_Guard_Test extends Rsx_Test_Abstract
                 fn () => Rsx_Project_Paths::assert_build_writable($root . '/manifest_index.php', 'test-write'),
                 'is a build artifact'
             );
+        });
+    }
+
+    // -------------------------------------------------------------------------
+    // A seal on disk guards a process that memoized development at boot
+    // -------------------------------------------------------------------------
+
+    public static function test_a_seal_on_disk_guards_a_development_process()
+    {
+        self::_with(Rsx::MODE_DEVELOPMENT, function ($root) {
+            mkdir($root, 0755, true);
+            file_put_contents($root . '/prod_seal.json', '{}');
+
+            try {
+                $exception = static::__assert_throws(
+                    \RuntimeException::class,
+                    fn () => Rsx_Project_Paths::assert_build_writable($root . '/bundles/x.js', 'test-write'),
+                    'is a build artifact'
+                );
+
+                static::__assert_contains('the build tree is sealed', $exception->getMessage(), 'the refusal says why a development process was refused');
+                static::__assert_contains('rsx:build --force', $exception->getMessage(), 'the refusal names the remedy');
+            } finally {
+                unlink($root . '/prod_seal.json');
+                rmdir($root);
+            }
         });
     }
 
