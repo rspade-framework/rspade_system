@@ -1243,6 +1243,7 @@ class ComposerStaticInitfe33f98a750b8c5a51b30c78bd3fab21
         'App\\RSpade\\Core\\Codegen\\Model_Codegen_Rewriter' => __DIR__ . '/../..' . '/app/RSpade/Core/Codegen/Model_Codegen_Rewriter.php',
         'App\\RSpade\\Core\\Console\\Rsx_Artisan' => __DIR__ . '/../..' . '/app/RSpade/Core/Console/Rsx_Artisan.php',
         'App\\RSpade\\Core\\Console\\Rsx_Internal_Flags' => __DIR__ . '/../..' . '/app/RSpade/Core/Console/Rsx_Internal_Flags.php',
+        'App\\RSpade\\Core\\Console\\Rsx_Script' => __DIR__ . '/../..' . '/app/RSpade/Core/Console/Rsx_Script.php',
         'App\\RSpade\\Core\\Controller\\Controller_BundleIntegration' => __DIR__ . '/../..' . '/app/RSpade/Core/Controller/Controller_BundleIntegration.php',
         'App\\RSpade\\Core\\Controller\\Controller_Service_Provider' => __DIR__ . '/../..' . '/app/RSpade/Core/Controller/Controller_Service_Provider.php',
         'App\\RSpade\\Core\\Controller\\Controller_Stub_ManifestSupport' => __DIR__ . '/../..' . '/app/RSpade/Core/Controller/Controller_Stub_ManifestSupport.php',

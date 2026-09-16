@@ -162,7 +162,9 @@ class Environment_Health_Checks
             $rows[] = static::_tree_row('build/', Rsx_Project_Paths::build_root());
         }
 
-        // Feature subdirs: created on first use, so a missing one is only a WARN.
+        // Feature subdirs: created on first use. A missing one passes when the nearest
+        // existing ancestor is writable (the first use will create it); it is a WARN only
+        // when that ancestor is not.
         $subdirs = [
             'storage/logs' => Rsx_Project_Paths::logs_dir(),
             'tmp/thumbnails' => Rsx_File_Paths::thumbnails_root(),
@@ -177,12 +179,21 @@ class Environment_Health_Checks
 
         foreach ($subdirs as $label => $path) {
             if (!is_dir($path)) {
-                $rows[] = [
-                    'label' => $label,
-                    'status' => 'WARN',
-                    'detail' => 'does not exist yet',
-                    'remediation' => 'created lazily on first use - no action needed unless a feature fails to write it',
-                ];
+                $parent = dirname($path);
+                while (!is_dir($parent) && dirname($parent) !== $parent) {
+                    $parent = dirname($parent);
+                }
+
+                if (is_writable($parent)) {
+                    $rows[] = ['label' => $label, 'status' => 'OK', 'detail' => 'not created yet; ' . $parent . ' is writable, so first use will create it'];
+                } else {
+                    $rows[] = [
+                        'label' => $label,
+                        'status' => 'WARN',
+                        'detail' => 'does not exist yet and ' . $parent . ' is not writable',
+                        'remediation' => 'chmod/chown ' . $parent . ' so the web/CLI user can create ' . $path,
+                    ];
+                }
             } elseif (!is_writable($path)) {
                 $rows[] = [
                     'label' => $label,

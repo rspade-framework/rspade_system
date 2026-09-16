@@ -156,6 +156,7 @@ OUTPUT CONVENTIONS
 
 SEE ALSO
        rsx:man task_commands - how an APPLICATION declares a command (#[Command] on a task)
+       rsx:man scripting - the other entry point sharing this pre-boot sequence (system/script.php)
        rsx:man maintenance_mode - the intercepted pair, and what the stubs stand in for
        rsx:man rsx_git - the intercepted git proxy
        rsx:man rsx_upstream - the intercepted framework pull

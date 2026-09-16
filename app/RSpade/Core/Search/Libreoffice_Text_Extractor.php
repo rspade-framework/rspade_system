@@ -90,28 +90,28 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
 
     /**
      * True for the Calc (spreadsheet) mime family: modern .xlsx (spreadsheetml), the older .xls
-     * (vnd.ms-excel), and OpenDocument .ods (opendocument.spreadsheet, incl. -template).
+     * and the macro/template variants (vnd.ms-excel*), and OpenDocument .ods (opendocument.spreadsheet, incl. -template).
      *
      * @param string $mime
      * @return bool
      */
     protected static function __is_spreadsheet_mime(string $mime): bool
     {
-        return $mime === 'application/vnd.ms-excel'
+        return str_starts_with($mime, 'application/vnd.ms-excel')
             || str_contains($mime, 'spreadsheetml')
             || str_contains($mime, 'opendocument.spreadsheet');
     }
 
     /**
      * True for the Impress (presentation) mime family: modern .pptx (presentationml), the older
-     * .ppt (vnd.ms-powerpoint), and OpenDocument .odp (opendocument.presentation, incl. -template).
+     * .ppt and the macro/template variants (vnd.ms-powerpoint*), and OpenDocument .odp (opendocument.presentation, incl. -template).
      *
      * @param string $mime
      * @return bool
      */
     protected static function __is_presentation_mime(string $mime): bool
     {
-        return $mime === 'application/vnd.ms-powerpoint'
+        return str_starts_with($mime, 'application/vnd.ms-powerpoint')
             || str_contains($mime, 'presentationml')
             || str_contains($mime, 'opendocument.presentation');
     }

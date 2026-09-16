@@ -366,6 +366,12 @@ class Rsx_Php_Requirements
             return false;
         }
 
+        // An external script's argv[1] is the script's own argument, not a command
+        // name: nothing there can earn the exemption, so a script is always enforced.
+        if (\App\RSpade\Core\Console\Rsx_Script::is_active()) {
+            return false;
+        }
+
         $command = $_SERVER['argv'][1] ?? '';
 
         return in_array($command, self::EXEMPT_COMMANDS, true);

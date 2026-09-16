@@ -1710,8 +1710,19 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
             'application/vnd.ms-excel',
             'application/vnd.ms-powerpoint',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.template',
             'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.openxmlformats-officedocument.presentationml.template',
+            'application/vnd.openxmlformats-officedocument.presentationml.slideshow',
+            'application/vnd.ms-word.document.macroEnabled.12',
+            'application/vnd.ms-word.template.macroEnabled.12',
+            'application/vnd.ms-excel.sheet.macroEnabled.12',
+            'application/vnd.ms-excel.template.macroEnabled.12',
+            'application/vnd.ms-powerpoint.presentation.macroEnabled.12',
+            'application/vnd.ms-powerpoint.template.macroEnabled.12',
+            'application/vnd.ms-powerpoint.slideshow.macroEnabled.12',
             'application/vnd.oasis.opendocument.text',
             'application/vnd.oasis.opendocument.spreadsheet',
             'application/vnd.oasis.opendocument.presentation',
@@ -1753,9 +1764,34 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' => 'Excel Spreadsheet',
         'application/vnd.ms-powerpoint' => 'PowerPoint Presentation',
         'application/vnd.openxmlformats-officedocument.presentationml.presentation' => 'PowerPoint Presentation',
+        'application/vnd.ms-excel.sheet.macroEnabled.12' => 'Excel Spreadsheet (Macro-Enabled)',
+        'application/vnd.ms-excel.template.macroEnabled.12' => 'Excel Template (Macro-Enabled)',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.template' => 'Excel Template',
+        'application/vnd.ms-word.document.macroEnabled.12' => 'Word Document (Macro-Enabled)',
+        'application/vnd.ms-word.template.macroEnabled.12' => 'Word Template (Macro-Enabled)',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.template' => 'Word Template',
+        'application/vnd.ms-powerpoint.presentation.macroEnabled.12' => 'PowerPoint Presentation (Macro-Enabled)',
+        'application/vnd.ms-powerpoint.template.macroEnabled.12' => 'PowerPoint Template (Macro-Enabled)',
+        'application/vnd.ms-powerpoint.slideshow.macroEnabled.12' => 'PowerPoint Slideshow (Macro-Enabled)',
+        'application/vnd.openxmlformats-officedocument.presentationml.template' => 'PowerPoint Template',
+        'application/vnd.openxmlformats-officedocument.presentationml.slideshow' => 'PowerPoint Slideshow',
         'application/vnd.oasis.opendocument.text' => 'OpenDocument Text',
         'application/vnd.oasis.opendocument.spreadsheet' => 'OpenDocument Spreadsheet',
         'application/vnd.oasis.opendocument.presentation' => 'OpenDocument Presentation',
+        'application/vnd.oasis.opendocument.graphics' => 'OpenDocument Drawing',
+        'application/vnd.oasis.opendocument.formula' => 'OpenDocument Formula',
+        'application/vnd.oasis.opendocument.text-template' => 'OpenDocument Text Template',
+        'application/vnd.oasis.opendocument.spreadsheet-template' => 'OpenDocument Spreadsheet Template',
+        'application/vnd.oasis.opendocument.presentation-template' => 'OpenDocument Presentation Template',
+        'application/vnd.visio' => 'Visio Drawing',
+        'application/vnd.ms-outlook' => 'Outlook Message',
+        'message/rfc822' => 'Email Message',
+        'text/calendar' => 'Calendar File',
+        'text/vcard' => 'vCard Contact',
+        'application/x-tex' => 'LaTeX Document',
+        'application/postscript' => 'PostScript Document',
+        'application/vnd.ms-xpsdocument' => 'XPS Document',
+        'application/x-mobipocket-ebook' => 'Kindle Book',
         'application/rtf' => 'Rich Text Document',
         'text/rtf' => 'Rich Text Document',
         'text/csv' => 'CSV File',
@@ -1780,6 +1816,17 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         'image/x-icon' => 'Icon Image',
         'image/vnd.microsoft.icon' => 'Icon Image',
         'image/vnd.adobe.photoshop' => 'Photoshop Image',
+        'image/jxl' => 'JPEG XL Image',
+        'image/jp2' => 'JPEG 2000 Image',
+        'image/x-xcf' => 'GIMP Image',
+        'image/x-canon-cr2' => 'Camera RAW Image',
+        'image/x-canon-cr3' => 'Camera RAW Image',
+        'image/x-nikon-nef' => 'Camera RAW Image',
+        'image/x-sony-arw' => 'Camera RAW Image',
+        'image/x-adobe-dng' => 'Camera RAW Image',
+        'image/x-olympus-orf' => 'Camera RAW Image',
+        'image/x-panasonic-rw2' => 'Camera RAW Image',
+        'image/x-eps' => 'PostScript Image',
 
         // Video
         'video/mp4' => 'MP4 Video',
@@ -1791,6 +1838,9 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         'video/3gpp' => '3GPP Video',
         'video/x-ms-wmv' => 'Windows Media Video',
         'video/x-flv' => 'Flash Video',
+        'video/x-m4v' => 'MPEG-4 Video',
+        'video/mp2t' => 'AVCHD Video',
+        'application/mxf' => 'MXF Video',
 
         // Audio
         'audio/mpeg' => 'MP3 Audio',
@@ -1804,6 +1854,17 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         'audio/aiff' => 'AIFF Audio',
         'audio/x-aiff' => 'AIFF Audio',
         'audio/x-ms-wma' => 'Windows Media Audio',
+        'audio/opus' => 'Opus Audio',
+        'audio/midi' => 'MIDI File',
+        'audio/x-midi' => 'MIDI File',
+
+        // Fonts
+        'font/ttf' => 'Font File',
+        'font/otf' => 'Font File',
+        'font/woff' => 'Font File',
+        'font/woff2' => 'Font File',
+        'application/font-sfnt' => 'Font File',
+        'application/vnd.ms-fontobject' => 'Font File',
 
         // Archives
         'application/zip' => 'ZIP Archive',
@@ -1819,23 +1880,67 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         'application/x-xz' => 'XZ Archive',
         'application/x-iso9660-image' => 'Disc Image',
         'application/x-apple-diskimage' => 'Apple Disk Image',
+        'application/zstd' => 'Zstandard Archive',
+        'application/x-lzma' => 'LZMA Archive',
+        'application/x-lzip' => 'LZIP Archive',
+        'application/vnd.ms-cab-compressed' => 'Windows Cabinet',
+        'application/java-archive' => 'Java Archive',
+        'application/vnd.android.package-archive' => 'Android Package',
+        'application/x-debian-package' => 'Debian Package',
+        'application/vnd.debian.binary-package' => 'Debian Package',
+        'application/x-rpm' => 'RPM Package',
+        'application/x-redhat-package-manager' => 'RPM Package',
+
+        // Executables and installers
+        'application/x-dosexec' => 'Windows Executable',
+        'application/vnd.microsoft.portable-executable' => 'Windows Executable',
+        'application/x-msdownload' => 'Windows Executable',
+        'application/x-msi' => 'Windows Installer',
+        'application/x-ms-installer' => 'Windows Installer',
+        'application/x-executable' => 'Linux Executable',
+        'application/x-pie-executable' => 'Linux Executable',
+        'application/x-sharedlib' => 'Shared Library',
+        'application/x-mach-binary' => 'macOS Executable',
+        'application/x-xar' => 'macOS Installer',
+
+        // Data, security and misc
+        'application/vnd.sqlite3' => 'SQLite Database',
+        'application/x-sqlite3' => 'SQLite Database',
+        'application/x-hdf5' => 'HDF5 Data',
+        'application/x-bittorrent' => 'Torrent File',
+        'application/pgp-encrypted' => 'PGP File',
+        'application/pgp-signature' => 'PGP Signature',
+        'application/pgp-keys' => 'PGP Key',
+        'application/x-x509-ca-cert' => 'Certificate',
+        'application/pkix-cert' => 'Certificate',
+        'application/x-pkcs12' => 'Certificate Bundle',
+        'application/x-ipynb+json' => 'Jupyter Notebook',
+        'application/geo+json' => 'GeoJSON Data',
+        'application/vnd.google-earth.kml+xml' => 'Map Data',
+        'application/vnd.google-earth.kmz' => 'Map Data',
+        'application/gpx+xml' => 'GPS Track',
+        'application/x-ms-shortcut' => 'Windows Shortcut',
+        'application/x-font-ttf' => 'Font File',
     ];
 
     /**
      * The second half of the map: formats the BYTE SNIFF cannot distinguish, keyed by
      * extension. Everything in here sniffs as a generic type (text/plain for source and
-     * config files, application/octet-stream for opaque binaries), so the mime table above
-     * has nothing to say about it and the extension is the only signal there is.
+     * config files, application/zip for the container formats, application/octet-stream for
+     * opaque binaries), so the extension is the better signal and file_type_label_for()
+     * consults this table before the mime table unless the mime is authoritative.
      *
      * The same regeneration rule applies to this table as to the one above.
      *
      * @var array<string, string>
      */
     protected const FILE_TYPE_LABEL_BY_EXTENSION = [
+        // Text, source and configuration (sniff as text/plain)
         'txt' => 'Text File',
         'log' => 'Log File',
         'md' => 'Markdown Document',
         'csv' => 'CSV File',
+        'tsv' => 'TSV File',
         'json' => 'JSON File',
         'xml' => 'XML File',
         'html' => 'HTML Document',
@@ -1850,18 +1955,256 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         'go' => 'Go File',
         'rs' => 'Rust File',
         'java' => 'Java File',
+        'c' => 'C Source File',
+        'cpp' => 'C++ Source File',
+        'h' => 'C Header File',
+        'cs' => 'C# Source File',
+        'swift' => 'Swift File',
+        'kt' => 'Kotlin File',
         'sql' => 'SQL File',
         'sh' => 'Shell Script',
         'bash' => 'Shell Script',
+        'bat' => 'Windows Batch Script',
+        'cmd' => 'Windows Batch Script',
+        'ps1' => 'PowerShell Script',
         'yml' => 'YAML File',
         'yaml' => 'YAML File',
+        'toml' => 'TOML File',
         'ini' => 'Configuration File',
         'conf' => 'Configuration File',
-        'psd' => 'Photoshop Image',
-        'ai' => 'Illustrator Document',
+        'cfg' => 'Configuration File',
+        'env' => 'Environment File',
+        'tex' => 'LaTeX Document',
+        'bib' => 'BibTeX Bibliography',
+        'srt' => 'Subtitle File',
+        'vtt' => 'Subtitle File',
+        'ics' => 'Calendar File',
+        'vcf' => 'vCard Contact',
+        'eml' => 'Email Message',
+        'mbox' => 'Mailbox Archive',
+        'geojson' => 'GeoJSON Data',
+        'gpx' => 'GPS Track',
+        'kml' => 'Map Data',
+        'ovpn' => 'VPN Profile',
+        'pem' => 'Certificate',
+        'crt' => 'Certificate',
+        'cer' => 'Certificate',
+        'csr' => 'Certificate Request',
+        'asc' => 'PGP File',
+        'ipynb' => 'Jupyter Notebook',
+        'edi' => 'EDI Interchange',
+        'x12' => 'EDI Interchange',
+        'xliff' => 'Translation File',
+        'sdlxliff' => 'Translation File',
+        'url' => 'Web Link',
+        'webloc' => 'Web Link',
+        'fcpxml' => 'Final Cut Project',
+        'iif' => 'QuickBooks Import',
+        'qif' => 'Bank Statement Export',
+        'ofx' => 'Bank Statement Export',
+        'qfx' => 'Bank Statement Export',
+        'qbo' => 'QuickBooks Online Import',
+
+        // Office, Apple and open-source documents the sniff cannot name (zip or opaque containers)
+        'xlsb' => 'Excel Binary Spreadsheet',
+        'xlsm' => 'Excel Spreadsheet (Macro-Enabled)',
+        'xltx' => 'Excel Template',
+        'xltm' => 'Excel Template (Macro-Enabled)',
+        'docm' => 'Word Document (Macro-Enabled)',
+        'dotx' => 'Word Template',
+        'dotm' => 'Word Template (Macro-Enabled)',
+        'pptm' => 'PowerPoint Presentation (Macro-Enabled)',
+        'potx' => 'PowerPoint Template',
+        'potm' => 'PowerPoint Template (Macro-Enabled)',
+        'ppsx' => 'PowerPoint Slideshow',
+        'ppsm' => 'PowerPoint Slideshow (Macro-Enabled)',
+        'one' => 'OneNote Notebook',
+        'vsd' => 'Visio Drawing',
+        'vsdx' => 'Visio Drawing',
+        'mpp' => 'Project Plan',
+        'pub' => 'Publisher Document',
+        'accdb' => 'Access Database',
+        'mdb' => 'Access Database',
+        'xps' => 'XPS Document',
+        'msg' => 'Outlook Message',
+        'pst' => 'Outlook Data File',
+        'ost' => 'Outlook Data File',
         'pages' => 'Pages Document',
         'numbers' => 'Numbers Spreadsheet',
+        'keynote' => 'Keynote Presentation',
+        'odg' => 'OpenDocument Drawing',
+        'odf' => 'OpenDocument Formula',
+        'ott' => 'OpenDocument Text Template',
+        'ots' => 'OpenDocument Spreadsheet Template',
+        'otp' => 'OpenDocument Presentation Template',
+        'wpd' => 'WordPerfect Document',
         'epub' => 'EPUB Book',
+        'mobi' => 'Kindle Book',
+        'azw3' => 'Kindle Book',
+        'chm' => 'Windows Help File',
+        'psd' => 'Photoshop Image',
+        'ai' => 'Illustrator Document',
+        'indd' => 'InDesign Document',
+        'xcf' => 'GIMP Image',
+        'sketch' => 'Sketch Design',
+        'fig' => 'Figma Design',
+        'afdesign' => 'Affinity Document',
+        'afphoto' => 'Affinity Document',
+        'afpub' => 'Affinity Document',
+        'cdr' => 'CorelDRAW Drawing',
+        'eps' => 'PostScript Image',
+        'ps' => 'PostScript Document',
+
+        // Accounting and business
+        'qbw' => 'QuickBooks Company File',
+        'qbb' => 'QuickBooks Backup',
+        'qbm' => 'QuickBooks Portable File',
+        'qbx' => 'QuickBooks Accountant Copy',
+        'gnucash' => 'GnuCash Book',
+        'mny' => 'Money File',
+        'tax' => 'TurboTax Return',
+
+        // Images. The common formats are here for the DEGRADED case: an image whose bytes
+        // would not parse is stored as application/octet-stream, and it is still a "PNG
+        // Image" to the person reading the list (a parseable one never reaches this table -
+        // its image sniff is authoritative). The RAW formats sniff generically always.
+        'png' => 'PNG Image',
+        'jpg' => 'JPEG Image',
+        'jpeg' => 'JPEG Image',
+        'gif' => 'GIF Image',
+        'webp' => 'WebP Image',
+        'bmp' => 'Bitmap Image',
+        'tif' => 'TIFF Image',
+        'tiff' => 'TIFF Image',
+        'svg' => 'SVG Image',
+        'heic' => 'HEIC Image',
+        'heif' => 'HEIF Image',
+        'avif' => 'AVIF Image',
+        'ico' => 'Icon Image',
+        'raw' => 'Camera RAW Image',
+        'cr2' => 'Camera RAW Image',
+        'cr3' => 'Camera RAW Image',
+        'nef' => 'Camera RAW Image',
+        'arw' => 'Camera RAW Image',
+        'dng' => 'Camera RAW Image',
+        'orf' => 'Camera RAW Image',
+        'rw2' => 'Camera RAW Image',
+        'jxl' => 'JPEG XL Image',
+        'jp2' => 'JPEG 2000 Image',
+        'icns' => 'macOS Icon',
+
+        // CAD, 3D and GIS
+        'dwg' => 'AutoCAD Drawing',
+        'dxf' => 'CAD Exchange Drawing',
+        'dwf' => 'Design Web Format',
+        'rvt' => 'Revit Model',
+        'rfa' => 'Revit Family',
+        'skp' => 'SketchUp Model',
+        'step' => 'CAD Exchange Model',
+        'stp' => 'CAD Exchange Model',
+        'iges' => 'CAD Exchange Model',
+        'igs' => 'CAD Exchange Model',
+        'stl' => '3D Print Model',
+        'obj' => '3D Model',
+        'fbx' => '3D Model',
+        'gltf' => '3D Model',
+        'glb' => '3D Model',
+        '3ds' => '3D Model',
+        'blend' => 'Blender Project',
+        'ifc' => 'Building Model',
+        'kmz' => 'Map Data',
+        'shp' => 'Shapefile',
+
+        // Video, audio and creative projects
+        'm4v' => 'MPEG-4 Video',
+        'mts' => 'AVCHD Video',
+        'm2ts' => 'AVCHD Video',
+        'mxf' => 'MXF Video',
+        'prproj' => 'Premiere Project',
+        'aep' => 'After Effects Project',
+        'm4b' => 'Audiobook',
+        'opus' => 'Opus Audio',
+        'mid' => 'MIDI File',
+        'midi' => 'MIDI File',
+        'als' => 'Ableton Project',
+        'logicx' => 'Logic Project',
+        'ptx' => 'Pro Tools Session',
+
+        // Archives, disk images and packages
+        'zip' => 'ZIP Archive',
+        '7z' => '7-Zip Archive',
+        'rar' => 'RAR Archive',
+        'tar' => 'TAR Archive',
+        'gz' => 'GZIP Archive',
+        'tgz' => 'Compressed TAR Archive',
+        'tbz2' => 'Compressed TAR Archive',
+        'txz' => 'Compressed TAR Archive',
+        'bz2' => 'BZIP2 Archive',
+        'xz' => 'XZ Archive',
+        'zst' => 'Zstandard Archive',
+        'lz' => 'LZIP Archive',
+        'lzma' => 'LZMA Archive',
+        'cab' => 'Windows Cabinet',
+        'jar' => 'Java Archive',
+        'war' => 'Java Web Archive',
+        'apk' => 'Android Package',
+        'ipa' => 'iOS Application',
+        'iso' => 'Disc Image',
+        'img' => 'Disk Image',
+        'dmg' => 'Apple Disk Image',
+        'vhd' => 'Virtual Disk Image',
+        'vhdx' => 'Virtual Disk Image',
+        'vmdk' => 'Virtual Disk Image',
+        'vdi' => 'Virtual Disk Image',
+        'qcow2' => 'Virtual Disk Image',
+        'ova' => 'Virtual Appliance',
+        'ovf' => 'Virtual Appliance',
+
+        // Executables and installers
+        'exe' => 'Windows Executable',
+        'msi' => 'Windows Installer',
+        'msix' => 'Windows App Package',
+        'appx' => 'Windows App Package',
+        'dll' => 'Windows Library',
+        'deb' => 'Debian Package',
+        'rpm' => 'RPM Package',
+        'appimage' => 'AppImage',
+        'snap' => 'Snap Package',
+        'flatpak' => 'Flatpak Package',
+        'pkg' => 'macOS Installer',
+        'app' => 'macOS Application',
+        'run' => 'Binary Installer',
+
+        // Security, data and misc
+        'kdbx' => 'KeePass Database',
+        'kdb' => 'KeePass Database',
+        '1pux' => '1Password Export',
+        'opvault' => '1Password Vault',
+        'der' => 'Certificate',
+        'p12' => 'Certificate Bundle',
+        'pfx' => 'Certificate Bundle',
+        'pgp' => 'PGP File',
+        'gpg' => 'PGP File',
+        'sqlite' => 'SQLite Database',
+        'sqlite3' => 'SQLite Database',
+        'db' => 'Database File',
+        'bak' => 'Backup File',
+        'parquet' => 'Columnar Data',
+        'avro' => 'Columnar Data',
+        'feather' => 'Columnar Data',
+        'rdata' => 'R Data',
+        'rds' => 'R Data',
+        'sav' => 'SPSS Data',
+        'dta' => 'Stata Data',
+        'mat' => 'MATLAB Data',
+        'h5' => 'HDF5 Data',
+        'hdf5' => 'HDF5 Data',
+        'torrent' => 'Torrent File',
+        'ttf' => 'Font File',
+        'otf' => 'Font File',
+        'woff' => 'Font File',
+        'woff2' => 'Font File',
+        'lnk' => 'Windows Shortcut',
     ];
 
     /**
@@ -1878,10 +2221,13 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * not parse is still a "PNG Image" to the person looking at the list; what it is not is
      * previewable, and preview_unavailable is the column that says so.
      *
-     * Resolution order: the exact pipeline-mime table, then the extension table for the
-     * formats a generic sniff cannot distinguish, then the generic form - the uppercased
-     * extension plus " File" ("EXE File", "XYZ File"), or the bare word "File" when the
-     * upload had no extension at all.
+     * Resolution order: the pipeline-mime table when the mime is authoritative (a document
+     * extension resolved it, or the sniff is an image), then the extension table (container
+     * formats and opaque binaries, where the name is the only signal), then the mime table
+     * for whatever the sniff still names, then the generic form - the uppercased extension
+     * plus " File" ("XYZ File"), or the bare word "File" when the upload had no extension.
+     * An extension two formats share (.key: a Keynote deck, a private key) is deliberately
+     * absent from the extension table.
      *
      * #[Replaceable] so an application override (which EXTENDS this class) can widen the map
      * without chaining. An override that adds labels owes its own regeneration - see
@@ -1897,12 +2243,24 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         $pipeline_mime = strtolower(trim(static::resolve_pipeline_mime($mime_type, $extension)));
         $ext = strtolower(trim((string) $extension));
 
-        if (isset(static::FILE_TYPE_LABEL_BY_MIME[$pipeline_mime])) {
+        // The pipeline mime is authoritative where the pipeline itself trusts it: a document
+        // extension (the map resolved it) and an image sniff (unambiguous magic bytes).
+        $document_map = config('rsx.files.document_mime_by_extension', []);
+        $mime_is_authoritative = ($ext !== '' && isset($document_map[$ext])) || str_starts_with($pipeline_mime, 'image/');
+
+        if ($mime_is_authoritative && isset(static::FILE_TYPE_LABEL_BY_MIME[$pipeline_mime])) {
             return static::FILE_TYPE_LABEL_BY_MIME[$pipeline_mime];
         }
 
+        // Otherwise the extension is the better signal: a container format (a .jar, a
+        // .keynote, a .kmz) sniffs as the ZIP it is built on, and an opaque binary sniffs
+        // as octet-stream, so the name is the only thing that says what the file is.
         if ($ext !== '' && isset(static::FILE_TYPE_LABEL_BY_EXTENSION[$ext])) {
             return static::FILE_TYPE_LABEL_BY_EXTENSION[$ext];
+        }
+
+        if (isset(static::FILE_TYPE_LABEL_BY_MIME[$pipeline_mime])) {
+            return static::FILE_TYPE_LABEL_BY_MIME[$pipeline_mime];
         }
 
         if ($ext === '') {

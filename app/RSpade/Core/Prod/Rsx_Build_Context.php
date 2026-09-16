@@ -7,6 +7,7 @@
 namespace App\RSpade\Core\Prod;
 
 use App\RSpade\Core\Console\Rsx_Internal_Flags;
+use App\RSpade\Core\Console\Rsx_Script;
 
 /**
  * THE build context: is this process producing the build tree right now?
@@ -69,6 +70,12 @@ class Rsx_Build_Context
 
         if (Rsx_Internal_Flags::has(self::FLAG)) {
             return true;
+        }
+
+        // An external script has no command name in argv[1] - only the explicit flag
+        // above can put such a process in the build context.
+        if (Rsx_Script::is_active()) {
+            return false;
         }
 
         return (($_SERVER['argv'][1] ?? '') === self::BUILD_COMMAND);

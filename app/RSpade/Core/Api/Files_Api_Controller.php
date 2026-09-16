@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Api\Rsx_Api;
 use App\RSpade\Core\Api\Rsx_Api_Controller_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Model;
+use App\RSpade\Core\Files\Spreadsheet_Rendition;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Rsx_File_Upload;
 use App\RSpade\Core\Rsx;
@@ -76,6 +77,10 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
      *   GET /_preview/pdf/{key}
      *     The PDF rendition - the file itself when it is already a PDF, and the converted
      *     rendition for an Office document. This is what a viewer embeds.
+     *
+     *   GET /_preview/sheet/{key}
+     *     A workbook's rendition is an HTML grid, not a PDF, and it lives at this route
+     *     instead; the `preview` URL below already names the right one for the file.
      *
      * WHICH OF THOSE ARE WORTH REQUESTING is what the two status fields on
      * GET /api/v1/files/{key} tell you, and they are the reason to poll that endpoint after
@@ -336,7 +341,12 @@ class Files_Api_Controller extends Rsx_Api_Controller_Abstract
                 'download' => static::__absolute($attachment->get_download_url()),
                 'inline' => static::__absolute($attachment->get_url()),
                 'thumbnail' => static::__absolute($attachment->get_thumbnail_url()),
-                'preview' => static::__absolute('/_preview/pdf/' . $attachment->key),
+                // A workbook previews as an HTML grid at its own route (Spreadsheet_Rendition);
+                // everything else that previews at all is a PDF rendition.
+                'preview' => static::__absolute(
+                    (Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime()) ? '/_preview/sheet/' : '/_preview/pdf/')
+                    . $attachment->key
+                ),
             ],
         ];
     }

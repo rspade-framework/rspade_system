@@ -36,8 +36,9 @@
  * tooling was written for", and both answer yes. (migrate asks the narrower
  * dev-versus-prod question separately, to decide the fate of its snapshot.)
  *
- * Required by system/artisan before anything reads configuration, so it runs with
- * no autoloader, no framework and no config: plain filesystem calls only.
+ * Required by the pre-boot sequence (bootstrap/rsx_preboot.php, shared by
+ * system/artisan and system/script.php) before anything reads configuration, so it
+ * runs with no autoloader, no framework and no config: plain filesystem calls only.
  */
 
 require_once __DIR__ . '/rsx_paths.php';
@@ -88,18 +89,22 @@ require_once __DIR__ . '/rsx_paths.php';
 function rsx_container_gate_refuse(): void
 {
     $argv = $_SERVER['argv'] ?? [];
-    $args = array_slice($argv, 1);
+
+    // Under RSX_SCRIPT_MODE (system/script.php) there is no artisan command line to
+    // echo: the invocation is the script's own path and arguments, starting at argv[0].
+    $is_script = defined('RSX_SCRIPT_MODE');
+    $args = array_slice($argv, $is_script ? 0 : 1);
 
     // Echo back what they actually typed, so the suggested line is the command
     // they wanted and not a generic example they have to adapt.
-    $command = 'php artisan';
+    $command = $is_script ? 'php' : 'php artisan';
     foreach ($args as $arg) {
         $command .= ' ' . (preg_match('/[\s"\'$`\\\\]/', (string) $arg)
             ? escapeshellarg((string) $arg)
             : (string) $arg);
     }
 
-    if ($args === []) {
+    if (!$is_script && $args === []) {
         $command = 'php artisan list';
     }
 

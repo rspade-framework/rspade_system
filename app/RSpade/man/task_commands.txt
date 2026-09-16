@@ -162,6 +162,7 @@ WHEN NOT TO
 SEE ALSO
        rsx:man tasks - #[Task], #[Schedule], dispatch, status, the worker pool
        rsx:man artisan_commands - hand-written framework commands and why they are unlike
+       rsx:man scripting - booting the shell from a PHP script OUTSIDE the application
        skill rspade:task-commands - the recipe, a worked transcript, the FATAL catalogue
        skill rspade:background-tasks - writing the task in the first place
        system/app/RSpade/resource/reference_app/services/seeder_service.php - rsx_app:seed

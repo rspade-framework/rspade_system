@@ -143,6 +143,72 @@ class File_Type_Label_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * THE CONTAINER FORMATS. A macro-enabled workbook, a Keynote deck, a Java archive and a
+     * KeePass database all sniff as the ZIP or the opaque binary they are built on; the
+     * extension is the only thing that says what they are, and it wins over that sniff.
+     * The macro formats are also document extensions, so their pipeline mime resolves and
+     * the mime table answers for them exactly as it does for .docx.
+     */
+    public static function test_container_formats_are_named_by_extension()
+    {
+        static::__assert_equals(
+            'Excel Spreadsheet (Macro-Enabled)',
+            File_Attachment_Model::file_type_label_for('application/zip', 'xlsm'),
+            'an xlsm sniffing as a zip is a macro-enabled workbook'
+        );
+        static::__assert_equals(
+            'Word Document (Macro-Enabled)',
+            File_Attachment_Model::file_type_label_for('application/zip', 'docm'),
+            'a docm likewise'
+        );
+        static::__assert_equals(
+            'Excel Binary Spreadsheet',
+            File_Attachment_Model::file_type_label_for('application/zip', 'xlsb'),
+            'an xlsb is named by extension - it is not a document extension, so the sniff is not authoritative'
+        );
+        static::__assert_equals(
+            'Keynote Presentation',
+            File_Attachment_Model::file_type_label_for('application/zip', 'keynote'),
+            'a Keynote package sniffing as a zip'
+        );
+        static::__assert_equals(
+            'Java Archive',
+            File_Attachment_Model::file_type_label_for('application/zip', 'jar'),
+            'a jar sniffing as a zip'
+        );
+        static::__assert_equals(
+            'KeePass Database',
+            File_Attachment_Model::file_type_label_for('application/octet-stream', 'kdbx'),
+            'an opaque binary named by its extension'
+        );
+        static::__assert_equals(
+            'Windows Executable',
+            File_Attachment_Model::file_type_label_for('application/x-dosexec', 'exe'),
+            'an exe by either signal'
+        );
+        static::__assert_equals(
+            'ZIP Archive',
+            File_Attachment_Model::file_type_label_for('application/zip', 'zip'),
+            'and a genuine zip is still a ZIP Archive'
+        );
+    }
+
+    /** .key is shared by a Keynote deck and a private key, so it is answered by the sniff alone. */
+    public static function test_an_ambiguous_extension_is_not_named_by_extension()
+    {
+        static::__assert_equals(
+            'ZIP Archive',
+            File_Attachment_Model::file_type_label_for('application/zip', 'key'),
+            'a .key sniffing as a zip is reported as what the bytes are'
+        );
+        static::__assert_equals(
+            'KEY File',
+            File_Attachment_Model::file_type_label_for('application/octet-stream', 'key'),
+            'and an opaque .key gets the generic form'
+        );
+    }
+
+    /**
      * The generic forms. A format the tables have never heard of still gets a label a person
      * can read, and a file with no extension at all is simply a File.
      */
@@ -154,8 +220,8 @@ class File_Type_Label_Test extends Rsx_Test_Abstract
             'an unknown extension is uppercased into the generic form'
         );
         static::__assert_equals(
-            'EXE File',
-            File_Attachment_Model::file_type_label_for('application/x-dosexec', 'exe'),
+            'TMP File',
+            File_Attachment_Model::file_type_label_for('application/octet-stream', 'tmp'),
             'so is an extension the tables deliberately do not name'
         );
         static::__assert_equals(

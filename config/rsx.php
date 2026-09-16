@@ -653,6 +653,7 @@ return [
             '_ide_helper.php',          // Laravel IDE Helper
             '._rsx_helper.php',         // RSX IDE Helper
             '.phpstorm.meta.php',       // PhpStorm metadata
+            'script.php',               // The external-script boot entry (rsx:man scripting)
         ],
 
         // Whitelisted test files allowed in rsx/ directory (not subdirectories)
@@ -1020,6 +1021,23 @@ return [
             'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 
+            // Macro-enabled and template variants of the three OOXML formats. They are zip
+            // containers like their siblings, so the sniff cannot tell them from a ZIP, and
+            // LibreOffice and PhpSpreadsheet read them exactly as they read the plain forms.
+            // (.xlsb, the binary workbook, is deliberately absent: PhpSpreadsheet cannot read
+            // it, so it is labelled by extension and previews as an icon.)
+            'xlsm' => 'application/vnd.ms-excel.sheet.macroEnabled.12',
+            'xltx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.template',
+            'xltm' => 'application/vnd.ms-excel.template.macroEnabled.12',
+            'docm' => 'application/vnd.ms-word.document.macroEnabled.12',
+            'dotx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.template',
+            'dotm' => 'application/vnd.ms-word.template.macroEnabled.12',
+            'pptm' => 'application/vnd.ms-powerpoint.presentation.macroEnabled.12',
+            'potx' => 'application/vnd.openxmlformats-officedocument.presentationml.template',
+            'potm' => 'application/vnd.ms-powerpoint.template.macroEnabled.12',
+            'ppsx' => 'application/vnd.openxmlformats-officedocument.presentationml.slideshow',
+            'ppsm' => 'application/vnd.ms-powerpoint.slideshow.macroEnabled.12',
+
             'doc' => 'application/msword',
             'xls' => 'application/vnd.ms-excel',
             'ppt' => 'application/vnd.ms-powerpoint',
@@ -1128,12 +1146,15 @@ return [
             // in-process (no soffice spawn, no worker slot) and indexes only the WORDS:
             // numbers, dates and currency are excluded, because a date and a currency amount
             // are numbers wearing a format and a full-text index is served worst by them.
-            'application/vnd.ms-excel' => 'Spreadsheet_Text_Extractor',
+            // The ms-* globs cover the macro-enabled and template variants
+            // (vnd.ms-excel.sheet.macroEnabled.12 and friends) beside the classic binary format.
+            'application/vnd.ms-excel*' => 'Spreadsheet_Text_Extractor',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.*' => 'Spreadsheet_Text_Extractor',
             'application/vnd.oasis.opendocument.spreadsheet*' => 'Spreadsheet_Text_Extractor',
 
             'application/msword' => 'Libreoffice_Text_Extractor',
-            'application/vnd.ms-powerpoint' => 'Libreoffice_Text_Extractor',
+            'application/vnd.ms-word*' => 'Libreoffice_Text_Extractor',
+            'application/vnd.ms-powerpoint*' => 'Libreoffice_Text_Extractor',
             'application/vnd.openxmlformats-officedocument.*' => 'Libreoffice_Text_Extractor',
             'application/vnd.oasis.opendocument.*' => 'Libreoffice_Text_Extractor',
             'application/rtf' => 'Libreoffice_Text_Extractor',
@@ -1180,12 +1201,13 @@ return [
             // pages, so a PDF of one is LibreOffice's PRINT view - page breaks through the data,
             // no gridlines, no row or column headers - which is faithful to a print-out and
             // unrecognisable as the thing being previewed.
-            'application/vnd.ms-excel' => 'Spreadsheet_Viewer',
+            'application/vnd.ms-excel*' => 'Spreadsheet_Viewer',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.*' => 'Spreadsheet_Viewer',
             'application/vnd.oasis.opendocument.spreadsheet*' => 'Spreadsheet_Viewer',
 
             'application/msword' => 'Pdf_Viewer',
-            'application/vnd.ms-powerpoint' => 'Pdf_Viewer',
+            'application/vnd.ms-word*' => 'Pdf_Viewer',
+            'application/vnd.ms-powerpoint*' => 'Pdf_Viewer',
             'application/vnd.openxmlformats-officedocument.*' => 'Pdf_Viewer',
             'application/vnd.oasis.opendocument.*' => 'Pdf_Viewer',
             'application/rtf' => 'Pdf_Viewer',
@@ -1203,8 +1225,9 @@ return [
 
         'convertible' => [
             'application/msword',
-            'application/vnd.ms-excel',
-            'application/vnd.ms-powerpoint',
+            'application/vnd.ms-word*',
+            'application/vnd.ms-excel*',
+            'application/vnd.ms-powerpoint*',
             'application/vnd.openxmlformats-officedocument.*',
             'application/vnd.oasis.opendocument.*',
             'application/rtf',
@@ -1245,7 +1268,7 @@ return [
         // An app narrows or widens this in rsx/resource/config/rsx.php.
         'text_preview_suppressed' => [
             'text/*',
-            'application/vnd.ms-excel',
+            'application/vnd.ms-excel*',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.*',
             'application/vnd.oasis.opendocument.spreadsheet',
         ],

@@ -560,8 +560,20 @@ FILE TYPE DETECTION
         the format name a user recognises:
 
             echo $file->file_type_label;   // "PDF Document"
-                                           // "Excel Spreadsheet"
+                                           // "Excel Spreadsheet (Macro-Enabled)"
                                            // "ZIP Archive", "JPEG Image"
+                                           // "KeePass Database", "AutoCAD Drawing"
+
+        The map covers the Office family (macro-enabled and template variants
+        included), Apple and OpenDocument formats, accounting exports
+        (QuickBooks, GnuCash, OFX/QIF), email and calendar files, archives,
+        disk images and packages, executables and installers, camera RAW and
+        design formats, CAD/3D/GIS, fonts, certificates and data files. The
+        pipeline mime answers where it is authoritative (a document extension
+        resolved it, or the bytes are an image); otherwise the EXTENSION
+        answers, because a .jar, a .keynote or a .kdbx sniffs only as the ZIP
+        or opaque binary it is built on. An extension two formats share (.key)
+        is deliberately unnamed. Anything else reads "XYZ File".
 
         It is a stored VARCHAR(64) column on _file_attachments, indexed
         (idx_file_attachments_file_type_label), so a file listing sorts and

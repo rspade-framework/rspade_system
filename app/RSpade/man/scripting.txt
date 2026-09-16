@@ -1,0 +1,181 @@
+SCRIPTING(7)                     RSX Framework Manual                     SCRIPTING(7)
+
+NAME
+       scripting - booting the RSpade shell from a PHP script outside the application
+
+SYNOPSIS
+       #!/usr/bin/env php
+       <?php
+       $app = require '<project>/system/script.php';
+
+       // optional, BEFORE the require:
+       $RSX_SCRIPT_OPTIONS = ['force' => true];
+
+DESCRIPTION
+       A PHP script that lives outside the application tree - a standalone tooling
+       repository, a one-off maintenance script, a cron job - brings the whole RSpade
+       shell up with one include. What comes up is exactly what an artisan command
+       gets:
+
+           - the pre-boot guards (paths, the environment and build links, the
+             submodule sync guard, the environment heal, the container gate, the
+             maintenance gate);
+           - Composer's autoloader and the RSpade autoloader;
+           - the manifest, and with it every model, service, handler and attribute;
+           - the polymorphic morph map;
+           - Main::init(), and with it the application's declared site;
+           - the ORM, its hooks, events, realtime emission, locks and queued mail.
+
+       There is ONE implementation of that sequence - bootstrap/rsx_preboot.php -
+       and system/artisan runs the same one. A script therefore cannot drift from
+       the command line, which is the whole reason this entry point exists rather
+       than a documented recipe for requiring bootstrap/app.php.
+
+       WHAT IT DOES NOT DO. No command is dispatched: Symfony's console is bootstrapped
+       but never handed an input, so there is no command name, no Task_Instance, no
+       $task->info() and no progress bar. A script prints its own output and chooses
+       its own exit code. The script's arguments are the SCRIPT'S - the framework reads
+       no command name out of argv, and `php my_tool.php help` boots exactly as
+       `php my_tool.php` does.
+
+       RETURN VALUE. The include returns the application container
+       (App\RSpade\Core\Laravel\Rsx_Application). Nothing further is required of the
+       script; it may simply exit when it is done, or call $app->terminate() first.
+       DB::transaction(), RsxLocks and every other service behave as they do under
+       artisan.
+
+IDENTITY
+       Main::init() runs during the boot, so whatever tenant the application declares
+       there (Session::set_site_id(...)) is the tenant this process has. Every
+       site-scoped query is scoped to it with no further action:
+
+           Session::get_site_id();       // the site Main::init() declared
+           Session::get_login_user_id(); // null - nobody has signed in
+           Session::get_user_id();       // null
+
+       TO ACT AS A USER, DECLARE ALL THREE. In CLI the identity is a set of process
+       statics, and the setters write only the property they are named for:
+
+           Session::set_login_user_id($login_user->id);
+
+       sets the AUTHENTICATION identity and nothing else, so Session::get_user_id()
+       stays null and anything keyed on the site-specific user record silently sees
+       nobody. The whole declaration is one call:
+
+           Session::impersonate($site_id, $login_user_id, $user_id);
+
+       which sets the site, the login identity and the site user together, and is
+       CLI-only (it throws in a web request). Session::reset_impersonation() returns
+       the process to a clean slate. A script that never demands a session id touches
+       the _sessions table zero times, however much identity it declares.
+
+MAINTENANCE MODE
+       While the maintenance flag is up, an external script is REFUSED:
+
+           503 - System is in maintenance mode (<reason>); external scripts are refused.
+           Set $RSX_SCRIPT_OPTIONS['force'] = true before the include to run anyway.
+           Exit maintenance mode: php artisan rsx:maintenance:disable
+
+       and the process exits 75. This is stricter than the artisan gate, which refuses
+       only the automated task runners: artisan has a command name to classify, and a
+       script does not - and a script is automation by definition.
+
+       The override exists for the script that IS the maintenance work. An importer is
+       the opposite case: the window is raised for operations like a migration mid-run,
+       and thirty thousand rows written into a half-migrated schema is precisely what
+       the refusal is preventing. A long write run does not override it.
+
+PATHS
+       The working directory is left at the framework tree (system/), as under artisan.
+       A script that needs its own directory saves getcwd() before the include.
+
+       The rsx_paths_*() pre-boot functions are available (rsx_paths_project_root(),
+       rsx_paths_build_root(), rsx_paths_tmp_root(), rsx_paths_storage_root(),
+       rsx_paths_state_root()), and once booted so is
+       App\RSpade\Core\Paths\Rsx_Project_Paths.
+
+       storage_path() IS THE TMP ROOT. Laravel's storage path is bound to <project>/tmp,
+       the disposable tree, so a durable file never goes through it: write through a
+       Storage disk, or under Rsx_Project_Paths::app_dir(). Never spell one of the three
+       volatile roots as a literal.
+
+LOGGING
+       Log::notice() and friends land in the application's own storage/logs, exactly as
+       under artisan. A script gets the application's log channels, not its own.
+
+CLASS LOADING FOR THE SCRIPT'S OWN CODE
+       The manifest indexes the application tree; it has never seen the script's
+       repository. A script with its own classes registers its own PSR-4 autoloader
+       AFTER the include:
+
+           $app = require '<project>/system/script.php';
+           spl_autoload_register(function (string $class): void {
+               $prefix = 'My_Tool\\';
+               if (!str_starts_with($class, $prefix)) { return; }
+               $path = __DIR__ . '/src/' . str_replace('\\', '/', substr($class, strlen($prefix))) . '.php';
+               if (is_file($path)) { require $path; }
+           });
+
+       The chain works because the RSpade autoloader returns false for a class it does
+       not know, leaving the next registered loader to answer.
+
+WHAT NOT TO DO
+       - Do not include bootstrap/app.php directly. That is the spike this entry point
+         replaces: it skips every pre-boot guard, and it leaves the argv sniffs reading
+         the script's first argument as a command name - which boots no manifest and
+         answers every site-scoped query with zero rows, silently.
+       - Do not chdir() before the include. The include does it, and doing it first
+         only changes where relative paths in the script's own code point afterwards.
+       - Do not reimplement the guards. They are framework-owned and they move; a copy
+         is correct until the next framework pull.
+       - Do not pass a first argument expecting the framework to read it. It is the
+         script's argument, deliberately, and nothing in the framework looks at it.
+       - Do not use it from the web. The include refuses under any SAPI but cli; a web
+         request enters through system/public/index.php.
+
+EXAMPLE
+       A script that boots, acts as a user, walks a site-scoped result set in one
+       transaction, and logs what it did:
+
+           #!/usr/bin/env php
+           <?php
+           use App\RSpade\Core\Session\Session;
+           use App\RSpade\Core\Files\File_Attachment_Model;
+           use Illuminate\Support\Facades\DB;
+           use Illuminate\Support\Facades\Log;
+
+           $app = require '/var/www/html/system/script.php';
+
+           $login_user = \App\RSpade\Core\Models\Login_User_Model::find(1);
+           $user = \App\RSpade\Core\Models\User_Model::where('login_user_id', $login_user->id)->first();
+           Session::impersonate((int) $user->site_id, (int) $login_user->id, (int) $user->id);
+
+           $seen = 0;
+           DB::transaction(function () use (&$seen) {
+               foreach (File_Attachment_Model::orderBy('id')->result_set() as $attachment) {
+                   $seen++;
+               }
+           });
+
+           Log::notice('attachment sweep complete', ['site_id' => Session::get_site_id(), 'seen' => $seen]);
+           echo "seen {$seen}\n";
+
+       No site_id appears in the query: the tenant was declared, and the model layer
+       scopes it. result_set() walks the WHOLE set a keyset page at a time, so the
+       loop reaches every record without holding them all in memory.
+
+SEE ALSO
+       rsx:man task_commands - giving a #[Task] an artisan command, for work INSIDE the app
+       rsx:man tasks - #[Task], #[Schedule], dispatch, the worker pool
+       rsx:man artisan_commands - hand-written framework commands and the pre-boot interceptions
+       rsx:man maintenance_mode - the flag, the window, and what it blocks
+       rsx:man session - the session lifecycle and the CLI identity statics
+       rsx:man storage_directories - build/, tmp/ and storage/, and which helper reaches each
+       skill rspade:bounded-result-sets - result_set() and why a bare LIMIT is the bug
+       system/script.php - the entry point itself
+       system/bootstrap/rsx_preboot.php - the shared pre-boot sequence
+
+AUTHORS
+       RSX Framework Team
+
+RSX Framework                   September 2026                   SCRIPTING(7)

@@ -536,6 +536,11 @@
             "created_at": "2026-09-14T14:49:12+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe add_file_type_label_to_file_attachments"
+        },
+        "2026_09_16_145407_widen_file_type_labels.php": {
+            "created_at": "2026-09-16T14:54:07+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe widen_file_type_labels"
         }
     }
 }

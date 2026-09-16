@@ -419,6 +419,7 @@ FILE ENDPOINTS
         /_download/:key          /_inline/:key
         /_thumbnail/preset/...   /_thumbnail/dynamic/...
         /_download_zip/:key      /_preview/pdf/:key
+        /_preview/sheet/:key
 
     A bad Bearer on one of these is a 401 - it never degrades to anonymous.
     Read authorization runs the file.thumbnail.authorize and (for bytes)

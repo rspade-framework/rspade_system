@@ -1217,6 +1217,12 @@ class Manifest
             return false;
         }
 
+        // An external script's argv holds no command name, so there is nothing here to
+        // recognise and never anything to skip: a script always gets the full boot.
+        if (\App\RSpade\Core\Console\Rsx_Script::is_active()) {
+            return false;
+        }
+
         $argv = $_SERVER['argv'] ?? [];
 
         // Bare `php artisan` - Symfony prints the command list
@@ -2833,6 +2839,12 @@ class Manifest
     {
         // Check if running from CLI
         if (php_sapi_name() !== 'cli') {
+            return false;
+        }
+
+        // An external script's first argument is its own; reading it as a command name
+        // would let `php my_tool.php migrate` silently skip the code quality checks.
+        if (\App\RSpade\Core\Console\Rsx_Script::is_active()) {
             return false;
         }
 

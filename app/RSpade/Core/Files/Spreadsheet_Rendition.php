@@ -105,7 +105,8 @@ class Spreadsheet_Rendition
     public static function mime_patterns(): array
     {
         return [
-            'application/vnd.ms-excel',
+            // The glob takes the macro-enabled and template variants with the classic .xls.
+            'application/vnd.ms-excel*',
             'application/vnd.openxmlformats-officedocument.spreadsheetml.*',
             'application/vnd.oasis.opendocument.spreadsheet*',
         ];
@@ -155,6 +156,10 @@ class Spreadsheet_Rendition
         }
 
         $safe = static::__purify($html);
+
+        // The rendition cache is a regenerable tree under tmp/ and may not exist yet - the
+        // first render after rsx:clean is the ordinary case.
+        ensure_directory(dirname($target_path));
 
         if (file_put_contents($target_path, $safe) === false) {
             throw new Exception('Failed to write spreadsheet rendition to ' . $target_path);

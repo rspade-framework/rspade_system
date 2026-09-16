@@ -297,7 +297,13 @@ function rsx_paths_assert_trees_writable(): void
 
     $mode = rsx_paths_env_value('RSX_MODE');
     $is_development = ($mode === '' || $mode === 'development');
-    $is_build = PHP_SAPI === 'cli' && isset($_SERVER['argv'][1]) && $_SERVER['argv'][1] === 'rsx:build';
+    // RSX_SCRIPT_MODE (system/script.php) says argv[1] is the script's own argument and
+    // not a command name. Read as the raw constant: this runs pre-boot, with no
+    // autoloader for App\RSpade\Core\Console\Rsx_Script.
+    $is_build = PHP_SAPI === 'cli'
+        && !defined('RSX_SCRIPT_MODE')
+        && isset($_SERVER['argv'][1])
+        && $_SERVER['argv'][1] === 'rsx:build';
 
     if (!$is_development && !$is_build) {
         return;

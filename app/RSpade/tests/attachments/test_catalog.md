@@ -54,6 +54,8 @@
 | LBL-07 | The label is re-derived on EVERY save, not only create (repoint/re-derivation change mime+extension) | php | change extension+mime, save | "PDF Document" | implemented | 2026-09-14 |
 | LBL-08 | A caller-assigned label is overwritten by save() - the model derives it, the caller supplies bytes | php | hand-set label, save | derived label wins | implemented | 2026-09-14 |
 | LBL-09 | regenerate_file_type_labels() repairs stale rows including TRASHED ones, returns the changed count, and is a no-op on a second run | php | two rows stale via direct UPDATE, one soft-deleted | 2 then 0, both repaired | implemented | 2026-09-14 |
+| LBL-10 | container formats are named by extension over a zip/octet-stream sniff: xlsm, docm (document extensions), xlsb, keynote, jar, kdbx, exe; a genuine zip stays a ZIP Archive | php | file_type_label_for() over eight pairs | the format names | implemented | 2026-09-16 |
+| LBL-11 | an ambiguous extension (.key) is never named by extension - the sniff answers, or the generic form | php | .key as zip, .key as octet-stream | ZIP Archive, KEY File | implemented | 2026-09-16 |
 | LBL-10 | The label rides toArray() as an ordinary column (no $appends), and field_length() answers 64 | php | toArray() of a created attachment | key present, "PDF Document", 64 | implemented | 2026-09-14 |
 | ATT-HTTP-01 | Real Content-Type on /_download and /_inline for old+new rows | http | GET endpoints | correct Content-Type header | planned | 2026-07-02 |
 | ATT-HTTP-02 | Thumbnail endpoints materialize + serve external attachments over the wire | http | GET /_thumbnail | 200 image/webp | planned | 2026-07-02 |

@@ -390,6 +390,7 @@ return array(
     'App\\RSpade\\Core\\Codegen\\Model_Codegen_Rewriter' => $baseDir . '/app/RSpade/Core/Codegen/Model_Codegen_Rewriter.php',
     'App\\RSpade\\Core\\Console\\Rsx_Artisan' => $baseDir . '/app/RSpade/Core/Console/Rsx_Artisan.php',
     'App\\RSpade\\Core\\Console\\Rsx_Internal_Flags' => $baseDir . '/app/RSpade/Core/Console/Rsx_Internal_Flags.php',
+    'App\\RSpade\\Core\\Console\\Rsx_Script' => $baseDir . '/app/RSpade/Core/Console/Rsx_Script.php',
     'App\\RSpade\\Core\\Controller\\Controller_BundleIntegration' => $baseDir . '/app/RSpade/Core/Controller/Controller_BundleIntegration.php',
     'App\\RSpade\\Core\\Controller\\Controller_Service_Provider' => $baseDir . '/app/RSpade/Core/Controller/Controller_Service_Provider.php',
     'App\\RSpade\\Core\\Controller\\Controller_Stub_ManifestSupport' => $baseDir . '/app/RSpade/Core/Controller/Controller_Stub_ManifestSupport.php',

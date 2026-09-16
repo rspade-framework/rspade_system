@@ -224,7 +224,12 @@ class Rsx_Framework_Provider extends ServiceProvider
         // Skip framework initialization for the always-runnable escape hatch
         // (rsx:clean, rsx:man, and pure Symfony introspection). The membership list
         // and its rationale live in Manifest::__cli_skips_manifest_boot().
-        $command = $_SERVER['argv'][1] ?? null;
+        // An external script's argv[1] is the script's own argument, never a command
+        // name (App\RSpade\Core\Console\Rsx_Script). Nulling it here is what keeps the
+        // --clean special case below from firing on `php my_tool.php rsx:manifest:build`.
+        $command = \App\RSpade\Core\Console\Rsx_Script::is_active()
+            ? null
+            : ($_SERVER['argv'][1] ?? null);
         if (Manifest::__cli_skips_manifest_boot()) {
             return;
         }
