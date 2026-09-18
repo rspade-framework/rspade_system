@@ -1,13 +1,36 @@
 # The RSpade container
 
-The image definition for the RSpade application container. One Dockerfile, two
-targets.
+The image definition for the RSpade application container. One Dockerfile, three
+targets — and `build.sh` is the way to build them, because it also applies the
+names and tags everything else expects.
 
-    docker build --target dev  -t rspade-dev  .
-    docker build --target prod -t rspade-prod .
+    bash build.sh              # dev      -> rspade/rspade-server-dev
+    bash build.sh prod         # prod     -> rspade/rspade-server-prod
+    bash build.sh docconvert   # the document sandbox image
+    bash build.sh both         # the two application images
+    bash build.sh all          # every image this file defines
 
 The application is **not** baked into the image. It is mounted at
 `/var/www/html`, so one image serves every project.
+
+## The third image: `rspade/rspade-docconvert`
+
+The `docconvert` target is **not** an application image and shares no layer with
+the other two. It is a bare `ubuntu:24.04` carrying `libreoffice`,
+`poppler-utils`, `fonts-liberation` and `fonts-dejavu-core` — no PHP, no nginx,
+no redis, no supervisor, no entrypoint.
+
+That is the whole design. When `LIBREOFFICE_SANDBOX=docker`, this is the image a
+hostile uploaded document is handed, one throwaway container per file, so every
+binary and library it carries is something a converter exploit could reach for —
+and an application runtime carries a great deal that converts nothing.
+
+**It builds itself.** The render worker builds it the first time a sandboxed
+conversion wants it, so switching the posture on is a setting and not an install
+step. `php artisan rsx:heal document-sandbox-image` pays that cost deliberately
+during a deploy instead. An operator who points `LIBREOFFICE_SANDBOX_IMAGE` at an
+image of their own gets neither: that image is theirs to carry soffice, pdftotext
+and fonts, and theirs to pull. See `rsx:man libreoffice`, THE CONVERTER IMAGE.
 
 ## Where this fits
 

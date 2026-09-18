@@ -1,7 +1,7 @@
 # =============================================================================
 # RSpade application container
 #
-# Two targets from one file, sharing every base layer:
+# Three targets from one file. Two of them share every base layer:
 #
 #   --target dev    a complete development environment: MySQL inside the
 #                   container, Playwright's browser libraries for rsx:debug,
@@ -11,6 +11,14 @@
 #                   your own), no browser libraries, and OPcache holding its
 #                   compiled state for 10 seconds instead of re-checking every
 #                   request.
+#
+# The third one shares nothing, on purpose:
+#
+#   --target docconvert   the document sandbox image - soffice, pdftotext and
+#                   fonts on a bare distribution base, no application runtime at
+#                   all. It is the machine a hostile uploaded document is handed,
+#                   so it carries as little as the conversion allows. The
+#                   reasoning is written beside the stage.
 #
 # The application itself is NOT baked in - it is mounted at /var/www/html. One
 # image serves every project.
@@ -450,3 +458,44 @@ RUN chmod 644 /etc/php/${PHP_VERSION}/fpm/conf.d/10-opcache.ini \
 
 # mysql-client is present (from base) on purpose: migrations, db:query and
 # operational access all need to reach the database server you provide.
+
+# -----------------------------------------------------------------------------
+# docconvert - the document sandbox image: soffice, pdftotext, fonts, nothing else
+# -----------------------------------------------------------------------------
+#
+# WHAT IT IS FOR. When rsx.libreoffice.sandbox is 'docker', the render worker spawns
+# ONE throwaway `docker run --rm` per document and runs soffice or pdftotext inside
+# it (rsx:man libreoffice, THE DOCUMENT SANDBOX). This is the image that run uses.
+#
+# WHY IT IS NOT BUILT FROM `base`. The whole point of the sandbox is that a hostile
+# document meets the smallest possible machine: every binary, library and service
+# the image carries is something a converter exploit could reach for. `base` is an
+# application runtime - PHP, nginx, redis, supervisor, mysql-client, git, ssh - and
+# none of it converts a document. So this stage starts from the distribution image
+# directly and installs the four packages the conversion actually needs. It is also
+# a fraction of the size, which matters on a host that pulls it to render one file.
+#
+# NO ENTRYPOINT, deliberately: the sandbox seam already passes `--entrypoint ''`,
+# and a bare image means the argv the framework builds IS the process, with nothing
+# bringing an environment up around it.
+#
+# An operator may point LIBREOFFICE_SANDBOX_IMAGE at an image of their own instead;
+# it then has to carry soffice, pdftotext and fonts, and it is theirs to distribute.
+FROM ubuntu:24.04 AS docconvert
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=UTC
+
+# tzdata configures itself non-interactively from this file, so it is written
+# BEFORE the first apt-get - otherwise the install stops on a region prompt.
+RUN echo "$TZ" > /etc/timezone
+
+RUN apt-get update && apt-get install -y \
+    # the two converters the framework spawns, and the fonts they substitute with.
+    # Without the fonts a conversion still succeeds and renders the wrong glyphs,
+    # which is the worse failure: it looks like a document rather than an error.
+        libreoffice poppler-utils fonts-liberation fonts-dejavu-core \
+    # apt fetches over https from the distribution archive; the root store is what
+    # makes that verifiable.
+        ca-certificates \
+    && rm -rf /var/lib/apt/lists/*

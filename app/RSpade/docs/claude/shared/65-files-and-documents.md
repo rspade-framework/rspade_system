@@ -30,6 +30,8 @@ Framework-core, no app wiring, all of it keyed on the **deduplicated blob**. An 
 
 **`<Document_Text_Preview $attachment_id=... />`** is its sibling and shows the extracted text, `(Extracting Text...)` until extraction lands, drawn in the same monospace text pane `Text_Viewer` uses (the framework mixin `rsx-preview-text-pane`), so a host styles the frame, never the text.
 
+**A site that accepts uploads from outside the organisation sets `LIBREOFFICE_SANDBOX=docker`**, which runs every soffice/pdftotext spawn in a throwaway container (no network, read-only root, dropped capabilities, memory and pid caps, one container per file) through the single seam `Document_Sandbox::command()` - PhpSpreadsheet, being in-process, is not covered; `rsx:man libreoffice`.
+
 **Operating it**: `rsx:documents:status`, `rsx:documents:failed`, `rsx:documents:rerender`, plus a "Document Render Backlog" row in `rsx:health`. **`rsx.libreoffice.timeout` (120s) is the ONE sanctioned bound in this subsystem** — it caps an external binary that can wedge, and nothing else here is timed.
 
 Skills: `rspade:file-attachments` (claim flow, URLs, displaying files, disposal hooks, ZIP downloads), `rspade:document-preview` (the render pipeline, viewer registry, the three `document.*` resolve chains, reindex triage, deps). Details: `rsx:man file_upload`, `rsx:man thumbnails`, `rsx:man document_search`, `rsx:man documents`.

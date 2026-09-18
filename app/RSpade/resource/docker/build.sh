@@ -8,9 +8,16 @@
 #
 #     bash build.sh                  # the dev image (default)
 #     bash build.sh prod             # the production image
-#     bash build.sh both             # both
+#     bash build.sh docconvert       # the document sandbox image
+#     bash build.sh both             # dev + prod (the two application images)
+#     bash build.sh all              # every image this file defines
 #     bash build.sh dev --push       # build, then push to the registry
 #     bash build.sh --claude         # ...with Claude Code baked into the image
+#
+# 'both' and 'all' are deliberately different words. 'both' is the pair of
+# APPLICATION images, which is what somebody standing up an environment wants.
+# 'all' is every image the Dockerfile defines, docconvert included - the release
+# sweep, and what a mirror of the registry needs.
 #
 # Run it with `bash build.sh`, never as a bare path: the exec bit does not
 # survive every checkout, and a bare path then dies with "Permission denied".
@@ -44,7 +51,9 @@ for arg in "$@"; do
     case "$arg" in
         dev)          TARGETS="$TARGETS dev" ;;
         prod)         TARGETS="$TARGETS prod" ;;
-        both|all)     TARGETS="dev prod" ;;
+        docconvert)   TARGETS="$TARGETS docconvert" ;;
+        both)         TARGETS="dev prod" ;;
+        all)          TARGETS="dev prod docconvert" ;;
         --push)       PUSH=true ;;
         --claude)     INSTALL_CLAUDE=true ;;
         -h|--help)
@@ -54,7 +63,7 @@ for arg in "$@"; do
             exit 0
             ;;
         *)
-            die "Unknown argument '$arg'. Expected: dev | prod | both | --push | --claude"
+            die "Unknown argument '$arg'. Expected: dev | prod | docconvert | both | all | --push | --claude"
             ;;
     esac
 done
@@ -93,7 +102,15 @@ fi
 BUILT=""
 
 for target in $TARGETS; do
-    image="rspade-server-${target}"
+    # The two application images are rspade-server-<target>; the document sandbox
+    # image is not a server, so it is named for what it does. Document_Sandbox
+    # recognises rspade/rspade-docconvert by name as the framework's own converter
+    # image and builds it on first use - that name is a contract, not a label.
+    if [ "$target" = "docconvert" ]; then
+        image="rspade-docconvert"
+    else
+        image="rspade-server-${target}"
+    fi
     registry_name="${REGISTRY}/${image}"
 
     say "Building the ${target} image (this takes a while)..."
@@ -141,9 +158,15 @@ say "Built:$BUILT"
 [ "$INSTALL_CLAUDE" = true ] && say "Claude Code: installed in the image."
 
 for target in $BUILT; do
+    if [ "$target" = "docconvert" ]; then
+        reported="${REGISTRY}/rspade-docconvert"
+    else
+        reported="${REGISTRY}/rspade-server-${target}"
+    fi
+
     echo ""
     docker images --format '  {{.Repository}}:{{.Tag}}   {{.Size}}' \
-        "${REGISTRY}/rspade-${target}" 2>/dev/null
+        "$reported" 2>/dev/null
 done
 
 echo ""

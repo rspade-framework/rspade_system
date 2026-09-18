@@ -301,6 +301,22 @@ THE RECOMMENDED DEPLOYMENT
     exits 0: the database is merely ahead of the build and nothing served
     reads that column.
 
+  DOCUMENTS FROM OUTSIDE THE ORGANISATION
+    A site that accepts uploads from people outside the organisation hands
+    soffice and pdftotext - two large C++ parsers - input that somebody else
+    chose. Set LIBREOFFICE_SANDBOX=docker on such a host and every document
+    binary runs in a throwaway container with no network, a read-only root
+    filesystem, dropped capabilities and memory and pid caps, one container per
+    file. The deployment requirement is that the user the render worker runs as
+    can reach a docker daemon (the docker group, or rootless docker); the host
+    then needs no LibreOffice and no poppler-utils of its own. The image is the
+    framework's own minimal converter image and is built on first use, so nothing
+    has to be installed ahead of the switch - `php artisan rsx:heal
+    document-sandbox-image` builds it during the deploy instead of during the
+    first document. rsx:health reports the posture in every mode and FAILs when a
+    box configured to sandbox cannot. See rsx:man libreoffice, THE DOCUMENT
+    SANDBOX.
+
   COMPOSER IS NOT A PRODUCTION-BOX OPERATION
     Do not run `composer install` or `composer dump-autoload` by hand on an
     unsealed production box. Composer's post-autoload-dump hook spawns a bare

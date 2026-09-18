@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Core\Files;
 
+use App\RSpade\Core\Files\Document_Sandbox;
+
 /**
  * Libreoffice - shared helpers for the headless LibreOffice (soffice) integration.
  *
@@ -52,11 +54,47 @@ class Libreoffice
     #[Health_Check('LibreOffice (soffice)')]
     public static function soffice_available(): array
     {
-        if (config('rsx.libreoffice.enabled', true) === false) {
-            return ['status' => 'INFO', 'detail' => 'disabled by config (rsx.libreoffice.enabled=false)'];
+        return static::_availability_row(
+            (bool) config('rsx.libreoffice.enabled', true),
+            Document_Sandbox::is_docker(),
+            Document_Sandbox::image(),
+            Document_Sandbox::is_docker() ? null : static::find_soffice()
+        );
+    }
+
+    /**
+     * The row soffice_available() reports, built from what it reports.
+     *
+     * UNDER THE SANDBOX THIS ROW IS ABOUT THE IMAGE, NOT THE HOST. A sandboxed box has no reason
+     * to carry soffice at all - the converter lives in the container - so looking for a host
+     * binary there would FAIL a correctly-configured site. The question "does soffice actually
+     * run" is answered by the Document Sandbox rows, which run it.
+     *
+     * @param bool $enabled rsx.libreoffice.enabled
+     * @param bool $sandboxed Are document binaries spawned inside a container?
+     * @param string $image The configured sandbox image.
+     * @param string|null $binary The discovered host binary (null when absent, or when sandboxed).
+     * @return array{status: string, detail: string, remediation: ?string}
+     */
+    public static function _availability_row(bool $enabled, bool $sandboxed, string $image, ?string $binary): array
+    {
+        if (!$enabled) {
+            return [
+                'status' => 'INFO',
+                'detail' => 'disabled by config (rsx.libreoffice.enabled=false)',
+                'remediation' => null,
+            ];
         }
 
-        $binary = static::find_soffice();
+        if ($sandboxed) {
+            return [
+                'status' => 'INFO',
+                'detail' => 'sandboxed - soffice runs inside ' . $image . ', not on this host'
+                    . ' (the Document Sandbox rows prove it runs)',
+                'remediation' => null,
+            ];
+        }
+
         if ($binary === null) {
             return [
                 'status' => 'FAIL',
@@ -65,6 +103,6 @@ class Libreoffice
             ];
         }
 
-        return ['status' => 'OK', 'detail' => 'soffice at ' . $binary];
+        return ['status' => 'OK', 'detail' => 'soffice at ' . $binary, 'remediation' => null];
     }
 }

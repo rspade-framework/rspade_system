@@ -1428,12 +1428,14 @@ ENTRY 13: THE PRODUCTION READ-ONLY POSTURE (who owns which tree on the host)
 
 --------------------------------------------------------------------------------
 
-ENTRY 14: THE SCHEMA CONTRACT AND THE HOSTNAME (rsx:health on the production database)
+ENTRY 14: THE SCHEMA CONTRACT, THE HOSTNAME AND THE DOCUMENT SANDBOX (rsx:health
+         on the production database)
 
     What to audit
         Whether `php artisan rsx:health` run against the PRODUCTION database, on
         the production host, reports no FAIL on the Schema Contract rows and no
-        FAIL on the Hostname row.
+        FAIL on the Hostname row, and that the Document Sandbox row reads the
+        posture this site is entitled to.
 
         Run it on the host, as the user that serves requests, after the
         deployment's migrate and build and before the site takes its first real
@@ -1441,7 +1443,7 @@ ENTRY 14: THE SCHEMA CONTRACT AND THE HOSTNAME (rsx:health on the production dat
 
             php artisan rsx:health
 
-        Two groups of rows are this entry's subject.
+        Three groups of rows are this entry's subject.
 
         SCHEMA CONTRACT (one row per table, in every mode). The framework reads
         a set of columns, unique indexes, foreign keys and rows BY NAME on the
@@ -1458,6 +1460,19 @@ ENTRY 14: THE SCHEMA CONTRACT AND THE HOSTNAME (rsx:health on the production dat
         HOSTNAME (debug and production modes only). FAILs when the APP_URL host
         contains `.dev.`.
 
+        DOCUMENT SANDBOX (every mode). On a site that will accept uploads from
+        people outside the organisation this row must read `docker`: soffice and
+        pdftotext are large C++ parsers being handed input somebody else chose,
+        and `none` means they parse it on the host as the worker's own user. A
+        site whose uploads all come from inside the organisation may launch on
+        `none` - that is why the row is a WARN there and not a FAIL - but it is
+        a decision to make deliberately, before launch, rather than to inherit
+        from the default. On a box set to `docker`, run
+        `php artisan rsx:heal document-sandbox-image` as part of the deploy: the
+        converter image is built on first use otherwise, and the first document
+        an operator uploads is a poor place to discover that the box cannot
+        build it. See rsx:man libreoffice, THE DOCUMENT SANDBOX.
+
     Why it matters
         Every other schema check compares the software against itself.
         `rsx:migrate:check_consistency` asks whether the sealed manifest
@@ -1471,6 +1486,11 @@ ENTRY 14: THE SCHEMA CONTRACT AND THE HOSTNAME (rsx:health on the production dat
         so. The failure without this audit is not a build error; it is a
         first-week 500 on a code path nobody exercised before launch - a
         password reset, an invitation, a queued email's recipient row.
+
+        The Document Sandbox row is about what an uploaded file can reach. It is
+        the one row here that reports a posture rather than a defect: nothing is
+        broken on a box that converts documents on the host, right up until a
+        crafted document is uploaded to it.
 
         The Hostname row is about outbound messages rather than the schema. On a
         host whose name contains `.dev.` the framework treats the box as a

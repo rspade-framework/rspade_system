@@ -3,7 +3,9 @@
 namespace App\RSpade\Core\Search;
 
 use Exception;
+use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
+use App\RSpade\Core\Files\Document_Sandbox;
 use App\RSpade\Core\Search\Rsx_Extraction_Unsupported_Exception;
 use App\RSpade\Core\Search\Rsx_Text_Extractor_Abstract;
 
@@ -30,32 +32,101 @@ class Pdftotext_Text_Extractor extends Rsx_Text_Extractor_Abstract
      */
     public static function extract(string $source_path, string $mime): string
     {
-        $binary = static::__find_pdftotext();
-        if ($binary === null) {
-            throw new Exception('pdftotext (poppler-utils) is not installed or not configured');
+        // Sandboxed, the binary name resolves on the image's PATH and there is nothing to
+        // discover on the host; unsandboxed, it is the host path discovery finds.
+        if (Document_Sandbox::is_docker()) {
+            $binary = 'pdftotext';
+        } else {
+            $binary = static::__find_pdftotext();
+            if ($binary === null) {
+                throw new Exception('pdftotext (poppler-utils) is not installed or not configured');
+            }
         }
 
-        // ONE sanctioned timeout bounds every external document binary this pipeline invokes -
-        // soffice and pdftotext alike. Both are the same shape (an external process that can wedge
-        // on malformed input and never return), so they share one number rather than carrying a
-        // second, separately-argued one. Justified in full at the config key.
-        $process = new Process([$binary, '-enc', 'UTF-8', $source_path, '-']);
-        $process->setTimeout((int) config('rsx.libreoffice.timeout', 120));
-        $process->run();
+        // Private work dir - the source is STAGED here rather than read where it lies, because
+        // the sandbox is given this one directory and nothing else. Mounting the storage tree (or
+        // the rendition cache) into the container would defeat the point of having one. The same
+        // staging runs unsandboxed, so there is one code path.
+        $work_dir = sys_get_temp_dir() . '/rsx_pdftotext_' . bin2hex(random_bytes(8));
+        if (!mkdir($work_dir, 0700, true) && !is_dir($work_dir)) {
+            throw new Exception("Failed to create pdftotext work dir: {$work_dir}");
+        }
 
-        if (!$process->isSuccessful()) {
-            $stderr = trim($process->getErrorOutput());
-
-            // Encrypted / password-protected PDF: structurally unextractable, not a failure.
-            if (stripos($stderr, 'incorrect password') !== false) {
-                throw new Rsx_Extraction_Unsupported_Exception('password-protected PDF');
+        try {
+            $staged = $work_dir . '/' . basename($source_path);
+            if (!copy($source_path, $staged)) {
+                throw new Exception('Failed to stage PDF for text extraction');
             }
 
-            throw new Exception('pdftotext failed for ' . basename($source_path) . ': ' . $stderr);
+            // ONE sanctioned timeout bounds every external document binary this pipeline invokes -
+            // soffice and pdftotext alike. Both are the same shape (an external process that can wedge
+            // on malformed input and never return), so they share one number rather than carrying a
+            // second, separately-argued one. Justified in full at the config key.
+            $command = Document_Sandbox::command([$binary, '-enc', 'UTF-8', $staged, '-'], $work_dir);
+            $process = new Process($command);
+            $process->setTimeout((int) config('rsx.libreoffice.timeout', 120));
+
+            try {
+                $process->run();
+            } catch (ProcessTimedOutException $e) {
+                // Expiry kills the process Symfony started - which under the sandbox is the docker
+                // CLIENT, leaving the wedged converter running in its container.
+                $container = Document_Sandbox::container_name($command);
+                if ($container !== null) {
+                    Document_Sandbox::kill($container);
+                }
+
+                throw $e;
+            }
+
+            if (!$process->isSuccessful()) {
+                $stderr = trim($process->getErrorOutput());
+
+                // Encrypted / password-protected PDF: structurally unextractable, not a failure.
+                if (stripos($stderr, 'incorrect password') !== false) {
+                    throw new Rsx_Extraction_Unsupported_Exception('password-protected PDF');
+                }
+
+                throw new Exception('pdftotext failed for ' . basename($source_path) . ': ' . $stderr);
+            }
+
+            // Empty output = a PDF with no text layer (all-image). Valid EXTRACTED result.
+            return $process->getOutput();
+        } finally {
+            static::__rmdir_recursive($work_dir);
+        }
+    }
+
+    /**
+     * Recursively remove a directory tree (best-effort cleanup of the temp work dir).
+     *
+     * @param string $dir
+     * @return void
+     */
+    protected static function __rmdir_recursive(string $dir): void
+    {
+        if (!is_dir($dir)) {
+            return;
         }
 
-        // Empty output = a PDF with no text layer (all-image). Valid EXTRACTED result.
-        return $process->getOutput();
+        $items = scandir($dir);
+        if ($items === false) {
+            return;
+        }
+
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $path = $dir . '/' . $item;
+            if (is_dir($path)) {
+                static::__rmdir_recursive($path);
+            } else {
+                @unlink($path);
+            }
+        }
+
+        @rmdir($dir);
     }
 
     /**

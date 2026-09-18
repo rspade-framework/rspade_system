@@ -117,6 +117,164 @@ TIMEOUT
     Do NOT lower this because renders "should be faster" - that will start failing
     legitimate renders.
 
+THE DOCUMENT SANDBOX
+    config('rsx.libreoffice.sandbox') - 'none' (default) or 'docker' (env
+    LIBREOFFICE_SANDBOX). It decides whether soffice and pdftotext run on the host
+    or inside a throwaway container, and it is the security posture for a site that
+    accepts uploads from outside the organisation.
+
+  WHY
+    soffice and pdftotext are large C++ parsers of hostile input, and an uploaded
+    document is input somebody else chose:
+
+      - The import filters are a long-running source of memory-corruption CVEs. A
+        crafted document is an exploit delivery mechanism, not merely a bad file.
+      - A document can carry event and script hooks that a converter will honour.
+      - A filter can be told to read a LOCAL FILE and embed it - the classic shape
+        of "convert this and mail me back the PDF" exfiltration.
+      - A document can reference resources the converter FETCHES OVER THE NETWORK,
+        which aims the converter at whatever the box can reach internally.
+
+    The render worker runs as a user that can read the application tree, its
+    storage, and its credentials. Sandboxed, the converter can read one directory.
+
+  WHAT THE CONTAINER GETS
+
+        docker run --rm --name rsx-doc-<random> \
+            --network none --read-only --cap-drop ALL \
+            --security-opt no-new-privileges \
+            --memory <sandbox_memory> --pids-limit <sandbox_pids> \
+            --tmpfs /tmp --user <uid>:<gid> \
+            -e HOME=<work_dir> -v <work_dir>:<work_dir> \
+            --entrypoint '' <sandbox_image> <the ordinary argv>
+
+      --network none          no linked resource is ever fetched, and nothing
+                              internal is reachable from the parser.
+      --read-only             the image's filesystem cannot be modified, so
+                              nothing a document does can persist into the next
+                              conversion.
+      --cap-drop ALL          no capability is needed to convert a file.
+      --security-opt
+        no-new-privileges     a setuid binary inside the image cannot escalate.
+      --memory / --pids-limit a malformed document that balloons or forks is
+                              contained instead of taking the host down. The
+                              memory cap is the one flag a daemon can refuse (a
+                              host whose cgroup layout is in threaded mode
+                              admits no memory controller); the seam probes for
+                              that once per process and DROPS the cap rather
+                              than stop converting, and the "Document Sandbox:
+                              memory cap" health row reports the daemon's own
+                              words. Every other flag is always applied.
+      --tmpfs /tmp            scratch space that dies with the container.
+      --user <uid>:<gid>      the worker's own identity, so the files written
+                              into the work dir belong to the process that has to
+                              read and delete them.
+      -v <work_dir>:<work_dir>
+                              THE ONLY MOUNT, at its own absolute path. Every path
+                              in the argv - the staged input, the
+                              -env:UserInstallation profile, the --outdir - is
+                              therefore valid unchanged inside the container, so
+                              one argv is correct in both modes. The blob is
+                              COPIED into the work dir first: mounting the storage
+                              tree into the sandbox would defeat the point of
+                              having one.
+      --entrypoint ''         the framework image's ENTRYPOINT brings a whole
+                              environment up; cleared, the argv IS the process.
+
+  ONE CONTAINER PER FILE, SEQUENTIAL, PRISTINE EACH TIME
+    The render worker is #[Exclusive] and single-threaded, so conversions are
+    serialized already; the sandbox adds one `docker run --rm` per file on top of
+    that. Nothing survives a document: the next one gets a new process in a new
+    filesystem.
+
+    A LONG-LIVED PER-TENANT CONTAINER IS THE WRONG TRADE. It re-introduces exactly
+    what the container is for - a process one document can leave modified for the
+    next one - and it buys only container-start latency on a pipeline that is
+    already asynchronous and whose unit of work is a multi-second conversion.
+
+  DEPLOYMENT REQUIREMENT
+    The user the render worker runs as must be able to reach a docker daemon:
+    membership of the docker group, or rootless docker for that user. Nothing
+    else is required of the host - in 'docker' mode the host needs no LibreOffice
+    and no poppler-utils at all, because the binaries live in the image.
+
+    The image (config('rsx.libreoffice.sandbox_image'), env
+    LIBREOFFICE_SANDBOX_IMAGE) must carry soffice, pdftotext and fonts.
+
+  THE CONVERTER IMAGE
+    The default is the framework's own converter image,
+    'rspade/rspade-docconvert:latest'. It is a bare ubuntu base carrying
+    libreoffice, poppler-utils, fonts-liberation and fonts-dejavu-core - no PHP,
+    no nginx, no redis, no supervisor, no entrypoint. That is the point: the
+    image is the machine a hostile uploaded document is handed, so everything it
+    carries is something a converter exploit could reach for, and an application
+    runtime carries a great deal that converts nothing. It is a docconvert stage
+    in the same Dockerfile as the application images and shares no layer with
+    them.
+
+    IT IS BUILT ON FIRST USE. Switching LIBREOFFICE_SANDBOX to 'docker' is a
+    posture, not an installation step: the first sandboxed invocation on a host
+    that does not have the image builds it (Document_Sandbox::ensure_image(),
+    once per process, inside the asynchronous render worker) and then converts.
+    Two ways to pay that cost deliberately instead:
+
+        php artisan rsx:heal document-sandbox-image
+        bash system/app/RSpade/resource/docker/build.sh docconvert
+
+    AN OPERATOR'S OWN IMAGE IS NEVER BUILT. Point LIBREOFFICE_SANDBOX_IMAGE at an
+    image of your own and it must carry soffice, pdftotext and fonts, and it is
+    yours to distribute: the framework has no Dockerfile for it and nothing to
+    guess from, so an absent one throws naming the image and `docker pull`, the
+    health row FAILs rather than WARNs, and rsx:heal REFUSES. The framework
+    builds exactly one image - rspade/rspade-docconvert, at whatever tag is
+    configured - and nothing else.
+
+  WHAT IS NOT COVERED
+    PhpSpreadsheet. A workbook's HTML rendition (Spreadsheet_Rendition) and a
+    workbook's text (Spreadsheet_Text_Extractor) are read IN-PROCESS by a PHP
+    library - no binary is spawned, so there is no process to contain. Sandboxing
+    that would mean sandboxing PHP itself.
+
+  THE TIMEOUT PATH
+    When the sanctioned bound expires, Symfony kills the process it started -
+    which under the sandbox is the docker CLIENT, not the container. So every
+    caller that enforces the bound also runs `docker kill` on the container it
+    named (Document_Sandbox::container_name() / ::kill()). Without that, a wedged
+    converter would keep running with the work dir still mounted.
+
+  THE HEALTH ROWS
+    rsx:health carries one "Document Sandbox" check in every mode:
+
+      sandbox='none'    INFO in development (it is the default); WARN on a debug
+                        or production box, naming LIBREOFFICE_SANDBOX=docker. It
+                        is a WARN and not a FAIL because a site whose uploads all
+                        come from inside the organisation is entitled to this
+                        posture, and the exit code gates deploys.
+      sandbox='docker'  FIVE rows - docker client, docker daemon, sandbox image,
+                        sandbox run, memory cap. A failing link is a FAIL, because
+                        a box configured to sandbox and unable to is a box that
+                        renders nothing. The "sandbox run" row is the one that
+                        proves the whole chain: it runs `soffice --version`
+                        inside the configured image with the SAME hardening flags
+                        a real conversion gets, and carries what the daemon said
+                        when it could not.
+
+                        THE IMAGE ROW SPLITS BY WHOSE IMAGE IT IS. An absent
+                        FRAMEWORK converter image is a WARN: it is built on
+                        demand, so the state resolves itself, but the first
+                        document conversion on that box takes a minute or two
+                        longer while the image builds - the row recommends
+                        building it once with `rsx:heal document-sandbox-image`.
+                        That heal ALWAYS rebuilds, present or not; docker's
+                        layer cache makes a rebuild of an unchanged image a
+                        matter of seconds, and it keeps the tagged image in step
+                        with the checkout. An absent operator image is a FAIL
+                        naming `docker pull`: nothing here will ever produce it.
+
+    In 'docker' mode the "LibreOffice (soffice)" row reports the IMAGE, as an
+    INFO - a sandboxed host is not supposed to carry soffice, and looking for a
+    host binary there would FAIL a correctly configured site.
+
 CONFIGURATION
     config/rsx.php -> 'libreoffice':
 
@@ -127,6 +285,18 @@ CONFIGURATION
                              /usr/local/bin/soffice, /opt/libreoffice/program/soffice).
         timeout      int     Per-invocation cap in seconds on the external binary.
                              Default 120. See TIMEOUT above.
+        sandbox      string  'none' (default) or 'docker'. See THE DOCUMENT
+                             SANDBOX above (env LIBREOFFICE_SANDBOX). Any other
+                             value throws at first use.
+        sandbox_image
+                     string  The image a sandboxed conversion runs. Default
+                             'rspade/rspade-docconvert:latest' - the framework's
+                             own converter image, built on first use (env
+                             LIBREOFFICE_SANDBOX_IMAGE). See THE CONVERTER IMAGE
+                             above.
+        sandbox_memory
+                     string  Memory cap for a sandboxed conversion. Default '1g'.
+        sandbox_pids int     Pid cap for a sandboxed conversion. Default 256.
 
     WHICH MIMES CONVERT is config('rsx.preview.convertible') - one list, read by the
     attachment (to decide whether a new upload owes a render) and by the worker. It is
@@ -153,8 +323,10 @@ INSTALLING LIBREOFFICE
     - Some base images disable PDF reads in ImageMagick policy.xml; allow "read" for
       the PDF coder if PDF thumbnails come out blank.
 
-    rsx:health verifies soffice, poppler and the render backlog - run it as a
-    container-readiness gate.
+    rsx:health verifies soffice, poppler, the sandbox and the render backlog - run
+    it as a container-readiness gate. A host that sandboxes needs none of the
+    packages above: set LIBREOFFICE_SANDBOX=docker instead, and provision access to
+    a docker daemon for the worker's user.
 
     See docs.dev/reference/docker_container_additions_7_2_2026.md for the full container
     provisioning writeup.
@@ -167,6 +339,8 @@ VERIFYING
     cache purge.
 
 SEE ALSO
+    rsx:man prod             Deployment requirements, including the sandbox
+    rsx:man health           The rsx:health inventory and what each row reports
     rsx:man documents        Operating the render pipeline (status / failed / rerender)
     rsx:man thumbnails       Render state machine, the thumbnail cache, the component
     rsx:man document_search  Text extraction + PDF renditions (the same worker)
@@ -174,4 +348,4 @@ SEE ALSO
     rsx:man tasks            #[Exclusive], #[Schedule] and the worker pool
     docs.dev/reference/docker_container_additions_7_2_2026.md
 
-RSX Framework              Last updated 2026-08-22               LIBREOFFICE(1)
+RSX Framework              Last updated 2026-09-18               LIBREOFFICE(1)

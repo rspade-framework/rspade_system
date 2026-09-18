@@ -3,7 +3,9 @@
 namespace App\RSpade\Core\Search;
 
 use Exception;
+use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
+use App\RSpade\Core\Files\Document_Sandbox;
 use App\RSpade\Core\Files\Libreoffice;
 use App\RSpade\Core\Search\Rsx_Text_Extractor_Abstract;
 
@@ -46,9 +48,15 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
      */
     public static function extract(string $source_path, string $mime): string
     {
-        $soffice = Libreoffice::find_soffice();
-        if ($soffice === null) {
-            throw new Exception('LibreOffice (soffice) is not installed or not configured');
+        // Sandboxed, the binary name resolves on the image's PATH and there is nothing to
+        // discover on the host; unsandboxed, it is the host path discovery finds.
+        if (Document_Sandbox::is_docker()) {
+            $soffice = 'soffice';
+        } else {
+            $soffice = Libreoffice::find_soffice();
+            if ($soffice === null) {
+                throw new Exception('LibreOffice (soffice) is not installed or not configured');
+            }
         }
 
         // The one sanctioned timeout: it bounds the EXTERNAL soffice binary, which wedges rather
@@ -62,18 +70,28 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
         }
 
         try {
+            // The blob lives in the storage tree, which the sandbox deliberately cannot see -
+            // mounting that tree into the container would defeat the point of having one. So the
+            // input is STAGED inside the work dir, the one directory the container is given, and
+            // the same staging runs unsandboxed so there is one code path. The basename is
+            // preserved, because soffice names its output after it.
+            $staged = $work_dir . '/' . basename($source_path);
+            if (!copy($source_path, $staged)) {
+                throw new Exception('Failed to stage source document for text extraction');
+            }
+
             if (static::__is_spreadsheet_mime($mime)) {
-                $fods = static::__convert($soffice, $work_dir, $source_path, 'fods', 'fods', $timeout);
+                $fods = static::__convert($soffice, $work_dir, $staged, 'fods', 'fods', $timeout);
                 return static::__stream_flat_xml($fods, true);
             }
 
             if (static::__is_presentation_mime($mime)) {
-                $fodp = static::__convert($soffice, $work_dir, $source_path, 'fodp', 'fodp', $timeout);
+                $fodp = static::__convert($soffice, $work_dir, $staged, 'fodp', 'fodp', $timeout);
                 return static::__stream_flat_xml($fodp, false);
             }
 
             // Writer family (and any other Office mime): the "Text (encoded)" filter emits UTF-8.
-            $txt = static::__convert($soffice, $work_dir, $source_path, 'txt:Text (encoded):UTF8', 'txt', $timeout);
+            $txt = static::__convert($soffice, $work_dir, $staged, 'txt:Text (encoded):UTF8', 'txt', $timeout);
             $raw = file_get_contents($txt);
             if ($raw === false) {
                 throw new Exception('Failed to read LibreOffice text output for ' . basename($source_path));
@@ -126,7 +144,7 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
      *
      * @param string $soffice
      * @param string $work_dir
-     * @param string $source_path
+     * @param string $source_path The STAGED input, inside $work_dir.
      * @param string $convert_to soffice --convert-to argument (e.g. 'fods', 'txt:Text (encoded):UTF8')
      * @param string $output_ext extension soffice will give the produced file (e.g. 'fods', 'txt')
      * @param int $timeout
@@ -141,7 +159,9 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
         string $output_ext,
         int $timeout
     ): string {
-        $process = new Process([
+        // Every path here is inside the work dir, which the sandbox mounts at its own absolute
+        // path - so ONE argv is correct both on the host and in the container.
+        $command = Document_Sandbox::command([
             $soffice,
             '-env:UserInstallation=file://' . $work_dir . '/profile',
             '--headless',
@@ -150,11 +170,25 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
             '--outdir',
             $work_dir,
             $source_path,
-        ]);
+        ], $work_dir);
+
+        $process = new Process($command);
 
         // Hard cap the external binary (see the timeout note above).
         $process->setTimeout($timeout);
-        $process->run();
+
+        try {
+            $process->run();
+        } catch (ProcessTimedOutException $e) {
+            // Expiry kills the process Symfony started - which under the sandbox is the docker
+            // CLIENT, leaving the wedged converter running in its container.
+            $container = Document_Sandbox::container_name($command);
+            if ($container !== null) {
+                Document_Sandbox::kill($container);
+            }
+
+            throw $e;
+        }
 
         $out_path = $work_dir . '/' . pathinfo($source_path, PATHINFO_FILENAME) . '.' . $output_ext;
         if (!file_exists($out_path)) {

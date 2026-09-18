@@ -1099,11 +1099,49 @@ return [
     |   If you are tempted to LOWER this because renders "should be faster", do not - that is
     |   the "give it room" fallacy inverted, and it will start failing legitimate renders.
     |
+    | THE DOCUMENT SANDBOX (sandbox, sandbox_image, sandbox_memory, sandbox_pids)
+    |
+    |   soffice and pdftotext are large C++ parsers of hostile input: their filters are a
+    |   long-running source of memory-corruption CVEs, a document can carry event or script
+    |   hooks, can name local files for the filter to read and embed, and can reference
+    |   resources the converter fetches over the network. On a site that accepts uploads from
+    |   outside the organisation those binaries are handed to strangers, and the user the
+    |   render worker runs as can read the application tree, its storage and its credentials.
+    |
+    |   - sandbox: 'none' (default) spawns the binaries on the host, exactly as before.
+    |     'docker' spawns ONE throwaway `docker run --rm` PER FILE, sequential, with no
+    |     network, a read-only root filesystem, every capability dropped, no-new-privileges,
+    |     the memory and pid caps below, a tmpfs /tmp and the worker's own uid:gid. Nothing
+    |     survives the file. Any other value throws at first use. The deployment requirement
+    |     is that the worker's user can reach the docker socket (or rootless docker).
+    |   - sandbox_image: the image the sandbox runs; it must carry soffice, pdftotext and
+    |     fonts. Default 'rspade/rspade-docconvert:latest' - the framework's own converter
+    |     image, a bare distribution base carrying those three and nothing else, BUILT ON
+    |     FIRST USE (or by `php artisan rsx:heal document-sandbox-image`, or by
+    |     `bash system/app/RSpade/resource/docker/build.sh docconvert`). Point the env key
+    |     LIBREOFFICE_SANDBOX_IMAGE at an image of your own instead and it is yours to
+    |     carry the three and yours to `docker pull` - the framework builds only its own.
+    |   - sandbox_memory / sandbox_pids: the caps a sandboxed conversion gets. Application
+    |     behaviour rather than deployment identity, so they are config and not env keys. A
+    |     daemon that refuses the memory cap (a threaded cgroup layout) has it dropped, once
+    |     per process, and the health rows say so; the pid cap always applies.
+    |
+    |   NOT COVERED: PhpSpreadsheet. Workbook renditions (Spreadsheet_Rendition) and workbook
+    |   text (Spreadsheet_Text_Extractor) are read IN-PROCESS by a PHP library - no binary is
+    |   spawned, so there is no process to contain.
+    |
+    |   rsx:health reports the posture, and in 'docker' mode proves the whole chain (client,
+    |   daemon, image, and one real hardened run). See rsx:man libreoffice.
+    |
     */
     'libreoffice' => [
         'enabled' => env('LIBREOFFICE_ENABLED', true),
         'binary_path' => env('LIBREOFFICE_BINARY_PATH', null),
         'timeout' => 120,
+        'sandbox' => env('LIBREOFFICE_SANDBOX', 'none'),
+        'sandbox_image' => env('LIBREOFFICE_SANDBOX_IMAGE', 'rspade/rspade-docconvert:latest'),
+        'sandbox_memory' => '1g',
+        'sandbox_pids' => 256,
     ],
 
     /*

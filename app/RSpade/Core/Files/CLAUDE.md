@@ -8,7 +8,7 @@ is a pointer, not a second copy.
 - **Thumbnails, `<Attachment_Thumbnail>`, the render state machine, the renderer registry**: `rsx:man thumbnails`
 - **The render pipeline in operation (`rsx:documents:status|failed|rerender`)**: `rsx:man documents`
 - **Text extraction, full-text search, `<Document_Preview>` / `<Document_Text_Preview>`, PDF renditions**: `rsx:man document_search`
-- **Headless soffice, invoked only by the render worker**: `rsx:man libreoffice`
+- **Headless soffice, invoked only by the render worker, and the document sandbox that can contain it (`Document_Sandbox`)**: `rsx:man libreoffice`
 - Skills: `rspade:file-attachments` (working with attachments), `rspade:document-preview`
 
 `Document_Render_Service` is the single background worker behind all of it: one soffice

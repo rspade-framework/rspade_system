@@ -153,12 +153,16 @@ FRAMEWORK INVENTORY
         Console Debug               debug, prod   names which sealed variant
                                                   this is
         Document Render Backlog     all
+        Document Sandbox            all           the containment the document
+                                                  binaries run under; four rows
+                                                  when it is on
         Env Encryption              all           branches on the mode itself
         Env Symlink                 all
         FPC                         all
         Hostname                    debug, prod   a .dev. hostname gates every
                                                   outbound email and SMS
-        LibreOffice (soffice)       all
+        LibreOffice (soffice)       all           reports the IMAGE, not the
+                                                  host, when the sandbox is on
         Lock Server                 all
         Login Auto-fill             debug, prod   a working credential on an
                                                   unauthenticated page
@@ -246,7 +250,50 @@ FRAMEWORK INVENTORY
                                  read Sent or Suppressed, and nobody is told.
                                  Remediation: set APP_URL to the production hostname,
                                  then rsx:build --force.
-        LibreOffice (soffice)    headless soffice present (or disabled)
+        Document Sandbox         whether soffice and pdftotext run on the host or
+                                 inside a throwaway container
+                                 (rsx.libreoffice.sandbox). 'none' is an INFO in
+                                 development, where it is the default, and a WARN on
+                                 a sealed box naming LIBREOFFICE_SANDBOX=docker - a
+                                 site whose uploads all come from inside the
+                                 organisation is entitled to that posture, and the
+                                 exit code gates deploys. 'docker' reports FIVE rows
+                                 instead - docker client, docker daemon, sandbox
+                                 image, sandbox run, memory cap. The first four are
+                                 the chain, and a failing link is a FAIL, because a
+                                 box configured to sandbox and unable to is a box
+                                 that renders nothing - with one exception: the
+                                 framework's own converter image not built yet is a
+                                 WARN on the image row AND on the run row it could
+                                 not attempt, since the worker builds it on first
+                                 use (rsx:heal document-sandbox-image builds it now).
+                                 An operator's own image absent is a FAIL. The sandbox-run row
+                                 is the one that proves the chain: soffice --version
+                                 inside the configured image, with the SAME hardening
+                                 flags a real conversion gets, carrying what the
+                                 daemon said when it could not.
+                                 THE SANDBOX-IMAGE ROW SPLITS BY WHOSE IMAGE IT IS.
+                                 An absent FRAMEWORK converter image
+                                 (rspade/rspade-docconvert, the default) is a WARN,
+                                 not a FAIL: it is built on demand, so the state
+                                 resolves itself, but the first document conversion
+                                 on that box takes a minute or two longer while the
+                                 image builds. Remediation: build it once with
+                                 rsx:heal document-sandbox-image - a heal that
+                                 ALWAYS rebuilds (seconds from cache when the image
+                                 is already present). An absent image of the
+                                 operator's own is a FAIL naming docker pull -
+                                 nothing here will ever produce it, and rsx:heal
+                                 REFUSES it. See rsx:man libreoffice.
+        LibreOffice (soffice)    headless soffice present (or disabled). Under the
+                                 sandbox this row is about the IMAGE and is an INFO:
+                                 a sandboxed host is not supposed to carry soffice,
+                                 and the Document Sandbox rows are what prove it runs.
+                                 The memory cap row is the one that may WARN: a
+                                 daemon whose cgroup layout admits no memory
+                                 controller refuses --memory, the seam drops the cap
+                                 (once per process) and converts without it, and the
+                                 row repeats the daemon's refusal.
         Lock Server              rsx-lockd listening (INFO under maintenance)
         Mail delivery            which of the four modes rsx.mail.delivery is
                                  CONFIGURED to (aiosmtpd | live | suppressed |

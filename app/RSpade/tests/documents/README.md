@@ -31,6 +31,14 @@ operator commands `rsx:documents:status|failed|rerender`).
   read behind `File_Attachment_Model.fetch(id)` in JavaScript, with the blob embedded), the create /
   `relink_storage()` hook that queues a convertible blob, `is_convertible_mime()`, `get_render_status()`, the `?v=`
   cache-buster on `get_thumbnail_url*()`, and render-aware `has_thumbnail()`.
+- `app/RSpade/Core/Files/Document_Sandbox.php` - THE one place a document binary's command
+  line is built: `mode()` / `is_docker()` / `command()` / `hardening_flags()` /
+  `container_name()` / `kill()`, plus `ensure_image()` / `is_framework_image()` (the framework's
+  own converter image `rspade/rspade-docconvert` is BUILT on first use; an operator's own image
+  is theirs to pull), and the `#[Health_Check('Document Sandbox')]` that reports the posture and,
+  under `docker`, proves the client / daemon / image / one hardened run / the memory cap, beside
+  its `#[Health_Heal('document-sandbox-image')]`. Every soffice and pdftotext spawn in the
+  framework goes through it.
 - `app/RSpade/Core/Search/Search_Index_Service.php` - `extract_storage()` with its optional
   `$rendition_path` (a Writer document is extracted from the rendition by `pdftotext`
   instead of a second soffice run).
@@ -73,6 +81,7 @@ operator commands `rsx:documents:status|failed|rerender`).
 
 | Area | Type | Notes |
 |------|------|-------|
+| The document sandbox (the command seam, the converter image and its build-on-first-use, the health rows, a real containerised render) | php | implemented (the two container tests skip where a hardened container will not start) |
 | The blob render state machine (queue on create, dedup, idempotent request, terminal FAILED) | php | implemented |
 | `render_storage()` outcomes (missing file, rendition short-circuit, real soffice, extraction folded in) | php | implemented |
 | Side effects of RENDERED (thumbnail-cache purge, realtime emission) | php | implemented |

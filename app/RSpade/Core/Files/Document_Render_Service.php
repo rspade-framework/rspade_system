@@ -8,7 +8,9 @@
 namespace App\RSpade\Core\Files;
 
 use Exception;
+use Symfony\Component\Process\Exception\ProcessTimedOutException;
 use Symfony\Component\Process\Process;
+use App\RSpade\Core\Files\Document_Sandbox;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Preview_Controller;
 use App\RSpade\Core\Files\File_Rendition_Service;
@@ -400,9 +402,15 @@ class Document_Render_Service extends Rsx_Service_Abstract
      */
     protected static function __convert_to_pdf(string $source_path, ?string $extension, string $cache_path): void
     {
-        $soffice = Libreoffice::find_soffice();
-        if ($soffice === null) {
-            throw new Exception('LibreOffice (soffice) is not installed or not configured');
+        // Sandboxed, the binary name resolves on the image's PATH and there is nothing to
+        // discover on the host; unsandboxed, it is the host path discovery finds.
+        if (Document_Sandbox::is_docker()) {
+            $soffice = 'soffice';
+        } else {
+            $soffice = Libreoffice::find_soffice();
+            if ($soffice === null) {
+                throw new Exception('LibreOffice (soffice) is not installed or not configured');
+            }
         }
 
         // Lazy-create the rendition cache directory.
@@ -429,7 +437,9 @@ class Document_Render_Service extends Rsx_Service_Abstract
                 throw new Exception('Failed to stage source document for PDF rendition');
             }
 
-            $process = new Process([
+            // Every path here is inside the work dir, which the sandbox mounts at its own
+            // absolute path - so ONE argv is correct both on the host and in the container.
+            $command = Document_Sandbox::command([
                 $soffice,
                 '-env:UserInstallation=file://' . $work_dir . '/profile',
                 '--headless',
@@ -438,14 +448,28 @@ class Document_Render_Service extends Rsx_Service_Abstract
                 '--outdir',
                 $work_dir,
                 $staged,
-            ]);
+            ], $work_dir);
+
+            $process = new Process($command);
 
             // THE one sanctioned timeout in this pipeline (rsx.libreoffice.timeout, justified in
             // full at its config key): it bounds the EXTERNAL soffice binary, which does not merely
             // run slowly on malformed input but WEDGES and never returns. Expiry degrades to a
             // working outcome - the blob is recorded FAILED and the extension icon is served.
             $process->setTimeout((int) config('rsx.libreoffice.timeout', 120));
-            $process->run();
+
+            try {
+                $process->run();
+            } catch (ProcessTimedOutException $e) {
+                // Expiry kills the process Symfony started - which under the sandbox is the
+                // docker CLIENT, leaving the wedged converter running in its container.
+                $container = Document_Sandbox::container_name($command);
+                if ($container !== null) {
+                    Document_Sandbox::kill($container);
+                }
+
+                throw $e;
+            }
 
             if (!$process->isSuccessful()) {
                 throw new Exception('LibreOffice PDF conversion failed: ' . trim($process->getErrorOutput()));
