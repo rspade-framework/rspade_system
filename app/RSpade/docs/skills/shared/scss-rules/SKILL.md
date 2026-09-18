@@ -105,6 +105,33 @@ works for every rule uniformly. **`rsx:disable <RULE-ID>` is NOT a spelling RSpa
 `SCSS-ANIM-01` alone once appeared to accept it, and no longer does; if you have one in an
 SCSS file it is granting nothing.
 
+## Framework text resets
+
+Three mixins are in scope in **every** compilation - the bundle compiler prepends the
+framework partial `Integrations/Scss/resource/_rsx_text_resets.scss` to each master
+stylesheet, and the single-file path does the same. There is nothing to import.
+
+| Mixin | What it establishes |
+|---|---|
+| `rsx-text-mono` | monospace stack, 13px, `tab-size: 4` |
+| `rsx-text-sans` | system sans stack, 14px, `line-height: 1.5` - the foundation for prose |
+| `rsx-preview-text-pane` | `rsx-text-mono` plus the scrolling pane (full size, 16px padding, transparent, `pre-wrap`, `overflow-wrap: anywhere`) |
+
+Each is a **full reset** of the inherited text properties - weight, style, line-height,
+letter-spacing, text-transform, text-decoration - with `color: inherit`. Half a reset is the
+bug: set the family but inherit `font-weight: 600` from a card heading and the document
+renders in bold with nothing pointing at why.
+
+**Use one on any element that presents text DATA rather than the application's own UI copy**
+- a document preview, extracted text, a log, source code, a rendered markdown body. UI copy
+inherits the host's type, which is what makes it look like the host; text data must not.
+
+```scss
+.My_Log_Panel {
+    &__body { @include rsx-text-mono; }
+}
+```
+
 ## No `<style>`, and no hand-injected stylesheet
 
 Markup carries no `<style>` block and no inline event handlers; SCSS files are the only

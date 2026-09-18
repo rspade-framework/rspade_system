@@ -8,6 +8,7 @@ use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Files\Markdown_Rendition;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Spreadsheet_Rendition;
 use App\RSpade\Core\Rsx;
@@ -36,6 +37,7 @@ use App\RSpade\Core\Session\Session;
  * POST (Ajax) get_preview_info  - {viewer, mime, file_name, extension, preview_unavailable,
  *                                  render_status_id, urls{rendition|null, inline, icon}} for a Document_Preview
  * POST (Ajax) get_extracted_text - {status, text|null} for a Document_Text_Preview
+ * POST (Ajax) get_markdown_html  - {status, html|null, truncated} for a Markdown_Viewer
  *
  * ================================================================================================
  * FILTER / GATE CHAINS
@@ -50,7 +52,8 @@ use App\RSpade\Core\Session\Session;
  *    rules). First non-true response denies. Payload for each:
  *        ['attachment' => File_Attachment_Model, 'user' => User|null, 'request' => Request]
  *    get_preview_info runs ONLY the thumbnail gate (metadata, not full content);
- *    get_extracted_text runs BOTH, because extracted text is the document's content.
+ *    get_extracted_text and get_markdown_html run BOTH, because the text of a document - and
+ *    a markdown file rendered - IS the document's content.
  *
  * 2. document.preview_rendition (RESOLVE - Rsx::trigger_resolve, first non-null handler wins)
  *    Lets an app override or extend how an attachment becomes a PDF rendition (e.g. an external
@@ -681,6 +684,123 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             Search_Index_Model::STATUS_UNSUPPORTED => ['status' => 'unsupported', 'text' => null, 'should_show_text_preview' => $should_show],
             default => ['status' => 'pending', 'text' => null, 'should_show_text_preview' => $should_show],
         };
+    }
+
+    // ============================================================================================
+    // MARKDOWN
+    // ============================================================================================
+
+    /**
+     * The RENDERED HTML of a markdown attachment, for the <Markdown_Viewer> component.
+     *
+     * Security: the CONTENT gate cascade - file.thumbnail.authorize THEN file.download.authorize,
+     * exactly as get_extracted_text() and pdf_rendition() run it. The rendered document IS the
+     * file's content, so it is gated like the bytes and not like the metadata get_preview_info()
+     * returns. A caller allowed to see that a file exists is not thereby allowed to read it.
+     *
+     * WHY THE SOURCE BYTES AND NOT THE EXTRACTION, which is how Text_Viewer reads a text file.
+     * The extraction is the file flattened for a search index; markdown must be rendered from
+     * the characters the author wrote, so this reads the resident blob through the same path the
+     * extractor uses ($storage->get_full_path()) and caps it at the same
+     * config('rsx.search.max_text_bytes'). The cap is REPORTED (truncated: true), never silent -
+     * a partial document is a fact the reader is entitled to, not a wrong answer with no signal.
+     *
+     * RENDERING HAPPENS PER REQUEST, and deliberately: there is no rendition on disk and no
+     * background worker involved. A markdown file is text, the parse is in-process and
+     * proportional to a bounded input, and a cached artifact would buy a few milliseconds in
+     * exchange for a second cache to invalidate. That is why this endpoint has no 'pending'
+     * status - the answer is always available now.
+     *
+     * Vocabulary (the sibling's, so a page describes a document the same way whichever it asks):
+     *     available    'html' is the sanitised fragment; 'truncated' says whether the source was
+     *                  read to its end.
+     *     unsupported  this attachment is not markdown - nothing here can render it.
+     *     error        the upload was degraded, or the blob is not on disk to read.
+     *
+     * @param Request $request
+     * @param array $params Requires attachment_id.
+     * @return array{status: string, html: string|null, truncated?: bool}
+     */
+    #[Ajax_Endpoint]
+    public static function get_markdown_html(Request $request, array $params = [])
+    {
+        $attachment_id = $params['attachment_id'] ?? null;
+        if (!$attachment_id) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_VALIDATION, 'attachment_id is required');
+        }
+
+        $attachment = File_Attachment_Model::find($attachment_id);
+        if (!$attachment) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND, 'Attachment not found');
+        }
+
+        // 'user' is realm-honest for the same reason the two siblings' is: this endpoint is
+        // #[Auth_Realm('any')], so a portal page reaches it as a genuine PORTAL request and its
+        // gate must not be handed a staff-facade read.
+        $user = \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
+            ? \App\RSpade\Core\Portal\Portal_Session::get_portal_user()
+            : Session::get_user();
+
+        $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
+            'attachment' => $attachment,
+            'user' => $user,
+            'request' => $request,
+        ]);
+        if ($thumbnail_auth !== true) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
+        }
+
+        $download_auth = Rsx::trigger_gate('file.download.authorize', [
+            'attachment' => $attachment,
+            'user' => $user,
+            'request' => $request,
+        ]);
+        if ($download_auth !== true) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_UNAUTHORIZED, 'Not authorized to read this file');
+        }
+
+        // Routed on the PIPELINE mime (extension-first for documents), the same answer
+        // viewer_for_mime() resolves Markdown_Viewer from - so the component this endpoint
+        // serves and the component get_preview_info() names can never disagree.
+        if ($attachment->pipeline_mime() !== 'text/markdown') {
+            return ['status' => 'unsupported', 'html' => null];
+        }
+
+        // A degraded upload has no readable content at all.
+        if ($attachment->preview_unavailable) {
+            return ['status' => 'error', 'html' => null];
+        }
+
+        $path = $attachment->resolve_storage()->get_full_path();
+        if (!file_exists($path)) {
+            return ['status' => 'error', 'html' => null];
+        }
+
+        $max_bytes = (int) config('rsx.search.max_text_bytes', 2 * 1024 * 1024);
+        $size = filesize($path);
+        $truncated = ($size !== false && $size > $max_bytes);
+
+        // Read AT MOST the cap - a 25 MB file is never slurped whole to render a preview of its
+        // first pages. Scrubbed to valid UTF-8 with the invalid or partial trailing sequence
+        // DROPPED rather than substituted, so a byte-capped read never hands the parser a split
+        // multibyte character (the same treatment Plain_Text_Extractor gives a text file).
+        $handle = fopen($path, 'rb');
+        if ($handle === false) {
+            return ['status' => 'error', 'html' => null];
+        }
+        $raw = ($size === 0) ? '' : (string) fread($handle, $truncated ? $max_bytes : (int) $size);
+        fclose($handle);
+
+        $prev_substitute = mb_substitute_character();
+        mb_substitute_character('none');
+        $markdown = mb_convert_encoding($raw, 'UTF-8', 'UTF-8');
+        mb_substitute_character($prev_substitute);
+
+        return [
+            'status' => 'available',
+            'html' => Markdown_Rendition::render($markdown),
+            'truncated' => $truncated,
+        ];
     }
 
     /**

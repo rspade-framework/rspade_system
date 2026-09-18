@@ -317,6 +317,57 @@ VARIABLES-ONLY FILES
     Such files are marked with scss_variables_only in the manifest and
     skip wrapper validation entirely.
 
+FRAMEWORK TEXT RESETS
+
+    Three mixins are in scope in EVERY SCSS compilation, with nothing to
+    import and nothing to declare. The bundle compiler prepends the
+    framework partial
+
+        system/app/RSpade/Integrations/Scss/resource/_rsx_text_resets.scss
+
+    to every master stylesheet it assembles, and the single-file compile
+    path (Scss_BundleProcessor::compile_file, used for the inlined email
+    stylesheet) wraps its input the same way. The partial is mixin-only: a
+    compilation that includes none of them emits not one byte from it.
+
+    rsx-text-mono
+        The monospace reset. ui-monospace/SF Mono/Menlo/Consolas stack,
+        13px, tab-size 4, plus a FULL reset of the inherited text
+        properties - font-weight, font-style, line-height, letter-spacing,
+        text-transform and text-decoration all normalised, colour
+        inherited.
+
+    rsx-text-sans
+        The sans-serif reset, and the foundation for prose. The system UI
+        stack, 14px, line-height 1.5, with the same full reset of the
+        other inherited text properties and colour inherited. A caller
+        layers its own scale (headings, list spacing) on top.
+
+    rsx-preview-text-pane
+        The scrolling raw-text pane - rsx-text-mono plus the layout
+        (full size, overflow auto, 16px padding, transparent surface,
+        white-space: pre-wrap, overflow-wrap: anywhere). ONE definition,
+        included by Text_Viewer's and Document_Text_Preview's __text
+        element, so a text file and an extraction read identically.
+
+    WHEN TO USE ONE. Any element that presents text DATA rather than the
+    application's own UI copy: a document preview, extracted text, a log,
+    source code, a rendered markdown body. UI copy inherits the host's
+    type, which is what makes it look like the host; text data must not,
+    because whatever the host happens to set - a condensed display face, a
+    heading weight, a letter-spacing, a text-transform on an ancestor - is
+    then applied to somebody's file.
+
+    EACH IS A FULL RESET, not just a family and a size. Half a reset is the
+    bug: a component that sets the family but inherits font-weight: 600
+    from a card heading renders the document in bold and nothing points at
+    why.
+
+    The partial references NO CSS custom properties, in either direction,
+    for the reason every framework stylesheet follows that rule: an
+    undefined var() silently invalidates the whole declaration, and the
+    framework guarantees no theme token.
+
 SUPPLEMENTAL SCSS FILES
 
     When a single SCSS file becomes unwieldy, you can split styles into

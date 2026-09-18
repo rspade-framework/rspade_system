@@ -1526,7 +1526,9 @@ class Manifest
         foreach ($classless_files as $file_path) {
             $full_path = base_path($file_path);
             if (file_exists($full_path)) {
-                include_once $full_path;
+                // A helper file declares no class, so only the include table can say whether
+                // it was already loaded - under any spelling of its path (Autoloader seam).
+                \App\RSpade\Core\Autoloader::include_declaration($full_path);
             }
         }
     }
@@ -2350,10 +2352,11 @@ class Manifest
                     shouldnt_happen("Class file not found: {$full_path} for {$class_info['fqcn']}");
                 }
 
-                // This includes the file.
-                // A side effect of this include is this line also lints the file.  Past this point, we can assume all php
-                // files (well, class files) have valid syntax.
-                include_once $full_path;
+                // This includes the file, through the one seam that never includes a file
+                // twice. A side effect of this include is this line also lints the file.
+                // Past this point, we can assume all php files (well, class files) have
+                // valid syntax.
+                \App\RSpade\Core\Autoloader::include_declaration($full_path, $class_info['fqcn']);
 
                 // Verify the class loaded successfully
                 if (!class_exists($class_info['fqcn'], false) &&

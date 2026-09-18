@@ -58,6 +58,33 @@ DESCRIPTION
         PhpSpreadsheet read filter), so a large workbook costs the memory of the
         preview window rather than of the workbook.
 
+    MARKDOWN RENDERS IN THE REQUEST, AND NOTHING IS STORED
+        A .md file resolves to Markdown_Viewer (registered for text/markdown ABOVE the
+        text/* entry - the viewer map is first-match), and the viewer asks the Ajax
+        endpoint File_Preview_Controller::get_markdown_html for the rendered markup.
+
+        NO WORKER IS INVOLVED, which is what makes this the odd one out here: markdown
+        is text, the parse runs in-process over an input capped at
+        rsx.search.max_text_bytes, and the answer is always final - there is no
+        rendition on disk, no render_status_id, no waiting state and nothing to
+        invalidate. A source longer than the cap is reported (truncated: true), never
+        silently shortened.
+
+        THE MARKUP IS SANITISED TWICE BEFORE IT LEAVES THE SERVER (Markdown_Rendition):
+        the league/commonmark parser with html_input=strip and
+        allow_unsafe_links=false, then HTMLPurifier over its OUTPUT with an explicit
+        allowlist of exactly the elements GitHub-flavoured markdown emits - headings,
+        tables, task lists, fenced code, links on http/https/mailto, images on
+        http/https. Either layer alone would suffice; they fail differently, which is
+        the argument for both, and the allowlist drops anything new by default rather
+        than by having been anticipated.
+
+        THUMBNAIL   none (text/* is not convertible - it keeps its extension icon).
+        TEXT        Plain_Text_Extractor, as for any text file. text/markdown is
+                    covered by the text/* glob in
+                    rsx.preview.text_preview_suppressed, so no text pane is
+                    recommended beside the rendered preview.
+
     RENDER FAILURE VS EXTRACTION FAILURE - the distinction that matters
         They are different failures on different columns with different remedies,
         and one document can have either, both, or neither.

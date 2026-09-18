@@ -51,3 +51,18 @@ file_type_id at all.
 | DOCUMENTS-TEXTVIEW-INLINE | can_open_inline() is answered from the mime, not file_type_id - the .txt and the .docx are the same bucket and disagree | php | txt / pdf / real png / docx / xlsx | true/true/true/false/false; both txt and docx are FILE_TYPE_DOCUMENT | implemented | 2026-09-08 |
 | DOCUMENTS-TEXTVIEW-APPENDS | toArray() carries all four derived keys and each equals its delegating method; fetch() carries them with no hand-added key | php | a real PNG and a .docx | four keys present, values match the predicates, fetch() agrees | implemented | 2026-09-08 |
 | DOCUMENTS-SHEET-DIR | a workbook renders into a rendition directory that does not exist yet (the state after rsx:clean) | php | Spreadsheet_Rendition::render() into a missing directory | the directory is created, the grid is written, no script in it | implemented | 2026-09-16 |
+
+## Markdown_Rendition_Test (php)
+
+A markdown attachment previews as the DOCUMENT its author wrote. Three independent properties:
+the renderer emits the GFM element set and emits nothing executable (two sanitising layers, one
+asserted outcome); the viewer registry routes text/markdown to Markdown_Viewer without disturbing
+the text/* entry below it; and the endpoint renders a real uploaded .md while refusing a file that
+is not markdown.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| DOCUMENTS-MARKDOWN-GFM | the GFM constructs survive the round trip - headings, emphasis, strikethrough, inline and fenced code, tables with column alignment, task lists, autolinks | php | a GFM sample through Markdown_Rendition::render() | h1/strong/del/code/pre present, table with th + align="right", input type=checkbox checked + disabled, an https autolink | implemented | 2026-09-18 |
+| DOCUMENTS-MARKDOWN-SANITISED | nothing executable survives: a raw script block and its body are discarded, a raw HTML block is discarded whole, a javascript: link loses its href and keeps its text, no class attribute reaches the page | php | the same sample | no `<script`, no `alert(`, no `javascript:`, no raw-block text, no `onerror`, no `class=` | implemented | 2026-09-18 |
+| DOCUMENTS-MARKDOWN-RESOLVE | text/markdown resolves to Markdown_Viewer ABOVE the text/* entry, and text/plain and text/csv still resolve to Text_Viewer | php | viewer_for_mime() over three mimes | Markdown_Viewer / Text_Viewer / Text_Viewer | implemented | 2026-09-18 |
+| DOCUMENTS-MARKDOWN-ENDPOINT | get_markdown_html renders a real uploaded .md and refuses a .txt; get_preview_info agrees about the viewer and recommends no text pane | php | an uploaded .md and .txt as user 1 | status available with `<table` and the h1, truncated false, no script; viewer Markdown_Viewer, should_show_text_preview false; status unsupported with html null for the .txt | implemented | 2026-09-18 |

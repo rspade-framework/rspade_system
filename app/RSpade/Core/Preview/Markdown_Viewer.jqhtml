@@ -1,0 +1,73 @@
+<%--
+Markdown_Viewer
+
+Displays a markdown attachment as the DOCUMENT its author wrote - headings, tables, task
+lists, code blocks - rather than as the raw characters of the file. Registered for
+`text/markdown` in config('rsx.preview.viewers'), ABOVE the `text/*` entry: the registry is
+first-match, and text/* would otherwise take it to Text_Viewer.
+
+WHY RENDERED AND NOT RAW. A markdown file is markup with a rendered form; showing its source
+is showing the reader the thing they asked to see, un-run. The raw characters are never far
+away - the file downloads and opens as itself - and the preview surface is where the rendered
+form belongs. Its sibling Text_Viewer keeps every other text/* mime, where there is no
+rendered form and the characters ARE the document.
+
+THE HTML IS SANITISED SERVER-SIDE, TWICE, before it ever reaches this template
+(Markdown_Rendition: the parser configured to strip raw HTML and refuse unsafe links, then
+HTMLPurifier over the output with an explicit allowlist of exactly the elements GFM emits).
+That is why the body interpolates with `<%!= %>` rather than escaping - escaping it here would
+print the tags instead of rendering them, and the safety it would add is safety the payload
+already carries. Nothing on this side re-sanitises: one sanitiser, at the source.
+
+NO WAITING STATE, and that is a real difference from every other viewer here. There is no
+rendition on disk and no background worker: a markdown file is text, the parse happens inside
+the request, and the endpoint's answer is always final. The realtime subscription is still
+here for the ordinary reasons - the attachment can be replaced or deleted underneath an open
+page - and the callback refetches.
+
+States, in the order the template tests them:
+  error_data set       the endpoint refused, or the attachment is gone  -> (Preview Unavailable)
+  info === null        the first load has not answered yet              -> (Loading...)
+  status 'unsupported' not markdown (a registry/mime disagreement)      -> (Preview Unavailable)
+  status 'error'       a degraded upload, or the bytes are gone         -> (Preview Unavailable)
+  status 'available'
+    with empty html    the file is genuinely empty                      -> (This file is empty)
+    with html          the rendered document, plus a truncation note when the
+                       source was longer than rsx.search.max_text_bytes
+
+Args (the viewer contract Document_Preview passes to every dynamic viewer):
+  $attachment_id (required) - the File_Attachment_Model id to read. Throws if absent.
+  $file_name     (optional) - shown in no state; accepted so the contract matches its siblings.
+
+Events OUT: 'preview_loaded' {pages:1}. The document scrolls; it does not paginate, so
+set_page is a no-op.
+--%>
+<Define:Markdown_Viewer tag="div">
+    <% if (!this.args.attachment_id) { throw new Error('Markdown_Viewer requires $attachment_id'); } %>
+    <%
+        const _info = this.data.error_data ? { status: 'error', html: null } : this.data.info;
+        const _available = _info && _info.status === 'available' && _info.html !== null;
+        const _has_html = _available && _info.html !== '';
+    %>
+    <div class="Markdown_Viewer__frame">
+        <% if (!_info) { %>
+            <div class="Markdown_Viewer__notice">(Loading...)</div>
+        <% } else if (_available && !_has_html) { %>
+            <%-- Distinguished from the failure notice below ON PURPOSE: an empty file is a
+                 fact about the file, not a fault in the preview, and telling the reader
+                 "unavailable" would send them looking for a problem that does not exist. --%>
+            <div class="Markdown_Viewer__notice">(This file is empty)</div>
+        <% } else if (!_has_html) { %>
+            <%-- error / unsupported. Both are the same answer to the reader: there is no
+                 document to show. --%>
+            <div class="Markdown_Viewer__notice">(Preview Unavailable)</div>
+        <% } else { %>
+            <div class="Markdown_Viewer__body"><%!= _info.html %></div>
+            <% if (_info.truncated) { %>
+                <%-- Recorded truncation is not silent truncation: the reader is told that the
+                     document continues past what is on screen. --%>
+                <div class="Markdown_Viewer__truncated">(This preview shows the beginning of a longer document.)</div>
+            <% } %>
+        <% } %>
+    </div>
+</Define:Markdown_Viewer>

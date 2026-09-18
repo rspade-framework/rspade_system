@@ -1,0 +1,242 @@
+// Markdown_Viewer - the viewer that renders a markdown attachment as the document it is.
+//
+// SELF-SUFFICIENT BY CONTRACT: NO CSS CUSTOM PROPERTIES, in either direction - the rule every
+// stylesheet in this directory follows, and for the same reason. A framework component is
+// styled inside applications whose themes it cannot see, and an undefined var() invalidates
+// the WHOLE declaration, so the rule silently paints nothing in every theme.
+//
+// SO EVERY COLOUR HERE IS EITHER `inherit` OR A GREY IN rgba(128,128,128,x). A mid grey at low
+// alpha composites toward the surface it is drawn on: it darkens a light page and lightens a
+// dark one, which is what makes one hairline rule legible in both without this file knowing
+// which it is in. Nothing here names a hue - the document's text colour is the page's.
+//
+// THE TYPOGRAPHY IS THE FRAMEWORK RESET, not the host's. A rendered document is TEXT DATA:
+// whatever the host happens to set - a condensed display face, a heading weight, a
+// letter-spacing, a text-transform on an ancestor - would otherwise be applied to somebody's
+// file. rsx-text-sans establishes the body; the scale below is this file's own.
+//
+// A CONSERVATIVE SHEET, deliberately. It is the shape a reader already recognises from every
+// other markdown surface - a hairline under the top two headings, a left rule on a quote, a
+// faint fill behind code, zebra rows in a table - and nothing more. No vendored stylesheet, no
+// syntax highlighting, no reading-width cap: the frame the host sized decides the measure.
+.Markdown_Viewer {
+    display: block;
+    width: 100%;
+    height: 100%;
+
+    &__frame {
+        width: 100%;
+        height: 100%;
+        // A viewer fills the frame Document_Preview sized for it; that frame is the element
+        // carrying the real dimensions, so nothing here sets its own width or height in px.
+        overflow: auto;
+    }
+
+    &__notice {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        // Not 100%: the notice is the only child of a scrolling frame, and a full-height
+        // sibling would push it past the fold the moment a truncation note joins it.
+        min-height: 100%;
+        font-style: italic;
+        text-align: center;
+        color: inherit;
+        opacity: 0.7;
+    }
+
+    &__truncated {
+        padding: 0 24px 16px;
+        font-style: italic;
+        text-align: center;
+        color: inherit;
+        opacity: 0.7;
+    }
+
+    &__body {
+        @include rsx-text-sans;
+
+        padding: 16px 24px;
+        background: transparent;
+        // A long URL or an unbroken run in a code span must not force the whole frame to
+        // scroll sideways.
+        overflow-wrap: anywhere;
+
+        // ----- Blocks -----------------------------------------------------------------
+        // The first block sits flush against the padding; every other block carries its own
+        // top margin. A blanket margin on every child would double the padding at the top.
+        > *:first-child {
+            margin-top: 0;
+        }
+
+        > *:last-child {
+            margin-bottom: 0;
+        }
+
+        p {
+            margin: 0 0 12px;
+        }
+
+        // ----- Headings ---------------------------------------------------------------
+        // A scale, not the browser's defaults: the default h1 is enormous beside 14px body
+        // text and the default h4-h6 are smaller than it, which inverts the hierarchy.
+        h1, h2, h3, h4, h5, h6 {
+            margin: 24px 0 12px;
+            font-weight: 600;
+            line-height: 1.25;
+            color: inherit;
+        }
+
+        h1 {
+            font-size: 26px;
+            padding-bottom: 6px;
+            // The hairline under the top two levels is what separates a document's sections
+            // at a glance. Low-alpha grey so it reads on a light page and a dark one alike.
+            border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+        }
+
+        h2 {
+            font-size: 21px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(128, 128, 128, 0.2);
+        }
+
+        h3 { font-size: 18px; }
+        h4 { font-size: 16px; }
+        h5 { font-size: 14px; }
+
+        h6 {
+            font-size: 14px;
+            opacity: 0.75;
+        }
+
+        // ----- Lists ------------------------------------------------------------------
+        ul, ol {
+            margin: 0 0 12px;
+            padding-left: 24px;
+        }
+
+        li {
+            margin: 4px 0;
+        }
+
+        // A nested list belongs to the item above it, so it loses the block gap the
+        // top-level list carries and keeps only its indent.
+        li > ul,
+        li > ol {
+            margin: 4px 0 0;
+        }
+
+        // The GFM task list. The markers are suppressed on the ITEMS that carry a checkbox
+        // rather than on the list, because a list can legitimately mix the two.
+        li:has(> input[type="checkbox"]) {
+            list-style: none;
+            margin-left: -18px;
+        }
+
+        input[type="checkbox"] {
+            margin: 0 6px 0 0;
+            vertical-align: baseline;
+        }
+
+        // ----- Quotes and rules --------------------------------------------------------
+        blockquote {
+            margin: 0 0 12px;
+            padding: 2px 0 2px 14px;
+            border-left: 3px solid rgba(128, 128, 128, 0.35);
+            color: inherit;
+            // The quote reads as secondary without being given a colour of its own.
+            opacity: 0.85;
+        }
+
+        hr {
+            height: 1px;
+            margin: 20px 0;
+            border: 0;
+            background: rgba(128, 128, 128, 0.3);
+        }
+
+        // ----- Code -------------------------------------------------------------------
+        // Both the span and the block take the framework monospace reset, so a code run
+        // inside a heading is not rendered at the heading's weight and size.
+        code {
+            @include rsx-text-mono;
+
+            padding: 2px 5px;
+            border-radius: 3px;
+            background: rgba(128, 128, 128, 0.15);
+        }
+
+        pre {
+            margin: 0 0 12px;
+            padding: 12px 14px;
+            border-radius: 4px;
+            background: rgba(128, 128, 128, 0.12);
+            // A fenced block keeps its authored line breaks and scrolls sideways rather than
+            // wrapping: in code, a wrap is a lie about where the line ends.
+            overflow-x: auto;
+            white-space: pre;
+        }
+
+        // Inside a block the span's own padding and fill would double up.
+        pre code {
+            padding: 0;
+            border-radius: 0;
+            background: transparent;
+        }
+
+        // ----- Tables -----------------------------------------------------------------
+        table {
+            margin: 0 0 12px;
+            border-collapse: collapse;
+            // A wide table scrolls its own overflow rather than widening the frame.
+            display: block;
+            max-width: 100%;
+            overflow-x: auto;
+        }
+
+        th, td {
+            padding: 6px 12px;
+            border: 1px solid rgba(128, 128, 128, 0.3);
+            text-align: left;
+        }
+
+        // A markdown table's alignment column is an `align` attribute, which the purifier
+        // keeps; these two make it win over the left default above.
+        th[align="center"], td[align="center"] { text-align: center; }
+        th[align="right"], td[align="right"] { text-align: right; }
+
+        th {
+            font-weight: 600;
+            background: rgba(128, 128, 128, 0.18);
+        }
+
+        // Zebra rows: the faintest fill in the sheet, enough to follow a row across a wide
+        // table and not enough to read as a highlight.
+        tbody tr:nth-child(even) {
+            background: rgba(128, 128, 128, 0.07);
+        }
+
+        // ----- Inline -----------------------------------------------------------------
+        a {
+            color: inherit;
+            // Underlined on hover only - the link is already distinguishable in running text
+            // by its context, and a document of underlines is harder to read than one without.
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-decoration: underline;
+        }
+
+        strong { font-weight: 600; }
+        em { font-style: italic; }
+        del { text-decoration: line-through; }
+
+        img {
+            max-width: 100%;
+            height: auto;
+        }
+    }
+}

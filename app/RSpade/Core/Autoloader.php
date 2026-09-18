@@ -163,6 +163,79 @@ class Autoloader
     }
 
     /**
+     * THE ONE INCLUDE SEAM. Every framework include of an indexed PHP file goes through
+     * here, and nothing is included twice - whoever loaded it first, and under whatever
+     * spelling of the path.
+     *
+     * Composer's autoloader runs ahead of this one. On a case-insensitive mount (a macOS
+     * bind mount into the container) a PSR-4 lookup can answer with the real file under a
+     * differently-cased path, and PHP's include table is keyed on the path string, so a
+     * later require_once of the canonical spelling declares the class a second time and
+     * fatals. Two questions settle it, in order:
+     *
+     *   1. Is the declaration this file carries already present? The manifest records the
+     *      FQCN a file declares, so class_exists() (interface, trait, enum alike) answers
+     *      without touching the filesystem. Present means somebody included the file - no
+     *      matter who, no matter how it was spelled - and there is nothing left to do.
+     *   2. For a file that declares nothing (a helper file): was the SAME path already
+     *      included under another spelling? get_included_files() compared without case.
+     *
+     * Only then is the file required. realpath() is deliberately not part of this: a FUSE
+     * mount does not answer canonically, which is the whole reason the question exists.
+     *
+     * @param string $absolute_path The file, as the manifest recorded it
+     * @param string|null $fqcn The class, interface, trait or enum the file declares, when known
+     */
+    public static function include_declaration(string $absolute_path, ?string $fqcn = null): void
+    {
+        if ($fqcn !== null && self::_is_declared($fqcn)) {
+            return;
+        }
+
+        if (self::_included_under_any_case($absolute_path, get_included_files())) {
+            return;
+        }
+
+        require_once $absolute_path;
+    }
+
+    /**
+     * Whether a class, interface, trait or enum of this name is already declared, without
+     * autoloading it.
+     */
+    public static function _is_declared(string $fqcn): bool
+    {
+        $fqcn = ltrim($fqcn, '\\');
+
+        return class_exists($fqcn, false)
+            || interface_exists($fqcn, false)
+            || trait_exists($fqcn, false)
+            || enum_exists($fqcn, false);
+    }
+
+    /**
+     * Whether $path is already in the include table under ANY spelling of its case.
+     *
+     * Pure over its inputs so a test can hand it a list; the caller passes
+     * get_included_files().
+     *
+     * @param string $path
+     * @param array<int, string> $included
+     */
+    public static function _included_under_any_case(string $path, array $included): bool
+    {
+        $wanted = str_replace('\\', '/', $path);
+
+        foreach ($included as $file) {
+            if (strcasecmp(str_replace('\\', '/', $file), $wanted) === 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * Load a class
      */
     public static function load($class)
@@ -184,11 +257,11 @@ class Autoloader
             $file_path = str_replace('\\', '/', $metadata['file']);
             $absolute_path = base_path($file_path);
             if (file_exists($absolute_path)) {
-                require_once $absolute_path;
+                $actual_fqcn = $metadata['fqcn'];
+                self::include_declaration($absolute_path, $actual_fqcn);
 
                 // If the requested FQCN still doesn't exist but the actual class does,
                 // create an alias
-                $actual_fqcn = $metadata['fqcn'];
                 if (!class_exists($requested_class, false) &&
                     class_exists($actual_fqcn, false) &&
                     $requested_class !== $actual_fqcn) {
@@ -247,7 +320,7 @@ class Autoloader
             return false;
         }
 
-        require_once $absolute_path;
+        self::include_declaration($absolute_path, $record['fqcn']);
 
         return true;
     }
@@ -265,7 +338,7 @@ class Autoloader
         if (isset($base_classes[$class])) {
             $file = base_path($base_classes[$class]);
             if (file_exists($file)) {
-                require_once $file;
+                self::include_declaration($file, $class);
 
                 return true;
             }

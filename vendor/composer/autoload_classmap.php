@@ -483,6 +483,7 @@ return array(
     'App\\RSpade\\Core\\Files\\File_Thumbnail_Service' => $baseDir . '/app/RSpade/Core/Files/File_Thumbnail_Service.php',
     'App\\RSpade\\Core\\Files\\Imagick_Thumbnail_Renderer' => $baseDir . '/app/RSpade/Core/Files/Imagick_Thumbnail_Renderer.php',
     'App\\RSpade\\Core\\Files\\Libreoffice' => $baseDir . '/app/RSpade/Core/Files/Libreoffice.php',
+    'App\\RSpade\\Core\\Files\\Markdown_Rendition' => $baseDir . '/app/RSpade/Core/Files/Markdown_Rendition.php',
     'App\\RSpade\\Core\\Files\\Rsx_Attachment_Handler_Abstract' => $baseDir . '/app/RSpade/Core/Files/Rsx_Attachment_Handler_Abstract.php',
     'App\\RSpade\\Core\\Files\\Rsx_File_Paths' => $baseDir . '/app/RSpade/Core/Files/Rsx_File_Paths.php',
     'App\\RSpade\\Core\\Files\\Rsx_File_Upload' => $baseDir . '/app/RSpade/Core/Files/Rsx_File_Upload.php',

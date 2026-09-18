@@ -34,6 +34,12 @@ operator commands `rsx:documents:status|failed|rerender`).
 - `app/RSpade/Core/Search/Search_Index_Service.php` - `extract_storage()` with its optional
   `$rendition_path` (a Writer document is extracted from the rendition by `pdftotext`
   instead of a second soffice run).
+- `app/RSpade/Core/Files/Markdown_Rendition.php` - markdown to sanitised HTML, the framework's
+  one markdown-to-HTML call: league/commonmark (core + GFM) configured closed, then HTMLPurifier
+  over the output with an explicit GFM allowlist. Two independent layers, because they fail
+  differently.
+- `app/RSpade/Core/Preview/Markdown_Viewer.{jqhtml,js}` - the text/markdown viewer. It waits on no
+  worker: the parse happens inside the request, so it has no PENDING state.
 - `app/RSpade/Core/Files/File_Preview_Controller.php` - serves the rendition of a RENDERED blob
   or 404s naming the render state; re-queues a blob whose rendition was evicted; it no longer
   converts. `get_preview_info()` exports `render_status_id` and withholds `urls.rendition` until
@@ -75,6 +81,7 @@ operator commands `rsx:documents:status|failed|rerender`).
 | `File_Attachment_Model::fetch()` / `portal_fetch()` (payload shape, gate denial, no byte access) | php | implemented |
 | `<Attachment_Thumbnail>` placeholder -> real-raster swap without reload | playwright | implemented |
 | `rsx:documents:status` / `:failed` / `:rerender` | cli | implemented |
+| Markdown rendering and sanitisation (`Markdown_Rendition`), the text/markdown viewer entry, and `get_markdown_html` end to end | php | implemented |
 
 ## Running
 

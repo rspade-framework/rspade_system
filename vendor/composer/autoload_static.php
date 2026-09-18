@@ -139,7 +139,6 @@ class ComposerStaticInitfe33f98a750b8c5a51b30c78bd3fab21
         ),
         'R' =>
         array (
-            'Rsx\\' => 4,
             'React\\Stream\\' => 13,
             'React\\Socket\\' => 13,
             'React\\Promise\\' => 14,
@@ -505,10 +504,6 @@ class ComposerStaticInitfe33f98a750b8c5a51b30c78bd3fab21
         'SocialiteProviders\\Apple\\' =>
         array (
             0 => __DIR__ . '/..' . '/socialiteproviders/apple',
-        ),
-        'Rsx\\' =>
-        array (
-            0 => __DIR__ . '/../..' . '/rsx',
         ),
         'React\\Stream\\' =>
         array (
@@ -1336,6 +1331,7 @@ class ComposerStaticInitfe33f98a750b8c5a51b30c78bd3fab21
         'App\\RSpade\\Core\\Files\\File_Thumbnail_Service' => __DIR__ . '/../..' . '/app/RSpade/Core/Files/File_Thumbnail_Service.php',
         'App\\RSpade\\Core\\Files\\Imagick_Thumbnail_Renderer' => __DIR__ . '/../..' . '/app/RSpade/Core/Files/Imagick_Thumbnail_Renderer.php',
         'App\\RSpade\\Core\\Files\\Libreoffice' => __DIR__ . '/../..' . '/app/RSpade/Core/Files/Libreoffice.php',
+        'App\\RSpade\\Core\\Files\\Markdown_Rendition' => __DIR__ . '/../..' . '/app/RSpade/Core/Files/Markdown_Rendition.php',
         'App\\RSpade\\Core\\Files\\Rsx_Attachment_Handler_Abstract' => __DIR__ . '/../..' . '/app/RSpade/Core/Files/Rsx_Attachment_Handler_Abstract.php',
         'App\\RSpade\\Core\\Files\\Rsx_File_Paths' => __DIR__ . '/../..' . '/app/RSpade/Core/Files/Rsx_File_Paths.php',
         'App\\RSpade\\Core\\Files\\Rsx_File_Upload' => __DIR__ . '/../..' . '/app/RSpade/Core/Files/Rsx_File_Upload.php',

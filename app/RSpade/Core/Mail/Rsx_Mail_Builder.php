@@ -177,7 +177,11 @@ class Rsx_Mail_Builder
             throw new \RuntimeException("Could not read the email stylesheet at {$source}.");
         }
 
-        $cache_file = Rsx_Project_Paths::tmp_path('email_css_' . hash('sha256', $scss) . '.css');
+        // Keyed on the stylesheet AND the framework text-reset prelude every compilation
+        // opens with: a mixin the stylesheet includes lives in that partial, so a change to
+        // it is a change to this CSS.
+        $prelude = (string) file_get_contents(\App\RSpade\Integrations\Scss\Scss_BundleProcessor::resets_partial_path());
+        $cache_file = Rsx_Project_Paths::tmp_path('email_css_' . hash('sha256', $prelude . "\n" . $scss) . '.css');
 
         if (is_file($cache_file)) {
             return (string) file_get_contents($cache_file);

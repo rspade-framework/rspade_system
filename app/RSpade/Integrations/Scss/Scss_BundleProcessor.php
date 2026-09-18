@@ -29,6 +29,42 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
     protected static $scss_files = [];
     
     /**
+     * The framework text resets - a MIXIN-ONLY partial prepended to every compilation.
+     *
+     * RSpade's bundle model has no @import in authored stylesheets (__validate_scss_file
+     * refuses one), so a framework mixin has no way to travel from one stylesheet to another
+     * except by being defined BEFORE the bundle's files are read. This is that prelude: the
+     * master file imports it first, and the single-file path (compile_file) wraps its input
+     * the same way, so `@include rsx-text-mono` resolves in every compilation the framework
+     * performs with nothing to declare and nothing to import.
+     *
+     * It lives under resource/, which the manifest ignores, so it is never itself scanned
+     * into a bundle - it emits no CSS of its own and would contribute nothing if it were.
+     */
+    public static function resets_partial_path(): string
+    {
+        return __DIR__ . '/resource/_rsx_text_resets.scss';
+    }
+
+    /**
+     * The prelude lines every master stylesheet opens with.
+     *
+     * @return array<int,string>
+     */
+    protected static function __prelude_lines(): array
+    {
+        return [
+            // SILENT (`//`) comments, not `/* */`: this partial emits no CSS, so its markers
+            // must not either - a `/* */` marker survives compilation and would ride along in
+            // the head of every stylesheet the framework produces, the inlined email CSS
+            // included.
+            '// ============ framework text resets (mixins only) ============',
+            '@import ' . json_encode(static::resets_partial_path()) . ';',
+            '',
+        ];
+    }
+
+    /**
      * Get processor name
      */
     public static function get_name(): string
@@ -133,6 +169,11 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
     protected static function _get_scss_cache_key(array $scss_files): string
     {
         $all_files = [];
+
+        // The framework text resets are prepended to the master file, so they are a dependency
+        // of EVERY bundle even though no bundle lists them. Keying on them is what makes an
+        // edit to that partial invalidate every compiled stylesheet in the project.
+        $all_files[static::resets_partial_path()] = true;
 
         // Add the direct SCSS files
         foreach ($scss_files as $file) {
@@ -297,6 +338,14 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
         $imports[] = "// This file imports all SCSS files in the bundle in order";
         $imports[] = "";
 
+        // The framework text resets go FIRST, before any bundle file: a mixin must be defined
+        // before it is included, and this is the only prelude an authored stylesheet gets.
+        // The master file is generated, so __validate_scss_file (which refuses @import in an
+        // authored stylesheet) never sees it - that validator runs over the bundle's own files.
+        foreach (static::__prelude_lines() as $line) {
+            $imports[] = $line;
+        }
+
         foreach ($scss_files as $file) {
             // Get relative path from project root
             $relative = str_replace(base_path() . '/', '', $file);
@@ -329,7 +378,25 @@ class Scss_BundleProcessor extends BundleProcessor_Abstract
      */
     public static function compile_file(string $input_file, string $output_file, array $options = []): void
     {
-        static::__compile_scss($input_file, $output_file, $options);
+        // The SAME prelude the bundle master gets, so a lone stylesheet sees the framework text
+        // resets too - "in scope in every compilation" is a promise the framework keeps on both
+        // paths or on neither. The wrapper is written NEXT TO the input (the directory the
+        // caller owns, per the note above) and imports the input by absolute path, so the
+        // caller's file is compiled exactly as authored and nothing in a source tree is touched.
+        $wrapper_file = $input_file . '.master.scss';
+
+        $wrapper = implode("\n", array_merge(
+            static::__prelude_lines(),
+            ['@import ' . json_encode($input_file) . ';', '']
+        ));
+
+        file_put_contents_safe($wrapper_file, $wrapper);
+
+        try {
+            static::__compile_scss($wrapper_file, $output_file, $options);
+        } finally {
+            @unlink($wrapper_file);
+        }
     }
 
     /**

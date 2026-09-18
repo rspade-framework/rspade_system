@@ -28,9 +28,10 @@ Args:
 
 Events: none. Public methods: none. The args are the entire surface.
 
-TYPOGRAPHY IS INHERITED, BY CONTRACT. The SCSS sets no font-family, font-size, colour or
-line-height, so the text takes the host's. A page that wants it monospaced or smaller says so on
-the element it mounts this into.
+THE TEXT PANE IS TEXT_VIEWER'S. Both components include the one mixin in _text_pane.scss -
+monospace, 13px, pre-wrap, colour inherited on a transparent surface - so an extraction reads
+exactly as a text file does under <Document_Preview>. A host styles the frame it mounts this
+into (its size and its surface), not the text.
 --%>
 <Define:Document_Text_Preview tag="div">
     <% if (!this.args.attachment_id) { throw new Error('Document_Text_Preview requires $attachment_id'); } %>

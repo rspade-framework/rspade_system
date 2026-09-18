@@ -1214,6 +1214,12 @@ return [
 
             'image/*' => 'Image_Viewer',
 
+            // MARKDOWN ABOVE text/* - first fnmatch match wins, and the text/* line below
+            // would otherwise take it. A .md file previews as the DOCUMENT its author wrote
+            // (headings, tables, task lists), rendered server-side and sanitised twice; the
+            // source characters are still one click away in the file itself.
+            'text/markdown' => 'Markdown_Viewer',
+
             // Plain text renders as ITSELF, in a scrolling text frame - it needs no
             // conversion and gains nothing from one. Sits below the document patterns above
             // (text/* must not shadow a more specific entry) and above the terminal '*',
@@ -2291,6 +2297,11 @@ return [
             'guzzlehttp/guzzle',
             'giggsey/libphonenumber-for-php',
             'ezyang/htmlpurifier',
+            // Markdown -> HTML. Markdown_Rendition::render() is the framework's own
+            // sanitised call (CommonMark + GFM, then HTMLPurifier); exposed because an
+            // application that renders markdown of its own must use this parser rather
+            // than installing a second one beside it.
+            'league/commonmark',
             'sokil/php-isocodes',
             'nikic/php-parser',
             'phpoffice/phpspreadsheet',

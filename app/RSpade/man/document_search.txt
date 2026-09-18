@@ -390,12 +390,31 @@ DOCUMENT_PREVIEW COMPONENT
 
     Viewer registry. get_preview_info() resolves the viewer by mime via
     config('rsx.preview.viewers') (an ordered fnmatch map of mime glob -> viewer
-    component simple name; first match wins). The framework ships four viewers and a
+    component simple name; first match wins). The framework ships six viewers and a
     terminal '*' entry so every mime resolves:
 
         Pdf_Viewer     PDFs and (via rendition) convertible Office docs. Lazy-loads
                        pdf.js and paginates on a canvas.
+        Spreadsheet_Viewer
+                       the workbook mimes, as a GRID - the HTML rendition
+                       PhpSpreadsheet produces, in a sandboxed iframe. Registered
+                       ABOVE the generic Office patterns, which would otherwise take
+                       it to a PDF of LibreOffice's print view.
         Image_Viewer   image/*  (natural-dimension preview).
+        Markdown_Viewer
+                       text/markdown - the file rendered as the DOCUMENT its author
+                       wrote (GitHub-flavoured: headings, tables, task lists, fenced
+                       code, autolinks), not as its source characters. Registered
+                       ABOVE the text/* entry, which would otherwise take it; the map
+                       is first-match, so that ordering IS the feature. The markup
+                       comes from the Ajax endpoint get_markdown_html, rendered per
+                       request - there is no rendition on disk, no background worker
+                       and therefore no waiting state. TWO INDEPENDENT SANITISING
+                       LAYERS produce it (Markdown_Rendition): the CommonMark parser
+                       configured with html_input=strip and allow_unsafe_links=false,
+                       then HTMLPurifier over the OUTPUT with an explicit allowlist of
+                       exactly the elements GFM emits. Either alone would be enough;
+                       they fail differently, which is the argument for both.
         Text_Viewer    text/*   (the file's own characters in a scrolling monospace
                        frame). IT READS THE EXTRACTION, not the inline URL: the text
                        pipeline has already decoded the file's charset and capped it at
@@ -425,7 +444,8 @@ SHOULD_SHOW_TEXT_PREVIEW
     UNSUPPORTED); the preview ALREADY IS the text (a text/* file renders through
     Text_Viewer, so a pane beside it repeats every character); or the extraction is not
     legible to a human (a spreadsheet). The last two are mime globs in
-    config('rsx.preview.text_preview_suppressed').
+    config('rsx.preview.text_preview_suppressed'); text/markdown is covered by the
+    text/* glob there, so a markdown file recommends its rendered preview alone.
 
     It is returned by BOTH get_preview_info() and get_extracted_text() - the second so a
     caller already holding the text needs no second round trip - and it never gates the

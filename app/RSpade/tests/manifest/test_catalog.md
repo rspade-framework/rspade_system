@@ -49,3 +49,7 @@ that only regroups data already in the manifest derives its section in full, eve
 | mds-04 | every registered module declares a kind | `config('rsx.manifest_support')` | each extends a support base | implemented |
 | `Manifest_Boot_Is_Idle_Test::test_the_index_records_generated_entries_the_owner_recognises` | php | implemented | The index records generated (stub) entries and the path owner classifies every one of them as generated, so the exemption below is exercised on this tree |
 | `Manifest_Boot_Is_Idle_Test::test_a_child_boot_does_not_rewrite_the_index` | php | implemented | A boot in a child process on an unchanged tree leaves the index file's mtime untouched - a generated entry absent from the source scan is not a deleted file |
+| `Autoloader_Include_Guard_Test::test_a_declared_class_is_never_included_again` | php | implemented | A class loaded first under another spelling of its path is not required again by the seam - no redeclare |
+| `Autoloader_Include_Guard_Test::test_a_helper_file_is_matched_without_case` | php | implemented | A classless file is matched against the include table without case |
+| `Autoloader_Include_Guard_Test::test_the_include_table_match_ignores_case_only` | php | implemented | The pure matcher: case-insensitive on the path, exact otherwise |
+| `Autoloader_Include_Guard_Test::test_an_unloaded_file_is_included` | php | implemented | A file nobody loaded is loaded, as before |

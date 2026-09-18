@@ -67,7 +67,6 @@ return array(
     'SocialiteProviders\\Microsoft\\' => array($vendorDir . '/socialiteproviders/microsoft'),
     'SocialiteProviders\\Manager\\' => array($vendorDir . '/socialiteproviders/manager/src'),
     'SocialiteProviders\\Apple\\' => array($vendorDir . '/socialiteproviders/apple'),
-    'Rsx\\' => array($baseDir . '/rsx'),
     'React\\Stream\\' => array($vendorDir . '/react/stream/src'),
     'React\\Socket\\' => array($vendorDir . '/react/socket/src'),
     'React\\Promise\\' => array($vendorDir . '/react/promise/src'),

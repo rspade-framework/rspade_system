@@ -233,6 +233,7 @@ FRAMEWORK-PROVIDED PACKAGES
                 'ezyang/htmlpurifier',
                 'sokil/php-isocodes',
                 'nikic/php-parser',
+                'league/commonmark',
                 'phpoffice/phpspreadsheet',
                 'league/csv',
                 'brick/money',

@@ -96,10 +96,10 @@ Four states, one of which is always painted:
 
 The three unavailable causes collapse into one notice on purpose: they are the same answer to a reader. An operator tells them apart with `rsx:search:reindex --status` and `rsx:documents:failed`.
 
-**Typography is inherited, by contract.** `document_text_preview.scss` sets no `font-family`, `font-size`, `color` or `line-height` - only layout, scrolling and `white-space: pre-wrap`. Style the element you mount it into:
+**The text pane is `Text_Viewer`'s, by contract.** Both components include the framework mixin `rsx-preview-text-pane` (monospace, 13px, `pre-wrap`, colour inherited on a transparent surface - in scope in every SCSS compilation, nothing to import; skill `rspade:scss-rules`), so an extraction reads exactly as a text file does under `<Document_Preview>`. Style the frame you mount it into (its size, its surface), not the text:
 
 ```jqhtml
-<div class="my-panel__text font-monospace small">
+<div class="my-panel__text">
     <Document_Text_Preview $attachment_id=this.data.doc.id />
 </div>
 ```
@@ -114,10 +114,23 @@ Behind it is `File_Preview_Controller::get_extracted_text`, returning `{status, 
 
 ```php
 'application/pdf'  => 'Pdf_Viewer',          // + Office mimes (via a PDF rendition)
+'application/vnd.ms-excel*' => 'Spreadsheet_Viewer',   // + the other workbook mimes
 'image/*'          => 'Image_Viewer',
+'text/markdown'    => 'Markdown_Viewer',     // ABOVE text/* - first match wins
 'text/*'           => 'Text_Viewer',         // the file's own characters
 '*'                => 'Icon_Viewer',
 ```
+
+**`Markdown_Viewer` shows a `.md` file as the DOCUMENT its author wrote** - GitHub-flavoured headings, tables, task lists, fenced code, autolinks - rather than as its source characters. Its entry sits ABOVE `text/*`, and since the map is first-match that ordering IS the feature: below it, every markdown file would render as raw text. The markup comes from `File_Preview_Controller::get_markdown_html`, which runs the same **content** gate cascade as `get_extracted_text`.
+
+**It waits on nothing**, which makes it the odd one out among these viewers: there is no rendition on disk and no background worker, the parse happens inside the request over a source capped at `rsx.search.max_text_bytes`, and the endpoint's answer is always final. A source past the cap is reported (`truncated: true`), never silently shortened.
+
+**TWO INDEPENDENT SANITISING LAYERS produce the markup**, in `Markdown_Rendition::render()`, and the pair is deliberate - they fail differently:
+
+1. **The parser, configured closed.** `league/commonmark` with `html_input => 'strip'` (a raw `<script>` or `<div>` in the source is DISCARDED, not passed through) and `allow_unsafe_links => false` (no `javascript:` href is emitted), plus a `max_nesting_level`. This layer is configuration: a regression in it is silent.
+2. **HTMLPurifier over the OUTPUT**, with an explicit allowlist of exactly the elements GFM emits - `h1`-`h6`, `p`/`br`/`hr`, `em`/`strong`/`del`/`code`/`pre`, `blockquote`, lists incl. the disabled task-list `input`, `a[href|title]` and `img[src|alt|title]` on http/https/mailto, and the table elements with `align`. No `class`, no `style`, no `id`. It does not care what produced the markup, and an element that appears from anywhere is dropped by DEFAULT.
+
+Because the markup is sanitised at the source, the component interpolates it with `<%!= %>` and nothing re-sanitises client-side. **Never hand-roll a second markdown path** - `Markdown_Rendition::render()` is the framework's one call.
 
 **`Text_Viewer` reads the EXTRACTION, not the inline URL** — and that is the design point, not an implementation detail. The text pipeline has already decoded the file's charset and capped the content at `rsx.search.max_text_bytes`; fetching the raw bytes would hand the browser an undecoded string of unknown encoding and unbounded length, and would need its own realtime wiring to notice the pipeline finishing. Reading the extraction gets a decoded, bounded string and the PENDING -> EXTRACTED swap for free. The cost is honest and on screen: a just-uploaded file shows `(Extracting Text...)` for a second or two. `(This file is empty)` is a **distinct** state from `(Text Unavailable)` — an empty file is a fact about the file, not a fault in the preview.
 
@@ -131,13 +144,13 @@ Register your own in `rsx/resource/config/rsx.php` under the same key:
 ] + config('rsx.preview.viewers')],
 ```
 
-The four built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{url, extension, file_name, page, fit}`. So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `preview_loaded`/`page_changed`.
+The built-ins are rendered by the template; **any other name is instantiated dynamically** into the `$sid="viewer"` host with `{url, extension, file_name, page, fit}`. So a custom viewer is an ordinary jqhtml component that takes those args and — if it wants the page UI to work — implements `set_page`/`get_page`/`get_pages` and fires `preview_loaded`/`page_changed`.
 
 **PDF renditions**: `/_preview/pdf/:key` serves the PDF pdf.js actually loads, and it is **serve-only — it never converts**. A PDF blob is served as-is; a mime listed in `rsx.preview.convertible` is served from the cached rendition at `tmp/renditions/{blob-hash}.pdf` (LRU-swept to `rsx.preview.quota_max_bytes`) **but only when the blob is RENDERED** — otherwise it 404s naming the render state. Anything else is 415. A RENDERED blob whose rendition was LRU-evicted re-queues itself and 404s for that one request, rather than showing an error over a cache eviction. The route is **dual-gated** (`file.thumbnail.authorize` AND `file.download.authorize`), so your file-access hooks apply to previews exactly as they do to downloads. pdf.js itself is lazy-served from `/_preview/pdfjs.mjs` (+ `pdf_worker.mjs`) out of the committed `node_modules` and is **never bundled**.
 
 ## Showing extracted text BESIDE a preview
 
-Ask the attachment, never the extraction status: **`$attachment->should_show_text_preview()`**, carried on both `get_preview_info()` and `get_extracted_text()` (the second so a caller already holding the text needs no second round trip). It is false when there is no extracted text, when the preview ALREADY IS the text (`text/*` — a pane beside it repeats every character), and when the extraction is not legible to a human (a spreadsheet flattens to an undelimited run of cell values). The last two are mime globs in `config('rsx.preview.text_preview_suppressed')`.
+Ask the attachment, never the extraction status: **`$attachment->should_show_text_preview()`**, carried on both `get_preview_info()` and `get_extracted_text()` (the second so a caller already holding the text needs no second round trip). It is false when there is no extracted text, when the preview ALREADY IS the text (`text/*`, markdown included — a pane beside it repeats every character), and when the extraction is not legible to a human (a spreadsheet flattens to an undelimited run of cell values). The last two are mime globs in `config('rsx.preview.text_preview_suppressed')`.
 
 **It is advice about display, never authorization** — extraction still runs for every one of these, the text stays searchable, and `get_extracted_text()` returns it whatever the flag says.
 

@@ -1,0 +1,99 @@
+// FRAMEWORK TEXT RESETS - the typography every SCSS compilation can reach.
+//
+// WHAT THIS IS. Three mixins that establish a known text foundation on an element:
+// `rsx-text-mono` (a monospace reset), `rsx-text-sans` (a sans-serif reset, the foundation
+// for prose), and `rsx-preview-text-pane` (the scrolling raw-text pane shared by the
+// document previews, built on `rsx-text-mono`).
+//
+// HOW IT IS IN SCOPE. The bundle compiler PREPENDS an `@import` of this file to every master
+// stylesheet it assembles, and the single-file compile path does the same, so the mixins are
+// defined before the first bundle file is read - in every bundle, in every mode, with nothing
+// to import and nothing to declare. RSpade's bundle model has no `@import` in authored
+// stylesheets (Scss_BundleProcessor refuses one); this file is the framework's own prelude and
+// is the reason a component stylesheet needs none.
+//
+// IT DEFINES NO CSS BY ITSELF. Mixins only: a compilation that includes none of them emits not
+// one byte from this file, so the prelude costs nothing anywhere it is not used.
+//
+// WHEN TO REACH FOR ONE. An element that presents text DATA - a document preview, extracted
+// text, a log, source code, a rendered markdown body - rather than the application's own UI
+// copy. UI copy inherits the host's type, which is what makes it look like the host; text data
+// must NOT, because whatever the host happens to set (a condensed display face, a heading
+// weight, a letter-spacing, a `text-transform: uppercase` on an ancestor) is then applied to
+// somebody's file.
+//
+// EACH MIXIN IS A FULL RESET OF THE INHERITED TEXT PROPERTIES, not just a family and a size.
+// Half a reset is the bug: a component that sets the family but inherits `font-weight: 600`
+// from a card heading renders the document in bold and nothing points at why.
+//
+// NO CSS CUSTOM PROPERTIES, in either direction. A framework stylesheet is compiled into
+// applications whose themes it cannot see, and an undefined `var()` silently invalidates the
+// WHOLE declaration - the rule paints nothing, in every theme. Colour is INHERITED and every
+// surface here is TRANSPARENT: the host provides the surface, and the page provides the text
+// colour it already uses for everything else. That is correct in every host, dark mode
+// included, without this file knowing which host it is in.
+
+// The monospace reset. For text where column alignment carries meaning - a log, a CSV, a
+// config, source code, the flattened cells of an extraction, a fenced code block.
+@mixin rsx-text-mono {
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+                 "Liberation Mono", "Courier New", monospace;
+    font-size: 13px;
+    tab-size: 4;
+
+    // The full reset of the inherited text properties. NO `line-height` value other than
+    // `normal`: a text box that both clips and wraps is exactly the pairing that shears the
+    // tails off g/y/p/j and collides wrapped lines, and the normal leading gives descenders
+    // their room.
+    font-weight: normal;
+    font-style: normal;
+    line-height: normal;
+    letter-spacing: normal;
+    text-transform: none;
+    text-decoration: none;
+    color: inherit;
+}
+
+// The sans-serif reset, and the foundation for prose - a rendered markdown document, a
+// formatted note, anything presenting somebody's words rather than this application's UI.
+// A caller layers its own scale on top (headings, list spacing); this establishes the body.
+@mixin rsx-text-sans {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 "Helvetica Neue", Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+
+    font-weight: normal;
+    font-style: normal;
+    letter-spacing: normal;
+    text-transform: none;
+    text-decoration: none;
+    color: inherit;
+}
+
+// The scrolling raw-text pane, shared by Text_Viewer (a text/* FILE presented as itself) and
+// Document_Text_Preview (the text EXTRACTED from a document).
+//
+// ONE DEFINITION, and it lives here rather than beside either component, because a reader must
+// not be able to tell the two apart by their typography and there is no `@import` with which
+// one component could reach the other. The framework prelude is the one place both can see.
+@mixin rsx-preview-text-pane {
+    @include rsx-text-mono;
+
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    margin: 0;
+    padding: 16px;
+    background: transparent;
+
+    // `pre-wrap`: the text's own newlines render as line breaks and runs of spaces survive,
+    // but a line longer than the frame SOFT-WRAPS instead of running off the edge. Plain
+    // `pre` was tried first and is wrong here: most text is prose with long author-wrapped
+    // lines, and it clipped them at the frame edge behind a horizontal scrollbar - the
+    // reader had to scroll sideways to read a sentence. overflow-wrap breaks the unbroken
+    // runs (long URLs, a table flattened to one line) that would otherwise force that
+    // scrollbar back.
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}

@@ -172,6 +172,31 @@ COMPOSER PACKAGES
             $headers, $rows) returns an RFC4180 string, written through
             League\Csv\Writer. Full treatment: rsx:man csv_exports.
 
+        league/commonmark
+            Markdown to HTML. It is the framework's markdown parser and the only
+            one - never hand-roll a converter and never install a second beside
+            it. Reach for it whenever markdown a person wrote has to become
+            markup a browser renders.
+
+            Markdown_Rendition::render($markdown) is the framework's own
+            sanitised call and the one to prefer: CommonMark plus the
+            GitHub-flavoured extension (tables, strikethrough, task lists,
+            autolinks), the parser configured with html_input=strip and
+            allow_unsafe_links=false, and the OUTPUT then passed through
+            HTMLPurifier with an explicit allowlist of exactly the elements GFM
+            emits. Two independent layers, because they fail differently. It
+            returns a FRAGMENT - the caller's element is the container.
+
+                $html = Markdown_Rendition::render($source);
+
+            Calling the parser directly is the case for markdown you generated
+            yourself. Markdown somebody UPLOADED, pasted or submitted goes
+            through Markdown_Rendition, or you have written the second sanitising
+            path this framework exists to not have.
+
+            It backs <Markdown_Viewer>, the document preview for a text/markdown
+            attachment - rsx:man documents.
+
         laravel/framework, guzzlehttp/guzzle, sokil/php-isocodes,
         nikic/php-parser
             Also exposed. Guzzle is the outbound HTTP client (never file_get_contents

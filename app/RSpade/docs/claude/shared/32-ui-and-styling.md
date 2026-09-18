@@ -20,6 +20,8 @@ one before it has designed one.
 
 **Every styled element is a component with scoped SCSS** — if you are copy-pasting markup, extract a component. SCSS in `rsx/app/` and `rsx/theme/components/` **must** wrap in a single class matching its component; `rsx/lib/` is non-visual; `rsx/theme/` outside `components/` holds primitives, variables and Bootstrap overrides. Page/action SCSS should be **near-empty** — a page's look lives in the components it composes.
 
+**Three framework text mixins are in scope in every compilation with nothing to import** - `rsx-text-mono` (monospace) and `rsx-text-sans` (prose), each a FULL reset of the inherited text properties, plus `rsx-preview-text-pane`; include one on any element that presents text DATA (a preview, extracted text, a log, code, rendered markdown) rather than the application's own UI copy.
+
 **BEM child classes use the exact PascalCase component name as prefix** (`.Component_Name { &__element }`). **No kebab-case** — `datagrid-kanban__loading` does not match the compiled CSS and the element silently gets no styles. Shared variables live in `rsx/theme/variables.scss`; **check that file before writing new SCSS**.
 
 **Responsive**: RSX replaces Bootstrap's breakpoints with semantic names — **Bootstrap's `.col-md-6`, `.d-lg-none` etc. do NOT work.** Tier 1 is `mobile` (0-1023) / `desktop` (1024+); tier 2 splits those into named device tiers (`phone`, `tablet`, `desktop-md`, …). Each is an SCSS mixin (`@include mobile { }`); infixed utility classes exist only for the non-zero tiers (`.col-tablet-6`, `.d-desktop-block` — the unprefixed `.col-6` IS the mobile rule), plus visibility helpers (`.mobile-only`, `.hide-phone`). JS asks `Responsive.is_mobile()` and friends. Full tier roster: app skill `theme`.
