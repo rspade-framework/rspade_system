@@ -1062,11 +1062,6 @@ DOCUMENTS (FIRM -> CLIENT SHARE)
     with a more granular per-document / per-contact sharing model - the per-contact share
     rows are retained precisely so that evolution is straightforward.
 
-    DEMO AUTO-SHARE (dev sites only): on a dev site, and never during the test suite,
-    Rsx\Lib\Portal_Demo_Autoshare auto-shares every uploaded document with its client so
-    the portal Documents tab is populated without manual sharing. No-op in real
-    deployments (guarded on Rsx::is_dev_site()).
-
     Staff side (Frontend_Clients_Controller, on the client Portal page's Documents tab):
         documents_list({id})       - the client's 'documents' attachments + each one's
                                      shares (who it's shared with, has_portal_account).
@@ -1151,11 +1146,7 @@ SAMPLE APPLICATION (THE SHIPPED REFERENCE TEMPLATE)
         additionally emails that one contact.
 
     DEV-ONLY conveniences (NOT production behavior)
-      - Demo auto-share (Rsx\Lib\Portal_Demo_Autoshare): on a dev site only, and never
-        during the test suite, every uploaded client document is auto-shared with the
-        client so the portal is populated without manual sharing. No-op in real
-        deployments (guarded on Rsx::is_dev_site()).
-      - Debug-site login auto-fill (config('rsx.default_user.*')) pre-fills credentials on
+      - Login auto-fill (RSPADE_LOGIN_AUTOFILL; credentials from config('rsx.default_user.*')) pre-fills credentials on
         the staff and portal login pages.
       - Seeded demo clients / contacts / portal users / threads exist only in the dev
         database. The admin@test.com demo account is intentionally wired to a contact for

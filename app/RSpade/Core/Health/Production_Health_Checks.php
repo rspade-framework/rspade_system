@@ -129,6 +129,54 @@ class Production_Health_Checks
     }
 
     /**
+     * The hostname a sealed box addresses itself by.
+     *
+     * `.dev.` in a hostname is not cosmetic here: Rsx::is_dev_site() reads it, and two
+     * outbound channels gate on that answer. With live delivery every email recipient
+     * on such a host is checked against the dev-site whitelists and otherwise rewritten
+     * to the catchall; an SMS is gated whatever the delivery mode is, and one with no
+     * whitelist match is recorded Suppressed and never sent. So a production site that
+     * carries a `.dev.` hostname silently stops writing to its own users - the queue
+     * drains, the rows read Sent or Suppressed, and nobody is told.
+     *
+     * The host is read from the CONFIGURED application URL, exactly as app_url_scheme()
+     * reads the scheme from it, so on a sealed box this is the value the running
+     * application actually addresses itself by.
+     *
+     * @return array
+     */
+    #[Health_Check('Hostname', modes: ['debug', 'production'])]
+    public static function hostname(): array
+    {
+        return static::_hostname_row((string) parse_url((string) config('app.url'), PHP_URL_HOST));
+    }
+
+    /**
+     * @param string $host The host of the configured application URL
+     * @return array{status: string, detail: string, remediation: ?string}
+     */
+    public static function _hostname_row(string $host): array
+    {
+        if (!str_contains($host, '.dev.')) {
+            return [
+                'status' => 'OK',
+                'detail' => ($host === '' ? '(empty)' : $host) . ' is not a development hostname',
+                'remediation' => null,
+            ];
+        }
+
+        return [
+            'status' => 'FAIL',
+            'detail' => 'a production site cannot carry a .dev. hostname: ' . $host
+                . ' makes Rsx::is_dev_site() true, so every outbound email is checked against the'
+                . ' dev-site whitelists and otherwise redirected to the catchall even when delivery'
+                . ' is live, and an SMS with no whitelist match is recorded Suppressed and never sent',
+            'remediation' => 'set APP_URL to the production hostname in .env, then php artisan rsx:build --force'
+                . ' (the running value comes from the cached config the build produced)',
+        ];
+    }
+
+    /**
      * Credential auto-fill on a sealed build.
      *
      * RSPADE_LOGIN_AUTOFILL pre-fills RSPADE_DEFAULT_EMAIL / RSPADE_DEFAULT_PASSWORD

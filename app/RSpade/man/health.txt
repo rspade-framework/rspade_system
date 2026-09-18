@@ -156,6 +156,8 @@ FRAMEWORK INVENTORY
         Env Encryption              all           branches on the mode itself
         Env Symlink                 all
         FPC                         all
+        Hostname                    debug, prod   a .dev. hostname gates every
+                                                  outbound email and SMS
         LibreOffice (soffice)       all
         Lock Server                 all
         Login Auto-fill             debug, prod   a working credential on an
@@ -175,6 +177,9 @@ FRAMEWORK INVENTORY
         Production Seal             debug, prod   there is no seal elsewhere
         Realtime Relay              all
         Redis Connectivity          all
+        Schema Contract             all           what the framework code reads
+                                                  by name on application-owned
+                                                  tables; one row per table
         Storage Writable            all           build/ row in development
                                                   only - branches internally
         Submodule Visibility        development   a git REVIEW surface; a
@@ -228,6 +233,19 @@ FRAMEWORK INVENTORY
                                  never WARNs - it is the one-line answer to "why
                                  is there debug output in this browser".
         Env Symlink              system/.env symlink to root .env intact
+        Hostname                 the host of the CONFIGURED application URL does not
+                                 contain '.dev.'. FAIL when it does: that substring is
+                                 what Rsx::is_dev_site() reads, and two outbound
+                                 channels gate on the answer - with live delivery every
+                                 email recipient is checked against the dev-site
+                                 whitelists and otherwise rewritten to the catchall,
+                                 and an SMS is gated whatever the delivery mode is and
+                                 recorded Suppressed when nothing matches. So a
+                                 production site on a .dev. hostname silently stops
+                                 writing to its own users: the queue drains, the rows
+                                 read Sent or Suppressed, and nobody is told.
+                                 Remediation: set APP_URL to the production hostname,
+                                 then rsx:build --force.
         LibreOffice (soffice)    headless soffice present (or disabled)
         Lock Server              rsx-lockd listening (INFO under maintenance)
         Mail delivery            which of the four modes rsx.mail.delivery is
@@ -278,6 +296,26 @@ FRAMEWORK INVENTORY
                                  drift, naming rsx:build --force.
         Realtime Relay           WebSocket relay reachable when enabled
         Redis Connectivity       Redis reachable (cache, realtime, task slots)
+        Schema Contract          what the framework READS BY NAME on
+                                 application-owned (non-underscore) tables is still
+                                 there. One row per contracted table (`schema: users`,
+                                 `schema: login_users`, ...) plus `schema: foreign
+                                 keys`, `schema: rows` and `schema: semantics`. FAIL on
+                                 a missing table, required column, unique index,
+                                 foreign key or required row, with the finding naming
+                                 the column or index AND the framework code that reads
+                                 it, so an operator can see it is the framework and not
+                                 their own feature that is about to fail. WARN for a
+                                 semantic probe - present and silently wrong (a NULL
+                                 user_permissions.is_grant is a permission lost, a NULL
+                                 users.is_api_access_enabled is an API opened). The
+                                 declaration is Core/Database/Schema_Contract; audit
+                                 pairs and timestamps are excluded because
+                                 migrate:normalize_schema guarantees them, and
+                                 deleted_at is included because it does not. This is
+                                 the only check that reads the framework's assumptions
+                                 against a database it did not build - see
+                                 rsx:man database_schema_architecture.
         Storage Writable         the project trees this process must be able to
                                  write: storage/ (user data) and tmp/ (derived
                                  caches) in every mode, build/ in development only -

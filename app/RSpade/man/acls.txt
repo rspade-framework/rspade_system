@@ -81,7 +81,6 @@ ARCHITECTURE
 
         ID   Constant            Label           Can Admin Roles
         ---  --------            -----           ---------------
-        100  ROLE_DEVELOPER      Developer       200-800 (system only)
         200  ROLE_ROOT_ADMIN     Root Admin      300-800 (system only)
         300  ROLE_SITE_OWNER     Site Owner      400-800
         400  ROLE_SITE_ADMIN     Site Admin      500-800
@@ -92,7 +91,12 @@ ARCHITECTURE
 
         IDs are 100-based for future expansion. Lower ID = higher privilege.
         "Can Admin Roles" prevents privilege escalation (Site Admin can't
-        create Site Owner). Developer and Root Admin are system-assigned only.
+        create Site Owner). Root Admin is system-assigned only.
+
+        A role says what somebody may do inside one site's records. Whether
+        somebody is a DEVELOPER of the installation is a different question and
+        is not a role: it is login_users.is_developer, read with
+        Session::is_developer(). See rsx:man session.
 
 PERMISSIONS
 
@@ -100,7 +104,7 @@ PERMISSIONS
 
         ID  Constant                    Granted By Default To
         --  --------                    ---------------------
-        1   PERM_MANAGE_SITES_ROOT      Developer, Root Admin only
+        1   PERM_MANAGE_SITES_ROOT      Root Admin only
         2   PERM_MANAGE_SITE_BILLING    Site Owner+
         3   PERM_MANAGE_SITE_SETTINGS   Site Admin+
         4   PERM_MANAGE_SITE_USERS      Site Admin+
@@ -117,17 +121,17 @@ PERMISSIONS
 
     Role-Permission Matrix
 
-        Permission              Dev  Root Owner Admin Mgr  User View Dis
-        ----------              ---  ---- ----- ----- ---  ---- ---- ---
-        MANAGE_SITES_ROOT        X    X
-        MANAGE_SITE_BILLING      X    X    X
-        MANAGE_SITE_SETTINGS     X    X    X     X
-        MANAGE_SITE_USERS        X    X    X     X
-        VIEW_USER_ACTIVITY       X    X    X     X     X
-        EDIT_DATA                X    X    X     X     X    X
-        VIEW_DATA                X    X    X     X     X    X    X
-        API_ACCESS               -    -    -     -     -    -    -
-        DATA_EXPORT              -    -    -     -     -    -    -
+        Permission              Root Owner Admin Mgr  User View Dis
+        ----------              ---- ----- ----- ---  ---- ---- ---
+        MANAGE_SITES_ROOT        X
+        MANAGE_SITE_BILLING      X    X
+        MANAGE_SITE_SETTINGS     X    X     X
+        MANAGE_SITE_USERS        X    X     X
+        VIEW_USER_ACTIVITY       X    X     X     X
+        EDIT_DATA                X    X     X     X    X
+        VIEW_DATA                X    X     X     X    X    X
+        API_ACCESS               -    -     -     -    -    -    -
+        DATA_EXPORT              -    -     -     -    -    -    -
 
         Legend: X = granted by role, - = must be granted individually
 
@@ -138,7 +142,6 @@ MODEL IMPLEMENTATION
         class User_Model extends Rsx_Model_Abstract
         {
             // Role constants (100-based, lower = higher privilege)
-            const ROLE_DEVELOPER = 100;
             const ROLE_ROOT_ADMIN = 200;
             const ROLE_SITE_OWNER = 300;
             const ROLE_SITE_ADMIN = 400;

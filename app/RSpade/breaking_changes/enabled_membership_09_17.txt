@@ -1,0 +1,186 @@
+users.is_enabled IS THE FRAMEWORK'S - refused at login, enforced every request
+Date: 2026-09-17
+
+IF YOU DO NOTHING: the is_enabled checks in your own login function and in your
+    pre_dispatch keep running, redundantly, behind a framework that already refused
+    the same identity - and any test fixture of yours that signs in a login_users
+    credential without an enabled users row now fails exactly as a wrong password
+    fails, with no message saying why.
+
+SUMMARY
+    users.is_enabled - the switch on a site MEMBERSHIP - is now enforced by the
+    framework, at login and on every request. An identity holding no enabled
+    membership on any site cannot sign in, and a session whose membership is
+    switched off is terminated the next time it asks for anything.
+
+    Your application therefore deletes its own is_enabled checks, and fixes any
+    fixture that used to get away with a credential that had no enabled membership
+    behind it. Your own identity-state vocabulary - status_id, is_activated,
+    is_verified, whatever you named it - is untouched and stays yours.
+
+THE CHANGE
+    The framework authenticated a credential and then handed the question of whether
+    that credential was allowed to be here to the application. Every application
+    answered it the same way, in the same two places, with the same query - and
+    every application that forgot one of the two places had a disabled user who could
+    still browse, because disabling only ever took effect at the next login.
+
+    Site membership is not application vocabulary. users is a FRAMEWORK table, the
+    row is what binds an identity to a tenant, and is_enabled is the framework's own
+    column on it. So the framework owns the rule, in both places, and owns it
+    completely enough that an application never writes the query.
+
+THE FIX
+    Informational: this arrives with the submodule. Nothing here to copy.
+
+      - RsxAuth::has_enabled_membership(Login_User_Model $login_user): bool is the
+        predicate, public for the rare caller that has to ask it directly.
+
+      - RsxAuth::attempt() refuses an identity with no enabled membership EXACTLY as
+        it refuses a wrong password: false, and the caller cannot tell the two apart.
+        The audit trail keeps the distinction the caller is denied -
+        Login_History::record_failure() with STATUS_FAILED_DISABLED, which names the
+        outcome in the failure log and feeds the framework throttle like any other
+        recorded failure.
+
+      - RsxAuth::login() - the convergence point every other door runs through -
+        asks the same question and returns false WITHOUT touching the session. So a
+        second factor answered correctly (Rsx_Two_Factor::verify_challenge), a
+        federated sign-in the provider verified (Rsx_Sso), and the development
+        harness's signed dev-auth headers (rsx:debug) are all refused too, each
+        recording STATUS_FAILED_DISABLED and then failing in its own vocabulary.
+
+      - Session::enforce_enabled_membership(): bool runs once per web request (the
+        staff dispatcher, immediately before the #[Auth] gates) and once per browser
+        Ajax call (before its own gates). When the session names a login user and a
+        site and the users row for that pair is MISSING or disabled, the session is
+        LOGGED OUT and the request answers response_auth_required() through its
+        ordinary channel - a redirect to login with the intended URL captured for a
+        page, the auth_required envelope for an Ajax call.
+
+      - Under impersonation the check applies to the EFFECTIVE identity, which is the
+        right answer: impersonating a disabled account ends the session.
+
+      - The headless API bearer tier already refused such an identity and is
+        unchanged. CLI and tests carry no session row and are not affected by the
+        request-time half.
+
+ACTION REQUIRED
+
+    1. DELETE YOUR OWN is_enabled CHECKS.
+
+           grep -rn "is_enabled" rsx/
+
+       Two shapes to remove, and one to keep. The reference application is the
+       worked pattern; the equivalents in your fork are the files to edit.
+
+       AT LOGIN - delete the branch, not just the filter. Your login function asked
+       whether the identity had an enabled membership and rendered its own message
+       when it did not. attempt() already answered the question two statements
+       earlier, so the branch is unreachable code that reads like policy:
+
+           system/app/RSpade/resource/reference_app/app/login/login_controller.php
+
+       The zero-sites branch there is gone: after a successful attempt() at least one
+       enabled membership is guaranteed to exist, so there is nothing to route to.
+
+       PER REQUEST - delete the membership block from your Main::pre_dispatch():
+
+           system/app/RSpade/resource/reference_app/main.php
+
+       The reference app replaced its redirect with a shouldnt_happen(): reaching
+       pre_dispatch with a login user and a site and NO users row is now an
+       impossible condition, and saying so loudly is better than silently routing
+       somewhere.
+
+       Also drop the filter from any query that resolves which membership the session
+       is about:
+
+           system/app/RSpade/resource/reference_app/app/login/
+               site_selection_controller.php
+               site_unauthorized_controller.php
+
+       KEEP IT IN A LISTING, AS PRESENTATION. The post-login "which of your sites?"
+       query keeps ->where('is_enabled', true), and the reference app says so in a
+       comment: there it decides which sites are worth OFFERING, so an identity
+       enabled on one site and disabled on another lands on the usable one instead of
+       a picker naming both. That is presentation, not authorization. If you keep such
+       a filter, write the comment too - otherwise the next reader deletes it as one
+       of the checks this document told them to remove.
+
+    2. KEEP YOUR IDENTITY-STATE CHECKS. THEY ARE STILL YOURS.
+
+       status_id, is_activated, is_verified, a suspension date, a signed-agreement
+       flag - account state is APPLICATION vocabulary and the framework knows nothing
+       about it. attempt() checks a live identity plus the password plus the
+       membership, and nothing else. Enforce your own statuses where you always
+       have: in your login function, and in Main::pre_dispatch() for a state that
+       must eject somebody mid-session. (init() is bootstrap and cannot eject
+       anybody.)
+
+    3. FIX FIXTURES THAT CREATE A CREDENTIAL WITH NO ENABLED MEMBERSHIP.
+
+       This is the one that bites without warning. A test that inserted a
+       login_users row, set a password and signed in used to work with no users row
+       at all, or with one whose is_enabled was 0. It now fails identically to a
+       wrong password - no exception, no message, just a false and a login page.
+
+           grep -rln "login_users" rsx/tests/
+           grep -rn "is_enabled" rsx/tests/
+
+       Give each such fixture a users row for the site under test with is_enabled = 1.
+       Three fixtures inside the framework's own suite had exactly this shape and
+       were given one; a downstream fixture of the same shape fails the same way.
+
+       A test that DELIBERATELY signs in a disabled identity keeps doing so - just
+       assert the wrong-password outcome, and read the recorded failure status if it
+       cares which denial it got.
+
+    4. STOP RECORDING FAILED_DISABLED YOURSELF.
+
+       Login_History::STATUS_FAILED_DISABLED ('failed_disabled', labelled "Failed -
+       Account Disabled") used to have NO framework producer: the constant existed so
+       every application spelled the outcome the same way, and the application called
+       record_failure() with it. The framework now writes it wherever a sign-in is
+       refused for an unenabled membership - attempt(), the second-factor challenge,
+       and SSO when login() refuses.
+
+           grep -rn "FAILED_DISABLED" rsx/
+
+       Delete the calls that recorded it for a MEMBERSHIP being switched off: they are
+       downstream of a refusal that already happened, so they either never run or
+       double-count against the throttle (every recorded failure feeds it). Keep the
+       calls that record one of YOUR identity states, and consider giving those their
+       own status rather than borrowing this one - the framework now uses it to mean
+       one specific thing.
+
+       If a screen or report of yours renders the status names with a hard-coded map,
+       it will meet failed_disabled on rows it did not write: an unknown key renders
+       blank.
+
+VERIFICATION
+    Disable one membership and try to sign in:
+
+        php artisan db:query "UPDATE users SET is_enabled = 0 WHERE id = <id>"
+
+    - The login page shows the ordinary wrong-password message, with no hint that the
+      account exists.
+    - The failure is recorded as failed_disabled: a "Login failure" warning naming
+      that status appears in storage/logs for the attempt (a failed sign-in is a log
+      line and a throttle increment, never a _login_history row - only successes are
+      rows).
+    - With that user already signed in a browser, disable the row and request any
+      page: you land on the login page with the intended URL captured. An Ajax call
+      from the open page answers the auth_required envelope.
+    - Re-enable the row and sign in: everything works, and no code of yours asked
+      about is_enabled anywhere in the flow.
+
+    grep -rn "is_enabled" rsx/
+        Every remaining hit is either a listing filter with its presentation comment,
+        or an administration screen that WRITES the column.
+
+    php artisan rsx:test
+        Your suite, after step 3.
+
+    php artisan rsx:man session
+        SITE MEMBERSHIP (users.is_enabled) - the full contract.

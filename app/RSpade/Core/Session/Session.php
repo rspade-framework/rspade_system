@@ -1012,6 +1012,57 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
+     * Is the signed-in identity still an ENABLED member of the site this request serves?
+     *
+     * THE REQUEST-TIME HALF OF THE FRAMEWORK'S is_enabled CONTRACT. RsxAuth::attempt() and
+     * RsxAuth::login() refuse an identity with no enabled membership at sign-in; this is what
+     * keeps a session that was legitimate five minutes ago from outliving the membership behind
+     * it. When the users row for (login_user_id, site_id) is MISSING or its is_enabled is false,
+     * the session is LOGGED OUT and false is returned, and the transport that asked answers
+     * response_unauthorized() through its ordinary channel - a login redirect for a page, the
+     * auth_required envelope for an Ajax call. Turning the switch off therefore ends the sessions
+     * that were already open, which is the only reading of "disabled" worth having.
+     *
+     * THE EFFECTIVE IDENTITY IS WHAT IS CHECKED. Under impersonation the session carries the
+     * TARGET, so it is the target's membership that is asked about: disabling an account ends an
+     * impersonation of it, the same as it ends that account's own sessions.
+     *
+     * CREATES NOTHING and costs at most ONE query. It reads the accessors, which answer from the
+     * session row the request already loaded, and goes through get_user(), so a request that has
+     * already resolved its user pays nothing at all. A caller with no identity, no tenant, or a
+     * headless API identity (which the Bearer dispatcher has already checked) is permitted here:
+     * "there is nobody to disable" is not a denial.
+     *
+     * Invoked ONCE per request, by the dispatcher immediately before the #[Auth] gates and by the
+     * Ajax browser entry point before its gates. Nothing else calls it; CLI processes and the
+     * suite have no session row to enforce against.
+     *
+     * @return bool True when the request may proceed; false when the session was just ended
+     */
+    public static function enforce_enabled_membership(): bool
+    {
+        // The headless API identity is not backed by a session row, and Rsx_Api_Bearer has
+        // already refused a disabled membership before minting it.
+        if (self::$_api_identity !== null) {
+            return true;
+        }
+
+        if (empty(self::get_login_user_id()) || empty(self::get_site_id())) {
+            return true;
+        }
+
+        $user = self::get_user();
+
+        if ($user !== null && $user->is_enabled) {
+            return true;
+        }
+
+        self::logout();
+
+        return false;
+    }
+
+    /**
      * Whether the current identity is permitted to use the external API.
      *
      * The one predicate every API seam asks: the Bearer dispatcher before it
@@ -1045,6 +1096,36 @@ class Session extends Rsx_System_Model_Abstract
         }
 
         return (bool) $user->is_api_access_enabled;
+    }
+
+    /**
+     * Whether the signed-in identity is a developer of this installation.
+     *
+     * A developer IS the login_users.is_developer flag, and nothing else. It is never a
+     * role - a role says what somebody may do inside one site's records, while this says
+     * who builds the software - and it is never a hostname: a box is not trusted because
+     * of what it is called.
+     *
+     * Only a person with a database client sets it, by hand
+     * (UPDATE login_users SET is_developer = 1 WHERE email = '...'). See rsx:man session.
+     *
+     * CREATES NOTHING - like has_api_access(), this is a question. The headless API tier
+     * is never a developer tier: a bearer key is a machine credential, and developer
+     * surfaces are for a person at a browser.
+     *
+     * @return bool
+     */
+    public static function is_developer(): bool
+    {
+        if (self::$_api_identity !== null) {
+            return false;
+        }
+
+        if (!self::has_session()) {
+            return false;
+        }
+
+        return (bool) self::get_login_user()?->is_developer;
     }
 
     /**

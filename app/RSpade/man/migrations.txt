@@ -488,6 +488,17 @@ MIGRATION WORKFLOW
        The repair is `php artisan rsx:build --force`. The ordering that avoids it is
        migrate BEFORE the mode switch; see rsx:man prod.
 
+       IT IS NOT THE SCHEMA CONTRACT CHECK, and the two are complementary. This one
+       compares the MANIFEST with the DATABASE, in production modes only; the manifest's
+       column map is DERIVED from the database at build time, so a column the framework
+       CODE needs and this schema never had is invisible to it - both sides agree and
+       the framework still throws on the first request that touches it. The "Schema
+       Contract" row of rsx:health compares the FRAMEWORK CODE with the DATABASE, in
+       every mode, from a declaration (Core/Database/Schema_Contract) that no database
+       produced. Run check_consistency after a production migrate; run rsx:health
+       against any database the framework did not build itself. See rsx:man health and
+       rsx:man database_schema_architecture.
+
    Framework-Only Migrations
        To run only framework migrations (system/database/migrations):
 

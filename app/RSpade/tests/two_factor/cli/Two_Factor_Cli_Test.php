@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\TwoFactor\Recovery_Codes;
@@ -56,7 +57,7 @@ class Two_Factor_Cli_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A live login identity, enrolled in nothing.
+     * A live login identity with an enabled site membership, enrolled in nothing.
      */
     private static function __make_login_user(): Login_User_Model
     {
@@ -67,6 +68,16 @@ class Two_Factor_Cli_Test extends Rsx_Test_Abstract
         $login_user->is_verified = true;
         $login_user->status_id = Login_User_Model::STATUS_ACTIVE;
         $login_user->save();
+
+        // An enabled site membership is part of being able to sign in: RsxAuth::login()
+        // refuses an identity that holds none, and verify_challenge() signs in through it.
+        $user = new User_Model();
+        $user->login_user_id = $login_user->id;
+        $user->email = $login_user->email;
+        $user->first_name = 'Fixture';
+        $user->last_name = 'Identity';
+        $user->is_enabled = 1;
+        $user->save();
 
         return $login_user;
     }

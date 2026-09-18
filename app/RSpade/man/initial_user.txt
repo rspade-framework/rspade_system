@@ -9,7 +9,7 @@ SYNOPSIS
 
         $user = Rsx_Initial_User::create($email, $password, [
             'site_id'    => 1,                          // optional; resolved when absent
-            'role_id'    => User_Model::ROLE_DEVELOPER, // optional; null when absent
+            'role_id'    => User_Model::ROLE_ROOT_ADMIN, // optional; null when absent
             'first_name' => 'Test',                     // optional
             'last_name'  => 'User',                     // optional
             'source'     => Rsx_Initial_User::SOURCE_FIRST_RUN,
@@ -36,6 +36,11 @@ DESCRIPTION
 
         login_users.id = 1    the credential   (activated, verified, active)
         users.id       = 1    the site profile (enabled, in the resolved site)
+
+    THE INITIAL USER IS A DEVELOPER. create() sets login_users.is_developer = 1 on
+    the credential it writes, on every path, because the first account on an
+    installation belongs to whoever is building it. Every later developer is made by
+    hand in the database - rsx:man session, THE DEVELOPER FLAG.
 
     That is a CONTRACT an application may build on, which is exactly why it is
     written explicitly instead of being left to AUTO_INCREMENT. The counter can
@@ -84,8 +89,10 @@ THE THREE CREATION PATHS (plus a direct call)
     test_baseline   Rsx_Test_Command::seed_test_baseline_user() - the ONE account the
                     framework test baseline carries, created as its OWN step right
                     after the provisioning migrate finishes, against the 'test'
-                    connection: test-user-1@rspade.test, site 1, ROLE_DEVELOPER. The
-                    event fires here too (see TEST MODE below).
+                    connection: test-user-1@rspade.test, site 1, at the most
+                    privileged role this application declares (derived from
+                    User_Model::$enums). The event fires here too (see TEST MODE
+                    below).
 
     manual          An operator or an application command calling create() directly.
                     The default source when none is given.
@@ -181,8 +188,8 @@ THE HANDLER RECIPE
         handed: $user->getConnectionName().
 
       - AN EXPLICIT ROLE BELONGS TO THE CALLER. The reference handler fills in a role
-        only when the framework left it null, so the test baseline's deliberate
-        ROLE_DEVELOPER survives its own creation.
+        only when the framework left it null, so the test baseline's deliberately
+        chosen role survives its own creation.
 
       - THE EVENT NAME IS A LITERAL. Never write #[OnEvent(Rsx_Initial_User::
         EVENT_CREATED)]: attribute arguments are read by reflection during the

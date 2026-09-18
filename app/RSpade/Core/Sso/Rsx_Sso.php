@@ -620,12 +620,16 @@ class Rsx_Sso
      *     begin_challenge() logs the session out - resolving afterwards and failing would
      *     leave a browser logged out, holding a pending challenge, with nowhere to answer it.
      *  3. Otherwise the identity is logged in, the success is recorded (RsxAuth::login()
-     *     records nothing by design), and the link is stamped.
+     *     records nothing by design), and the link is stamped. login() REFUSES an identity
+     *     holding no enabled site membership (users.is_enabled - the framework's switch, not
+     *     the application's account vocabulary); that refusal is recorded
+     *     STATUS_FAILED_DISABLED and denied exactly as the gate above denies.
      *
      * @param Login_User_Model $login_user
      * @param Sso_Identity_Model $identity The link that was used.
      * @return string The URL the browser should be sent to.
-     * @throws Sso_Failed_Exception When the gate denied the sign-in.
+     * @throws Sso_Failed_Exception When the gate denied the sign-in, or the identity holds no
+     *         enabled site membership.
      */
     private static function _complete_login(Login_User_Model $login_user, Sso_Identity_Model $identity): string
     {
@@ -672,7 +676,20 @@ class Rsx_Sso
             return $verify_url;
         }
 
-        RsxAuth::login($login_user);
+        // login() refuses an identity holding no enabled site membership (users.is_enabled -
+        // the framework's switch). A provider proving who somebody is does not make them a
+        // member, so the refusal is spelled exactly the way the authorize gate spells a denial.
+        if (!RsxAuth::login($login_user)) {
+            Login_History::record_failure(
+                (string) $login_user->email,
+                Login_History::STATUS_FAILED_DISABLED,
+                'no enabled site membership',
+                (int) $login_user->id
+            );
+
+            throw new Sso_Failed_Exception('That account cannot be signed in to right now.');
+        }
+
         Login_History::record_success((int) $login_user->id, (string) $login_user->email);
 
         $destination = Rsx::trigger_resolve('sso.login.destination', ['login_user' => $login_user]);

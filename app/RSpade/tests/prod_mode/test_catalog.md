@@ -116,11 +116,14 @@ manifest and finder, no DB.
 | VIEWS-03 | the framework views rendered by name are in the set | php | the set | `errors.rsx_error`, `mail.unsubscribe` present | implemented | 2026-09-16 |
 | VIEWS-04 | an rsx:: view is located at the hint spelling, the compiled file's identity | php | every rsx:: name | path starts with `base_path('rsx')` | implemented | 2026-09-16 |
 
-## cli/prod_lifecycle.sh (cli, bash)
+## cli/prod_lifecycle.sh (cli, bash), wrapped by `Prod_Lifecycle_Cli_Test`
 
 The real round trip on the box the test runs on: three builds, roughly four minutes.
-Run it with `bash`, not `rsx:test` (bash tests are not manifest-discovered). Ends in
-development mode whatever happens - the EXIT trap runs `rsx:prod:disable`.
+`Prod_Lifecycle_Cli_Test` runs the script and asserts its exit code and its `PASS:`
+verdict; it is `$explicit_group_only`, so it RUNS ONLY WHEN THE GROUP IS NAMED:
+`php artisan rsx:test --framework --group=prod_mode --sequential`. The script stays
+runnable with `bash` on its own. Ends in development mode whatever happens - the EXIT
+trap runs `rsx:prod:disable`.
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
@@ -134,12 +137,15 @@ development mode whatever happens - the EXIT trap runs `rsx:prod:disable`.
 | LIFE-08 | rsx:build --force is the repair | cli | rsx:build --force, GET /login | seal written, 200 | implemented | 2026-09-15 |
 | LIFE-09 | rsx:prod:disable returns a working development box | cli | rsx:prod:disable, rsx:debug / | development, no seal, 200 with no console errors | implemented | 2026-09-15 |
 
-## cli/prod_readonly.sh (cli, bash)
+## cli/prod_readonly.sh (cli, bash), wrapped by `Prod_Readonly_Cli_Test`
 
 The recommended production posture, applied to the real trees: `chmod -R a-w build
 system rsx`, exercise the box, restore every recorded mode. Complete only when the test
 user is unprivileged; as root it proves the bits are gone, that an unprivileged process
 is refused, and that nothing was written anyway. The script says which path it took.
+`Prod_Readonly_Cli_Test` runs it and asserts its verdict; it is `$explicit_group_only`,
+so it RUNS ONLY WHEN THE GROUP IS NAMED, with `--sequential` (two mode-switching classes
+must not share a box concurrently).
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
@@ -151,6 +157,14 @@ is refused, and that nothing was written anyway. The script says which path it t
 | RO-06 | rsx:health reports against read-only trees | cli | rsx:health | exit 0 | implemented | 2026-09-15 |
 | RO-07 | none of it wrote into the three trees | cli | marker, then all of the above | `find -newer` empty | implemented | 2026-09-15 |
 | RO-08 | the modes are restored exactly and development still serves | cli | restore, rsx:prod:disable, GET /login | writable again, development, 200 | implemented | 2026-09-15 |
+
+## Wrappers (php)
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| WRAP-01 | `Prod_Lifecycle_Cli_Test` runs the script to completion and reads its verdict | php | `bash cli/prod_lifecycle.sh` | exit 0 and a `PASS:` line; the log path and the last 40 lines on failure | implemented | 2026-09-17 |
+| WRAP-02 | `Prod_Readonly_Cli_Test` does the same for the read-only posture | php | `bash cli/prod_readonly.sh` | exit 0 and a `PASS:` line | implemented | 2026-09-17 |
+| WRAP-03 | Both are `$explicit_group_only` - a bare suite run never walks into a full build | php | the selector | asserted in `tests/test_runner/php/Explicit_Group_Test.php` | implemented | 2026-09-17 |
 
 ## Build_Context_Test (php)
 

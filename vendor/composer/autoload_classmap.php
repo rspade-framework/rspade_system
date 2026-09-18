@@ -426,6 +426,8 @@ return array(
     'App\\RSpade\\Core\\Database\\Rsx_Data_Wipe' => $baseDir . '/app/RSpade/Core/Database/Rsx_Data_Wipe.php',
     'App\\RSpade\\Core\\Database\\Rsx_Result_Set' => $baseDir . '/app/RSpade/Core/Database/Rsx_Result_Set.php',
     'App\\RSpade\\Core\\Database\\Schema\\Grammars\\Schema_MySqlGrammar' => $baseDir . '/app/RSpade/Core/Database/Schema/Grammars/Schema_MySqlGrammar.php',
+    'App\\RSpade\\Core\\Database\\Schema_Contract' => $baseDir . '/app/RSpade/Core/Database/Schema_Contract.php',
+    'App\\RSpade\\Core\\Database\\Schema_Contract_Health_Checks' => $baseDir . '/app/RSpade/Core/Database/Schema_Contract_Health_Checks.php',
     'App\\RSpade\\Core\\Database\\SeederPaths' => $baseDir . '/app/RSpade/Core/Database/SeederPaths.php',
     'App\\RSpade\\Core\\Database\\SqlQueryTransformer' => $baseDir . '/app/RSpade/Core/Database/SqlQueryTransformer.php',
     'App\\RSpade\\Core\\Database\\TextTypes\\Rsx_Text_Abstract' => $baseDir . '/app/RSpade/Core/Database/TextTypes/Rsx_Text_Abstract.php',

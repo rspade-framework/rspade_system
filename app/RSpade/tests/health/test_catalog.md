@@ -121,7 +121,7 @@ reports as a parameter and is driven directly.
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
-| HEALTH-PROD-MODES | every check in the class declares exactly the two sealed modes, and the test knows about every check the class declares | php | discover() | modes == ['debug','production'] for all five | implemented | 2026-09-15 |
+| HEALTH-PROD-MODES | every check in the class declares exactly the two sealed modes, and the test knows about every check the class declares | php | discover() | modes == ['debug','production'] for all six | implemented | 2026-09-17 |
 | HEALTH-PROD-SEAL | an intact seal is OK; drift is a FAIL carrying the finding and naming rsx:build --force | php | _seal_row(true, []) / (true, [finding]) | OK; FAIL naming the file and the rebuild | implemented | 2026-09-15 |
 | HEALTH-PROD-SEAL-NONE | a missing seal is a FAIL naming the build | php | _seal_row(false, []) | FAIL; rsx:build --force | implemented | 2026-09-15 |
 | HEALTH-PROD-URL | https is OK; http, a schemeless value and an empty one all FAIL naming APP_URL | php | _app_url_row per value | OK; three FAILs | implemented | 2026-09-15 |
@@ -129,6 +129,9 @@ reports as a parameter and is driven directly.
 | HEALTH-PROD-AUTOFILL | login auto-fill on a sealed build is a FAIL naming RSPADE_LOGIN_AUTOFILL | php | _login_autofill_row(true/false) | OK; FAIL + key | implemented | 2026-09-15 |
 | HEALTH-PROD-CONSOLE | the console_debug row is INFO and names the variant (stripped vs intact) | php | _console_debug_row per mode | two INFO rows | implemented | 2026-09-15 |
 | HEALTH-PROD-MAIL | the development catcher on a sealed build WARNs and names the silent outage; live is OK | php | _mail_delivery_row('aiosmtpd'/'live') | WARN naming 'no recipient'; OK | implemented | 2026-09-15 |
+| HEALTH-PROD-HOST | a .dev. hostname on a sealed build FAILs, naming the host and BOTH outbound consequences (email redirected to the catchall, SMS recorded Suppressed) | php | _hostname_row('app.dev.example.test') | FAIL; detail names the host, 'catchall' and 'Suppressed'; remediation names APP_URL + rsx:build --force | implemented | 2026-09-17 |
+| HEALTH-PROD-HOST-OK | an ordinary production hostname is OK with nothing to remediate | php | _hostname_row('app.example.test') | OK; remediation null | implemented | 2026-09-17 |
+| HEALTH-PROD-HOST-SUBSTR | the row asks the IDENTICAL question Rsx::is_dev_site() asks - the dotted substring '.dev.', dots on both sides - so a leading 'dev.' label and a trailing '.dev' are both OK | php | _hostname_row per host | OK for dev.example.test / example.dev / devel.* / mydev.*; FAIL for a.dev.b and staging.dev.example.test | implemented | 2026-09-17 |
 
 ## Opcache_Advisory_Test (php)
 
@@ -144,3 +147,30 @@ by the stamp, never by waiting.
 | HEALTH-OPCACHE-CLI | a CLI process is never advised and never consumes the live window - OPcache is correctly off for the CLI SAPI | php | check() under the suite's cli SAPI | no line; live key unstamped | implemented | 2026-09-15 |
 | HEALTH-OPCACHE-INI | an ini nothing declares reads as OFF, never as enabled | php | _ini_enabled(false/'0'/'1'/'On') | false, false, true, true | implemented | 2026-09-15 |
 | HEALTH-OPCACHE-MSG | the line names the exact setting, says it is a recommendation, and states its own cadence | php | message() | contains opcache.enable=1, 'recommendation', '6 hours' | implemented | 2026-09-15 |
+
+## Schema_Contract_Test (php)
+
+The framework's contract on application-owned tables (`Core/Database/Schema_Contract`)
+and the `Schema Contract` rsx:health rows over it. The live schema is checked by the
+real check; every failure branch is driven through a public row builder with an injected
+shape, because a database missing `users.login_user_id` is not one a test may create.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| SCHEMA-CONTRACT-LIVE | the schema this framework ships satisfies its own contract - the regression test that keeps the map honest as the framework's reads move | php | run_one on the real check | zero FAIL rows | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-SHAPE | one row per contracted table plus `schema: foreign keys`, `schema: rows`, `schema: semantics`, and nothing else | php | run_one on the real check | count == tables + 3; every label present | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-MODES | the check declares no mode axis - the question and its consequence are identical on every box | php | discover() | modes === null | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-COLUMN | a missing required column is a FAIL naming the column AND the framework consumer, so the operator knows it is not their feature | php | _table_row('users', ..., columns minus login_user_id) | FAIL; 'users.login_user_id'; 'Session::get_user()'; 'framework requirement' | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-TABLE | a missing modelled table is a FAIL naming the framework migration that created it | php | _table_row('login_users', ..., null, []) | FAIL; names 2025_11_04_051746_create_login_users_table | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-INDEX | a missing unique index is a FAIL naming the columns, the conventional index name, and what losing uniqueness silently does | php | _table_row('login_users', ..., all columns, no indexes) | FAIL; 'UNIQUE(email)'; 'uk_login_users_email'; 'non-deterministic' | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-INDEX-SET | an index is matched by COLUMN SET, never by name or column order - renaming one breaks nothing | php | _table_row('users', ..., [site_id, login_user_id]) | OK | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-FK | a missing foreign key is a FAIL naming both sides - the four from framework tables into application tables are the contract at its strongest | php | _foreign_keys_row with _sso_identities removed | FAIL; '_sso_identities.login_user_id->login_users.id' | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-ROW | a missing sites id 0 is a FAIL naming the row and what it is for | php | _rows_row with site 0 absent | FAIL; 'sites id 0'; 'sessionless site' | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-ROW-GUARD | a row guarded by `only_if_any` is not asked about when the guard table is empty - an unseeded database is a fresh install, not a broken one | php | _rows_row with the initial-user pair absent from the map | OK; '2 required row(s)' | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-SEMANTIC | an out-of-range dark_mode WARNs and never FAILs, names the column, says what the framework silently does instead, and carries a runnable remedy | php | _semantics_row with the dark_mode finding | WARN; 'login_users.dark_mode'; 'AUTO'; 'UPDATE login_users' | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-SEMANTIC-OK | nothing found is nothing reported | php | _semantics_row with two clean probes | OK; '2 semantic probe(s)' | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-ROLE-ENUM | the one PHP-side probe reads the live role declaration and finds permissions + can_admin_roles on every entry | php | _role_enum_finding() | null | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-CONSUMER | every contracted column names the framework code that reads or writes it - that string is the whole value of the map | php | Schema_Contract::tables() | every 'where' non-empty | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-NO-AUDIT | audit pairs and timestamps are deliberately absent - normalize_schema guarantees them, so a finding could only duplicate a repair | php | Schema_Contract::tables() | none of the eight columns declared anywhere | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-DELETED-AT | deleted_at IS contracted, on exactly the four soft-deleting tables - normalization never adds it and losing it fatals every query | php | Schema_Contract::tables() | declared iff table in {users, login_users, portal_users, sites} | implemented | 2026-09-17 |
+| SCHEMA-CONTRACT-PROBE-SHAPE | every probe declares a kind the check knows how to run and a remedy; a count probe names its table and predicate | php | Schema_Contract::probes() | kind in {enum,count}; remediation non-empty | implemented | 2026-09-17 |

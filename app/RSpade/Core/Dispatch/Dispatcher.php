@@ -397,6 +397,19 @@ class Dispatcher
         // Load and validate handler class
         static::__load_handler_class($handler_class);
 
+        // --- Site membership (users.is_enabled) ---
+        // The request-time half of the framework's is_enabled contract, asked ONCE per
+        // request and ahead of the gates: a session whose membership was disabled or
+        // deleted since it was established is ended here, and the caller gets the ordinary
+        // unauthorized channel below - which, having just been logged out, is the login
+        // redirect with the intended URL captured. An application writes no is_enabled
+        // check of its own. See: php artisan rsx:man session
+        if (!Session::enforce_enabled_membership()) {
+            $response = static::__build_response(response_auth_required());
+
+            return static::__transform_response($response, $original_method);
+        }
+
         // --- Declarative #[Auth] gates ---
         // The framework authorization seam for #[Route] / #[SPA] surfaces: every gate
         // the matched route declares must pass BEFORE any application code runs -
@@ -545,7 +558,16 @@ class Dispatcher
 
         // A harness login is not a real login, so it must not stamp last_login (same principle
         // as an impersonation identity swap).
-        \App\RSpade\Core\Auth\RsxAuth::login($user, touch_last_login: false);
+        //
+        // login() refuses an identity with no ENABLED site membership, and the harness is not
+        // an exemption from that: a disabled account renders anonymous here exactly as it would
+        // answer a password. The rejection is named because a harness run against a disabled
+        // account is a fixture problem, not a legitimate anonymous request.
+        if (!\App\RSpade\Core\Auth\RsxAuth::login($user, touch_last_login: false)) {
+            console_debug('AUTH', 'DEV AUTH REJECTED: login user ' . (int) $user->id
+                . ' holds no enabled site membership - rendering anonymous');
+            return;
+        }
 
         console_debug('AUTH', "DEV AUTH: Authenticated as user {$user->id} via signed X-Dev-Auth-Token");
     }

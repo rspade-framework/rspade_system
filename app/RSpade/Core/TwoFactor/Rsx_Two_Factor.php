@@ -693,11 +693,16 @@ class Rsx_Two_Factor
      *  5. On success the pending value is forgotten FIRST, then RsxAuth::login() stamps
      *     last_login, then the success is recorded. login() records nothing itself, by
      *     design, so this is the method that owns the history row.
+     *  6. login() REFUSES an identity holding no enabled site membership (users.is_enabled -
+     *     the framework's switch, enforced at every sign-in and at every request). A correct
+     *     code from such an identity is recorded STATUS_FAILED_DISABLED and then fails with
+     *     the wrong-code message, so the two are indistinguishable from the outside.
      *
      * @param array $input {assertion: array} or {code: string}.
      * @return Login_User_Model The identity now signed in.
      * @throws \App\RSpade\Core\Auth\Auth_Throttled_Exception When the client IP is locked out.
-     * @throws Two_Factor_Failed_Exception When the window has closed or the answer is wrong.
+     * @throws Two_Factor_Failed_Exception When the window has closed, the answer is wrong, or the
+     *         identity holds no enabled site membership.
      */
     public static function verify_challenge(array $input): Login_User_Model
     {
@@ -738,7 +743,16 @@ class Rsx_Two_Factor
 
         self::abandon_challenge();
 
-        RsxAuth::login($login_user);
+        // The second factor was answered correctly, and the identity still holds no enabled
+        // site membership - so the sign-in is refused with the same message a wrong code gets.
+        // The framework's is_enabled switch is not something to explain to whoever is typing;
+        // the audit trail carries the real classification.
+        if (!RsxAuth::login($login_user)) {
+            Login_History::record_failure($email, Login_History::STATUS_FAILED_DISABLED, null, $login_user_id);
+
+            throw new Two_Factor_Failed_Exception('That code is not valid.');
+        }
+
         Login_History::record_success($login_user_id, $email);
 
         return $login_user;

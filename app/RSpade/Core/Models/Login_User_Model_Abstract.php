@@ -59,6 +59,7 @@ use App\RSpade\Core\Session\Session;
  * @property string $deleted_at
  * @property int $deleted_by_id
  * @property int $deleted_by_type
+ * @property int $is_developer
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
@@ -381,5 +382,25 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
         $model = static::find($id);
 
         return $model ?: false;
+    }
+
+    /**
+     * Convert model to array, carrying is_developer only when it is set.
+     *
+     * The flag rides a payload when it is true and is absent otherwise, so a consumer
+     * reads it as a truthiness question and an absent key means false. Every ordinary
+     * identity therefore ships no developer key at all.
+     *
+     * @return array
+     */
+    public function toArray()
+    {
+        $array = parent::toArray();
+
+        if (empty($array['is_developer'])) {
+            unset($array['is_developer']);
+        }
+
+        return $array;
     }
 }

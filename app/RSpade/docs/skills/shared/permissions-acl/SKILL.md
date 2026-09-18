@@ -23,7 +23,6 @@ Lower id = higher privilege. IDs are 100-based to leave room for insertion.
 
 | ID | Constant | Label | Can admin roles |
 |---|---|---|---|
-| 100 | `ROLE_DEVELOPER` | Developer | 200-800 (system-assigned only) |
 | 200 | `ROLE_ROOT_ADMIN` | Root Admin | 300-800 (system-assigned only) |
 | 300 | `ROLE_SITE_OWNER` | Site Owner | 400-800 |
 | 400 | `ROLE_SITE_ADMIN` | Site Admin | 500-800 |
@@ -31,6 +30,8 @@ Lower id = higher privilege. IDs are 100-based to leave room for insertion.
 | 600 | `ROLE_USER` | User | none |
 | 700 | `ROLE_VIEWER` | Viewer | none |
 | 800 | `ROLE_DISABLED` | Disabled | none |
+
+**A developer is not a role.** Whether somebody builds this installation is `login_users.is_developer`, read with `Session::is_developer()` (JS: `window.rsxapp.is_developer`, present only when true) and set only by hand in the database - `rsx:man session`.
 
 `has_role()` is an **"at least" test** - same or higher privilege (lower id). `can_admin_role()` reads the "can admin roles" list and is what **prevents privilege escalation**: a Site Admin cannot create a Site Owner.
 

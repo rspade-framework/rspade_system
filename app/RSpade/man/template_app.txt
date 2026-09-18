@@ -284,7 +284,7 @@ NOTES
     - YOUR /rsx/ is meant to be CHANGED; the shipped reference_app copy is not.
       Treat the framework (/system/) as upstream and your /rsx/ as yours; pull
       framework updates, keep your app.
-    - Dev-only conveniences (demo auto-share, debug login auto-fill, seeded demo data)
+    - Dev-only conveniences (debug login auto-fill, seeded demo data)
       are gated to dev sites and never run in production - see portal(3) "SAMPLE
       APPLICATION". Strip them when building a real product.
 

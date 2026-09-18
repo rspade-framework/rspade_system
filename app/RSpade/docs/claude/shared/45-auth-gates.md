@@ -10,6 +10,8 @@
 
 **Three layers, do not conflate them.** **Roles** = `users.role_id`, hierarchical (lower id = higher privilege). **ACLs** = `user_permissions` GRANT/DENY rows layering per-user exceptions (DENY wins). **Auth-gate checks** = named `#[Auth_Check]` methods on the realm's `Permission` class, **evaluated LIVE on every ask — never cached between asks**, so keep the body to in-memory resolution and hoist anything expensive into a model-layer cache with its own invalidation. Usually they read roles and ACLs, but a check may consider any user- or environment-scoped fact. **A check is where "may this user" is answered; roles and ACLs are only the most common inputs.**
 
+**A DEVELOPER is not one of those layers**: it is `login_users.is_developer`, read as `Session::is_developer()` in PHP and `window.rsxapp.is_developer` in JS (present ONLY when true, so absence reads as false) — never a role, never a hostname, and set only by hand in the database (`rsx:man session`).
+
 **`can_access($target)`** (both languages, same spellings as `Rsx::Route()`) is true when every gate on the TARGET passes — **so link visibility derives from the destination's own declaration and a sidebar cannot lie.** **Realms**: staff and portal check registries are separate namespaces, so a cross-realm check name is a build error.
 
 Skills: `rspade:auth-gates` (writing checks, the JS export, `#[Auth_Realm]`, the build-failure worklist), `rspade:permissions-acl` (the `Permission` API, roles, GRANT/DENY rows). Details: `rsx:man auth_gates`, `rsx:man acls`.

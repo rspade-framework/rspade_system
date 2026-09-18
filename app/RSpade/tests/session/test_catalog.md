@@ -1,7 +1,7 @@
 # Test catalog: session
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues) | `planned`.
-Type: php / cli / asset / http / playwright. Last updated: 2026-09-14.
+Type: php / cli / asset / http / playwright. Last updated: 2026-09-17.
 
 ## Session_Cli_Test (php, default isolation) - CLI impersonation & resolvers
 
@@ -45,6 +45,22 @@ identity must never mint a session row for a caller who has none.
 | sess-apiacc-04 | the headless Bearer tier is consulted | _set_api_identity, flag on | has_session() false, has_api_access() true | implemented |
 | sess-apiacc-05 | asking mints no session row | no identity | _sessions count unchanged, has_session() still false | implemented |
 | sess-apiacc-06 | asking with a declared identity mints no row | CLI identity | _sessions count unchanged | implemented |
+
+## Developer_Flag_Test (php, default isolation) - login_users.is_developer
+
+The whole of what a developer is: the initial user carries the flag, toArray() carries
+the key only when it is true (so absence reads as false), and Session::is_developer()
+answers from the signed-in LOGIN identity - never a role, never a hostname.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-dev-01 | the initial user is a developer | baseline login identity 1 | is_developer truthy | implemented |
+| sess-dev-02 | the column defaults off | a new login_users row | is_developer falsy | implemented |
+| sess-dev-03 | a developer's payload carries the key | find(1)->toArray() | is_developer present and true | implemented |
+| sess-dev-04 | an ordinary payload omits it | new identity ->toArray() | no is_developer key at all | implemented |
+| sess-dev-05 | the session reads the flag | impersonate(site, login 1, user 1) | is_developer() true | implemented |
+| sess-dev-06 | it is the LOGIN identity's flag | impersonate with an ordinary login id | is_developer() false | implemented |
+| sess-dev-07 | anonymous is never a developer | reset_impersonation() | is_developer() false | implemented |
 
 ## Session_Cli_Row_Test (php, default isolation) - the CLI session ROW
 
@@ -317,3 +333,26 @@ every user-scoped endpoint while the actor stamp was correct.
 | sess-ajaxdbg-06 | no site anywhere, no --site: refused | login user with no rows | exit 1, `site_required`, names --site | implemented |
 | sess-ajaxdbg-07 | several sites, no --site: refused | rows on sites A and B | exit 1, `site_required`, lists A and B | implemented |
 | sess-ajaxdbg-08 | several sites, --site chooses | rows on A and B, `--site=B` | site B and B's users row | implemented |
+
+
+## Enabled_Membership_Test (php, default isolation) - `users.is_enabled` is the framework's
+
+The framework's own site-membership switch, enforced in two places: at sign-in
+(`RsxAuth::attempt()` / `RsxAuth::login()` / `has_enabled_membership()`) and at request time
+(`Session::enforce_enabled_membership()`, which the dispatcher and the Ajax browser entry point
+call ahead of the `#[Auth]` gates). Failures are redis counters outside the per-test
+transaction, so every test uses a fresh email and deletes its keys in teardown. Memberships are
+written inside a DECLARED tenant - the site-scope trait sets `site_id` from the session and
+refuses a cross-site save or delete.
+
+| ID | Purpose | Type | Input | Expected | Status |
+|----|---------|------|-------|----------|--------|
+| sess-enabled-01 | the only membership is disabled: refused like a wrong password, classified FAILED_DISABLED | php | identity + one `is_enabled = 0` membership, correct password | `attempt()` false, no identity, no success row, counter 1, `failed_disabled` logged | implemented |
+| sess-enabled-02 | no membership at all is the same answer | php | credential row only, correct password | `attempt()` false, no identity | implemented |
+| sess-enabled-03 | one enabled membership out of two authenticates | php | disabled on site 1, enabled on a second site | `attempt()` true, identity set, one SUCCESS row | implemented |
+| sess-enabled-04 | `has_enabled_membership()` reads across every site | php | none -> disabled -> enabled | false, false, true | implemented |
+| sess-enabled-05 | `login()` refuses without touching the session or recording | php | disabled identity | false, session identity unchanged, no history row | implemented |
+| sess-enabled-06 | request time: disabling a membership ends the session | php | acting identity, then `is_enabled = 0` | `enforce_enabled_membership()` false, `get_login_user_id()` null | implemented |
+| sess-enabled-07 | request time: a DELETED membership ends it too | php | acting identity, then soft-delete the row | false, logged out | implemented |
+| sess-enabled-08 | anonymous is permitted and asking creates nothing | php | no identity | true, `has_session()` false | implemented |
+| sess-enabled-09 | end to end: a disabled membership mid-session redirects a page to login and answers an Ajax call `auth_required` | http | live session, disable the row, request a page / call an endpoint | 302 to login / `auth_required` envelope | deferred (the http harness runs against the development database; disabling a live account's membership there is not a fixture the suite may create - verified by hand with `rsx:debug` during W2) |

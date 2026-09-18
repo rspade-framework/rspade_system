@@ -229,6 +229,64 @@ regions
   Records: Country subdivisions
   Note: Reference data table, could be considered infrastructure
 
+THE FRAMEWORK CONTRACT ON APPLICATION TABLES
+-------------------------------------------
+An application-owned table - one with no leading underscore - may be altered by
+the application that owns it. Seventeen of them are nonetheless MODELLED BY THE
+FRAMEWORK, which reads and writes named columns on them, joins them, and in four
+places points a foreign key from one of its own `_`-prefixed tables into them:
+
+  users, login_users, sites, portal_users, user_permissions, user_profiles,
+  user_invites, user_verifications, countries, regions, ip_addresses,
+  email_queue, email_recipients, email_attachments, sms_queue, sms_recipients,
+  portal_notifications
+
+Examples of what the framework reads by name: users.login_user_id and
+users.site_id (Session::get_user(), the Site_Scoped global scope),
+users.is_api_access_enabled (the sole external-API predicate),
+login_users.email and login_users.password (every sign-in),
+login_users.dark_mode and .timezone (the per-identity preferences),
+sites.id 0 (the sessionless site), user_permissions.is_grant (a NULL reads as a
+DENY, and DENY wins), and the two outbound queues in full.
+
+The four foreign keys INTO application-owned tables are the contract at its
+strongest, because the framework's own storage cannot be written at all if the
+target is gone: _file_attachments.site_id -> sites.id,
+_sessions.portal_user_id -> portal_users.id,
+_sso_identities.login_user_id -> login_users.id and
+_two_factor_credentials.login_user_id -> login_users.id.
+
+THE DECLARATION is App\RSpade\Core\Database\Schema_Contract: one map, per
+table, of the required columns - each naming the framework code that reads or
+writes it - the unique indexes the framework relies on, the foreign keys, the
+rows it assumes (sites id 0, the configured default site, and the initial user
+pair when the database has been seeded at all), and the semantic probes.
+
+THE CHECK is the "Schema Contract" row of rsx:health (rsx:man health), in every
+mode: one row per table, plus foreign keys, rows and semantics. A missing table,
+column, unique index, foreign key or row is a FAIL naming the consumer that will
+break; a semantic finding is a WARN.
+
+WHAT IS NOT IN THE CONTRACT, and why:
+
+  - The audit pairs (created_by_id/_type, updated_by_id/_type,
+    deleted_by_id/_type) and created_at/updated_at. migrate:normalize_schema
+    adds them to every table on every migrate, so a finding could only duplicate
+    a repair that has already happened.
+  - deleted_at is the exception: normalization never adds it, and losing it
+    fatals every query a soft-deleting model issues, so it IS required on users,
+    login_users, portal_users and sites.
+  - Column types, nullability and defaults. Presence is what the framework
+    depends on and what an ALTER realistically removes.
+  - Columns the framework only declares on a model and never reads.
+
+AN APPLICATION THAT ALTERS ONE OF THESE TABLES KEEPS THE CONTRACT. Adding
+columns, indexes and relations of its own is expected; removing or renaming one
+of the contracted columns is not, and rsx:health is where that is discovered
+rather than in a stack trace on a request. The same rule extends the map in the
+other direction: a new framework read of an application-owned table adds its
+column to Schema_Contract in the same commit.
+
 ARCHITECTURAL PRINCIPLES
 -------------------------
 

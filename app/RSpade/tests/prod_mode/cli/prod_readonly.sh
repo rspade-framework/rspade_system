@@ -193,7 +193,11 @@ status="$(http_status "$bundle_path")"
 artisan migrate > /dev/null || fail "migrate exited non-zero with the trees read-only"
 artisan rsx:task:run Session_Cleanup_Service cleanup_sessions > /dev/null \
     || fail "a framework task exited non-zero with the trees read-only"
-artisan rsx:health > /dev/null || fail "rsx:health exited non-zero with the trees read-only"
+# The exit code is not asserted - rows unrelated to the trees (hostname, scheduler) are
+# facts about the box - only that rsx:health ran and reported the seal intact.
+health_output="$(artisan rsx:health)" || true
+echo "$health_output" | grep -Eq 'Production Seal[[:space:]|]+OK' \
+    || fail "rsx:health does not report the Production Seal row OK with the trees read-only"
 
 written="$(find $TREES -newer "$MARKER" -type f 2>/dev/null)"
 rm -f "$MARKER"

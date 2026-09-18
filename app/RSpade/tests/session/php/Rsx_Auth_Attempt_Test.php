@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Hash;
 use Redis;
 use App\RSpade\Core\Auth\RsxAuth;
 use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Login_History;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -92,6 +93,19 @@ class Rsx_Auth_Attempt_Test extends Rsx_Test_Abstract
         $login_user->is_verified = true;
         $login_user->status_id = Login_User_Model::STATUS_ACTIVE;
         $login_user->save();
+
+        // AN ENABLED SITE MEMBERSHIP IS PART OF BEING ABLE TO SIGN IN. users.is_enabled is the
+        // framework's switch: RsxAuth::attempt() and RsxAuth::login() both refuse an identity
+        // that holds none, so a credential row on its own is not a usable fixture. Which site
+        // it lands on does not matter here - the predicate reads across all of them - and the
+        // site-scope trait sets the column from the session anyway.
+        $user = new User_Model();
+        $user->login_user_id = $login_user->id;
+        $user->email = $email;
+        $user->first_name = 'Fixture';
+        $user->last_name = 'Identity';
+        $user->is_enabled = 1;
+        $user->save();
 
         return $login_user;
     }

@@ -80,7 +80,6 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     /**
      * _AUTO_GENERATED_ Enum constants
      */
-    const ROLE_DEVELOPER = 100;
     const ROLE_ROOT_ADMIN = 200;
     const ROLE_SITE_OWNER = 300;
     const ROLE_SITE_ADMIN = 400;
@@ -144,14 +143,6 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
      */
     public static $enums = [
         'role_id' => [
-            // ROLE_DEVELOPER = 100
-            100 => [
-                'constant' => 'ROLE_DEVELOPER',
-                'label' => 'Developer',
-                'permissions' => [1, 2, 3, 4, 5, 6, 7], // All core PERM_* (1-7)
-                'can_admin_roles' => [200, 300, 400, 500, 600, 700, 800], // All roles below
-                'selectable' => false, // Developer assigned by system only
-            ],
             // ROLE_ROOT_ADMIN = 200
             200 => [
                 'constant' => 'ROLE_ROOT_ADMIN',

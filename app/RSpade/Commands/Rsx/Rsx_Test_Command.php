@@ -164,6 +164,19 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     protected int $queue_request_id = 0;
 
     /**
+     * The groups whose $explicit_group_only classes this selection passed over, and how
+     * many classes that was. Recorded by select_test_classes() and reported once by
+     * discover_selected_classes(), so a class that is not in the run is never silently
+     * absent from it.
+     *
+     * @var array<int, string>
+     */
+    protected array $explicit_only_skipped = [];
+
+    /** @var int */
+    protected int $explicit_only_skipped_count = 0;
+
+    /**
      * The name and signature of the console command.
      *
      * @var string
@@ -394,7 +407,23 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         // Deterministic, reproducible run order (by class name).
         ksort($test_classes);
 
-        return $this->select_test_classes($test_classes, $specific_tests, $filters, $groups, $framework_only);
+        $selected = $this->select_test_classes($test_classes, $specific_tests, $filters, $groups, $framework_only);
+
+        // Say what was passed over. ONE line, and only when something was: a class the
+        // runner declines to run on its own initiative has to be visible, or the suite's
+        // green is a green for a set nobody stated.
+        if ($this->explicit_only_skipped_count > 0) {
+            $count = $this->explicit_only_skipped_count;
+            $this->line(
+                ($count === 1 ? '1 class runs only when its group is named: ' : $count . ' classes run only when their group is named: ')
+                . implode(', ', $this->explicit_only_skipped)
+                . ' (rsx:test ' . ($framework_only ? '--framework ' : '')
+                . '--group=' . $this->explicit_only_skipped[0] . ')'
+            );
+            $this->newLine();
+        }
+
+        return $selected;
     }
 
     /**
@@ -585,17 +614,35 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      */
     private static function __file_in_groups(string $file, array $groups): bool
     {
-        if ($file === '' || !preg_match('#(?:^|/)tests/([^/]+)/#', $file, $m)) {
+        $group = self::__file_group($file);
+
+        if ($group === null) {
             return false;
         }
 
-        foreach ($groups as $group) {
-            if (strcasecmp($m[1], (string) $group) === 0) {
+        foreach ($groups as $wanted) {
+            if (strcasecmp($group, (string) $wanted) === 0) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    /**
+     * The group a test file belongs to - the concern directory name - or null when it sits
+     * directly in a tests/ root and therefore belongs to none.
+     *
+     * @param string $file Manifest-relative path of the test file
+     * @return string|null
+     */
+    private static function __file_group(string $file): ?string
+    {
+        if ($file === '' || !preg_match('#(?:^|/)tests/([^/]+)/#', $file, $m)) {
+            return null;
+        }
+
+        return $m[1];
     }
 
     /**
@@ -1155,8 +1202,12 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
      * The class-level selection - which classes this invocation runs - applied in exactly
      * one place so the sequential loop and the parallel orchestrator can never disagree.
      * Every decision the historical loop made inline is made here: framework/app partition,
-     * --group, specific-class args, abstract skip, and the --filter "selects nothing in this
-     * class" skip. Order is the caller's (name-sorted) order.
+     * --group, specific-class args, abstract skip, the $explicit_group_only skip, and the
+     * --filter "selects nothing in this class" skip. Order is the caller's (name-sorted)
+     * order.
+     *
+     * The explicit-only skips are recorded in $explicit_only_skipped for the caller to
+     * report; the array is reset on every call, so it describes THIS selection.
      *
      * @param array $test_classes Manifest entries (fqcn + file), already name-sorted
      * @param array $specific_tests
@@ -1173,6 +1224,8 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         bool $framework_only
     ): array {
         $selected = [];
+        $this->explicit_only_skipped = [];
+        $this->explicit_only_skipped_count = 0;
 
         foreach ($test_classes as $test_class_info) {
             if (!isset($test_class_info['fqcn'])) {
@@ -1210,6 +1263,24 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             $reflection = new ReflectionClass($class_name);
             // @PHP-REFLECT-01-EXCEPTION - Test runner needs ReflectionClass for filtering
             if ($reflection->isAbstract()) {
+                continue;
+            }
+
+            // A class that mutates the BOX rather than the test database runs only when
+            // asked for by name: its group named with --group, or the class itself named as
+            // a specific test. Both of those already narrowed the loop above, so reaching
+            // here with neither selector set IS the bare run this class opts out of.
+            //
+            // Checked BEFORE --filter, so a filter that happens to match one of these
+            // classes cannot drag it into an ordinary run, and so the skip is still
+            // reported when a filter selects nothing at all.
+            if ($groups === [] && $specific_tests === [] && $class_name::explicit_group_only()) {
+                $group = self::__file_group($file);
+                if ($group !== null && !in_array($group, $this->explicit_only_skipped, true)) {
+                    $this->explicit_only_skipped[] = $group;
+                }
+                $this->explicit_only_skipped_count++;
+
                 continue;
             }
 

@@ -41,7 +41,7 @@
  * runs with no autoloader, no framework and no config: plain filesystem calls only.
  */
 
-require_once __DIR__ . '/rsx_paths.php';
+require_once __DIR__ . '/rsx_mode.php';
 
 (static function (): void {
     // The overwhelmingly common path in the environment this framework ships:
@@ -50,29 +50,11 @@ require_once __DIR__ . '/rsx_paths.php';
         return;
     }
 
-    // Mirror App\RSpade\Core\Rsx::get_mode() exactly, including its default.
-    //
-    // ABSENT MEANS DEVELOPMENT. env('RSX_MODE', MODE_DEVELOPMENT) defaults that
-    // way once booted, so a .env with no RSX_MODE line IS a development install
-    // and is gated like one. Reading it any other way here would mean the
-    // entrypoint and the booted application disagreed about what mode this is.
-    //
-    // Precedence follows phpdotenv: a real environment variable WINS over the
-    // .env file (phpdotenv does not overwrite what the process already has).
-    // This is load-bearing - the test runner exports RSX_MODE=debug to its
-    // subprocesses, and reading only the file would gate a test suite that the
-    // booted framework would have run in debug.
-    $mode = strtolower(trim(rsx_paths_env_value('RSX_MODE')));
-
-    // The alias get_mode() normalizes. An unrecognized value is NOT rejected here:
-    // validation belongs to get_mode(), which throws a better error than a
-    // pre-boot guard could, and this gate must not become a second opinion on
-    // what a valid mode is.
-    if ($mode === 'dev') {
-        $mode = 'development';
-    }
-
-    if ($mode !== '' && $mode !== 'development') {
+    // ONE pre-boot mode reader, shared with the rsx:test refusal in
+    // bootstrap/rsx_preboot.php: it mirrors Rsx::get_mode() including its
+    // absent-means-development default and its environment-beats-file precedence
+    // (bootstrap/rsx_mode.php carries the reasoning).
+    if (rsx_preboot_mode() !== 'development') {
         return;
     }
 

@@ -16,7 +16,9 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxNotFoundException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
+use App\RSpade\Core\Session\Session;
 
 // @FILE-SUBCLASS-01-EXCEPTION
 
@@ -419,6 +421,20 @@ class Ajax
         // Revision history files this call's writes under the endpoint, not under the
         // transport URL the dispatcher saw: the unit of work is Controller::action.
         \App\RSpade\Core\Revisions\Revision::_reset_request_state('ajax', $controller_name . '::' . $action_name);
+
+        // --- Site membership (users.is_enabled) ---
+        // The request-time half of the framework's is_enabled contract, the twin of the
+        // dispatcher's: a session whose membership was disabled or deleted since it was
+        // established is ended here and the call answers the ordinary auth_required envelope,
+        // which the client's generic handlers already render as a sign-in prompt.
+        //
+        // STAFF ONLY. Session is the staff facade, so the row it asks about is the staff
+        // membership; a portal request shares the browser's one session row and would have its
+        // staff identity judged for it. The portal's own per-client rules live in the record
+        // layer (portal_can_read), and the API tier is refused by Rsx_Api_Bearer.
+        if (!Rsx_Portal::is_portal_request() && !Session::enforce_enabled_membership()) {
+            return static::_handle_browser_special_response(response_auth_required());
+        }
 
         // --- Declarative #[Auth] gates ---
         // The framework authorization seam for #[Ajax_Endpoint]: after CSRF (enforced

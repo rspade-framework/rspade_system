@@ -55,10 +55,14 @@ class Login_History
      * verify - a state that does not match, a token exchange the provider refused, a
      * provider account connected to no local identity.
      *
-     * FAILED_LOCKED / FAILED_DISABLED have NO framework producer - account state (status_id,
-     * is_activated, is_verified) is APPLICATION vocabulary, so the app records those outcomes
-     * itself through record_failure(). They are kept here so every app spells the same outcome
-     * the same way.
+     * FAILED_DISABLED is written by the framework wherever a sign-in is refused because the
+     * identity holds no ENABLED site membership (users.is_enabled): RsxAuth::attempt(),
+     * Rsx_Two_Factor::verify_challenge() and Rsx_Sso when RsxAuth::login() refuses. Site
+     * membership is the framework's switch, so the framework records its own refusals.
+     *
+     * FAILED_LOCKED has NO framework producer - identity state (status_id, is_activated,
+     * is_verified) is APPLICATION vocabulary, so the app records that outcome itself through
+     * record_failure(). It is kept here so every app spells the same outcome the same way.
      */
     public const STATUS_SUCCESS = 'success';
     public const STATUS_FAILED_PASSWORD = 'failed_password';

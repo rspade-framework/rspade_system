@@ -88,6 +88,7 @@ LAZY INITIALIZATION
         - Session::is_logged_in() - returns false if no session
         - Session::has_session() - returns false if no session
         - Session::has_api_access() - returns false if no session
+        - Session::is_developer() - returns false if no session
         - Session::init() - only loads existing session, never creates
 
     Example Flow:
@@ -298,6 +299,25 @@ API REFERENCE
 
             JS twin: Permission.has_api_access() - see rsx:man acls.
 
+        Session::is_developer(): bool
+            Whether the signed-in identity is a developer of this installation,
+            read from login_users.is_developer. Does NOT create session - false
+            for an anonymous caller and false for the headless Bearer tier.
+
+            Never a role and never a hostname; set only by hand in the database.
+            See ACCOUNT STATE below. JS twin: window.rsxapp.is_developer, which
+            is present only when it is true.
+
+        Session::enforce_enabled_membership(): bool
+            Framework seam, called once per request by the staff dispatcher and
+            by the Ajax browser entry point, ahead of the #[Auth] gates. Returns
+            true when the request may proceed; LOGS THE SESSION OUT and returns
+            false when the users row for (login_user_id, site_id) is missing or
+            its is_enabled is false. Creates nothing and costs at most one query
+            (it reuses get_user()'s cache). True for an anonymous caller, for a
+            caller with no tenant, and for the headless Bearer tier. See SITE
+            MEMBERSHIP under ACCOUNT STATE below; an application does not call it.
+
         Session::set_login_user_id(int|null $login_user_id,
                                    bool $touch_last_login = true): void
             Log in or out by cross-site login identity ID. Pass null to logout.
@@ -494,35 +514,122 @@ CONTROLLER AUTHENTICATION
     function body, where Session::get_user_id() and friends belong.
 
 ACCOUNT STATE (WHO MAY LOG IN AT ALL)
-    THE DOCTRINE (owner ruling 2026-08-12): the framework authenticates; the
-    APPLICATION decides what an account's state means.
+    THE DOCTRINE (owner rulings 2026-08-12, 2026-09-17): the framework
+    authenticates AND enforces SITE MEMBERSHIP; the APPLICATION decides what an
+    account's IDENTITY state means.
 
-    RsxAuth::attempt() checks exactly two things: the address resolves to a live
-    login identity, and the password matches. It does NOT read
-    login_users.status_id, is_activated or is_verified, and it never will. Those
-    three columns are APPLICATION vocabulary - they ship with the template as a
-    starting point, they are meant to be overridden, and "suspended" means
-    whatever your product says it means. A framework that guessed would either
-    lock out an app that uses the column differently or quietly authenticate one
-    that expected it to be enforced.
+    RsxAuth::attempt() checks exactly three things: the address resolves to a live
+    login identity, the password matches, and the identity holds at least one
+    ENABLED site membership. It does NOT read login_users.status_id, is_activated
+    or is_verified, and it never will. Those three columns are APPLICATION
+    vocabulary - they ship with the template as a starting point, they are meant to
+    be overridden, and "suspended" means whatever your product says it means. A
+    framework that guessed would either lock out an app that uses the column
+    differently or quietly authenticate one that expected it to be enforced.
 
-    Two columns, two owners:
+    users.is_enabled is the other case entirely. It is written by the framework's
+    own user-management surfaces and read by the framework wherever an identity is
+    established, so its meaning is fixed and the framework enforces it. AN
+    APPLICATION DELETES ITS OWN is_enabled CHECKS: repeating one adds nothing, and
+    a listing that filters on it while the framework enforces it elsewhere is how
+    the two drift.
 
-        users.is_enabled        FRAMEWORK. The per-site disable trait on the
-                                site-specific membership - User_Model::is_active()
-                                and the ->enabled() scope read it. "This person no
-                                longer works here."
+    The columns and their owners:
+
+        users.is_enabled        FRAMEWORK. The per-site membership switch -
+                                "this person no longer works here". Enforced at
+                                login and at every request; see SITE MEMBERSHIP
+                                below. User_Model::is_active() and the ->enabled()
+                                scope read the same column.
         login_users.status_id   APPLICATION. Along with is_activated /
         (+ is_activated,        is_verified, the account-level state of the
            is_verified)         cross-site identity. Yours to define and yours to
                                 enforce.
+        login_users.is_developer  FRAMEWORK. Whether this identity is a developer
+                                of the installation. It gates nothing about logging
+                                in; it is here because it is the one piece of
+                                account state a person sets by hand.
+
+    THE DEVELOPER FLAG
+
+    A developer is login_users.is_developer, and nothing else. Read it with
+    Session::is_developer() in PHP, and with window.rsxapp.is_developer in
+    JavaScript - where the key is PRESENT ONLY WHEN TRUE, so client code asks it as
+    a truthiness question and an absent key means false. It is never a role (a role
+    says what somebody may do inside one site's records; this says who builds the
+    software, across every site they belong to) and it is never a hostname (a box is
+    not trusted because of what it is called).
+
+    IT IS SET BY A PERSON, BY HAND, IN THE DATABASE:
+
+        UPDATE login_users SET is_developer = 1 WHERE email = 'someone@example.com';
+
+    There is no UI for it, no endpoint that writes it, no configuration key and no
+    environment variable - and there will not be one. Whoever can open a database
+    client against the production database already has de facto developer access to
+    everything the application can reach, so the flag grants nothing that possession
+    of that client did not already grant; and being able to open one is exactly the
+    competence bar for holding it. Any lesser channel would hand the flag to people
+    who could not otherwise have taken it.
+
+    The initial user - login_users id 1, the account the first-run screen or the
+    RSPADE_DEFAULT_* post-migrate step creates - is a developer, because the first
+    account on an installation belongs to whoever is building it.
+
+    The headless API tier is never a developer tier: a bearer key is a machine
+    credential, and Session::is_developer() answers false for it and for an
+    anonymous caller.
 
     A soft-deleted identity is refused for free and needs no code: Login_User_Model
     uses SoftDeletes, so the global scope hides trashed rows from attempt()'s
     lookup and a deleted account is classified NOT_FOUND - the same answer a
     stranger's address gets, which is the right answer to give a stranger.
 
-    Enforce your statuses in TWO places, and understand why both:
+    SITE MEMBERSHIP (users.is_enabled) - THE FRAMEWORK'S OWN ENFORCEMENT
+
+    Two rules, and an application writes neither of them.
+
+    AT LOGIN. An identity holding no enabled membership on ANY site fails exactly
+    the way a wrong password fails: attempt() returns false and the caller cannot
+    tell the two apart. The audit trail keeps the distinction the caller is denied
+    - Login_History::record_failure() with STATUS_FAILED_DISABLED. The predicate is
+    public, for the rare caller that has to ask it directly:
+
+        RsxAuth::has_enabled_membership($login_user): bool
+
+    Every other door runs through RsxAuth::login(), which asks the same question
+    and RETURNS FALSE without touching the session when the answer is no - so a
+    second factor answered correctly (Rsx_Two_Factor::verify_challenge), a
+    federated sign-in the provider verified (Rsx_Sso), and the development
+    harness's signed dev-auth headers are all refused too. The framework's callers
+    record STATUS_FAILED_DISABLED and then fail in their own vocabulary: the
+    challenge answers "That code is not valid.", SSO answers the same message its
+    sso.login.authorize denial answers, and the harness renders anonymous.
+
+    AT REQUEST TIME. A session that was legitimate five minutes ago must not
+    outlive the membership behind it:
+
+        Session::enforce_enabled_membership(): bool
+
+    When the session names a login user and a site, and the users row for that pair
+    is MISSING or its is_enabled is false, the session is LOGGED OUT and false is
+    returned. The staff dispatcher calls it once per request immediately before the
+    #[Auth] gates, and the Ajax browser entry point calls it before its own gates;
+    both then answer response_auth_required() through their ordinary channel - a
+    redirect to login with the intended URL captured for a page, the auth_required
+    envelope for an Ajax call. Disabling an account therefore ends the sessions
+    that were already open, which is the only reading of "disabled" worth having.
+
+    The EFFECTIVE identity is what is checked. Under impersonation the session
+    carries the target, so disabling an account ends an impersonation of it exactly
+    as it ends that account's own sessions.
+
+    The external API tier is enforced separately and earlier - Rsx_Api_Bearer
+    refuses a key whose membership is not active before it mints an identity - and
+    CLI processes have no session row to enforce against.
+
+    Enforce your own IDENTITY statuses in TWO places, and understand why both
+    (site membership needs neither - the framework does it):
 
     1. AT THE LOGIN GATE - your own login function, right after attempt()
        returns true. This stops a bad-state account from getting a session at
@@ -535,9 +642,11 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
            $login_user = Session::get_login_user();
 
            if ($login_user->status_id !== Login_User_Model::STATUS_ACTIVE) {
+               // STATUS_FAILED_LOCKED is the app-owned outcome; the framework
+               // writes STATUS_FAILED_DISABLED itself for site membership.
                Login_History::record_failure(
                    $params['email'],
-                   Login_History::STATUS_FAILED_DISABLED,
+                   Login_History::STATUS_FAILED_LOCKED,
                    'status_id = ' . $login_user->status_id,
                    $login_user->id
                );
@@ -587,10 +696,12 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     reusable and visible to Permission::can_access(). Use pre_dispatch when the
     answer must apply to EVERY surface, gates when it narrows specific ones.
 
-    Session termination is the other half of enforcement: disabling an account
-    leaves its existing sessions alive until the next pre_dispatch runs, so an
-    app that wants the browser signed out NOW calls
+    Session termination is the other half of enforcement FOR YOUR OWN STATUSES:
+    an app-defined suspension leaves existing sessions alive until the next
+    pre_dispatch runs, so an app that wants the browser signed out NOW calls
     Session::terminate_all_sessions_for_user() (SESSION MANAGEMENT below).
+    users.is_enabled needs none of that - enforce_enabled_membership() ends such a
+    session on its very next request.
 
 SECURITY
     Automatic Security Features:

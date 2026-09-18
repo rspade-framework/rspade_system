@@ -368,6 +368,28 @@ RUNNING AND NARROWING A RUN
     neighbouring concern whose name contains it. An application test sitting
     directly in rsx/tests/ belongs to no group and --group can never select it.
 
+    A CLASS MAY REQUIRE TO BE NAMED. A test class declaring
+
+        protected static $explicit_group_only = true;
+
+    runs ONLY when its group is named with --group, or when the class itself is
+    named as a specific test. A bare run skips it, and so does a --filter that
+    matches it - a filter is not an explicit selection. The runner never passes
+    over such a class silently; it prints one line saying how many there were,
+    which groups they are in, and the invocation that runs them:
+
+        1 class runs only when its group is named: prod_mode
+          (rsx:test --framework --group=prod_mode)
+
+    The flag is for a class that mutates THE BOX rather than the test database -
+    one that switches RSX_MODE, rebuilds the real build tree, or changes the
+    permissions of the source trees. Every other test is isolated by
+    construction (a rolled-back transaction, a container's own database, the
+    relocated file root); these are not, and each costs minutes. It is not a
+    place to park a slow or a flaky test: a test nobody ever names is a test
+    nobody runs. The group that has them today is prod_mode - see PRODUCTION
+    MODE below.
+
     Exit code: 1 if any test failed, otherwise 0. A run that selected NOTHING
     prints "No tests were run." and exits 0 - so check the summary line, not
     just the exit code, when a selector is involved.
@@ -382,12 +404,17 @@ RUNNING AND NARROWING A RUN
     framework and its environment (PHP extensions, services, database,
     Redis) behave as the maintainer's do: rsx:test --framework, long, and
     sequential unless that box's container can run nested docker (below). It
-    is rarely needed - after provisioning a new host, before a
-    launch, when an environment is suspect - and it is never part of
-    development or of drafting a framework change request. Tests that
-    exercise the reference application's own models can fail on an
-    application that has removed those template modules; read such a
-    failure as "not applicable here", not as a framework defect.
+    is rarely needed - after provisioning a new host, before a launch, when
+    an environment is suspect - and it is never part of development or of
+    drafting a framework change request.
+
+    IT RUNS ON A DEVELOPMENT BOX, BEFORE THE LAUNCH - never on the sealed box
+    itself. rsx:test refuses to run in debug or production mode at all (see
+    PRODUCTION MODE below), so the audit is performed on the development
+    install the deployment is built from, and the deployment is what seals.
+    Tests that exercise the reference application's own models can fail on an
+    application that has removed those template modules; read such a failure
+    as "not applicable here", not as a framework defect.
 
 DOCKER-ACCELERATED TESTING
 
@@ -544,6 +571,58 @@ PER-TEST STATE RESET
     fails standalone is the signature of borrowed static state - almost always
     this one.
 
+PRODUCTION MODE
+
+    THE SUITE DOES NOT RUN IN A PRODUCTION MODE. On a box whose RSX_MODE is
+    debug or production, rsx:test refuses before Laravel boots:
+
+        rsx:test does not run in a production mode (this box is in production mode).
+        The suite is a CI step that runs before a deployment, on a development box.
+        Return to development first: php artisan rsx:mode:set dev
+
+    Exit 1. `prod` is accepted as the alias it is everywhere else and reported
+    as production.
+
+    WHY. debug and production are SEALED builds - compiled once by an explicit
+    command, then immutable. The suite is the opposite of that: it rebuilds the
+    manifest to index the test trees, provisions and re-provisions a database,
+    and runs fixtures as real indexed source. On a sealed box it either writes
+    into the artifact the seal describes or fails trying.
+
+    WHY THE REFUSAL IS PRE-BOOT rather than a check inside the command. An
+    UNSEALED production box refuses every command at Manifest::init() with the
+    unsealed-build fatal, so a check inside rsx:test would never be reached and
+    the operator would be told their build was unsealed when the real answer is
+    that the suite does not belong on that box at all. A SEALED box was worse:
+    the test trees are indexed only under a test run, the flag that says so
+    arrives one manifest too late on a box that will not rebuild, and the run
+    reported "No test classes found" and exited 0 - a false green, which is the
+    one outcome a test runner must never produce.
+
+    THE CI ORDER, therefore:
+
+        1. php artisan rsx:test              on a DEVELOPMENT box
+        2. php artisan rsx:test --framework  (when the framework itself is
+                                              being audited)
+        3. php artisan migrate               schema first - the manifest bakes
+                                              every model's columns in
+        4. php artisan rsx:build --force     or rsx:mode:set prod - the seal
+
+    The suite proves the code; the build seals it. Nothing runs the suite after
+    step 4, and nothing needs to: the artifact is byte-identical to what step 1
+    tested.
+
+    THE prod_mode GROUP is the exception that proves the rule - the tests whose
+    SUBJECT is the sealed lifecycle. They start from a development box, drive
+    the real rsx:prod:enable / disable, and restore development in an EXIT trap:
+
+        php artisan rsx:test --framework --group=prod_mode --sequential
+
+    They are $explicit_group_only (above), so a bare suite run never walks into
+    them, and --sequential is required rather than advisory: the classes switch
+    the mode of the SAME box, and run concurrently they would seal and unseal
+    the build tree underneath each other. Four builds, several minutes.
+
 TEST TYPES
 
     PHP classes are one of five test types the framework tree recognizes (php,
@@ -681,6 +760,20 @@ TROUBLESHOOTING
         PascalCased, e.g. app/RSpade/tests/locks/php/ ->
         App\RSpade\Tests\Locks\Php.
 
+    "rsx:test does not run in a production mode"
+        This box's RSX_MODE is debug or production, and the suite is a CI step
+        that runs on a development box before a deployment. php artisan
+        rsx:mode:set dev, run the suite, then build and seal. The refusal is
+        pre-boot, so it arrives instead of the unsealed-build fatal an
+        unsealed box would otherwise answer with. See PRODUCTION MODE.
+
+    "A class I expected never ran, and the run says so."
+        A line like "1 class runs only when its group is named: prod_mode"
+        means the class declares $explicit_group_only: it mutates the box
+        rather than the test database, so it runs only when its group is named
+        with --group or the class itself is named. The line prints the
+        invocation.
+
     "My test passes in the suite and fails on its own."
         Borrowed state. Either a fixture another class committed, or a static
         another class set. Portal tests are the classic case: declare the portal
@@ -723,6 +816,8 @@ SEE ALSO
     rsx:man session             the session facade the context helpers drive
     rsx:man portal              Portal_Session and the portal site declaration
     rsx:man turnstile           the validation latch the runner resets per test
+    rsx:man prod                the sealed build the suite runs BEFORE, and the
+                                lifecycle the prod_mode group exercises
     system/app/RSpade/tests/CLAUDE.md
                                 framework test structure: concerns, the five
                                 test types, README/test_catalog contract

@@ -63,6 +63,26 @@ abstract class Rsx_Test_Abstract
     protected static $requires_db_reset = false;
 
     /**
+     * When true, this class runs ONLY when its group is named with --group, or when the
+     * class itself is named as a specific test. A bare suite run - and every --filter over
+     * one - skips it, and the runner says so rather than passing over it silently.
+     *
+     * FOR A CLASS THAT MUTATES THE BOX, not merely the test database. Everything else in
+     * the suite is isolated by construction: a transaction that rolls back, a container
+     * with its own database, a path override pointing the file subsystem at a scratch
+     * tree. A class that switches RSX_MODE, rebuilds the real build tree or changes the
+     * permissions of the source trees has none of that isolation - it acts on the one
+     * shared thing the whole run depends on, and its cost is measured in minutes rather
+     * than seconds. Opting it out of the default run is what makes both facts survivable:
+     * the operator asks for it deliberately, knowing the box is theirs for the duration.
+     *
+     * It is NOT a way to park a slow or a flaky test. A test nobody ever names is a test
+     * nobody runs.
+     * @var bool
+     */
+    protected static $explicit_group_only = false;
+
+    /**
      * The internal flag that marks a process as PART OF A TEST RUN: rsx:test declares it
      * on itself - in system/artisan, PRE-BOOT, because Manifest::init() runs during boot and
      * what it indexes depends on the answer - and Rsx_Artisan forwards it to every child it
@@ -135,6 +155,15 @@ abstract class Rsx_Test_Abstract
     public static function requires_db_reset(): bool
     {
         return static::$requires_db_reset;
+    }
+
+    /**
+     * Runner-facing accessor for the per-class explicit-selection flag.
+     * @return bool
+     */
+    public static function explicit_group_only(): bool
+    {
+        return static::$explicit_group_only;
     }
 
     /**

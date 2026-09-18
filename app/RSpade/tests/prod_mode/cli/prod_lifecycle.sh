@@ -10,7 +10,7 @@
 #   1. rsx:prod:enable produces a SEALED build and the site serves from it - the page
 #      and the compiled bundle it names both answer 200.
 #   2. A sealed box WRITES NOTHING under build/, system/ or rsx/ while it serves, runs
-#      rsx:health, and runs migrate. `find -newer` over the three trees is the proof,
+#      rsx:health (which reports the seal intact), and runs migrate. `find -newer` over the three trees is the proof,
 #      and it is the assertion the downstream field report that started this epic was
 #      about.
 #   3. The refusals hold: rsx:build and rsx:clean both demand --force.
@@ -170,7 +170,13 @@ http_status /login > /dev/null
 http_status "$bundle_path" > /dev/null
 http_status / > /dev/null
 
-artisan rsx:health > /dev/null || fail "rsx:health exited non-zero on a sealed box"
+# rsx:health runs on a sealed box and reports the seal intact. Its EXIT CODE is not
+# asserted: the exit code sums every row, and rows unrelated to the seal - the hostname,
+# the scheduler, login auto-fill - are facts about the box the script runs on, not about
+# the lifecycle. Step 4 asserts the exit code, where the seal itself is the failing row.
+health_output="$(artisan rsx:health)" || true
+echo "$health_output" | grep -Eq 'Production Seal[[:space:]|]+OK' \
+    || fail "rsx:health does not report the Production Seal row OK on a sealed box"
 artisan migrate > /dev/null || fail "migrate exited non-zero on a sealed box"
 
 written="$(find build system rsx -newer "$MARKER" -type f 2>/dev/null)"

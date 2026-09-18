@@ -504,6 +504,13 @@ abstract class Rsx_Bundle_Abstract
         $login_user = $is_portal ? null : Session::get_login_user();
         $rsxapp_data['user_timezone_auto'] = $login_user ? (bool) $login_user->timezone_auto : null;
 
+        // The developer flag, present ONLY when it is true. Client code asks
+        // window.rsxapp.is_developer as a truthiness question, so an ordinary page ships
+        // no key at all and its absence reads as false.
+        if ($login_user && $login_user->is_developer) {
+            $rsxapp_data['is_developer'] = true;
+        }
+
         // Theme, ALWAYS present so client code can read it as a constant. 'mode' is the
         // preference (light/dark/auto); 'is_dark' is the RESOLVED answer, or null under
         // auto - where only the browser knows and Rsx_Dark_Mode.js decides at boot. The

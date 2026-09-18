@@ -57,6 +57,10 @@ IDENTITY MODEL
             status_id       STATUS_ACTIVE(1) / STATUS_INACTIVE(2)
                             / STATUS_SUSPENDED(3)
             timezone        User timezone
+            is_developer    Whether this identity is a developer of the
+                            installation. Set by hand in the database only;
+                            read with Session::is_developer(). Never a role,
+                            never a hostname - see rsx:man session.
             remember_token  (hidden, never_export)
             last_login      Last successful login (set only on real login)
             created_at / updated_at / created_by_id / created_by_type /
@@ -73,7 +77,9 @@ IDENTITY MODEL
             email               Invited email (before login_user is linked)
             first_name / last_name / phone   Display + contact
             role_id             Site role (enum 100-800, see PERMISSIONS below)
-            is_enabled          Active membership flag
+            is_enabled          Active membership flag. FRAMEWORK-OWNED and
+                                framework-enforced at login and at every request
+                                (see Site membership below)
             invite_code         Random 32-char code for the accept URL
             invite_accepted_at  NULL until accepted (marks membership active)
             invite_expires_at   Invitation expiry
@@ -173,11 +179,21 @@ AUTHENTICATION
 
     Account state (status_id / is_activated / is_verified):
         APPLICATION vocabulary, enforced by the application - attempt() checks a
-        live identity plus the password and nothing else, so a non-activated
-        login user authenticates unless YOUR login function refuses it. The
-        framework's own per-site disable trait is users.is_enabled. Where to put
-        the checks (login function + Main::pre_dispatch(), with the ejection
+        live identity, the password, and site membership, so a non-activated
+        login user authenticates unless YOUR login function refuses it. Where to
+        put the checks (login function + Main::pre_dispatch(), with the ejection
         recipe): rsx:man session, ACCOUNT STATE.
+
+    Site membership (users.is_enabled):
+        THE FRAMEWORK'S, not the application's, and enforced twice. An identity
+        with no enabled membership on any site fails attempt() exactly as a wrong
+        password does (recorded STATUS_FAILED_DISABLED), and RsxAuth::login()
+        refuses it too - so the second-factor, federated and dev-auth doors are
+        closed by the same rule. At request time
+        Session::enforce_enabled_membership() ends a session whose membership was
+        disabled or deleted, before the gates, and the caller gets the ordinary
+        auth-required answer. An application deletes its own is_enabled checks.
+        Full treatment: rsx:man session, ACCOUNT STATE / SITE MEMBERSHIP.
 
 AUTHORIZATION (DECLARATIVE GATES)
     Every route/SPA/Ajax/fetch/API surface and every JS action carries an
@@ -236,7 +252,6 @@ PERMISSIONS (ACL)
     php artisan rsx:man acls. Overview only here.
 
     Roles (users.role_id, lower id = higher privilege):
-        ROLE_DEVELOPER   100
         ROLE_ROOT_ADMIN  200
         ROLE_SITE_OWNER  300
         ROLE_SITE_ADMIN  400

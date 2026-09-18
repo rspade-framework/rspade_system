@@ -280,6 +280,43 @@ function rsx_preboot(array $options = []): void
         $GLOBALS['__rsx_internal_flags'][] = '--_test-run';
     }
 
+    /*
+     | THE SUITE DOES NOT RUN IN A PRODUCTION MODE.
+     |
+     | debug and production are SEALED builds - compiled once by an explicit command and
+     | then immutable - and the suite is the opposite of that: it rebuilds the manifest to
+     | index the test trees, provisions and re-provisions a database, and runs fixtures as
+     | real indexed source. Running it on a sealed box either writes into the artifact the
+     | seal describes or fails trying. The suite is a CI step that runs BEFORE a deployment,
+     | on a development box; the deployment is what seals.
+     |
+     | WHY PRE-BOOT, AND NOT A CHECK INSIDE THE COMMAND. A production box with no seal
+     | refuses everything at Manifest::init() with the unsealed-build fatal, so a check
+     | inside handle() would never be reached and the operator would be told their build
+     | was unsealed when the real answer is that the suite does not belong here at all. A
+     | SEALED production box was worse: the manifest carries no test trees (they are
+     | indexed only under --_test-run, and that flag arrives one manifest too late on a box
+     | that will not rebuild), so the run found nothing, printed "No test classes found"
+     | and exited 0 - a false green, which is the one outcome a test runner must never
+     | produce.
+     |
+     | Placed beside the --_test-run declaration above because it asks the same question of
+     | the same argv, and before the command interceptions and the maintenance gate, none
+     | of which classify rsx:test.
+     */
+
+    if (!$script_mode && isset($_SERVER['argv'][1]) && $_SERVER['argv'][1] === 'rsx:test') {
+        require_once __DIR__ . '/rsx_mode.php';
+
+        if (rsx_preboot_mode_is_production_like()) {
+            fwrite(STDERR, 'rsx:test does not run in a production mode (this box is in '
+                . rsx_preboot_mode() . " mode).\n");
+            fwrite(STDERR, "The suite is a CI step that runs before a deployment, on a development box.\n");
+            fwrite(STDERR, "Return to development first: php artisan rsx:mode:set dev\n");
+            exit(1);
+        }
+    }
+
     // The pull's own sub-calls carry this token so they run while the gate is up.
     // Mirrors App\RSpade\Core\Framework\Framework_Maintenance::OVERRIDE_FLAG.
     $fw_update_override = in_array('--_framework-update-override', $GLOBALS['__rsx_internal_flags'], true);

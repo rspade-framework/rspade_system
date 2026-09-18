@@ -106,14 +106,19 @@ A login path that verifies its own password and does not record to `Login_Histor
 
 Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (10), `window_minutes` (15), `lockout_minutes` (15). **A caller with no client IP is never throttled** - CLI, tasks and tests have no remote party to throttle. **Fail closed**: a cache error propagates and the login fails loud; only maintenance mode (redis deliberately stopped) leaves the throttle inert.
 
-### Account state is APPLICATION vocabulary
+### Account state is APPLICATION vocabulary; site membership is the FRAMEWORK's
 
-`attempt()` verifies a live identity plus the password and **nothing else**. `login_users.status_id` / `is_activated` / `is_verified` mean whatever your app decides. Enforce your statuses in **two** places:
+`attempt()` verifies a live identity, the password, and site membership - and **nothing else**. `login_users.status_id` / `is_activated` / `is_verified` mean whatever your app decides. Enforce your statuses in **two** places:
 
 1. Your login function (above) - so a bad-state login never starts.
 2. `Main::pre_dispatch()` - return non-null to halt, which ejects a session whose account went bad AFTER sign-in. **`init()` is a bootstrap hook and cannot eject anybody.**
 
-`users.is_enabled` is the framework's own per-site disable trait, checked by the framework.
+**`users.is_enabled` is NOT yours - delete every check you wrote on it.** It is the framework's per-site membership switch, enforced twice:
+
+- **At login.** No enabled membership on any site -> `attempt()` returns false, indistinguishable from a wrong password, with `Login_History::STATUS_FAILED_DISABLED` in the audit trail. `RsxAuth::has_enabled_membership($login_user)` is the public predicate. Every other door runs through `RsxAuth::login()`, which **returns false without touching the session** for the same reason - so the second factor, a federated sign-in and the `rsx:debug` dev-auth harness are all refused too.
+- **At every request.** `Session::enforce_enabled_membership()` runs ahead of the `#[Auth]` gates in the staff dispatcher and in the Ajax browser entry point: a missing or disabled `users` row for (login user, site) **logs the session out** and answers `response_auth_required()` - a login redirect for a page, the `auth_required` envelope for an Ajax call. The **effective** identity is checked, so disabling an account also ends an impersonation of it.
+
+A listing of "which sites may I use" therefore needs no `is_enabled` filter of its own, and `Site_Unauthorized`-style screens are reached only where the app itself declares the requested site.
 
 ---
 

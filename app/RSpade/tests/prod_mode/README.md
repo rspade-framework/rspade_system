@@ -83,11 +83,22 @@ Batch 2 (seal + guards):
 
 ## Notes
 
-- The two `cli/` scripts are BASH and are therefore not discovered by
-  `rsx:test --framework` (which runs the PHP-runnable types). They are run by
-  `tests/run_all_tests.sh` alongside the `http/` scripts, or directly:
-  `bash system/app/RSpade/tests/prod_mode/cli/prod_lifecycle.sh`. Each takes minutes -
-  they build the box three times - and each restores development mode in an EXIT trap.
+- The two `cli/` scripts are BASH, and each is WRAPPED by a PHP class in the same
+  directory (`Prod_Lifecycle_Cli_Test`, `Prod_Readonly_Cli_Test`) that runs it and reads
+  its `PASS:` verdict, so `rsx:test` is the one way to run a test here. Both wrappers are
+  `$explicit_group_only`: they RUN ONLY WHEN THE GROUP IS NAMED, and a bare suite run says
+  so in one line rather than passing over them silently.
+
+      php artisan rsx:test --framework --group=prod_mode --sequential
+
+  `--sequential` is not optional: both classes switch the mode of the SAME box, and
+  concurrently they would seal and unseal the build tree underneath each other. Each takes
+  minutes - between them they build the box four times - and each restores development
+  mode in an EXIT trap. The scripts stay runnable by hand:
+  `bash system/app/RSpade/tests/prod_mode/cli/prod_lifecycle.sh`.
+- `rsx:test` REFUSES TO RUN AT ALL in a production mode, pre-boot, naming
+  `php artisan rsx:mode:set dev`. The suite is a CI step that runs on a development box
+  before a deployment; the deployment is what seals. See `rsx:man testing`.
 - All Batch 1 tests are pure logic (`$use_database_transactions = false`); no DB.
 - The file-hash tests exercise the PROD content branch WITHOUT flipping the
   process-global `RSX_MODE`, by calling the extracted pure helpers directly.

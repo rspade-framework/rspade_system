@@ -37,6 +37,7 @@ class Production_Health_Test extends Rsx_Test_Abstract
         'Login Auto-fill',
         'Console Debug',
         'Mail Delivery Target',
+        'Hostname',
     ];
 
     // -------------------------------------------------------------------------
@@ -151,6 +152,54 @@ class Production_Health_Test extends Rsx_Test_Abstract
         $debug = Production_Health_Checks::_console_debug_row(Rsx::MODE_DEBUG, true);
         static::__assert_equals('INFO', $debug['status'], 'the debug variant is a deliberate configuration');
         static::__assert_contains('intact', $debug['detail'], 'the debug variant keeps console_debug');
+    }
+
+    // -------------------------------------------------------------------------
+    // The hostname - the two outbound channels that read it
+    // -------------------------------------------------------------------------
+
+    public static function test_a_dev_hostname_fails_on_a_sealed_build()
+    {
+        $row = Production_Health_Checks::_hostname_row('app.dev.example.test');
+
+        static::__assert_equals('FAIL', $row['status'], 'a production site cannot carry a .dev. hostname');
+        static::__assert_contains('app.dev.example.test', $row['detail'], 'the row names the host it read');
+        static::__assert_contains('catchall', $row['detail'], 'the email consequence is stated');
+        static::__assert_contains('Suppressed', $row['detail'], 'the SMS consequence is stated');
+        static::__assert_contains('APP_URL', $row['remediation'], 'the remediation names the key');
+        static::__assert_contains('rsx:build --force', $row['remediation'], 'the cached config must be rebuilt');
+    }
+
+    public static function test_an_ordinary_hostname_is_ok()
+    {
+        $row = Production_Health_Checks::_hostname_row('app.example.test');
+
+        static::__assert_equals('OK', $row['status'], 'a production hostname is not a development one');
+        static::__assert_null($row['remediation'], 'nothing to remediate');
+    }
+
+    public static function test_the_test_is_the_dotted_substring_and_nothing_looser()
+    {
+        // Rsx::is_dev_site() is str_contains($hostname, '.dev.') - the dot on BOTH sides
+        // is the whole rule, and this row asks the identical question. So a LEADING
+        // 'dev.' label is not a development host, and neither is a trailing '.dev':
+        // the framework would gate neither, and a row that disagreed with the gate it
+        // reports on would send an operator after the wrong thing.
+        foreach (['dev.example.test', 'example.dev', 'devel.example.test', 'mydev.example.test'] as $host) {
+            static::__assert_equals(
+                'OK',
+                Production_Health_Checks::_hostname_row($host)['status'],
+                "{$host} does not contain '.dev.' so Rsx::is_dev_site() is false for it"
+            );
+        }
+
+        foreach (['a.dev.b', 'staging.dev.example.test'] as $host) {
+            static::__assert_equals(
+                'FAIL',
+                Production_Health_Checks::_hostname_row($host)['status'],
+                "{$host} contains '.dev.'"
+            );
+        }
     }
 
     public static function test_the_development_catcher_on_a_sealed_build_warns()

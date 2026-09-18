@@ -1426,6 +1426,115 @@ ENTRY 13: THE PRODUCTION READ-ONLY POSTURE (who owns which tree on the host)
         php artisan rsx:man health              (the check inventory)
 
 
+--------------------------------------------------------------------------------
+
+ENTRY 14: THE SCHEMA CONTRACT AND THE HOSTNAME (rsx:health on the production database)
+
+    What to audit
+        Whether `php artisan rsx:health` run against the PRODUCTION database, on
+        the production host, reports no FAIL on the Schema Contract rows and no
+        FAIL on the Hostname row.
+
+        Run it on the host, as the user that serves requests, after the
+        deployment's migrate and build and before the site takes its first real
+        visitor:
+
+            php artisan rsx:health
+
+        Two groups of rows are this entry's subject.
+
+        SCHEMA CONTRACT (one row per table, in every mode). The framework reads
+        a set of columns, unique indexes, foreign keys and rows BY NAME on the
+        application-owned tables - users, login_users, sites, portal_users, the
+        permission and profile tables, the email and SMS queues, and the rest.
+        The declaration is one file,
+        `App\RSpade\Core\Database\Schema_Contract`, and each finding names the
+        framework consumer that fails without the thing it is missing, so a FAIL
+        tells you it is the FRAMEWORK, not your code, that will break. A FAIL is
+        a missing required column, unique index, foreign key or row; a WARN is a
+        semantic probe (a NULL where the framework expects a value, a value
+        outside the range a column's meaning allows).
+
+        HOSTNAME (debug and production modes only). FAILs when the APP_URL host
+        contains `.dev.`.
+
+    Why it matters
+        Every other schema check compares the software against itself.
+        `rsx:migrate:check_consistency` asks whether the sealed manifest
+        describes the schema this database has - both sides are things the build
+        produced. The Schema Contract row is the only check that reads the
+        framework's own assumptions against A DATABASE IT DID NOT BUILD: one
+        restored from a backup, migrated through a fork's own migration history,
+        edited by hand during an incident, or carried across from a system this
+        application replaced. That database is exactly where a column the
+        framework has always assumed can be absent, and nothing in a build says
+        so. The failure without this audit is not a build error; it is a
+        first-week 500 on a code path nobody exercised before launch - a
+        password reset, an invitation, a queued email's recipient row.
+
+        The Hostname row is about outbound messages rather than the schema. On a
+        host whose name contains `.dev.` the framework treats the box as a
+        development site and forces outbound email to the dev-site whitelist or
+        catchall, and records an SMS with no whitelist match as Suppressed. A
+        production box that kept a staging hostname therefore LOOKS healthy and
+        sends nothing to real customers, silently, with every message marked
+        delivered-ish in the queue. The row says so before a customer does.
+
+    Guidelines
+        Audit against the production database, not a copy and not the
+        development one. The whole value of the check is that it reads the
+        database the application will actually serve.
+
+        Run it as the serving user, on the host. `rsx:health` reports the access
+        and the environment of the process that ran it; run as root or from a
+        laptop it answers about the wrong process.
+
+        Fix a Schema Contract FAIL with a MIGRATION, dated now, written against
+        the known state - never with a hand-edit on the production database,
+        which leaves the next deployment's migrate facing a schema no migration
+        history explains. `rsx:man migrations` is the procedure.
+
+        Read a WARN before dismissing it. A semantic probe fires on data, so it
+        names rows that exist and are wrong rather than structure that is
+        missing - usually a backfill somebody's own migration skipped.
+
+        Re-run the audit after any restore, any import from another system, and
+        any incident in which somebody opened a database client against
+        production.
+
+        Fix a Hostname FAIL by setting APP_URL to the production hostname and
+        rebuilding (`php artisan rsx:build --force`); the mode's build pins the
+        value, so editing it without rebuilding changes nothing that is served.
+
+        The test suite is not part of this audit and does not run here. It runs
+        on a DEVELOPMENT box before the deployment - `rsx:test` refuses in a
+        production mode - so the sealed box is asked only the questions
+        `rsx:health` asks.
+
+    Dos and don'ts
+        DO run rsx:health on the production host, as the serving user, and read
+             every Schema Contract row rather than only the exit code, which
+             sums rows about the whole box.
+        DO treat a named framework consumer in a FAIL as the description of what
+             breaks: it is the feature that will 500, not a lint opinion.
+        DON'T hand-edit the production database to clear a FAIL. Write the
+             migration, run it, re-run the check.
+        DON'T launch on a `.dev.` hostname "just for the first week". Every
+             message the application sends in that week goes to the dev
+             whitelist or nowhere, and the queue will not look wrong.
+        DON'T run the suite on the sealed production box to "check everything
+             works". It refuses, and the refusal is the design: the suite is a
+             step before the deployment, on a development box.
+
+    Related
+        php artisan rsx:man health          (the check inventory)
+        php artisan rsx:man database_schema_architecture
+                                            (THE FRAMEWORK CONTRACT ON
+                                             APPLICATION TABLES)
+        php artisan rsx:man migrations      (writing the fix)
+        php artisan rsx:man prod            (APP_URL, the build, the deployment)
+
+
 SEE ALSO
     rsx:man login_redirect
     rsx:man session
@@ -1437,6 +1546,9 @@ SEE ALSO
     rsx:man app_mode
     rsx:man prod
     rsx:man storage_directories
+    rsx:man health
+    rsx:man database_schema_architecture
+    rsx:man migrations
     rsx:man csp
     rsx:man external_resources
     rsx:man time

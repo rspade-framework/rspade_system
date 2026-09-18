@@ -69,9 +69,10 @@ DESCRIPTION
     identity either holds a confirmed factor or it does not, and
     is_enabled($login_user) is the whole question. A framework-wide "2FA on"
     flag would have to decide what happens to every account that has not
-    enrolled yet, which is a policy only an application can hold. The template
-    application's answer is a users.is_2fa_required column and an interstitial
-    (see IMPLEMENTING 2FA IN AN APPLICATION); yours may differ.
+    enrolled yet, which is a policy only an application can hold. THE
+    FRAMEWORK READS NO SUCH COLUMN. The reference application's example of
+    holding that policy is a users.is_2fa_required column of its own plus an
+    interstitial (see IMPLEMENTING 2FA IN AN APPLICATION); yours may differ.
 
     Laravel differences: there is no package to install, no service provider,
     no middleware and no fortify-style scaffolding. The tables ship in the
@@ -586,8 +587,16 @@ IMPLEMENTING 2FA IN AN APPLICATION
         REQUIREMENT is application policy, and the whole point of one is that
         the app is unusable until it is met - so it belongs in
         Main::pre_dispatch(), ahead of every screen, not on a page the user
-        can decline to visit. The template carries a users.is_2fa_required
-        column, set from the edit-user modal:
+        can decline to visit.
+
+        WHAT FOLLOWS IS THE REFERENCE APPLICATION'S EXAMPLE, not a framework
+        contract: users.is_2fa_required is a column that application added in
+        its own migration (reference_app/resource/migrations/
+        2026_09_02_133139_add_is_2fa_required_to_users.php), sets from its
+        edit-user modal, and reads in its own Main::pre_dispatch() - the whole
+        of which is at system/app/RSpade/resource/reference_app/main.php. No
+        framework code reads the column. Any predicate your policy can answer
+        works the same way in the same place:
 
             if (str_starts_with($handler, 'Rsx\App\Frontend')) {
                 // ...
@@ -624,7 +633,7 @@ IMPLEMENTING 2FA IN AN APPLICATION
         pre_dispatch() runs on DOCUMENT requests, and an SPA does not make
         them - so a policy flag flipped while a user is on screen needs a
         realtime user refresh to take effect before their next full load. The
-        template pushes one on a confirmed change of the flag.
+        reference application pushes one on a confirmed change of its flag.
 
 CLI COMMANDS
     THE BOOTSTRAP AND RECOVERY PATH, and deliberately not a general

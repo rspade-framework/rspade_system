@@ -1,6 +1,6 @@
 ---
 name: two-factor
-description: "Wiring RSpade's second factor into an application - Rsx_Two_Factor (is_enabled / begin_challenge / verify_challenge), the two-stage login with RsxAuth::attempt(record: false, touch_last_login: false), <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove operator commands, and a forced-enrollment interstitial driven from pre_dispatch. Use when adding 2FA, TOTP or passkeys to a login flow, building an enrollment or Security settings screen, requiring a factor per user (is_2fa_required), recording STATUS_FAILED_2FA, or when hitting 'That code is not valid.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', or a passkey refused after moving hosts."
+description: "Wiring RSpade's second factor into an application - Rsx_Two_Factor (is_enabled / begin_challenge / verify_challenge), the two-stage login with RsxAuth::attempt(record: false, touch_last_login: false), <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove operator commands, and a forced-enrollment interstitial driven from pre_dispatch. Use when adding 2FA, TOTP or passkeys to a login flow, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA, or when hitting 'That code is not valid.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', or a passkey refused after moving hosts."
 ---
 
 # Two-factor authentication
@@ -117,7 +117,9 @@ Removal is `Rsx_Two_Factor_Controller.credential_remove({ id })`; a new code she
 
 ## The forced-2FA recipe (application policy)
 
-The framework decides only whether an identity HAS a factor. A requirement belongs in `Main::pre_dispatch()`, ahead of every screen - not on a page the user can decline to visit:
+The framework decides only whether an identity HAS a factor, and reads no requirement column of any kind. A requirement belongs in `Main::pre_dispatch()`, ahead of every screen - not on a page the user can decline to visit.
+
+Below is **the reference application's example**: `users.is_2fa_required` is a column IT added (`rsx/resource/migrations/2026_09_02_133139_add_is_2fa_required_to_users.php`), sets from its edit-user modal, and reads in its own `pre_dispatch()` - shipped in full at `system/app/RSpade/resource/reference_app/main.php`. Any predicate your policy can answer goes in the same place:
 
 ```php
 if (str_starts_with($handler, 'Rsx\App\Frontend')) {
@@ -158,7 +160,7 @@ JS helpers: `Rsx_Two_Factor.is_supported()`, `register_passkey(label)`, `authent
 
 - **Do not double-count the throttle.** `Login_History::record_failure(..., STATUS_FAILED_2FA, ...)` already feeds `Login_Throttle`. Calling `Login_Throttle::record_failure()` beside it halves the real budget, and the halving is only ever discovered by a user locked out early.
 - **Park before you log out.** Anything the challenge must carry across (an invite code, a redirect) is written with `Session::put_value($key, $value, Rsx_Two_Factor::challenge_expires_at())` **BEFORE** `begin_challenge()`. `put_value()` establishes the session row; the logout clears the identity, not the row, and `_session_values` survive by FK. Written afterwards, it lands on a session the caller abandoned.
-- **A checkbox absent from a POST means OFF.** A policy flag like `is_2fa_required` uses `!empty($params['is_2fa_required']) ? 1 : 0`, or it can never be turned back off.
+- **A checkbox absent from a POST means OFF.** A policy flag of your own (the reference app's `is_2fa_required`) uses `!empty($params['is_2fa_required']) ? 1 : 0`, or it can never be turned back off.
 - **A dismissed browser prompt is not an error.** `NotAllowedError` is caught and answered as `null`; say nothing and leave the button available.
 - **No Turnstile on the verification endpoint.** `<Two_Factor_Challenge>` renders no widget, so there is no `__turnstile` field and the completeness guard stays silent. The surface is still guarded: it answers only from the caller's own pending challenge, and `verify_challenge()` spends the brute-force budget first.
 - **`credential_key`, not `credential_id`** - it is an opaque string handle from an authenticator, and `SCHEMA-TYPE-01` reserves `_id` for integers.

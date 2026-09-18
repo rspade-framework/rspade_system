@@ -38,10 +38,18 @@ Shipped in the Document Pipeline epic, Batch 5.
   recommendation a web process with no OPcache writes during boot (whether a host runs
   OPcache is the host's decision, so rsx:health carries no OPcache check).
 - `Core/Health/Production_Health_Checks.php` - the rows that only mean something on a
-  sealed box (the seal, the APP_URL scheme, login auto-fill, the console_debug
-  variant, the mail delivery target), each declaring
+  sealed box (the seal, the APP_URL scheme, the hostname, login auto-fill, the
+  console_debug variant, the mail delivery target), each declaring
   `modes: ['debug', 'production']`.
 - `Core/Database/Database_Health_Checks.php` - MySQL connectivity, pending migrations.
+- `Core/Database/Schema_Contract.php` - the ONE declaration of what the framework
+  reads by name on application-owned (non-underscore) tables: required columns each
+  naming its framework consumer, the unique indexes and foreign keys the code relies
+  on, the rows it assumes, and the semantic probes. Audit pairs and timestamps are
+  excluded (normalization guarantees them); `deleted_at` is included (it does not).
+- `Core/Database/Schema_Contract_Health_Checks.php` - the "Schema Contract" row over
+  it, in every mode: one row per contracted table plus `schema: foreign keys`,
+  `schema: rows` and `schema: semantics`. FAIL is structural, WARN is semantic.
 - `Core/Task/Task_Health_Checks.php` - #[Schedule] tracker-staleness scheduler-liveness.
 - `Core/Task/Task_Worker_Registry.php::redis_connectivity` - Redis reachability.
 - `Core/Realtime/Realtime.php::realtime_relay` - relay TCP probe (or INFO when disabled).
@@ -95,6 +103,13 @@ repositories through its project-root argument - the same seam the check reads -
 missing / wrong / blanket cases are reachable without touching this box's own
 `.gitmodules` or `.git/config`. No submodule is ever cloned: both settings are pure
 configuration.
+
+`Schema_Contract_Test` runs the REAL check against the live test schema (which is the
+contract's own regression test - it is what keeps the map honest as the framework's
+reads move) and drives every failure branch through the row builders with an INJECTED
+shape. A database missing `users.login_user_id` or `uk_login_users_email` is not one a
+test may create, which is exactly why each builder takes the introspected shape as a
+parameter.
 
 `Project_Tree_Health_Test` drives the three project-tree rows through
 `Environment_Health_Checks::__tree_row()` against throwaway sandbox paths, because

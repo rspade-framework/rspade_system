@@ -1,0 +1,243 @@
+A DEVELOPER IS login_users.is_developer - the Developer ROLE retires
+Date: 2026-09-17
+
+IF YOU DO NOTHING: every reference to User_Model::ROLE_DEVELOPER in your code is a
+    fatal undefined-constant error on the next pull, and any developer-only surface
+    you gate on a role id or on a hostname keeps its old key - so it either opens for
+    the wrong people or for nobody.
+
+SUMMARY
+    Being a developer is now a property of the IDENTITY, login_users.is_developer,
+    and nothing else. The Developer role (users.role_id 100) is gone from
+    User_Model_Abstract, and a framework migration has already remapped the data on
+    an installation running the framework's default roles.
+
+    This affects you if your code names ROLE_DEVELOPER, if your User_Model override
+    declares its own developer role, or if any surface in your application decides
+    "this person builds the software" from a role, a permission constant, a
+    configuration key or - the case that motivated the change - the hostname the
+    request arrived on.
+
+THE CHANGE
+    A role is a rank inside ONE site's record model: it says what a person may do
+    with that site's data, and it can only ever say it for one membership at a time.
+    "This person builds the software" is not that statement. It is true of the human
+    across every site they belong to, it grants nothing about any site's records, and
+    it has to be assignable on an installation where the person holds no membership
+    worth ranking.
+
+    Nor is it a hostname. A downstream field report (2026-09-16) traced two failing
+    application tests to debug hatches gated on a domain suffix: a staff "become
+    user" hatch that committed an impersonation into a real login as the target, and
+    a portal "write mode" hatch that lifted the read-only guard on an impersonated
+    session. Both opened for anybody whose request reached a box with the right name,
+    and both failed on a box with the wrong one. A BOX IS NOT TRUSTED FOR WHAT IT IS
+    CALLED. The framework itself derives nothing from a hostname except which
+    outbound mail is allowed to leave a .dev. host, and it gave an application no
+    better key to use - so this change supplies one.
+
+THE FIX
+    Informational: all of this arrives with the submodule. There is nothing in this
+    section to copy.
+
+      - login_users.is_developer (TINYINT(1) NOT NULL DEFAULT 0, indexed), added by
+        the framework migration 2026_09_17_160704_add_is_developer_to_login_users.
+
+      - 2026_09_17_161704_retire_developer_role backfills and remaps:
+
+            UPDATE login_users l
+            JOIN users u ON u.login_user_id = l.id
+            SET l.is_developer = 1
+            WHERE u.role_id = 100;
+
+            UPDATE users SET role_id = 200 WHERE role_id = 100;
+
+        Every identity that held the Developer role anywhere becomes a developer;
+        every membership that held it becomes a Root Admin (200), which is what the
+        role was standing in for.
+
+      - User_Model_Abstract no longer declares ROLE_DEVELOPER or the 100 entry in
+        $enums['role_id']. ROLE_ROOT_ADMIN (200) is the top role.
+
+      - Login_User_Model_Abstract carries $is_developer and omits the key from
+        toArray() unless it is true. JavaScript reads window.rsxapp.is_developer the
+        same way: the key is PRESENT ONLY WHEN TRUE, so an absent key means false.
+
+      - Session::is_developer(): bool is the PHP reader. It answers false for an
+        anonymous caller and for the headless API bearer tier - a machine credential
+        is never a developer tier.
+
+      - The initial user (login_users id 1) is created as a developer, because the
+        first account on an installation belongs to whoever is building it.
+
+ACTION REQUIRED
+
+    1. THE DATA, AND YOUR OWN DEVELOPER ROLE IF YOU HAVE ONE.
+
+       If your application runs on the framework's default roles, the data is done:
+       the framework migration backfilled the flag and remapped 100 to 200. Nothing
+       to write.
+
+       If your application OVERRIDES User_Model with its own $enums['role_id'] and
+       its own developer-ish role, the framework migration did not touch it (it
+       matched role id 100; yours is your own number, and the enum it lives in is
+       your file). Write ONE migration of your own, with a filename timestamp AFTER
+       the two framework migrations above so it runs after the column exists:
+
+           php artisan make:migration:safe retire_our_developer_role
+
+           // Every identity holding our developer role becomes a developer.
+           DB::statement("
+               UPDATE login_users l
+               JOIN users u ON u.login_user_id = l.id
+               SET l.is_developer = 1
+               WHERE u.role_id = <YOUR DEVELOPER ROLE ID>
+           ");
+
+           // The membership becomes the rank it was standing in for.
+           DB::statement("
+               UPDATE users
+               SET role_id = <YOUR ADMIN ROLE ID>
+               WHERE role_id = <YOUR DEVELOPER ROLE ID>
+           ");
+
+       Then DELETE the entry from $enums['role_id'] and the constant beside it in
+       your User_Model override, and run `php artisan rsx:constants:regenerate`.
+
+       An override that REDECLARES $enums['role_id'] wholesale is the case to watch:
+       it does not inherit the framework's deletion, so the developer entry survives
+       in your file until you remove it by hand, and the role keeps appearing in
+       every role picker your application renders.
+
+    2. REPLACE EVERY DEVELOPER GATE.
+
+       Find them:
+
+           grep -rn "ROLE_DEVELOPER" rsx/
+           grep -rn "is_dev_site\|\.dev\.\|getHost()\|HTTP_HOST" rsx/
+           grep -rn "APP_URL\|app.url" rsx/ | grep -i "dev\|debug\|internal"
+
+       Add ONE check to your Permission class - it is the whole vocabulary:
+
+           File: rsx/permission.php
+
+           use App\RSpade\Core\Session\Session;
+
+               /**
+                * Builds the software: login_users.is_developer, set by hand in the
+                * database. Never a role (a role ranks one site's records) and never
+                * a hostname (a box is not trusted for what it is called).
+                */
+               #[Auth_Check]
+               public static function is_developer(): bool
+               {
+                   return Session::is_developer();
+               }
+
+       Then convert each surface. A staff "become user" hatch that commits an
+       impersonation into a real login as the target:
+
+           BEFORE
+               #[Ajax_Endpoint]
+               #[Auth('is_logged_in')]
+               public static function become_user(Request $request)
+               {
+                   if (!str_contains(Rsx::get_hostname(), '.dev.')) {
+                       return response_unauthorized();
+                   }
+                   ...
+
+           AFTER
+               #[Ajax_Endpoint]
+               #[Auth('is_logged_in', 'is_developer')]
+               public static function become_user(Request $request)
+               {
+                   ...
+
+       A portal "write mode" hatch that lifts the read-only guard on an impersonated
+       session reads the same flag, at the one place the guard is asked:
+
+           BEFORE   if ($this->is_read_only() && !$this->is_dev_host()) { ... }
+           AFTER    if ($this->is_read_only() && !Session::is_developer()) { ... }
+
+       Two rules that come with the conversion. The flag is the gate's whole KEY, not
+       a second opinion added to a hostname test - delete the hostname test rather
+       than AND-ing it, or you have kept the thing that broke. And the gate is
+       declared: `#[Auth('is_developer')]` reads at the top of the surface, where a
+       reviewer can see it, instead of an early-return four lines into a body.
+
+    3. TESTS THAT ASSUMED A HOSTNAME.
+
+       A test that only passed on a particular host is the symptom this change
+       exists to remove. Nothing in your suite should derive anything from a
+       hostname: tests pass on any box.
+
+         - A test that hit a developer surface because the test box was named right
+           now gives the IDENTITY the flag instead - set login_users.is_developer on
+           the fixture identity it signs in as, through the seam your suite already
+           uses to build one.
+
+         - A test that asserted a mode-dependent behavior forces the MODE through
+           the framework's own seam rather than inferring it from the host.
+
+         - A test that read `$response->getTargetUrl()` to see where a hatch sent it
+           now has to ASSERT THE RESPONSE TYPE FIRST. A gate that denies returns an
+           unauthorized response, not a redirect, and reading a target URL off one is
+           a fatal error that hides the real failure.
+
+    4. SHOW THE FLAG SOMEWHERE (optional, and worth it).
+
+       A flag nobody can see is a flag nobody audits. The reference application
+       renders an outline "Developer" chip beside the name in three places, read from
+       the payload key and never editable from a screen:
+
+           system/app/RSpade/resource/reference_app/app/frontend/settings/
+               profile_display/
+           system/app/RSpade/resource/reference_app/app/frontend/settings/
+               user_management/view/
+           system/app/RSpade/resource/reference_app/app/frontend/settings/
+               user_management/list/users_datagrid.php  (and .jqhtml)
+
+       The list joins login_users ONCE and selects the column; it never does a
+       per-row lookup.
+
+    5. HOW A DEVELOPER IS MADE.
+
+           UPDATE login_users SET is_developer = 1 WHERE email = 'someone@example.com';
+
+       By hand, in the database, and by no other channel. There is no UI for it, no
+       endpoint that writes it, no configuration key and no environment variable -
+       and there will not be one. Whoever can open a database client against the
+       production database already has de facto developer access to everything the
+       application can reach, so the flag grants nothing that possession of that
+       client did not already grant; and being able to open one is exactly the
+       competence bar for holding it. Any lesser channel would hand the flag to
+       people who could not otherwise have taken it.
+
+       DO NOT add a checkbox for it to your user-management screen. If you do, the
+       flag becomes something a site administrator can grant, which is the one thing
+       it must never be.
+
+VERIFICATION
+    php artisan migrate
+        Applies the two framework migrations on an existing install.
+
+    php artisan db:query "SELECT id, email FROM login_users WHERE is_developer = 1"
+        The identities that held the Developer role, plus id 1.
+
+    php artisan db:query "SELECT COUNT(*) AS c FROM users WHERE role_id = 100"
+        Must be 0. A non-zero count on an app with its own developer role means step
+        1's migration has not been written yet.
+
+    grep -rn "ROLE_DEVELOPER" rsx/
+        Must be empty.
+
+    grep -rn "\.dev\.\|getHost()\|HTTP_HOST" rsx/
+        Every remaining hit must be something other than an authorization decision.
+
+    php artisan rsx:check
+        Reports the manifest and code-quality state after the conversion.
+
+    php artisan rsx:man session
+        THE DEVELOPER FLAG - the full contract, including why the only channel is
+        the database.

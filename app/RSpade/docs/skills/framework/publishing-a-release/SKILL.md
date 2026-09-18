@@ -17,6 +17,7 @@ The script itself (`system/bin/publish`, ~770 lines, heavily commented) is the a
 
 ## Pre-flight gates
 
+0. **The MODE GATE**: the box must be in development mode, and the committed `system/vendor/composer` autoloader must not be the production (classmap-authoritative) one. A strict production build rewrites that committed autoloader, and a release published from a sealed box ships it and records it in this repository's history, where the next framework class added here fails to load until the autoloader is dumped again. The remedy is `php artisan rsx:prod:disable`, which restores the development autoloader.
 1. **`php artisan rsx:check`** must pass. A code-quality violation stops the publish.
 2. **The monorepo working directory must be CLEAN** (`git status --porcelain` empty). Everything ships from committed state, so the release commit and its changelog describe the source honestly.
 3. **The CONFIDENTIALITY GATE** - every staged tree (all three repositories) and the release changelog are scanned for a blocked confidential term before anything is committed or pushed; one hit aborts the whole publish, naming the offending files. The term and its narrow whitelist (third-party `node_modules/`/`vendor/` and `*.pdf`, where the word is legitimate typography vocabulary) are encoded beside the gate in `bin/publish`, which does not ship. The remedy is always to scrub the mention at its SOURCE - the monorepo file or commit message - never to widen the whitelist.
@@ -94,6 +95,7 @@ The downstream pull commits its own `system/` changes BEFORE the rebuild, so the
 
 | Symptom | Cause / fix |
 |---|---|
+| "This box is in production mode" / "carries the production ... autoloader" | Run `php artisan rsx:prod:disable` (or `rsx:mode:set dev`), commit, publish again. |
 | "Code quality check failed" | Fix the `rsx:check` violations. Never bypass. |
 | "Git working directory is not clean" | Commit (or genuinely revert) first - the release ships committed state only. |
 | "Tracked-but-ignored files present" | Read the printed list; strip the ignore rule that excludes each one. |

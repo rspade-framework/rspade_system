@@ -165,6 +165,8 @@ class Rsx_Initial_User
         $login_user->is_activated = 1;
         $login_user->is_verified = 1;
         $login_user->status_id = Login_User_Model::STATUS_ACTIVE;
+        // The first account on an installation belongs to whoever is building it.
+        $login_user->is_developer = 1;
         $login_user->save();
         $login_user->incrementing = true;
 

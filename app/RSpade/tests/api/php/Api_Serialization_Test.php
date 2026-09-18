@@ -25,11 +25,11 @@ class Api_Serialization_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
 
-    private static function __user(int $id = 1, int $role_id = 100): User_Model
+    private static function __user(int $id = 1, ?int $role_id = null): User_Model
     {
         $u = new User_Model();
         $u->id = $id;
-        $u->role_id = $role_id;
+        $u->role_id = $role_id ?? static::most_privileged_role_id();
         $u->site_id = 1;
         $u->login_user_id = 1;
         $u->email = "user{$id}@example.com";
@@ -44,10 +44,13 @@ class Api_Serialization_Test extends Rsx_Test_Abstract
 
     public static function test_model_serializes_with_model_marker_and_enum_label()
     {
-        $array = Api_Dispatcher::serialize(static::__user(1, 100));
+        $role_id = static::most_privileged_role_id();
+        $expected_label = User_Model::role_id__enum()[$role_id]['label'];
+
+        $array = Api_Dispatcher::serialize(static::__user(1, $role_id));
 
         static::__assert_equals('User_Model', $array['__MODEL'], '__MODEL identifies the class');
-        static::__assert_equals('Developer', $array['role_id__label'], 'BEM-style enum label is composed');
+        static::__assert_equals($expected_label, $array['role_id__label'], 'BEM-style enum label is composed');
     }
 
     public static function test_model_serialization_redacts_never_export_columns()

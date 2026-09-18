@@ -12,7 +12,9 @@ This concern covers the runner's own decisions and formats, NOT the tests it run
 - **the queue protocol** the containers pull classes from;
 - **the output format** a run produces, which must be identical whether the classes ran
   in one process or across eight containers;
-- **the singleton flock** that stops two runs sharing one test database.
+- **the singleton flock** that stops two runs sharing one test database;
+- **which classes a selection runs**, including the classes it declines to run and the
+  modes in which it declines to run at all.
 
 Out of scope: whether any individual framework test passes (that is its own concern), and
 the docker image build itself (asserted by running the suite, not by a unit test).
@@ -21,6 +23,8 @@ the docker image build itself (asserted by running the suite, not by a unit test
 
 | File | What it owns |
 |------|--------------|
+| `bootstrap/rsx_preboot.php` + `bootstrap/rsx_mode.php` | the pre-boot refusal of `rsx:test` in a production mode, and the one pre-boot mode reader it shares with the container gate |
+| `app/RSpade/Core/Testing/Rsx_Test_Abstract.php` | the per-class declarations the runner reads: `$requires_db_reset`, `$explicit_group_only` |
 | `app/RSpade/Commands/Rsx/Rsx_Test_Command.php` | discovery, the singleton flock, the docker gate, the worker count, the queue ordering, worker mode, the output format (`print_class_results` / `print_summary` / `merge_and_report`), the full-suite result cache keyed by the manifest build key (`results_cache_path` / `read_cached_results` / `write_cached_results`, replayed through `report_records`) |
 | `bin/rsx-testd/orchestrator.js` | the run: sweep, build, queue, N containers, `results.jsonl`, prune |
 | `bin/rsx-testd/lib/queue_server.js` | the unix-socket work queue, the holder map, and the live per-class line printed as each result arrives |
@@ -57,6 +61,19 @@ real `Queue_Server` the way the PHP worker does - one connection, one line, one 
 and asserts the wire shapes, the drain sentinel, the holder map, the exact key set of a
 `results.jsonl` record, and that abuse (unknown method, malformed frame, oversized frame)
 is refused without taking the server down.
+
+**WHICH RUNS HAPPEN AT ALL is the other half of selection.** `Explicit_Group_Test` covers
+two rules the runner applies before any test executes. A class marked
+`$explicit_group_only` - for a class that mutates the BOX rather than the test database,
+the prod_mode lifecycle wrappers being the ones that exist - runs only when its group is
+named with `--group` or the class itself is named, and the skip is REPORTED in one line so
+a suite's green is a green for a stated set. And `rsx:test` refuses to run at all in a
+production mode, PRE-BOOT: a sealed box used to report "No test classes found" and exit 0
+(the manifest carries no test trees there), which is a false green, and an unsealed one
+answered with the unsealed-build fatal, which describes the wrong problem. That refusal is
+asserted against the real artisan in subprocesses, with the mode placed in the CHILD's
+environment - the pre-boot reader honours a real environment variable ahead of the
+environment file - so nothing on this box is written.
 
 **The singleton is asserted against itself.** `Runner_Singleton_Test` proves a subprocess
 cannot take `storage/state/flock/rsx_test_runner.lock` while the run executing the test holds it.
