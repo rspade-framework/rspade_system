@@ -14,6 +14,7 @@ class Ajax {
     static ERROR_AUTH_REQUIRED = 'auth_required';
     static ERROR_FATAL = 'fatal';
     static ERROR_GENERIC = 'generic';
+    static ERROR_QUESTION = 'question';             // Not a failure: a pending server-driven question
     static ERROR_SERVER = 'server_error';           // Client-generated (HTTP 500)
     static ERROR_NETWORK = 'network_error';         // Client-generated (connection failed)
     static ERROR_PHP_EXCEPTION = 'php_exception';   // Client-generated (PHP exception with file/line/backtrace)

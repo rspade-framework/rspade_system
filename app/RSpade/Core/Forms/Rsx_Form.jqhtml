@@ -12,6 +12,8 @@ the content the application composes inside (Form_Field, the form grid, .form-ac
   $controller  (required) - controller class name; with $method, names the ONE endpoint
   $method      (required) - Ajax endpoint method on that controller
   $data        (optional) - seed values for an edit form; omit for a pristine create form
+  $question_handler (optional) - (question, context) => answer, overriding the application's
+                   registered handler for this form's server-driven questions
 
   <Rsx_Form $controller="Frontend_Tasks_Controller" $method="save" $data=this.data.form_data>
       <Form_Field $label="Title" $required=true>

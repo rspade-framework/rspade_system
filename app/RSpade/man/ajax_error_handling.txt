@@ -116,6 +116,25 @@ ERROR TYPES
     Resource not found.
     Used via: return response_error(Ajax::ERROR_NOT_FOUND, 'Project not found');
 
+    Ajax::ERROR_QUESTION
+    --------------------
+    NOT A FAILURE: the endpoint is asking the user something it cannot
+    decide for itself, and has written nothing. Sent by
+    response_form_question($key, $question); metadata is {key, question}.
+
+        return response_form_question('duplicate_email', [
+            'kind' => 'confirm', 'title' => '...', 'body' => '...',
+        ]);
+
+    The form engine answers it through the application's registered question
+    handler and calls the endpoint again with _answers attached. A caller that
+    is NOT a form reads error.metadata.key and error.metadata.question and
+    decides for itself (Rsx_Form.ask() runs the same handler). An IN-PROCESS
+    Ajax::call() raises AjaxQuestionException, carrying get_key() and
+    get_question(), which is what a PHP test and rsx:ajax see.
+
+    Full protocol: rsx:man form_conventions, the QUESTIONS section.
+
     network (client-side only)
     --------------------------
     Server unreachable (xhr.status === 0).
@@ -370,7 +389,9 @@ BATCH REQUESTS
 
     A sub-call's error_code is the one its exception carries, not_found
     included - client code that branches on Ajax.ERROR_NOT_FOUND (the ORM
-    fetch path does) behaves identically batched and unbatched.
+    fetch path does) behaves identically batched and unbatched. A pending question is
+    re-encoded the same way, as error_code "question" with its {key, question}
+    metadata, so a form can answer one from inside a batch.
 
 TESTING
 

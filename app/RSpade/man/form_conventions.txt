@@ -2,7 +2,8 @@ FORM_CONVENTIONS(3)             RSX Framework Manual             FORM_CONVENTION
 
 NAME
     Form Conventions - The Rsx_Form contract: declaration, submission,
-    validation ownership, loading and dirty protection
+    validation ownership, server-driven questions, loading and dirty
+    protection
 
 SYNOPSIS
     <Rsx_Form $controller="Frontend_Tasks_Controller" $method="save"
@@ -252,6 +253,174 @@ THE ENDPOINT CONTRACT
         the form navigate. Flash_Alert::success(...) before returning is the
         normal companion to a redirect.
 
+QUESTIONS (SERVER-DRIVEN CONFIRMATION)
+
+    A submission sometimes needs to ask the user something before it can finish:
+    "a contact with this email already exists - create anyway?", "this group
+    still has 12 members - remove it anyway?". That is not a validation error
+    (nothing the user typed is wrong) and not a success (nothing was written).
+    It is a QUESTION, and the framework carries it through the same pipeline.
+
+    WHY THE SERVER ASKS
+
+        The trigger is server knowledge: whether an address is already in use,
+        whether a group has members, whether an invoice has payments. Asking
+        from the client would mean re-implementing each of those rules in
+        JavaScript, where it drifts from the rule it mirrors - the same reason
+        validation lives on the server, once (see VALIDATION LIVES ON THE
+        SERVER, ONCE). So the question originates exactly where a validation
+        error originates: in the endpoint, after validation, before the write.
+
+    THE PROTOCOL
+
+        1. The endpoint returns response_form_question($key, $question).
+        2. The form engine calls the application's registered question handler
+           with $question verbatim and receives an answer.
+        3. The engine calls the endpoint AGAIN with the same values plus
+           _answers: {$key: answer}.
+        4. The endpoint re-runs from scratch, reads the answer, and writes.
+
+        One question per response. The framework holds no state between rounds.
+
+    VALIDATE -> ASK -> WRITE
+
+        An endpoint validates first, then asks the FIRST question that is still
+        unanswered, then writes. Nothing - no row, no file, no email - happens
+        before every question has been answered, because the resubmission
+        re-runs the whole endpoint. That is also what makes it stateless: if the
+        world changed between rounds and a question is due again, it is simply
+        asked again.
+
+            $answer = Form_Questions::answer($params, 'duplicate_email');
+
+            if ($answer === null) {
+                return response_form_question('duplicate_email', [
+                    'kind' => 'confirm',
+                    'title' => 'A contact with this email already exists',
+                    'body' => "Richard Browne (Acme Corp) already uses {$email}."
+                            . "\n\nCreate a second contact with the same email?",
+                    'confirm_label' => 'Create anyway',
+                    'cancel_label' => 'Open the existing contact',
+                ]);
+            }
+
+            if ($answer === false) {
+                return ['redirect' => Rsx::Route('Contacts_View_Action', $existing->id)];
+            }
+
+            // true: fall through and create
+
+        NULL MEANS NOT ASKED YET. Every other value, FALSE INCLUDED, is an
+        answer the user gave and the endpoint acts on.
+
+            Form_Questions::answer($params, $key)     mixed; null when unanswered
+            Form_Questions::answered($params, $key)   bool
+
+        $question is OPAQUE to the framework. No field of it is read on the way
+        to the handler; the recommended shapes below are documentation.
+
+    REGISTERING THE HANDLER
+
+        Once per application, from a static on_app_modules_define() on the class
+        that owns the presentation - the modal facade, typically. There is no
+        init file and none is needed.
+
+            static on_app_modules_define() {
+                Rsx_Form.set_question_handler(async (question, context) => {
+                    // present it however this application presents questions
+                    return answer;   // or Rsx_Form.CANCELLED
+                });
+            }
+
+            context: {form, key, attempt, answers}
+                     answers = those already given during THIS submission
+
+        A FORM may override it - <Rsx_Form $question_handler=this.ask_inline>,
+        or form.question_handler = fn - with the same signature, for a form that
+        wants its question asked inline rather than in the usual dialog.
+
+        NO HANDLER ANYWHERE IS AN ERROR. The submit throws, naming
+        Rsx_Form.set_question_handler(). A question reaching a client that
+        cannot ask it is a configuration fault, never a silent skip.
+
+    CANCEL IS NOT AN ANSWER
+
+            Rsx_Form.CANCELLED          a frozen sentinel object
+            Rsx_Form.is_cancelled(v)    identity test
+
+        Returning CANCELLED stops the submit exactly like before_submit
+        returning false: no error rendered, no 'submit_error' fired, dirty state
+        and parking intact, the form still open with the user's values. It is
+        what the dialog's Back button, its X, Escape and a backdrop click mean.
+
+        FALSE IS AN ANSWER. "No" reaches the endpoint and the endpoint acts on
+        it. CANCELLED never reaches the endpoint at all. The sentinel is an
+        OBJECT and never a boolean precisely so the two can never collide - a
+        dialog whose "No" button resolves with a bare false is indistinguishable
+        from a dismissal, so give "No" a distinct token and map it.
+
+    MAX_QUESTION_ROUNDS
+
+        Rsx_Form.MAX_QUESTION_ROUNDS (5) is a DEFECT DETECTOR, not a duration
+        and not a guess about speed. Every prior answer is carried forward, so
+        an endpoint asking a sixth question inside one submission is asking
+        something it has already been told - it is ignoring _answers, and the
+        loop it started is infinite. The cap turns that into a rendered error
+        naming the endpoint instead of a tab that posts forever.
+
+    WHAT THE FRAMEWORK WILL NOT DO
+
+        - Define question kinds. 'confirm', 'select' and 'prompt' below are a
+          RECOMMENDED contract; an application may invent kind: 'portal_invite'
+          and mount its own component.
+        - Render anything, ship a default dialog, or fall back to
+          window.confirm.
+        - Hold state between rounds, or support more than one question per
+          response.
+        - Close, hide or re-render the form's host. A form inside a modal stays
+          exactly where it is while the question is asked over it; how a
+          question stacks over an open dialog is the application's decision.
+
+    THE RECOMMENDED QUESTION CONTRACT
+
+        { kind: 'confirm', title, body, confirm_label, cancel_label }
+            answer: true | false        (Back / X -> Rsx_Form.CANCELLED)
+
+        { kind: 'select', title, body, options: [{value, label}], default }
+            answer: the chosen value
+
+        { kind: 'prompt', title, body, default, multiline }
+            answer: the string
+
+        { kind: '<application-defined>', ... }
+            answer: whatever the application's handler returns
+
+        title and body are PLAIN TEXT; \n\n is a paragraph break, as in the
+        dialog facades.
+
+    A CALLER THAT IS NOT A FORM
+
+        A widget calling Controller.method() directly, or an API bridge, sees
+        the question as a distinct response code:
+
+            error.code === Ajax.ERROR_QUESTION
+            error.metadata.key, error.metadata.question
+
+        Rsx_Form.ask(question, {key}) runs the registered handler for such a
+        caller, so the question looks identical wherever it came from; the
+        caller then decides what to do with the answer. In PHP, an in-process
+        Ajax::call() raises AjaxQuestionException, carrying get_key() and
+        get_question() - which is what a PHP test and rsx:ajax see.
+
+    THE WORKED EXAMPLE
+
+        system/app/RSpade/resource/reference_app/lib/modal/modal.js
+            the registered handler: three kinds, a three-button confirm, and
+            the distinct "No" token that keeps cancel and No apart.
+
+        system/app/RSpade/resource/reference_app/app/frontend/contacts/contacts_controller.php
+            save(): validate, ask about the duplicate email, then write.
+
 VALUES AND INPUT ACCESS
 
     form.vals()             serialize - {name: value} for every descendant input
@@ -488,6 +657,24 @@ COMMON MISTAKES
     A "loading..." placeholder branch instead of the form
         The overlay is the loading state; the form renders unconditionally
         underneath it.
+
+    Writing before asking
+        A question asked after the row is created is a question with no
+        effect. Validate, ask, THEN write - the resubmission re-runs the
+        endpoint from scratch.
+
+    Re-implementing a question's trigger on the client
+        Whether the address is already taken is server knowledge. A JavaScript
+        copy of that query drifts from it, silently, exactly as a client-side
+        required check masks a missing server rule.
+
+    Treating a `false` answer as a cancel
+        false is an ANSWER the endpoint acts on ("No"). Rsx_Form.CANCELLED is
+        the cancel, and it never reaches the endpoint.
+
+    Asking two questions in one response
+        One question per response. Return the FIRST unanswered one; the next
+        round asks the next.
 
     Non-serializable form_data
         Extract a plain object; never assign a model instance.

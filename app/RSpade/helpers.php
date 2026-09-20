@@ -1348,6 +1348,51 @@ function response_form_error(string $message, array $field_errors = [])
 }
 
 /**
+ * Ask the user a question instead of writing, and stop here.
+ *
+ * A question is a decision only the USER can make about a condition only the SERVER can
+ * see: this email already belongs to another contact, this group still has members, this
+ * invoice already has payments. The trigger is server knowledge, so the question has to
+ * originate where a validation error originates - in the endpoint - rather than being
+ * re-implemented in JavaScript, where it would drift from the rule it mirrors.
+ *
+ * THE ENDPOINT CONTRACT IS VALIDATE -> ASK -> WRITE. Validate first, then ask the FIRST
+ * question that is still unanswered, then write. NOTHING is written before every question
+ * is answered: a resubmission re-runs the endpoint from scratch with the answers attached
+ * in $params['_answers'], so the endpoint holds no state between rounds and asks again if
+ * the world changed underneath it.
+ *
+ *     $answer = Form_Questions::answer($params, 'duplicate_email');
+ *     if ($answer === null) {
+ *         return response_form_question('duplicate_email', [
+ *             'kind' => 'confirm',
+ *             'title' => 'A contact with this email already exists',
+ *             'body' => "Jane Doe already uses {$email}.\n\nCreate a second contact anyway?",
+ *             'confirm_label' => 'Create anyway',
+ *             'cancel_label' => 'Open the existing contact',
+ *         ]);
+ *     }
+ *     if ($answer === false) { ... }   // false is an ANSWER, acted on; it is not a cancel
+ *
+ * $question is OPAQUE to the framework. It is carried to the application's registered
+ * question handler verbatim and no field of it is ever read on the way. The framework
+ * defines no question kinds and ships no dialog; the recommended contract (confirm /
+ * select / prompt, and whatever an application invents beside them) is documentation:
+ * php artisan rsx:man form_conventions, the QUESTIONS section.
+ *
+ * @param string $key What the answer is filed under in $params['_answers']
+ * @param array $question The question object, passed to the handler unchanged
+ * @return \App\RSpade\Core\Response\Error_Response
+ */
+function response_form_question(string $key, array $question)
+{
+    return response_error(
+        \App\RSpade\Core\Ajax\Ajax::ERROR_QUESTION,
+        ['key' => $key, 'question' => $question]
+    );
+}
+
+/**
  * Create an authentication required error response
  *
  * Use this when the user is not logged in and needs to authenticate.

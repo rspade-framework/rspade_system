@@ -12,6 +12,10 @@ button, a programmatic caller - funnels into it.
 - `system/app/RSpade/Core/Forms/Rsx_Form.jqhtml` - `<Define:Rsx_Form tag="form">`, which is
   what makes the component a real `<form>` element and brings the browser's own submission
   machinery into scope
+- `system/app/RSpade/Core/Forms/Form_Questions.php` - the endpoint's reader for the answers a
+  resubmission carries
+- `response_form_question()` in `system/app/RSpade/helpers.php`, `Ajax::ERROR_QUESTION` and
+  `AjaxQuestionException` - the question response envelope and what an in-process caller sees
 
 ## Behavior defined by
 
@@ -20,7 +24,12 @@ summary).
 
 ## Applicability note
 
-The submission surface is a BROWSER behavior, so the coverage here is playwright. Implicit
+The question protocol has two halves and they are tested separately. The SERVER half - the
+response envelope, `Form_Questions::answer()`, the in-process exception - is plain PHP and
+lives in `php/`, with a fixture controller the test trees put in the manifest for the run. The
+BROWSER half - the submission loop, the cancel sentinel, the round cap - is playwright.
+
+The rest of the submission surface is a BROWSER behavior, so the coverage here is playwright. Implicit
 submission - Enter in a text input, with no button involved - exists only in a real browser
 running a real form element; a synthetic `.trigger('submit')` reproduces none of it and would
 pass against the very defect the test exists to catch.
@@ -39,3 +48,11 @@ and a playwright script drives the ordinary web server.
 | Loading guard: `submit()` refuses while the overlay is up | playwright | planned |
 | Re-entrancy guard: a second submit in flight returns false | playwright | planned |
 | Server error rendering into `<Form_Errors />` | playwright | planned |
+| `response_form_question()` envelope: code and `{key, question}` metadata | php | implemented (`Form_Questions_Test.php`) |
+| `Form_Questions::answer()` / `answered()`: null is unasked, `false` is an answer | php | implemented (`Form_Questions_Test.php`) |
+| An asking endpoint raises `AjaxQuestionException` in-process | php | implemented (`Form_Questions_Test.php`) |
+| `Rsx_Form.CANCELLED` stops the submit, leaving the form open and error-free | playwright | implemented (`form_questions_round_trip.js`) |
+| An answer resubmits with `_answers` plus the original values | playwright | implemented (`form_questions_round_trip.js`) |
+| Answers accumulate across questions in one submit | playwright | implemented (`form_questions_round_trip.js`) |
+| `MAX_QUESTION_ROUNDS` ends a runaway loop with an error naming the endpoint | playwright | implemented (`form_questions_round_trip.js`) |
+| A question with no registered handler throws instead of rendering | playwright | implemented (`form_questions_round_trip.js`) |

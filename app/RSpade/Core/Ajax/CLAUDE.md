@@ -116,6 +116,19 @@ Error responses:
 }
 ```
 
+A pending QUESTION uses the same envelope with `error_code: "question"` - not a failure,
+but an endpoint asking the user something before it writes:
+```json
+{
+    "_success": false,
+    "error_code": "question",
+    "reason": "A question is pending",
+    "metadata": { "key": "duplicate_email", "question": { "kind": "confirm", "...": "..." } }
+}
+```
+Sent by `response_form_question($key, $question)`; raised in-process as
+`AjaxQuestionException`. Protocol: `rsx:man form_conventions`, QUESTIONS.
+
 ## Exception Handling
 
 For **internal calls** (`Ajax::internal()`), the method throws specific exceptions for different error scenarios:
@@ -230,7 +243,7 @@ return response_error(Ajax::ERROR_AUTH_REQUIRED);
 return response_error(Ajax::ERROR_FATAL, 'Something went wrong');
 ```
 
-**Error codes:** `ERROR_VALIDATION`, `ERROR_NOT_FOUND`, `ERROR_UNAUTHORIZED`, `ERROR_AUTH_REQUIRED`, `ERROR_FATAL`, `ERROR_GENERIC`
+**Error codes:** `ERROR_VALIDATION`, `ERROR_NOT_FOUND`, `ERROR_UNAUTHORIZED`, `ERROR_AUTH_REQUIRED`, `ERROR_FATAL`, `ERROR_GENERIC`, `ERROR_QUESTION`
 
 ## Security Considerations
 

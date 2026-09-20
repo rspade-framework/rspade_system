@@ -138,6 +138,60 @@ message}` entry under the input whose `data-name` the key matches and puts the s
 `<Form_Errors />`. There is exactly one styling path for a failed submit - never add a
 second one in a field wrapper. Skill `rspade:ajax-error-handling`.
 
+## Questions (server-driven confirmation)
+
+An endpoint may answer a submission with a QUESTION instead of a result - a decision only
+the user can make about a condition only the server can see. **VALIDATE -> ASK -> WRITE**:
+validate, return the FIRST unanswered question, write nothing. The resubmission re-runs the
+endpoint from scratch with the answers attached, so no state is held between rounds.
+
+```php
+$answer = Form_Questions::answer($params, 'duplicate_email');   // null = not asked yet
+
+if ($answer === null) {
+    return response_form_question('duplicate_email', [
+        'kind' => 'confirm',
+        'title' => 'A contact with this email already exists',
+        'body' => "Richard Browne already uses {$email}.\n\nCreate a second contact?",
+        'confirm_label' => 'Create anyway',
+        'cancel_label' => 'Open the existing contact',
+    ]);
+}
+
+if ($answer === false) { ... }   // false is an ANSWER, acted on - never a cancel
+```
+
+The application registers ONE handler, once, from a static `on_app_modules_define()` on the
+class that owns the presentation (no init file):
+
+```javascript
+static on_app_modules_define() {
+    Rsx_Form.set_question_handler(async (question, context) => {
+        // context: {form, key, attempt, answers}
+        return answer;                    // or Rsx_Form.CANCELLED
+    });
+}
+```
+
+- **`Rsx_Form.CANCELLED`** (a frozen sentinel object, `Rsx_Form.is_cancelled(v)`) stops the
+  submit like `before_submit` returning false: no error, no `submit_error`, the form open
+  and dirty. **`false` is an answer the endpoint receives; CANCELLED never reaches it.** A
+  dialog whose "No" resolves with a bare `false` is indistinguishable from a dismissal -
+  give "No" a distinct token and map it.
+- **Per-form override**: `<Rsx_Form $question_handler=this.ask_inline>` or
+  `form.question_handler = fn`.
+- **No handler anywhere throws**, naming `set_question_handler()`.
+- **`Rsx_Form.MAX_QUESTION_ROUNDS` (5) is a defect detector**, not a duration: a sixth
+  question in one submit means the endpoint is ignoring `_answers`.
+- The framework defines **no question kinds** and ships **no dialog**. `confirm` / `select`
+  / `prompt` are a recommended contract - `rsx:man form_conventions`, QUESTIONS.
+- A non-form caller sees `error.code === Ajax.ERROR_QUESTION` with `metadata.key` /
+  `metadata.question`, and may run the same handler with `Rsx_Form.ask()`. In PHP an
+  in-process `Ajax::call()` raises `AjaxQuestionException`.
+
+Worked example: `system/app/RSpade/resource/reference_app/lib/modal/modal.js` and
+`.../reference_app/app/frontend/contacts/contacts_controller.php`.
+
 ## The page pattern (SPA add/edit)
 
 The action loads in `on_load()`, so the form is never blank on a first visit - but a
@@ -265,6 +319,9 @@ The client submits `{"model":"Contact_Model","id":123}`. Always whitelist with
 | A model instance in `form_data` | Extract a plain object |
 | `$name` on the field wrapper | It belongs on the input |
 | Storing the settled flag in `this.data` | Instance property |
+| Writing before asking a question | Validate, ask, THEN write |
+| Treating a `false` answer as a cancel | `false` is an answer; `Rsx_Form.CANCELLED` is the cancel |
+| Two questions in one response | Return the first unanswered one |
 
 Details: `php artisan rsx:man form_conventions`, `rsx:man form_input`, `rsx:man modals`.
 Related: `rspade:form-input-contract`, `rspade:ajax-error-handling`, and the app skills

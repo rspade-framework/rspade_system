@@ -450,6 +450,27 @@ underneath. While the record is in flight the form REFUSES to submit: blank is a
 value, so a submit racing the fetch would validly clear every field the data had
 not reached yet.
 
+THE REGISTERED QUESTION HANDLER
+-------------------------------
+The framework's form engine carries SERVER-DRIVEN QUESTIONS - an endpoint that
+returns response_form_question() instead of writing - but defines no dialog and
+no question kinds. This facade is where the reference application presents them:
+Modal.on_app_modules_define() calls Rsx_Form.set_question_handler() once, and the
+handler switches on question.kind to confirm(), select() and prompt().
+
+A 'confirm' question is a THREE-button dialog - Back, the cancel_label, the
+confirm_label - because cancel and "No" are different outcomes. "No" is an answer
+the endpoint receives and acts on; Back (and X, Escape, a backdrop click) returns
+Rsx_Form.CANCELLED, which stops the submit and leaves the form open. Since
+Rsx_Modal resolves every dismissal with close(false), a "No" button whose value
+is a bare false would be indistinguishable from one - so it carries a distinct
+token that the handler maps back to false.
+
+    system/app/RSpade/resource/reference_app/lib/modal/modal.js
+
+Protocol, the recommended question shapes and the endpoint's side:
+rsx:man form_conventions, the QUESTIONS section.
+
 ERROR HANDLING IN MODALS
 ------------------------
 There is nothing to write. The form owns it:

@@ -12,6 +12,7 @@ use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Ajax\Exceptions\AjaxAuthRequiredException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFormErrorException;
+use App\RSpade\Core\Ajax\Exceptions\AjaxQuestionException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFatalErrorException;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Debug\Debugger;
@@ -198,6 +199,17 @@ class Ajax_Debug_Command extends Command
             }
 
             $this->output_json($error_response);
+            return 1;
+
+        } catch (AjaxQuestionException $e) {
+            // Not a failure: the endpoint is asking. Call again with
+            // --args='{"_answers":{"<key>":<answer>}}' to answer it.
+            $this->output_json([
+                'success' => false,
+                'error_type' => 'question',
+                'key' => $e->get_key(),
+                'question' => $e->get_question(),
+            ]);
             return 1;
 
         } catch (AjaxFatalErrorException $e) {

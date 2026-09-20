@@ -143,6 +143,20 @@ class Ajax_Batch_Controller extends Rsx_Controller_Abstract
                     'metadata' => $e->get_details(),
                 ];
 
+            // A pending question, not a failure. Re-encoded with its own code so the
+            // client's form engine sees the same shape it sees on the direct transport
+            // and can run its question handler from inside a batch.
+            } catch (Exceptions\AjaxQuestionException $e) {
+                $responses["C_{$call_id}"] = [
+                    '_success' => false,
+                    'error_code' => Ajax::ERROR_QUESTION,
+                    'reason' => $e->getMessage(),
+                    'metadata' => [
+                        'key' => $e->get_key(),
+                        'question' => $e->get_question(),
+                    ],
+                ];
+
             } catch (Exceptions\AjaxFatalErrorException $e) {
                 $responses["C_{$call_id}"] = [
                     '_success' => false,

@@ -38,6 +38,7 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 | `Ajax::ERROR_UNAUTHORIZED` | User lacks permission |
 | `Ajax::ERROR_AUTH_REQUIRED` | User not logged in |
 | `Ajax::ERROR_FATAL` | Uncaught PHP exceptions |
+| `Ajax::ERROR_QUESTION` | Not a failure: a pending question (`response_form_question($key, $question)`); the form engine answers it, a non-form caller reads `metadata.key`/`metadata.question`, an in-process `Ajax::call()` raises `AjaxQuestionException`. `rsx:man form_conventions`, QUESTIONS |
 
 Constants available in both PHP (`Ajax::ERROR_*`) and JavaScript (`Ajax.ERROR_*`).
 

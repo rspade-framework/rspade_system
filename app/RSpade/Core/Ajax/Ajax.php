@@ -13,6 +13,7 @@ use App\RSpade\Core\Ajax\Exceptions\AjaxAuthRequiredException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFatalErrorException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxFormErrorException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxNotFoundException;
+use App\RSpade\Core\Ajax\Exceptions\AjaxQuestionException;
 use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Manifest\Manifest;
@@ -40,6 +41,7 @@ class Ajax
     const ERROR_AUTH_REQUIRED = 'auth_required';
     const ERROR_FATAL = 'fatal';
     const ERROR_GENERIC = 'generic';
+    const ERROR_QUESTION = 'question';        // Not a failure: the endpoint is asking the user something
     const ERROR_SERVER = 'server_error';      // Client-generated (HTTP 500)
     const ERROR_NETWORK = 'network_error';    // Client-generated (connection failed)
 
@@ -146,6 +148,7 @@ class Ajax
             self::ERROR_SERVER => 'A server error occurred. Please try again.',
             self::ERROR_NETWORK => 'Could not connect to server. Please check your connection.',
             self::ERROR_GENERIC => 'An error has occurred',
+            self::ERROR_QUESTION => 'A question is pending',
             default => 'An error has occurred',
         };
     }
@@ -361,6 +364,17 @@ class Ajax
                     $message .= ' - ' . json_encode($details);
                 }
                 throw new AjaxFatalErrorException($message);
+
+            // Not a failure. The endpoint validated, found a decision only the user can
+            // make, and returned it instead of writing. An in-process caller (a PHP test,
+            // rsx:ajax, one leg of a batch) sees the question as this exception and either
+            // answers it - by calling again with $params['_answers'][$key] set - or gives up.
+            case self::ERROR_QUESTION:
+                throw new AjaxQuestionException(
+                    $reason,
+                    (string) ($details['key'] ?? ''),
+                    (array) ($details['question'] ?? [])
+                );
 
             case self::ERROR_GENERIC:
                 throw new Exception($reason);

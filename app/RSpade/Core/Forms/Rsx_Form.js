@@ -89,6 +89,38 @@
  * ALWAYS render the top alert; the form scrolls its feedback into view. When the form
  * contains Rsx_Tabs, tab badges update and the first erroring tab activates.
  *
+ * ── Questions (server-driven confirmation) ───────────────────────────────────────────
+ *
+ * An endpoint may answer a submission with a QUESTION instead of a result: a decision
+ * only the user can make about a condition only the server can see ("a contact with this
+ * email already exists - create anyway?"). The endpoint validates, asks the first
+ * unanswered question with response_form_question($key, $question), and writes nothing.
+ *
+ * submit() answers it and carries on inside the SAME invocation: the spinner comes off,
+ * the registered handler is called with the question object verbatim, the answer is
+ * merged into the POST body under _answers (never into the inputs - vals() is unchanged)
+ * and the endpoint is called again from scratch. Prior answers are carried forward;
+ * answers die with this submit(), so a fresh user submit starts with none.
+ *
+ * THE FRAMEWORK OWNS THE PROTOCOL AND NOTHING ELSE. It defines no question kinds, ships
+ * no dialog and never falls back to window.confirm: the application registers ONE handler
+ * and decides entirely how a question looks.
+ *
+ *     // once per application, from a static on_app_modules_define()
+ *     Rsx_Form.set_question_handler(async (question, context) => answer);
+ *     //   context: {form, key, attempt, answers}
+ *     //   answer: anything JSON-serializable, or Rsx_Form.CANCELLED
+ *
+ * CANCEL IS NOT AN ANSWER. Rsx_Form.CANCELLED is a frozen sentinel OBJECT, never a
+ * boolean, precisely so it can never be confused with a legitimate `false` - "No" is an
+ * answer the endpoint acts on, while CANCELLED stops the submit exactly like before_submit
+ * returning false: no error rendered, no 'submit_error', dirty state and parking intact,
+ * the form open with the user's values. A form with no handler anywhere THROWS naming
+ * set_question_handler() - a question reaching a client that cannot ask it is a
+ * configuration error, never a silent skip.
+ *
+ * Contract of record, including the recommended question shapes: rsx:man form_conventions.
+ *
  * ── Dirty protection ─────────────────────────────────────────────────────────────────
  *
  * The user's keystrokes always win. Every user 'input' marks that name dirty; applying
@@ -101,6 +133,97 @@
  * input directly: form.input(name).val(v).
  */
 class Rsx_Form extends Component {
+    /**
+     * The cancel sentinel. A question handler returns THIS to stop the submit.
+     *
+     * A frozen object, never a boolean, and that is the whole point: `false` is a
+     * legitimate answer ("No") that the endpoint receives and acts on, so cancel needs a
+     * value that no answer can ever collide with. Identity-compared by is_cancelled().
+     */
+    static CANCELLED = Object.freeze({ rsx_form_cancelled: true });
+
+    /**
+     * Is this value the cancel sentinel?
+     *
+     * @param {*} value
+     * @returns {boolean}
+     */
+    static is_cancelled(value) {
+        return value === Rsx_Form.CANCELLED;
+    }
+
+    /**
+     * How many questions one submit() may answer before the form calls it a defect.
+     *
+     * NOT a duration and NOT a guess about how fast anything is - a defect detector. The
+     * endpoint re-runs from scratch each round and every prior answer is carried forward,
+     * so an endpoint asking a sixth question inside ONE submit is asking something it has
+     * already been told: it is ignoring _answers, and the loop it has started is infinite.
+     * This cap turns that into a rendered error naming the endpoint, instead of a browser
+     * tab that never stops posting.
+     */
+    static MAX_QUESTION_ROUNDS = 5;
+
+    /** The application's question handler. Registered once - see set_question_handler(). */
+    static _question_handler = null;
+
+    /**
+     * Register the application's question handler.
+     *
+     * Called once per application, from a static on_app_modules_define() on the class
+     * that owns the presentation (the modal facade, typically) - there is no init file
+     * and none is needed. The handler receives the question object exactly as PHP
+     * returned it and returns an answer, or Rsx_Form.CANCELLED to stop the submit.
+     *
+     *     static on_app_modules_define() {
+     *         Rsx_Form.set_question_handler(async (question, context) => { ... });
+     *     }
+     *
+     * @param {Function} fn (question, context) => answer
+     */
+    static set_question_handler(fn) {
+        Rsx_Form._question_handler = fn;
+    }
+
+    /**
+     * Ask a question that arrived somewhere other than a form's own submit().
+     *
+     * A widget calling Controller.method() directly can receive the same pending-question
+     * response a form does (error.code === Ajax.ERROR_QUESTION). This runs the registered
+     * handler for it, so that caller presents the question identically to every other one
+     * and then decides for itself what to do with the answer.
+     *
+     * @param {Object} question The question object from error.metadata.question
+     * @param {Object} [context] Merged into the handler's context; pass {form} to prefer
+     *        that form's own handler, and {key} so the handler knows what is being asked
+     * @returns {Promise<*>} The answer, or Rsx_Form.CANCELLED
+     */
+    static async ask(question, context = {}) {
+        const form = context.form || null;
+        const handler = (form && typeof form.question_handler === 'function')
+            ? form.question_handler
+            : Rsx_Form._question_handler;
+
+        if (typeof handler !== 'function') {
+            const error = new Error(
+                'Rsx_Form: the server asked a question and no question handler is registered. ' +
+                'Register one once per application from a static on_app_modules_define(): ' +
+                'Rsx_Form.set_question_handler((question, context) => answer). ' +
+                'See rsx:man form_conventions (QUESTIONS).'
+            );
+
+            // Marked so submit() lets it ESCAPE instead of rendering it. A missing handler
+            // is a configuration fault in the application, not a failed submission: shown
+            // inside <Form_Errors /> it would read to the user as a server problem and the
+            // omission would survive unnoticed.
+            error.rsx_form_configuration_error = true;
+
+            throw error;
+        }
+
+        return await handler(question, Object.assign({ form: form, key: null, attempt: 1, answers: {} }, context));
+    }
+
     on_create() {
         this.state = {
             values: {}, // Seed values {name: value} - applied in on_ready()
@@ -117,6 +240,14 @@ class Rsx_Form extends Component {
          * adjusted object, or throw a {field: message} object rendered as validation.
          */
         this.before_submit = null;
+
+        /**
+         * Optional per-form question handler, overriding the application's global one.
+         * Set from the template ($question_handler=) or assigned here by a host that
+         * wants this form's questions asked inline rather than in the usual dialog.
+         * Same signature as the global handler: (question, context) => answer.
+         */
+        this.question_handler = this.args.question_handler || null;
 
         // Parse the $data seed (object, or JSON string when passed through Blade)
         let data = this.args.data;
@@ -386,8 +517,64 @@ class Rsx_Form extends Component {
         const $submit_btns = this.$.find('button[type="submit"]');
         this._set_submitting($submit_btns, true);
 
+        const url = `/_ajax/${this.args.controller}/${this.args.method}`;
+        const answers = {};
+        let asked = 0;
+
         try {
-            const result = await Ajax.call(`/_ajax/${this.args.controller}/${this.args.method}`, values);
+            let result = null;
+
+            // The question loop. One pass per call to the endpoint: normally exactly one,
+            // and one more for each question the server asks and the user answers.
+            while (true) {
+                const payload = asked > 0 ? Object.assign({}, values, { _answers: Object.assign({}, answers) }) : values;
+                let question = null;
+
+                try {
+                    result = await Ajax.call(url, payload);
+                } catch (error) {
+                    if (!error || error.code !== Ajax.ERROR_QUESTION) {
+                        throw error;
+                    }
+                    question = error.metadata || {};
+                }
+
+                if (question === null) {
+                    break;
+                }
+
+                asked++;
+
+                if (asked > Rsx_Form.MAX_QUESTION_ROUNDS) {
+                    // The endpoint is ignoring the answers it is being handed. Name it.
+                    const runaway = new Error(
+                        `${this.args.controller}::${this.args.method} asked more than ` +
+                        `${Rsx_Form.MAX_QUESTION_ROUNDS} questions in one submission. The endpoint is ` +
+                        'not reading the answers it was given (_answers), so the submission cannot finish.'
+                    );
+                    runaway.code = Ajax.ERROR_GENERIC;
+
+                    this._set_submitting($submit_btns, false);
+                    await this.render_error(runaway);
+                    this.trigger('submit_error', runaway);
+                    return false;
+                }
+
+                // The spinner comes off while the user reads the question; _submitting
+                // stays true for the whole loop, so re-entrancy remains blocked.
+                this._set_submitting($submit_btns, false);
+
+                const answer = await this._ask_question(question.question || {}, question.key, asked, answers);
+
+                if (Rsx_Form.is_cancelled(answer)) {
+                    // Exactly like before_submit returning false: nothing rendered, nothing
+                    // fired, the form left open with the user's values and dirty state.
+                    return false;
+                }
+
+                answers[question.key] = answer;
+                this._set_submitting($submit_btns, true);
+            }
 
             // Success: the user's edits are now the record - nothing left to protect.
             this._dirty = {};
@@ -405,12 +592,40 @@ class Rsx_Form extends Component {
             return result;
         } catch (error) {
             this._set_submitting($submit_btns, false);
+
+            // A missing question handler is a configuration fault, not a failed submit.
+            // It escapes rather than being rendered - see Rsx_Form.ask().
+            if (error && error.rsx_form_configuration_error) {
+                throw error;
+            }
+
             await this.render_error(error);
             this.trigger('submit_error', error);
             return false;
         } finally {
             this._submitting = false;
         }
+    }
+
+    /**
+     * Run the question handler for one pending question.
+     *
+     * The per-form handler wins over the application's global one, so a form that wants
+     * its question asked inline can override the usual presentation without touching it.
+     *
+     * @param {Object} question The question object, exactly as the endpoint returned it
+     * @param {string} key The question key
+     * @param {number} attempt Which question of this submission this is (1-based)
+     * @param {Object} answers The answers already given in this submission
+     * @returns {Promise<*>} The answer, or Rsx_Form.CANCELLED
+     */
+    async _ask_question(question, key, attempt, answers) {
+        return await Rsx_Form.ask(question, {
+            form: this,
+            key: key,
+            attempt: attempt,
+            answers: Object.assign({}, answers),
+        });
     }
 
     /**
