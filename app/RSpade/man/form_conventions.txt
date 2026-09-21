@@ -596,6 +596,11 @@ DIRTY PROTECTION
     is engine-internal and silent, cleared on a successful submit, and dies with
     the action on navigation.
 
+    Dirty protection is about VALUES SURVIVING A RE-RENDER. Leaving the page
+    altogether is a different question and a different seam: Rsx's navigation
+    guard, which asks the user before a dispatch or a real page exit takes the
+    unsaved work with it. See rsx:man spa, THE NAVIGATION GUARD.
+
     The parking key is computed ONCE, in on_create(), from
     controller|method|record-id ('new' for a create form). It must not be
     re-derived later: the record id comes from the seed values, so an edit form
@@ -689,6 +694,7 @@ SEE ALSO
     rsx:man ajax_error_handling
     rsx:man auth_gates
     rsx:man jqhtml
-    rsx:man spa
+    rsx:man spa - THE NAVIGATION GUARD: warning before unsaved work is lost
+    skill rspade:navigation-guard
 
 RSX Framework                     August 2026             FORM_CONVENTIONS(3)

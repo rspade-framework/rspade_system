@@ -52,7 +52,9 @@ DESCRIPTION
     See rsx:man helpers for the PHP side.
 
     What is NOT here: browser storage (Rsx_Storage - rsx:man storage), URL hash
-    state (Rsx.url_hash_* - rsx:man url_hash), breakpoint predicates (Responsive
+    state (Rsx.url_hash_* - rsx:man url_hash), the navigation guard
+    (Rsx.set_navigation_guard() / clear_navigation_guard() /
+    has_navigation_guard() - rsx:man spa), breakpoint predicates (Responsive
     - rsx:man responsive), jQuery extensions (rsx:man jquery), and time (Rsx_Time
     / Rsx_Date - rsx:man time). Those are their own subsystems with their own
     rules.
@@ -392,6 +394,8 @@ SEE ALSO
                              and the $.ajax() block)
     rsx:man storage          Rsx_Storage - scoped browser storage
     rsx:man url_hash         Rsx.url_hash_* - UI state in the URL
+    rsx:man spa              Rsx.set_navigation_guard() - warning before the
+                             user leaves a page with unsaved work
     rsx:man responsive       Responsive.is_*() - the breakpoint predicates
     rsx:man time             Rsx_Time / Rsx_Date in JavaScript
     rsx:man js_decorators    the decorator system @debounce plugs into

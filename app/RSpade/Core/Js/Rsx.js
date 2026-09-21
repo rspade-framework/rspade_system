@@ -327,6 +327,107 @@ class Rsx {
         return Rsx._uid++;
     }
 
+
+    // The registered navigation guard, or null. ONE slot: set_navigation_guard()
+    // overwrites whatever was there, so the LAST registration wins and there is
+    // never a stack to unwind.
+    static _navigation_guard = null;
+
+    // Whether the beforeunload listener has been installed (once per page load).
+    static _navigation_guard_beforeunload_installed = false;
+
+    /**
+     * Register the navigation guard: an async callback consulted before the user
+     * leaves the page they are on. The classic use is an editor with unsaved changes.
+     *
+     * TWO MECHANISMS, one registration:
+     *
+     *  - SPA navigation (link click, Back/Forward, or a programmatic Spa.dispatch() /
+     *    Spa.redirect() - all three reach Spa.dispatch(), which is the single choke
+     *    point: the delegated click handler in Spa.setup_browser_integration() calls
+     *    dispatch(), the popstate listener calls dispatch({_is_popstate: true}), and
+     *    redirect() is dispatch() with history: 'replace'). There, dispatch() awaits
+     *    the callback with the target URL. Resolve EXACTLY true to allow the
+     *    navigation; anything else blocks it, and the framework logs
+     *    "[Rsx] Navigation to <url> was prevented by the navigation guard."
+     *
+     *  - Leaving the page for real (refresh, tab close, typed URL, external link).
+     *    The browser's own beforeunload dialog does the asking - a page cannot show
+     *    its own UI there - so the callback is NOT invoked in that case. This works
+     *    on any page, SPA or not: on a server-rendered page the native dialog IS the
+     *    whole feature.
+     *
+     * THE FRAMEWORK SHOWS NO DIALOG OF ITS OWN for SPA navigation. The callback is
+     * where the application asks - typically `async () => Modal.confirm(...)`, which
+     * resolves true/false and is exactly this contract.
+     *
+     * The guard is CLEARED automatically once a navigation it approved goes ahead, so
+     * an editor that approved a departure cannot leave a stale prompt behind for the
+     * next page. A rejection leaves it registered.
+     *
+     * A callback that REJECTS is not caught: the error propagates as an ordinary
+     * unhandled error rather than being read as a silent "block".
+     *
+     * @param {function(string): Promise<boolean>} fn - receives the target URL.
+     */
+    static set_navigation_guard(fn) {
+        Rsx._navigation_guard = fn;
+        Rsx._install_navigation_guard_beforeunload();
+    }
+
+    /**
+     * Clear the navigation guard. ONE call clears it however many times
+     * set_navigation_guard() was called - there is one slot, not a stack.
+     */
+    static clear_navigation_guard() {
+        Rsx._navigation_guard = null;
+    }
+
+    /**
+     * Is a navigation guard currently registered?
+     *
+     * @returns {boolean}
+     */
+    static has_navigation_guard() {
+        return Rsx._navigation_guard !== null;
+    }
+
+    /**
+     * Consult the guard for a target URL. True when there is no guard, or when the
+     * registered callback resolved exactly true. The navigation seam calls this so
+     * it never touches the slot itself.
+     *
+     * @param {string} url
+     * @returns {Promise<boolean>}
+     */
+    static async navigation_guard_allows(url) {
+        if (!Rsx._navigation_guard) {
+            return true;
+        }
+        const answer = await Rsx._navigation_guard(url);
+        return answer === true;
+    }
+
+    /**
+     * Install, once per page load, the beforeunload listener that raises the browser's
+     * native leave dialog while a guard is registered. Browsers render their own
+     * wording and ignore the supplied string; it is set for the ones that honour it.
+     * Private.
+     */
+    static _install_navigation_guard_beforeunload() {
+        if (Rsx._navigation_guard_beforeunload_installed) {
+            return;
+        }
+        Rsx._navigation_guard_beforeunload_installed = true;
+        window.addEventListener('beforeunload', (e) => {
+            if (!Rsx._navigation_guard) {
+                return;
+            }
+            e.preventDefault();
+            e.returnValue = 'You have unsaved changes. Leave this page?';
+        });
+    }
+
     // Storage for route definitions loaded from bundles
     static _routes = {};
 

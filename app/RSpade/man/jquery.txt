@@ -12,6 +12,9 @@ SYNOPSIS
         // Link navigation happens
     });
 
+    // A numeric field: digits only, formatted inline, .val() is the number
+    $('input.amount').rsx_numeric({decimals: 2, commas: true, prefix: '$'});
+
     // Other jQuery helpers
     if ($('.element').exists()) { ... }
     if ($('.element').is_in_viewport()) { ... }
@@ -269,6 +272,67 @@ JQUERY HELPERS
                     }
                 }
 
+    Numeric Fields
+
+        .rsx_numeric(options)
+            Turn an <input type="text"> into a numeric field: it filters what may
+            be typed, writes the formatted form inline as the user types, and
+            answers .val() with the raw number.
+
+            Options, all optional:
+
+                decimals   0       Maximum decimal places. 0 accepts integers
+                                   only - '.' is rejected like any other
+                                   non-digit. A longer fraction is TRUNCATED,
+                                   never rounded.
+                commas     false   Show thousands separators.
+                prefix     ''      A display-only prefix such as '$'.
+
+            THE RAW NUMBER IS WHAT .val() SEES, BOTH WAYS. The getter answers
+            digits with at most one '.' - no commas, no prefix, '' for an empty
+            box - and the setter takes a number or a string, sanitises it and
+            displays it formatted:
+
+                $input.rsx_numeric({decimals: 2, commas: true, prefix: '$'});
+                $input.val('9876543.21');   // displays $9,876,543.21
+                $input.val();               // "9876543.21"
+
+            That is a 'text' entry in $.valHooks, applied only to elements
+            carrying the filter's own data and deferring to whatever hook was
+            installed for 'text' before it for every other element. So a
+            Form_Input_Abstract subclass reading this.$sid('input').val(), and
+            any plain $(el).val(), get the number without knowing the filter is
+            there - Text_Input's own _get_value()/_set_value() are what
+            Currency_Input inherits.
+
+            FORMATTING IS INLINE. With the caret at the end the box is rewritten
+            formatted on every keystroke; an edit mid-string writes the cleaned
+            unformatted number and keeps the caret where it was, because
+            re-applying separators under the caret would move it; blur reformats
+            the whole value; focus selects everything, so the next keystroke
+            replaces it. Backspace at the end over a formatting character deletes
+            the number's last character rather than one that is only there to be
+            read. The box looks the same focused and blurred. Pasted text is
+            filtered exactly like typed text.
+
+            Filtering is ALL it does. It never validates - that rule is the
+            server's - never calls _notify_input(), and never fires an 'input'
+            event of its own: the browser already fired one for the keystroke
+            that reached it.
+
+            Calling it again reconfigures - the previous handlers come off first,
+            so the last options win and there is only ever one set of handlers.
+
+                $input.rsx_numeric(false);
+
+            removes the filter: the handlers and the hook stop applying to that
+            element and the raw number is left in the box.
+
+            Currency_Input is this filter with commas and a prefix, and it is
+            what every numeric input invokes - no component filters digits by
+            hand. A code whose leading zeros are significant (a PIN) is a string
+            of digits rather than a number, and is not a numeric field.
+
     Form Validation
 
         .checkValidity()
@@ -506,6 +570,13 @@ EXAMPLES
                 show_errors();
             }
         });
+
+    Currency Field
+        // Digits, two decimals, separators and the symbol written as you type
+        $('#invoice_amount').rsx_numeric({decimals: 2, commas: true, prefix: '$'});
+
+        // The endpoint gets the number, not the picture of it
+        await Invoice_Controller.save({amount: $('#invoice_amount').val()});
 
     Lazy Loading on Scroll
         $(window).on('scroll', function() {

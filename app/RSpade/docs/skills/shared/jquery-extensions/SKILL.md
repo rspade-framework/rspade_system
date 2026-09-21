@@ -1,6 +1,6 @@
 ---
 name: jquery-extensions
-description: "RSX jQuery extensions including the click() override that auto-prevents default, .click_async() button busy-states, existence and viewport checks, component-aware traversal, form validation helpers, scrolling, and the width_group family. Use when working with click handlers, wiring a button to a server-side action, checking element existence or visibility, finding sibling components, syncing widths across elements, understanding why links don't navigate, or hitting the \"$.ajax() is blocked\" throw."
+description: "RSX jQuery extensions including the click() override that auto-prevents default, .click_async() button busy-states, existence and viewport checks, component-aware traversal, form validation helpers, scrolling, the width_group family, and rsx_numeric() - the one numeric field filter. Use when working with click handlers, wiring a button to a server-side action, checking element existence or visibility, finding sibling components, syncing widths across elements, building a numeric only textbox, a digits only input, a currency input, decimal places or thousands separators, understanding why links don't navigate, or hitting the \"$.ajax() is blocked\" throw."
 ---
 
 # RSX jQuery Extensions
@@ -197,6 +197,29 @@ if ($('a').is_external()) {
 // element is above the viewport. speed is the animation duration in ms.
 $('.error-field').scroll_up_to(300);
 ```
+
+---
+
+## Numeric fields: rsx_numeric()
+
+```javascript
+$input.rsx_numeric({decimals: 2, commas: true, prefix: '$'});
+$input.rsx_numeric(false);   // remove the filter, raw number left in the box
+```
+
+Turns an `<input type="text">` into a numeric field. **It is the ONE numeric filter** - never hand-roll `replace(/[^0-9]/g, '')` in a component.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `decimals` | `0` | Maximum decimal places. `0` accepts integers only - `.` is rejected like any other non-digit. A longer fraction is truncated, never rounded. |
+| `commas` | `false` | Show thousands separators. |
+| `prefix` | `''` | A display-only prefix such as `'$'`. |
+
+**`.val()` is the RAW NUMBER, both ways** - digits with at most one `.`, no commas, no prefix, `''` when empty; the setter takes a number or a string and displays it formatted. That is a `$.valHooks.text` entry keyed on the filter's own data, so `Text_Input._get_value()` / `_set_value()` and any plain `$(el).val()` see the number and the component knows nothing about the filter.
+
+Formatting is written INLINE as the user types (blur reformats, focus selects all, backspace at the end over a formatting character takes the number's last character, a paste is filtered like typing). It filters characters and nothing else: no validation (that rule is the server's), no `_notify_input()`, and no `input` event of its own. Calling it again reconfigures rather than double-binding.
+
+`Currency_Input` is this filter with `commas` and a `prefix`, and its whole class body is the call. A PIN is NOT a numeric field - `0042` is not `42`.
 
 ---
 

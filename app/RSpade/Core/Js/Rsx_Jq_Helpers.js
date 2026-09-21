@@ -228,6 +228,215 @@ class Rsx_Jq_Helpers {
             return $();
         };
 
+        // The numeric field filter. $.fn.rsx_numeric() and the two pure helpers
+        // Rsx_Jq_Helpers._numeric_read() / ._numeric_format() are its whole
+        // implementation, plus the valHook installed below it.
+        /**
+         * Turn an <input type="text"> into a numeric field.
+         *
+         *     $input.rsx_numeric({decimals: 2, commas: true, prefix: '$'});
+         *     $input.rsx_numeric(false);   // remove the filter
+         *
+         * | Option     | Default | Meaning                                                      |
+         * |------------|---------|--------------------------------------------------------------|
+         * | `decimals` | `0`     | Maximum decimal places. `0` accepts integers only - `.` is    |
+         * |            |         | rejected like any other non-digit; a longer fraction is       |
+         * |            |         | truncated, never rounded.                                     |
+         * | `commas`   | `false` | Show thousands separators.                                    |
+         * | `prefix`   | `''`    | A display-only prefix such as `'$'`.                          |
+         *
+         * WHAT .val() SEES IS THE RAW NUMBER, BOTH WAYS. The getter answers digits with
+         * at most one `.` - no commas, no prefix, `''` for an empty box - and the setter
+         * takes a number or a string, sanitises it and displays it formatted. That is a
+         * `text` entry in `$.valHooks`, applied only to elements carrying this plugin's
+         * data and deferring to whatever hook was there before for every other element.
+         * So `Form_Input_Abstract` subclasses reading `this.$sid('input').val()`, and any
+         * plain `$(el).val()`, get the number without knowing the filter exists.
+         *
+         * FORMATTING IS INLINE, as the user types. With the caret at the end the box is
+         * rewritten formatted on every keystroke; editing mid-string writes the cleaned
+         * unformatted number and keeps the caret where it was, because re-applying
+         * separators under the caret would move it; blur reformats the whole value; focus
+         * selects everything, so the next keystroke replaces it. Backspace at the end over
+         * a separator deletes the digit before it rather than a character that is only
+         * there to be read. The box looks the same focused and blurred.
+         *
+         * Filtering is all it does - it never validates (that is the server's), never
+         * calls `_notify_input()`, and never fires an `input` event of its own: the
+         * browser already fired one for the keystroke that reached it.
+         *
+         * Calling it again reconfigures: the previous handlers come off first, so the last
+         * options win and there is only ever one set. `rsx_numeric(false)` takes the
+         * handlers off and leaves the raw number in the box.
+         *
+         * `Currency_Input` is this filter with `commas` and a `prefix`; it is what every
+         * numeric input invokes, so no component filters digits by hand.
+         *
+         * @param {Object|false} options
+         * @returns {jQuery}
+         */
+        $.fn.rsx_numeric = function (options) {
+            if (options === false) {
+                return this.each(function () {
+                    const $input = $(this);
+                    const state = $.data(this, 'rsx_numeric');
+                    if (!state) {
+                        return;
+                    }
+
+                    // Read the number out while the state still describes the display.
+                    const numeric = Rsx_Jq_Helpers._numeric_read(this.value, state);
+                    $input.off('.rsx_numeric');
+                    $.removeData(this, 'rsx_numeric');
+                    this.value = numeric;
+                });
+            }
+
+            const settings = options || {};
+
+            return this.each(function () {
+                const $input = $(this);
+                const element = this;
+
+                const state = {
+                    decimals: settings.decimals === undefined ? 0 : int(settings.decimals),
+                    commas: settings.commas === true,
+                    prefix: settings.prefix === undefined ? '' : str(settings.prefix),
+
+                    // Raised by focus and consumed by the mouseup that completes the
+                    // focusing click - see the focus handlers below.
+                    select_on_mouseup: false,
+                };
+
+                // Reconfiguration: handlers from an earlier call are unbound first, so two
+                // calls leave one set of handlers rather than two.
+                $input.off('.rsx_numeric');
+                $.data(element, 'rsx_numeric', state);
+
+                // Whatever the box already holds is now displayed under these options.
+                element.value = Rsx_Jq_Helpers._numeric_format(
+                    Rsx_Jq_Helpers._numeric_read(element.value, state),
+                    state
+                );
+
+                $input.on('keydown.rsx_numeric', function (e) {
+                    if (e.key !== 'Backspace') {
+                        return;
+                    }
+
+                    const caret = element.selectionStart;
+                    if (caret !== element.selectionEnd || caret !== element.value.length || caret === 0) {
+                        return;
+                    }
+                    if (/[0-9]/.test(element.value.charAt(caret - 1))) {
+                        return;
+                    }
+
+                    // The last character is one the filter wrote, not one the user typed.
+                    // Deleting it would only see it written again by the reformat, so the
+                    // digit in front of it goes instead.
+                    e.preventDefault();
+
+                    const numeric = Rsx_Jq_Helpers._numeric_read(element.value, state);
+                    if (!numeric.length) {
+                        return;
+                    }
+
+                    element.value = Rsx_Jq_Helpers._numeric_format(numeric.slice(0, -1), state);
+                    const end = element.value.length;
+                    element.setSelectionRange(end, end);
+                });
+
+                $input.on('input.rsx_numeric', function () {
+                    const raw = element.value;
+                    const caret = element.selectionStart;
+                    const numeric = Rsx_Jq_Helpers._numeric_read(raw, state);
+
+                    if (caret === raw.length) {
+                        const display = Rsx_Jq_Helpers._numeric_format(numeric, state);
+                        if (display !== raw) {
+                            element.value = display;
+                            const end = display.length;
+                            element.setSelectionRange(end, end);
+                        }
+                        return;
+                    }
+
+                    // The caret is inside the value: only the rejected characters come
+                    // out, and the caret keeps its place relative to what is left.
+                    // Separators are not re-applied here because inserting one ahead of
+                    // the caret moves the caret off the digit the user is editing; the
+                    // next keystroke at the end, or the blur, formats the whole value.
+                    const cleaned = state.prefix + numeric;
+                    if (cleaned !== raw) {
+                        element.value = cleaned;
+                        const position = Math.min(caret, cleaned.length);
+                        element.setSelectionRange(position, position);
+                    }
+                });
+
+                $input.on('blur.rsx_numeric', function () {
+                    state.select_on_mouseup = false;
+                    element.value = Rsx_Jq_Helpers._numeric_format(
+                        Rsx_Jq_Helpers._numeric_read(element.value, state),
+                        state
+                    );
+                });
+
+                // Select-all on focus, in two halves. A keyboard focus is done here; a
+                // mouse focus is not, because the click that raised it has not finished -
+                // its default action still has a caret to place, and it lands after this
+                // handler returns and collapses the selection. The mouseup that ends the
+                // click is where that is undone, and only when the user did not drag a
+                // selection of their own.
+                $input.on('focus.rsx_numeric', function () {
+                    state.select_on_mouseup = true;
+                    element.select();
+                });
+
+                $input.on('mouseup.rsx_numeric', function () {
+                    if (!state.select_on_mouseup) {
+                        return;
+                    }
+                    state.select_on_mouseup = false;
+
+                    if (element.selectionStart === element.selectionEnd) {
+                        element.select();
+                    }
+                });
+            });
+        };
+
+        // The raw-value contract. jQuery consults $.valHooks[elem.type] before reading or
+        // writing a value, and 'text' is the type of every input this plugin is applied
+        // to. Returning undefined hands the element back to jQuery, so an input without
+        // the plugin's data behaves exactly as it did. jQuery ships no hook of its own
+        // for 'text', and the framework is the one owner of this slot: a hook already
+        // present here is a collision, not something to chain behind.
+        if ($.valHooks.text !== undefined) {
+            throw new Error('Rsx_Jq_Helpers: $.valHooks.text is already defined; rsx_numeric() owns the text value hook.');
+        }
+        $.valHooks.text = {
+            get: function (elem) {
+                const state = $.data(elem, 'rsx_numeric');
+                if (state) {
+                    return Rsx_Jq_Helpers._numeric_read(elem.value, state);
+                }
+                return undefined;
+            },
+            set: function (elem, value) {
+                const state = $.data(elem, 'rsx_numeric');
+                if (state) {
+                    elem.value = Rsx_Jq_Helpers._numeric_format(
+                        Rsx_Jq_Helpers._numeric_read(value, state),
+                        state
+                    );
+                    return elem.value;
+                }
+                return undefined;
+            },
+        };
+
         // Attach the CSRF token header to a settings object bound for the local
         // server, without clobbering any caller-supplied header. window.rsxapp.csrf
         // is populated (session-gated) at page render; when absent (anonymous
@@ -307,5 +516,59 @@ class Rsx_Jq_Helpers {
             // Allow external requests (different domain)
             return native_ajax.call(this, settings);
         };
+    }
+
+    /**
+     * The raw number inside a displayed value: digits, at most one '.', and at most
+     * state.decimals digits after it (truncated, never rounded). Everything else -
+     * separators, the prefix, letters, a second decimal point - is dropped. With
+     * state.decimals at 0 the '.' is dropped too.
+     *
+     * This is also the sanitiser for a value handed to .val().
+     *
+     * @param {*} display
+     * @param {Object} state - the options stored in $.data(el, 'rsx_numeric')
+     * @returns {string}
+     */
+    static _numeric_read(display, state) {
+        const text = str(display);
+
+        if (state.decimals <= 0) {
+            return text.replace(/[^0-9]/g, '');
+        }
+
+        const digits = text.replace(/[^0-9.]/g, '');
+        const point = digits.indexOf('.');
+        if (point < 0) {
+            return digits;
+        }
+
+        const fraction = digits.slice(point + 1).replace(/\./g, '').slice(0, state.decimals);
+        return digits.slice(0, point + 1) + fraction;
+    }
+
+    /**
+     * The displayed form of a raw number: the prefix, thousands separators if the
+     * options ask for them, and the fraction exactly as typed - a trailing '.' is kept,
+     * because the user is still typing the number that follows it.
+     *
+     * @param {string} numeric - a value already through _numeric_read()
+     * @param {Object} state - the options stored in $.data(el, 'rsx_numeric')
+     * @returns {string}
+     */
+    static _numeric_format(numeric, state) {
+        if (numeric === '') {
+            return '';
+        }
+
+        const point = numeric.indexOf('.');
+        let integer = point < 0 ? numeric : numeric.slice(0, point);
+
+        if (state.commas) {
+            integer = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        }
+
+        const display = state.prefix + integer;
+        return point < 0 ? display : display + '.' + numeric.slice(point + 1);
     }
 }

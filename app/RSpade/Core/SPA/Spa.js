@@ -46,18 +46,11 @@ class Spa {
     // Grace period in milliseconds for suppressing errors after navigation
     static NAVIGATION_GRACE_PERIOD_MS = 10000;
 
-    // The registered leave-guard callback: () => string|null|false. Returns a
-    // confirmation message to block/prompt navigation, or a falsy value to allow it.
-    static _leave_guard = null;
-
     // URL of the page currently showing, captured once a navigation actually
     // completes. Used to restore the address bar if a Back/Forward navigation is
     // vetoed (the browser has already changed window.location by the time popstate
     // fires, so cancelling requires explicitly pushing the prior URL back).
     static _last_committed_url = null;
-
-    // Whether the window.beforeunload guard listener has been installed (once per page load)
-    static _beforeunload_installed = false;
 
     /**
      * Get the current action component instance
@@ -96,58 +89,6 @@ class Spa {
             return false;
         }
         return (Date.now() - Spa._navigation_timestamp) < Spa.NAVIGATION_GRACE_PERIOD_MS;
-    }
-
-    /**
-     * Register a leave-guard: a function returning a confirmation message string
-     * to block navigation (prompting the user), or a falsy value to allow it.
-     * Consulted at the single choke point every navigation passes through -
-     * Spa.dispatch() - so link clicks, popstate (Back/Forward), and programmatic
-     * dispatch()/redirect() calls are all covered by one registration.
-     *
-     * Also installs (once, lazily, idempotently) a window.beforeunload handler so
-     * native browser navigation (refresh, tab close, typed URL, external link) gets
-     * the same coverage automatically - no separate addEventListener needed by the
-     * caller.
-     *
-     * Auto-cleared once a navigation it approved completes (see clear_leave_guard),
-     * so a stale guard can never outlive the editor that registered it - a fresh
-     * action must re-register if it wants a guard.
-     *
-     * @param {function(): (string|null|false)} fn
-     */
-    static set_leave_guard(fn) {
-        Spa._leave_guard = fn;
-        Spa._install_beforeunload_guard();
-    }
-
-    /**
-     * Clear the registered leave-guard, if any.
-     */
-    static clear_leave_guard() {
-        Spa._leave_guard = null;
-    }
-
-    /**
-     * Lazily install a single beforeunload listener (once per page load) that
-     * consults Spa._leave_guard fresh on every unload attempt - a no-op when no
-     * guard is registered. Private.
-     */
-    static _install_beforeunload_guard() {
-        if (Spa._beforeunload_installed) {
-            return;
-        }
-        Spa._beforeunload_installed = true;
-        window.addEventListener('beforeunload', (e) => {
-            if (!Spa._leave_guard) {
-                return;
-            }
-            const message = Spa._leave_guard();
-            if (message) {
-                e.preventDefault();
-                e.returnValue = '';
-            }
-        });
     }
 
     /**
@@ -592,9 +533,9 @@ class Spa {
      * @param {object|null} options.scroll - Scroll position {x, y} to restore (default: null = scroll to top)
      * @param {boolean} options.triggers - Fire before/after dispatch events (default: true)
      * @param {boolean} options.force - Force SPA dispatch even if disabled (used by popstate) (default: false)
-     * @param {boolean} options.skip_leave_guard - Bypass the registered leave-guard for an intentional
-     *   programmatic navigation (default: false). Note: popstate does NOT set this - Back/Forward must
-     *   always be subject to the guard.
+     * @param {boolean} options.skip_navigation_guard - Bypass the registered navigation guard
+     *   (Rsx.set_navigation_guard) for an intentional programmatic navigation (default: false).
+     *   Note: popstate does NOT set this - Back/Forward must always be subject to the guard.
      */
     /**
      * Navigate to a URL, replacing the current history entry instead of pushing.
@@ -606,24 +547,19 @@ class Spa {
     }
 
     static async dispatch(url, options = {}) {
-        if (Spa._leave_guard && !options.skip_leave_guard) {
-            const message = Spa._leave_guard();
-            if (message) {
-                const confirmed = (typeof Modal !== 'undefined' && Modal.confirm)
-                    ? await Modal.confirm('Leave Page?', message, 'Leave', 'Stay')
-                    : window.confirm(message);
-                if (!confirmed) {
-                    if (options._is_popstate && Spa._last_committed_url) {
-                        // Browser already changed window.location by the time popstate
-                        // fires; restore the address bar without re-triggering another
-                        // popstate (pushState does not fire it).
-                        history.pushState(history.state, '', Spa._last_committed_url);
-                    }
-                    return;
+        if (Rsx.has_navigation_guard() && !options.skip_navigation_guard) {
+            if (!await Rsx.navigation_guard_allows(url)) {
+                console.warn('[Rsx] Navigation to ' + url + ' was prevented by the navigation guard.');
+                if (options._is_popstate && Spa._last_committed_url) {
+                    // Browser already changed window.location by the time popstate
+                    // fires; restore the address bar without re-triggering another
+                    // popstate (pushState does not fire it).
+                    history.pushState(history.state, '', Spa._last_committed_url);
                 }
+                return;
             }
+            Rsx.clear_navigation_guard();
         }
-        Spa.clear_leave_guard();
 
         // Check if SPA is disabled - do full page load
         // Exception: popstate events always attempt SPA dispatch (force: true)
@@ -923,7 +859,7 @@ class Spa {
             }
 
             // Record the URL now showing. Used to restore the address bar if a
-            // later Back/Forward navigation is vetoed by a leave-guard. Same URL
+            // later Back/Forward navigation is vetoed by the navigation guard. Same URL
             // construction as the history push/replace above.
             Spa._last_committed_url = parsed.path + parsed.search + (parsed.hash || '');
 

@@ -63,7 +63,9 @@ between `app_init` and `app_ready`: awaited dispatch to the initial URL). Both r
 unless `window.rsxapp.is_spa`.
 
 `dispatch()` is the single choke point - link clicks, `popstate`, `redirect()` and programmatic
-calls all land here. In order: leave-guard consult; the disabled check (`Spa.disable()` degrades
+calls all land here. In order: the navigation-guard consult (`Rsx.has_navigation_guard()` ->
+`Rsx.navigation_guard_allows(url)`, cleared on an approved navigation, bypassed by
+`skip_navigation_guard`); the disabled check (`Spa.disable()` degrades
 everything to full page loads, `force` exempts popstate); re-entrancy, which QUEUES a nested
 dispatch as `pending_redirect` and drains it in the `finally` (this is how an `on_load()` redirect
 works); ORM cache reset and the `spa_dispatch_start` trigger; the four hand-offs to the server via
