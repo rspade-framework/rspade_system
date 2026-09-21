@@ -1,0 +1,196 @@
+APPLICATION-DEFINED ERROR PAGES
+Date: 2026-09-21
+
+IF YOU DO NOTHING: nothing in your code breaks. The framework renders its own
+    (restyled) standalone page for every 404, 403 and 500; a CSRF failure on a
+    native form POST answers a 419 "Page Expired" page instead of the plain text
+    it used to; response_not_found() and response_form_error() returned from a
+    GET web route render a 404 and a 400 page instead of a 500; and a route you
+    already declared under /error/ that does not fit ROUTE-ERROR-01 fails the
+    manifest build naming the rule. What you do NOT get until you port it is a
+    404 that looks like your application.
+
+SUMMARY
+    A full-page error - no route matched, a gate refused an identified caller, a
+    form's CSRF token expired, an exception reached the top of the request - is
+    now rendered by a page the APPLICATION declares, as an ordinary route under
+    the reserved prefix /error/, per realm. The framework resolves the page for
+    the status, calls it directly with the failure as $params['error'], and
+    forces the response's status.
+
+    The engine arrives with the framework. The pages do not: they live in the
+    template app's /rsx/, which your fork does not receive. Until you declare
+    your own, every error in your application renders the framework's standalone
+    page - correct, styled, and not yours.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    App\RSpade\Core\Errors\Error_Screens
+        The one funnel every full-page failure goes through: unauthorized(),
+        not_found(), fatal(), expired() (419), bad_request() (400),
+        http_status() (any other browsed abort()), preview().
+
+    App\RSpade\Core\Errors\Error_Pages
+        Resolution: the realm's own table, exact /error/<status> first, then
+        /error/generic; a portal failure with neither falls to the staff pair;
+        nothing declared falls to the framework page.
+
+    App\RSpade\Core\Errors\Error_Context
+        The readonly object a page receives as $params['error']: status, title,
+        message, path, method, realm, home_url, preview, detail. detail is the
+        exception block, for a 500 only, and null in any sealed build (debug
+        and production alike).
+
+    ROUTE-ERROR-01 (manifest-build FATAL)
+        A pattern under /error/ must be exactly /error/<status 400-599> or
+        /error/generic, one segment with no :param, GET only, and gated
+        #[Auth('public')]. THIS IS THE ONE THING THAT CAN FAIL YOUR BUILD: if
+        your application already declares a route whose path begins /error/ -
+        an "error log" screen at /error/list, say - rename it. The prefix is
+        reserved.
+
+    The preview intercept, in both dispatchers
+        A path matching /error/<3 digits> or /error/generic is intercepted
+        before route matching in EVERY mode: development renders the page as a
+        preview, a sealed build answers the 404 page. An error page never
+        answers 200 at its own URL.
+
+    The framework's own page, restyled
+        system/resources/views/errors/rsx_error.blade.php - standalone, inline
+        styles, no bundle, light and dark. It is what renders until you declare
+        your pages, and what renders afterwards whenever one of them fails.
+
+    Three behaviours moved without any code change on your side:
+        - A CSRF failure on a native form POST renders the 419 page. The /_ajax
+          and /_upload envelope is untouched.
+        - response_not_found() returned from a GET web route renders the 404
+          page (it used to throw and surface a 500); response_form_error()
+          renders the 400 page carrying your message. The POST behaviour -
+          flash the reason, re-issue the URL as a GET - is unchanged.
+        - Every other browsed abort() status (405, 429, 503 ...) renders a page
+          instead of falling through to a Laravel error view.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    The pages themselves, in both realms.
+
+    Concretely: a person who mistypes a URL in your staff application sees the
+    framework's page, not yours - no header, no navigation, no brand, and a
+    "Return to Home" link rather than anything of yours. A client who mistypes a
+    portal URL sees the same page, with a link to the STAFF root, because the
+    portal declares nothing and a staff page (or the framework page) is the
+    fallback. A denied user gets a correct 403 and no way back into your product.
+
+    Nothing is broken and nothing is insecure; the product simply stops looking
+    like itself at exactly the moment a user is already unhappy.
+
+THE REFERENCE IMPLEMENTATION
+    Release-current, readable on your own disk:
+
+    system/app/RSpade/resource/reference_app/app/errors/
+        CLAUDE.md                   what the module is and how it is customised
+        errors_bundle.php           Errors_Bundle - the same theme set as the
+                                    login bundle: variables, responsive, the
+                                    Bootstrap build, the whole theme tree, lib,
+                                    and this directory. No models, no feature
+                                    module.
+        errors_layout.blade.php     Errors_Layout - the card shell: a status
+                                    chip, heading, content, an action row with
+                                    the home link, and a detail region the
+                                    generic page fills. Paints the theme class
+                                    in the first bytes of HTML.
+        errors_layout.scss          its geometry, BEM under .Errors_Layout. No
+                                    palette - every colour is a runtime token.
+        errors_controller.php       Errors_Controller, class-level
+                                    #[Auth('public')], four routes:
+                                    /error/404, /error/403, /error/419,
+                                    /error/generic
+        errors_not_found.blade.php  404
+        errors_forbidden.blade.php  403, plus a "Sign in as a different user"
+                                    link to the logout route
+        errors_expired.blade.php    419
+        errors_generic.blade.php    every status with no exact page, and the
+                                    only one that renders $error->detail
+
+    system/app/RSpade/resource/reference_app/portal/errors/
+        Portal_Errors_Controller.php   two #[Portal_Route] declarations,
+                                       /error/404 and /error/generic
+        portal_errors_not_found.blade.php
+        portal_errors_generic.blade.php
+                                       both extending the portal's own auth
+                                       layout, both linking the portal's home
+
+    There is deliberately no /error/500 in the reference app: the generic page
+    answers it, which makes the fallback visible rather than theoretical.
+
+PORTING IT
+    The shape of the work, not a diff to paste - your navigation, layouts and
+    design system decide where these land.
+
+    1. Decide the layout. An error page must render with NOTHING loaded: no
+       record, no session, no user. If your authenticated layout reads the
+       signed-in user to draw a header, it is the wrong layout for a 403. The
+       reference app uses a standalone card shell for exactly this reason.
+
+    2. Declare the staff pages. A controller in your own /rsx/ with class-level
+       #[Auth('public')] and one method per status. Start with /error/404 and
+       /error/generic; add /error/403 and /error/419 when you have something
+       particular to say. Declaring an exact page takes that status off the
+       generic page automatically.
+
+    3. Declare the portal pages, if you have a portal. #[Portal_Route] is what
+       puts the pattern in the portal table; a staff page cannot render portal
+       links (Rsx_Portal::Route() resolves nothing outside the portal table) and
+       would carry the staff bundle.
+
+    4. Give the module a bundle. The theme set your login pages use is the right
+       starting point - an error page wants your palette and your typography and
+       nothing else.
+
+    5. Write the copy against the context and nothing else. $error->title,
+       ->message, ->status, ->path, ->home_url. Do not load a record, do not
+       read the session, and do not call Rsx::Route() for a target that might
+       not exist in every install - it THROWS on a miss, and a page that throws
+       is replaced by the framework page (the failure is logged as "Error page
+       X::y failed while rendering a NNN").
+
+    6. Decide about the detail block. $error->detail is populated for a 500 in
+       development and is null in every sealed build - the redaction is
+       server-side, so your template needs no mode check. Render it or do not;
+       do not re-implement the decision.
+
+    7. Do not gate them, do not link to them, and do not add a :param. Each is a
+       ROUTE-ERROR-01 build failure, and the first would deny a caller twice.
+
+VERIFICATION
+    Preview each page you declared (development only - a sealed build answers
+    404 to these URLs):
+
+        php artisan rsx:debug /error/404 --user=1
+        php artisan rsx:debug /error/403 --user=1
+        php artisan rsx:debug /error/419 --user=1
+        php artisan rsx:debug /error/generic --user=1
+
+    /error/generic renders as a 500 with a fabricated detail block, which is how
+    you see what an undeclared status will get.
+
+    The portal twins, under your portal prefix (config('rsx.portal.prefix'),
+    default /_portal):
+
+        php artisan rsx:debug /_portal/error/404 --portal --portal-user=<id>
+        php artisan rsx:debug /_portal/error/generic --portal --portal-user=<id>
+
+    Then the real thing:
+
+        curl -i https://<your host>/no-such-page
+            404, your page's own markup in the body.
+        curl -i https://<your host>/_portal/no-such-page
+            404, the PORTAL page - if it answers with the staff page, the portal
+            declared neither /error/404 nor /error/generic.
+        A cross-origin POST to a native form URL
+            419, "Page Expired". The same POST to an /_ajax path still answers
+            the JSON envelope at HTTP 200.
+
+    Finally, check the log after each page renders once. A line reading "failed
+    while rendering" means your page threw and the framework page was served in
+    its place - that is the one failure mode that is invisible in the browser.

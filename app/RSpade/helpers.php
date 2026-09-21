@@ -1317,7 +1317,8 @@ function response_unauthorized(?string $message = null)
  *
  * Context-aware response:
  * - Ajax requests: Returns JSON {success: false, error_code: 'not_found'}
- * - Web requests: Renders 404 error page or throws HttpException
+ * - Web GET: renders the 404 error page, the same one an unmatched URL gets
+ * - Web POST: flashes the reason and re-issues the same URL as a GET
  *
  * Use this when a requested resource does not exist.
  *
@@ -1334,6 +1335,10 @@ function response_not_found(?string $message = null)
  *
  * Use this for validation errors with field-specific messages.
  * The client-side form handling will apply errors to matching fields.
+ *
+ * From a web route the field errors have no form to land on, so the summary is
+ * what the caller sees: a POST flashes it and re-issues the same URL as a GET,
+ * and a GET renders the 400 error page carrying it.
  *
  * @param string $message Summary message for the error
  * @param array $field_errors Field-specific errors as ['field_name' => 'error message']

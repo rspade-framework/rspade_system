@@ -52,7 +52,7 @@ case. Both would replace the csrf contract if the short-circuit were removed.
 | csrf-http-05 | valid _csrf_token body field accepted | http | POST probe + body-field token | no "CSRF token mismatch" | implemented |
 | csrf-http-06 | staff ajax rejection contract | http | POST /_ajax probe, foreign Origin | 200 + `"error_code":"unauthorized"` | implemented |
 | csrf-http-07 | portal ajax rejection contract | http | POST /_portal/_ajax probe, foreign Origin | 200 + same JSON | implemented |
-| csrf-http-08 | native form rejection status | http | POST /login, foreign Origin | 419 + "CSRF token mismatch" | implemented |
+| csrf-http-08 | native form rejection status | http | POST /login, foreign Origin | 419 + the "Page Expired" page | implemented |
 | csrf-http-09 | Playwright rejection not a 500 dump | http | POST /_ajax probe + X-Playwright-Test | 200 + JSON contract | implemented |
 
 ## The exempt paths - covered in the concerns that own them

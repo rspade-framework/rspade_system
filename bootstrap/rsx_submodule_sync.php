@@ -429,15 +429,12 @@ function rsx_submodule_sync_fail(string $submodule, string $recorded, string $ac
         exit(1);
     }
 
-    if (!headers_sent()) {
-        header('HTTP/1.1 503 Service Unavailable');
-        header('Content-Type: text/plain; charset=utf-8');
-        header('Retry-After: 60');
-    }
+    rsx_preboot_page_render(
+        503,
+        'Framework version mismatch',
+        $lines,
+        ['Retry-After' => '60']
+    );
 
-    echo "503 - Framework version mismatch\n\n";
-    foreach ($lines as $line) {
-        echo $line . "\n";
-    }
     exit(1);
 }

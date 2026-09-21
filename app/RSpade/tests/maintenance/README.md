@@ -8,7 +8,7 @@ with two ways in:
   `system/bin/maintenance-mode.sh`.
 - `rsx:framework:pull` - the same script with the reason `framework update in progress`.
 
-While the flag is up: every WEB request answers 503 (quoting the reason), and the CLI gate is
+While the flag is up: every WEB request answers a 503 HTML page (quoting the reason), and the CLI gate is
 **allow-most-deny-some** - it exists to keep AUTOMATED processes out of a stopped environment,
 not to babysit humans.
 

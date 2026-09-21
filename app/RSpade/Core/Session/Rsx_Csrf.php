@@ -139,8 +139,10 @@ class Rsx_Csrf
      *
      * AJAX (/_ajax*) and upload (/_upload) get the AJAX error contract shape
      * (200 + _success:false + error_code, identical to an endpoint auth failure);
-     * native full-page form POSTs get a plain 419. Thrown as HttpResponseException
-     * so Laravel returns the response verbatim with no handler embellishment.
+     * native full-page form POSTs get the 419 page, built here through
+     * Error_Screens::expired() so the application's own /error/419 renders when it
+     * declares one. Thrown as HttpResponseException so Laravel returns the response
+     * verbatim with no handler embellishment.
      *
      * @param Request $request
      * @return void
@@ -158,7 +160,7 @@ class Rsx_Csrf
                 'reason'     => 'CSRF token mismatch',
             ]);
         } else {
-            $response = response('CSRF token mismatch', 419);
+            $response = \App\RSpade\Core\Errors\Error_Screens::expired($request);
         }
 
         throw new HttpResponseException($response);

@@ -97,36 +97,43 @@ THE DISPATCH PIPELINE
        the original method is remembered so the body can be stripped afterward
        (see HEAD REQUESTS).
 
-    9. Route match. __find_route() sorts the manifest's route patterns by
-       specificity and returns the first whose pattern matches the URL and whose
-       method list includes the request method (see ROUTE MATCHING).
+    9. Error-page namespace. A path matching /error/<3 digits> or
+       /error/generic is intercepted BEFORE route matching, in every mode: in
+       development it renders that error page as a preview, in a sealed build it
+       answers the 404 page. An error page is therefore never served by ordinary
+       matching and never answers 200 at its own URL (see rsx:man error_pages).
 
-    10. No match. If nothing matched, three things are tried in order: the
+    10. Route match. __find_route() sorts the manifest's route patterns by
+        specificity and returns the first whose pattern matches the URL and whose
+        method list includes the request method (see ROUTE MATCHING).
+
+    11. No match. If nothing matched, three things are tried in order: the
         default /_/{controller}/{action} route (see DEFAULT ROUTE), then
         Main_Abstract::pre_dispatch, then Main_Abstract::unhandled_route (see
-        MAIN HOOKS). If all return null, dispatch returns null and Laravel emits
-        its own 404.
+        MAIN HOOKS). If all return null, the request renders the 404 error page -
+        the terminal outcome is the framework's to render, never Laravel's
+        unthemed default.
 
-    11. Param assembly. $params is built and the handler is loaded (see THE
+    12. Param assembly. $params is built and the handler is loaded (see THE
         $params ARRAY).
 
-    12. FPC detection (see FULL PAGE CACHE).
+    13. FPC detection (see FULL PAGE CACHE).
 
-    13. AUTH GATES. The matched route's #[Auth] check list is evaluated for
+    14. AUTH GATES. The matched route's #[Auth] check list is evaluated for
         the active realm - before Main_Abstract::pre_dispatch, before the
         controller's pre_dispatch, before the action. A denial ends the
         request here (see AUTHORIZATION AND PRE_DISPATCH).
 
-    14. pre_dispatch. Main_Abstract::pre_dispatch runs first; then, for a
+    15. pre_dispatch. Main_Abstract::pre_dispatch runs first; then, for a
         controller, the controller's own static pre_dispatch runs immediately
         before the action. A non-null return from either halts dispatch and
         becomes the response. Neither performs authorization.
 
-    15. Action. The static method is invoked as $class::$method($request,
+    16. Action. The static method is invoked as $class::$method($request,
         $params). Its return value is passed to response building.
 
-    16. Response build + transform. The return value becomes an HTTP response
-        (see RETURN VALUES AND RESPONSES); the FPC header is added if step 12
+    17. Response build + transform. The return value becomes an HTTP response
+        (see RETURN VALUES AND RESPONSES); the FPC header is added if step 13
         armed it; the HEAD body is stripped if the request was HEAD.
 
 ROUTES AND CONTROLLERS
@@ -186,9 +193,12 @@ AUTHORIZATION AND PRE_DISPATCH
       denial). This is the one helper for "must be authenticated" AND "lacks
       permission" - it picks the right outcome from the session state.
     - response_form_error() / response_not_found() (validation / not-found) ->
-      on a POST, flash the message and redirect back to the same URL as a GET;
-      otherwise throw.
-    - response_fatal_error() -> always throw (surfaces the framework error page).
+      on a POST, flash the message and redirect back to the same URL as a GET
+      (the user is standing in front of the form that failed). On a GET there is
+      no form to return to - the request IS the page - so the coded outcome is
+      the page's outcome: response_not_found() renders the 404 error page, and
+      response_form_error() the 400 page carrying the reason.
+    - response_fatal_error() -> always throw (surfaces the 500 error page).
 
     This is the FULL-PAGE path. An Ajax endpoint returning the same helper does
     NOT redirect - the Ajax layer renders a JSON error envelope
@@ -206,7 +216,7 @@ MAIN HOOKS
       becomes the response. It is not an authorization hook.
     - unhandled_route(Request $request, array $params) runs only when no route
       matched (and the default route did not apply). A non-null return becomes
-      the response; null lets the request fall through to Laravel's 404.
+      the response; null lets the request fall through to the 404 error page.
 
 ROUTE MATCHING
     Supported pattern syntax (RouteResolver):
@@ -361,9 +371,9 @@ TROUBLESHOOTING
         yields a JSON error instead.
 
     A URL 404s and you expected a handler
-        The dispatcher returned null (no route, default route did not apply, and
-        no Main hook produced a response) and Laravel emitted its 404. Confirm
-        the pattern and verb with `php artisan rsx:routes`.
+        Nothing matched (no route, the default route did not apply, and no Main
+        hook produced a response), so the 404 error page rendered. Confirm the
+        pattern and verb with `php artisan rsx:routes`.
 
     Tracing a dispatch
         The pipeline emits console_debug() on the DISPATCH and BENCHMARK
@@ -395,6 +405,7 @@ SEE ALSO
     rsx:man auth                (Session and permission checks)
     rsx:man login_redirect      (post-login return-URL threading)
     rsx:man ajax_error_handling (JSON error channel for endpoints)
+    rsx:man error_pages        (the /error/ pages a terminal outcome renders)
     php artisan rsx:routes      (list all registered routes)
 
 DISPATCH(1)                      RSpade Manual                      DISPATCH(1)

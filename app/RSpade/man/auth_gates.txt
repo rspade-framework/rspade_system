@@ -573,85 +573,40 @@ PORTAL
     declares #[Auth_Realm('portal')].
 
 ERROR SCREENS
-    What a denial - and every other terminal error - RENDERS is one system
-    with the same interface on both sides: Error_Screens.
+    THE DENIAL SPLIT IS THE PART THAT BELONGS HERE. A gate denial does not
+    produce one outcome, it produces two, and which one a caller gets is
+    decided by whether they are identified:
 
-    PHP (full-page requests)
-        App\RSpade\Core\Errors\Error_Screens - one renderer per outcome:
+        no session   -> 302 to the realm's login route, with the URL they
+                        wanted captured through Login_Redirect. Being shown a
+                        403 would tell them nothing they can act on.
+        identified   -> a genuine 403 page. Re-authenticating cannot fix a
+                        permission denial.
 
-            Error_Screens::unauthorized(Request $request, ?string $realm = null): Response
-            Error_Screens::not_found(Request $request): Response
-            Error_Screens::fatal(Request $request, ?\Throwable $e = null): Response
+    THE SPLIT IS REALM-AWARE. Error_Screens::unauthorized(Request $request,
+    ?string $realm = null) consults the PORTAL session and the PORTAL login
+    route for a portal request. A caller that KNOWS its realm passes it
+    (Portal_Dispatcher passes REALM_PORTAL); everyone else omits it and the
+    realm is detected from the request context. Omitting it is correct on the
+    staff dispatcher and in the exception handler; passing the wrong one would
+    send a denied portal visitor to the staff login.
 
-        unauthorized()'s $realm decides which session is consulted and which
-        login route an unidentified caller lands on. A caller that KNOWS its
-        realm passes it (Portal_Dispatcher passes REALM_PORTAL); everyone
-        else omits it and the realm is detected from the request context
-        (Rsx_Portal::is_portal_request()). Omitting it is correct on the
-        staff dispatcher and in the exception handler; passing the wrong one
-        would redirect a denied portal visitor to the staff login.
+    An in-body response_unauthorized() or response_auth_required() lands on the
+    same split, so a gate denial and a hand-written refusal look identical.
 
-        The Dispatcher routes every terminal outcome through it: a gate
-        denial calls unauthorized() (no session -> 302 to the realm's login
-        with Login_Redirect::capture(); authenticated -> 403), an unmatched
-        route calls not_found() (404) after Main::unhandled_route() declines,
-        an uncaught exception calls fatal() (500; production: fully redacted,
-        per the existing redaction rules - outside production the page shows
-        the class, message, project-relative file:line and up to ten trace
-        frames). Web_Exception_Handler is the second entry point, mapping a
-        thrown HttpException 404/403 onto not_found()/unauthorized() and
-        anything uncaught onto fatal(); it declines other statuses, and
-        declines entirely in development with app.debug on so the interactive
-        debugger still renders.
+    WHAT THE 403 ACTUALLY RENDERS is the application's own page. An application
+    declares its error screens as routes under the reserved /error/ prefix -
+    #[Route('/error/403')] in the staff realm, #[Portal_Route('/error/403')] in
+    the portal - and the framework invokes the one matching the status, falling
+    back to /error/generic and then to its own standalone page. That is a
+    declaration, not a class override. See rsx:man error_pages.
 
-        Each returns a complete server-rendered page with the correct HTTP
-        status, from a standalone Blade with inline styles - no bundle, no
-        manifest view lookup, no SPA runtime. These pages render when the
-        application is broken, so they depend on as little as possible.
-
-        CUSTOMIZING (PHP): copy-replace Error_Screens via the standard
-        class-override pattern (rsx:man class_override) - it is not a model, so
-        the override is a COPY under the same class name. Keep the signatures,
-        own the markup.
-
-    JS (SPA)
-        The Error_Screens JS class renders the same-coded error body into the
-        active layout's content area - no navigation, no server round trip:
-
-            Error_Screens.unauthorized(options = {})  // Spa gate denial
-            Error_Screens.not_found(options = {})     // no action matches the URL
-            Error_Screens.fatal(error)                // boot/render failure
-
-        The options are display copy only, all defaulted: unauthorized()
-        takes {message, section}, not_found() takes {record_type, back_label,
-        back_url}. The Spa gate calls unauthorized() with none of them.
-
-        fatal(error) accepts an Error or a string, console.error()s the
-        object, and renders the MESSAGE only - never the error object. An
-        error page is the one surface a user always sees; it must not become
-        a debug dump.
-
-        Wiring, all in Spa.js: the gate denial in Spa.dispatch() calls
-        unauthorized() (after the history entry is committed, so the URL
-        becomes the denied page exactly as the server behaves); the dispatch
-        catch block calls fatal() unless the development in-layout exception
-        box is active; the unknown-route path calls not_found().
-
-        Under the hood these mount the app-owned theme components in
-        rsx/theme/components/feedback/errors/ -
-        Unauthorized_Error_Page_Component, Not_Found_Error_Page_Component
-        and Generic_Error_Page_Component, the same ones the three-state
-        pattern reaches through Universal_Error_Page_Component. The denied or
-        failed action is stopped first, then the body is mounted inside the
-        deepest layout's $sid="content" (or #spa-root when a first load is
-        denied before any layout mounts), so the layout, nav and session
-        chrome stay alive around the error body.
-
-        CUSTOMIZING (SPA): those components are APP-OWNED theme code already
-        - edit them. Your unauthorized/404/fatal designs live in your theme,
-        exactly like every other component; no override machinery is
-        involved on the JS side. Renaming or deleting one throws a loud
-        error naming the missing component.
+    INSIDE A LIVE SPA SESSION the denial never leaves the page: the Spa gate
+    calls the JS Error_Screens, which mounts an application-owned theme
+    component from rsx/theme/components/feedback/errors/ into the active
+    layout's content area - no navigation, no round trip, the nav and session
+    chrome still alive around the error body. Those components are edited
+    directly; there is no override machinery on that side.
 
     Coded Ajax errors keep their existing contract: handled errors stay in
     the component's catch; unhandled ERROR_UNAUTHORIZED / ERROR_NOT_FOUND
@@ -706,7 +661,7 @@ SEE ALSO
     rsx:man portal
     rsx:man model_fetch
     rsx:man realtime
-    rsx:man class_override
+    rsx:man error_pages
     rsx:man spa
     rsx:man login_redirect
 

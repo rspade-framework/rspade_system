@@ -44,7 +44,7 @@ Refusals exit 75 and always name the way out (`php artisan rsx:maintenance:disab
 
 ## What the web serves
 
-While PHP still runs: **503 with `Retry-After: 120`** and a plain-text body quoting your reason, emitted before Composer's autoloader. The IDE bridge (`/_ide/service/*`) is intentionally exempt so the editor keeps working.
+While PHP still runs: **503 with `Retry-After: 120`** and an HTML page quoting your reason, emitted before Composer's autoloader by `bootstrap/rsx_preboot_page.php`. The IDE bridge (`/_ide/service/*`) is intentionally exempt so the editor keeps working.
 
 **Once enable has stopped php-fpm, no PHP runs at all**, so your web server answers its own upstream error (nginx: 502) instead. Both mean "down"; do not go hunting for why the 503 body disappeared.
 

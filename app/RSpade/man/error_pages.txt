@@ -1,0 +1,352 @@
+ERROR_PAGES(7)              RSpade Framework Manual              ERROR_PAGES(7)
+
+NAME
+    error_pages - the full-page error screens an application declares as routes
+    under the reserved /error/ prefix
+
+SYNOPSIS
+    Staff realm (rsx/app/errors/):
+
+        #[Auth('public')]
+        class Errors_Controller extends Rsx_Controller_Abstract
+        {
+            #[Route('/error/404')]
+            public static function not_found(Request $request, array $params = [])
+            {
+                return rsx_view('Errors_Not_Found', ['error' => $params['error']]);
+            }
+
+            #[Route('/error/403')]      ... 'Errors_Forbidden'
+            #[Route('/error/419')]      ... 'Errors_Expired'
+            #[Route('/error/generic')]  ... 'Errors_Generic'
+        }
+
+    Portal realm (rsx/portal/errors/), its own declarations in its own table:
+
+        #[Auth('public')]
+        class Portal_Errors_Controller extends Rsx_Controller_Abstract
+        {
+            #[Portal_Route('/error/404')]     ... 'Portal_Errors_Not_Found'
+            #[Portal_Route('/error/generic')] ... 'Portal_Errors_Generic'
+        }
+
+    Preview, development only - browse the URL:
+
+        /error/404   /error/403   /error/419   /error/500   /error/generic
+        <portal prefix>/error/404             (config('rsx.portal.prefix'),
+        <portal prefix>/error/generic          default /_portal)
+
+        php artisan rsx:debug /error/404 --user=1
+
+    The context each page is handed:
+
+        App\RSpade\Core\Errors\Error_Context   as $params['error']
+
+DESCRIPTION
+    An error page is what a request RENDERS when it ends on a status instead of
+    on its own content: no route matched, a gate refused an identified caller, a
+    form's CSRF token had expired, an exception reached the top of the request.
+
+    An application declares those pages as ordinary routes under the reserved
+    prefix /error/, one per status plus a catch-all, per realm. Nothing links to
+    them and no application code calls them: the framework reads the route table,
+    finds the page for the status, and invokes the method itself with the failure
+    as its only argument.
+
+    THE DOCTRINE, IN ONE SENTENCE: a page shows what the Error_Context carries
+    and nothing else - the failing request is over, its controller never ran, the
+    caller may be anonymous, and the page is fully inspectable with curl.
+
+    One funnel produces every one of them, App\RSpade\Core\Errors\Error_Screens,
+    so "what does a denial look like" is answered in one place regardless of
+    which layer decided it. An application answers it by declaring a route, not
+    by overriding a class.
+
+DECLARING ERROR PAGES
+    A declaration is an ordinary static controller method carrying a route
+    attribute under the prefix. The realm is chosen by the ATTRIBUTE:
+
+        #[Route('/error/<status>')]         the staff route table
+        #[Portal_Route('/error/<status>')]  the portal route table
+
+    Both realms use the same patterns, because they are separate tables. A portal
+    failure must render portal links and the portal bundle - Rsx_Portal::Route()
+    resolves nothing outside the portal table and Rsx::Route() emits an
+    unprefixed URL - so a staff page cannot serve a portal failure, and the
+    portal declares its own.
+
+    /error/generic is the catch-all: it answers every status with no exact page
+    of its own. A realm may declare nothing but the catch-all; a realm may
+    declare nothing at all, and the framework's own page answers.
+
+    THE PREFIX IS RESERVED. A pattern under /error/ is never served by ordinary
+    route matching in any mode - the dispatchers intercept the path before route
+    lookup - so an error page can never answer 200 at its own URL.
+
+    ROUTE-ERROR-01 (manifest-build FATAL) keeps every declaration one the funnel
+    can reach. A pattern under the prefix must be:
+
+        exactly /error/<status 400-599> or /error/generic   one segment, no :param
+        GET only
+        gated #[Auth('public')], on the method or on its class
+
+    A violation fails the build naming the rule, the surface and the remedy:
+
+        Invalid error-page route: Rsx\App\Errors\Errors_Controller::oops in <file>
+          ROUTE-ERROR-01: '/error/oops' is not a page the error funnel looks up.
+          Declare the pattern as /error/<status 400-599> (one segment, no :param)
+          or /error/generic.
+          See: php artisan rsx:man error_pages
+
+    The public gate is part of the rule because an error page is shown to a
+    caller who has just been denied; a gated one would deny them twice.
+
+WHAT A PAGE RECEIVES
+    Exactly one argument beyond the request: $params['error'], a readonly
+    App\RSpade\Core\Errors\Error_Context.
+
+        status      int      the HTTP status the response will carry
+        title       string   the framework headline ("Page Not Found")
+        message     string   the framework sentence, or the reason the failing
+                             endpoint gave
+        path        string   the failing request's path
+        method      string   the failing request's HTTP method
+        realm       string   Auth_Gates::REALM_STAFF | REALM_PORTAL
+        home_url    string   the realm's home - the staff root, or the portal
+                             prefix (the portal root on a dedicated domain)
+        preview     bool     true when a development browse of /error/<code>
+                             fabricated this context
+        detail      ?array   {class, message, file, line, frames[]} - a 500 only,
+                             and NULL whenever Rsx::is_production(), which is
+                             every SEALED build: strict production and the
+                             debug mode beside it
+
+    The framework's titles and messages, by status: 400 Bad Request; 403 Access
+    Denied; 404 Page Not Found; 419 Page Expired; 500 Something Went Wrong. Any
+    other status takes the standard HTTP status text as its title.
+
+    DISCLOSURE. The context is the disclosure boundary, and it is the same object
+    an application page and the framework page receive - so an application page
+    cannot disclose more than the framework page would. detail is redacted
+    server-side, which is why a page needs no mode check of its own. Nothing that
+    is not already in the context belongs on a page: no record lookup, no session
+    chrome, no "you were trying to reach X" beyond the path the context holds.
+
+WHICH FAILURES RENDER A PAGE
+    status  raised by
+    ------  ---------------------------------------------------------------
+    404     no route matched, after Main::unhandled_route declined; abort(404);
+            response_not_found() returned from a web route, GET included
+    403     a gate denial for an IDENTIFIED caller; abort(403);
+            response_unauthorized() / response_auth_required() for an
+            identified caller
+    419     a CSRF failure on a native form POST (Rsx_Csrf::__reject)
+    400     response_form_error() returned from a web GET route, carrying the
+            reason as the message
+    500     any uncaught exception reaching the top of a full-page request
+    other   any other abort() status on a browsed request (405, 429, 503 ...),
+            through Error_Screens::http_status(), carrying the raiser's message
+
+    A POST is not on this table for 400 and 404: a POST is a form submission, and
+    the user is standing in front of the form that failed, so the reason is
+    flashed and the same URL is re-issued as a GET. That is unchanged.
+
+    500 IN DEVELOPMENT is the one status a mode changes: with the interactive
+    debugger active, an uncaught exception renders the debug page rather than the
+    error page, because a stack trace is what a developer needs at that moment.
+    Browse /error/500 (or /error/generic) to see the page itself.
+
+WHAT NEVER RENDERS A PAGE
+    An ANONYMOUS DENIAL. A caller with no session cannot fix a denial by being
+    shown a 403, so it is a 302 to the realm's login route with the requested URL
+    threaded through Login_Redirect. Only an identified caller gets a 403 page.
+    The split is realm-aware: a portal visitor lands on the portal login.
+
+    AJAX AND API. Both have their own envelope contracts and both keep them: the
+    Ajax channel answers {_success: false, error_code} at HTTP 200, and the
+    external API answers its own error shape. A CSRF failure on /_ajax or
+    /_upload is the Ajax envelope, not a 419 page.
+
+    A NON-HTML REQUEST. The test is the request's own declaration: an abort() on
+    a request whose Accept header does not prefer text/html gets the bare status
+    and one line of text. This is what keeps the framework's file routes
+    (/_thumbnail, /_preview, /_inline, /_download) usable - they are fetched by
+    an <img> tag, never browsed, and an HTML document there would be served as
+    the file. A request with no Accept header at all counts as asking for a page.
+
+    THE PRE-BOOT TIER. The maintenance 503, the framework-version refusal beside
+    it and the first-run screen all run BEFORE Laravel exists - no autoloader, no
+    config, no view finder, no route table - so there is nothing there that could
+    look up an application page. They render the standalone shell
+    bootstrap/rsx_preboot_page.php, which carries the framework error screen's
+    look by hand. See rsx:man maintenance_mode.
+
+    THE SPA'S IN-APP ERRORS. A denial or a missing record INSIDE a live SPA
+    session mounts a component into the layout's content area - no navigation, no
+    round trip, the nav and session chrome still alive around it. Those bodies
+    are the application's own theme components in
+    rsx/theme/components/feedback/errors/, and they are edited directly. The two
+    sides say the same things about the same outcomes and are kept aligned by
+    hand; neither renders the other.
+
+THE FALLBACK CHAIN
+    Resolution, for a status in a realm:
+
+        1. the realm's own table, EXACT /error/<status>
+        2. the realm's own table, /error/generic
+        3. for a PORTAL failure with neither, the STAFF pair (exact, then
+           generic) - a staff page is still a page, and a page beats no page
+        4. nothing resolved -> the framework's own page
+
+    The manifest may not be there. These pages exist to render when the
+    application is broken, and a boot that failed before the index leaves no
+    route table to read, so an uninitialised manifest resolves to nothing and the
+    framework page renders.
+
+    A RESOLVED PAGE IS CALLED DIRECTLY, with ($request, ['error' => $error]) and
+    nothing else - not through the ordinary action path, because a controller
+    pre_dispatch that redirected or a gate that denied would take the error page
+    away from the person who needs to read it. The response's status is then
+    FORCED to the context's status, so a page that renders a view cannot answer
+    200, and the realm's CSP is applied.
+
+    A PAGE THAT FAILS IS REPLACED BY THE FRAMEWORK PAGE, and the failure is
+    logged - the error page for the error page must not be a third error. Three
+    things count as a failure: the page throws, the page returns null, or the
+    page returns a coded response (response_not_found() and friends), which would
+    otherwise recurse straight back into the funnel. The log line names the
+    surface and the status:
+
+        Error page Errors_Controller::generic failed while rendering a 500; the
+        framework page was rendered instead: <the page's own message>
+
+PREVIEWING
+    Browse the page's URL. In development the request renders the page against a
+    fabricated context (preview = true), so a page can be read at every status
+    without breaking anything:
+
+        /error/404     the 404 page
+        /error/403     the 403 page
+        /error/500     the 500 page, with a fabricated detail block
+        /error/generic the catch-all, rendered as a 500 with a detail block and
+                       the exact lookup skipped - which is how a developer sees
+                       what an undeclared status will get
+
+        php artisan rsx:debug /error/generic --user=1
+
+    The portal's pages preview under the portal prefix, the same way.
+
+    THE MODE RULE. The interception happens in EVERY mode; what it does differs.
+    Development previews. A sealed build (debug or production) answers the 404
+    page any unknown URL gets, because a preview is a development affordance and
+    nothing else. So an error page never answers 200 at its own URL anywhere, and
+    a crawler that finds one of these URLs in a sealed build finds a 404.
+
+THE FRAMEWORK PAGE
+    system/resources/views/errors/rsx_error.blade.php - what renders when an
+    application declares no page for the status or its page fails.
+
+    STANDALONE ON PURPOSE: a plain Laravel view with inline styles, no bundle, no
+    manifest view lookup, no SPA runtime, no JavaScript, no external asset. It
+    links no bundle because a bundle needs a manifest, and the manifest is one of
+    the things that can be broken when this page is what is left. It follows the
+    browser's light/dark preference and carries the same redaction rules as any
+    other page: no exception detail in production.
+
+    ITS PRE-BOOT TWIN is bootstrap/rsx_preboot_page.php, the hand-written shell
+    the guards that run before Laravel emit. The two carry the same tokens, class
+    names and light/dark blocks, duplicated by necessity - the pre-boot tier has
+    no autoloader and no Blade to share the file with - and are kept aligned by
+    hand.
+
+WRITING A PAGE
+    PUBLIC BY DECLARATION. #[Auth('public')] on the method or its class;
+    ROUTE-ERROR-01 requires it. The page renders only what the context carries,
+    so there is nothing behind a gate to protect.
+
+    READ NOTHING THAT CAN THROW. No record lookup, no session read, no service
+    call. A 403 reaches somebody the gate just refused; a 500 reaches a request
+    whose boot may be what failed. Anything that throws costs the reader the
+    page.
+
+    LINK ONLY WHAT IS CERTAIN. $error->home_url is computed by the framework from
+    the realm and is always safe. Rsx::Route() and Rsx_Portal::Route() THROW for
+    a target the route table does not carry, so a link to a route that might not
+    exist in a given application is a page that fails for that application.
+
+    KEEP IT SHORT. A status, a sentence, one action. The generic page is the
+    place for a detail block, and it needs no mode check because detail is
+    already null in production.
+
+    NO /error/500 IS A REASONABLE CHOICE. The generic page answers it, which
+    makes the fallback visible in the application rather than theoretical.
+    Declaring an exact page for a status takes that status off the generic page
+    automatically; deleting one puts it back.
+
+    The reference implementation, readable on disk:
+
+        system/app/RSpade/resource/reference_app/app/errors/
+            the staff module - bundle, layout, controller, four blades, SCSS,
+            and a CLAUDE.md describing the module
+        system/app/RSpade/resource/reference_app/portal/errors/
+            the portal pair - controller and two blades on the portal's own
+            auth layout
+
+COMMON MISTAKES
+    Linking to an error page. Nothing links to one; they are declarations, and
+        the framework is the only caller.
+
+    Expecting /error/404 to be a normal page. It is intercepted before route
+        matching in every mode: a preview in development, a 404 in a sealed
+        build. It never answers 200.
+
+    Putting a record lookup on a page. The failing request is over and its
+        controller never ran; there is nothing loaded, and a throw here costs
+        the reader the page entirely.
+
+    Branching on the mode to hide a stack trace. detail is null in production
+        already. A page that adds its own check has two rules to keep in step.
+
+    Declaring /error/404 with methods: ['GET','POST'], a :param, or without
+        #[Auth('public')]. Each is a ROUTE-ERROR-01 build failure.
+
+    Declaring a staff page and expecting the portal to use it. It will, but only
+        as the last resort before the framework page - and it will carry the
+        staff bundle and staff links. A portal page is a #[Portal_Route].
+
+    Wondering why a 500 shows the debug screen instead of the error page in
+        development. It is meant to; browse /error/500 to see the page.
+
+    Expecting an Ajax call to render a page. It answers the Ajax envelope, and
+        so does a CSRF failure on /_ajax or /_upload.
+
+FILES
+    system/app/RSpade/Core/Errors/Error_Context.php    what a page is told
+    system/app/RSpade/Core/Errors/Error_Pages.php      which route answers
+    system/app/RSpade/Core/Errors/Error_Screens.php    the funnel
+    system/app/RSpade/Core/Dispatch/Dispatcher.php     render_error_route, the
+                                                       preview intercept
+    system/app/RSpade/Core/Portal/Portal_Dispatcher.php   the portal twins
+    system/app/RSpade/Core/Dispatch/Route_ManifestSupport.php
+                                                       ROUTE-ERROR-01
+    system/app/RSpade/Core/Exceptions/Web_Exception_Handler.php
+                                                       abort() and uncaught
+    system/app/RSpade/Core/Session/Rsx_Csrf.php        the 419
+    system/resources/views/errors/rsx_error.blade.php  the framework page
+    system/bootstrap/rsx_preboot_page.php              its pre-boot twin
+
+SEE ALSO
+    auth_gates - #[Auth], the realms, and the denial split
+    csrf - what raises the 419
+    dispatch - the request pipeline these seams sit in
+    controller - routes, actions and the response helpers
+    error_handling - the response_* helpers and the exception-handler chain
+    maintenance_mode - the pre-boot 503 and its shell
+    portal - the portal realm, its prefix and its route table
+    skill rspade:error-pages - writing the pages
+
+VERSION
+    RSpade Framework 1.0
+    Last updated 2026-09-21
+
+ERROR_PAGES(7)              RSpade Framework Manual              ERROR_PAGES(7)

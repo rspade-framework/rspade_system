@@ -114,7 +114,7 @@ for path in "/_sso/google/callback" "/_sso/apple/callbackx" "/_sso/apple/begin";
         echo "FAIL: $TEST_NAME - ${path} answered 303; the Apple CSRF exemption is NOT path-exact"
         exit 1
     fi
-    if ! printf '%s' "$body" | grep -q "CSRF token mismatch"; then
+    if ! printf '%s' "$body" | grep -q "Page Expired"; then
         echo "FAIL: $TEST_NAME - a cross-site POST to ${path} was not rejected by the CSRF origin check (HTTP $status); got: $body"
         exit 1
     fi

@@ -12,6 +12,19 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  * Each route row carries an 'auth' key: the declarative gate list (class-level
  * #[Auth] then method-level, additive) the dispatcher evaluates before the
  * controller runs. See php artisan rsx:man auth_gates.
+ *
+ * ROUTE-ERROR-01 lives here (and is called by the portal twin, which declares the
+ * same pages for its own realm). /error/ is the reserved prefix an application
+ * declares its error pages under, and a declaration in it must be one the error
+ * funnel can actually reach:
+ *
+ *   - the pattern is exactly /error/<3-digit status, 400-599> or /error/generic
+ *   - GET only, and no :param - the funnel renders one status, with no URL to read
+ *   - the method or its class carries #[Auth('public')] - an error page is shown to
+ *     a caller who has just been denied, and a gated one would deny them again
+ *
+ * A malformed declaration is a manifest-build FATAL rather than a page that
+ * silently never renders. See php artisan rsx:man error_pages.
  */
 class Route_ManifestSupport extends Full_ManifestSupport_Abstract
 {
@@ -123,11 +136,13 @@ class Route_ManifestSupport extends Full_ManifestSupport_Abstract
             // auth.surfaces. merge_gate_lists() still runs because it is what
             // raises a contradiction; its result is not copied onto the row.
             $file_metadata = $files[$file] ?? [];
-            Auth_ManifestSupport::merge_gate_lists(
+            $gates = Auth_ManifestSupport::merge_gate_lists(
                 $file_metadata['attributes'] ?? null,
                 $file_metadata['public_static_methods'][$method_name]['attributes'] ?? null,
                 "{$fqcn}::{$method_name} in {$file}"
             );
+
+            static::assert_error_route_shape($pattern, (array) $methods, $gates, $fqcn, $method_name, $file);
 
             // The surface key auth.surfaces is keyed by, and the target
             // routes_by_target is grouped by at load. Both are the SIMPLE class
@@ -175,6 +190,93 @@ class Route_ManifestSupport extends Full_ManifestSupport_Abstract
 
             $manifest_data['data']['routes'][$pattern] = $route_data;
         }
+    }
+
+    /**
+     * ROUTE-ERROR-01: a declaration under the reserved /error/ prefix must be one
+     * the error funnel can reach.
+     *
+     * Called by this module and by Portal_Route_ManifestSupport - the rule is the
+     * same in both realms, and one implementation is what keeps them the same.
+     * Patterns outside the prefix return immediately.
+     *
+     * @param string $pattern The route pattern, leading slash included
+     * @param array $methods The declared HTTP methods
+     * @param array $gates The merged #[Auth] check names for the surface
+     * @param string|null $fqcn Declaring class
+     * @param string $method_name Declaring method
+     * @param string $file Declaring file
+     * @return void
+     */
+    public static function assert_error_route_shape(
+        string $pattern,
+        array $methods,
+        array $gates,
+        ?string $fqcn,
+        string $method_name,
+        string $file
+    ): void {
+        if (!str_starts_with($pattern, \App\RSpade\Core\Errors\Error_Pages::PREFIX)) {
+            return;
+        }
+
+        $suffix = substr($pattern, strlen(\App\RSpade\Core\Errors\Error_Pages::PREFIX));
+
+        if ($suffix !== 'generic' && !preg_match('/^[45][0-9][0-9]$/', $suffix)) {
+            static::_throw_error_route_violation(
+                $fqcn,
+                $method_name,
+                $file,
+                "'{$pattern}' is not a page the error funnel looks up.",
+                'Declare the pattern as /error/<status 400-599> (one segment, no :param) or /error/generic.'
+            );
+        }
+
+        $declared = array_map('strtoupper', $methods);
+        if ($declared !== ['GET']) {
+            static::_throw_error_route_violation(
+                $fqcn,
+                $method_name,
+                $file,
+                "'{$pattern}' declares " . implode(', ', $declared) . '; an error page is rendered by GET only.',
+                'Remove the methods argument, or declare methods: [\'GET\'].'
+            );
+        }
+
+        if (!in_array('public', $gates, true)) {
+            static::_throw_error_route_violation(
+                $fqcn,
+                $method_name,
+                $file,
+                "'{$pattern}' is gated; an error page is shown to a caller who has just been denied.",
+                "Declare #[Auth('public')] on the method or on its class."
+            );
+        }
+    }
+
+    /**
+     * Raise one ROUTE-ERROR-01 violation.
+     *
+     * @param string|null $fqcn
+     * @param string $method_name
+     * @param string $file
+     * @param string $problem What is wrong
+     * @param string $remedy What to do about it
+     * @return void
+     */
+    private static function _throw_error_route_violation(
+        ?string $fqcn,
+        string $method_name,
+        string $file,
+        string $problem,
+        string $remedy
+    ): void {
+        throw new \RuntimeException(
+            "Invalid error-page route: {$fqcn}::{$method_name} in {$file}\n" .
+            "  ROUTE-ERROR-01: {$problem}\n" .
+            "  {$remedy}\n" .
+            '  See: php artisan rsx:man error_pages'
+        );
     }
 
     /**

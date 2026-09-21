@@ -46,7 +46,7 @@ class Csrf_Reject_Contract_Test extends Rsx_Test_Abstract
     /** Portal internal-endpoint channel in prefix mode (domain mode reuses /_ajax). */
     private const PORTAL_AJAX_URI = '/_portal/_ajax/Foo_Controller/bar';
 
-    /** A native #[Route] path -> reject renders as a bare 419. */
+    /** A native #[Route] path -> reject renders the 419 page. */
     private const FORM_URI = '/settings/save';
 
     /**
@@ -133,7 +133,7 @@ class Csrf_Reject_Contract_Test extends Rsx_Test_Abstract
         );
 
         static::__assert_equals(419, $rendered->getStatusCode(), 'the handler chain must not restatus the native 419 rejection');
-        static::__assert_contains('CSRF token mismatch', $rendered->getContent());
+        static::__assert_contains('Page Expired', $rendered->getContent(), 'the native rejection is the 419 page');
     }
 
     /**

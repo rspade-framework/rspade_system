@@ -70,7 +70,7 @@ class Users_Index_Action extends Spa_Action { }
 
 | Surface | Seam | Denied |
 |---|---|---|
-| `#[Route]` / `#[SPA]` | Dispatcher, after route resolution, **before `Main::pre_dispatch`** | no session -> 302 to the realm's login with the intended URL captured (`Login_Redirect`); authenticated -> the 403 error screen |
+| `#[Route]` / `#[SPA]` | Dispatcher, after route resolution, **before `Main::pre_dispatch`** | no session -> 302 to the realm's login with the intended URL captured (`Login_Redirect`); authenticated -> the application's 403 error page (`#[Route('/error/403')]`) |
 | `#[Ajax_Endpoint]` | Ajax dispatch, after CSRF | the standard coded unauthorized Ajax error; the body never runs |
 | `#[Ajax_Endpoint_Model_Fetch]` | ORM seam | the same generic "not found" a missing row returns (anti-enumeration) |
 | `#[Api_Endpoint]` | API dispatch | 401/403 JSON error |
@@ -262,6 +262,6 @@ Separately fatal at scan time, before that pass: an `#[Auth_Check]` that is para
 - **Build error naming a check that exists.** It exists in the *other* realm. Portal surfaces resolve only against `Portal_Permission`; staff surfaces only against `Permission`.
 - **A hidden link that should be visible.** `can_access()` reads the DESTINATION's gates - fix the destination's declaration, never the link.
 - **`can_access()` throws "unknown target".** The spelling must match `Rsx::Route()` exactly; for a surface that may not exist in this install, use `Auth_Gates::accessible_route()` instead.
-- **Denial screens** are `Error_Screens` (PHP `unauthorized()`/`not_found()`/`fatal()`, JS `Error_Screens.unauthorized()`); customize the PHP side by class-overriding `Error_Screens`.
+- **Denial screens** are `Error_Screens` (PHP `unauthorized()`/`not_found()`/`fatal()`, JS `Error_Screens.unauthorized()`). Customize the full-page side by declaring `#[Route('/error/403')]` (portal: `#[Portal_Route]`) - skill `rspade:error-pages`, `rsx:man error_pages`. The SPA side is the theme components in `rsx/theme/components/feedback/errors/`, edited directly.
 
 Details: `php artisan rsx:man auth_gates`. Related: `rspade:permissions-acl`, `rspade:portal-core`, `rspade:session-auth`.

@@ -137,10 +137,20 @@ AUTHENTICATION
     handled by the framework and never reaches your code):
 
         response_unauthorized(?string $message = null)
-            Context-aware: JSON for Ajax, redirect/403 for web
+            Context-aware: JSON for Ajax; for web, a 302 to login when nobody
+            is identified, the 403 error page when somebody is
 
         response_not_found(?string $message = null)
-            Context-aware: JSON for Ajax, 404 page for web
+            Context-aware: JSON for Ajax; for a web GET, the 404 error page;
+            for a web POST, the reason is flashed and the same URL is
+            re-issued as a GET so the user returns to their form
+
+        response_form_error(string $message, array $field_errors = [])
+            Context-aware: JSON for Ajax; for a web GET, the 400 error page
+            carrying the message; for a web POST, the flash-and-redirect above
+
+    Which page those render is the application's own declaration under the
+    reserved /error/ prefix - rsx:man error_pages.
 
     Public Endpoints:
 
@@ -403,6 +413,7 @@ TROUBLESHOOTING
 SEE ALSO
     rsx:man auth_gates
     rsx:man acls
+    rsx:man error_pages
     rsx:man manifest_api
     rsx:man bundle_api
     rsx:man jqhtml

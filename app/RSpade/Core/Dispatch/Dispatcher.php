@@ -10,11 +10,9 @@ namespace App\RSpade\Core\Dispatch;
 use Exception;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
-use Illuminate\Support\Facades\Log;
 use ReflectionClass;
 use RuntimeException;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
-use Throwable;
 use App\RSpade\Core\Api\Api_Dispatcher;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Csp\Rsx_Csp;
@@ -172,6 +170,20 @@ class Dispatcher
         // Make the request appear as GET to all handlers if it's HEAD
         if ($method === 'HEAD' && $request) {
             $request->setMethod('GET');
+        }
+
+        // THE ERROR-PAGE NAMESPACE. /error/<code> and /error/generic are where an
+        // application DECLARES its error pages, and they are never served by ordinary
+        // route matching in any mode - so an error page can never answer 200 at its own
+        // URL, in development or in production. Development renders the page as a
+        // preview of the real failure; a sealed build answers the 404 any unknown URL
+        // gets, because a preview is a development affordance and nothing else.
+        if (preg_match('#^/error/(\d{3}|generic)$#', $url, $error_preview_match)) {
+            $error_preview_response = Rsx::is_production()
+                ? Error_Screens::not_found($request)
+                : Error_Screens::preview($request, $error_preview_match[1]);
+
+            return static::__transform_response($error_preview_response, $original_method, $request);
         }
 
         // Find matching route
@@ -741,7 +753,9 @@ class Dispatcher
      * a page. A request with no Accept header at all (curl, a probe) counts as asking for one -
      * that is Laravel's own reading of an absent Accept, and it keeps the browsed case correct.
      *
-     * Only 404 and 403 have screens; every other status keeps its meaning and its plain body.
+     * EVERY status a browsed request ends on gets a page: 404, 403 and 419 have their own
+     * entry points, and everything else goes through http_status(), which carries the
+     * raiser's own message. The non-HTML channel keeps the bare status and one line of text.
      *
      * @param HttpExceptionInterface $e
      * @param Request|null $request
@@ -760,6 +774,12 @@ class Dispatcher
             if ($status === 403) {
                 return Error_Screens::unauthorized($request);
             }
+
+            if ($status === 419) {
+                return Error_Screens::expired($request);
+            }
+
+            return Error_Screens::http_status($request, $status, $e->getMessage());
         }
 
         $headers = $e->getHeaders();
@@ -857,6 +877,52 @@ class Dispatcher
     }
 
     /**
+     * Render one application error page, for Error_Screens.
+     *
+     * The narrow facade the error funnel uses, and the only entry point that
+     * invokes a controller method WITHOUT __call_action: the failing request is
+     * already over, so a pre_dispatch that redirected or a gate that denied would
+     * take the error page away from the person who needs to read it. The page is
+     * called directly with the context, and its result is built the ordinary way.
+     *
+     * A coded response (response_unauthorized(), response_not_found()) is a page
+     * FAILURE, not a second outcome to route: handing it to
+     * __handle_special_response would call back into Error_Screens and recurse.
+     * It throws, and the funnel's catch renders the framework page instead.
+     *
+     * @param array $route_match ['class', 'method', ...] from Error_Pages::resolve
+     * @param Request $request The failing request
+     * @param Error_Context $error What the page is told about the failure
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    public static function render_error_route(array $route_match, Request $request, \App\RSpade\Core\Errors\Error_Context $error)
+    {
+        $class = $route_match['class'];
+        $action = $route_match['method'];
+
+        // The error page is the current page from here on. The bundle coverage
+        // check (Rsx_Bundle_Abstract) asks whether the bundle being rendered
+        // includes the CURRENT controller, which would still be the failing
+        // request's; the error module's bundle covers the error module and
+        // nothing else, so the page is declared before it renders.
+        \App\RSpade\Core\Rsx::_set_current_controller_action($class, $action, ['error' => $error], $route_match['type'] ?? 'standard');
+
+        $result = $class::$action($request, ['error' => $error]);
+
+        // A coded response would recurse into Error_Screens through
+        // __handle_special_response, and a null would serialize as a JSON body
+        // carrying the error status. Both are page failures the funnel replaces
+        // with the framework page.
+        if ($result === null || $result instanceof \App\RSpade\Core\Response\Rsx_Response_Abstract) {
+            throw new RuntimeException(
+                "Error page {$class}::{$action} returned " . ($result === null ? 'nothing' : 'a coded response') . " instead of a page."
+            );
+        }
+
+        return static::__build_response($result);
+    }
+
+    /**
      * Build response from handler result
      *
      * @param mixed $result
@@ -943,6 +1009,11 @@ class Dispatcher
     /**
      * Handle special RSX response types for HTTP requests
      *
+     * Every coded outcome a web route can return ends as an Error_Screens page,
+     * the same page the equivalent abort() would produce - except a POST, which
+     * is a form submission and is answered by flashing the reason and re-issuing
+     * the same URL as a GET so the user is returned to their form.
+     *
      * @param \App\RSpade\Core\Response\Rsx_Response_Abstract $response
      * @return \Illuminate\Http\Response
      */
@@ -979,9 +1050,14 @@ class Dispatcher
             return Error_Screens::unauthorized(request());
         }
 
-        // Handle validation and not found errors
+        // Handle validation and not found errors.
+        //
+        // A POST is a form submission: the user is standing in front of the form
+        // that failed, so the reason is flashed and the same URL is re-requested
+        // as a GET. A GET has no form to return to - it IS the page - so the
+        // coded outcome is the page's outcome: a missing record renders the 404
+        // page, a rejected request the 400 page carrying the reason.
         if ($type === \App\RSpade\Core\Ajax\Ajax::ERROR_VALIDATION || $type === \App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND) {
-            // Only redirect if this was a POST request
             if (request()->isMethod('POST')) {
                 Flash_Alert::error($reason);
 
@@ -989,40 +1065,15 @@ class Dispatcher
                 return redirect(request()->url());
             }
 
-            // Not a POST request, throw exception
-            throw new Exception($reason);
+            if ($type === \App\RSpade\Core\Ajax\Ajax::ERROR_NOT_FOUND) {
+                return Error_Screens::not_found(request());
+            }
+
+            return Error_Screens::bad_request(request(), (string) $reason);
         }
 
         // Unknown response type
         throw new Exception("Unknown RSX response type: {$type}");
-    }
-
-    /**
-     * Handle 404 not found
-     *
-     * @param string $url
-     * @param string $method
-     * @return Response
-     */
-    protected static function __handle_not_found($url, $method)
-    {
-        Log::warning("Route not found: {$method} {$url}");
-
-        // Try to find a custom 404 handler
-        $custom_404 = static::__find_route('/404', 'GET');
-
-        if ($custom_404) {
-            try {
-                $result = static::__call_action($custom_404['class'], $custom_404['method'], ['url' => $url, 'method' => $method]);
-
-                return static::__build_response($result);
-            } catch (Throwable $e) {
-                Log::error('Custom 404 handler failed: ' . $e->getMessage());
-            }
-        }
-
-        // Default 404 response
-        abort(404, "Route not found: {$url}");
     }
 
     /**

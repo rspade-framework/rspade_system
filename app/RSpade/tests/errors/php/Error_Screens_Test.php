@@ -277,17 +277,22 @@ class Error_Screens_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Statuses Error_Screens does not define keep their own meaning and their own
-     * Laravel view.
+     * A status with no entry point of its own still gets a page, carrying its
+     * own status and the raiser's message - Laravel's stock error views are
+     * unreachable from RSX, so declining would leave the outcome unthemed.
      */
-    public static function test_handler_declines_other_http_statuses()
+    public static function test_handler_renders_a_page_for_any_other_http_status()
     {
         $handler = new Web_Exception_Handler();
 
-        static::__assert_null($handler->handle(
+        $response = $handler->handle(
             new HttpException(429, 'slow down'),
             Request::create('/anything', 'GET')
-        ));
+        );
+
+        static::__assert_not_empty($response);
+        static::__assert_equals(429, $response->getStatusCode());
+        static::__assert_contains('slow down', $response->getContent());
     }
 
     /**

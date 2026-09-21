@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Portal;
 
 use App\RSpade\Core\Auth\Auth_ManifestSupport;
+use App\RSpade\Core\Dispatch\Route_ManifestSupport;
 use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
 
 /**
@@ -20,6 +21,11 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  * #[Portal_Route('/projects/:id', methods: ['GET'])]
  * public static function view(Request $request, array $params = []) { ... }
  * ```
+ *
+ * ROUTE-ERROR-01 applies here exactly as it does to a staff #[Route]: a declaration
+ * under the reserved /error/ prefix must be an exact status or /error/generic, GET
+ * only, param-free and #[Auth('public')]. The rule is enforced by the one
+ * implementation on Route_ManifestSupport, so the two realms cannot drift.
  */
 class Portal_Route_ManifestSupport extends Full_ManifestSupport_Abstract
 {
@@ -116,11 +122,13 @@ class Portal_Route_ManifestSupport extends Full_ManifestSupport_Abstract
 
             // Declarative auth gates, resolved against the PORTAL check
             // registry: class-level #[Auth] then the method's own.
-            Auth_ManifestSupport::merge_gate_lists(
+            $gates = Auth_ManifestSupport::merge_gate_lists(
                 $file_metadata['attributes'] ?? null,
                 $file_metadata['public_static_methods'][$method_name]['attributes'] ?? null,
                 "{$fqcn}::{$method_name} in {$file}"
             );
+
+            Route_ManifestSupport::assert_error_route_shape($pattern, (array) $methods, $gates, $fqcn, $method_name, $file);
 
             // Check for duplicate portal route definition
             if (isset($manifest_data['data']['portal_routes'][$pattern])) {

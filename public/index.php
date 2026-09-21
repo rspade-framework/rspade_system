@@ -38,6 +38,7 @@ define('LARAVEL_START', microtime(true));
 */
 
 require_once __DIR__ . '/../bootstrap/rsx_paths.php';
+require_once __DIR__ . '/../bootstrap/rsx_preboot_page.php';
 rsx_paths_export();
 rsx_paths_assert_trees_writable();
 
@@ -217,20 +218,26 @@ if (RSPADE_MAINT_MODE) {
         ? trim(substr($__rsx_maint_stamp, 5))
         : '';
 
-    http_response_code(503);
-    header('Retry-After: 120');
-    header('Content-Type: text/plain; charset=UTF-8');
-    echo "503 Service Unavailable - RSpade is in maintenance mode ({$__rsx_maint_reason}). Please retry shortly.\n";
+    $__rsx_maint_page_lines = [
+        "RSpade is in maintenance mode ({$__rsx_maint_reason}). Please retry shortly.",
+    ];
 
     // "Retry shortly" is WRONG ADVICE for a stale flag - an interrupted update, a killed
     // maintenance script - where no retry will ever succeed. On a non-production box, name
     // the one command that fixes it. Production says nothing extra, and a flag carrying no
-    // stamp at all is treated as production: absence resolves to disclosing nothing.
+    // stamp at all is treated as production: absence resolves to disclosing nothing. The
+    // stamp itself is machinery and never reaches the page.
     if ($__rsx_maint_mode !== '' && $__rsx_maint_mode !== 'production') {
-        echo "\n";
-        echo "[dev] If this persists, an interrupted update may have left the flag behind. Clear it with:\n";
-        echo "      php artisan rsx:maintenance:disable\n";
+        $__rsx_maint_page_lines[] = 'If this persists, an interrupted update may have left the flag behind. Clear it with:';
+        $__rsx_maint_page_lines[] = 'php artisan rsx:maintenance:disable';
     }
+
+    rsx_preboot_page_render(
+        503,
+        'Maintenance in progress',
+        $__rsx_maint_page_lines,
+        ['Retry-After' => '120']
+    );
 
     exit;
 }

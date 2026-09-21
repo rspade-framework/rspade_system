@@ -139,7 +139,7 @@ assert_reject "portal ajax reject" "${BASE}${PORTAL_PREFIX}/_ajax/Csrf_Test_Prob
 echo "[TEST] 7. OK" >&2
 
 echo "[TEST] 8. Native form POST rejection returns 419..." >&2
-assert_reject "native form reject" "${BASE}/login" "419" "CSRF token mismatch"
+assert_reject "native form reject" "${BASE}/login" "419" "Page Expired"
 echo "[TEST] 8. OK" >&2
 
 echo "[TEST] 9. A Playwright-flagged rejection is NOT converted to a 500 dump..." >&2

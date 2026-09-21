@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Core\Exceptions;
 
+use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
@@ -19,9 +20,14 @@ use App\RSpade\Core\Rsx;
  *
  * PRIORITY: 1100 (runs LAST, after Rsx_Dispatch_Bootstrapper_Handler at 1000)
  *
- * Everything a request can end as is now an Error_Screens page: the dispatchers
- * render denials and unmatched routes themselves, and this handler covers what is
- * left - an exception that escaped all the way to the top of a full-page request.
+ * Everything a request can end as is an Error_Screens page: the dispatchers render
+ * denials and unmatched routes themselves, and this handler covers what is left - an
+ * exception that escaped all the way to the top of a full-page request.
+ *
+ * IT ANSWERS EVERY HTTP EXCEPTION. Laravel's stock errors/{code}.blade.php views are
+ * unreachable from RSX, so a status this handler declined would be the one terminal
+ * outcome with no page behind it. A browsed request gets the Error_Screens page for
+ * its status; a non-HTML request gets the bare status and one line of text.
  *
  * IT MUST RUN AFTER THE BOOTSTRAPPER. RSX routing is driven by Laravel throwing
  * NotFoundHttpException and the bootstrapper (priority 1000) dispatching it into
@@ -80,18 +86,41 @@ class Web_Exception_Handler extends Rsx_Exception_Handler_Abstract
         if ($e instanceof HttpExceptionInterface) {
             $status = $e->getStatusCode();
 
-            if ($status === 404) {
-                return Error_Screens::not_found($request);
+            if ($request->acceptsHtml()) {
+                if ($status === 404) {
+                    return Error_Screens::not_found($request);
+                }
+
+                if ($status === 403) {
+                    return Error_Screens::unauthorized($request);
+                }
+
+                if ($status === 419) {
+                    return Error_Screens::expired($request);
+                }
+
+                // Every other status (405, 429, 503 ...) is a page too, carrying
+                // the raiser's own message. Nothing is left to Laravel's stock
+                // errors/{code}.blade.php views any more - RSX reaches none of
+                // them, and a status with no page of its own would otherwise be
+                // the one unthemed outcome in the framework.
+                return Error_Screens::http_status($request, $status, $e->getMessage());
             }
 
-            if ($status === 403) {
-                return Error_Screens::unauthorized($request);
+            // The non-HTML channel (an <img>, a fetch(), a probe) gets the bare
+            // status and one line of text, exactly as the dispatcher's own
+            // __http_exception_response answers it.
+            $headers = $e->getHeaders();
+            if (!isset($headers['Content-Type']) && !isset($headers['content-type'])) {
+                $headers['Content-Type'] = 'text/plain; charset=UTF-8';
             }
 
-            // Every other HTTP status (405, 419, 429, 503 ...) keeps its own
-            // meaning and its own Laravel view - this class speaks for the three
-            // outcomes Error_Screens defines, not for the whole status space.
-            return null;
+            $body = $e->getMessage();
+            if ($body === '') {
+                $body = SymfonyResponse::$statusTexts[$status] ?? '';
+            }
+
+            return new SymfonyResponse($body, $status, $headers);
         }
 
         if (Rsx::is_development() && config('app.debug')) {

@@ -353,6 +353,31 @@ GIT OPERATIONS
 
 ERROR MESSAGES
 
+    Error Pages Are ROUTES, Not Views
+        Change          RSpade reads no resources/views/errors/{code}.blade.php.
+                        A full-page error is rendered by an application ROUTE
+                        under the reserved /error/ prefix - #[Route('/error/404')],
+                        #[Route('/error/generic')], and the #[Portal_Route]
+                        twins for the portal realm - which the framework calls
+                        directly with the failure as $params['error'].
+        Affected        Laravel's errors/{code}.blade.php convention, its
+                        abort() rendering, its stock 404/419/500 blades and
+                        Symfony's exception views: none of them is reachable.
+                        Laravel's own 404 is never emitted either - an unmatched
+                        URL ends on the 404 error page.
+        Reason          An error page is a page: it wants the application's
+                        layout, bundle, links and realm, which a view rendered
+                        outside dispatch cannot have. Making it a route puts it
+                        on the same declaration, gating and realm machinery as
+                        every other page, and gives the portal its own pages
+                        without a second mechanism.
+        Implementation  Error_Screens (the funnel), Error_Pages (resolution),
+                        Error_Context (what a page receives), the /error/
+                        intercept in both dispatchers, and ROUTE-ERROR-01,
+                        which FATALs the manifest build on a declaration the
+                        funnel could not reach.
+        See also        rsx:man error_pages
+
     Educational Exception Messages
         Change          Custom exceptions explain the rule, name the offending
                         model and method, list the attempted fields, and print
@@ -424,6 +449,7 @@ SEE ALSO
     rsx:man migrations           Forward-only migrations and snapshots
     rsx:man polymorphic          Integer type refs and the morph map
     rsx:man session              Session lifecycle and retention
+    rsx:man error_pages          The /error/ page declarations
     rsx:man rsx_git              The git proxy
     php artisan rsx:check        Reports the rule ids above with their
                                  severities and remediation text

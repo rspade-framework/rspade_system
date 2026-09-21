@@ -208,15 +208,21 @@ RESPONSE HELPERS
         response_form_error($message, array $field_errors = [])
             ERROR_VALIDATION with a summary $message plus per-field errors
             (['email' => 'Required']). The client applies each error to the
-            matching form field.
+            matching form field. Returned from a WEB route: a POST flashes the
+            message and re-issues the same URL as a GET (the user is standing
+            in front of the form); a GET renders the 400 error page carrying
+            the message.
 
         response_unauthorized(?$message)   ERROR_UNAUTHORIZED
             Authenticated but lacking permission. Context-aware: on a web
             request from a logged-OUT user it 302-redirects to login
             (threading the requested URL via Login_Redirect); logged-in but
-            unpermitted yields 403; Ajax/API yields the JSON error.
+            unpermitted yields the 403 error page; Ajax/API yields the JSON
+            error.
 
         response_not_found(?$message)      ERROR_NOT_FOUND
+            Returned from a WEB route: a POST flashes and re-issues the URL as
+            a GET; a GET renders the 404 error page.
         response_auth_required(?$message)  ERROR_AUTH_REQUIRED (not logged in)
         response_fatal_error(?$message, array $details = [])   ERROR_FATAL
 
@@ -244,6 +250,10 @@ RESPONSE HELPERS
     by the global handler - so an endpoint returning response_error() never
     fails silently even when the caller writes no catch. The full envelope,
     every code, and every client display path live in ajax_error_handling.
+
+    WHICH PAGE a web refusal renders is the application's own declaration
+    under the reserved /error/ prefix (#[Route('/error/404')] and friends),
+    with the framework's own page as the fallback - see rsx:man error_pages.
 
     Permission facade throws instead of returns: Permission::require_role()
     / require_permission() throw AjaxUnauthorizedException (403) rather than
@@ -323,6 +333,8 @@ COMMON PITFALLS
 
 SEE ALSO
     rsx:man ajax_error_handling - Ajax error contract + client
+    rsx:man error_pages         - the full-page error screens a web refusal
+                                  renders
     rsx:man code_quality        - fail-loud enforcement rules
     rsx:man acls                - Permission require_* throwers
     rsx:man console_debug       - channel-filtered debug output

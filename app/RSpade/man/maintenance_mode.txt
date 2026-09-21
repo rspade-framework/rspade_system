@@ -176,9 +176,11 @@ THE CLI GATE (allow-most-deny-some)
     vendor/ is half-synced.
 
 WEB
-    Every request answers 503 with Retry-After: 120 and a plain-text body quoting the reason
-    (system/public/index.php, before Composer's autoloader). The IDE bridge (/_ide/service/*)
-    is intentionally exempt - the editor keeps working during maintenance.
+    Every request answers 503 with Retry-After: 120 and an HTML page quoting the reason
+    (system/public/index.php, before Composer's autoloader; the page is built by
+    bootstrap/rsx_preboot_page.php, which carries the framework error screen's look with no
+    autoloader and no Blade). The IDE bridge (/_ide/service/*) is intentionally exempt - the
+    editor keeps working during maintenance.
 
     CAVEAT worth knowing: once enable has STOPPED php-fpm, no PHP runs at all, so the web
     server answers with its own upstream error (nginx: 502 Bad Gateway) instead of the

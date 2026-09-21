@@ -167,6 +167,19 @@ class Portal_Dispatcher
             $request->setMethod('GET');
         }
 
+        // THE ERROR-PAGE NAMESPACE, portal realm. The twin of the staff seam in
+        // Dispatcher::dispatch(): /error/<code> and /error/generic are where the portal
+        // DECLARES its error pages, and they are never served by ordinary route matching
+        // in any mode, so a portal error page can never answer 200 at its own URL.
+        // Development renders the preview; a sealed build answers 404.
+        if (preg_match('#^/error/(\d{3}|generic)$#', $normalized_url, $error_preview_match)) {
+            $error_preview_response = Rsx::is_production()
+                ? Error_Screens::not_found($request)
+                : Error_Screens::preview($request, $error_preview_match[1]);
+
+            return static::__build_response($error_preview_response, $original_method, $request);
+        }
+
         // Find matching portal route
         console_debug('PORTAL', "Looking for portal route: {$normalized_url}, method: {$route_method}");
         $route_match = static::__find_portal_route($normalized_url, $route_method);
@@ -443,6 +456,48 @@ class Portal_Dispatcher
         }
 
         return null;
+    }
+
+    /**
+     * Render one portal error page, for Error_Screens.
+     *
+     * The portal twin of Dispatcher::render_error_route, and the same contract:
+     * the page is called DIRECTLY with the context rather than through the
+     * ordinary action path, because the failing request is over and a
+     * pre_dispatch redirect or a gate denial would take the error page away from
+     * the person who needs to read it. A coded response is a page failure and
+     * throws, so the funnel's catch renders the framework page instead.
+     *
+     * @param array $route_match ['class', 'method', ...] from Error_Pages::resolve
+     * @param Request $request The failing request
+     * @param \App\RSpade\Core\Errors\Error_Context $error What the page is told
+     * @return \Symfony\Component\HttpFoundation\Response
+     */
+    public static function render_error_route(array $route_match, Request $request, \App\RSpade\Core\Errors\Error_Context $error)
+    {
+        $class = $route_match['class'];
+        $action = $route_match['method'];
+
+        // The error page is the current page from here on: the bundle coverage
+        // check reads the current controller, which would otherwise still be
+        // the failing request's. Both registries are set - the portal one is
+        // what portal helpers read, the staff one is what the coverage check
+        // reads.
+        Rsx_Portal::_set_current_controller_action($class, $action, $route_match['type'] ?? 'portal');
+        \App\RSpade\Core\Rsx::_set_current_controller_action($class, $action, ['error' => $error], $route_match['type'] ?? 'portal');
+
+        $result = $class::$action($request, ['error' => $error]);
+
+        // A coded response would recurse into Error_Screens, and a null would
+        // serialize as a body carrying the error status. Both are page
+        // failures the funnel replaces with the framework page.
+        if ($result === null || $result instanceof \App\RSpade\Core\Response\Rsx_Response_Abstract) {
+            throw new \RuntimeException(
+                "Error page {$class}::{$action} returned " . ($result === null ? 'nothing' : 'a coded response') . " instead of a page."
+            );
+        }
+
+        return static::__build_response($result, $request->getMethod(), $request);
     }
 
     /**

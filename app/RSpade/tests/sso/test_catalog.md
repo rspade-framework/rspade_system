@@ -106,7 +106,7 @@ outcomes.
 | sso-http-01 | an unknown provider key is refused | GET `/_sso/nonesuch/begin` | 404 | implemented |
 | sso-http-02 | a configured-but-DISABLED key is the same refusal, and never a 500 | GET `/_sso/google/begin` | 404 | implemented |
 | sso-http-03 | THE APPLE EXEMPTION: a cross-site POST passes the origin check and 303s to the GET leg | POST + `Origin: appleid.apple.com` | 303, Location carries code, state and user | implemented |
-| sso-http-04 | THE EXEMPTION IS PATH-EXACT | the identical POST to `/_sso/google/callback`, `/_sso/apple/callbackx`, `/_sso/apple/begin` | all rejected, "CSRF token mismatch", none 303 | implemented |
+| sso-http-04 | THE EXEMPTION IS PATH-EXACT | the identical POST to `/_sso/google/callback`, `/_sso/apple/callbackx`, `/_sso/apple/begin` | all rejected with the "Page Expired" page, none 303 | implemented |
 | sso-http-05 | the settings endpoints refuse a logged-out caller AT THE GATE | anonymous POSTs | `unauthorized`, and the endpoint body is never reached | implemented |
 
 Cross-referenced from `tests/csrf/test_catalog.md` (the exempt-path section), because the

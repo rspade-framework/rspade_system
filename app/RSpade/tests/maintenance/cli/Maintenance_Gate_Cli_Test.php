@@ -238,9 +238,23 @@ class Maintenance_Gate_Cli_Test extends Rsx_Test_Abstract
             static::__assert_equals('503', $code, 'the web gate must answer 503 while maintenance is up');
 
             $body = [];
-            exec_safe('curl -s http://localhost/', $body, $rc);
+            exec_safe('curl -si http://localhost/', $body, $rc);
             $text = implode("\n", $body);
             static::__assert_contains(self::REASON, $text, 'the 503 body must quote the reason');
+
+            // The gate renders the pre-boot page shell (bootstrap/rsx_preboot_page.php),
+            // the twin of the framework error screen - so the answer is a page, not a
+            // line of text, and it carries the shell's title.
+            static::__assert_contains(
+                'text/html',
+                strtolower($text),
+                'the 503 must be served as HTML: ' . $text
+            );
+            static::__assert_contains(
+                'Maintenance in progress',
+                $text,
+                'the 503 page must carry its title'
+            );
 
             // "Retry shortly" is wrong advice for a stale flag, so a non-production box
             // also gets the one command that clears it. This box is development, hence

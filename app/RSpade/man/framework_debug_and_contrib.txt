@@ -531,7 +531,10 @@ SUBSYSTEM PRIMERS
     php-fpm -> system/public/index.php
         The entry script runs a series of PRE-BOOT handlers, before composer's
         autoloader, so that they still answer when the tree is half-synced.
-        In order:
+        In order, after the path resolver (bootstrap/rsx_paths.php) and the
+        page shell the two 503 answers below share
+        (bootstrap/rsx_preboot_page.php - the pre-boot twin of the framework
+        error screen, carrying the same look with no autoloader and no Blade):
 
             1  .env symlink invariant (a real file where the symlink belongs
                shadows the project-root .env)
@@ -546,8 +549,8 @@ SUBSYSTEM PRIMERS
                during a window.
             7  the maintenance flag is stat'ed ONCE and frozen into a
                constant for the process
-            8  the maintenance gate - 503 with Retry-After and the operator's
-               own reason text
+            8  the maintenance gate - 503 with Retry-After and an HTML page
+               quoting the operator's own reason text
             9  composer autoload
            10  bootstrap/app.php, then the HTTP kernel
 
@@ -610,7 +613,7 @@ SUBSYSTEM PRIMERS
             route lookup
             no match -> the default controller/action pattern, then
               Main::pre_dispatch, then Main::unhandled_route, then the
-              framework's own not-found screen. It is never Laravel's 404.
+              404 error screen. It is never Laravel's 404.
             parameter merge: extra params, then query string, then route
               params
             full-page-cache eligibility
@@ -920,10 +923,19 @@ SUBSYSTEM PRIMERS
 
     The PHP side renders a full page: unauthorized (an unidentified visitor
     gets the redirect capture plus a 302 to the realm's login; an identified
-    one gets a themed 403), not found, and fatal. It renders through a plain
-    Laravel view, deliberately, so that it still renders when the manifest is
-    what broke, and production suppresses all exception detail. Customise it
-    by class override.
+    one gets a themed 403), not found, expired, bad request, fatal, and any
+    other status a browsed abort() raised. One funnel, Error_Screens, builds
+    an Error_Context and asks which APPLICATION ROUTE under the reserved
+    /error/ prefix declares that status in that realm - exact, then
+    /error/generic, then the staff pair for a portal failure, then the
+    framework's own page. The framework's page is a plain Laravel view,
+    deliberately, so that it still renders when the manifest is what broke,
+    and production suppresses all exception detail. An application customises
+    the screens by DECLARING those routes; a page that throws is logged and
+    replaced by the framework page. The /error/ paths are intercepted before
+    route matching in every mode - a development preview, a 404 in a sealed
+    build - so an error page never answers 200 at its own URL. See
+    rsx:man error_pages.
 
     The JS side has the same three names but mounts a component into the LIVE
     layout's content area - no navigation, no round trip. Its bodies are
@@ -938,11 +950,12 @@ SUBSYSTEM PRIMERS
 
     References
       Man pages: dispatch, routing, controller, auth_gates, spa, portal,
-      external_api, error_handling, coding_standards.
+      external_api, error_handling, error_pages, coding_standards.
       Colocated: Core/CLAUDE.md, Core/Portal/CLAUDE.md, Core/SPA/CLAUDE.md.
       Source: Core/Dispatch/ (Dispatcher, Route_ManifestSupport,
       RouteResolver, AssetHandler), Core/Auth/ (Auth_Gates,
-      Auth_ManifestSupport), Core/Errors/Error_Screens.php,
+      Auth_ManifestSupport), Core/Errors/ (Error_Screens, Error_Pages,
+      Error_Context),
       Core/SPA/Error_Screens.js, Core/Rsx.php, Core/Portal/Rsx_Portal.php,
       Core/Base/Main_Abstract.php.
       Skills: rspade:auth-gates, rspade:spa, rspade:portal.
@@ -1099,7 +1112,9 @@ SUBSYSTEM PRIMERS
 
     A rejection renders its response DIRECTLY and throws it, so no handler
     can embellish it: the Ajax and upload paths get the ordinary unauthorized
-    envelope at HTTP 200, and everything else gets a plain 419.
+    envelope at HTTP 200, and a native form POST gets the 419 error page -
+    the application's own /error/419 when it declares one (rsx:man
+    error_pages).
 
     Brute-force throttling is the framework's and is on by default: the
     authentication entry point refuses a locked-out client address as its

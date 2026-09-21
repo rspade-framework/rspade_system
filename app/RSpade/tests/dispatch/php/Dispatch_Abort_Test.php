@@ -25,8 +25,9 @@ use App\RSpade\Tests\Dispatch\Php\Dispatch_Abort_Fixture_Controller;
  *
  * The Dispatcher now answers a coded HTTP outcome at the seam that invoked the action.
  * Proved here: 404 and 403 land on the same Error_Screens the Web_Exception_Handler uses,
- * any other status keeps its own status and message, the asset channel gets a plain body
- * rather than a themed page, and a non-HTTP exception still propagates untouched.
+ * any other status gets its own page carrying its own status and message, the asset
+ * channel gets a plain body rather than a page, and a non-HTTP exception still
+ * propagates untouched.
  */
 class Dispatch_Abort_Test extends Rsx_Test_Abstract
 {
@@ -87,6 +88,10 @@ class Dispatch_Abort_Test extends Rsx_Test_Abstract
         static::__assert_contains('/login', (string) $response->headers->get('Location'));
     }
 
+    /**
+     * A status with no entry point of its own is a page too, carrying the status and
+     * the message the raiser gave.
+     */
     public static function test_any_other_status_keeps_its_status_and_message()
     {
         $response = static::__browse('/_test/dispatch/abort-418');

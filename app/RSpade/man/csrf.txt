@@ -75,8 +75,10 @@ ENFORCEMENT POINT
     /_ajax/:controller/:action, /_ajax/_batch, /_upload, and native #[Route(POST)]
     controllers. Both calls are the same call because both channels serve the same
     browser session and the same token - Rsx_Csrf takes no realm argument. A
-    failure returns a clean auth-style error (AJAX contract for /_ajax and
-    /_upload, a 419 for native form POSTs) with no stack trace. The portal channel
+    failure returns a clean auth-style error with no stack trace: the AJAX
+    envelope for /_ajax and /_upload, and for a native form POST the 419 error
+    page - the application's own /error/419 when it declares one, the
+    framework's page otherwise (rsx:man error_pages). The portal channel
     is the same path under the portal base (<portal-prefix>/_ajax/..., or
     /_ajax/... on a portal domain); the path test matches both spellings.
 
@@ -130,6 +132,7 @@ FILES
                                                        Honors the rejection response verbatim
 
 SEE ALSO
+    rsx:man error_pages
     rsx:man session
     rsx:man auth
     rsx:man portal

@@ -64,6 +64,7 @@ function rsx_preboot(array $options = []): void
     */
 
     require_once __DIR__ . '/rsx_paths.php';
+    require_once __DIR__ . '/rsx_preboot_page.php';
     rsx_paths_export();
     rsx_paths_assert_trees_writable();
 

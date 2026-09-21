@@ -164,6 +164,10 @@ class Rsx_Csp
      * explicitly. A response already carrying a policy of its own (AssetHandler's static HTML)
      * is left exactly as it is.
      *
+     * IDEMPOTENT, and relied upon: an error page is stamped by Error_Screens::render() and
+     * then passes through the dispatcher's own application on the way out, so the second
+     * call must be a no-op rather than a second header.
+     *
      * @param mixed $response anything a dispatcher may be holding; non-responses are ignored
      * @param string $realm 'staff' or 'portal'
      * @return void
