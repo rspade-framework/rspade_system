@@ -113,8 +113,16 @@ class Make_Migration_With_Whitelist_Command extends Command
             ], JSON_PRETTY_PRINT));
         }
 
-        // Load existing whitelist
+        // Load existing whitelist. A file that does not parse is refused, never rebuilt:
+        // writing a fresh map over it would silently discard every entry it held.
         $whitelist = json_decode(file_get_contents($whitelistPath), true);
+
+        if (!is_array($whitelist) || !isset($whitelist['migrations']) || !is_array($whitelist['migrations'])) {
+            throw new \RuntimeException(
+                "{$whitelistPath} is not valid JSON; the usual cause is merge conflict markers left in the file. "
+                . "Repair it (it is the key-union of both sides' migrations maps) and run make:migration:safe again."
+            );
+        }
 
         // Add new migration with metadata
         $whitelist['migrations'][$filename] = [

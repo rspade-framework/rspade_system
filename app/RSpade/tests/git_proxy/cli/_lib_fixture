@@ -8,6 +8,7 @@
 #   $PROJECT/                          git repo, branch master, remote -> $BARE
 #     .env                             (IS_FRAMEWORK_DEVELOPER absent by default)
 #     storage/.rspade_storage_relocated  a sentinel proving storage/ survives the reset
+#     system/bin/lib/merge_migration_whitelist.php  COPY of the real whitelist resolver
 #     system/bin/rsx-git.sh            COPY of the real proxy (it derives PROJECT_ROOT
 #                                      from its own location, so a symlink would resolve
 #                                      to the real repo - it must be a copy)
@@ -32,6 +33,7 @@
 
 REAL_PROXY="/var/www/html/system/bin/rsx-git.sh"
 REAL_PATHS_LIB="/var/www/html/system/bin/lib/rsx_paths.sh"
+REAL_WHITELIST_MERGE="/var/www/html/system/bin/lib/merge_migration_whitelist.php"
 REAL_MAINT="/var/www/html/system/bin/maintenance-mode.sh"
 
 FX_ROOT=""
@@ -152,6 +154,9 @@ fx_build_project() {
         # The proxy resolves the volatile-tree roots through this library; a framework
         # tree without it cannot answer where storage/state is.
         cp "$REAL_PATHS_LIB" "$fw/bin/lib/rsx_paths.sh"
+        # The append-append resolver the proxy shells to for a conflicted
+        # .migration_whitelist. It ships in the same bin/lib/ the proxy reads it from.
+        cp "$REAL_WHITELIST_MERGE" "$fw/bin/lib/merge_migration_whitelist.php"
 
         # A FLAG-ONLY maintenance-mode.sh. The proxy calls this script directly (not
         # through artisan), so there is no seam a test could use to pass --no-services -
@@ -222,6 +227,7 @@ MAINT
         mkdir -p "$PROJECT/system/bin/lib" "$PROJECT/system/app/RSpade"
         cp "$REAL_PROXY" "$PROJECT/system/bin/rsx-git.sh"
         cp "$REAL_PATHS_LIB" "$PROJECT/system/bin/lib/rsx_paths.sh"
+        cp "$REAL_WHITELIST_MERGE" "$PROJECT/system/bin/lib/merge_migration_whitelist.php"
         fx_write_shim "$PROJECT/system"
         printf 'framework v1\n' > "$PROJECT/system/app/RSpade/core.php"
     else

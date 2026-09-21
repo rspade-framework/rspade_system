@@ -42,6 +42,13 @@ validation, and schema normalization.
 - **Normalization is DATABASE-DRIVEN.** `migrate:normalize_schema` reads SHOW TABLES and
   information_schema and consults no model and no manifest, so a stale manifest during a
   migrate can never cost a new table a column. It adds only what EVERY table carries.
+- **An unparseable `.migration_whitelist` is an ERROR naming the path, never an empty map.**
+  The file is machine-written, so the one way it stops being JSON is a merge that left
+  conflict markers in it; read as an empty map it declares every migration in the tree
+  unauthorized under a message that names `make:migration` and not the file (a downstream
+  field report, 2026-09-21). `Maint_Migrate::read_whitelist_entries()` is the single parse,
+  and `rsx:git` merges the conflict itself as a key-union so the state is rarely reached at
+  all (`system/bin/lib/merge_migration_whitelist.php`; `rsx:man rsx_git`).
 - **No source file is written outside development.** `.migration_whitelist` is written only
   in development and consulted in every mode; `rsx:constants:regenerate` never rewrites a
   file under `system/` unless this box is a framework-developer box, judged on the RESOLVED

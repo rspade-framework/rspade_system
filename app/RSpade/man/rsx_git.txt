@@ -117,6 +117,64 @@ WHERE IT GETS OUT OF THE WAY
     here must never brick git. Anything unexpected falls through to plain git
     with the original argv.
 
+THE TWO FILES IT MERGES FOR YOU
+    After a MERGING operation returns - pull, merge, rebase, cherry-pick,
+    revert, stash - and before anything else looks at the tree, the proxy
+    settles every unmerged path whose basename is one of:
+
+        .migration_whitelist            key-union of the `migrations` maps
+        framework_update_history.dat    line-union of the log's sections
+
+    Both conflict for exactly one reason - both sides appended to the end of
+    them - and git's line merge cannot settle either, because it does not know
+    the whitelist's closing brace belongs to both sides. The markers it leaves
+    are out of all proportion to the cause: a whitelist that is not JSON makes
+    `migrate` read an EMPTY map and declare every migration in the tree
+    unauthorized, under a message that names make:migration and never mentions
+    the file.
+
+    They are safe to merge mechanically because neither holds anything two
+    sides can legitimately disagree about. The whitelist's keys are migration
+    filenames, unique by construction (a YYYY_MM_DD_HHMMSS_ timestamp plus a
+    slug, minted by make:migration:safe), and its values are provenance stamps
+    written once at mint and never edited - so a key on both sides came from
+    the shared ancestor with identical values. Both sides only append; should
+    one ever drop a key, the union keeps it and the worst case is an entry for
+    a file that is gone, which the checker ignores. The history log is
+    append-only sections that delimit themselves. A key-union is therefore not
+    a heuristic: it is the only correct result, and a developer resolving it by
+    hand can only reproduce it or get it wrong.
+
+    Each resolved path is written, staged, and announced on one line:
+
+        [NOTE] rsx/resource/migrations/.migration_whitelist merged (ours 264 + theirs 266 -> 267 entries)
+        [NOTE] rsx/resource/framework_update_history.dat merged (union)
+
+    WHEN THEY WERE THE ONLY CONFLICTS, the pull or merge is CARRIED TO
+    COMPLETION - the merge is committed with git's own prepared message, a
+    rebase is continued (once per stopping commit), the proxy's exit code
+    becomes 0, and the submodule sync and environment updates run as they would
+    after a clean pull. Resolving the files and leaving the merge half-finished
+    would be the worst of both: the developer still needs the incantation, and
+    now has staged changes they did not make.
+
+    ANYTHING ELSE STILL UNMERGED STOPS IT. The two files are resolved and
+    staged either way, but the operation is left exactly as git left it and
+    git's exit code stands. The same is true when a stage does not parse - that
+    is unreachable for a machine-written file, and it is reported rather than
+    guessed at:
+
+        [NOTE] <path> could not be merged automatically: <reason>
+
+    checkout, switch, restore and reset are NOT included: they are in the
+    subcommand list because they can move the gitlink, not because they can
+    conflict, so an unmerged whitelist while one of them runs belongs to a
+    merge somebody is already in the middle of.
+
+    The whitelist merge is performed by bin/lib/merge_migration_whitelist.php,
+    plain PHP with no framework boot, because the proxy is boot-free by
+    contract. `git merge-file --union` does the log.
+
 A CONFLICTED REVISION IS REPORTED, NEVER RESOLVED
     When both sides of a merge moved the recorded revision, git cannot choose
     and neither does this. Which framework release to run is a decision with
@@ -127,11 +185,18 @@ A CONFLICTED REVISION IS REPORTED, NEVER RESOLVED
         git checkout --ours   -- system    # keep yours
         git add system
 
-    Then rsx:framework:pull brings system/ into line.
+    Then COMMIT THE MERGE. The next `php artisan rsx:git pull` - or any other
+    proxied operation that moves HEAD - checks system/ out at the revision you
+    just recorded, which is this proxy's one job.
 
-    The vendored-era proxy tried to settle this automatically by comparing
-    the two sides' release markers. That cleverness is what a submodule makes
-    unnecessary; the marker itself is retired.
+    rsx:framework:pull is a DIFFERENT operation: it fetches the tip of the
+    branch system/ tracks and moves onto THAT, so it advances to the latest
+    release rather than to the revision you chose. Run it only when advancing
+    is what you want.
+
+    The vendored-era proxy tried to settle the gitlink automatically by
+    comparing the two sides' release markers. That cleverness is what a
+    submodule makes unnecessary; the marker itself is retired.
 
 IT DOES NOT HAVE TO BE EXHAUSTIVE
     bootstrap/rsx_submodule_sync.php refuses to boot when the recorded
@@ -185,3 +250,4 @@ SEE ALSO
     rsx:man rsx_upstream       the framework update itself
     rsx:man maintenance_mode   the window the sync raises
     rsx:man class_override     the supported way to change framework code
+    rsx:man migrations         the .migration_whitelist the proxy key-union merges

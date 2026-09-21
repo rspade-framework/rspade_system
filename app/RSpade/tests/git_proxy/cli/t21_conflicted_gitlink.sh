@@ -35,7 +35,13 @@ if git -C "$PROJECT" ls-files -u -- system 2>/dev/null | grep -q .; then
     fx_assert_out "both sides changed which framework revision"
     fx_assert_out "checkout --theirs"
     fx_assert_out "checkout --ours"
-    fx_assert_out "rsx:framework:pull"
+
+    # THE RECIPE MUST NAME THE RIGHT TOOL. Committing the merge is the whole of it: the
+    # next proxied operation that moves HEAD checks system/ out at the revision just
+    # recorded, which is this proxy's one job. rsx:framework:pull ADVANCES to the latest
+    # release instead - naming it as the remedy sends the developer somewhere else.
+    fx_assert_out "rsx:git pull"
+    fx_assert_out "ADVANCES to the"
     fx_refute_out "framework revision changed"
 
     git -C "$PROJECT" ls-files -u -- system | grep -q . \

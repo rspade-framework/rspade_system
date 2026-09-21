@@ -415,6 +415,198 @@ sync_submodule() {
 }
 
 # =============================================================================
+# APPEND-APPEND CONFLICTS THE PROXY OWNS
+#
+# Two files in every RSpade project conflict on a merge for one reason only: both
+# sides appended to the end of them. Git's line merge cannot settle either - it does
+# not know the whitelist's closing brace belongs to both sides - so it leaves markers
+# in a machine-written file, and the damage is out of all proportion to the cause: a
+# whitelist with markers in it is not JSON, so `migrate` reads an empty map and
+# declares EVERY migration in the tree unauthorized.
+#
+# They are safe to merge mechanically because there is nothing in either file that
+# two sides can legitimately disagree about:
+#
+#   rsx/resource/migrations/.migration_whitelist (and the framework's own) - the keys
+#   are migration filenames, unique by construction (a YYYY_MM_DD_HHMMSS_ timestamp
+#   plus a slug, minted by make:migration:safe), and the values are provenance stamps
+#   written once at mint and never edited. Two developers cannot mint the same key, so
+#   a key on both sides came from the shared ancestor with identical values. Both sides
+#   only append; should one ever drop a key, the union keeps it and the worst case is an
+#   entry for a file that is gone - which the checker ignores, since it compares FILES
+#   against the whitelist and never the reverse.
+#
+#   rsx/resource/framework_update_history.dat - an append-only log of self-delimiting
+#   `## RSPADE-UPDATE <iso> from= to=` sections, one per framework pull. A line-level
+#   union is the whole of it.
+#
+# So a key-union is not a heuristic; it is the only correct result, and a developer
+# resolving it by hand can only reproduce it or get it wrong. That is the definition of
+# a merge a tool should own.
+#
+# THE system/ GITLINK IS THE OPPOSITE CASE and keeps its refusal below: which framework
+# revision to run is a decision with consequences (a release can carry migrations), the
+# two sides genuinely disagree, and there is no result that is correct by construction.
+# =============================================================================
+
+WHITELIST_BASENAME=".migration_whitelist"
+HISTORY_BASENAME="framework_update_history.dat"
+
+# Every path git left unmerged, one per line, de-duplicated across the three stages.
+unmerged_paths() {
+    local record
+    "${ROOT_GIT_RO[@]}" ls-files -u -z 2>/dev/null \
+        | while IFS= read -r -d '' record; do
+              printf '%s\n' "${record#*$'\t'}"
+          done \
+        | sort -u
+}
+
+has_unmerged() {
+    "${ROOT_GIT_RO[@]}" ls-files -u 2>/dev/null | grep -q .
+}
+
+git_dir() {
+    "${ROOT_GIT_RO[@]}" rev-parse --absolute-git-dir 2>/dev/null || true
+}
+
+# Write one index stage of a conflicted path to a file. A missing stage (stage 1 when
+# the file is new on both sides) leaves the file empty and answers non-zero.
+stage_to_file() {
+    "${ROOT_GIT_RO[@]}" show ":$1:$2" > "$3" 2>/dev/null
+}
+
+# Resolve every append-append conflict in the tree. Answers 0 when at least one path
+# was resolved, 1 when none was - the rebase loop below uses that as its progress test.
+resolve_append_conflicts() {
+    local resolved=0
+
+    local tmpdir
+    tmpdir="$(mktemp -d)" || return 1
+
+    local path base ours theirs out errfile counts rc
+    base="$tmpdir/base"
+    ours="$tmpdir/ours"
+    theirs="$tmpdir/theirs"
+    out="$tmpdir/out"
+    errfile="$tmpdir/err"
+
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
+
+        case "${path##*/}" in
+            "$WHITELIST_BASENAME"|"$HISTORY_BASENAME") : ;;
+            *) continue ;;
+        esac
+
+        : > "$base"
+        stage_to_file 1 "$path" "$base" || : > "$base"
+
+        if ! stage_to_file 2 "$path" "$ours" || ! stage_to_file 3 "$path" "$theirs"; then
+            err "[NOTE] $path could not be merged automatically: one side of it was deleted"
+            continue
+        fi
+
+        if [ "${path##*/}" = "$WHITELIST_BASENAME" ]; then
+            if ! command -v php >/dev/null 2>&1; then
+                err "[NOTE] $path could not be merged automatically: php is not on PATH"
+                continue
+            fi
+
+            rc=0
+            php "$SYSTEM_DIR/bin/lib/merge_migration_whitelist.php" "$base" "$ours" "$theirs" \
+                > "$out" 2> "$errfile" || rc=$?
+
+            if [ "$rc" -ne 0 ]; then
+                err "[NOTE] $path could not be merged automatically: $(tr '\n' ' ' < "$errfile" | sed 's/[[:space:]]*$//')"
+                continue
+            fi
+
+            cp "$out" "$PROJECT_ROOT/$path" || continue
+            "${ROOT_GIT[@]}" add -- "$path" >/dev/null 2>&1 || continue
+
+            # ours=N theirs=M merged=K, straight from the resolver.
+            counts="$(sed -n 's/^ours=\([0-9]*\) theirs=\([0-9]*\) merged=\([0-9]*\)$/ours \1 + theirs \2 -> \3 entries/p' "$errfile")"
+            err "[NOTE] $path merged (${counts:-key union})"
+            resolved=$((resolved + 1))
+            continue
+        fi
+
+        # The history log: a line-level union, written into the first file by git.
+        if ! git merge-file --union "$ours" "$base" "$theirs" >/dev/null 2>&1; then
+            err "[NOTE] $path could not be merged automatically: git merge-file --union failed"
+            continue
+        fi
+
+        cp "$ours" "$PROJECT_ROOT/$path" || continue
+        "${ROOT_GIT[@]}" add -- "$path" >/dev/null 2>&1 || continue
+
+        err "[NOTE] $path merged (union)"
+        resolved=$((resolved + 1))
+    done < <(unmerged_paths)
+
+    rm -rf "$tmpdir" 2>/dev/null || true
+
+    [ "$resolved" -gt 0 ]
+}
+
+# =============================================================================
+# complete_operation - finish a pull/merge whose ONLY conflicts we just resolved.
+#
+# Resolving the files and leaving the merge half-finished would be the worst of both:
+# the developer still has to know the incantation, and now has staged changes they did
+# not make. So when nothing unmerged remains, the operation is carried to its end and
+# the proxy reports the success git would have reported.
+#
+# A rebase stops once per conflicting commit, so a range in which several commits each
+# touch these two files stops several times. Loop until the rebase finishes or leaves
+# something that is not ours - and require PROGRESS every round, so a --continue that
+# refuses for its own reasons ends the loop instead of spinning.
+# =============================================================================
+complete_operation() {
+    local dir rc
+
+    while :; do
+        # Anything still unmerged is not ours to settle: leave everything exactly as
+        # git left it, and let git's own exit code stand.
+        has_unmerged && return 0
+
+        dir="$(git_dir)"
+        [ -n "$dir" ] || return 0
+
+        if [ -f "$dir/MERGE_HEAD" ]; then
+            # --no-edit with core.editor=true: the message is the one git prepared in
+            # MERGE_MSG, and no editor may open in a proxied command.
+            if "${ROOT_GIT[@]}" -c core.editor=true commit --no-edit >/dev/null 2>&1; then
+                GIT_RC=0
+                note "merge completed: the only conflicts were append-append files the proxy merges"
+            fi
+            return 0
+        fi
+
+        if [ -d "$dir/rebase-merge" ] || [ -d "$dir/rebase-apply" ]; then
+            rc=0
+            GIT_EDITOR=true "${ROOT_GIT[@]}" rebase --continue >/dev/null 2>&1 || rc=$?
+
+            if [ ! -d "$dir/rebase-merge" ] && [ ! -d "$dir/rebase-apply" ]; then
+                if [ "$rc" -eq 0 ]; then
+                    GIT_RC=0
+                    note "rebase completed: the only conflicts were append-append files the proxy merges"
+                fi
+                return 0
+            fi
+
+            # Stopped again. Resolve the next commit's conflicts and carry on; if there
+            # is nothing of ours to resolve, this is where the developer takes over.
+            resolve_append_conflicts || return 0
+            continue
+        fi
+
+        return 0
+    done
+}
+
+# =============================================================================
 # post_update - re-apply the environment updates after a pull/merge landed code.
 #
 # WHY A PULL NEEDS THIS. The environment updates normally ride on a manifest build,
@@ -461,6 +653,26 @@ HEAD_BEFORE="$("${ROOT_GIT_RO[@]}" rev-parse HEAD 2>/dev/null || true)"
 git -c fetch.recurseSubmodules=no -c submodule.recurse=false "${ARGS[@]}"
 GIT_RC=$?
 
+# Settle the append-append conflicts before anything else looks at the tree: they are
+# the proxy's to merge, and when they were the only thing in the way the operation is
+# carried to completion so the rest of this file sees a clean pull.
+#
+# Only for the operations that MERGE. `checkout`, `switch`, `restore` and `reset` are in
+# the subcommand list because they can move the gitlink, not because they can conflict -
+# so an unmerged whitelist while one of those runs belongs to a merge somebody is already
+# in the middle of, and staging a file under them would be a surprise rather than a help.
+case "$SUBCMD" in
+    pull|merge|rebase|cherry-pick|revert|stash)
+        if has_unmerged; then
+            resolve_append_conflicts || true
+
+            case "$SUBCMD" in
+                pull|merge) complete_operation ;;
+            esac
+        fi
+        ;;
+esac
+
 AFTER="$(recorded_revision)"
 ACTUAL="$(actual_revision)"
 
@@ -476,7 +688,13 @@ if gitlink_conflicted; then
     err "           git checkout --ours   -- $SUBMODULE_PATH   # keep yours"
     err "           git add $SUBMODULE_PATH"
     err ""
-    err "       Then run 'php artisan rsx:framework:pull' to bring system/ into line."
+    err "       Then commit the merge. The next 'php artisan rsx:git pull' (or any other"
+    err "       proxied operation that moves HEAD) checks system/ out at the revision you"
+    err "       just recorded - that is the reconciliation this proxy exists for."
+    err ""
+    err "       'php artisan rsx:framework:pull' is a different thing: it ADVANCES to the"
+    err "       latest release rather than to the revision you chose. Run it only if that"
+    err "       is what you want."
     err ""
     exit "$GIT_RC"
 fi

@@ -458,6 +458,38 @@ MIGRATION WORKFLOW
          tripwire at no cost.
        - It is SKIPPED SILENTLY when absent outside development. An application that
          never had one migrates exactly as it always did.
+       - It is NEVER read as an empty map. A file that does not parse as JSON, or
+         that carries no `migrations` object, ABORTS the run naming the path:
+
+             [ERROR] The migration whitelist is not valid JSON:
+
+                rsx/resource/migrations/.migration_whitelist
+
+             The usual cause is merge conflict markers left in the file. Repair it
+             (it is the key-union of both sides' `migrations` maps) and run migrate
+             again.
+
+         The file is machine-written, so the one way it stops being JSON is a merge.
+         Read as an empty map it would fire the tripwire on EVERY migration in the
+         tree, under a message that names make:migration and never mentions the file.
+
+   Merging a Whitelist
+       Two developers who each minted a migration since the last sync conflict on this
+       file, always: both appended an entry at the end of the same JSON object, and
+       git's line merge does not know the closing brace belongs to both sides.
+
+       THE MERGE IS THE KEY-UNION of the two sides' `migrations` maps, sorted by key.
+       Keys are migration filenames, unique by construction (a YYYY_MM_DD_HHMMSS_
+       timestamp plus a slug), and values are provenance stamps written once at mint
+       and never edited - so two sides cannot mint the same key, and a key on both
+       sides came from the shared ancestor with identical values. There is nothing to
+       choose between, which is why the union is the only correct result rather than a
+       convention.
+
+       php artisan rsx:git performs it for you: a conflicted .migration_whitelist is
+       merged, staged and announced, and when it was the only conflict the pull
+       completes normally (`rsx:man rsx_git`). Resolving it by hand as TEXT is the
+       natural move and the wrong one - it produces a file that is not JSON.
 
    Manifest Consistency (production modes)
        A production build bakes every model's column map into the manifest at BUILD
@@ -1008,6 +1040,8 @@ SEE ALSO
                                   disable refusal that protects an interrupted build
        rsx:man artisan_commands - How framework commands are registered, intercepted
                                   and stubbed, and why that directory is not linted
+       rsx:man rsx_git - The git proxy, which key-union merges a conflicted
+                                  .migration_whitelist and completes the pull
        rsx:man database_schema_architecture - Database system overview
        rsx:man coding_standards - General coding standards
        rsx:man error_handling - Error handling patterns

@@ -26,6 +26,14 @@ class Whitelist_Probe_Migrate extends Maint_Migrate
     /** Basenames the sandbox whitelist file lists, when one is written by the test. */
     public array $whitelisted = [];
 
+    /**
+     * Verbatim content for the sandbox whitelist file, in place of an encoded one.
+     *
+     * The seam for a file that is not a whitelist at all - conflict markers, truncation -
+     * which is a state $whitelisted cannot express, because it always produces valid JSON.
+     */
+    public ?string $raw_whitelist = null;
+
     /** Every console line this run produced. */
     public array $console = [];
 
@@ -121,7 +129,9 @@ class Whitelist_Probe_Migrate extends Maint_Migrate
                 "<?php\n// Never executed - see Whitelist_Prod_Mode_Test.\n"
             );
 
-            if (!empty($this->whitelisted)) {
+            if ($this->raw_whitelist !== null) {
+                file_put_contents_safe($this->sandbox . '/.migration_whitelist', $this->raw_whitelist);
+            } elseif (!empty($this->whitelisted)) {
                 $migrations = [];
                 foreach ($this->whitelisted as $basename) {
                     $migrations[$basename] = ['created_at' => 'test', 'created_by' => 'test', 'command' => 'test'];

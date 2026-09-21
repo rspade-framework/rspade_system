@@ -1,6 +1,6 @@
 ---
 name: git-operations
-description: "Running git in a downstream RSpade app through the php artisan rsx:git proxy - why bare git loses a race it cannot see, what the proxy does per subcommand (pathspec exclusion, commit unstaging, the maintenance cycle, passthrough), how system/ and app-file conflicts are handled, the stash-failed evidence classification and the scratch-worktree escape, the override flags, and troubleshooting a refusal. Use for any git operation on an app checkout, or when git refuses with overwritten-by-merge or stash failed, or when system/ is conflicted."
+description: "Running git in a downstream RSpade app through the php artisan rsx:git proxy - why bare git loses a race it cannot see, what the proxy does per subcommand (pathspec exclusion, commit unstaging, the maintenance cycle, passthrough), how system/ and app-file conflicts are handled, the two append-append files it merges itself (.migration_whitelist by key-union, framework_update_history.dat by line-union), the stash-failed evidence classification and the scratch-worktree escape, the override flags, and troubleshooting a refusal. Use for any git operation on an app checkout, or when git refuses with overwritten-by-merge or stash failed, when system/ is conflicted, or when migrate reports every migration as unauthorized after a merge."
 ---
 
 # Git operations on an RSpade app
@@ -52,10 +52,24 @@ Ref-only and remote ops touch no working tree. **`log` and `show` are deliberate
 git checkout --theirs -- system    # take the incoming revision
 git checkout --ours   -- system    # keep yours
 git add system
-php artisan rsx:framework:pull     # bring the checkout into line
+php artisan rsx:git commit         # commit the merge
+php artisan rsx:git pull           # the next proxied op checks system/ out at it
 ```
 
-Take the NEWER revision unless you have a reason not to; a release can carry migrations, so run `php artisan migrate` afterwards. `bootstrap/rsx_submodule_sync.php` refuses to boot while the recorded revision and the checkout disagree, so a wrong or half-finished choice is loud rather than silent.
+Take the NEWER revision unless you have a reason not to; a release can carry migrations, so run `php artisan migrate` afterwards. **`rsx:framework:pull` is NOT the remedy here** - it fetches the tip of the branch `system/` tracks and moves onto that, so it ADVANCES to the latest release rather than to the revision you just chose. Run it only when advancing is what you want. `bootstrap/rsx_submodule_sync.php` refuses to boot while the recorded revision and the checkout disagree, so a wrong or half-finished choice is loud rather than silent.
+
+### The two files the proxy merges for you
+
+`rsx/resource/migrations/.migration_whitelist` and `rsx/resource/framework_update_history.dat` conflict on a merge for one reason: both sides appended to the end of them. The proxy resolves each itself - **key-union** of the whitelist's `migrations` maps, **line-union** of the log - stages it, and prints one line:
+
+```
+[NOTE] rsx/resource/migrations/.migration_whitelist merged (ours 264 + theirs 266 -> 267 entries)
+[NOTE] rsx/resource/framework_update_history.dat merged (union)
+```
+
+**When they were the only conflicts the pull or merge is carried to completion** and exits 0; a rebase is continued once per stopping commit. Anything else still unmerged leaves the operation exactly as git left it, with git's exit code - the two files are merged and staged either way.
+
+**Never resolve a conflicted whitelist by hand as TEXT.** That is the natural move and the wrong one: the result is not JSON, and `migrate` then reads an empty map and declares EVERY migration in the tree unauthorized. If you ever have to do it manually, the answer is the key-union of both sides' `migrations` maps, sorted by key - the keys are timestamped filenames, unique by construction, so there is nothing to choose between.
 
 **Release reconciliation is retired.** The vendored-era proxy read a per-release marker on both refs and restated the winner's whole `system/` tree; a submodule makes that structural - git contributes one gitlink and knows where the boundary is.
 
@@ -126,7 +140,8 @@ A pull through the proxy ends with the same pending-migration notice the framewo
 ## Troubleshooting
 
 - **"your local changes would be overwritten by merge"** on a bare `git` - stop using bare git; re-run through `rsx:git`. **NEVER resolve it with `git stash`** or by committing `system/` into an app commit.
-- **`system/` is conflicted after a merge** - both sides chose a framework revision. Pick one with `git checkout --ours|--theirs -- system`, `git add system`, then `php artisan rsx:framework:pull`.
+- **`system/` is conflicted after a merge** - both sides chose a framework revision. Pick one with `git checkout --ours|--theirs -- system`, `git add system`, commit the merge, and let the next `php artisan rsx:git pull` check `system/` out at it. `rsx:framework:pull` advances to the LATEST release instead, which is a different decision.
+- **`migrate` says every migration is unauthorized** - read the line above it. A `.migration_whitelist` that does not parse is now reported as such, naming the path; repair it as the key-union of both sides' `migrations` maps.
 - **Maintenance stuck on after a halt** - resolve and commit the merge first; `rsx:maintenance:disable` refuses while unmerged (`--force` overrides, and leaves you serving a half-merged tree).
 - **Framework files missing after a merge** - `php artisan rsx:framework:pull` restores them, no flag.
 - **In the RSpade monorepo `rsx:git` is exactly git** - no exclusion, no cycle, nothing announced; there `system/` is authored source.

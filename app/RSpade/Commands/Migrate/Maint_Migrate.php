@@ -1342,6 +1342,34 @@ class Maint_Migrate extends Command
     }
 
     /**
+     * The migration basenames one whitelist file lists, or NULL when the file is not a
+     * whitelist at all.
+     *
+     * The one place the file is parsed, so the "not valid JSON" answer is a single
+     * decision a test can drive directly rather than a `?? []` scattered across callers.
+     * NULL is reserved for a file that cannot be read as a whitelist; a whitelist that
+     * genuinely lists nothing answers an empty array.
+     *
+     * @return string[]|null
+     */
+    public static function read_whitelist_entries(string $whitelist_path): ?array
+    {
+        $raw = file_get_contents($whitelist_path);
+
+        if ($raw === false) {
+            return null;
+        }
+
+        $decoded = json_decode($raw, true);
+
+        if (!is_array($decoded) || !isset($decoded['migrations']) || !is_array($decoded['migrations'])) {
+            return null;
+        }
+
+        return array_keys($decoded['migrations']);
+    }
+
+    /**
      * Check if all pending migrations are whitelisted
      */
     protected function checkMigrationWhitelist(array $paths): bool
@@ -1354,8 +1382,27 @@ class Maint_Migrate extends Command
         foreach ($whitelistPaths as $whitelistPath) {
             if (file_exists($whitelistPath)) {
                 $foundAtLeastOne = true;
-                $whitelist = json_decode(file_get_contents($whitelistPath), true);
-                $migrations = array_keys($whitelist['migrations'] ?? []);
+
+                $migrations = static::read_whitelist_entries($whitelistPath);
+
+                // AN UNPARSEABLE WHITELIST IS AN ERROR, NOT AN EMPTY ONE. The file is
+                // machine-written, so the way it stops being JSON is conflict markers left
+                // in it by a merge - and read as an empty map it makes the tripwire fire on
+                // EVERY migration in the tree, which names make:migration and says nothing
+                // about the file. Diagnosing that took several steps in the field
+                // (a downstream field report, 2026-09-21).
+                if ($migrations === null) {
+                    $this->error('[ERROR] The migration whitelist is not valid JSON:');
+                    $this->error('');
+                    $this->line('   ' . $whitelistPath);
+                    $this->error('');
+                    $this->line('The usual cause is merge conflict markers left in the file. Repair it (it is');
+                    $this->line("the key-union of both sides' `migrations` maps) and run migrate again.");
+                    $this->error('');
+
+                    return false;
+                }
+
                 $whitelistedMigrations = array_merge($whitelistedMigrations, $migrations);
             }
         }

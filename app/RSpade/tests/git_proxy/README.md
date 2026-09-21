@@ -80,9 +80,28 @@ ref` aborted the entire pull and `sync_submodule` never ran. A container several
 behind could not pull at all, on any retry. An explicit `--recurse-submodules` still
 overrides `-c`, and `clone` is not wrapped (`cli/t24`).
 
+## The two files the proxy merges itself
+
+`.migration_whitelist` and `framework_update_history.dat` conflict on a merge for one
+reason: both sides appended to the end of them. Git's line merge cannot settle either -
+it does not know the whitelist's closing brace belongs to both sides - and the markers it
+leaves are out of all proportion to the cause, because a whitelist that is not JSON makes
+`migrate` read an empty map and declare EVERY migration in the tree unauthorized.
+
+Neither holds anything two sides can legitimately disagree about (the whitelist's keys are
+timestamped filenames, unique by construction, whose values are written once at mint), so
+the union is the only correct result rather than a convention, and the proxy owns it:
+key-union through `bin/lib/merge_migration_whitelist.php` (plain PHP - the proxy is
+boot-free by contract), line-union through `git merge-file --union`. When they were the
+ONLY conflicts the operation is carried to completion, because resolving the files and
+leaving the merge half-finished is the worst of both outcomes. The `system/` gitlink is the
+opposite case and keeps its refusal: the two sides genuinely disagree about which framework
+release to run, and no result is correct by construction (`cli/t25`, `cli/t26`).
+
 ## Source files under test
 
 - `bin/rsx-git.sh` - the proxy
+- `bin/lib/merge_migration_whitelist.php` - the key-union resolver it shells to
 - `bin/maintenance-mode.sh` - `do_disable()`'s conflict guard + `--force`
 - `bin/claude-git-guard.sh` - the PreToolUse redirect
 - `bin/environment_updates/040_claude_git_guard.sh` - its installer (and the removal of

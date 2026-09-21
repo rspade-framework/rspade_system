@@ -198,3 +198,20 @@ every development migrate).
 | CRS-05 | a nonexistent framework path still classifies | php | a deleted app/RSpade path | false | implemented | 2026-09-15 |
 | CRS-06 | a sibling directory sharing the prefix is not the framework tree | php | app/RSpade_extras path | true | implemented | 2026-09-15 |
 | CRS-07 | the gate is applied AFTER resolve_declaring_file(), not to the model's own file record | php | handle() source offsets | gate offset > resolve offset | implemented | 2026-09-15 |
+
+## Migration_Whitelist_Parse_Test (php)
+
+The whitelist is parsed in ONE place (`Maint_Migrate::read_whitelist_entries()`), and a
+file that does not parse is an ERROR naming the path - never an empty map, which would
+fire the stray-file tripwire on every migration in the tree under a message that names
+`make:migration` and not the file. The same class covers `bin/lib/merge_migration_whitelist.php`,
+the resolver `rsx:git` runs to produce the union in the first place.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MWP-01 | a whitelist carrying merge conflict markers refuses the run, naming the path and the usual cause | php | conflicted file, dev mode | false; "not valid JSON"; never "Unauthorized migrations detected" | implemented | 2026-09-21 |
+| MWP-02 | a valid whitelist listing the tree passes silently | php | listed tree | true; no output | implemented | 2026-09-21 |
+| MWP-03 | the parse seam answers null for markers and for JSON with no migrations map, and [] for a whitelist that lists nothing | php | three files | null, null, [] | implemented | 2026-09-21 |
+| MWP-04 | the resolver produces the sorted key-union in the writer command's own JSON shape, and the accounting line the proxy quotes | php | base/ours/theirs | 3 keys in filename order; ours=2 theirs=2 merged=3 | implemented | 2026-09-21 |
+| MWP-05 | an EMPTY base stage (the file is new on both sides) is not a failure | php | empty base | both sides' keys | implemented | 2026-09-21 |
+| MWP-06 | a stage that is not a whitelist exits 2 naming the stage, and writes nothing | php | malformed ours, then a theirs with no migrations map | exit 2 both times | implemented | 2026-09-21 |
