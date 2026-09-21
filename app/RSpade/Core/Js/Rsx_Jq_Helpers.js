@@ -228,9 +228,10 @@ class Rsx_Jq_Helpers {
             return $();
         };
 
-        // The numeric field filter. $.fn.rsx_numeric() and the two pure helpers
-        // Rsx_Jq_Helpers._numeric_read() / ._numeric_format() are its whole
-        // implementation, plus the valHook installed below it.
+        // The numeric field filter. $.fn.rsx_numeric() and the pure helpers
+        // Rsx_Jq_Helpers._numeric_read() / ._numeric_value() / ._numeric_format() /
+        // ._numeric_time_to_decimal() are its whole implementation, plus the valHook
+        // installed below it.
         /**
          * Turn an <input type="text"> into a numeric field.
          *
@@ -244,6 +245,31 @@ class Rsx_Jq_Helpers {
          * |            |         | truncated, never rounded.                                     |
          * | `commas`   | `false` | Show thousands separators.                                    |
          * | `prefix`   | `''`    | A display-only prefix such as `'$'`.                          |
+         * | `time`     | `false` | Hours, with minutes accepted after a colon. Forces `decimals` |
+         * |            |         | to 2; `commas` and `prefix` apply as usual.                   |
+         *
+         * TIME ENTRY. With `time: true` the field holds HOURS, and a colon is accepted so
+         * that a duration may be typed the way it is read off a clock. The accepted
+         * characters are digits plus at most one `.` OR at most one `:` - the two are
+         * mutually exclusive in one value, and whichever is typed first wins, so `1.5:2`
+         * becomes `1.52` and `1:3.` stays `1:3`. At most two digits follow either one.
+         *
+         * A colon value is hours:minutes and is converted to decimal hours:
+         *
+         *     1:30  -> 1.5        :30 and 0:30 -> 0.5      2:15 -> 2.25
+         *     1:20  -> 1.33       1:   -> 1                1:5  -> 1.08
+         *     :90   -> 1.5        1:63 -> 2.05
+         *
+         * A single digit after the colon is minutes as written, so `1:5` is 1:05 and not
+         * 1:50. Minutes at or past 60 roll into hours. The result is rounded to two
+         * decimals, half up, and trailing zeros are not padded - `1.5`, never `1.50`, and
+         * a whole number of hours shows as `2`.
+         *
+         * The conversion happens at the three moments the value leaves the user's hands:
+         * `.val()` answers decimal hours and never a colon, `.val('2:15')` displays `2.25`,
+         * and blur rewrites the box from `1:30` to `1.5`. While the field is FOCUSED a
+         * colon value is left exactly as typed, so it can still be edited. A plain decimal
+         * typed in time mode is already decimal hours and is left alone.
          *
          * WHAT .val() SEES IS THE RAW NUMBER, BOTH WAYS. The getter answers digits with
          * at most one `.` - no commas, no prefix, `''` for an empty box - and the setter
@@ -269,8 +295,9 @@ class Rsx_Jq_Helpers {
          * options win and there is only ever one set. `rsx_numeric(false)` takes the
          * handlers off and leaves the raw number in the box.
          *
-         * `Currency_Input` is this filter with `commas` and a `prefix`; it is what every
-         * numeric input invokes, so no component filters digits by hand.
+         * `Currency_Input` is this filter with `commas` and a `prefix`, and
+         * `Time_Entry_Input` is it with `time`; it is what every numeric input invokes, so
+         * no component filters digits by hand.
          *
          * @param {Object|false} options
          * @returns {jQuery}
@@ -285,7 +312,7 @@ class Rsx_Jq_Helpers {
                     }
 
                     // Read the number out while the state still describes the display.
-                    const numeric = Rsx_Jq_Helpers._numeric_read(this.value, state);
+                    const numeric = Rsx_Jq_Helpers._numeric_value(this.value, state);
                     $input.off('.rsx_numeric');
                     $.removeData(this, 'rsx_numeric');
                     this.value = numeric;
@@ -298,8 +325,15 @@ class Rsx_Jq_Helpers {
                 const $input = $(this);
                 const element = this;
 
+                const time = settings.time === true;
+
                 const state = {
-                    decimals: settings.decimals === undefined ? 0 : int(settings.decimals),
+                    time: time,
+
+                    // Time entry is two decimal places by definition - a minute is a
+                    // hundredth of an hour to the nearest hundredth - so the option is
+                    // not the caller's to set there.
+                    decimals: time ? 2 : (settings.decimals === undefined ? 0 : int(settings.decimals)),
                     commas: settings.commas === true,
                     prefix: settings.prefix === undefined ? '' : str(settings.prefix),
 
@@ -315,7 +349,7 @@ class Rsx_Jq_Helpers {
 
                 // Whatever the box already holds is now displayed under these options.
                 element.value = Rsx_Jq_Helpers._numeric_format(
-                    Rsx_Jq_Helpers._numeric_read(element.value, state),
+                    Rsx_Jq_Helpers._numeric_value(element.value, state),
                     state
                 );
 
@@ -375,10 +409,13 @@ class Rsx_Jq_Helpers {
                     }
                 });
 
+                // Blur is where a time value stops being something the user is typing and
+                // becomes the number the field holds, so the box is rewritten in decimal
+                // hours here rather than while the caret is still in it.
                 $input.on('blur.rsx_numeric', function () {
                     state.select_on_mouseup = false;
                     element.value = Rsx_Jq_Helpers._numeric_format(
-                        Rsx_Jq_Helpers._numeric_read(element.value, state),
+                        Rsx_Jq_Helpers._numeric_value(element.value, state),
                         state
                     );
                 });
@@ -420,7 +457,7 @@ class Rsx_Jq_Helpers {
             get: function (elem) {
                 const state = $.data(elem, 'rsx_numeric');
                 if (state) {
-                    return Rsx_Jq_Helpers._numeric_read(elem.value, state);
+                    return Rsx_Jq_Helpers._numeric_value(elem.value, state);
                 }
                 return undefined;
             },
@@ -428,7 +465,7 @@ class Rsx_Jq_Helpers {
                 const state = $.data(elem, 'rsx_numeric');
                 if (state) {
                     elem.value = Rsx_Jq_Helpers._numeric_format(
-                        Rsx_Jq_Helpers._numeric_read(value, state),
+                        Rsx_Jq_Helpers._numeric_value(value, state),
                         state
                     );
                     return elem.value;
@@ -524,7 +561,10 @@ class Rsx_Jq_Helpers {
      * separators, the prefix, letters, a second decimal point - is dropped. With
      * state.decimals at 0 the '.' is dropped too.
      *
-     * This is also the sanitiser for a value handed to .val().
+     * In time mode a ':' is accepted in the '.' position instead: digits plus at most one
+     * of the two, whichever appears first, with at most two digits after it. This is what
+     * the box holds WHILE IT IS BEING TYPED - the colon is still there. _numeric_value()
+     * is what turns it into a number.
      *
      * @param {*} display
      * @param {Object} state - the options stored in $.data(el, 'rsx_numeric')
@@ -532,6 +572,19 @@ class Rsx_Jq_Helpers {
      */
     static _numeric_read(display, state) {
         const text = str(display);
+
+        if (state.time) {
+            const accepted = text.replace(/[^0-9.:]/g, '');
+            const separator = accepted.search(/[.:]/);
+            if (separator < 0) {
+                return accepted;
+            }
+
+            // The first separator is the one the value has; every later one of either
+            // kind is dropped, which is what makes '.' and ':' mutually exclusive.
+            const minutes = accepted.slice(separator + 1).replace(/[.:]/g, '').slice(0, 2);
+            return accepted.slice(0, separator + 1) + minutes;
+        }
 
         if (state.decimals <= 0) {
             return text.replace(/[^0-9]/g, '');
@@ -548,9 +601,60 @@ class Rsx_Jq_Helpers {
     }
 
     /**
+     * The NUMBER inside a displayed value - _numeric_read() plus, in time mode, the
+     * hours:minutes conversion. This is what .val() answers, what .val(x) is sanitised
+     * through, and what blur rewrites the box from; the typing handlers use
+     * _numeric_read() directly, which is why a colon survives while the caret is in it.
+     *
+     * @param {*} display
+     * @param {Object} state - the options stored in $.data(el, 'rsx_numeric')
+     * @returns {string}
+     */
+    static _numeric_value(display, state) {
+        const numeric = Rsx_Jq_Helpers._numeric_read(display, state);
+        return state.time ? Rsx_Jq_Helpers._numeric_time_to_decimal(numeric) : numeric;
+    }
+
+    /**
+     * Hours:minutes as decimal hours. Text with no ':' is already decimal hours and comes
+     * back unchanged, so '1.5' and '' both pass straight through.
+     *
+     *     1:30 -> 1.5     :30 -> 0.5     2:15 -> 2.25     1:20 -> 1.33
+     *     1:   -> 1       :90 -> 1.5     1:63 -> 2.05     1:5  -> 1.08
+     *
+     * A single digit after the colon is minutes as written, so '1:5' is 1:05. Minutes at
+     * or past 60 roll into hours. The arithmetic is done in whole minutes and rounded to
+     * hundredths half up, so no float fraction is ever carried; trailing zeros are not
+     * padded and a whole number of hours has no fraction at all.
+     *
+     * @param {string} text - a value already through _numeric_read() in time mode
+     * @returns {string}
+     */
+    static _numeric_time_to_decimal(text) {
+        const colon = text.indexOf(':');
+        if (colon < 0) {
+            return text;
+        }
+
+        const hours = text.slice(0, colon);
+        const minutes = text.slice(colon + 1);
+        if (hours === '' && minutes === '') {
+            return '';
+        }
+
+        const total_minutes = int(hours || '0') * 60 + int(minutes || '0');
+        const hundredths = Math.round((total_minutes * 100) / 60);
+        const whole = Math.floor(hundredths / 100);
+        const fraction = str(hundredths % 100).padStart(2, '0').replace(/0+$/, '');
+
+        return fraction === '' ? str(whole) : whole + '.' + fraction;
+    }
+
+    /**
      * The displayed form of a raw number: the prefix, thousands separators if the
-     * options ask for them, and the fraction exactly as typed - a trailing '.' is kept,
-     * because the user is still typing the number that follows it.
+     * options ask for them, and everything from the separator on exactly as typed - a
+     * trailing '.' or ':' is kept, because the user is still typing what follows it. In
+     * time mode the separator may be either one, and only the part before it is grouped.
      *
      * @param {string} numeric - a value already through _numeric_read()
      * @param {Object} state - the options stored in $.data(el, 'rsx_numeric')
@@ -561,14 +665,14 @@ class Rsx_Jq_Helpers {
             return '';
         }
 
-        const point = numeric.indexOf('.');
-        let integer = point < 0 ? numeric : numeric.slice(0, point);
+        const separator = numeric.search(/[.:]/);
+        let integer = separator < 0 ? numeric : numeric.slice(0, separator);
 
         if (state.commas) {
             integer = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         }
 
         const display = state.prefix + integer;
-        return point < 0 ? display : display + '.' + numeric.slice(point + 1);
+        return separator < 0 ? display : display + numeric.slice(separator);
     }
 }

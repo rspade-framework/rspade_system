@@ -4,13 +4,14 @@ The framework's extensions to jQuery, installed by `Rsx_Jq_Helpers._on_framework
 and available on every page: the `.click()` override and `.click_async()` busy-state, the
 existence/visibility/traversal helpers, the `$.ajax()` block, `.width_group()`, and
 `$(input).rsx_numeric()` - the ONE numeric field filter, which every numeric input in an
-application invokes instead of filtering digits by hand.
+application invokes instead of filtering digits by hand, in its plain and its `time` form.
 
 ## Source under test
 
 - `system/app/RSpade/Core/Js/Rsx_Jq_Helpers.js` - the helpers, the `$.ajax()` block, and
   `$.fn.rsx_numeric()` with its `$.valHooks.text` entry and the two pure helpers
-  `_numeric_read()` / `_numeric_format()`
+  `_numeric_read()` / `_numeric_format()`, plus `_numeric_value()` and the hours:minutes
+  conversion `_numeric_time_to_decimal()`
 - `system/app/RSpade/Core/Js/Width_Group.js` - the width-group family
 - `system/app/RSpade/Core/Ui/Button_Utils.js` - the busy-state engine behind `.click_async()`
 
@@ -44,6 +45,10 @@ the browser; nothing application-side is involved, and the tests run in any inst
 | `rsx_numeric(false)` leaves an ordinary text input holding the raw number | playwright | implemented (`rsx_numeric.js`) |
 | `rsx_numeric`: a second call reconfigures rather than double-binding | playwright | implemented (`rsx_numeric.js`) |
 | `rsx_numeric`: pasted text is filtered like typing | playwright | implemented (`rsx_numeric.js`) |
+| `rsx_numeric`: `time` accepts a colon and converts it to decimal hours | playwright | implemented (`rsx_numeric_time.js`) |
+| `rsx_numeric`: `time` leaves the colon form as typed while the field is focused | playwright | implemented (`rsx_numeric_time.js`) |
+| `rsx_numeric`: `time` forces two decimal places whatever `decimals` says | playwright | implemented (`rsx_numeric_time.js`) |
+| `rsx_numeric`: `.` and `:` are mutually exclusive in one value | playwright | implemented (`rsx_numeric_time.js`) |
 | `rsx_numeric`: focus selects the whole value, mouse and keyboard alike | playwright | planned |
 | `rsx_numeric`: an edit mid-string keeps the caret where the user left it | playwright | planned |
 | `.click()` calls `preventDefault()`, `.click_allow_default()` does not | playwright | planned |

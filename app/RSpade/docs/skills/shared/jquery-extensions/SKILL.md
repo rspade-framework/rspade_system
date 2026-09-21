@@ -1,6 +1,6 @@
 ---
 name: jquery-extensions
-description: "RSX jQuery extensions including the click() override that auto-prevents default, .click_async() button busy-states, existence and viewport checks, component-aware traversal, form validation helpers, scrolling, the width_group family, and rsx_numeric() - the one numeric field filter. Use when working with click handlers, wiring a button to a server-side action, checking element existence or visibility, finding sibling components, syncing widths across elements, building a numeric only textbox, a digits only input, a currency input, decimal places or thousands separators, understanding why links don't navigate, or hitting the \"$.ajax() is blocked\" throw."
+description: "RSX jQuery extensions including the click() override that auto-prevents default, .click_async() button busy-states, existence and viewport checks, component-aware traversal, form validation helpers, scrolling, the width_group family, and rsx_numeric() - the one numeric field filter. Use when working with click handlers, wiring a button to a server-side action, checking element existence or visibility, finding sibling components, syncing widths across elements, building a numeric only textbox, a digits only input, a currency input, a time entry field, hours and minutes, H:MM to decimal hours, decimal places or thousands separators, understanding why links don't navigate, or hitting the \"$.ajax() is blocked\" throw."
 ---
 
 # RSX jQuery Extensions
@@ -204,7 +204,8 @@ $('.error-field').scroll_up_to(300);
 
 ```javascript
 $input.rsx_numeric({decimals: 2, commas: true, prefix: '$'});
-$input.rsx_numeric(false);   // remove the filter, raw number left in the box
+$input.rsx_numeric({time: true});   // hours, with minutes accepted after a colon
+$input.rsx_numeric(false);          // remove the filter, raw number left in the box
 ```
 
 Turns an `<input type="text">` into a numeric field. **It is the ONE numeric filter** - never hand-roll `replace(/[^0-9]/g, '')` in a component.
@@ -214,12 +215,24 @@ Turns an `<input type="text">` into a numeric field. **It is the ONE numeric fil
 | `decimals` | `0` | Maximum decimal places. `0` accepts integers only - `.` is rejected like any other non-digit. A longer fraction is truncated, never rounded. |
 | `commas` | `false` | Show thousands separators. |
 | `prefix` | `''` | A display-only prefix such as `'$'`. |
+| `time` | `false` | Hours, with minutes accepted after a colon. Forces `decimals` to 2; `commas` and `prefix` apply as usual. |
 
 **`.val()` is the RAW NUMBER, both ways** - digits with at most one `.`, no commas, no prefix, `''` when empty; the setter takes a number or a string and displays it formatted. That is a `$.valHooks.text` entry keyed on the filter's own data, so `Text_Input._get_value()` / `_set_value()` and any plain `$(el).val()` see the number and the component knows nothing about the filter.
 
 Formatting is written INLINE as the user types (blur reformats, focus selects all, backspace at the end over a formatting character takes the number's last character, a paste is filtered like typing). It filters characters and nothing else: no validation (that rule is the server's), no `_notify_input()`, and no `input` event of its own. Calling it again reconfigures rather than double-binding.
 
-`Currency_Input` is this filter with `commas` and a `prefix`, and its whole class body is the call. A PIN is NOT a numeric field - `0042` is not `42`.
+**Time entry**: with `time: true` the field holds HOURS and accepts a colon, so a duration may be typed the way it is read off a clock. Digits plus at most one `.` OR at most one `:` - whichever is typed first wins, so `1.5:2` becomes `1.52` and `1:3.` stays `1:3` - with at most two digits after it.
+
+```javascript
+$input.rsx_numeric({time: true});
+// typing 1:30 and leaving the field  -> displays 1.5,  .val() === '1.5'
+// typing :90                         -> displays 1.5   (minutes roll into hours)
+// typing 1:20                        -> displays 1.33  (rounded to two decimals, half up)
+```
+
+A single digit after the colon is minutes as written, so `1:5` is 1:05 and not 1:50. The conversion happens at the getter, the setter (`.val('2:15')` displays `2.25`) and blur; while the field is FOCUSED the colon form is left as typed so it can still be edited. Trailing zeros are not padded - `1.5`, never `1.50`. A plain decimal is already decimal hours and is left alone.
+
+`Currency_Input` is this filter with `commas` and a `prefix` and `Time_Entry_Input` is it with `time`; each one's whole class body is the call. A PIN is NOT a numeric field - `0042` is not `42`.
 
 ---
 

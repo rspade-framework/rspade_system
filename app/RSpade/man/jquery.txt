@@ -287,6 +287,9 @@ JQUERY HELPERS
                                    never rounded.
                 commas     false   Show thousands separators.
                 prefix     ''      A display-only prefix such as '$'.
+                time       false   Hours, with minutes accepted after a colon.
+                                   Forces decimals to 2; commas and prefix
+                                   apply as usual.
 
             THE RAW NUMBER IS WHAT .val() SEES, BOTH WAYS. The getter answers
             digits with at most one '.' - no commas, no prefix, '' for an empty
@@ -328,10 +331,36 @@ JQUERY HELPERS
             removes the filter: the handlers and the hook stop applying to that
             element and the raw number is left in the box.
 
-            Currency_Input is this filter with commas and a prefix, and it is
-            what every numeric input invokes - no component filters digits by
-            hand. A code whose leading zeros are significant (a PIN) is a string
-            of digits rather than a number, and is not a numeric field.
+            TIME ENTRY. With time: true the field holds HOURS, and a colon is
+            accepted so that a duration may be typed the way it is read off a
+            clock. The accepted characters are digits plus at most one '.' OR at
+            most one ':' - the two are mutually exclusive in one value, and
+            whichever is typed first wins, so '1.5:2' becomes 1.52 and '1:3.'
+            stays '1:3'. At most two digits follow either one.
+
+            A colon value is hours:minutes and is converted to decimal hours:
+
+                1:30  -> 1.5        :30 and 0:30 -> 0.5      2:15 -> 2.25
+                1:20  -> 1.33       1:   -> 1                1:5  -> 1.08
+                :90   -> 1.5        1:63 -> 2.05
+
+            A single digit after the colon is minutes as written, so '1:5' is
+            1:05 and not 1:50. Minutes at or past 60 roll into hours. The result
+            is rounded to two decimals, half up, and trailing zeros are not
+            padded - 1.5, never 1.50, and a whole number of hours shows as 2.
+
+            The conversion happens at the three moments the value leaves the
+            user's hands: .val() answers decimal hours and never a colon,
+            .val('2:15') displays 2.25, and blur rewrites the box from '1:30' to
+            '1.5'. While the field is FOCUSED a colon value is left exactly as
+            typed, so it can still be edited. A plain decimal typed in time mode
+            is already decimal hours and is left alone.
+
+            Currency_Input is this filter with commas and a prefix and
+            Time_Entry_Input is it with time, and it is what every numeric input
+            invokes - no component filters digits by hand. A code whose leading
+            zeros are significant (a PIN) is a string of digits rather than a
+            number, and is not a numeric field.
 
     Form Validation
 
@@ -577,6 +606,13 @@ EXAMPLES
 
         // The endpoint gets the number, not the picture of it
         await Invoice_Controller.save({amount: $('#invoice_amount').val()});
+
+    Hours Field
+        // Digits and a colon; the colon becomes decimal hours on the way out
+        $('#timesheet_hours').rsx_numeric({time: true});
+
+        // The user types 1:30, the endpoint gets 1.5
+        await Timesheet_Controller.save({hours: $('#timesheet_hours').val()});
 
     Lazy Loading on Scroll
         $(window).on('scroll', function() {
