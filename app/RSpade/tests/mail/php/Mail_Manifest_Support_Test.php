@@ -325,7 +325,7 @@ class Mail_Manifest_Support_Test extends Rsx_Test_Abstract
 
     /**
      * One basename names exactly ONE email: it is the blade id and the value stored in
-     * email_queue.email_class, so two classes sharing it would make a queued row
+     * _email_queue.email_class, so two classes sharing it would make a queued row
      * ambiguous about which message it is.
      */
     public static function test_two_classes_with_the_same_basename_are_a_fatal()

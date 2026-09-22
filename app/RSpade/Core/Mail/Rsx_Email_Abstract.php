@@ -35,7 +35,7 @@ use App\RSpade\Core\Models\Email_Queue_Model;
  * ```
  *
  * THE CLASS NAME IS THE IDENTITY. It is the blade's @rsx_id, it is what lands in
- * email_queue.email_class, and it is the key in the manifest's baked email table.
+ * _email_queue.email_class, and it is the key in the manifest's baked email table.
  *
  * WHY `const CATEGORY` IS NOT DECLARED HERE: a default would silently decide, for
  * every email an application ever writes, whether an unsubscribed recipient still
@@ -133,7 +133,7 @@ abstract class Rsx_Email_Abstract
     }
 
     /**
-     * The class basename - the blade @rsx_id and the email_queue.email_class value.
+     * The class basename - the blade @rsx_id and the _email_queue.email_class value.
      */
     public static function view_id(): string
     {

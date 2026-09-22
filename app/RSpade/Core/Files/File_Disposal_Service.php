@@ -32,7 +32,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  * "count remaining attachments" of the old inline hook would under-count and free a blob a
  * recoverable attachment still needs.
  *
- * _file_attachments is NOT the only thing that pins a blob. email_attachments does too:
+ * _file_attachments is NOT the only thing that pins a blob. _email_attachments does too:
  * a queued email's PDF lives in the same content-addressed store, and releasing those
  * bytes would turn a pending send into a message that arrives with an empty attachment -
  * silently, hours later, in a background task. Every reference check below asks both
@@ -253,7 +253,7 @@ class File_Disposal_Service extends Rsx_Service_Abstract
                 })
                 ->whereNotExists(function ($q) {
                     $q->select(DB::raw(1))
-                        ->from('email_attachments as e')
+                        ->from('_email_attachments as e')
                         ->whereColumn('e.file_storage_id', 's.id');
                 })
                 ->orderBy('s.id')

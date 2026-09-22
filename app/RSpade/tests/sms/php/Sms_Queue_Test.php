@@ -36,7 +36,7 @@ class Sms_Queue_Test extends Rsx_Test_Abstract
     private static function __enqueue(): Sms_Queue_Model
     {
         // Site-scoped models persist site_id from the session; set it so inserts satisfy the
-        // sms_queue site FK.
+        // _sms_queue site FK.
         Session::set_site_id(self::SITE_ID);
 
         return Sms_Queue_Model::enqueue(

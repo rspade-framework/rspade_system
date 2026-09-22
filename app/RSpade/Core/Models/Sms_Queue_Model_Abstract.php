@@ -47,7 +47,7 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 
 /**
  * _AUTO_GENERATED_ Database type hints - do not edit manually
- * Table: sms_queue
+ * Table: _sms_queue
  *
  * @property int $id
  * @property int $site_id
@@ -132,7 +132,7 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
 
     
 
-    protected $table = 'sms_queue';
+    protected $table = '_sms_queue';
     protected $fillable = [];
 
     public static $enums = [

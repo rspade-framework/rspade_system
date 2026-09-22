@@ -41,7 +41,7 @@ use App\RSpade\Core\Models\Sms_Queue_Model;
  */
 /**
  * _AUTO_GENERATED_ Database type hints - do not edit manually
- * Table: sms_recipients
+ * Table: _sms_recipients
  *
  * @property int $id
  * @property int $site_id
@@ -68,7 +68,7 @@ abstract class Sms_Recipient_Model_Abstract extends Rsx_Site_Model_Abstract
     // kick the emitter engine.
     public static $realtime_silent = true;
 
-    protected $table = 'sms_recipients';
+    protected $table = '_sms_recipients';
     protected $fillable = [];
 
     protected $casts = [

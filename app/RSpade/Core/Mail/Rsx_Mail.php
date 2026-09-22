@@ -154,7 +154,7 @@ class Rsx_Mail
      * Store each declared attachment's bytes in the blob store and record the row.
      *
      * The bytes are content-addressed, so the same file mailed to a thousand people is
-     * stored once; the email_attachments row is what pins the blob against disposal.
+     * stored once; the _email_attachments row is what pins the blob against disposal.
      *
      * @param Email_Queue_Model $record
      * @param array<int, array> $specs

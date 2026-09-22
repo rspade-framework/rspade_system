@@ -116,6 +116,37 @@ _flash_alerts
          CASCADE). It carries the realm too: portal sessions are rows in the same
          table, and ids are globally unique, so no realm column exists.
 
+_email_queue
+  Purpose: Outbound email queue - one row per message
+  Managed by: Rsx_Mail, Rsx_Mail_Builder, Mail_Queue_Service
+  Records: Envelope, frozen subject and template data, both rendered bodies, the
+           delivery state machine and what the transport answered
+  Developer API: Email_Queue_Model and the rsx:mail:* commands, not the table
+
+_email_recipients
+  Purpose: Per-address opt-out and delivery counters
+  Managed by: Rsx_Mail (is_blocked / block / unblock / block_all)
+  Records: One row per site_id + address
+  Note: The consent record behind every non-transactional send
+
+_email_attachments
+  Purpose: The files and inline images belonging to a queued message
+  Managed by: Rsx_Email_Abstract attach()/embed(), the builder
+  Records: Filename, mime, attachment-vs-inline, cid and order; the bytes are in
+           _file_storage
+  Implementation: A row here PINS its blob against File_Disposal_Service, and
+                  cascades away with its _email_queue row at retention time
+
+_sms_queue
+  Purpose: Outbound SMS queue - the deliberate mirror of _email_queue
+  Managed by: Rsx_Sms and the SMS drain
+  Records: Number, body, category and the same delivery state machine
+
+_sms_recipients
+  Purpose: Per-number opt-out (STOP) and delivery counters
+  Managed by: Rsx_Sms
+  Records: One row per site_id + number
+
 _search_indexes
   Purpose: Full-text search index storage
   Managed by: RSpade Search system
@@ -232,13 +263,12 @@ regions
 THE FRAMEWORK CONTRACT ON APPLICATION TABLES
 -------------------------------------------
 An application-owned table - one with no leading underscore - may be altered by
-the application that owns it. Seventeen of them are nonetheless MODELLED BY THE
+the application that owns it. Twelve of them are nonetheless MODELLED BY THE
 FRAMEWORK, which reads and writes named columns on them, joins them, and in four
 places points a foreign key from one of its own `_`-prefixed tables into them:
 
   users, login_users, sites, portal_users, user_permissions, user_profiles,
   user_invites, user_verifications, countries, regions, ip_addresses,
-  email_queue, email_recipients, email_attachments, sms_queue, sms_recipients,
   portal_notifications
 
 Examples of what the framework reads by name: users.login_user_id and
@@ -246,8 +276,8 @@ users.site_id (Session::get_user(), the Site_Scoped global scope),
 users.is_api_access_enabled (the sole external-API predicate),
 login_users.email and login_users.password (every sign-in),
 login_users.dark_mode and .timezone (the per-identity preferences),
-sites.id 0 (the sessionless site), user_permissions.is_grant (a NULL reads as a
-DENY, and DENY wins), and the two outbound queues in full.
+sites.id 0 (the sessionless site) and user_permissions.is_grant (a NULL reads as
+a DENY, and DENY wins).
 
 The four foreign keys INTO application-owned tables are the contract at its
 strongest, because the framework's own storage cannot be written at all if the

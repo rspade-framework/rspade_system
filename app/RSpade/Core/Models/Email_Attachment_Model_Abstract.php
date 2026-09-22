@@ -16,7 +16,7 @@ use App\RSpade\Core\Models\Email_Queue_Model;
  *
  * A row here is a LIVE reference to its blob: File_Disposal_Service counts this table
  * before releasing bytes, so a queued email can never lose the file it is about to
- * send. The FK to email_queue is ON DELETE CASCADE - the retention sweep deletes queue
+ * send. The FK to _email_queue is ON DELETE CASCADE - the retention sweep deletes queue
  * rows and these follow.
  *
  * No site_id: an attachment is reached through its email, which carries the tenant.
@@ -33,7 +33,7 @@ use App\RSpade\Core\Models\Email_Queue_Model;
  */
 /**
  * _AUTO_GENERATED_ Database type hints - do not edit manually
- * Table: email_attachments
+ * Table: _email_attachments
  *
  * @property int $id
  * @property int $email_queue_id
@@ -78,7 +78,7 @@ abstract class Email_Attachment_Model_Abstract extends Rsx_Model_Abstract
      */
     public static $unbounded = true;
 
-    protected $table = 'email_attachments';
+    protected $table = '_email_attachments';
     protected $fillable = [];
 
     public static $enums = [

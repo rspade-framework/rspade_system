@@ -1,0 +1,105 @@
+THE FIVE OUTBOUND-QUEUE TABLES ARE SYSTEM TABLES: _email_queue, _email_recipients,
+_email_attachments, _sms_queue, _sms_recipients
+Date: 2026-09-22
+
+IF YOU DO NOTHING: any query of yours that names one of these tables DIRECTLY - a
+    DB::table('email_queue'), a raw DB::select, a ->from('email_recipients'), a
+    reporting view, a BI dashboard reading the database, a hand-written migration
+    that alters one of them - fails with "table doesn't exist" the moment this
+    release's migration runs. Anything that goes through the models, through
+    Rsx_Mail / Rsx_Sms, or through the rsx:mail:* commands is unaffected and needs
+    no change at all.
+
+SUMMARY
+    The five tables behind the outbound mail and SMS queues now carry the system-table
+    underscore prefix:
+
+        email_queue         ->  _email_queue
+        email_recipients    ->  _email_recipients
+        email_attachments   ->  _email_attachments
+        sms_queue           ->  _sms_queue
+        sms_recipients      ->  _sms_recipients
+
+    A framework migration performs the rename. There is no data step and nothing to
+    back up: MySQL carries the rows, the indexes and the foreign keys across a RENAME
+    TABLE, and the models were updated in the same release, so every model query keeps
+    working across the change.
+
+THE CHANGE
+    A leading underscore means the framework owns the table: it is framework storage,
+    the application reads it through the framework's models and never alters it. That
+    is what _sessions, _file_storage, _file_attachments, _search_indexes and the rest
+    have said since the convention was introduced.
+
+    These five tables have always been exactly that. They are created by framework
+    migrations, written only by Rsx_Mail, Rsx_Sms, the queue drain and the retention
+    sweep, and read by the framework's own commands. Nothing in an application is
+    expected to write a row into them, and nothing in the reference application does.
+    They simply never got the prefix, and so they were carried in the documentation as
+    application-owned tables that the framework happens to model - which is the one
+    thing they are not.
+
+    A consequence worth knowing: a system table is exempt from the ORM requirement, so
+    a raw DB::table('_email_queue') is a legitimate spelling for a report, where a raw
+    query against an application-owned table is not.
+
+    The framework's contract on APPLICATION-owned tables (Core/Database/Schema_Contract,
+    the "Schema Contract" rows in rsx:health) therefore drops these five and now covers
+    twelve tables rather than seventeen. Your health output loses five rows and gains
+    nothing else.
+
+ACTION REQUIRED
+
+    1. Find every place your own code names one of the five tables as a STRING:
+
+           grep -rn "email_queue\|email_recipients\|email_attachments\|sms_queue\|sms_recipients" rsx/ \
+               | grep -v "Email_Queue_Model\|Email_Recipient_Model\|Email_Attachment_Model\|Sms_Queue_Model\|Sms_Recipient_Model"
+
+       Matches that are a MODEL name, a relation method, the email_queue_id COLUMN, a
+       route path or a page slug are not table names and need no change. What needs
+       changing is a table name in a query:
+
+           DB::table('email_queue')             ->  DB::table('_email_queue')
+           ->from('email_attachments as e')     ->  ->from('_email_attachments as e')
+           DB::select('... FROM sms_queue ...') ->  DB::select('... FROM _sms_queue ...')
+
+       Better, where the query is ordinary: use the model. Email_Queue_Model,
+       Email_Recipient_Model, Email_Attachment_Model, Sms_Queue_Model and
+       Sms_Recipient_Model declare the table themselves, so code written through them
+       never had to change and never will.
+
+    2. Repoint anything OUTSIDE the application that reads the database by name: a SQL
+       view, a scheduled report, a BI or analytics connection, a monitoring query, a
+       dashboard someone built over the queue. These are the ones no grep of your tree
+       will find, and the ones that fail silently in a report rather than loudly in a
+       request.
+
+    3. If you wrote a migration that ALTERS one of these tables, it has already run and
+       is history; nothing to do. If you have an UNAPPLIED one, rename the table in it
+       before you migrate.
+
+    4. If you class-override one of the five models - class Email_Queue_Model extends
+       Email_Queue_Model_Abstract in rsx/models/ - there is nothing to do: the table is
+       declared on the base you extend, and your override inherits the rename. Do NOT
+       declare $table in your override; that would pin the old name.
+
+VERIFICATION
+    php artisan migrate               # the rename; full output, it is one statement
+    php artisan rsx:health            # the Schema Contract rows are twelve, all OK
+    php artisan rsx:mail:queue        # the queue still lists; the models found their table
+    php artisan rsx:mail:test <you@example.com>
+
+    In the database:
+
+        SHOW TABLES LIKE '\_email%';   # _email_attachments, _email_queue, _email_recipients
+        SHOW TABLES LIKE '\_sms%';     # _sms_queue, _sms_recipients
+
+    A message with an attachment is the end-to-end check: send one, then
+    php artisan rsx:mail:show <id> lists its attachments, which are rows in
+    _email_attachments read through the queue row's relation.
+
+SEE ALSO
+    rsx:man database_schema_architecture - system tables vs application-owned tables
+    rsx:man email - the mail queue, attachments and the retention sweep
+    rsx:man sms - the SMS queue
+    rsx:man class_override - overriding one of the five models by extension

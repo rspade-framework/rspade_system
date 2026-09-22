@@ -11,7 +11,7 @@ tests follow is:
 
 1. **Enqueue** - `(new Some_Email($x))->to($person)->send()` resolves the tenant, honours
    the blocklist and a `dedupe_key`, applies the `.dev.`-hostname recipient gate, FREEZES
-   `subject()` and `data()` into an `email_queue` row, persists attachments into the
+   `subject()` and `data()` into an `_email_queue` row, persists attachments into the
    content-addressed blob store, and kicks the drain.
 2. **Claim** - `Mail_Queue_Service::send_pending_queue` (`#[Exclusive]`,
    `#[Schedule('every minute')]`) reclaims anything stranded in SENDING, then takes rows
@@ -93,7 +93,9 @@ Behavior of record: `php artisan rsx:man email`. Config: `rsx:man config_rsx`.
   outcomes plus reclaim and cleanup, driven by the stub transport
   (`Mail_Queue_Runner_Test`); the signed unsubscribe round trip (`Mail_Unsubscribe_Test`);
   the build-time FATALs over a synthetic manifest (`Mail_Manifest_Support_Test`);
-  `rsx_absolute_url()` with no request (`Absolute_Url_Test`).
+  `rsx_absolute_url()` with no request (`Absolute_Url_Test`); the system-table prefix on
+  the five outbound-queue tables and the attachment cascade that rode through the rename
+  (`Outbound_Queue_Tables_Test`).
 - **cli** - `rsx:mail:test`, run in-process through `Artisan::call()` so the transport can
   be pinned at the catcher and the row lands in the test database
   (`cli/Mail_Test_Command_Cli_Test`).

@@ -40,7 +40,7 @@ use App\RSpade\Core\Models\Email_Queue_Model;
  */
 /**
  * _AUTO_GENERATED_ Database type hints - do not edit manually
- * Table: email_recipients
+ * Table: _email_recipients
  *
  * @property int $id
  * @property int $site_id
@@ -81,7 +81,7 @@ abstract class Email_Recipient_Model_Abstract extends Rsx_Site_Model_Abstract
     public static $unbounded = true;
 
 
-    protected $table = 'email_recipients';
+    protected $table = '_email_recipients';
     protected $fillable = [];
 
     protected $casts = [

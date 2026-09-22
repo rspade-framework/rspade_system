@@ -104,7 +104,7 @@ The signed unsubscribe endpoint, via `Mail_Unsubscribe_Test` (in-process
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | MAIL-100 | a valid signed link renders the confirmation page naming the address and the category | php | GET the signed URL | 200, address and "notification email" in the body | implemented | 2026-08-31 |
-| MAIL-101 | a GET decides nothing - a link scanner's prefetch must not opt anybody out | php | GET only | no `email_recipients` row | implemented | 2026-08-31 |
+| MAIL-101 | a GET decides nothing - a link scanner's prefetch must not opt anybody out | php | GET only | no `_email_recipients` row | implemented | 2026-08-31 |
 | MAIL-102 | posting the form blocks the named category ONLY | php | POST `scope=category` | 200; notification blocked, marketing not | implemented | 2026-08-31 |
 | MAIL-103 | `scope=all` blocks every opt-outable category and stamps the moment | php | POST `scope=all` | both blocked, `unsubscribed_at` set | implemented | 2026-08-31 |
 | MAIL-104 | a one-click POST (RFC 8058) answers 200 plain text, no redirect, and blocks the category only | php | POST `List-Unsubscribe=One-Click` | 200, `text/plain`, "Unsubscribed"; category blocked, marketing not | implemented | 2026-08-31 |
@@ -220,3 +220,17 @@ arrive, so what is under test is their ANSWERS. Run in-process via `Artisan::cal
 | MAIL-237 | `resend` does nothing to a row the queue already has | cli | a PENDING row | exit 0, "already", row untouched | implemented | 2026-08-31 |
 | MAIL-238 | resending a BLOCKED row requires `--force` - an opt-out is a consent record, not a delivery failure | cli | a Blocked row, with and without `--force` | exit 1 + "unsubscribed" + "--force", row untouched; then exit 0 and PENDING | implemented | 2026-08-31 |
 | MAIL-239 | `resend` refuses an id that does not exist | cli | a missing id | exit 1, the id named | implemented | 2026-08-31 |
+
+## The system-table prefix (`php/Outbound_Queue_Tables_Test.php`)
+
+The mail and SMS queues are framework storage behind `Rsx_Mail` / `Rsx_Sms`, so they
+carry the `_` system-table prefix. Both halves are pinned: the prefixed table is what
+exists, and the bare one does not, so nothing can still be reading a table the framework
+stopped writing. The cascade rides with them because the prefix arrived by a RENAME.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MAIL-240 | every queue model declares a system table | php | the five model classes | each `getTable()` starts with `_` | implemented | 2026-09-22 |
+| MAIL-241 | the prefixed tables are the ones the database has | php | information_schema | one row each for the five `_`-prefixed names | implemented | 2026-09-22 |
+| MAIL-242 | the bare names are gone - nothing may still read them | php | information_schema | no `email_queue` / `email_recipients` / `email_attachments` / `sms_queue` / `sms_recipients` | implemented | 2026-09-22 |
+| MAIL-243 | deleting a queued message still cascades to its attachments (the rename kept the FK) | php | a queued message with one attachment, then `delete()` | both rows gone | implemented | 2026-09-22 |

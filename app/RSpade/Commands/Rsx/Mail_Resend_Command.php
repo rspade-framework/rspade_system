@@ -33,7 +33,7 @@ use Illuminate\Console\Command;
 class Mail_Resend_Command extends Command
 {
     protected $signature = 'rsx:mail:resend
-                            {id : The email_queue row id}
+                            {id : The _email_queue row id}
                             {--force : Resend even though the recipient has unsubscribed (BLOCKED rows)}';
 
     protected $description = 'Reset a finished email queue row to PENDING and drain the queue';

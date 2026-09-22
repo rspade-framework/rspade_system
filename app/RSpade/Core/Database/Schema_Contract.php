@@ -42,7 +42,7 @@ namespace App\RSpade\Core\Database;
  *   - Columns the framework only DECLARES on a model and never reads (users.phone,
  *     user_profiles.title/department/bio, ip_addresses' geocoding columns). A column
  *     nothing reads cannot break anything by being absent.
- *   - Tables no framework code names. The framework models 17 application-owned tables;
+ *   - Tables no framework code names. The framework models 12 application-owned tables;
  *     every other non-underscore table in a database belongs to the application alone.
  *
  * EXTENDING IT. A new framework read or write of an application-owned table adds its
@@ -305,111 +305,6 @@ class Schema_Contract
             ],
 
             // -----------------------------------------------------------------
-            // The outbound queues
-            // -----------------------------------------------------------------
-            'email_queue' => [
-                'migration' => '2026_04_08_070914_create_email_queue_table',
-                'columns' => [
-                    'site_id' => ['where' => 'Rsx_Mail::enqueue() tenant scope'],
-                    'to_address' => ['where' => 'Rsx_Mail::enqueue(), the transport'],
-                    'to_name' => ['where' => 'Rsx_Mail::enqueue()'],
-                    'subject' => ['where' => 'Rsx_Email_Abstract::subject()'],
-                    'email_class' => ['where' => 'the drain rehydrates the email class from it'],
-                    'template_data' => ['where' => 'the drain rehydrates the email data from it'],
-                    'category_id' => ['where' => 'Rsx_Mail blocklist policy (TRANSACTIONAL ignores it)'],
-                    'reply_to' => ['where' => 'Rsx_Mail::enqueue()'],
-                    'reply_to_name' => ['where' => 'Rsx_Mail::enqueue()'],
-                    'cc' => ['where' => 'Rsx_Mail::enqueue()'],
-                    'bcc' => ['where' => 'Rsx_Mail::enqueue()'],
-                    'dedupe_key' => ['where' => 'Rsx_Email_Abstract::dedupe_key()'],
-                    'next_attempt_at' => ['where' => 'the minute sweeper claim'],
-                    'dev_original_to' => ['where' => 'the .dev.-hostname redirect records the original recipient here'],
-                    'related_type' => ['where' => 'the polymorphic subject of the message'],
-                    'related_id' => ['where' => 'the polymorphic subject of the message'],
-                    'attempt_count' => ['where' => 'retry budget, and the FAILED cap'],
-                    'status_id' => ['where' => 'the claim is a conditional UPDATE on status_id = PENDING'],
-                    'last_attempt_at' => ['where' => 'rsx:mail:queue'],
-                    'sent_at' => ['where' => 'rsx:mail:queue'],
-                    'message_id_header' => ['where' => 'rsx:mail:show'],
-                    'transport' => ['where' => 'rsx:mail:show'],
-                    'transport_response' => ['where' => 'rsx:mail:show'],
-                    'last_error' => ['where' => 'rsx:mail:queue / rsx:mail:show'],
-                    'rendered_html' => ['where' => 'the rendered body suppressed delivery records'],
-                    'rendered_text' => ['where' => 'the rendered body suppressed delivery records'],
-                ],
-                'unique' => [],
-            ],
-
-            'email_recipients' => [
-                'migration' => '2026_04_08_070914_create_email_recipients_table',
-                'columns' => [
-                    'site_id' => ['where' => 'Rsx_Mail blocklist tenant scope'],
-                    'email' => ['where' => 'Rsx_Mail::is_blocked()/block()/unblock()'],
-                    'is_blocked_notification' => ['where' => 'Rsx_Mail::is_blocked() - absent means writing to opted-out recipients'],
-                    'is_blocked_marketing' => ['where' => 'Rsx_Mail::is_blocked() - absent means writing to opted-out recipients'],
-                    'is_blocked_all' => ['where' => 'Rsx_Mail::block_all() - absent means writing to opted-out recipients'],
-                    'unsubscribed_at' => ['where' => 'Rsx_Mail unsubscribe record'],
-                    'total_sent' => ['where' => 'Rsx_Mail delivery counters'],
-                    'total_failed' => ['where' => 'Rsx_Mail delivery counters'],
-                    'last_sent_at' => ['where' => 'Rsx_Mail delivery counters'],
-                ],
-                'unique' => [],
-            ],
-
-            'email_attachments' => [
-                'migration' => '2026_08_31_122859_create_email_attachments_table',
-                'columns' => [
-                    'email_queue_id' => ['where' => 'Rsx_Email_Abstract::attach()/embed()'],
-                    'file_storage_id' => ['where' => 'the blob the attachment is served from'],
-                    'file_name' => ['where' => 'the attachment filename the transport emits'],
-                    'mime_type' => ['where' => 'the attachment content type the transport emits'],
-                    'disposition_id' => ['where' => 'attachment vs inline (embed)'],
-                    'cid' => ['where' => 'the content id an embedded image is referenced by'],
-                    'sort_order' => ['where' => 'attachment order'],
-                ],
-                'unique' => [],
-            ],
-
-            'sms_queue' => [
-                'migration' => '2026_07_01_132114_create_sms_queue_table',
-                'columns' => [
-                    'site_id' => ['where' => 'Rsx_Sms::send() tenant scope'],
-                    'to_number' => ['where' => 'Rsx_Sms::send()'],
-                    'body' => ['where' => 'Rsx_Sms::send()'],
-                    'category_id' => ['where' => 'Rsx_Sms blocklist policy'],
-                    'status_id' => ['where' => 'the claim is a conditional UPDATE on status_id = PENDING'],
-                    'attempt_count' => ['where' => 'retry budget, and the FAILED cap'],
-                    'next_attempt_at' => ['where' => 'the minute sweeper claim'],
-                    'dev_original_to' => ['where' => 'the .dev.-hostname redirect records the original number here'],
-                    'dedupe_key' => ['where' => 'Rsx_Sms de-duplication'],
-                    'sent_at' => ['where' => 'the SMS queue report'],
-                    'last_attempt_at' => ['where' => 'the SMS queue report'],
-                    'last_error' => ['where' => 'the SMS queue report'],
-                    'transport' => ['where' => 'the SMS queue report'],
-                    'transport_response' => ['where' => 'the SMS queue report'],
-                    'related_type' => ['where' => 'the polymorphic subject of the message'],
-                    'related_id' => ['where' => 'the polymorphic subject of the message'],
-                ],
-                'unique' => [],
-            ],
-
-            'sms_recipients' => [
-                'migration' => '2026_07_01_133258_create_sms_recipients_table',
-                'columns' => [
-                    'site_id' => ['where' => 'Rsx_Sms blocklist tenant scope'],
-                    'number' => ['where' => 'Rsx_Sms blocklist lookup'],
-                    'is_blocked_notification' => ['where' => 'Rsx_Sms blocklist - absent means texting opted-out numbers'],
-                    'is_blocked_marketing' => ['where' => 'Rsx_Sms blocklist - absent means texting opted-out numbers'],
-                    'is_blocked_all' => ['where' => 'Rsx_Sms blocklist - absent means texting opted-out numbers'],
-                    'unsubscribed_at' => ['where' => 'Rsx_Sms unsubscribe record'],
-                    'total_sent' => ['where' => 'Rsx_Sms delivery counters'],
-                    'total_failed' => ['where' => 'Rsx_Sms delivery counters'],
-                    'last_sent_at' => ['where' => 'Rsx_Sms delivery counters'],
-                ],
-                'unique' => [],
-            ],
-
-            // -----------------------------------------------------------------
             // Portal notifications
             // -----------------------------------------------------------------
             'portal_notifications' => [
@@ -530,13 +425,6 @@ class Schema_Contract
                 'references' => 'countries',
                 'referenced_column' => 'alpha2',
                 'why' => 'Select_State_Input filters regions by country',
-            ],
-            [
-                'table' => 'email_attachments',
-                'column' => 'email_queue_id',
-                'references' => 'email_queue',
-                'referenced_column' => 'id',
-                'why' => 'an attachment with no message is never emitted and never cleaned up',
             ],
         ];
     }

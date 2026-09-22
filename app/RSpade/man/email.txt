@@ -49,7 +49,7 @@ DESCRIPTION
     passed around as loose strings.
 
     THE CLASS NAME IS THE IDENTITY. It is the blade's @rsx_id, it is the value in
-    email_queue.email_class, and it is the key in the manifest's baked email table.
+    _email_queue.email_class, and it is the key in the manifest's baked email table.
 
     EVERY EMAIL IS QUEUED - never sent inline, in any context. send() writes a row and
     dispatches the drain, so a slow or down mail host can never slow a user's action. The
@@ -208,7 +208,7 @@ RECIPIENTS AND BLOCKLIST
 
     Pick by what the message IS, not by how much you want it delivered.
 
-    Per-address preferences live in email_recipients, unique per site_id + address:
+    Per-address preferences live in _email_recipients, unique per site_id + address:
 
         Rsx_Mail::is_blocked($email, Rsx_Mail::MARKETING);
         Rsx_Mail::block($email, Rsx_Mail::MARKETING);
@@ -237,7 +237,7 @@ ATTACHMENTS AND INLINE IMAGES
         with nothing embedded under that name is a BUILD FAILURE for the row, not a silent
         hole in the message.
 
-    Rows land in email_attachments (disposition_id 1 = attachment, 2 = inline, plus cid and
+    Rows land in _email_attachments (disposition_id 1 = attachment, 2 = inline, plus cid and
     sort_order) and are what PIN the blob against File_Disposal_Service. They cascade away
     with the queue row at retention time.
 
@@ -314,9 +314,14 @@ LINKS - AND THE RULE THAT ENFORCES THEM
 
 THE QUEUE AND ITS STATUSES
 
-    email_queue is the whole message: envelope, frozen subject and template_data, both
+    _email_queue is the whole message: envelope, frozen subject and template_data, both
     rendered bodies once the builder has run, the headers the framework added, and what the
     transport answered.
+
+    THE THREE MAIL TABLES ARE SYSTEM TABLES - _email_queue, _email_recipients and
+    _email_attachments. The framework writes every row of them; an application reads them
+    through Email_Queue_Model, Email_Recipient_Model and Email_Attachment_Model and never
+    alters them (rsx:man database_schema_architecture).
 
         Id  Status       Meaning
         --  -----------  --------------------------------------------------------------

@@ -555,7 +555,7 @@ class Rsx_Email_Enqueue_Test extends Rsx_Test_Abstract
     /**
      * attach_bytes() puts the caller's bytes in the CONTENT-ADDRESSED store, so the same
      * generated report mailed to a thousand people is stored once - and the
-     * email_attachments row is what pins the blob against disposal.
+     * _email_attachments row is what pins the blob against disposal.
      */
     public static function test_attach_bytes_stores_the_blob_and_pins_it_against_disposal()
     {

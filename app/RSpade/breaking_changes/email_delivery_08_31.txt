@@ -254,6 +254,10 @@ ACTION REQUIRED
 
     D. FIX ANY APP CODE OR UI THAT READS email_queue / sms_queue DIRECTLY.
 
+       Those two tables are now named _email_queue and _sms_queue - see
+       outbound_queue_tables_09_22.txt, which is the document to apply if you are
+       processing both at once.
+
            OLD COLUMN     NEW COLUMN
            -------------  ---------------------------------------------------
            template       email_class      (email_queue only - it names an

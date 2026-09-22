@@ -65,7 +65,7 @@ use App\RSpade\Core\Models\Email_Attachment_Model;
 
 /**
  * _AUTO_GENERATED_ Database type hints - do not edit manually
- * Table: email_queue
+ * Table: _email_queue
  *
  * @property int $id
  * @property int $site_id
@@ -175,7 +175,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
 
     
 
-    protected $table = 'email_queue';
+    protected $table = '_email_queue';
     protected $fillable = [];
 
     protected $casts = [

@@ -75,6 +75,15 @@ Each base sits beside its shell in the same directory - for example
 system/app/RSpade/Core/Models/User_Model_Abstract.php beside
 system/app/RSpade/Core/Models/User_Model.php.
 
+A SPLIT MODEL OVER A SYSTEM TABLE IS STILL OVERRIDABLE, and the table is still
+the framework's. Email_Queue_Model, Email_Recipient_Model,
+Email_Attachment_Model, Sms_Queue_Model, Sms_Recipient_Model,
+File_Storage_Model, File_Attachment_Model, Flash_Alert_Model,
+Search_Index_Model and the rest read `_`-prefixed tables that the framework
+creates, writes and sweeps. Extend the base to add a scope, a relation or an
+accessor; do not migrate those tables, and do not write their rows around the
+model.
+
 ## HOW IT WORKS
 
 During manifest build, when duplicate simple class names are detected:

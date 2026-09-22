@@ -1955,7 +1955,7 @@ SUBSYSTEM PRIMERS
     subject and data into a descriptor, persist attachments into the
     content-addressed blob store, and kick the drain.
 
-    THE QUEUE is email_queue with companion recipient and attachment tables
+    THE QUEUE is _email_queue with companion recipient and attachment tables
     (and a parallel set for SMS). Statuses: PENDING, SENDING, SENT, FAILED,
     BLOCKED (never queued at all - the audit row is the point) and
     SUPPRESSED (rendered and recorded, deliberately never handed to a

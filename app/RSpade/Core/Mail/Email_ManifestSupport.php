@@ -117,7 +117,7 @@ class Email_ManifestSupport extends Full_ManifestSupport_Abstract
                     "Duplicate email class '{$class}': {$location}\n"
                     . "  Already declared by {$table[$class]['class']} in {$table[$class]['file']}.\n"
                     . '  A class basename names exactly one email - it is the blade id and the'
-                    . " value stored in\n  email_queue.email_class."
+                    . " value stored in\n  _email_queue.email_class."
                 );
             }
 

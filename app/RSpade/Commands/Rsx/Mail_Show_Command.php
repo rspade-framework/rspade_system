@@ -24,7 +24,7 @@ use Illuminate\Console\Command;
 class Mail_Show_Command extends Command
 {
     protected $signature = 'rsx:mail:show
-                            {id : The email_queue row id}
+                            {id : The _email_queue row id}
                             {--json : Machine-readable JSON output, including the rendered bodies}';
 
     protected $description = 'Show every recorded detail of one queued email';

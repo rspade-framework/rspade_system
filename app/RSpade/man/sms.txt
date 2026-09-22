@@ -14,7 +14,7 @@ SYNOPSIS
 
 DESCRIPTION
     The SMS system is the deliberate mirror of the email system (see email(7)): a
-    one-call facade that QUEUES every message to sms_queue - never sends inline -
+    one-call facade that QUEUES every message to _sms_queue - never sends inline -
     plus a background drain with the same claim, the same statuses, the same
     retention and the same dev-site gating. It is framework core.
 
@@ -87,7 +87,11 @@ CATEGORIES
     Sms_Queue_Model::CATEGORY_*.
 
 BLOCKLIST / OPT-OUT (STOP)
-    Per-number preferences live in sms_recipients, unique per site_id + number. A
+    _sms_queue and _sms_recipients are SYSTEM tables: the framework writes every row,
+    and an application reads them through Sms_Queue_Model and Sms_Recipient_Model
+    (rsx:man database_schema_architecture).
+
+    Per-number preferences live in _sms_recipients, unique per site_id + number. A
     non-transactional message to an opted-out number is recorded as a BLOCKED row
     rather than silently dropped.
 
