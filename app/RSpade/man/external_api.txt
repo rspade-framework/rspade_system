@@ -205,7 +205,39 @@ PARAMETERS AND VALIDATION
     Coercion rules:
         int    matches /^-?\d+$/           float  is_numeric()
         bool   truthy: 1 true yes on       falsy: 0 false no off
-        string passthrough
+        string passthrough, except an ENCODED TEXT VALUE (below)
+
+    DECLARED TEXT COLUMNS. A model column declared in $text_types
+    (Rich_Text and the like) is written through an ordinary 'string' param,
+    in one of two forms:
+
+        plain text    any ordinary string. Assigned to the column it is a
+                      bare string, which a declared column treats as PLAIN
+                      TEXT: the type escapes it into its encoding (for
+                      Rich_Text, nl2br(htmlspecialchars(...)) in a <p>) and
+                      then filters it. "a < b" stores as the text "a < b".
+
+        encoded       the value's envelope, JSON-ENCODED INTO THE STRING:
+                          "{\"__TEXT\":\"Rich_Text\",\"raw\":\"<p>Hi <b>x</b></p>\"}"
+                      The param reaches the controller as the same typeless
+                      request value the browser's editor produces, and the
+                      column's filter (HTMLPurifier for Rich_Text) runs on
+                      assignment, exactly as for an Ajax submission.
+
+      A string is the encoded form when, and only when, it (1) begins with
+      `{`, (2) parses as a JSON object, and (3) has a key named __TEXT. Any
+      other string - "{hello}", a JSON object without __TEXT - is plain
+      text. An identified envelope must then pass the Ajax shape check or the
+      request fails 422 with the reason under that field; it is never
+      stored as its own JSON:
+          __TEXT a non-empty string (never resolved - the column decides the
+          type), raw a string or null, empty an optional boolean, no other key.
+
+      Reads return the envelope as a JSON OBJECT (rsx:man text_types,
+      contract rule 7). To write back what was read, JSON-encode that object
+      into the string param; sending its raw alone stores the markup as
+      literal text. The endpoint does nothing special - it assigns the param
+      to the column. Full treatment: rsx:man text_types, THE EXTERNAL API.
 
     INPUT PRECEDENCE (highest wins): route params > GET query > body.
     The body is parsed as JSON when Content-Type is application/json,
@@ -1541,6 +1573,7 @@ SEE ALSO
     rsx:man session          headless identity, impersonation, Session accessors
     rsx:man acls             Permission:: checks, role_id, the reserved override
     rsx:man model_fetch      redacting toArray(), enum magic properties
+    rsx:man text_types       declared text columns: plain vs encoded writes
     rsx:man enums            enum __label / __MODEL export
     rsx:man dispatch         the dispatcher chain the API branch lives in
     rsx:man tasks            #[Task]/#[Exclusive]/#[Schedule] (the log cleanup)

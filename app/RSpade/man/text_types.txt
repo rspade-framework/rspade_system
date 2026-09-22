@@ -14,6 +14,10 @@ SYNOPSIS
 
     $project->description                      a Rich_Text, not a string
     $project->description = $params['description'];    filtered, typed, stored
+    $project->description = "a < b\nline two";          PLAIN TEXT: escaped, then
+                                                         filtered
+    $project->description = Rich_Text::from_untrusted($html);
+                                                       encoded content, filtered
     <%= this.data.project.description %>       prints through its own component
 
     Rich_Text::from_request($params['body'])   the value, typed, for code that
@@ -46,12 +50,15 @@ THE CONTRACT
        trim, concatenate or format. The framework holds you to this - a
        typed value used as a string throws.
 
-    2. ONE FUNCTION IS REQUIRED OF A TYPE, AND IT TOUCHES THE CONTENT ONCE.
-       filter_set(), the SANITIZER ON THE SERVER, applied to every value that
-       did not come from the database. The framework will not let a type
-       omit it - even when it is a passthrough, which it should not be. An
-       optional SANITIZER ON THE CLIENT, filter_set() on the JS class, runs
-       at the editor as defense in depth; never the authority.
+    2. TWO FUNCTIONS ARE REQUIRED OF A TYPE, BOTH ON THE SERVER.
+       filter_set(), the SANITIZER, applied to every value that did not come
+       from the database. escape_string(), the PLAIN-TEXT CONVERSION, applied
+       to every bare string before the sanitizer sees it - for an HTML type,
+       '<p>' . nl2br(htmlspecialchars($plain)) . '</p>'. The framework will
+       not let a type omit either, even when one is a passthrough; a
+       passthrough is written down with the reason it is safe. An optional
+       SANITIZER ON THE CLIENT, filter_set() on the JS class, runs at the
+       editor as defense in depth; never the authority.
 
     3. EVERYTHING ELSE A TYPE OFFERS IS A CONVENTION, NOT A REQUIREMENT.
        to_text() and to_html() are predictable names application code can
@@ -113,7 +120,8 @@ DECLARING A COLUMN
     From then on:
 
         $project->description             a Rich_Text on read
-        $project->description = $x        filtered by Rich_Text, then stored
+        $project->description = $x        converted and filtered by Rich_Text
+                                          (ASSIGNING A VALUE), then stored
         $project->description->is_empty() the blessed emptiness test
         $project->description->to_text()  readable text, IF the type offers it
         $project->description->to_html()  a document rendition, IF it offers it
@@ -135,6 +143,12 @@ WRITING A TYPE
             // untrusted input.
             public static function filter_set(string $raw): string { ... }
 
+            // REQUIRED. Plain text -> this encoding. Every bare string
+            // assigned to the column passes through it, and filter_set()
+            // then runs on the result. Same pure-transform contract. A type
+            // whose encoding IS plain text returns $plain, and says why.
+            public static function escape_string(string $plain): string { ... }
+
             // CONVENTION. Emptiness. Default: a whitespace check on the raw
             // form. Override when the encoding WRAPS its content, so that an
             // empty document is not mistaken for a full one.
@@ -147,10 +161,6 @@ WRITING A TYPE
             // CONVENTION. Markup for a server-generated document. Default:
             // throws. Rarely needed - a page renders through the PRINTER.
             public function to_html(): string { ... }
-
-            // Plain text -> this format, for a column migrating to this type.
-            // Default: from_untrusted($plain).
-            public static function from_string(string $plain): static { ... }
 
             // DEDICATED FUNCTIONS: whatever the application must READ from
             // the encoding, written here and nowhere else.
@@ -186,6 +196,9 @@ TWO TYPES, WORKED
 
         filter_set()   safe_html() - HTMLPurifier with the application's
                        allow-list. What the column holds is already safe.
+        escape_string() '<p>' . nl2br(htmlspecialchars($plain)) . '</p>'.
+                       A bare string keeps its angle brackets, ampersands
+                       and line breaks as the text they were.
         is_empty()     OVERRIDDEN: trim(strip_tags(...)) === ''. An emptied
                        editor stores <p><br></p>, which the raw check would
                        call full.
@@ -209,6 +222,11 @@ TWO TYPES, WORKED
                        manifest knows (Manifest::php_get_extending on
                        Rsx_Model_Abstract) or whose id is not digits. Nothing
                        else - the text between tags is opaque.
+
+        escape_string() A passthrough: the encoding is plain text, and a
+                       bare string that happens to contain a well-formed
+                       {{Class:id}} is a tag, which is what the notation
+                       means. filter_set() still drops malformed ones.
 
         is_empty()     Default is correct: the storage form is text.
 
@@ -239,8 +257,9 @@ TWO TYPES, WORKED
                        'Entity_Tag_Input' (a textarea with an @-style
                        autocomplete that inserts {{Class:id}}). Nothing else.
 
-        The complete type is filter_set() plus tagged_entities(). Two
-        methods, both about the encoding, neither a rendition.
+        The complete type is filter_set(), escape_string() and
+        tagged_entities(). Three methods, all about the encoding, none a
+        rendition.
 
 IN AN ENDPOINT
     A declared field arrives already wrapped. The endpoint does what it does
@@ -308,7 +327,8 @@ WORKING WITH THE VALUE BEFORE STORING IT
         between the form and the endpoint, not a security control - the
         value resolves to the type you named regardless of the claim.
       - an already-typed value of the same type, returned as is.
-      - a bare string (a plain field that never wrapped), filtered.
+      - a bare string (a plain field that never wrapped): PLAIN TEXT,
+        converted by from_string().
       - null, returned as null.
     A typed value of a DIFFERENT type throws. Types do not convert.
 
@@ -317,6 +337,98 @@ WORKING WITH THE VALUE BEFORE STORING IT
     $comment->body->tagged_entities() works with no explicit resolution.
     from_request() is for the case where you need the typed value and do not
     have - or do not want - a record to assign it to.
+
+ASSIGNING A VALUE
+    What a declared column does with each thing it can be handed:
+
+      a typed value (Rich_Text)       already encoded and filtered; stored
+                                      as is. A typed value of ANOTHER type
+                                      throws - types do not convert.
+      a request envelope              ENCODED content from an editor or an
+        (Ajax or /api/vN)             API caller: filter_set(), then stored.
+      a bare string                   PLAIN TEXT: escape_string(), then
+                                      filter_set(), then stored.
+      null                            null.
+      anything else                   throws.
+
+    A BARE STRING IS PLAIN TEXT. A string carries no encoding, and the only
+    encoding it can honestly be taken to have is none - so an import, a
+    seed, a CLI script, a plain API param or a Text_Input wired to the
+    column all store what was typed, never markup it happened to resemble.
+    On a Rich_Text column "Contact <john@acme.com>\nre: <b>billing</b>"
+    stores as escaped text with a line break: the address is not purified
+    away as an unknown tag, the <b> is shown, not applied. On a Raw_Text
+    column escape_string() is a passthrough, so nothing changes.
+
+    ENCODED CONTENT FROM YOUR OWN CODE IS SAID OUT LOUD. HTML built on the
+    server, or converted from another system's markup, is assigned as
+
+        $record->description = Rich_Text::from_untrusted($html);
+
+    which runs filter_set() (and only filter_set()) exactly as a submitted
+    envelope does. Rich_Text::from_string($plain) is the same conversion
+    assignment performs, for code that wants the typed value without a
+    column. Neither can skip the filter: from_storage() is the only
+    unfiltered door, and it is the database's.
+
+    So a generic importer needs no list of which columns are special:
+
+        $record->$column = $value;           // plain text, every column
+
+    and a column-aware one that holds HTML asks the model:
+
+        $type = Project_Model::text_type_for($column);   // null: undeclared
+        $record->$column = $type ? $type::from_untrusted($html) : $html;
+
+THE EXTERNAL API
+    Reads: a declared column leaves /api/vN as its envelope, like every
+    other payload (contract rule 7).
+
+    Writes: an #[Api_Param] of type 'string' bound to a declared column
+    accepts two forms.
+
+      PLAIN TEXT. Any ordinary string. Assigned, it is a bare string:
+      escaped into the column's encoding and filtered.
+
+          {"description": "Call back Tuesday\nRe: <invoice>"}
+
+      ENCODED CONTENT. The envelope, JSON-ENCODED INTO THE STRING - the
+      param is a string, so the envelope rides inside one, in a JSON body
+      and a form body alike:
+
+          {"description": "{\"__TEXT\":\"Rich_Text\",\"raw\":\"<p>Hi <b>there</b></p>\"}"}
+
+      Assigned, it is a request envelope: the column's filter_set() runs,
+      exactly as for a value posted by the browser's editor.
+
+    A string param is an envelope when, and only when, ALL THREE hold:
+
+      1. it begins with `{` (no leading whitespace);
+      2. it parses as JSON, to an object;
+      3. that object has a key named __TEXT.
+
+    Otherwise it is an ordinary string: "{hello}", a JSON object with no
+    __TEXT, a JSON array are all plain text.
+
+    An IDENTIFIED envelope then faces the same shape check an Ajax
+    envelope does, and fails the request if it is malformed (422,
+    code 'validation', the reason under that field) - it is never demoted
+    to plain text, because the caller claimed an encoding:
+
+      __TEXT      a non-empty string. Never resolved - the COLUMN decides
+                  the type, exactly as on the Ajax path; the claim is only
+                  checked by Type::from_request().
+      raw         required; a string, or null (the param becomes null).
+      empty       optional; a boolean.
+      no other keys.
+
+    A client that round-trips a record - GET it, change something, send it
+    back - JSON-encodes the envelope it received into the string param, and
+    the stored bytes are unchanged. Sending the envelope's raw alone would
+    store the markup as literal text.
+
+    A JSON OBJECT (not a string) in a string param is refused as 'Expected
+    string', as any compound value is.
 
 PRINTING AND EDITING
     A live page interpolates the value and its PRINTER component renders it:
@@ -417,9 +529,22 @@ HOW IT WORKS INSIDE
       browser -> PHP         hydrate_request_value() -> Rsx_Text_Request_Value
                              TYPELESS. See below.
 
+      API caller -> PHP      Api_Param_Validator -> hydrate_request_string()
+                             -> Rsx_Text_Request_Value, same shape check
+
       PHP -> database        Rsx_Text_Cast::set() -> Type::from_untrusted()
+                             (an envelope) or Type::from_string() (a bare
+                             string: escape_string() first)
                              THE trust boundary. The column's type is applied
                              and its filter_set() runs, exactly once.
+
+    WHY AN API ENVELOPE IS A STRING, IDENTIFIED BY THREE TESTS. API params
+    are declared scalars; a compound value never satisfies one. Riding the
+    envelope inside a string keeps that rule and works for form bodies too.
+    The three tests make identification unambiguous - a plain text value
+    that merely starts with a brace is still plain text - and once a string
+    passes them the caller has claimed an encoding, so a malformed envelope
+    is refused rather than stored as its own JSON.
 
     WHY THE REQUEST SIDE IS TYPELESS. At the Ajax boundary the server holds a
     bag of keys and does not know which column each is bound for - that is
@@ -502,6 +627,20 @@ HOW IT WORKS INSIDE
     cast has already been filtered once, and the cast passing it through
     unfiltered is correct rather than a gap.
 
+    WHY A BARE STRING IS PLAIN TEXT. The alternative - reading it as already
+    encoded - is a guess about an encoding nothing declared, which is the
+    failure this feature exists to end. It is also the worse failure: plain
+    text read as HTML loses its line breaks and any <...> that looks like a
+    tag, silently; HTML read as plain text shows its tags, visibly. Encoded
+    content always has a way to say so (a typed value, an envelope,
+    from_untrusted()), so nothing is lost by the rule.
+
+    WHY escape_string() IS REQUIRED AND from_string() IS FINAL. Every bare
+    string goes through the conversion, so every type must state it. It
+    returns a string, not a value, so that from_string() - escape, then
+    from_untrusted() - is the only way plain text becomes a value, and no
+    type can build one from plain text without its filter running.
+
     WHY filter_set() IS REQUIRED. So that "no filter" is always a declaration
     with its reason beside it, never something a type inherits by omission.
     Raw_Text's passthrough is written down with why it is safe: plain text is
@@ -519,6 +658,7 @@ SEE ALSO
     rsx:man model - $enums and the model's other column declarations
     rsx:man form_input - the input value contract
     rsx:man csv_exports - where to_text() lands in an export
+    rsx:man external_api - param types, the 422 validation envelope
     skill rspade:text-types - use cases, writing a custom type, the tagged-entities example
 
     resource/reference_app/lib/text_types/ - the shipped types

@@ -171,13 +171,21 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
 
     public static function test_from_request_accepts_a_bare_string_and_null()
     {
-        static::__assert_equals('BARE', Text_Fixture_Loud_Text::from_request('bare')->to_storage(), 'a bare string is untrusted input and is filtered');
+        static::__assert_equals('[BARE]', Text_Fixture_Loud_Text::from_request('bare')->to_storage(), 'a bare string is plain text: escaped, then filtered');
         static::__assert_null(Text_Fixture_Loud_Text::from_request(null));
+    }
+
+    public static function test_from_string_escapes_then_filters()
+    {
+        // A bare string is PLAIN TEXT: escape_string() converts it into the encoding and
+        // filter_set() still runs on the result, so the plain-text door cannot skip the filter.
+        static::__assert_equals('[  HELLO  ]', Text_Fixture_Loud_Text::from_string('  hello  ')->to_storage());
+        static::__assert_equals('<p>a &lt;b&gt; c</p>', Text_Fixture_Wrapped_Text::from_string('a <b> c')->to_storage());
     }
 
     public static function test_a_type_is_complete_with_only_its_filter()
     {
-        // filter_set() is the ONE requirement. A type declaring nothing else can be
+        // filter_set() and escape_string() are the requirements. A type declaring nothing else can be
         // constructed, stored, and asked the one question every endpoint asks.
         $value = Text_Fixture_Bare_Text::from_untrusted('  content  ');
 
@@ -255,6 +263,56 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
                 ]);
             },
             'non-string raw form'
+        );
+    }
+
+    public static function test_request_hydration_refuses_a_malformed_envelope_instead_of_passing_it_through()
+    {
+        // A key named __TEXT is a claim to be an envelope. A claim that fails the shape is
+        // refused - never walked as an ordinary array and never demoted to plain text.
+        $malformed = [
+            'no raw' => ['__TEXT' => 'Text_Fixture_Plain_Text'],
+            'non-string type' => ['__TEXT' => 7, 'raw' => 'x'],
+            'empty type' => ['__TEXT' => '', 'raw' => 'x'],
+            'extra key' => ['__TEXT' => 'Text_Fixture_Plain_Text', 'raw' => 'x', 'html' => 'y'],
+            'non-bool empty' => ['__TEXT' => 'Text_Fixture_Plain_Text', 'raw' => 'x', 'empty' => 'no'],
+        ];
+
+        foreach ($malformed as $envelope) {
+            static::__assert_throws(
+                \InvalidArgumentException::class,
+                fn () => Rsx_Text_Abstract::hydrate_request_value(['body' => $envelope])
+            );
+        }
+    }
+
+    public static function test_a_request_string_is_an_envelope_only_when_it_is_a_json_object_with_a_text_key()
+    {
+        $envelope = json_encode(['__TEXT' => 'Text_Fixture_Loud_Text', 'raw' => '<b>x</b>', 'empty' => false]);
+        $wrapped = Rsx_Text_Abstract::hydrate_request_string($envelope);
+
+        static::__assert_instance_of(Rsx_Text_Request_Value::class, $wrapped);
+        static::__assert_equals('<b>x</b>', $wrapped->_raw(), 'unfiltered until it reaches a column');
+
+        // Each of these is an ordinary string - plain text to a declared column.
+        foreach (['plain', '{hello}', '{"raw": "x"}', ' ' . $envelope, '[' . $envelope . ']'] as $ordinary) {
+            static::__assert_equals($ordinary, Rsx_Text_Abstract::hydrate_request_string($ordinary));
+        }
+
+        static::__assert_null(Rsx_Text_Abstract::hydrate_request_string('{"__TEXT": "Text_Fixture_Plain_Text", "raw": null}'));
+    }
+
+    public static function test_a_request_string_identified_as_an_envelope_faces_the_ajax_shape_check()
+    {
+        static::__assert_throws(
+            \InvalidArgumentException::class,
+            fn () => Rsx_Text_Abstract::hydrate_request_string('{"__TEXT": "Text_Fixture_Plain_Text", "raw": ["x"]}'),
+            'non-string raw form'
+        );
+        static::__assert_throws(
+            \InvalidArgumentException::class,
+            fn () => Rsx_Text_Abstract::hydrate_request_string('{"__TEXT": "Text_Fixture_Plain_Text"}'),
+            'no raw form'
         );
     }
 }

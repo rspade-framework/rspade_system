@@ -20,6 +20,12 @@ class Text_Fixture_Loud_Text extends Rsx_Text_Abstract
         return strtoupper(trim($raw));
     }
 
+    /** Brackets mark the plain-text path, so a test can tell it from the encoded one. */
+    public static function escape_string(string $plain): string
+    {
+        return '[' . $plain . ']';
+    }
+
     public function to_text(): string
     {
         return strip_tags($this->raw);

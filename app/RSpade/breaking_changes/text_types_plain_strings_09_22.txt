@@ -1,0 +1,77 @@
+DECLARED TEXT COLUMNS: A BARE STRING IS PLAIN TEXT; escape_string() IS REQUIRED
+Date: 2026-09-22
+
+IF YOU DO NOTHING: the manifest build fails on every text type in your
+    application (rsx/lib/text_types/ - Rich_Text, Raw_Text and any of your own):
+    each must now define escape_string(), and Rich_Text's from_string()
+    override collides with the base, where from_string() is now final. Once
+    that is fixed, any code of yours that assigns an HTML STRING to a declared
+    column - `$record->description = '<p>...</p>'` - stores it as escaped plain
+    text, so the page shows the tags instead of applying them.
+
+SUMMARY
+    A bare string assigned to a declared text column is now PLAIN TEXT. The
+    column's type converts it into its encoding with a new required method,
+    escape_string(), and filter_set() runs on the result. For Rich_Text that is
+    '<p>' . nl2br(htmlspecialchars($plain)) . '</p>': an import, a seed, a
+    script or a plain API param stores what was typed, and "a <b@c.com>" or a
+    line break survives as text instead of being purified away as a tag.
+
+    Encoded content is said explicitly: a typed value, a request envelope, or
+    Type::from_untrusted($html) from server code - each filtered by
+    filter_set() alone, exactly as before.
+
+    The external API gains the encoded form: a 'string' #[Api_Param] whose value
+    begins with `{`, parses as a JSON object and has a `__TEXT` key is the
+    envelope, becomes the same typeless request value the Ajax path produces,
+    and faces the same shape check - a malformed one is a 422 on that field.
+    The Ajax envelope check is stricter too: an object carrying `__TEXT` must be
+    exactly {__TEXT, raw, empty?} or the request fails.
+
+    WHY. Reading a bare string as already-encoded was a guess about an encoding
+    nothing declared, and its failure was silent data loss (line breaks and
+    anything tag-shaped gone). Reading it as plain text fails visibly, and every
+    encoded source already has a way to say so.
+
+ACTION REQUIRED - YOUR TEXT TYPES
+    Add escape_string() to every class extending Rsx_Text_Abstract. The shipped
+    reference types (system/app/RSpade/resource/reference_app/lib/text_types/):
+
+        Rich_Text   delete the from_string() override, add
+
+            public static function escape_string(string $plain): string
+            {
+                return '<p>' . nl2br(htmlspecialchars($plain, ENT_QUOTES | ENT_HTML5)) . '</p>';
+            }
+
+        Raw_Text    a written-down passthrough:
+
+            public static function escape_string(string $plain): string
+            {
+                return $plain;
+            }
+
+    A type of your own: return $plain when the encoding IS plain text,
+    otherwise escape plain text into the encoding. Move any from_string()
+    override's conversion into escape_string() - from_string() is now
+    escape_string() followed by from_untrusted(), and final.
+
+ACTION REQUIRED - HTML STRINGS ASSIGNED TO DECLARED COLUMNS
+    Find assignments of markup strings to a column named in a $text_types map
+    (grep your seeders, handlers, services, tests and API controllers for the
+    column names) and wrap each:
+
+        $record->description = Rich_Text::from_untrusted($html);
+
+    An assignment of genuinely plain text (a name, a sentence, an imported
+    cell) needs nothing - and a hand-rolled htmlspecialchars()/nl2br() before
+    assignment should be REMOVED, or it now double-escapes.
+
+    An API client that posted HTML as a bare string for a Rich_Text param now
+    stores it as text; it must send the envelope JSON-encoded into the string
+    ("{\"__TEXT\":\"Rich_Text\",\"raw\":\"<p>...</p>\"}").
+
+SEE ALSO
+    rsx:man text_types       ASSIGNING A VALUE, THE EXTERNAL API
+    rsx:man external_api     PARAMETERS AND VALIDATION, declared text columns
+    skill rspade:text-types

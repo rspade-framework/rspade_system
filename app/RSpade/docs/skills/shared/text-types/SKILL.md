@@ -1,6 +1,6 @@
 ---
 name: text-types
-description: "Declaring what kind of string a TEXT column holds and writing a type for it - public static $text_types on a model, Rsx_Text_Abstract with its one required method filter_set(), the optional to_text()/to_html() conventions and when NOT to define them, is_empty() and the wrapping-encoding override, the PRINTER and EDITOR registrations on the JavaScript class of the same name, ACCEPTS on an input component, what an Ajax endpoint receives (a typeless Rsx_Text_Request_Value that answers only is_empty()), and Type::from_request() for reading the content before storing it. Use when a TEXT column should hold rich text or a custom notation such as {{Client_Model:42}}, when adding or adapting a type under rsx/lib/text_types/, when an endpoint must read a submitted value (tagged entities in a comment), when wiring an editor or printer, when migrating a column from plain text, or on hitting \"cannot be used as a string\", \"does not define to_text()\", \"does not define to_html()\", \"A submitted text value cannot be used as a string\", \"Text types do not convert into one another\", \"was handed a value the client submitted as\", \"edits Rich_Text values, but was given string\", or a column comparison against '' that is unexpectedly false."
+description: "Declaring what kind of string a TEXT column holds and writing a type for it - public static $text_types on a model, Rsx_Text_Abstract with its two required methods filter_set() and escape_string(), what assigning a bare string does (plain text, escaped into the encoding) versus Type::from_untrusted() for encoded content, writing a declared column through the external API (plain string or a JSON-encoded {__TEXT, raw} envelope in a string param), the optional to_text()/to_html() conventions and when NOT to define them, is_empty() and the wrapping-encoding override, the PRINTER and EDITOR registrations on the JavaScript class of the same name, ACCEPTS on an input component, what an Ajax endpoint receives (a typeless Rsx_Text_Request_Value that answers only is_empty()), and Type::from_request() for reading the content before storing it. Use when a TEXT column should hold rich text or a custom notation such as {{Client_Model:42}}, when adding or adapting a type under rsx/lib/text_types/, when an endpoint must read a submitted value (tagged entities in a comment), when wiring an editor or printer, when migrating a column from plain text, when an importer or API client writes a declared column, or on hitting \"cannot be used as a string\", \"does not define to_text()\", \"does not define to_html()\", \"A submitted text value cannot be used as a string\", \"Text types do not convert into one another\", \"was handed a value the client submitted as\", \"edits Rich_Text values, but was given string\", or a column comparison against '' that is unexpectedly false."
 ---
 
 # Declared TEXT column types
@@ -37,15 +37,15 @@ else you need to *read* out of it is a dedicated method on the type.
 **An undeclared TEXT column is an ordinary string.** Opt-in; a tree that declares nothing is
 unaffected.
 
-## What a type is — one requirement, several conventions
+## What a type is — two requirements, several conventions
 
 | Method | Status | Define it when |
 |---|---|---|
 | `filter_set()` | **Required** | Always. The trust boundary, even as a written-down passthrough |
+| `escape_string()` | **Required** | Always. Plain text -> this encoding; every bare string passes through it before `filter_set()`. A passthrough when the encoding IS plain text |
 | `is_empty()` | Convention, default = raw check | The encoding *wraps* content (an emptied WYSIWYG stores `<p><br></p>`) |
 | `to_text()` | Convention, **throws** by default | Something needs a plain rendition — a CSV cell, an index. Rarely |
 | `to_html()` | Convention, **throws** by default | Markup must be produced *on the server* — an email, an export. **Rarely.** A page renders through the PRINTER component |
-| `from_string()` | Convention, default = `from_untrusted` | A column is migrating to this type from plain text |
 | your own | — | Anything the application must *read* from the encoding |
 
 **Rule of thumb for `to_text()` and `to_html()`: rarely necessary.** They exist so that
@@ -66,6 +66,12 @@ takes, and it shows where the conventions are *not* needed.
 class Rich_Text extends Rsx_Text_Abstract
 {
     public static function filter_set(string $raw): string { return safe_html($raw); }
+
+    // REQUIRED. A bare string is plain text: escape it, keep its line breaks.
+    public static function escape_string(string $plain): string
+    {
+        return '<p>' . nl2br(htmlspecialchars($plain, ENT_QUOTES | ENT_HTML5)) . '</p>';
+    }
 
     // OVERRIDDEN: the encoding wraps content. <p><br></p> is empty.
     public function is_empty(): bool { return trim($this->to_text()) === ''; }
@@ -108,6 +114,10 @@ class Entity_Tag_Text extends Rsx_Text_Abstract
         }, $raw);
     }
 
+    // REQUIRED. The encoding is plain text with markers: a passthrough.
+    // filter_set() still drops a malformed tag.
+    public static function escape_string(string $plain): string { return $plain; }
+
     // THE DEDICATED FUNCTION - the reason the type exists. A parse, no database.
     // Returns [['User_Model', 33], ['Client_Model', 7]].
     public function tagged_entities(): array
@@ -136,8 +146,8 @@ class Entity_Tag_Text extends Rsx_Text_Abstract {
 }
 ```
 
-The complete type is `filter_set()` plus `tagged_entities()`. Two methods, both about the
-encoding, neither a rendition.
+The complete type is `filter_set()`, `escape_string()` and `tagged_entities()`. Three
+methods, all about the encoding, none a rendition.
 
 **There is no `to_text()` in JavaScript, on purpose.** Where a type offers one at all, it
 lives on the server, which can resolve synchronously; the browser often cannot, and rather
@@ -173,6 +183,41 @@ box only the widgets built for its type understand: a template interpolates it w
 hydration call because the PRINTER is the one thing that can render it. A consumer that needs
 a plain rendition gets a deliberate extra key from the endpoint (`to_text()`), never a rewritten
 column.
+
+## Assigning a value: a bare string is plain text
+
+| Assigned | Meaning | Path |
+|---|---|---|
+| a typed value (`Rich_Text`) | already encoded + filtered | stored as is (another type throws) |
+| a request envelope (Ajax or `/api/vN`) | encoded content | `filter_set()` |
+| **a bare string** | **plain text** | `escape_string()` then `filter_set()` |
+| `null` | null | — |
+
+An importer, a seed, a script or a plain API param stores what was typed: on a `Rich_Text`
+column `"Contact <john@acme.com>\nline two"` becomes escaped text with a `<br>`, never a
+purified-away "tag". **Never hand-roll `htmlspecialchars`/`nl2br` before assigning** — that is
+`escape_string()`'s job and doing it too double-escapes.
+
+**Encoded content from your own code is said out loud**: `$record->body =
+Rich_Text::from_untrusted($html);` (filter only). `Rich_Text::from_string($plain)` is the
+explicit form of what assignment does. A column-aware importer holding HTML asks the model:
+`$type = Model::text_type_for($col); $record->$col = $type ? $type::from_untrusted($html) : $html;`
+
+## Writing through the external API
+
+A declared column is written through an ordinary `'string'` `#[Api_Param]`; the endpoint just
+assigns it. The client chooses the form:
+
+- **plain text** — any ordinary string; escaped into the encoding on assignment.
+- **encoded** — the envelope **JSON-encoded into the string**:
+  `"{\"__TEXT\":\"Rich_Text\",\"raw\":\"<p>Hi</p>\"}"`. It becomes the same
+  `Rsx_Text_Request_Value` the Ajax path produces, and the column's `filter_set()` runs.
+
+A string is an envelope only when it **begins with `{`, parses as a JSON object, and has a
+`__TEXT` key**; anything else is plain text. An identified envelope that fails the shape check
+(`__TEXT` non-empty string, `raw` string|null, optional boolean `empty`, no other keys) is a
+**422 on that field**, never stored as its own JSON. A client round-tripping a GET JSON-encodes
+the envelope it read; sending `raw` alone stores the markup as literal text.
 
 ## What happens on an Ajax POST
 
@@ -249,8 +294,8 @@ public static function post_comment(Request $request, array $params = [])
 
 `from_request()` takes the request value (its client-claimed type must match — a mismatch
 means the form and the endpoint disagree about what the field *is*, which is a bug to
-surface, not a security control), an already-typed value of the same type, a bare string,
-or `null`. A typed value of a *different* type throws; types don't convert.
+surface, not a security control), an already-typed value of the same type, a bare string
+(plain text, via `from_string()`), or `null`. A typed value of a *different* type throws; types don't convert.
 
 **Equivalent when the record is at hand:** `$comment->body` after assignment *is* an
 `Entity_Tag_Text`, so `$comment->body->tagged_entities()` works with no explicit

@@ -25,6 +25,12 @@ class Text_Fixture_Plain_Text extends Rsx_Text_Abstract
         return $raw;
     }
 
+    /** Required of every type; a passthrough here because the encoding IS plain text. */
+    public static function escape_string(string $plain): string
+    {
+        return $plain;
+    }
+
     public function to_text(): string
     {
         return $this->raw;

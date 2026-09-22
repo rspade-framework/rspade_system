@@ -15,10 +15,11 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
  * Rsx_Model_Abstract::__schema_derived_casts(). A column with no declaration never
  * reaches this class and stays an ordinary string.
  *
- * Reads hydrate through from_storage() (trusted, unfiltered). Writes route through
- * from_untrusted() when handed a bare string, so the common `$record->body = $params['body']`
- * is filtered by the type without the endpoint knowing text types exist - which is the
- * point. A value of the WRONG type is refused rather than coerced: text types do not
+ * Reads hydrate through from_storage() (trusted, unfiltered). A request value (the Ajax or
+ * API envelope, already encoded) routes through from_untrusted(), so the common
+ * `$record->body = $params['body']` is filtered by the type without the endpoint knowing
+ * text types exist - which is the point. A BARE STRING is plain text and routes through
+ * from_string(): the type escapes it into its encoding, then filters it. A value of the WRONG type is refused rather than coerced: text types do not
  * convert into one another, and a silent conversion is exactly the class of bug this
  * system exists to make impossible.
  */
@@ -110,9 +111,11 @@ class Rsx_Text_Cast implements CastsAttributes, SerializesCastableAttributes
             );
         }
 
-        // A bare string from a request, an import or a seed. This is the trust boundary:
-        // the type filters it on the way in, so nothing downstream has to remember to.
-        return $type::from_untrusted((string) $value)->to_storage();
+        // A bare string from an import, a seed, a script or a plain API param. It carries no
+        // encoding, so it is PLAIN TEXT: the type escapes it into its encoding and filters
+        // the result. Encoded content arrives as a typed value or a request envelope above;
+        // code holding an encoded string says so with Type::from_untrusted($encoded).
+        return $type::from_string((string) $value)->to_storage();
     }
 
     /**

@@ -23,14 +23,17 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
  *
  * A value is IMMUTABLE and carries its own storage form. It enters through exactly two
  * doors - from_storage() trusts the database, everything else routes through
- * from_untrusted() and is filtered - and there is no third way to construct one.
+ * from_untrusted() and is filtered - and there is no third way to construct one. A BARE
+ * STRING is plain text: from_string() escapes it into the encoding first (escape_string())
+ * and then takes the same filtered door.
  *
  * A column with NO declaration keeps today's behaviour exactly: a naked PHP string, no
  * object, no filtering, nothing to migrate.
  *
  * ── What a type must supply, and what it merely may ─────────────────────────────────
  *
- * ONE method is required: filter_set(), the trust boundary. Everything else is a
+ * TWO methods are required: filter_set(), the trust boundary, and escape_string(), the
+ * plain-text conversion every bare string goes through. Everything else is a
  * CONVENTION - a predictable name application code can rely on when a type chooses to
  * offer the capability - and throws by default so that asking a type for a rendition it
  * never defined fails loudly instead of guessing.
@@ -192,15 +195,38 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     abstract public static function filter_set(string $raw): string;
 
     /**
-     * Plain text -> this format. The migration path when a column changes type.
+     * Plain text -> this type's encoding: the ESCAPE, REQUIRED of every type.
+     *
+     * A bare string carries no encoding, so the one thing it can honestly be taken to be is
+     * plain text. This is what makes that true: every bare string assigned to a declared
+     * column - an import, a seed, a CLI script, an /api/vN call, a plain form field - is
+     * converted by it, and the type's filter_set() then runs on the result. For an HTML
+     * type this is `'<p>' . nl2br(htmlspecialchars($plain)) . '</p>'`, so `<`, `&` and line
+     * breaks survive as the text they were instead of being read as markup.
+     *
+     * Abstract for the same reason filter_set() is: a type whose encoding IS plain text
+     * writes the passthrough down, with the reason beside it, rather than inheriting one.
+     *
+     * CONTRACT: a pure string transform, exactly as filter_set().
+     *
+     * @param string $plain
+     * @return string
+     */
+    abstract public static function escape_string(string $plain): string;
+
+    /**
+     * Plain text -> a value of this type: escape_string(), then filter_set().
+     *
+     * What the cast does with a bare string, and the explicit spelling for code that wants
+     * the typed value without a column to assign it to. Final so that no type can build a
+     * value from plain text without its filter running.
      *
      * @param string $plain
      * @return static
      */
-    #[Replaceable]
-    public static function from_string(string $plain): static
+    final public static function from_string(string $plain): static
     {
-        return static::from_untrusted($plain);
+        return static::from_untrusted(static::escape_string($plain));
     }
 
     // =========================================================================
@@ -253,7 +279,8 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * Turn every {__TEXT, raw} envelope in a decoded request body into a typeless
      * Rsx_Text_Request_Value, recursively, leaving everything else untouched.
      *
-     * Called once at the Ajax boundary. NOTHING IS RESOLVED HERE: the boundary holds a bag
+     * Called once at the Ajax boundary (the external API's string params go through
+     * hydrate_request_string() instead, held to the same shape check). NOTHING IS RESOLVED HERE: the boundary holds a bag
      * of keys and cannot know which column each is bound for, so it does not guess a type
      * from the client's claim - the claim is carried as an opaque string and discarded when
      * the value reaches a column (the cast) or a type that names itself (from_request()).
@@ -269,7 +296,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
             return $value;
         }
 
-        if (isset($value['__TEXT']) && is_string($value['__TEXT']) && array_key_exists('raw', $value)) {
+        if (array_key_exists('__TEXT', $value)) {
             return static::__wrap_envelope($value);
         }
 
@@ -281,13 +308,75 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     }
 
     /**
-     * One envelope from the wire, wrapped. Shape is checked; the type name is not.
+     * One string-valued request field, checked for an ENCODED text value.
+     *
+     * The external API's params are scalars, so an encoded value arrives as the envelope
+     * JSON-encoded into a string. A string is an envelope when, and only when, it begins
+     * with `{`, parses as a JSON object, and that object has a `__TEXT` key. Anything else
+     * - "{hello}", a JSON object with no `__TEXT` - is an ordinary string, which a declared
+     * column reads as plain text.
+     *
+     * A string that IS identified as an envelope faces exactly the scrutiny an Ajax
+     * envelope faces (__wrap_envelope(), shared), and a malformed one is refused rather
+     * than quietly demoted to plain text: the caller said "this is encoded", and storing
+     * its JSON as literal text would be a silent reinterpretation.
+     *
+     * @param string $value
+     * @return string|Rsx_Text_Request_Value|null the string untouched, the wrapper, or null
+     *                                            for an envelope whose raw form is null
+     * @throws \InvalidArgumentException on an identified but malformed envelope
+     */
+    public static function hydrate_request_string(string $value): string|Rsx_Text_Request_Value|null
+    {
+        if (!str_starts_with($value, '{')) {
+            return $value;
+        }
+
+        $decoded = json_decode($value, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded) || !array_key_exists('__TEXT', $decoded)) {
+            return $value;
+        }
+
+        return static::__wrap_envelope($decoded);
+    }
+
+    /**
+     * One envelope from the wire, wrapped. Shape is checked strictly; the type name is not
+     * resolved. The ONE check both transports run - an Ajax envelope and an API envelope
+     * string are held to the same rules.
+     *
+     * The shape is exactly what jsonSerialize() emits: `__TEXT` a non-empty string, `raw` a
+     * string or null, `empty` optional and boolean, and nothing else. A key named `__TEXT`
+     * is a claim to be an envelope, so an object that makes the claim and fails the shape
+     * is refused, never passed through as an ordinary array.
      *
      * @param array $envelope
      * @return Rsx_Text_Request_Value|null
+     * @throws \InvalidArgumentException
      */
     private static function __wrap_envelope(array $envelope): ?Rsx_Text_Request_Value
     {
+        if (!is_string($envelope['__TEXT']) || $envelope['__TEXT'] === '') {
+            throw new \InvalidArgumentException('A text value envelope must name its type in a non-empty string __TEXT.');
+        }
+
+        $extra = array_diff(array_keys($envelope), ['__TEXT', 'raw', 'empty']);
+        if (!empty($extra)) {
+            throw new \InvalidArgumentException(
+                "Text value '{$envelope['__TEXT']}' carries unexpected keys: " . implode(', ', $extra)
+                . '. An envelope is exactly {__TEXT, raw, empty}.'
+            );
+        }
+
+        if (!array_key_exists('raw', $envelope)) {
+            throw new \InvalidArgumentException("Text value '{$envelope['__TEXT']}' has no raw form.");
+        }
+
+        if (array_key_exists('empty', $envelope) && !is_bool($envelope['empty'])) {
+            throw new \InvalidArgumentException("Text value '{$envelope['__TEXT']}' has a non-boolean empty flag.");
+        }
+
         if ($envelope['raw'] === null) {
             return null;
         }
@@ -320,7 +409,8 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * Accepts a request wrapper (its client-claimed type must match - a mismatch is a
      * programming error and fatal, not a security control: the value resolves to THIS type
      * regardless), an already-typed value (must be this type), or a bare string (a plain
-     * field that never wrapped). Every path that carries untrusted input runs the filter.
+     * field that never wrapped - PLAIN TEXT, converted by from_string()). Every path that
+     * carries untrusted input runs the filter.
      *
      * @param mixed $value
      * @return static|null null in, null out - a nullable column with nothing submitted
@@ -358,7 +448,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
         }
 
         if (is_string($value)) {
-            return static::from_untrusted($value);
+            return static::from_string($value);
         }
 
         throw new \InvalidArgumentException(

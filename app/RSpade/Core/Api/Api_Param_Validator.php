@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Api;
 
 use Illuminate\Http\UploadedFile;
+use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 use App\RSpade\Core\Turnstile\Rsx_Turnstile;
 
 /**
@@ -17,6 +18,10 @@ use App\RSpade\Core\Turnstile\Rsx_Turnstile;
  * - applies declared defaults for absent optional params;
  * - coerces present values to the declared scalar type (string/int/float/bool), reporting
  *   a per-field error when a value cannot be coerced;
+ * - hands every string param to Rsx_Text_Abstract::hydrate_request_string(): a string that
+ *   begins with `{`, parses as a JSON object and carries a `__TEXT` key is an ENCODED text
+ *   value and becomes the same typeless Rsx_Text_Request_Value the Ajax boundary produces,
+ *   under the same shape check - a malformed one is a per-field error, never plain text;
  * - validates a type:'file' param, which is NOT coerced: it must arrive as an UploadedFile
  *   (a multipart part the dispatcher merged in) and that upload must have succeeded. The
  *   UploadedFile instance is passed through to the endpoint untouched.
@@ -136,7 +141,15 @@ class Api_Param_Validator
                 if (is_bool($value)) {
                     return ['ok' => false, 'value' => null];
                 }
-                return ['ok' => true, 'value' => (string) $value];
+                // An encoded text value rides a string param as its envelope, JSON-encoded.
+                // Identified and malformed is REFUSED: the caller claimed an encoding, and
+                // storing its JSON as literal text would silently reinterpret the claim.
+                try {
+                    $hydrated = Rsx_Text_Abstract::hydrate_request_string((string) $value);
+                } catch (\InvalidArgumentException $e) {
+                    return ['ok' => false, 'value' => null, 'message' => $e->getMessage()];
+                }
+                return ['ok' => true, 'value' => $hydrated];
 
             case 'int':
                 if (is_int($value)) {

@@ -22,4 +22,9 @@ class Text_Fixture_Bare_Text extends Rsx_Text_Abstract
     {
         return $raw;
     }
+
+    public static function escape_string(string $plain): string
+    {
+        return $plain;
+    }
 }

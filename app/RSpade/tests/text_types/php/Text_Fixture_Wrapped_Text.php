@@ -22,6 +22,12 @@ class Text_Fixture_Wrapped_Text extends Rsx_Text_Abstract
         return $raw;
     }
 
+    /** A wrapping encoding escapes plain text into its wrapper. */
+    public static function escape_string(string $plain): string
+    {
+        return '<p>' . htmlspecialchars($plain) . '</p>';
+    }
+
     /** A wrapping encoding answers emptiness by content, as the base requires. */
     public function is_empty(): bool
     {
