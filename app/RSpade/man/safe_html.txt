@@ -30,7 +30,26 @@ ALLOWED TAGS
 ALLOWED ATTRIBUTES
     href, title, target (on links)
     src, alt, width, height (on images)
-    class (on all elements)
+    data-list (on li only, and only 'checked', 'unchecked', 'ordered' or
+        'bullet' - see CHECKLISTS)
+    class (on all elements) - the JS sanitizer only. The PHP sanitizer
+        does not list class for any element, so a stored value carries none.
+
+CHECKLISTS
+    Quill 2 records a list item's kind as li[data-list], and for a checklist
+    that attribute IS the state:
+
+        <ul><li data-list="checked">Signed letter</li>
+            <li data-list="unchecked">Prior year return</li></ul>
+
+    It is the one editor attribute that must survive a round trip: Quill
+    rebuilds its checkbox UI (span.ql-ui) from it on load, so that UI needs
+    no allowance and is stripped. Both sanitizers keep the attribute on an
+    li with one of the four values Quill defines, and drop it anywhere else.
+    It is load-bearing markup, not editor noise - a rich-text column holding
+    a checklist holds its ticks here and nowhere else. The reference app's
+    Rich_Text_Display draws the boxes in a read view (static: changing a
+    tick is an edit).
 
 EXAMPLES
     PHP:
@@ -61,6 +80,7 @@ USAGE PATTERN
     <%!= safe_html(this.data.description) %>
 
 SEE ALSO
-    html() - Escape all HTML (for plain text, not rich text)
+    js_functions - html(), which escapes all HTML (plain text, not rich text)
+    text_types - the declared column that runs safe_html() on every write
 
 RSpade Framework                  December 2025                   SAFE_HTML(1)

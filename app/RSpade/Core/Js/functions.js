@@ -295,11 +295,28 @@ function html(str) {
  * @returns {string} Sanitized HTML safe for display
  */
 function safe_html(html_string) {
-    return DOMPurify.sanitize(html_string, {
-        ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', 'code', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'span'],
-        ALLOWED_ATTR: ['href', 'title', 'target', 'src', 'alt', 'width', 'height', 'class'],
-        ALLOW_DATA_ATTR: false,
+    // li[data-list] is a Quill 2 list item's kind, and for a checklist it IS the state.
+    // Held to Quill's four values on an <li>, exactly as the PHP safe_html() holds it. The
+    // hook is added and removed around this one synchronous call, so no other DOMPurify
+    // caller sees it.
+    DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+        if (data.attrName !== 'data-list') {
+            return;
+        }
+        const value = String(data.attrValue).toLowerCase();
+        data.keepAttr = node.nodeName === 'LI' && ['checked', 'unchecked', 'ordered', 'bullet'].includes(value);
+        data.attrValue = value;
     });
+
+    try {
+        return DOMPurify.sanitize(html_string, {
+            ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', 'code', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'span'],
+            ALLOWED_ATTR: ['href', 'title', 'target', 'src', 'alt', 'width', 'height', 'class', 'data-list'],
+            ALLOW_DATA_ATTR: false,
+        });
+    } finally {
+        DOMPurify.removeHook('uponSanitizeAttribute');
+    }
 }
 
 /**

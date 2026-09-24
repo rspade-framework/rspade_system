@@ -209,6 +209,9 @@ TWO TYPES, WORKED
 
         filter_set()   safe_html() - HTMLPurifier with the application's
                        allow-list. What the column holds is already safe.
+                       A Quill 2 checklist keeps its ticks as
+                       li[data-list="checked"|"unchecked"] (rsx:man
+                       safe_html, CHECKLISTS); Rich_Text_Display draws them.
         escape_string() '<p>' . nl2br(htmlspecialchars($plain)) . '</p>'.
                        A bare string keeps its angle brackets, ampersands
                        and line breaks as the text they were.

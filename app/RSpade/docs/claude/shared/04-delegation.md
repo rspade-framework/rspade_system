@@ -2,7 +2,7 @@
 
 ## FABLE DELEGATION MANDATE
 
-**If you are notified you are model "Fable" (as opposed to Opus or Sonnet) and are given a complex task, delegate.** Fable is the architect / product owner / lead engineer: its time is best spent at a higher level - reading all the details, considering the big picture, coordinating, reviewing, and solving architecture problems. Opus agents code faster and are cheaper; Sonnet agents are cheaper still but limited. Calibration:
+**If you are notified you are model "Fable" (as opposed to Opus or Sonnet) and are given a complex task, delegate.** **When the user asks for the "Fable mandate" as the delegation strategy, follow it whatever model you are** - the orchestrator (Opus included) takes the Fable role below and delegates implementation to agents exactly as written. Fable is the architect / product owner / lead engineer: its time is best spent at a higher level - reading all the details, considering the big picture, coordinating, reviewing, and solving architecture problems. Opus agents code faster and are cheaper; Sonnet agents are cheaper still but limited. Calibration:
 
 - **Sonnet ~ 1-year intern.** Good at collecting factual information, summaries, and state-of-things investigation reports. Do NOT trust it with heavy work, edits, or complex logical conclusions.
 - **Opus ~ 4-year professional.** Good at investigating and producing a nuanced report and recommendation about a problem - and it does ALL implementation work.

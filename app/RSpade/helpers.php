@@ -1537,7 +1537,18 @@ function safe_html(string $html): string
         $config->set('Cache.SerializerPermissions', null);  // Disable chmod (Docker compatibility)
 
         // Allow common formatting elements
-        $config->set('HTML.Allowed', 'p,br,strong,b,em,i,u,s,strike,a[href|title|target],ul,ol,li,blockquote,h1,h2,h3,h4,h5,h6,pre,code,img[src|alt|title|width|height],table,thead,tbody,tr,th,td,div,span');
+        $config->set('HTML.Allowed', 'p,br,strong,b,em,i,u,s,strike,a[href|title|target],ul,ol,li[data-list],blockquote,h1,h2,h3,h4,h5,h6,pre,code,img[src|alt|title|width|height],table,thead,tbody,tr,th,td,div,span');
+
+        // li[data-list] is a Quill 2 list item's kind, and for a checklist it IS the
+        // state: 'checked' / 'unchecked'. It is the only editor attribute that has to
+        // survive a round trip - Quill regenerates its checkbox UI from it on load. Held
+        // to Quill's own four values, so it cannot become a general data-attribute hole.
+        // HTMLPurifier caches the definition by id + revision, and the revision is derived
+        // from the values, so changing them retires the cached definition by itself.
+        $list_kinds = ['checked', 'unchecked', 'ordered', 'bullet'];
+        $config->set('HTML.DefinitionID', 'rsx-safe-html');
+        $config->set('HTML.DefinitionRev', crc32(implode(',', $list_kinds)) & 0x7fffffff);
+
 
         // Allow class attributes for styling
         $config->set('Attr.AllowedClasses', null); // Allow all classes
@@ -1545,6 +1556,11 @@ function safe_html(string $html): string
         // Link handling
         $config->set('HTML.TargetBlank', true);
         $config->set('URI.AllowedSchemes', ['http' => true, 'https' => true, 'mailto' => true]);
+
+        // Last: fetching the raw definition finalizes the config, so every set() is above.
+        if ($definition = $config->maybeGetRawHTMLDefinition()) {
+            $definition->addAttribute('li', 'data-list', new HTMLPurifier_AttrDef_Enum($list_kinds));
+        }
 
         $purifier = new HTMLPurifier($config);
     }
