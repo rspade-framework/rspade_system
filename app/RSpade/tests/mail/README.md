@@ -19,8 +19,10 @@ tests follow is:
 3. **Build** - `Rsx_Mail_Builder` renders the blade, inlines the compiled stylesheet,
    turns local images into `cid:` parts, derives the text part, and writes both rendered
    bodies plus the header map back onto the row.
-4. **Transport** - a Symfony mailer built from `rsx.mail.transport`, and one of three
-   outcomes the runner keeps strictly apart.
+4. **Transport** - in `live` mode the Laravel mailer `MAIL_MAILER` names, built by
+   Laravel's MailManager (any Laravel mailer, or a transport a package registers with
+   `Mail::extend()`); in `aiosmtpd` the fixed catcher. One of three outcomes the runner
+   keeps strictly apart - an API transport's HTTP failures sorted into them by status.
 5. **Unsubscribe** - the signed link every non-transactional footer and `List-Unsubscribe`
    header carries, and the blocklist row it writes.
 
@@ -57,7 +59,7 @@ Invariants the tests exist to hold:
 | `Core/Mail/Email_ManifestSupport.php` | The build-time email table and its three FATALs |
 | `Core/Mail/Rsx_Mail_Builder.php` | Row -> `Symfony\Component\Mime\Email` |
 | `Core/Mail/Rsx_Mail_Text.php` | The derived plain-text part |
-| `Core/Mail/Rsx_Mail_Transport.php` | The four delivery modes, DSN construction, the aiosmtpd banner probe, `$override_for_tests` / `$banner_for_tests`, the `Mail` health rows |
+| `Core/Mail/Rsx_Mail_Transport.php` | The four delivery modes, the Laravel mailer resolution (`make()`, `mailer_config()`, `describe()`), the aiosmtpd banner probe, `$override_for_tests` / `$banner_for_tests`, the `Mail` health rows |
 | `Core/Mail/Mail_Queue_Service.php` | The drain and the daily cleanup |
 | `Core/Mail/Mail_Unsubscribe_Controller.php` | `GET`/`POST /_mail/unsubscribe`, incl. RFC 8058 one-click |
 | `Core/Mail/Rsx_Mail_Test_Email.php` | The framework's own smoke-test email |
@@ -115,8 +117,8 @@ Behavior of record: `php artisan rsx:man email`. Config: `rsx:man config_rsx`.
   `Task::internal('Mail_Queue_Service', 'send_pending_queue')`.
 - The framework test host is a `.dev.` hostname, so the dev-site recipient gate is LIVE
   for every send. A test whose subject is not the gate whitelists `example.com` past it;
-  a test whose subject IS the gate pins `rsx.mail.transport.host` to a non-loopback value,
-  because the gate does not engage on a transport that cannot leave this box.
+  a test whose subject IS the gate sets `rsx.mail.delivery` to `live`, because the gate
+  engages in that mode only.
 - Every test that sets `Rsx_Mail_Transport::$override_for_tests` clears it in a `finally`.
   A stub surviving into another class would make that class's failures unattributable.
 - Site context is ESTABLISHED, never inherited (backlog B-45, closed by this concern):

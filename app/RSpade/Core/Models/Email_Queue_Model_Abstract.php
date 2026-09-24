@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Models;
 
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Models\Email_Attachment_Model;
 
 /**
@@ -415,7 +416,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
         $this->attempt_count = $this->attempt_count + 1;
         $this->message_id_header = $message_id_header;
         $this->transport_response = $transport_response;
-        $this->transport = config('rsx.mail.transport.driver');
+        $this->transport = Rsx_Mail_Transport::transport_label();
         $this->last_error = null;
         $this->save();
     }
@@ -447,7 +448,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
         $this->attempt_count = $this->attempt_count + 1;
         $this->last_error = $reply;
         $this->transport_response = $reply;
-        $this->transport = config('rsx.mail.transport.driver');
+        $this->transport = Rsx_Mail_Transport::transport_label();
 
         $max_attempts = (int) config('rsx.mail.retry.attempts', 3);
         $delay_minutes = (int) config('rsx.mail.retry.delay_minutes', 3);

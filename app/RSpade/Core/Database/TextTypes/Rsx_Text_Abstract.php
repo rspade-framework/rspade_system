@@ -83,7 +83,13 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     // =========================================================================
 
     /**
-     * Hydrate from the database.
+     * Hydrate from the database - the TRUSTED door.
+     *
+     * Public, because a caller holding content that came out of the column (a stored
+     * snapshot reduced to text, say) legitimately needs it, and UNFILTERED: whatever is
+     * handed in is stored and rendered byte for byte. Anything that did not come out of
+     * the column - a request, an import, an API caller - goes through from_untrusted();
+     * handing it here instead is a stored-XSS path.
      *
      * The stored content is TRUSTED: it was filtered by from_untrusted() on the way in,
      * so a read performs no filtering at all. That matters - re-purifying on every read
@@ -121,8 +127,8 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     }
 
     // =========================================================================
-    // WHAT A CONCRETE TYPE SUPPLIES - filter_set() is required; the rest are
-    // CONVENTIONS a type adopts only when it needs the capability.
+    // WHAT A CONCRETE TYPE SUPPLIES - filter_set() and escape_string() are required;
+    // the rest are CONVENTIONS a type adopts only when it needs the capability.
     // =========================================================================
 
     /**

@@ -90,3 +90,9 @@ for a model whose table is missing, and that is deliberate - see the test.
 
 `Manifest_Stub_Rewrite_Test` asserts MTIMES, because that is what the damage is made of:
 a stub write that changes not one byte still recompiles every bundle carrying the stub.
+
+`Manifest_Parameter_Default_Test` reflects a fixture whose parameter defaults name a class
+nobody declares. The scanner records a parameter as `optional` and never evaluates its
+default: a constant default autoloads its class, and mid-build that class can be an
+overridden core model's `rsx/` twin the same pass has not indexed yet - which once aborted
+every `rsx:test` run downstream over one private helper's signature.

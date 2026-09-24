@@ -1973,14 +1973,19 @@ return [
     | Mail Configuration
     |--------------------------------------------------------------------------
     |
-    | Outbound email: the queue (Email_Queue_Model), the transport it is handed
-    | to, and the two independent safety layers. See: php artisan rsx:man email
+    | Outbound email: the queue (Email_Queue_Model) and the two independent
+    | safety layers. See: php artisan rsx:man email
+    |
+    | HOW a message leaves - the mailer, its host and credentials, the From
+    | address - is Laravel's mail configuration (config/mail.php: MAIL_MAILER,
+    | MAIL_HOST, MAIL_FROM_ADDRESS, ...), extended in rsx/resource/config/mail.php.
+    | WHETHER it leaves is decided here.
     |
     | 'delivery' is the master switch and is CONFIGURED, not derived: 'live'
-    | hands each row to the transport, 'suppressed' renders the message, records
-    | it, and records STATUS_SUPPRESSED without sending. The shipped transport
-    | default is SMTP to the loopback catcher, so a fresh install delivers into
-    | a local Maildir and nothing leaves the box even on 'live'.
+    | hands each row to the Laravel mailer MAIL_MAILER names, 'suppressed'
+    | renders the message, records it, and records STATUS_SUPPRESSED without
+    | sending. The shipped default is 'aiosmtpd', so a fresh install delivers
+    | into a local Maildir and nothing leaves the box.
     |
     | 'dev_site' is the SECOND, independent layer: on a hostname containing
     | '.dev.' (Rsx::is_dev_site()) every recipient is checked against the
@@ -1992,41 +1997,27 @@ return [
         // accepted - an unrecognised value throws (Rsx_Mail_Transport::delivery_mode()).
         //
         //   aiosmtpd   THE DEFAULT. Captured by the development catcher on this box:
-        //              SMTP to 127.0.0.1:1025, no encryption, no auth. The whole
-        //              'transport' block below is IGNORED in this mode, so a stale
-        //              MAIL_HOST cannot redirect a development install's mail at a real
-        //              relay. The catcher's SMTP greeting must contain 'aiosmtpd' or
-        //              every message is refused as a server error - see
+        //              SMTP to 127.0.0.1:1025, no encryption, no auth. Laravel's mail
+        //              config is IGNORED in this mode, so a stale MAIL_HOST cannot
+        //              redirect a development install's mail at a real relay. The
+        //              catcher's SMTP greeting must contain 'aiosmtpd' or every
+        //              message is refused as a server error - see
         //              system/bin/mail_catcher.py.
-        //   live       Real delivery through 'transport' below. The .dev.-hostname
-        //              recipient whitelist/catchall gate applies in THIS MODE ONLY.
+        //   live       Real delivery through the Laravel mailer MAIL_MAILER names
+        //              (config/mail.php). 'log' and 'array' are refused - they deliver
+        //              nothing. The .dev.-hostname recipient whitelist/catchall gate
+        //              applies in THIS MODE ONLY.
         //   suppressed Built and recorded (rendered_html/rendered_text land on the row),
         //              never handed to a transport. Rows end SUPPRESSED.
         //   disabled   The queue is FROZEN. The drain logs one line and returns; rows
         //              stay PENDING, untouched, and nothing is marked stale.
         'delivery' => env('MAIL_DELIVERY', 'aiosmtpd'),
 
-        // IGNORED WHEN delivery = 'aiosmtpd'. Read only in 'live' mode.
-        'transport' => [
-            // smtp | sendmail
-            'driver' => env('MAIL_TRANSPORT', 'smtp'),
-            'host' => env('MAIL_HOST', '127.0.0.1'),
-            'port' => (int) env('MAIL_PORT', 1025),
-            // '' | tls | ssl
-            'encryption' => env('MAIL_ENCRYPTION', ''),
-            'username' => env('MAIL_USERNAME', ''),
-            'password' => env('MAIL_PASSWORD', ''),
-            'sendmail_path' => '/usr/sbin/sendmail -bs -i',
-        ],
-
-        'from_address' => env('MAIL_FROM_ADDRESS', 'noreply@example.com'),
-        // '' = use rsx.name
-        'from_name' => env('MAIL_FROM_NAME', ''),
-
-        // SMTP server-error policy: the server answered with an error for THIS
-        // message, so the message is retried on its own clock. A connection-level
-        // failure is NOT this - the runner reconnects once and then dies loud,
-        // leaving every row PENDING for the next sweep.
+        // Server-error policy: the mail host answered with an error for THIS message
+        // (an SMTP reply, or an API transport's 4xx refusal), so the message is retried
+        // on its own clock. A connection-level failure is NOT this - the runner
+        // reconnects once and then dies loud, leaving every row PENDING for the next
+        // sweep.
         'retry' => [
             'attempts' => 3,
             'delay_minutes' => 3,

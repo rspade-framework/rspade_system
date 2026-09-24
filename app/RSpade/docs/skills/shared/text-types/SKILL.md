@@ -1,6 +1,6 @@
 ---
 name: text-types
-description: "Declaring what kind of string a TEXT column holds and writing a type for it - public static $text_types on a model, Rsx_Text_Abstract with its two required methods filter_set() and escape_string(), what assigning a bare string does (plain text, escaped into the encoding) versus Type::from_untrusted() for encoded content, writing a declared column through the external API (plain string or a JSON-encoded {__TEXT, raw} envelope in a string param), the optional to_text()/to_html() conventions and when NOT to define them, is_empty() and the wrapping-encoding override, the PRINTER and EDITOR registrations on the JavaScript class of the same name, ACCEPTS on an input component, what an Ajax endpoint receives (a typeless Rsx_Text_Request_Value that answers only is_empty()), and Type::from_request() for reading the content before storing it. Use when a TEXT column should hold rich text or a custom notation such as {{Client_Model:42}}, when adding or adapting a type under rsx/lib/text_types/, when an endpoint must read a submitted value (tagged entities in a comment), when wiring an editor or printer, when migrating a column from plain text, when an importer or API client writes a declared column, or on hitting \"cannot be used as a string\", \"does not define to_text()\", \"does not define to_html()\", \"A submitted text value cannot be used as a string\", \"Text types do not convert into one another\", \"was handed a value the client submitted as\", \"edits Rich_Text values, but was given string\", or a column comparison against '' that is unexpectedly false."
+description: "Declaring what kind of string a TEXT column holds and writing a type for it - public static $text_types on a model, Rsx_Text_Abstract with its two required methods filter_set() and escape_string(), what assigning a bare string does (plain text, escaped into the encoding) versus Type::from_untrusted() for encoded content, writing a declared column through the external API (plain string or a JSON-encoded {__TEXT, raw} envelope in a string param), the optional to_text()/to_html() conventions and when NOT to define them, is_empty() and the wrapping-encoding override, the PRINTER and EDITOR registrations on the JavaScript class of the same name, ACCEPTS on an input component, what an Ajax endpoint receives (a typeless Rsx_Text_Request_Value that answers only is_empty()), and Type::from_request() for reading the content before storing it. Use when a TEXT column should hold rich text or a custom notation such as {{Client_Model:42}}, when adding or adapting a type under rsx/lib/text_types/, when an endpoint must read a submitted value (tagged entities in a comment), when wiring an editor or printer, when migrating a column from plain text, when an importer or API client writes a declared column, or on hitting \"cannot be used as a string\", \"does not define to_text()\", \"does not define to_html()\", \"A submitted text value cannot be used as a string\", \"Text types do not convert into one another\", \"was handed a value the client submitted as\", \"edits Rich_Text values, but was given string\", or a column comparison against '' that is unexpectedly false, when composing markup for a declared column (a helper returning `\"<p>...\"`), when stored text shows literal &lt;p&gt; tags, or on a TEXT-TYPE-01 build failure."
 ---
 
 # Declared TEXT column types
@@ -19,7 +19,10 @@ prints, edits, exports or indexes the column independently remembers which kind 
 reaches for the matching escape, widget or filter. Misremembering doesn't crash: it renders
 markup as literal text, or user input unescaped.
 
-Declare the type once on the model and the value carries it. Every sink asks the value.
+PHP cannot notate a variable as markup rather than a string; a declared column supplies the
+type the language lacks. Declare the type once on the model and the value carries it. Every
+sink asks the value. **Declare any TEXT column whose content is not plain prose** - anything
+a sink must escape, render or interpret differently from the characters it holds.
 
 ```php
 public static $text_types = [
@@ -191,7 +194,34 @@ column.
 | a typed value (`Rich_Text`) | already encoded + filtered | stored as is (another type throws) |
 | a request envelope (Ajax or `/api/vN`) | encoded content | `filter_set()` |
 | **a bare string** | **plain text** | `escape_string()` then `filter_set()` |
+| an int, float or bool | stringified plain text | as a bare string (`false` -> `''` -> `is_empty()`) |
 | `null` | null | — |
+| an array or other object | — | throws |
+
+**Only the first two rows are enforced.** A wrong type throws; a malformed envelope throws. A
+bare string cannot be checked - every string is legal plain text - so **markup assigned as a
+bare string is stored as visible tags (`<p>&lt;strong&gt;...`) with no error, no log line and
+no failing round-trip test.** Misremembering doesn't crash here either: it is the read-side
+failure this feature ends, reappearing on the write side, and it is the one choice nothing
+checks for you.
+
+**Ask what is in your hand:**
+- **You BUILT the string and it contains tags?** It is markup: `Type::from_untrusted($html)`.
+- **It ARRIVED as prose** - a spreadsheet cell, a typed sentence, an API scalar? Assign it
+  bare. **Do not hand-wrap it in `<p>`** - the column does that, and your wrapper becomes
+  visible tags.
+
+**A function that composes content for a declared column returns the TYPE, never a string:**
+
+```php
+private static function task_created_body(User_Model $actor): Rich_Text
+{
+    return Rich_Text::from_untrusted('<p><strong>' . e($actor->get_printed_name()) . '</strong> created a task.</p>');
+}
+```
+
+`from_untrusted()` then lives once, where the markup is born, and every signature downstream
+carries the fact. A composer typed `string` loses it at the first hop.
 
 An importer, a seed, a script or a plain API param stores what was typed: on a `Rich_Text`
 column `"Contact <john@acme.com>\nline two"` becomes escaped text with a `<br>`, never a
@@ -201,7 +231,13 @@ purified-away "tag". **Never hand-roll `htmlspecialchars`/`nl2br` before assigni
 **Encoded content from your own code is said out loud**: `$record->body =
 Rich_Text::from_untrusted($html);` (filter only). `Rich_Text::from_string($plain)` is the
 explicit form of what assignment does. A column-aware importer holding HTML asks the model:
-`$type = Model::text_type_for($col); $record->$col = $type ? $type::from_untrusted($html) : $html;`
+`$type = Model::text_type_or_null($col); $record->$col = $type ? $type::from_untrusted($html) : $html;`
+(`text_type_for()` is the cast's lookup and THROWS on an undeclared column.)
+
+**`from_storage()` is the fourth door: public, trusted and UNFILTERED.** It is how the cast
+reads the column, and it is for content that came OUT of the column. Handing it a request, an
+import or an API value stores it byte for byte - a stored-XSS path. Everything else is
+`from_untrusted()`.
 
 ## Writing through the external API
 
@@ -303,6 +339,9 @@ resolution. `from_request()` is for when you need the typed value without a reco
 
 ## Gotchas, in the order they bite
 
+**Markup in a bare string is stored as visible tags, silently** - and prose pre-wrapped in
+`<p>` is the mirror image. See "Assigning a value" above; a composer returns the type.
+
 **`=== ''` and `empty()` are both silently wrong.** A value object is never identical to a
 string, and PHP's `empty()` is always false on an object. Use `is_empty()`.
 
@@ -325,6 +364,11 @@ application class - MIGRATION-MODEL-01), then the declaration change.
 
 **A third-party editor may not round-trip HTML it didn't author.** Load a stored value and
 save it back; the result must be byte-identical.
+
+**TEXT-TYPE-01 (manifest-build FATAL)** refuses a declaration the cast cannot honour: an entry
+naming no `Rsx_Text_Abstract` class, a type with no JS twin, and a `$casts` / `casts()` entry on
+a declared column - which would SHADOW the text cast and store request markup unfiltered.
+Escape: `@TEXT-TYPE-01-EXCEPTION` in the file.
 
 **`->pluck()`, raw SQL and `DB::table()` bypass the cast** — the same boundary that already
 applies to dates and type refs. Mass assignment is refused by `Rsx_Model_Abstract` and

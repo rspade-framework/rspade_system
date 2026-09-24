@@ -174,7 +174,7 @@ Not implemented.
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | MAIL-200 | the `Mail` health rows: delivery mode, a TCP probe of the transport, and the sender-domain DNS check | php | `Rsx_Mail_Transport::mail_health()` under each configuration | delivery INFO for suppressed/disabled, OK for aiosmtpd/live; transport FAIL naming `[program:mail-catcher]` when the catcher is closed, and FAIL "server did not advertise aiosmtpd" on a greeting mismatch; sender domain INFO in any mode but live, WARN when SPF/DMARC are missing | planned - the DNS rows reach the network, so they need a resolver stub or a fixture domain before they can be asserted deterministically | 2026-08-31 |
 | MAIL-201 | a `<Class>_Text` blade is used verbatim in place of the derived text part | php | an email class shipping a text template | the text part is the blade's output, not the converted html | planned - no email in this tree ships a text template yet; the fixture would exist only for the test | 2026-08-31 |
-| MAIL-202 | a `sendmail` transport builds the right DSN in `live` mode | php | `rsx.mail.delivery = live`, `transport.driver = sendmail` | `sendmail://default?command=...` | planned | 2026-08-31 |
+| MAIL-202 | a `sendmail` mailer builds Laravel's sendmail transport in `live` mode | php | `rsx.mail.delivery = live`, `MAIL_MAILER = sendmail` | a `SendmailTransport` on the configured path | planned | 2026-09-24 |
 | MAIL-203 | two concurrent drains never take the same row | php | two processes racing `claim_next()` | one claim matches, the other does not | deferred - the conditional UPDATE is asserted single-threaded (MAIL-03); a real race needs two processes against a committed database, which the transaction-isolated runner cannot provide | 2026-08-31 |
 
 ## Delivery modes, the greeting, and the stale sweep (`php/Mail_Delivery_Mode_Test.php`)
@@ -189,8 +189,11 @@ that only some modes run.
 |----|--------------------------|------|-------|-------------------|--------|--------------|
 | MAIL-210 | an unrecognised mode THROWS rather than being read as "not live" | php | `rsx.mail.delivery = 'sortof'` | `RuntimeException` naming the value and the four modes | implemented | 2026-08-31 |
 | MAIL-211 | every documented mode is accepted | php | each of aiosmtpd/live/suppressed/disabled | `delivery_mode()` returns it | implemented | 2026-08-31 |
-| MAIL-212 | aiosmtpd mode IGNORES the whole transport block - a stale MAIL_HOST cannot mail anybody | php | mode aiosmtpd + a real-looking host/port/credentials | DSN is `127.0.0.1:1025` with `auto_tls=false` and none of the configured values; `describe()` says the same | implemented | 2026-08-31 |
-| MAIL-213 | live mode is the mode the transport block is for | php | mode live + a configured host | the DSN names it | implemented | 2026-08-31 |
+| MAIL-212 | aiosmtpd mode IGNORES Laravel's mail config - a stale MAIL_HOST cannot mail anybody | php | mode aiosmtpd + a real-looking smtp mailer | the transport built is `127.0.0.1:1025` (`auto_tls=false`) naming none of the configured values; `describe()` and the row label say the same | implemented | 2026-09-24 |
+| MAIL-213 | live mode builds the Laravel mailer MAIL_MAILER names | php | mode live + an smtps mailer on 465 | `smtps://<host>`; `describe()` names mailer, scheme, host, port and user, never the password; the row label is the mailer name | implemented | 2026-09-24 |
+| MAIL-213c | MAIL_URL is resolved the way Laravel's MailManager resolves it | php | an smtp mailer with only a `url` | the transport and `describe()` name the url's host, port and user; no password | implemented | 2026-09-24 |
+| MAIL-213a | live mode refuses a mailer that delivers nothing | php | `MAIL_MAILER = log` | `make()` throws naming the `'log'` transport | implemented | 2026-09-24 |
+| MAIL-213b | live mode refuses a mailer that is not configured | php | `MAIL_MAILER = no-such-mailer` | `make()` throws "has no such mailer" | implemented | 2026-09-24 |
 | MAIL-214 | a greeting that does not say `aiosmtpd` is reported, naming what answered | php | banner `220 ... ESMTP Postfix` | error contains "expected server aiosmtpd" and "Postfix" | implemented | 2026-08-31 |
 | MAIL-215 | the catcher's own greeting is trusted, and no other mode ever asks | php | catcher banner under aiosmtpd; Postfix banner under live | null both times | implemented | 2026-08-31 |
 | MAIL-216 | nothing answering is an OUTAGE, not a banner problem (so the retry budget is not burned) | php | empty banner under aiosmtpd | null - the transport-failure path handles it | implemented | 2026-08-31 |
@@ -234,3 +237,18 @@ stopped writing. The cascade rides with them because the prefix arrived by a REN
 | MAIL-241 | the prefixed tables are the ones the database has | php | information_schema | one row each for the five `_`-prefixed names | implemented | 2026-09-22 |
 | MAIL-242 | the bare names are gone - nothing may still read them | php | information_schema | no `email_queue` / `email_recipients` / `email_attachments` / `sms_queue` / `sms_recipients` | implemented | 2026-09-22 |
 | MAIL-243 | deleting a queued message still cascades to its attachments (the rename kept the FK) | php | a queued message with one attachment, then `delete()` | both rows gone | implemented | 2026-09-22 |
+
+## Any Laravel mailer, and an API transport's failures (`php/Mail_Laravel_Mailer_Test.php`)
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| MAIL-250 | a transport registered with `Mail::extend()` - a package's shape - carries the queue | php | mode live, `MAIL_MAILER = fake-graph`, driver registered in the test | Laravel builds it from the mailer's own config; the row is SENT with `transport = 'fake-graph'`; the transport received the message | implemented | 2026-09-24 |
+| MAIL-251 | an inline image reaches a registered transport intact | php | the fixture email with `embed('fixture_image', ...)` | the html's `cid:` reference equals the image part's `Content-ID`, disposition inline | implemented | 2026-09-24 |
+| MAIL-252 | an HTTP 4xx is a refusal of THIS message | php | Guzzle `ClientException` 400 | PENDING, attempt counted, `next_attempt_at` set, `HTTP 400` recorded | implemented | 2026-09-24 |
+| MAIL-253 | an HTTP 5xx is an outage | php | Guzzle `ServerException` 503 | drain throws `Mail_Transport_Unavailable_Exception`; row PENDING, no attempt spent | implemented | 2026-09-24 |
+| MAIL-254 | a 429 is an outage, not a refusal | php | Guzzle `ClientException` 429 | no attempt spent | implemented | 2026-09-24 |
+| MAIL-255 | a connection failure is an outage | php | Guzzle `ConnectException` | drain throws; row PENDING, no attempt spent | implemented | 2026-09-24 |
+| MAIL-256 | a status is read through a wrapping exception | php | Symfony `TransportException` wrapping a Guzzle 422 | a refusal, `HTTP 422` recorded | implemented | 2026-09-24 |
+| MAIL-257 | an exception saying nothing about HTTP is a refusal, so it cannot stop the queue | php | `RuntimeException` | attempt counted, reason recorded | implemented | 2026-09-24 |
+| MAIL-258 | a Symfony `HttpTransportException` is read by its response status | php | an `HttpTransportException` carrying a 400 | a refusal | deferred (symfony/http-client-contracts is not installed, so no response object can be built; the same status path is covered by MAIL-252/256) | 2026-09-24 |
+| MAIL-259 | the Mail transport health row constructs an API transport and FAILs an unregistered one | php | the registered `fake-graph`, then `MAIL_MAILER` naming an unregistered driver | a registered driver is OK; an unregistered one FAILs naming `rsx.integrations.providers` | implemented | 2026-09-24 |

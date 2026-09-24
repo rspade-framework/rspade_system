@@ -566,6 +566,10 @@ NAVIGATION
     Automatic Browser Integration:
         - Clicking links to SPA routes triggers client-side navigation
         - Browser back/forward buttons handled without page reload
+        - A Back/Forward that keeps the path and query - at most the #fragment
+          changed - does NOT re-dispatch: the action stays mounted and
+          spa_hash_change fires (see SPA EVENTS). A change of path or query
+          always re-dispatches, and actions are never reused.
         - URL updates in address bar via pushState()
         - Links to external or non-SPA routes perform full page load
 
@@ -688,7 +692,9 @@ THE NAVIGATION GUARD
     which is the one console line to grep for when a dispatch appears to do
     nothing. A programmatic navigation that must not be asked about passes
     { skip_navigation_guard: true } to dispatch(); popstate never does, because
-    Back/Forward is always subject to the guard.
+    Back/Forward is always subject to the guard. The one exception is a
+    fragment-only Back/Forward, which leaves the page in place and is not a
+    navigation at all - it fires spa_hash_change and asks nobody.
 
     Worked example, complete and current:
         system/app/RSpade/resource/reference_app/app/frontend/contacts/edit/
@@ -821,6 +827,40 @@ SPA EVENTS
             - Analytics page view tracking
             - Focus management after navigation
             - Lazy-load additional resources
+
+    spa_hash_change
+        Fired when Back/Forward moves between history entries that share the
+        current path and query, so at most the #fragment differs. The action is
+        NOT re-dispatched: it stays mounted with its data and state, and the
+        application reacts to the fragment itself - close the dialog it
+        addressed, switch the tab, restore the DataGrid page.
+
+        Rsx.on('spa_hash_change', (data) => {
+            if (!data.hash.includes('modal_type=')) {
+                My_Dialogs.close_addressed_dialog();
+            }
+        });
+
+        Data payload:
+            url:  The URL now showing (path + query + fragment)
+            hash: window.location.hash - '' when the entry has none
+
+        What fires it: a popstate whose path and query match the page showing.
+        That covers Back/Forward across an entry the application pushed, an
+        in-page <a href="#section"> the user followed, and a location.hash
+        assignment. history.pushState()/replaceState() fire NOTHING - that is
+        the browser's rule - so the code that wrote a fragment already knows it
+        did. There is no "from" value for the same reason: a replaceState()
+        write is invisible, so the fragment the page last showed cannot be
+        known reliably. Keep your own record of what you opened.
+
+        An `at` anchor in the new fragment is scrolled to before the event
+        fires, so an in-page section link works without a dispatch
+        (rsx:man anchors).
+
+        So "Back closes the dialog" is: pushState() the dialog's fragment on
+        open, and close it from spa_hash_change when the fragment no longer
+        names it. It costs a DOM removal, not a page rebuild.
 
     Example: Custom navigation tracking
 

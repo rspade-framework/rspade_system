@@ -440,3 +440,21 @@ The constant set is DERIVED, never listed: the role names come from
 `User_Model::$enums['role_id'][*]['constant']` (plus the same for `Portal_User_Model` and
 `Login_User_Model`), and `PERM_` is matched as a prefix because the manifest indexes no class
 constants. A hardcoded list here would be the very mistake the test exists to catch.
+
+TEXT-TYPE-01 (TextTypeDeclaration_CodeQualityRule), via `Text_Type_Declaration_Rule_Test`. A
+`$text_types` declaration the cast cannot honour - every mode silent at runtime, so it is a
+manifest-build FATAL. Fixture models are loaded from temp files, outside the manifest, and
+handed to the `evaluate_class()` seam.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| TT-01 | a `$casts` entry on a declared column is fatal | php | fixture with `$casts = ['body' => 'string']` | violation naming the SHADOWING cast | implemented | 2026-09-24 |
+| TT-02 | a `casts()` method shadows exactly as `$casts` does | php | fixture `casts()` returning `['body' => 'string']` | the same violation | implemented | 2026-09-24 |
+| TT-03 | an entry naming a non-type class is fatal | php | `['body' => ArrayObject::class]` | 1 violation, "not a class extending Rsx_Text_Abstract" | implemented | 2026-09-24 |
+| TT-04 | a type with no JS twin is fatal | php | the PHP-only `Text_Fixture_Plain_Text` | 1 violation, "has no JavaScript twin" | implemented | 2026-09-24 |
+| TT-05 | a model declaring nothing is not examined | php | a cast on an undeclared column | 0 violations | implemented | 2026-09-24 |
+| TT-06 | `@TEXT-TYPE-01-EXCEPTION` suppresses the file | php | shadowing fixture with the marker | 0 violations | implemented | 2026-09-24 |
+
+End-to-end (during implementation): planting `protected $casts = ['description' => 'string']`
+on the reference app's `Project_Model` aborted `rsx:manifest:build` with the rule's message;
+removing it built clean. The tree carries zero violations.

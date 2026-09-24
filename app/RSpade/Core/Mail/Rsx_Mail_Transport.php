@@ -7,15 +7,21 @@
 
 namespace App\RSpade\Core\Mail;
 
+use Illuminate\Support\Arr;
+use Illuminate\Support\ConfigurationUrlParser;
 use Symfony\Component\Mailer\Transport;
 use Symfony\Component\Mailer\Transport\TransportInterface;
+use App\RSpade\Core\Models\Email_Queue_Model;
 
 /**
  * Rsx_Mail_Transport - the one place a mail transport is constructed.
  *
- * config('rsx.mail.transport') is turned into a Symfony DSN here and nowhere else, so
- * "what does this install actually send through" has one answer, readable by the queue
- * drain, by rsx:mail:test and by the health check alike.
+ * In 'live' mode the transport is the mailer Laravel's mail config names (config('mail'),
+ * MAIL_MAILER and friends), built by Laravel's MailManager - so any Laravel mailer, and any
+ * transport a composer package registers with Mail::extend(), carries the queue. In
+ * 'aiosmtpd' mode it is the fixed development catcher. Either way it is built here and
+ * nowhere else, so "what does this install actually send through" has one answer,
+ * readable by the queue drain, by rsx:mail:test and by the health check alike.
  *
  * IT ALSO OWNS THE DELIVERY MODE - the four-valued answer to "what does this install do
  * with an email". See delivery_mode(); every reader in the framework asks here, so an
@@ -34,7 +40,7 @@ class Rsx_Mail_Transport
      */
     const MODE_AIOSMTPD = 'aiosmtpd';
 
-    /** Real delivery through rsx.mail.transport.*, with the dev-site recipient gate. */
+    /** Real delivery through the mailer config('mail.default') names, with the dev-site recipient gate. */
     const MODE_LIVE = 'live';
 
     /** Built and recorded, deliberately never handed to a transport. */
@@ -54,7 +60,7 @@ class Rsx_Mail_Transport
     /**
      * The fixed transport of MODE_AIOSMTPD.
      *
-     * Fixed, not defaulted: in this mode rsx.mail.transport.* is IGNORED entirely, so a
+     * Fixed, not defaulted: in this mode Laravel's mail config is IGNORED entirely, so a
      * box whose MAIL_HOST still names last year's relay cannot mail anybody by accident.
      * Point it somewhere real by choosing MODE_LIVE, which is the switch that says so.
      */
@@ -63,6 +69,12 @@ class Rsx_Mail_Transport
 
     /** The substring the catcher's SMTP greeting must contain. */
     const AIOSMTPD_IDENT = 'aiosmtpd';
+
+    /**
+     * Laravel transports that accept a message and deliver it nowhere. 'live' refuses
+     * them, because the queue would record every row SENT - see mailer_config().
+     */
+    const NON_DELIVERING_TRANSPORTS = ['log', 'array'];
 
     /**
      * TEST-ONLY SEAM: when set, probe_banner() returns this instead of opening a socket.
@@ -176,6 +188,15 @@ class Rsx_Mail_Transport
 
     /**
      * Build the transport this install is configured to send through.
+     *
+     * 'aiosmtpd' is the fixed development catcher, whatever Laravel's mail config says.
+     * 'live' is the mailer config('mail.default') names, built by Laravel's own
+     * MailManager - so every Laravel mailer, and every transport a package registers
+     * with Mail::extend(), carries this queue unchanged. A FRESH transport per call:
+     * the drain rebuilds after a connection failure, and a mailer Laravel had cached
+     * would hand back the broken one.
+     *
+     * 'suppressed' and 'disabled' never open a transport and never call this.
      */
     public static function make(): TransportInterface
     {
@@ -183,86 +204,200 @@ class Rsx_Mail_Transport
             return static::$override_for_tests;
         }
 
-        return Transport::fromDsn(static::dsn());
+        if (static::delivery_mode() === self::MODE_AIOSMTPD) {
+            return Transport::fromDsn(static::aiosmtpd_dsn());
+        }
+
+        $config = static::mailer_config();
+
+        return app('mail.manager')->createSymfonyTransport($config);
     }
 
     /**
-     * The DSN describing the configured transport.
+     * The development catcher's DSN.
      *
-     * Kept separate from make() because it is also the thing to print when somebody
-     * asks why mail went where it went - with the password left out.
+     * auto_tls=false is explicit, not merely unmentioned: left to itself Symfony
+     * STARTTLSes whenever a server advertises it, and the catcher is plain loopback.
      */
-    public static function dsn(): string
+    public static function aiosmtpd_dsn(): string
     {
-        $config = static::_transport_config();
+        return 'smtp://' . self::AIOSMTPD_HOST . ':' . self::AIOSMTPD_PORT . '?auto_tls=false';
+    }
 
-        if ($config['driver'] === 'sendmail') {
-            return 'sendmail://default?command=' . rawurlencode($config['sendmail_path']);
+    /**
+     * The name of the mailer 'live' sends through - config('mail.default').
+     *
+     * Stored on every row it sends (email_queue.transport), so it must fit that column;
+     * a name that does not is refused HERE, before a message goes out, rather than by the
+     * database after it has.
+     */
+    public static function mailer_name(): string
+    {
+        $name = trim((string) config('mail.default', ''));
+
+        if ($name === '') {
+            throw new \RuntimeException(
+                "mail.default is empty - set MAIL_MAILER to one of the mailers in config('mail.mailers')."
+            );
         }
 
-        return static::_smtp_dsn($config, $config['password']);
+        $max = Email_Queue_Model::field_length('transport');
+
+        if ($max !== null && mb_strlen($name) > $max) {
+            throw new \RuntimeException(
+                "The mailer name '{$name}' is longer than {$max} characters, the width of the email "
+                . "queue's transport column - rename the mailer in rsx/resource/config/mail.php."
+            );
+        }
+
+        return $name;
+    }
+
+    /**
+     * The configuration array of the mailer 'live' sends through.
+     *
+     * Throws when MAIL_MAILER names no mailer, and when it names one that delivers
+     * nothing: 'log' and 'array' would record every row SENT while no message left the
+     * box, which is the one outcome worse than an error. Recording without delivering
+     * is what MAIL_DELIVERY=suppressed is for.
+     */
+    public static function mailer_config(): array
+    {
+        $name = static::mailer_name();
+        $config = static::_resolve_mailer($name);
+
+        if ($config === null) {
+            $known = implode("', '", array_keys((array) config('mail.mailers', [])));
+
+            throw new \RuntimeException(
+                "MAIL_MAILER is '{$name}', but config('mail.mailers') has no such mailer - the mailers are '{$known}'. "
+                . "Declare it in rsx/resource/config/mail.php."
+            );
+        }
+
+        $transport = (string) ($config['transport'] ?? '');
+
+        if (in_array($transport, self::NON_DELIVERING_TRANSPORTS, true)) {
+            throw new \RuntimeException(
+                "MAIL_DELIVERY is live, but mailer '{$name}' uses the '{$transport}' transport, which delivers nothing - "
+                . "every message would be recorded SENT and none would arrive. Use MAIL_DELIVERY=suppressed "
+                . "to record without sending, or point MAIL_MAILER at a mailer that delivers."
+            );
+        }
+
+        return $config;
+    }
+
+    /**
+     * A mailer's configuration exactly as Laravel's MailManager resolves it, or null when
+     * config('mail.mailers') has no such mailer: a 'url' (MAIL_URL) is parsed into the
+     * keys it supplies and names the transport, as MailManager::getConfig() does it.
+     */
+    private static function _resolve_mailer(string $name): ?array
+    {
+        $config = config('mail.mailers.' . $name);
+
+        if (!is_array($config)) {
+            return null;
+        }
+
+        if (isset($config['url'])) {
+            $config = array_merge($config, (new ConfigurationUrlParser())->parseConfiguration($config));
+            $config['transport'] = Arr::pull($config, 'driver');
+        }
+
+        return $config;
+    }
+
+    /**
+     * What goes in email_queue.transport for a row this install hands to a transport.
+     */
+    public static function transport_label(): string
+    {
+        return static::delivery_mode() === self::MODE_AIOSMTPD
+            ? self::MODE_AIOSMTPD
+            : static::mailer_name();
+    }
+
+    /**
+     * The From address every queued email is sent from - config('mail.from.address').
+     */
+    public static function from_address(): string
+    {
+        return trim((string) config('mail.from.address', ''));
+    }
+
+    /**
+     * The From display name - config('mail.from.name'), or the application name when
+     * that is empty.
+     */
+    public static function from_name(): string
+    {
+        $name = trim((string) config('mail.from.name', ''));
+
+        return $name !== '' ? $name : (string) config('rsx.name', '');
     }
 
     /**
      * A one-line description of the transport, for narration and health rows.
      *
-     * Never contains the password.
+     * Never contains a password or an API key: only the host, port, scheme and user of
+     * an SMTP mailer, the path of a sendmail one, and the transport name of anything
+     * else.
      */
     public static function describe(): string
     {
-        $config = static::_transport_config();
-
-        if ($config['driver'] === 'sendmail') {
-            return 'sendmail ' . $config['sendmail_path'];
+        if (static::delivery_mode() === self::MODE_AIOSMTPD) {
+            return 'smtp ' . self::AIOSMTPD_HOST . ':' . self::AIOSMTPD_PORT . ' (development catcher)';
         }
 
-        $description = 'smtp ' . $config['host'] . ':' . $config['port'];
+        $name = static::mailer_name();
+        $config = static::_resolve_mailer($name) ?? [];
+        $transport = (string) ($config['transport'] ?? '?');
 
-        if ($config['encryption'] !== '') {
-            $description .= ' (' . $config['encryption'] . ')';
+        if ($transport === 'smtp') {
+            $smtp = static::_smtp_endpoint($config);
+            $description = "mailer '{$name}': " . $smtp['scheme'] . ' ' . $smtp['host'] . ':' . $smtp['port'];
+
+            if (!empty($config['require_tls'])) {
+                $description .= ' (STARTTLS required)';
+            }
+
+            if ($smtp['username'] !== '') {
+                $description .= ' as ' . $smtp['username'];
+            }
+
+            return $description;
         }
 
-        if ($config['username'] !== '') {
-            $description .= ' as ' . $config['username'];
+        if ($transport === 'sendmail') {
+            return "mailer '{$name}': sendmail " . (string) ($config['path'] ?? '');
         }
 
-        return $description;
+        if ($transport === 'failover' || $transport === 'roundrobin') {
+            return "mailer '{$name}': {$transport} over '" . implode("', '", (array) ($config['mailers'] ?? [])) . "'";
+        }
+
+        return "mailer '{$name}': {$transport} transport";
     }
 
     /**
-     * The SMTP DSN.
+     * Where an SMTP mailer connects. The scheme follows Laravel: 'smtps' when declared or
+     * when the port is 465, 'smtp' when not.
      *
-     * Encryption maps onto the two knobs Symfony actually has:
-     *   ''    -> smtp:// with auto_tls=false. Explicitly OFF, not merely unmentioned:
-     *            left to itself Symfony opportunistically STARTTLSes whenever the
-     *            server advertises it, and a plain loopback catcher that does not
-     *            advertise it would work while a real host silently changed behaviour.
-     *   'tls' -> smtp:// with require_tls=true (STARTTLS on the plain port, mandatory).
-     *   'ssl' -> smtps:// (TLS from the first byte, the historical port 465 shape).
+     * @return array{scheme: string, host: string, port: int, username: string}
      */
-    private static function _smtp_dsn(array $config, string $password): string
+    private static function _smtp_endpoint(array $config): array
     {
-        $scheme = $config['encryption'] === 'ssl' ? 'smtps' : 'smtp';
+        $host = (string) ($config['host'] ?? '127.0.0.1');
+        $port = (int) ($config['port'] ?? 25);
+        $scheme = (string) ($config['scheme'] ?? '');
 
-        $credentials = '';
-        if ($config['username'] !== '') {
-            $credentials = rawurlencode($config['username']) . ':' . rawurlencode($password) . '@';
+        if ($scheme === '') {
+            $scheme = $port === 465 ? 'smtps' : 'smtp';
         }
 
-        $query = [];
-        if ($config['encryption'] === '') {
-            $query['auto_tls'] = 'false';
-        } elseif ($config['encryption'] === 'tls') {
-            $query['require_tls'] = 'true';
-        }
-
-        $dsn = $scheme . '://' . $credentials . $config['host'] . ':' . $config['port'];
-
-        if ($query !== []) {
-            $dsn .= '?' . http_build_query($query);
-        }
-
-        return $dsn;
+        return ['scheme' => $scheme, 'host' => $host, 'port' => $port, 'username' => (string) ($config['username'] ?? '')];
     }
 
     /**
@@ -298,7 +433,7 @@ class Rsx_Mail_Transport
     public static function mail_health(): array
     {
         $mode = static::delivery_mode();
-        $from_address = (string) config('rsx.mail.from_address');
+        $from_address = static::from_address();
 
         $rows = [];
 
@@ -325,10 +460,17 @@ class Rsx_Mail_Transport
                     . ', from ' . $from_address . ' (nothing leaves this host)',
             ];
         } else {
+            // An unusable mailer is the transport row's FAIL to report, with its reason.
+            try {
+                $via = static::describe();
+            } catch (\RuntimeException $e) {
+                $via = 'an unusable mailer (see Mail transport)';
+            }
+
             $rows[] = [
                 'label' => 'Mail delivery',
                 'status' => 'OK',
-                'detail' => 'live via ' . static::describe() . ' from ' . $from_address,
+                'detail' => 'live via ' . $via . ' from ' . $from_address,
             ];
         }
 
@@ -340,6 +482,13 @@ class Rsx_Mail_Transport
 
     /**
      * Can the configured transport be reached right now.
+     *
+     * What "reached" can mean depends on the transport. An SMTP host gets a read-only
+     * TCP connect; a sendmail binary gets an executable check; a composite (failover,
+     * roundrobin) is described, its members not probed. Anything else - an HTTP API
+     * transport, one a package registered - is CONSTRUCTED and nothing more: that proves
+     * the package is installed and its driver registered without sending anything, and
+     * whether the service accepts the credentials is what rsx:mail:test is for.
      */
     private static function _health_transport_row(string $mode): array
     {
@@ -351,10 +500,31 @@ class Rsx_Mail_Transport
             ];
         }
 
-        $config = static::_transport_config();
+        if ($mode === self::MODE_AIOSMTPD) {
+            return static::_health_smtp_row(self::AIOSMTPD_HOST, self::AIOSMTPD_PORT, $mode);
+        }
 
-        if ($config['driver'] === 'sendmail') {
-            $command = trim($config['sendmail_path']);
+        try {
+            $config = static::mailer_config();
+        } catch (\RuntimeException $e) {
+            return [
+                'label' => 'Mail transport',
+                'status' => 'FAIL',
+                'detail' => $e->getMessage(),
+                'remediation' => 'set MAIL_MAILER to a delivering mailer in config(\'mail.mailers\') - rsx:man email, MAIL TRANSPORTS',
+            ];
+        }
+
+        $transport = (string) ($config['transport'] ?? '');
+
+        if ($transport === 'smtp') {
+            $smtp = static::_smtp_endpoint($config);
+
+            return static::_health_smtp_row($smtp['host'], $smtp['port'], $mode);
+        }
+
+        if ($transport === 'sendmail') {
+            $command = trim((string) ($config['path'] ?? ''));
             $binary = explode(' ', $command)[0];
 
             if (!is_executable($binary)) {
@@ -362,31 +532,62 @@ class Rsx_Mail_Transport
                     'label' => 'Mail transport',
                     'status' => 'FAIL',
                     'detail' => "sendmail binary '{$binary}' is not executable - nothing can be sent",
-                    'remediation' => 'install an MTA providing ' . $binary
-                        . ', or set rsx.mail.transport.driver to smtp',
+                    'remediation' => 'install an MTA providing ' . $binary . ', or point MAIL_MAILER at another mailer',
                 ];
             }
 
             return [
                 'label' => 'Mail transport',
                 'status' => 'OK',
-                'detail' => 'sendmail ' . $command,
+                'detail' => static::describe(),
             ];
         }
 
+        if ($transport === 'failover' || $transport === 'roundrobin') {
+            return [
+                'label' => 'Mail transport',
+                'status' => 'INFO',
+                'detail' => static::describe() . ' - members not probed; rsx:mail:test proves delivery',
+            ];
+        }
+
+        try {
+            app('mail.manager')->createSymfonyTransport($config);
+        } catch (\Throwable $e) {
+            return [
+                'label' => 'Mail transport',
+                'status' => 'FAIL',
+                'detail' => static::describe() . ' cannot be constructed: ' . $e->getMessage(),
+                'remediation' => 'install the transport\'s package (php artisan rsx:composer require ...) and register '
+                    . 'its service provider in rsx.integrations.providers - rsx:man email, MAIL TRANSPORTS',
+            ];
+        }
+
+        return [
+            'label' => 'Mail transport',
+            'status' => 'OK',
+            'detail' => static::describe() . ' - constructed; rsx:mail:test proves the service accepts mail',
+        ];
+    }
+
+    /**
+     * A read-only TCP connect to an SMTP host - plus, in aiosmtpd mode, the greeting.
+     */
+    private static function _health_smtp_row(string $host, int $port, string $mode): array
+    {
         $errno = 0;
         $errstr = '';
-        $socket = @fsockopen($config['host'], $config['port'], $errno, $errstr, 2);
+        $socket = @fsockopen($host, $port, $errno, $errstr, 2);
 
         if ($socket === false) {
             $remediation = $mode === self::MODE_AIOSMTPD
                 ? 'start the development mail catcher - check supervisor [program:mail-catcher]'
-                : 'check MAIL_HOST/MAIL_PORT and that the relay accepts connections from this host';
+                : 'check MAIL_HOST/MAIL_PORT (or MAIL_URL) and that the relay accepts connections from this host';
 
             return [
                 'label' => 'Mail transport',
                 'status' => 'FAIL',
-                'detail' => 'cannot connect to ' . $config['host'] . ':' . $config['port']
+                'detail' => 'cannot connect to ' . $host . ':' . $port
                     . ' (' . trim($errstr) . ') - every send will fail',
                 'remediation' => $remediation,
             ];
@@ -415,7 +616,7 @@ class Rsx_Mail_Transport
         return [
             'label' => 'Mail transport',
             'status' => 'OK',
-            'detail' => 'accepting connections on ' . $config['host'] . ':' . $config['port']
+            'detail' => 'accepting connections on ' . $host . ':' . $port
                 . ($mode === self::MODE_AIOSMTPD ? ' (greeting confirms the catcher)' : ''),
         ];
     }
@@ -437,7 +638,7 @@ class Rsx_Mail_Transport
             return [
                 'label' => 'Mail sender domain',
                 'status' => 'FAIL',
-                'detail' => "rsx.mail.from_address is '{$from_address}' - that is not an email address",
+                'detail' => "mail.from.address is '{$from_address}' - that is not an email address",
                 'remediation' => 'set MAIL_FROM_ADDRESS to a real address at a domain you control',
             ];
         }
@@ -511,56 +712,5 @@ class Rsx_Mail_Transport
         }
 
         return false;
-    }
-
-    /**
-     * The transport block, normalized to the types the DSN builder expects.
-     */
-    private static function _transport_config(): array
-    {
-        // MODE_AIOSMTPD IS NOT A DEFAULT, IT IS AN OVERRIDE. rsx.mail.transport.* is not
-        // consulted at all: the mode names one specific listener on this box, and a
-        // half-applied MAIL_HOST from an old deployment must not be able to redirect a
-        // development install's mail at a real relay. Choosing MODE_LIVE is the one way
-        // to make that block matter.
-        if (static::delivery_mode() === self::MODE_AIOSMTPD) {
-            return [
-                'driver' => 'smtp',
-                'host' => self::AIOSMTPD_HOST,
-                'port' => self::AIOSMTPD_PORT,
-                'encryption' => '',
-                'username' => '',
-                'password' => '',
-                'sendmail_path' => '/usr/sbin/sendmail -bs -i',
-            ];
-        }
-
-        $config = config('rsx.mail.transport', []);
-
-        $driver = (string) ($config['driver'] ?? 'smtp');
-
-        if ($driver !== 'smtp' && $driver !== 'sendmail') {
-            throw new \RuntimeException(
-                "rsx.mail.transport.driver is '{$driver}' - the only drivers are 'smtp' and 'sendmail'."
-            );
-        }
-
-        $encryption = strtolower(trim((string) ($config['encryption'] ?? '')));
-
-        if ($encryption !== '' && $encryption !== 'tls' && $encryption !== 'ssl') {
-            throw new \RuntimeException(
-                "rsx.mail.transport.encryption is '{$encryption}' - the only values are '', 'tls' and 'ssl'."
-            );
-        }
-
-        return [
-            'driver' => $driver,
-            'host' => (string) ($config['host'] ?? '127.0.0.1'),
-            'port' => (int) ($config['port'] ?? 25),
-            'encryption' => $encryption,
-            'username' => (string) ($config['username'] ?? ''),
-            'password' => (string) ($config['password'] ?? ''),
-            'sendmail_path' => (string) ($config['sendmail_path'] ?? '/usr/sbin/sendmail -bs -i'),
-        ];
     }
 }

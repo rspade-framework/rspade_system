@@ -396,7 +396,8 @@ class Spa {
      * - Intercepts clicks on <a> tags for same-domain SPA routes
      * - Preserves standard browser behaviors (Ctrl+click, target="_blank", etc.)
      * - Handles back/forward navigation with scroll restoration
-     * - Hash-only changes don't create history entries
+     * - A Back/Forward that changes only the fragment fires spa_hash_change and
+     *   leaves the action mounted; any path or query change re-dispatches
      * - Defers to server for edge cases (external links, non-SPA routes, etc.)
      */
     static setup_browser_integration() {
@@ -412,6 +413,20 @@ class Spa {
 
             // Get target URL (browser has already updated location)
             const url = window.location.pathname + window.location.search + window.location.hash;
+
+            // A FRAGMENT-ONLY history move is not a navigation. Path and query are what
+            // route an action; the fragment is page state the application owns (a tab, a
+            // dialog, a DataGrid page). Re-dispatching would tear down and rebuild the
+            // action to reflect a change only the application can interpret, so the
+            // action stays mounted and the application is told instead. The navigation
+            // guard is not consulted: the user is not leaving the page.
+            if (Spa._last_committed_url !== null && Spa._is_fragment_only_move(Spa._last_committed_url, url)) {
+                console_debug('Spa', 'Fragment-only popstate, firing spa_hash_change: ' + url);
+                Spa._last_committed_url = url;
+                Spa._scroll_to_hash_anchor();
+                Rsx.trigger('spa_hash_change', { url: url, hash: window.location.hash });
+                return;
+            }
 
             // Retrieve scroll position from history state
             const scroll = e.state?.scroll || null;
@@ -514,6 +529,25 @@ class Spa {
                 console_debug('Spa', 'No SPA route match, letting server handle: ' + href);
             }
         });
+    }
+
+    /**
+     * True when a history move keeps the path and the query - the two parts that route
+     * an action - so at most the fragment changed.
+     *
+     * The fragments are deliberately not compared: an application may rewrite its own
+     * fragment with history.replaceState(), which fires nothing, so the fragment this
+     * class last saw can be stale and a comparison would misread the move.
+     *
+     * @param {string} from_url - The URL the page was showing
+     * @param {string} to_url - The URL history moved to
+     * @returns {boolean}
+     */
+    static _is_fragment_only_move(from_url, to_url) {
+        const from = Spa.parse_url(from_url);
+        const to = Spa.parse_url(to_url);
+
+        return from.path === to.path && from.search === to.search;
     }
 
 
@@ -1191,6 +1225,26 @@ class Spa {
         }
 
         Spa._scroll_action_container_to_top();
+    }
+
+    /**
+     * Act on an `at` anchor after a fragment-only history move.
+     *
+     * The action is already mounted, so the target already exists - but the browser's
+     * own fragment scroll looks for an element whose id is the whole fragment
+     * ("at=installation") and finds nothing. An in-page link to a section therefore
+     * scrolls here. Without an anchor the browser's own scroll restoration stands.
+     */
+    static _scroll_to_hash_anchor() {
+        const layout = Spa.layout;
+        if (layout && layout.$ && layout.$.attr('data-anchor-scroll') === 'manual') {
+            return;
+        }
+
+        const anchor = Rsx.url_hash_get(Rsx.HASH_ANCHOR_KEY);
+        if (anchor) {
+            Spa.scroll_to_anchor(anchor);
+        }
     }
 
     /**

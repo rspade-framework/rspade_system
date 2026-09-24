@@ -1,6 +1,6 @@
 ---
 name: email-and-sms
-description: "Sending mail and SMS in RSpade - writing an email class (Rsx_Email_Abstract in rsx/emails/ with const CATEGORY, subject(), data(), sample()), the fluent to/cc/reply_to/attach/embed/dedupe_key envelope, the queue statuses and the drain's failure policy, the four delivery modes (aiosmtpd | live | suppressed | disabled) and the live-only dev-site recipient gate, the development SMTP catcher and its aiosmtpd greeting, rsx:mail:test / rsx:mail:queue / rsx:mail:show / rsx:mail:resend, /_mail/unsubscribe, and the Rsx_Sms mirror. Use when a feature must notify somebody by email or text, when writing or styling an email template, when a queued message did not arrive, when inspecting or resending the mail queue, or when hitting EMAIL-TEMPLATE-01, Mail_Transport_Unavailable_Exception, STATUS_SUPPRESSED, \"expected server aiosmtpd\", \"Timed out - email was queued too far in the past\", or \"dev site: no whitelist match and no catchall\"."
+description: "Sending mail and SMS in RSpade - writing an email class (Rsx_Email_Abstract in rsx/emails/ with const CATEGORY, subject(), data(), sample()), the fluent to/cc/reply_to/attach/embed/dedupe_key envelope, the queue statuses and the drain's failure policy, the four delivery modes (aiosmtpd | live | suppressed | disabled) and the live-only dev-site recipient gate, the development SMTP catcher and its aiosmtpd greeting, sending through any Laravel mailer (MAIL_MAILER, config/mail.php) including a composer transport package such as Microsoft Graph, rsx:mail:test / rsx:mail:queue / rsx:mail:show / rsx:mail:resend, /_mail/unsubscribe, and the Rsx_Sms mirror. Use when a feature must notify somebody by email or text, when writing or styling an email template, when a queued message did not arrive, when inspecting or resending the mail queue, when configuring SMTP or adding a mail transport package, or when hitting EMAIL-TEMPLATE-01, Mail_Transport_Unavailable_Exception, STATUS_SUPPRESSED, \"expected server aiosmtpd\", \"Timed out - email was queued too far in the past\", or \"dev site: no whitelist match and no catchall\"."
 ---
 
 # Email and SMS
@@ -120,8 +120,8 @@ A root-relative `<img src="/img/logo.png">` is embedded as a `cid:` part automat
 
 `Mail_Queue_Service::send_pending_queue` is `#[Exclusive] #[Schedule('every minute')]`. It reclaims anything stranded in SENDING, then claims rows one at a time.
 
-- **SMTP answered with an error for THIS message** -> `attempt_count++`, `next_attempt_at` +`rsx.mail.retry.delay_minutes`, FAILED at `rsx.mail.retry.attempts` with the server's reply in `last_error`.
-- **The transport could not be reached** -> the row goes back to PENDING with its attempt NOT counted, one reconnect + retry of the same message, then `Mail_Transport_Unavailable_Exception` ends the drain. Rows stay PENDING; the minute sweeper retries forever. An outage is to be seen, not to burn retries on.
+- **The mail host refused THIS message** (an SMTP error reply, or an API transport's HTTP 4xx other than 408/429 read anywhere in the exception chain, or any exception that says neither) -> `attempt_count++`, `next_attempt_at` +`rsx.mail.retry.delay_minutes`, FAILED at `rsx.mail.retry.attempts` with the server's reply in `last_error`.
+- **The transport could not be reached** (a connection failure, 408/429/5xx, a Symfony transport exception) -> the row goes back to PENDING with its attempt NOT counted, one reconnect + retry of the same message, then `Mail_Transport_Unavailable_Exception` ends the drain. Rows stay PENDING; the minute sweeper retries forever. An outage is to be seen, not to burn retries on.
 - **A build/render error** -> FAILED immediately. No retry fixes a code bug.
 
 Retention: whole rows (attachments cascade) deleted after `rsx.mail.retention_days` (30) by the daily cleanup.
@@ -136,10 +136,12 @@ Retention: whole rows (attachments cascade) deleted after `rsx.mail.retention_da
 
 | Mode | What happens |
 |---|---|
-| `aiosmtpd` | **The shipped default.** Captured by the development catcher on `127.0.0.1:1025`. The whole `rsx.mail.transport.*` block is **ignored**, so a stale `MAIL_HOST` cannot mail anybody by accident. |
-| `live` | Real delivery through `rsx.mail.transport.*` — **the only mode that reads it, and the only one the dev-site gate applies to**. |
+| `aiosmtpd` | **The shipped default.** Captured by the development catcher on `127.0.0.1:1025`. Laravel's mail config is **ignored**, so a stale `MAIL_HOST` cannot mail anybody by accident. |
+| `live` | Real delivery through **the Laravel mailer `MAIL_MAILER` names** — **the only mode that reads Laravel's mail config, and the only one the dev-site gate applies to**. `log`/`array` are refused (every row would read Sent). |
 | `suppressed` | Rendered and recorded, handed to nobody. Rows end **Suppressed**. |
 | `disabled` | **The queue is frozen.** `send()` still queues; the drain logs one line and returns. Rows stay Pending, untouched, and are never set aside as stale. |
+
+**The transport is Laravel's.** `system/config/mail.php` is Laravel's own shape with Laravel's `.env` keys (`MAIL_MAILER`, `MAIL_SCHEME`, `MAIL_URL`, `MAIL_HOST`, `MAIL_PORT`, `MAIL_USERNAME`, `MAIL_PASSWORD`, `MAIL_FROM_ADDRESS`, `MAIL_FROM_NAME`); `Rsx_Mail_Transport::make()` builds the named mailer through `MailManager::createSymfonyTransport()` and hands it the MIME the queue built, so inline images and attachments never depend on the transport. **Add a mailer** (a Microsoft Graph package, say): `rsx:composer require` it, register its service provider in `rsx.integrations.providers` (auto-discovery reads only `system/vendor`), declare its `mailers` entry in `rsx/resource/config/mail.php` (every `rsx/resource/config/<name>.php` deep-merges over `config('<name>')`), set `MAIL_MAILER`. `rsx:health` constructs it; `rsx:mail:test` proves it. Never call Laravel's `Mail` facade or write a Mailable - only the transport is borrowed. `rsx:man email`, MAIL TRANSPORTS.
 
 The **dev-site layer** is separate, keyed on the hostname containing `.dev.`, and applies **in `live` mode only**: address whitelist -> domain whitelist -> catchall (`dev_original_to` records the real address) -> otherwise the row is written **Suppressed at enqueue** with `"dev site: no whitelist match and no catchall"`. No other mode can reach a real person, so gating there would just hide a developer's own mail.
 
@@ -197,6 +199,8 @@ Every non-transactional message carries a signed footer link and `List-Unsubscri
 | Row is **Blocked** | The recipient opted out of that category. Transactional never blocks — check the categorisation. |
 | Row is **Failed** | `last_error` carries the SMTP reply or the build error. A build error is a code bug; no retry helps. |
 | Rows stay **Pending** with attempts unspent | The transport is unreachable — the drain threw. Fix the host and the next sweep sends them. |
+| Drain throws `MAIL_DELIVERY is live, but mailer '...' uses the 'log' transport` / `has no such mailer` | `MAIL_MAILER` names a mailer that delivers nothing or does not exist. Point it at a real mailer, or use `MAIL_DELIVERY=suppressed` to record without sending. |
+| `Unsupported mail transport [x]` on the Mail transport row | A package's driver is not registered: add its service provider to `rsx.integrations.providers`. |
 | Pending with `next_attempt_at` in the future | A server error is serving its retry delay, or `send_at()` held it. |
 | Mail arrives, links are dead | A template built a URL without `rsx_absolute_url()`, or `APP_URL` is wrong on the sending host. |
 | Styles missing | One stylesheet wins: `rsx/emails/email.scss` if present, else the framework default. There is no merge. |

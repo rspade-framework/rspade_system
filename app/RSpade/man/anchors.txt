@@ -249,6 +249,14 @@ EXAMPLES
                 on_load
             </a>
 
+    Linking to a section of the page already showing
+
+        The same link works in-page. Following it changes only the fragment, so
+        the action is NOT re-dispatched (rsx:man spa, spa_hash_change): the
+        framework scrolls the mounted page to the anchor instead, with the
+        same target resolution, focus and data-anchor-scroll="manual" opt-out.
+        Back and Forward across such entries behave the same way.
+
     Scrolling after the user picks a search result
 
         async on_result_click(result) {

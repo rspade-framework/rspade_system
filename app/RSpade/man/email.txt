@@ -56,10 +56,12 @@ DESCRIPTION
     drain runs within seconds; the once-a-minute schedule is only a sweeper for rows a
     retry delay or a send_at() held back.
 
-    Delivery is real SMTP (or sendmail), built in one place from config('rsx.mail.delivery')
-    and, in 'live' mode only, config('rsx.mail.transport'). A fresh install is in
-    'aiosmtpd' mode - captured by the development catcher on this box - so nothing leaves
-    the box until an operator says MAIL_DELIVERY=live and where mail goes.
+    WHETHER a message is handed over is RSpade's: config('rsx.mail.delivery'). HOW it is
+    handed over is Laravel's: in 'live' mode the queue sends the message it built through
+    the mailer Laravel's mail config names (MAIL_MAILER) - SMTP, sendmail, any Laravel API
+    mailer, or a transport a composer package registers (see MAIL TRANSPORTS). A fresh
+    install is in 'aiosmtpd' mode - captured by the development catcher on this box - so
+    nothing leaves the box until an operator says MAIL_DELIVERY=live and where mail goes.
 
 WRITING AN EMAIL
 
@@ -395,8 +397,8 @@ THE DRAIN AND THE FAILURE POLICY
     quietly destroys mail:
 
         THE SERVER ANSWERED WITH AN ERROR FOR THIS MESSAGE (UnexpectedResponseException -
-        any reply code the SMTP command did not expect, 4xx and 5xx alike). The connection
-        is fine; this MESSAGE is the problem. attempt_count++, next_attempt_at pushed out by
+        any reply code the SMTP command did not expect, 4xx and 5xx alike - or an API
+        transport's refusal, below). The connection is fine; this MESSAGE is the problem. attempt_count++, next_attempt_at pushed out by
         rsx.mail.retry.delay_minutes, and FAILED at rsx.mail.retry.attempts with the
         server's own words in last_error.
 
@@ -410,6 +412,22 @@ THE DRAIN AND THE FAILURE POLICY
 
         A BUILD OR RENDER ERROR is neither: it is a code bug no retry can fix, and the row
         is FAILED immediately with the message.
+
+    AN API TRANSPORT'S FAILURE IS READ FOR WHAT IT SAYS. An HTTP transport - one a package
+    registered, typically - fails with its HTTP client's exceptions, not SMTP's, so the
+    drain reads the whole exception chain (Symfony HttpClient, Guzzle, Laravel's Http
+    client):
+
+        an HTTP 4xx other than 408/429    a refusal of THIS message (a bad recipient, a
+                                          rejected attachment) - the retry clock
+        408, 429, 5xx                     the service is unavailable - the outage path
+        no response (DNS, refused, TLS)   the outage path
+        a Symfony transport exception     the outage path, exactly as for SMTP
+          saying neither
+        anything else                     a refusal: it cannot be told apart, so the
+                                          retry clock bounds it and the row ends FAILED
+                                          with the reason recorded. Read as an outage, one
+                                          poisoned message would stop the queue forever.
 
     The task returns ['sent', 'server_errors', 'failed', 'suppressed', 'reclaimed',
     'stale'].
@@ -469,15 +487,17 @@ DELIVERY MODES AND THE DEV-SITE LAYER
     so a typo is never silently read as "not live"):
 
         aiosmtpd     THE SHIPPED DEFAULT. Captured by the development catcher on this box:
-                     SMTP to 127.0.0.1:1025, no encryption, no auth. THE ENTIRE
-                     rsx.mail.transport BLOCK IS IGNORED in this mode - driver, host, port,
-                     encryption, username and password are not read at all - so a box whose
-                     MAIL_HOST still names last year's relay cannot mail anybody by
-                     accident. The catcher must ADVERTISE ITSELF (see THE DEVELOPMENT
+                     SMTP to 127.0.0.1:1025, no encryption, no auth. LARAVEL'S MAIL CONFIG
+                     IS IGNORED in this mode - MAIL_MAILER, MAIL_HOST and the rest are not
+                     read at all - so a box whose MAIL_HOST still names last year's relay
+                     cannot mail anybody by accident. The catcher must ADVERTISE ITSELF (see THE DEVELOPMENT
                      CATCHER). Nothing leaves the box.
-        live         each row is handed to the transport built from rsx.mail.transport.
-                     This is the ONLY mode that reads that block, and the ONLY mode the
-                     dev-site recipient layer below applies to.
+        live         each row is handed to the mailer MAIL_MAILER names (MAIL
+                     TRANSPORTS). This is the ONLY mode that reads Laravel's mail config,
+                     and the ONLY mode the dev-site recipient layer below applies to. A
+                     mailer that delivers nothing ('log', 'array') is REFUSED - the drain
+                     throws before claiming a row - because every row would be recorded
+                     Sent; recording without sending is 'suppressed'.
         suppressed   each row is rendered, recorded, and marked Suppressed. Nothing is
                      opened, nothing leaves.
         disabled     THE QUEUE IS FROZEN. send() still queues and still kicks the drain
@@ -577,24 +597,91 @@ UNSUBSCRIBE
     Mint one by hand with Rsx_Mail::unsubscribe_url($email, $category, $site_id); verify one
     with Rsx_Mail::verify_unsubscribe_signature($email, $category, $site_id, $sig).
 
+MAIL TRANSPORTS
+
+    'live' sends through LARAVEL'S MAIL CONFIGURATION, in Laravel's shape and with
+    Laravel's .env keys. The framework ships it as system/config/mail.php; an application
+    adds or changes a mailer in rsx/resource/config/mail.php, which is deep-merged over it
+    (any rsx/resource/config/<name>.php merges over config('<name>') the same way).
+
+        Env                  Default                  Meaning
+        -------------------  -----------------------  ---------------------------------------
+        MAIL_MAILER          smtp                     the mailer in config('mail.mailers')
+        MAIL_SCHEME          (none)                   smtp | smtps; port 465 implies smtps
+        MAIL_URL             (none)                   a DSN supplying the SMTP settings at once
+        MAIL_HOST            127.0.0.1
+        MAIL_PORT            1025
+        MAIL_USERNAME        (none)
+        MAIL_PASSWORD        (none)
+        MAIL_EHLO_DOMAIN     the APP_URL host
+        MAIL_SENDMAIL_PATH   /usr/sbin/sendmail -bs -i
+        MAIL_FROM_ADDRESS    noreply@example.com      every queued email's From
+        MAIL_FROM_NAME       '' (= rsx.name)
+
+    SMTP TLS: 'smtps' is TLS from the first byte; otherwise STARTTLS is negotiated
+    whenever the server offers it. To REFUSE a server that does not offer it, set
+    'require_tls' => true on the mailer in rsx/resource/config/mail.php.
+
+    The transport is built by Laravel's MailManager (createSymfonyTransport), fresh for
+    each drain and after each reconnect, and receives the MIME message the queue BUILT -
+    rendered bodies, inlined CSS, cid: inline images, attachments, List-Unsubscribe and
+    the Message-ID. Nothing about the message depends on the transport; a transport that
+    speaks raw MIME (SMTP, sendmail, SES) carries it byte for byte, and an API transport
+    that maps it into its own JSON must carry each inline part's Content-ID itself -
+    check that before adopting one.
+
+    Laravel's own Mail facade, Mailables and queued mail are NOT part of this system;
+    only the transport is borrowed.
+
+    ADDING A TRANSPORT (a Microsoft Graph one, say). A transport package registers a
+    driver with Mail::extend() in its service provider. Three steps:
+
+        1. Install it at the application layer:
+
+               php artisan rsx:composer require <vendor>/<package>
+
+        2. Register its service provider, since Laravel's package auto-discovery reads
+           only the framework's vendor tree - in rsx/resource/config/rsx.php:
+
+               'integrations' => [
+                   'providers' => [
+                       \Vendor\Package\PackageServiceProvider::class,
+                   ],
+               ],
+
+        3. Declare the mailer the package documents, in rsx/resource/config/mail.php, and
+           point MAIL_MAILER at it:
+
+               return [
+                   'mailers' => [
+                       'microsoft-graph' => [
+                           'transport' => 'microsoft-graph',
+                           'tenant_id' => env('MICROSOFT_GRAPH_TENANT_ID'),
+                           'client_id' => env('MICROSOFT_GRAPH_CLIENT_ID'),
+                           'client_secret' => env('MICROSOFT_GRAPH_CLIENT_SECRET'),
+                       ],
+                   ],
+               ];
+
+           Credentials a package reads from config('services.*') go in
+           rsx/resource/config/services.php. Every new .env key goes in .env.dist.
+
+    Then rsx:health's Mail transport row CONSTRUCTS the transport (proving the package is
+    installed and the driver registered) and php artisan rsx:mail:test <address> proves
+    the service accepts mail. A mailer name is stored on every row it sends
+    (_email_queue.transport), so it must fit that column; a longer one is refused before
+    anything is sent.
+
 CONFIGURATION
 
-    config('rsx.mail.*') in system/config/rsx.php; an app overrides branding (and nothing
-    else, normally) in rsx/resource/config/rsx.php.
+    config('rsx.mail.*') in system/config/rsx.php - whether and to whom mail is sent; the
+    transport is MAIL TRANSPORTS above. An app overrides branding (and nothing else,
+    normally) in rsx/resource/config/rsx.php.
 
         Key                             Env                              Default
         ------------------------------  -------------------------------  ------------------
         delivery                        MAIL_DELIVERY                    aiosmtpd
                                         (aiosmtpd | live | suppressed | disabled)
-        transport.driver                MAIL_TRANSPORT                   smtp
-        transport.host                  MAIL_HOST                        127.0.0.1
-        transport.port                  MAIL_PORT                        1025
-        transport.encryption            MAIL_ENCRYPTION                  '' ('' | tls | ssl)
-        transport.username              MAIL_USERNAME                    ''
-        transport.password              MAIL_PASSWORD                    ''
-        transport.sendmail_path         -                                /usr/sbin/sendmail -bs -i
-        from_address                    MAIL_FROM_ADDRESS                noreply@example.com
-        from_name                       MAIL_FROM_NAME                   '' (= rsx.name)
         retry.attempts                  -                                3
         retry.delay_minutes             -                                3
         retention_days                  -                                30
@@ -608,21 +695,14 @@ CONFIGURATION
         catcher_maildir                 -                                tmp/mail-catcher
         dkim_selector                   -                                null
 
-    encryption maps onto the two knobs that exist: '' is explicitly OFF (auto_tls=false, so
-    a transport does not silently start negotiating STARTTLS the day a server advertises
-    it), 'tls' requires STARTTLS on the plain port, 'ssl' is TLS from the first byte (the
-    historical port 465 shape).
+    LARAVEL'S MAIL CONFIG IS READ IN 'live' MODE ONLY. In 'aiosmtpd' the transport is
+    127.0.0.1:1025 with no encryption and no auth, by definition; 'suppressed' and
+    'disabled' never open a transport at all.
 
-    THE WHOLE transport.* BLOCK IS READ IN 'live' MODE ONLY. In 'aiosmtpd' it is ignored
-    and the transport is 127.0.0.1:1025 with no encryption and no auth, by definition;
-    'suppressed' and 'disabled' never open a transport at all.
-
-    The whitelists are comma-separated. retry is the SMTP SERVER-ERROR policy only.
-    stale_after_days is queue hygiene, not a timeout - see THE STALE-MESSAGE WINDOW.
-    dkim_selector, when set, is the only reason rsx:health looks up a DKIM record.
-
-    There is no config/mail.php and no MAIL_MAILER: Rsx_Mail_Transport is the one place a
-    transport is constructed, and Laravel's Mail facade is not part of this system.
+    The whitelists are comma-separated. retry is the SERVER-ERROR policy only (an SMTP
+    reply, or an API transport's refusal). stale_after_days is queue hygiene, not a
+    timeout - see THE STALE-MESSAGE WINDOW. dkim_selector, when set, is the only reason
+    rsx:health looks up a DKIM record.
 
 OPERATIONS
 
@@ -679,13 +759,15 @@ OPERATIONS
     rsx:health - three Mail rows
         Mail delivery        which of the four modes this install is in. INFO, never FAIL,
                              for suppressed and disabled: those are settings somebody chose.
-        Mail transport       a read-only TCP connect to the transport's host:port (or the
-                             sendmail binary's executability), plus - in aiosmtpd mode - the
-                             greeting check. FAIL when it cannot be reached, and FAIL
-                             "server did not advertise aiosmtpd" when something else has the
-                             port; both remediations name [program:mail-catcher] in aiosmtpd
-                             mode. Not probed at all when delivery is suppressed
-                             or disabled.
+        Mail transport       SMTP: a read-only TCP connect to host:port, plus - in aiosmtpd
+                             mode - the greeting check (FAIL "server did not advertise
+                             aiosmtpd" when something else has the port). sendmail: the
+                             binary's executability. failover/roundrobin: INFO, members not
+                             probed. Any other transport is CONSTRUCTED, sending nothing -
+                             FAIL when its package is missing or its driver unregistered.
+                             FAIL when MAIL_MAILER names no mailer or one that delivers
+                             nothing. Not probed at all when delivery is suppressed or
+                             disabled.
         Mail sender domain   whether the From domain publishes SPF, DMARC, and DKIM when a
                              selector is configured. WARN, never FAIL - missing records mean
                              spam folders, and the fix is at a registrar. INFO for an

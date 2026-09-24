@@ -32,9 +32,11 @@ DESCRIPTION
     cost of misremembering is not a crash: it is markup rendered as literal
     text, or user input rendered unescaped, and nothing reports either.
 
-    A declared column is read as a VALUE OBJECT. The object carries its own
-    encoding, so the knowledge lives in one place and every sink asks the
-    value instead of remembering.
+    PHP cannot notate a variable as markup rather than a string. A declared
+    column supplies the type the language lacks: it is read as a VALUE
+    OBJECT that carries its own encoding, so the knowledge lives in one
+    place and every sink asks the value instead of remembering. Every rule
+    below follows from that.
 
     A column with NO declaration is unchanged: an ordinary string, no object,
     no filtering. Declaration is OPT-IN.
@@ -126,13 +128,24 @@ DECLARING A COLUMN
         $project->description->to_text()  readable text, IF the type offers it
         $project->description->to_html()  a document rendition, IF it offers it
 
+    A DECLARATION THE CAST CANNOT HONOUR FAILS THE BUILD (TEXT-TYPE-01):
+    an entry naming no Rsx_Text_Abstract class, a type with no JavaScript
+    twin, or a $casts / casts() entry on a declared column - the text cast is
+    attached only where no cast exists, so that entry would SHADOW it and
+    store request markup unfiltered. @TEXT-TYPE-01-EXCEPTION in the file
+    suppresses it.
+
+    WHEN TO DECLARE: any TEXT column whose content is not plain prose -
+    anything a sink must escape, render or interpret differently from the
+    characters it holds. A column of prose stays undeclared.
+
     The concrete types are APPLICATION code. The framework ships the abstract
     and no types; which exist and what each permits is yours to decide. The
     reference app ships Raw_Text and Rich_Text at
     resource/reference_app/lib/text_types/.
 
 WRITING A TYPE
-    PHP. One required method; the rest are conventions with throwing
+    PHP. Two required methods; the rest are conventions with throwing
     defaults, adopted only when the type needs the capability:
 
         class My_Text extends Rsx_Text_Abstract
@@ -348,8 +361,42 @@ ASSIGNING A VALUE
         (Ajax or /api/vN)             API caller: filter_set(), then stored.
       a bare string                   PLAIN TEXT: escape_string(), then
                                       filter_set(), then stored.
+      an int, float or bool           stringified, then PLAIN TEXT as above.
+                                      42 stores as '<p>42</p>' on Rich_Text;
+                                      false stringifies to '' and is_empty().
       null                            null.
-      anything else                   throws.
+      an array or any other object    throws.
+
+    ONLY THE FIRST TWO ROWS ARE ENFORCED. A wrong type throws; a malformed
+    envelope throws. A bare string CANNOT be checked: every string is legal
+    plain text, so markup assigned as a bare string is stored as visible
+    tags - '<p>&lt;strong&gt;...' - with no error, no log line, and no
+    failing round-trip test. It is the one choice in this subsystem nothing
+    checks for you, and misremembering it does not crash, exactly like the
+    read-side failure this feature exists to end.
+
+    THE QUESTION THAT DECIDES IT is about what is in your hand:
+
+      Did you BUILD this string, and does it contain tags? Then it is
+      markup, and the assignment owes Type::from_untrusted($html).
+
+      Did it ARRIVE as prose - a spreadsheet cell, a typed sentence, an API
+      scalar? Assign it bare; the column escapes and wraps it. Do NOT
+      hand-wrap prose in '<p>' first: the column does that, and your
+      wrapper becomes visible tags.
+
+    A FUNCTION THAT COMPOSES CONTENT FOR A DECLARED COLUMN RETURNS THE TYPE,
+    NEVER A STRING:
+
+        private static function task_created_body(User_Model $actor): Rich_Text
+        {
+            return Rich_Text::from_untrusted('<p><strong>' . e($actor->get_printed_name()) . '</strong> created a task.</p>');
+        }
+
+    The from_untrusted() call then lives once, where the markup is built and
+    its author knows what it is, and every signature it passes through
+    carries the fact. A composer typed `string` loses it at the first hop,
+    and some assignment far away has to remember it.
 
     A BARE STRING IS PLAIN TEXT. A string carries no encoding, and the only
     encoding it can honestly be taken to have is none - so an import, a
@@ -368,8 +415,15 @@ ASSIGNING A VALUE
     which runs filter_set() (and only filter_set()) exactly as a submitted
     envelope does. Rich_Text::from_string($plain) is the same conversion
     assignment performs, for code that wants the typed value without a
-    column. Neither can skip the filter: from_storage() is the only
-    unfiltered door, and it is the database's.
+    column. Neither can skip the filter.
+
+    from_storage() IS THE FOURTH DOOR: TRUSTED AND UNFILTERED. The cast
+    reads the column through it, and it is public because code holding
+    content that came OUT of the column may need it. Whatever it is handed
+    is stored and rendered byte for byte, so anything that did not come out
+    of the column - a request, an import, an API caller - never goes
+    through it: that is a stored-XSS path. from_untrusted() is the door for
+    everything else.
 
     So a generic importer needs no list of which columns are special:
 
@@ -377,8 +431,11 @@ ASSIGNING A VALUE
 
     and a column-aware one that holds HTML asks the model:
 
-        $type = Project_Model::text_type_for($column);   // null: undeclared
+        $type = Project_Model::text_type_or_null($column);   // null: undeclared
         $record->$column = $type ? $type::from_untrusted($html) : $html;
+
+    text_type_for() is the cast's own lookup and THROWS for an undeclared
+    column; text_type_or_null() is the one that answers null.
 
 THE EXTERNAL API
     Reads: a declared column leaves /api/vN as its envelope, like every
@@ -468,6 +525,10 @@ CHANGING A COLUMN'S TYPE
     does not have.
 
 GOTCHAS
+    MARKUP IN A BARE STRING IS STORED AS VISIBLE TAGS, SILENTLY. See
+    ASSIGNING A VALUE: a composer returns the type, and prose is assigned
+    bare, never pre-wrapped.
+
     USE is_empty(). NEVER === '' OR empty(). A value object is never
     identical to a string, and PHP's empty() is always false on an object.
     Both are silently wrong: an empty body reads as non-empty. This is the

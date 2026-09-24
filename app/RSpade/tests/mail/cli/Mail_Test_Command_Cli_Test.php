@@ -61,7 +61,7 @@ class Mail_Test_Command_Cli_Test extends Rsx_Test_Abstract
         $previous = config('rsx.mail.delivery');
 
         // THE MODE IS THE PINNING. In 'aiosmtpd' the transport is 127.0.0.1:1025 with no
-        // encryption and no auth by definition - rsx.mail.transport.* is not consulted -
+        // encryption and no auth by definition - Laravel's mail config is not consulted -
         // so naming the mode says everything the old six-key block said, and says it the
         // way an install says it. A test that pinned the host under 'live' would also be
         // arming the .dev.-hostname recipient gate, which is not this class's subject.
@@ -236,8 +236,7 @@ class Mail_Test_Command_Cli_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * __run() pins delivery to live; this pins it back after, so the suppressed case gets
-     * the same transport setup with the one setting that is under test changed.
+     * rsx:mail:test with delivery pinned to 'suppressed' - the one setting under test.
      *
      * @return array{0: int, 1: string}
      */
@@ -247,28 +246,17 @@ class Mail_Test_Command_Cli_Test extends Rsx_Test_Abstract
 
         Rsx_Mail_Transport::$override_for_tests = null;
 
-        $previous = [
-            config('rsx.mail.delivery'),
-            config('rsx.mail.transport.host'),
-            config('rsx.mail.transport.port'),
-        ];
+        // Suppressed never opens a transport, so no mailer setting is part of this case.
+        $previous = config('rsx.mail.delivery');
 
-        config([
-            'rsx.mail.delivery' => 'suppressed',
-            'rsx.mail.transport.host' => self::CATCHER_HOST,
-            'rsx.mail.transport.port' => self::CATCHER_PORT,
-        ]);
+        config(['rsx.mail.delivery' => 'suppressed']);
 
         try {
             $exit_code = Artisan::call('rsx:mail:test', ['address' => $address, '--json' => true]);
 
             return [$exit_code, Artisan::output()];
         } finally {
-            config([
-                'rsx.mail.delivery' => $previous[0],
-                'rsx.mail.transport.host' => $previous[1],
-                'rsx.mail.transport.port' => $previous[2],
-            ]);
+            config(['rsx.mail.delivery' => $previous]);
         }
     }
 }

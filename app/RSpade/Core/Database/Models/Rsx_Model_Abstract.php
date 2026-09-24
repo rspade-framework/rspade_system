@@ -845,8 +845,8 @@ abstract class Rsx_Model_Abstract extends Model
 
         // Apply text-value casts for columns with a declared type. Opt-in and last, so a
         // declaration never fights a schema-derived cast: a column is a date or a text
-        // type, never both, and a nonsensical pairing is caught by the declaration check
-        // in text_type_for() rather than by silent precedence here.
+        // type, never both. An explicit $casts entry on a declared column would win here
+        // and shadow the text cast, which is why TEXT-TYPE-01 refuses one at build time.
         foreach (array_keys((array) static::$text_types) as $column) {
             if (!isset($casts[$column])) {
                 $casts[$column] = \App\RSpade\Core\Database\TextTypes\Rsx_Text_Cast::class;

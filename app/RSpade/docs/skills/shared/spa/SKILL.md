@@ -1,6 +1,6 @@
 ---
 name: spa
-description: "Building SPA modules in RSX - the #[SPA] bootstrap controller, @route/@layout/@spa/@auth/@title action decorators, Spa_Layout and on_action(), sublayouts, Spa.dispatch/Spa.redirect navigation, route and query parameters, and the module/feature/submodule file organization. Use when adding a screen to an authenticated area, creating a new SPA module or layout, wiring client-side navigation or redirects, reading route params in an action, deciding SPA vs Blade, or debugging a 404 on an SPA route."
+description: "Building SPA modules in RSX - the #[SPA] bootstrap controller, @route/@layout/@spa/@auth/@title action decorators, Spa_Layout and on_action(), sublayouts, Spa.dispatch/Spa.redirect navigation, the spa_hash_change event for a Back/Forward over a #fragment, route and query parameters, and the module/feature/submodule file organization. Use when adding a screen to an authenticated area, creating a new SPA module or layout, wiring client-side navigation or redirects, making Back close a URL-addressed dialog or tab, reading route params in an action, deciding SPA vs Blade, or debugging a 404 on an SPA route."
 ---
 
 # SPA Routing
@@ -88,6 +88,8 @@ Spa.action()                     // current action instance
 ```
 
 `Spa.dispatch()` routes client-side when the path belongs to the current SPA, and falls back to a full page load when it does not. **`Spa.redirect()` is the one to use for a programmatic redirect inside `on_load()`** - replacing the history entry means the browser Back button does not bounce the user straight back into the redirecting action.
+
+**Back/Forward over a `#fragment` does not re-dispatch.** A history move that keeps the path and query leaves the action mounted and fires `Rsx.on('spa_hash_change', ({url, hash}) => ...)` instead - so fragment-addressed UI (a dialog, a tab) can `history.pushState()` its fragment on open and close itself there, at the cost of a DOM change rather than a page rebuild. A path or query change always re-dispatches; `pushState`/`replaceState` fire nothing (browser rule), and the navigation guard is not consulted for a fragment move. `rsx:man spa`, SPA EVENTS.
 
 **Link interception**: the SPA only intercepts clicks on links whose href matches a known SPA route. Links to server-side controllers, unknown paths, or external URLs pass through as normal full-page navigations. **No special attributes are needed to bypass SPA routing** - do not invent a `data-no-spa`.
 

@@ -943,12 +943,14 @@ ENTRY 9: OUTBOUND EMAIL (the transport, the sender domain, and the dev safety ne
                php artisan rsx:health          # the three Mail rows
 
            This one value moves THREE things at once: whether mail is handed to a
-           transport at all, whether the rsx.mail.transport.* block is even read
-           (only 'live' reads it), and whether the dev-site recipient gate engages
-           (only 'live' engages it).
+           transport at all, whether Laravel's mail config (MAIL_MAILER and the
+           rest) is even read (only 'live' reads it), and whether the dev-site
+           recipient gate engages (only 'live' engages it).
 
-        2. MAIL_HOST/MAIL_PORT name the relay or MTA that actually sends for you,
-           with MAIL_ENCRYPTION and credentials to match. They are INERT until
+        2. MAIL_MAILER names the mailer that actually sends for you - for SMTP,
+           MAIL_HOST/MAIL_PORT name the relay, with MAIL_SCHEME and credentials to
+           match; for an API transport, its package is installed and its
+           credentials set (rsx:man email, MAIL TRANSPORTS). They are INERT until
            MAIL_DELIVERY=live, so a box that looks configured may not be.
 
         3. A real MAIL_FROM_ADDRESS on a domain you control, and MAIL_FROM_NAME set
@@ -1000,8 +1002,8 @@ ENTRY 9: OUTBOUND EMAIL (the transport, the sender domain, and the dev safety ne
 
     Triage rules (one correct fix per finding)
         MAIL_DELIVERY is not 'live' on a launch host
-            Set MAIL_DELIVERY=live, point MAIL_HOST/MAIL_PORT at the real relay, set
-            MAIL_ENCRYPTION and credentials, and re-run rsx:mail:test to a real
+            Set MAIL_DELIVERY=live, point MAIL_MAILER at the real mailer (for SMTP:
+            MAIL_HOST/MAIL_PORT, MAIL_SCHEME and credentials), and re-run rsx:mail:test to a real
             mailbox. Do not "test in production" by sending to a colleague from a box
             still in aiosmtpd mode: it proves nothing, because nothing left. Verify
             the "Mail delivery" health row says live via the relay you configured.

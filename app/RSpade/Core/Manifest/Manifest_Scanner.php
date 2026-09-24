@@ -613,10 +613,11 @@ class Manifest_Scanner
                     $param_data['nullable'] = $type->allowsNull();
                 }
 
-                // Get default value if available
-                if ($param->isDefaultValueAvailable()) {
-                    $param_data['default'] = $param->getDefaultValue();
-                }
+                // A default is recorded as present (`optional`) and never EVALUATED: a
+                // constant expression such as `Portal_User_Model::STATUS_ACTIVE` autoloads
+                // its class, and mid-build that class may be one this very pass has not
+                // indexed yet - an overridden core model resolves to its rsx/ twin - so
+                // evaluating it can fail the whole build over a value nothing reads.
 
                 $parameters[] = $param_data;
             }
@@ -705,11 +706,6 @@ class Manifest_Scanner
                 if ($type !== null) {
                     $param_data['type'] = $type instanceof ReflectionNamedType ? $type->getName() : (string) $type;
                     $param_data['nullable'] = $type->allowsNull();
-                }
-
-                // Get default value if available
-                if ($param->isDefaultValueAvailable()) {
-                    $param_data['default'] = $param->getDefaultValue();
                 }
 
                 $parameters[] = $param_data;

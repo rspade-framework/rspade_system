@@ -7,8 +7,17 @@
 
 namespace App\RSpade\Core\Mail;
 
+use GuzzleHttp\Exception\ConnectException as Guzzle_Connect_Exception;
+use GuzzleHttp\Exception\RequestException as Guzzle_Request_Exception;
+use Illuminate\Http\Client\ConnectionException as Http_Client_Connection_Exception;
+use Illuminate\Http\Client\RequestException as Http_Client_Request_Exception;
+use Symfony\Component\Mailer\Exception\HttpTransportException;
+use Symfony\Component\Mailer\Exception\TransportException;
 use Symfony\Component\Mailer\Exception\TransportExceptionInterface;
 use Symfony\Component\Mailer\Exception\UnexpectedResponseException;
+use Symfony\Component\Mailer\SentMessage;
+use Symfony\Component\Mailer\Transport\TransportInterface;
+use Symfony\Component\Mime\Email;
 use App\RSpade\Core\Mail\Mail_Transport_Unavailable_Exception;
 use App\RSpade\Core\Mail\Rsx_Mail_Builder;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
@@ -36,7 +45,8 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
      *
      *   The SERVER ANSWERED WITH AN ERROR for this message (UnexpectedResponseException,
      *   raised by SmtpTransport::assertResponseCode() for any reply code the command did
-     *   not expect - 4xx and 5xx alike). The connection is fine; this MESSAGE is the
+     *   not expect - 4xx and 5xx alike - and by _send() for an API transport's refusal of
+     *   this message). The connection is fine; this MESSAGE is the
      *   problem. It gets its own clock: attempt counted, next_attempt_at pushed out, and
      *   FAILED at the cap with the server's own words recorded.
      *
@@ -118,7 +128,12 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
         }
 
         $delivery_suppressed = $mode === Rsx_Mail_Transport::MODE_SUPPRESSED;
-        $transport = Rsx_Mail_Transport::make();
+
+        // Suppressed never opens a transport, so it never requires a usable mailer. In the
+        // sending modes an unusable one (MAIL_MAILER naming nothing, or a mailer that
+        // delivers nothing) throws HERE, before a row is claimed, so every row stays
+        // PENDING and the drain dies naming the setting to fix.
+        $transport = $delivery_suppressed ? null : Rsx_Mail_Transport::make();
         $banner_error = Rsx_Mail_Transport::aiosmtpd_banner_error();
         $reconnected = false;
 
@@ -152,7 +167,7 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
                     }
 
                     $message = Rsx_Mail_Builder::build($row);
-                    $sent = $transport->send($message);
+                    $sent = static::_send($transport, $message);
 
                     $message_id = $message->getHeaders()->get('Message-ID')->getBodyAsString();
                     $row->mark_sent($message_id, static::_transport_response($sent));
@@ -292,7 +307,106 @@ class Mail_Queue_Service extends Rsx_Service_Abstract
     }
 
     /**
-     * The SMTP conversation, for the row's transport_response column.
+     * Hand one message to the transport, sorting any failure into the two classes the
+     * drain acts on.
+     *
+     * The drain's two answers are "this MESSAGE was refused" (UnexpectedResponseException
+     * - its own retry clock, FAILED at the cap) and "the TRANSPORT is unreachable" (any
+     * other TransportExceptionInterface - back to PENDING, attempt not counted, reconnect
+     * once, then the drain dies). SMTP already speaks that language. An HTTP API
+     * transport - one a package registered with Mail::extend(), typically - does not,
+     * and may let its HTTP client's own exception escape, so its failure is read for
+     * what it says, anywhere in the exception chain:
+     *
+     *   An HTTP status. A 4xx other than 408 and 429 is the service refusing THIS
+     *   message - a bad recipient, a rejected attachment - so it is a refusal. Any other
+     *   status (408, 429, 5xx) is the service being unavailable: an outage.
+     *
+     *   A connection failure with no response at all: an outage.
+     *
+     *   A Symfony transport exception saying neither: an outage, as for SMTP.
+     *
+     *   Anything else cannot be told apart, so it is a refusal: the retry clock bounds
+     *   it, the row ends FAILED with the message recorded, and rsx:mail:resend is the way
+     *   back. Treating it as an outage instead would let one poisoned message stop every
+     *   message behind it, forever.
+     */
+    private static function _send(TransportInterface $transport, Email $message): ?SentMessage
+    {
+        try {
+            return $transport->send($message);
+        } catch (UnexpectedResponseException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            $status = static::_http_status($e);
+
+            if ($status !== null) {
+                if ($status >= 400 && $status < 500 && $status !== 408 && $status !== 429) {
+                    throw new UnexpectedResponseException("HTTP {$status}: " . $e->getMessage(), 0, $e);
+                }
+
+                throw new TransportException("HTTP {$status}: " . $e->getMessage(), 0, $e);
+            }
+
+            if ($e instanceof TransportExceptionInterface || static::_is_connection_failure($e)) {
+                throw new TransportException($e->getMessage(), 0, $e);
+            }
+
+            throw new UnexpectedResponseException(get_class($e) . ': ' . $e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * The HTTP status a failure carries anywhere in its exception chain, or null.
+     *
+     * Read from the three HTTP clients a transport is built on: Symfony's (an
+     * HttpTransportException's response), Guzzle's (a RequestException's response) and
+     * Laravel's (a RequestException's response, over Guzzle).
+     */
+    private static function _http_status(\Throwable $e): ?int
+    {
+        for ($link = $e; $link !== null; $link = $link->getPrevious()) {
+            if ($link instanceof HttpTransportException) {
+                try {
+                    return $link->getResponse()->getStatusCode();
+                } catch (\Throwable $unreadable) {
+                    // A response that never arrived throws when its status is read; the
+                    // failure is then a connection failure, decided by the caller.
+                    return null;
+                }
+            }
+
+            if ($link instanceof Guzzle_Request_Exception && $link->getResponse() !== null) {
+                return $link->getResponse()->getStatusCode();
+            }
+
+            if ($link instanceof Http_Client_Request_Exception) {
+                return $link->response->status();
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Whether a failure is, anywhere in its chain, an HTTP client that never got a
+     * response (DNS, refused connection, TLS).
+     */
+    private static function _is_connection_failure(\Throwable $e): bool
+    {
+        for ($link = $e; $link !== null; $link = $link->getPrevious()) {
+            if ($link instanceof Guzzle_Connect_Exception
+                || $link instanceof Http_Client_Connection_Exception
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The transport's conversation log (SMTP's dialogue; whatever an API transport records), for the row's transport_response column.
      *
      * Capped at the column's usable width: a chatty server's debug log is diagnostic
      * detail, and losing its tail is better than losing the whole row to an overflow.

@@ -19,7 +19,7 @@ The Config directory contains Laravel configuration files that define how the ap
 | filesystems.php | 2,370 bytes | File storage configuration with local, public, and S3 disk options. Sets up where uploaded files, public assets, and private data are stored. |
 | hashing.php | 1,572 bytes | Password hashing settings with bcrypt and Argon2 options, defining algorithm and computational costs for secure password storage. |
 | logging.php | 3,749 bytes | Application logging setup with stack, single file, daily, Slack, and other channels. Configures how and where application logs are stored. |
-| mail.php | 3,600 bytes | Email service configuration supporting SMTP, Mailgun, SES, and other mail drivers. Defines mail sender information and delivery settings. |
+| mail.php | 4,249 bytes | Laravel's mail configuration in Laravel's own shape and `MAIL_*` keys: the mailer the queue sends through in `live` mode (`MAIL_MAILER`, default smtp to 127.0.0.1:1025) and the global From. Whether mail is sent at all is `rsx.mail`. Apps extend it in `rsx/resource/config/mail.php`. |
 | models.php | 480 bytes | Custom registry of application models used for dynamic model loading and auto-discovery. |
 | multi-tenant.php | 2,631 bytes | Custom multi-tenant system configuration with single-user tenant mode option, 48-hour invitation expiry, session key for current site ID ('current_site_id'), and site creation permissions. |
 | queue.php | 2,906 bytes | Queue system configuration with sync, database, Redis, SQS, and other queue drivers for asynchronous task processing. |

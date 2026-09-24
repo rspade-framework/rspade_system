@@ -12,6 +12,7 @@ use Symfony\Component\Mime\Email;
 use TijsVerkoyen\CssToInlineStyles\CssToInlineStyles;
 use App\RSpade\Core\Mail\Rsx_Mail;
 use App\RSpade\Core\Mail\Rsx_Mail_Text;
+use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Models\Email_Attachment_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
@@ -415,14 +416,7 @@ class Rsx_Mail_Builder
      */
     private static function _apply_envelope(Email $message, Email_Queue_Model $row): void
     {
-        $from_address = (string) config('rsx.mail.from_address');
-        $from_name = trim((string) config('rsx.mail.from_name', ''));
-
-        if ($from_name === '') {
-            $from_name = (string) config('rsx.name', '');
-        }
-
-        $message->from(new Address($from_address, $from_name));
+        $message->from(new Address(Rsx_Mail_Transport::from_address(), Rsx_Mail_Transport::from_name()));
         $message->to(static::_address($row->to_address, $row->to_name));
         $message->subject((string) $row->subject);
 

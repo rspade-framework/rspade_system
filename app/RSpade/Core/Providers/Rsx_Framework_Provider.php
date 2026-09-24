@@ -82,13 +82,17 @@ class Rsx_Framework_Provider extends ServiceProvider
         $package_config = base_path('config/rsx.php');
         $this->mergeConfigFrom($package_config, 'rsx');
 
-        // Merge user config overrides from /rsx/resource/config/rsx.php
-        $user_config_path = base_path('rsx/resource/config/rsx.php');
-        if (file_exists($user_config_path)) {
+        // Merge application config overrides: every rsx/resource/config/<name>.php is
+        // deep-merged over config('<name>') - rsx.php over the framework's rsx config,
+        // mail.php over Laravel's mail config, services.php over the service credentials.
+        // system/config is framework property, so this directory is how an application
+        // changes any of it.
+        foreach (glob(base_path('rsx/resource/config/*.php')) ?: [] as $user_config_path) {
+            $config_key = basename($user_config_path, '.php');
             $user_config = require $user_config_path;
-            $current_config = config('rsx', []);
+            $current_config = config($config_key, []);
             $merged_config = array_merge_deep($current_config, $user_config);
-            config(['rsx' => $merged_config]);
+            config([$config_key => $merged_config]);
         }
 
         // Merge additional config from RSX_ADDITIONAL_CONFIG env variable

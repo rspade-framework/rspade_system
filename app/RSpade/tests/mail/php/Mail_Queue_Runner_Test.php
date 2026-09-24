@@ -135,7 +135,7 @@ class Mail_Queue_Runner_Test extends Rsx_Test_Abstract
         static::__assert_not_empty($row->message_id_header, 'the Message-ID is recorded so a bounce can be traced back');
         static::__assert_not_null($row->sent_at, 'and when it went');
         static::__assert_null($row->last_error, 'nothing went wrong');
-        static::__assert_equals('smtp', $row->transport, 'the configured driver is recorded on the row');
+        static::__assert_equals(Rsx_Mail_Transport::transport_label(), $row->transport, 'the transport actually used is recorded on the row');
     }
 
     public static function test_a_sent_message_counts_against_its_recipient()

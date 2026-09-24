@@ -73,6 +73,12 @@ works); ORM cache reset and the `spa_dispatch_start` trigger; the four hand-offs
 whose `@spa` names a different bootstrap than the loaded one); history push/replace; the `@auth`
 gate; `_resolve_layout_chain()`; `Rsx.validate_session()` on every navigation after the first.
 
+The one popstate that does NOT reach `dispatch()` is a fragment-only move: when the new location
+keeps the path and query of `_last_committed_url` (`_is_fragment_only_move()`), the handler
+records the URL, fires `spa_hash_change {url, hash}` and returns - no guard consult, no dispatch,
+the action stays mounted. Fragments are not compared, because an application's own
+`replaceState()` write is invisible here and can leave the recorded fragment stale.
+
 `_resolve_layout_chain()` walks `#spa-root` downward comparing each container's own class against
 `[...layouts, action]` - a layout or action is rendered ON its container element, not as a child of
 it - reuses matching layouts, destroys from the first divergence down, and creates the rest.

@@ -1,0 +1,101 @@
+MAIL IS SENT THROUGH LARAVEL'S MAIL CONFIG: MAIL_MAILER / MAIL_SCHEME REPLACE MAIL_TRANSPORT / MAIL_ENCRYPTION
+Date: 2026-09-24
+
+IF YOU DO NOTHING: on a box with MAIL_DELIVERY=live, MAIL_TRANSPORT and
+    MAIL_ENCRYPTION in your .env are read by nothing. A box that sent through
+    sendmail now sends SMTP to MAIL_HOST instead; one with MAIL_ENCRYPTION=ssl
+    on a port other than 465 speaks plain SMTP to a TLS port and every send
+    fails; one with MAIL_ENCRYPTION=tls no longer REFUSES a relay that does not
+    offer STARTTLS; one with MAIL_ENCRYPTION empty now negotiates STARTTLS
+    whenever the relay offers it. Any 'transport', 'from_address' or
+    'from_name' key you set under 'mail' in rsx/resource/config/rsx.php is
+    ignored, and code of yours reading config('rsx.mail.transport.*') or
+    config('rsx.mail.from_*') reads null - the reference app's email
+    configuration screen did.
+
+SUMMARY
+    The mail queue - rendering, CSS inlining, cid: inline images, attachments,
+    unsubscribe headers, the delivery modes, the dev-site gate, retries, the
+    stale sweep - is unchanged. What changed is the last step: in 'live' mode
+    the message the queue built is handed to the mailer LARAVEL'S MAIL CONFIG
+    names, built by Laravel's own MailManager, instead of an SMTP connection
+    RSpade configured itself.
+
+    So the transport settings are Laravel's file (system/config/mail.php) and
+    Laravel's .env keys:
+
+        MAIL_MAILER   MAIL_SCHEME   MAIL_URL   MAIL_HOST   MAIL_PORT
+        MAIL_USERNAME   MAIL_PASSWORD   MAIL_EHLO_DOMAIN   MAIL_SENDMAIL_PATH
+        MAIL_FROM_ADDRESS   MAIL_FROM_NAME
+
+    and any Laravel mailer works - smtp, sendmail, ses, postmark, resend,
+    failover, roundrobin - as does a transport a composer package registers
+    with Mail::extend() (a Microsoft Graph one, say). MAIL_DELIVERY and the
+    EMAIL_DEV_* keys are RSpade's and are unchanged.
+
+    An API transport's failures are sorted the way SMTP's always were: an HTTP
+    4xx other than 408/429 is a refusal of that message (retry clock, FAILED
+    at the cap), a 408/429/5xx or a connection failure is an outage (row back
+    to PENDING, drain dies). 'live' refuses the 'log' and 'array' mailers,
+    which would record every row Sent while delivering nothing.
+
+    Every rsx/resource/config/<name>.php now deep-merges over
+    config('<name>'), so rsx/resource/config/mail.php is where an application
+    adds a mailer.
+
+    Full contract: php artisan rsx:man email (MAIL TRANSPORTS, CONFIGURATION)
+
+ACTION REQUIRED - .env ON EVERY BOX THAT SENDS REAL MAIL
+    Translate the two retired keys:
+
+        MAIL_TRANSPORT=smtp        ->  MAIL_MAILER=smtp  (the default; may be omitted)
+        MAIL_TRANSPORT=sendmail    ->  MAIL_MAILER=sendmail
+        MAIL_ENCRYPTION=ssl        ->  MAIL_SCHEME=smtps (implied when MAIL_PORT=465)
+        MAIL_ENCRYPTION=tls        ->  STARTTLS is used whenever the relay offers
+                                       it. To keep REFUSING a relay that does not,
+                                       set 'require_tls' => true on the mailer:
+                                       rsx/resource/config/mail.php ->
+                                       ['mailers' => ['smtp' => ['require_tls' => true]]]
+        MAIL_ENCRYPTION=           ->  nothing to set. Note STARTTLS is now
+                                       negotiated when offered: a relay that
+                                       advertises it with a certificate this box
+                                       cannot verify now fails - fix the
+                                       certificate, or pass Symfony's
+                                       'verify_peer' => false on the mailer.
+
+    Then delete MAIL_TRANSPORT and MAIL_ENCRYPTION from the .env (and from your
+    .env.dist, if you ship one). MAIL_HOST, MAIL_PORT, MAIL_USERNAME,
+    MAIL_PASSWORD, MAIL_FROM_ADDRESS and MAIL_FROM_NAME keep their names and
+    meanings. A box on MAIL_DELIVERY=aiosmtpd (the default), suppressed or
+    disabled never reads any of them and needs nothing.
+
+ACTION REQUIRED - CONFIG AND CODE
+    - rsx/resource/config/rsx.php: move a 'mail' => ['transport' => ...]
+      override into rsx/resource/config/mail.php as a Laravel mailer, and
+      'from_address'/'from_name' into ['from' => ['address' => ..., 'name' => ...]]
+      there (or into MAIL_FROM_ADDRESS/MAIL_FROM_NAME).
+    - Code reading the retired keys uses Rsx_Mail_Transport instead:
+
+          config('rsx.mail.from_address')      Rsx_Mail_Transport::from_address()
+          config('rsx.mail.from_name')         Rsx_Mail_Transport::from_name()
+                                               (falls back to rsx.name)
+          config('rsx.mail.transport.driver')  Rsx_Mail_Transport::transport_label()
+                                               ('aiosmtpd', or the mailer name)
+
+      The reference implementation is the email configuration screen:
+      system/app/RSpade/resource/reference_app/app/frontend/system/email_config/
+      system_email_controller.php (the 'mailer', 'from_address', 'from_name'
+      keys) and System_Email_Config_Action.jqhtml (the "Mailer" field).
+
+ADDING A TRANSPORT PACKAGE (optional)
+    php artisan rsx:composer require <vendor>/<package>, register its service
+    provider in rsx.integrations.providers (rsx/resource/config/rsx.php -
+    Laravel's package auto-discovery reads only the framework's vendor tree),
+    declare its mailer in rsx/resource/config/mail.php, set MAIL_MAILER. The
+    worked recipe is rsx:man email, MAIL TRANSPORTS.
+
+VERIFICATION
+    - php artisan rsx:health - the Mail rows: "Mail delivery" names the mailer
+      ("live via mailer 'smtp': smtp host:port ..."), and "Mail transport" is OK.
+    - php artisan rsx:mail:test <a real mailbox> on a live box - exit 0, status
+      Sent, and the message arrives.

@@ -40,6 +40,13 @@ TWO-TIER MERGE
     than replacing them, while a user 'mode' scalar overrides outright.
     The user file is optional; absent, pure framework defaults apply.
 
+    THE SAME MERGE APPLIES TO EVERY FILE IN THAT DIRECTORY:
+    rsx/resource/config/<name>.php deep-merges over config('<name>'),
+    whichever framework or Laravel config file that is. system/config/ is
+    framework property, so this is how an application adds a mailer
+    (rsx/resource/config/mail.php - rsx:man email, MAIL TRANSPORTS) or a
+    package's credentials (rsx/resource/config/services.php).
+
     A third, test-runner-only layer merges last: if the RSX_ADDITIONAL_CONFIG
     env var points at a PHP config file, its array is merged on top of the
     user config (used by Rsx_Test_Command to inject per-run overrides).
@@ -641,26 +648,15 @@ FULL PAGE CACHE
 MAIL AND SMS
     'mail' => [
         # aiosmtpd | live | suppressed | disabled. Anything else THROWS.
-        #   aiosmtpd   the development catcher on 127.0.0.1:1025 (THE DEFAULT); the
-        #              whole 'transport' block below is IGNORED, and the catcher's
-        #              SMTP greeting must say 'aiosmtpd'
-        #   live       real delivery through 'transport'; the .dev.-hostname
-        #              recipient gate applies in THIS MODE ONLY
+        #   aiosmtpd   the development catcher on 127.0.0.1:1025 (THE DEFAULT);
+        #              Laravel's mail config is IGNORED, and the catcher's SMTP
+        #              greeting must say 'aiosmtpd'
+        #   live       real delivery through the Laravel mailer MAIL_MAILER names
+        #              (config/mail.php - rsx:man email, MAIL TRANSPORTS); the
+        #              .dev.-hostname recipient gate applies in THIS MODE ONLY
         #   suppressed built and recorded, handed to nobody
         #   disabled   the queue is FROZEN - the drain returns, rows stay Pending
         'delivery' => env('MAIL_DELIVERY', 'aiosmtpd'),
-        # READ IN 'live' MODE ONLY.
-        'transport' => [
-            'driver' => env('MAIL_TRANSPORT', 'smtp'),     # smtp | sendmail
-            'host' => env('MAIL_HOST', '127.0.0.1'),
-            'port' => (int) env('MAIL_PORT', 1025),
-            'encryption' => env('MAIL_ENCRYPTION', ''),    # '' | tls | ssl
-            'username' => env('MAIL_USERNAME', ''),
-            'password' => env('MAIL_PASSWORD', ''),
-            'sendmail_path' => '/usr/sbin/sendmail -bs -i',
-        ],
-        'from_address' => env('MAIL_FROM_ADDRESS', 'noreply@example.com'),
-        'from_name' => env('MAIL_FROM_NAME', ''),          # '' = rsx.name
         'retry' => ['attempts' => 3, 'delay_minutes' => 3],
         'retention_days' => 30,
         # QUEUE HYGIENE, NOT A TIMEOUT. Guards against one configuration failure:

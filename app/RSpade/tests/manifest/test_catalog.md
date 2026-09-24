@@ -13,6 +13,7 @@
 | `Manifest_Model_Introspection_Test::test_consecutive_passes_issue_no_schema_queries` | php | implemented | Two consecutive model-module passes over an unchanged tree issue ZERO `SHOW COLUMNS` |
 | `Manifest_Model_Introspection_Test::test_the_registry_survives_a_pass_unchanged` | php | implemented | A pass over an unchanged tree leaves the model registry exactly as it found it |
 | `Manifest_Model_Introspection_Test::test_every_model_row_carries_its_fingerprint` | php | implemented | Every model row records the model-file + migration fingerprint its columns were introspected for |
+| `Manifest_Parameter_Default_Test::test_a_constant_default_naming_a_missing_class_is_not_evaluated` | php | implemented | The scanner records a parameter as optional and never evaluates its default, so a constant default naming a class the build cannot load yet (an overridden core model) cannot abort the build |
 | `Manifest_Stub_Rewrite_Test::test_a_no_change_rebuild_rewrites_no_stub` | php | implemented | A no-change rebuild rewrites no generated JS stub - no mtime moves, so no bundle recompiles |
 | restart safety: a bounded restart loop throws naming the last reason | php | not implemented | Needs a build whose passes genuinely fight; W4/W5 own the restart rework's own coverage |
 | `_set_manifest_is_bad()` writes the flag and never a partial index | php | not implemented | Phase 4 (`tests/manifest/` build-out) |

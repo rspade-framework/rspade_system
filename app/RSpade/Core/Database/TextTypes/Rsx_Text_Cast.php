@@ -99,8 +99,9 @@ class Rsx_Text_Cast implements CastsAttributes, SerializesCastableAttributes
         if ($value instanceof Rsx_Text_Abstract) {
             throw new \InvalidArgumentException(
                 get_class($model) . "::{$key} is " . class_basename($type) . ', got '
-                . class_basename($value) . '. Text types do not convert into one another - '
-                . 'use ' . class_basename($type) . '::from_string((string) $value) if that is what you mean.'
+                . class_basename($value) . '. Text types do not convert into one another - use '
+                . class_basename($type) . '::from_untrusted($value->to_storage()) to keep its markup, or '
+                . class_basename($type) . '::from_string($value->to_text()) to reinterpret it as plain text.'
             );
         }
 
@@ -111,7 +112,8 @@ class Rsx_Text_Cast implements CastsAttributes, SerializesCastableAttributes
             );
         }
 
-        // A bare string from an import, a seed, a script or a plain API param. It carries no
+        // A bare string from an import, a seed, a script or a plain API param - or an int,
+        // float or bool, stringified (false becomes '', which is_empty()). It carries no
         // encoding, so it is PLAIN TEXT: the type escapes it into its encoding and filters
         // the result. Encoded content arrives as a typed value or a request envelope above;
         // code holding an encoded string says so with Type::from_untrusted($encoded).

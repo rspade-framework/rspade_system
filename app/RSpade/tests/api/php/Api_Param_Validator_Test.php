@@ -213,7 +213,7 @@ class Api_Param_Validator_Test extends Rsx_Test_Abstract
     public static function test_a_string_param_carrying_a_text_envelope_becomes_a_request_value()
     {
         $specs = [static::__spec('body', 'string', true)];
-        $envelope = json_encode(['__TEXT' => 'Rich_Text', 'raw' => '<p>hi</p>']);
+        $envelope = json_encode(['__TEXT' => 'Text_Fixture_Wrapped_Text', 'raw' => '<p>hi</p>']);
 
         $result = Api_Param_Validator::validate($specs, ['body' => $envelope]);
 
@@ -236,7 +236,7 @@ class Api_Param_Validator_Test extends Rsx_Test_Abstract
     {
         $specs = [static::__spec('body', 'string', true)];
 
-        $result = Api_Param_Validator::validate($specs, ['body' => '{"__TEXT": "Rich_Text", "raw": 5}']);
+        $result = Api_Param_Validator::validate($specs, ['body' => '{"__TEXT": "Text_Fixture_Wrapped_Text", "raw": 5}']);
 
         static::__assert_false($result['valid']);
         static::__assert_array_has_key('body', $result['fields']);

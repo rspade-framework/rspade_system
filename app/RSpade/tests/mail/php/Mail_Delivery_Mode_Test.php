@@ -142,83 +142,172 @@ class Mail_Delivery_Mode_Test extends Rsx_Test_Abstract
     }
 
     // =========================================================================
-    // AIOSMTPD: the transport block is IGNORED
+    // AIOSMTPD: Laravel's mail config is IGNORED
     // =========================================================================
 
     /**
      * A box whose MAIL_HOST still names last year's relay must not be able to mail
-     * anybody merely because nobody noticed the leftover value. In aiosmtpd mode the
-     * whole transport block is unread - which is the difference between a DEFAULT and
+     * anybody merely because nobody noticed the leftover value. In aiosmtpd mode
+     * Laravel's mail config is unread - which is the difference between a DEFAULT and
      * this mode's promise.
      */
-    public static function test_aiosmtpd_mode_ignores_the_configured_transport()
+    public static function test_aiosmtpd_mode_ignores_the_configured_mailer()
     {
-        $previous = [
-            config('rsx.mail.delivery'),
-            config('rsx.mail.transport.host'),
-            config('rsx.mail.transport.port'),
-            config('rsx.mail.transport.username'),
-            config('rsx.mail.transport.password'),
-            config('rsx.mail.transport.encryption'),
-        ];
+        $previous = [config('rsx.mail.delivery'), config('mail.default'), config('mail.mailers.smtp')];
 
         config([
             'rsx.mail.delivery' => 'aiosmtpd',
-            'rsx.mail.transport.host' => 'smtp.somewhere-real.example.com',
-            'rsx.mail.transport.port' => 587,
-            'rsx.mail.transport.username' => 'someuser',
-            'rsx.mail.transport.password' => 'somepass',
-            'rsx.mail.transport.encryption' => 'tls',
+            'mail.default' => 'smtp',
+            'mail.mailers.smtp' => [
+                'transport' => 'smtp',
+                'host' => 'smtp.somewhere-real.example.com',
+                'port' => 587,
+                'username' => 'someuser',
+                'password' => 'somepass',
+            ],
         ]);
 
         try {
-            $dsn = Rsx_Mail_Transport::dsn();
+            $dsn = Rsx_Mail_Transport::aiosmtpd_dsn();
+            $transport = (string) Rsx_Mail_Transport::make();
 
             static::__assert_contains('127.0.0.1:1025', $dsn, 'the DSN is the catcher');
-            static::__assert_true(
-                strpos($dsn, 'somewhere-real') === false,
-                'and names nothing from the configured transport block: ' . $dsn
-            );
-            static::__assert_true(
-                strpos($dsn, 'someuser') === false,
-                'including its credentials: ' . $dsn
-            );
             static::__assert_contains('auto_tls=false', $dsn, 'and TLS is explicitly off, not merely unmentioned');
+            static::__assert_contains('127.0.0.1:1025', $transport, 'the transport built is the catcher');
+            static::__assert_true(
+                strpos($transport, 'somewhere-real') === false,
+                'and names nothing from the configured mailer: ' . $transport
+            );
 
             static::__assert_equals(
-                'smtp 127.0.0.1:1025',
+                'smtp 127.0.0.1:1025 (development catcher)',
                 Rsx_Mail_Transport::describe(),
-                'and what an operator is shown says the same thing'
+                'what an operator is shown says the same thing'
             );
+            static::__assert_equals('aiosmtpd', Rsx_Mail_Transport::transport_label(), 'and so does the row label');
         } finally {
             config([
                 'rsx.mail.delivery' => $previous[0],
-                'rsx.mail.transport.host' => $previous[1],
-                'rsx.mail.transport.port' => $previous[2],
-                'rsx.mail.transport.username' => $previous[3],
-                'rsx.mail.transport.password' => $previous[4],
-                'rsx.mail.transport.encryption' => $previous[5],
+                'mail.default' => $previous[1],
+                'mail.mailers.smtp' => $previous[2],
             ]);
         }
     }
 
-    public static function test_live_mode_reads_the_configured_transport()
+    /**
+     * Live mode is Laravel's: the transport is the mailer MAIL_MAILER names, built by
+     * Laravel's MailManager - host, port, scheme and user all read from it.
+     */
+    public static function test_live_mode_builds_the_laravel_mailer()
     {
-        $previous = [config('rsx.mail.delivery'), config('rsx.mail.transport.host')];
+        $previous = [config('rsx.mail.delivery'), config('mail.default'), config('mail.mailers.smtp')];
 
         config([
             'rsx.mail.delivery' => 'live',
-            'rsx.mail.transport.host' => 'smtp.somewhere-real.example.com',
+            'mail.default' => 'smtp',
+            'mail.mailers.smtp' => [
+                'transport' => 'smtp',
+                'scheme' => 'smtps',
+                'host' => 'smtp.somewhere-real.example.com',
+                'port' => 465,
+                'username' => 'someuser',
+                'password' => 'somepass',
+            ],
         ]);
 
         try {
-            static::__assert_contains(
-                'smtp.somewhere-real.example.com',
-                Rsx_Mail_Transport::dsn(),
-                'live mode is the mode the transport block is for'
+            $transport = (string) Rsx_Mail_Transport::make();
+
+            // Symfony leaves 465 out of the name of an smtps transport - it is the default.
+            static::__assert_equals('smtps://smtp.somewhere-real.example.com', $transport, 'the configured host is the one built, over TLS');
+            static::__assert_equals(
+                "mailer 'smtp': smtps smtp.somewhere-real.example.com:465 as someuser",
+                Rsx_Mail_Transport::describe(),
+                'and the description names the mailer, never the password'
+            );
+            static::__assert_equals('smtp', Rsx_Mail_Transport::transport_label(), 'the row records the mailer name');
+        } finally {
+            config([
+                'rsx.mail.delivery' => $previous[0],
+                'mail.default' => $previous[1],
+                'mail.mailers.smtp' => $previous[2],
+            ]);
+        }
+    }
+
+    /**
+     * MAIL_URL supplies the SMTP settings in one string, resolved exactly as Laravel's
+     * MailManager resolves it - the transport built and the description agree.
+     */
+    public static function test_a_mail_url_is_resolved_the_way_laravel_resolves_it()
+    {
+        $previous = [config('rsx.mail.delivery'), config('mail.default'), config('mail.mailers.smtp')];
+
+        config([
+            'rsx.mail.delivery' => 'live',
+            'mail.default' => 'smtp',
+            'mail.mailers.smtp' => [
+                'transport' => 'smtp',
+                'url' => 'smtp://urluser:urlpass@relay.url-probe.example.com:2525',
+            ],
+        ]);
+
+        try {
+            static::__assert_equals(
+                'smtp://relay.url-probe.example.com:2525',
+                (string) Rsx_Mail_Transport::make(),
+                'the url names the host and port built'
+            );
+            static::__assert_equals(
+                "mailer 'smtp': smtp relay.url-probe.example.com:2525 as urluser",
+                Rsx_Mail_Transport::describe(),
+                'and the description reads the same resolution, password left out'
             );
         } finally {
-            config(['rsx.mail.delivery' => $previous[0], 'rsx.mail.transport.host' => $previous[1]]);
+            config([
+                'rsx.mail.delivery' => $previous[0],
+                'mail.default' => $previous[1],
+                'mail.mailers.smtp' => $previous[2],
+            ]);
+        }
+    }
+
+    /**
+     * 'log' and 'array' accept a message and deliver it nowhere, so under 'live' the
+     * queue would record every row SENT while nothing left the box. Refused, naming the
+     * setting that records without sending.
+     */
+    public static function test_live_mode_refuses_a_mailer_that_delivers_nothing()
+    {
+        $previous = [config('rsx.mail.delivery'), config('mail.default')];
+
+        config(['rsx.mail.delivery' => 'live', 'mail.default' => 'log']);
+
+        try {
+            static::__assert_throws(
+                \RuntimeException::class,
+                fn() => Rsx_Mail_Transport::make(),
+                "'log' transport, which delivers nothing"
+            );
+        } finally {
+            config(['rsx.mail.delivery' => $previous[0], 'mail.default' => $previous[1]]);
+        }
+    }
+
+    public static function test_live_mode_refuses_a_mailer_that_is_not_configured()
+    {
+        $previous = [config('rsx.mail.delivery'), config('mail.default')];
+
+        config(['rsx.mail.delivery' => 'live', 'mail.default' => 'no-such-mailer']);
+
+        try {
+            static::__assert_throws(
+                \RuntimeException::class,
+                fn() => Rsx_Mail_Transport::make(),
+                "has no such mailer"
+            );
+        } finally {
+            config(['rsx.mail.delivery' => $previous[0], 'mail.default' => $previous[1]]);
         }
     }
 
