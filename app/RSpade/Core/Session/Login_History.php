@@ -53,11 +53,14 @@ class Login_History
      * second-factor answer (and the SUCCESS row when the challenge passes);
      * Rsx_Sso::handle_callback() writes FAILED_SSO when a federated sign-in does not
      * verify - a state that does not match, a token exchange the provider refused, a
-     * provider account connected to no local identity.
+     * provider account connected to no local identity; Rsx_Two_Factor::verify_passkey_login()
+     * writes FAILED_PASSKEY when a passwordless passkey sign-in does not verify (and the
+     * SUCCESS row when it does).
      *
      * FAILED_DISABLED is written by the framework wherever a sign-in is refused because the
      * identity holds no ENABLED site membership (users.is_enabled): RsxAuth::attempt(),
-     * Rsx_Two_Factor::verify_challenge() and Rsx_Sso when RsxAuth::login() refuses. Site
+     * Rsx_Two_Factor::verify_challenge() and verify_passkey_login(), and Rsx_Sso when
+     * RsxAuth::login() refuses. Site
      * membership is the framework's switch, so the framework records its own refusals.
      *
      * FAILED_LOCKED has NO framework producer - identity state (status_id, is_activated,
@@ -71,6 +74,7 @@ class Login_History
     public const STATUS_FAILED_DISABLED = 'failed_disabled';
     public const STATUS_FAILED_NOT_FOUND = 'failed_not_found';
     public const STATUS_FAILED_SSO = 'failed_sso';
+    public const STATUS_FAILED_PASSKEY = 'failed_passkey';
 
     /**
      * Record a successful login

@@ -480,7 +480,14 @@ abstract class Rsx_Bundle_Abstract
         // Asked ONCE and tested for emptiness, rather than is_enabled() followed by
         // enabled_providers(): is_enabled() IS enabled_providers() underneath, and every
         // resolution reads each live provider's brand mark off disk. One call, same answer.
-        $sso_providers = \App\RSpade\Core\Sso\Rsx_Sso::enabled_providers();
+        //
+        // REALM-HONEST: a portal page gets the PORTAL roster (Rsx_Portal_Sso), whose
+        // begin_url is the portal's own ceremony and which is empty unless
+        // rsx.sso.portal_enabled is on - so <Sso_Buttons> on a portal login page can never
+        // start a staff ceremony, and needs no argument to know which realm it is in.
+        $sso_providers = $is_portal
+            ? \App\RSpade\Core\Sso\Rsx_Portal_Sso::enabled_providers()
+            : \App\RSpade\Core\Sso\Rsx_Sso::enabled_providers();
 
         if ($sso_providers !== []) {
             $rsxapp_data['sso'] = ['providers' => $sso_providers];

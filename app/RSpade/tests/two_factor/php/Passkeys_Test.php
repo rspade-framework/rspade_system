@@ -89,7 +89,7 @@ class Passkeys_Test extends Rsx_Test_Abstract
      */
     private static function __stored_challenge(): string
     {
-        return (string) Session::get_value(Passkeys::CHALLENGE_KEY);
+        return (string) Session::get_value(Rsx_Two_Factor::WEBAUTHN_CHALLENGE_KEY);
     }
 
     /**
@@ -232,7 +232,7 @@ class Passkeys_Test extends Rsx_Test_Abstract
         static::__assert_count(Recovery_Codes::COUNT, $codes, 'recovery codes are minted with the first factor');
 
         static::__assert_null(
-            Session::get_value(Passkeys::CHALLENGE_KEY),
+            Session::get_value(Rsx_Two_Factor::WEBAUTHN_CHALLENGE_KEY),
             'the challenge is spent'
         );
     }
@@ -311,7 +311,7 @@ class Passkeys_Test extends Rsx_Test_Abstract
 
         $authenticator = static::__register_passkey();
 
-        $options = Passkeys::assertion_options((int) $login_user->id);
+        $options = Passkeys::assertion_options(Rsx_Two_Factor::class, (int) $login_user->id);
 
         static::__assert_equals(Passkeys::relying_party_id(), $options['publicKey']['rpId']);
         static::__assert_not_empty($options['publicKey']['challenge']);
@@ -333,9 +333,9 @@ class Passkeys_Test extends Rsx_Test_Abstract
 
         $authenticator = static::__register_passkey();
 
-        Passkeys::assertion_options($id);
+        Passkeys::assertion_options(Rsx_Two_Factor::class, $id);
 
-        $credential = Passkeys::verify_assertion(
+        $credential = Passkeys::verify_assertion(Rsx_Two_Factor::class, 
             $authenticator->assertion_response(static::__stored_challenge(), 7)
         );
 
@@ -355,15 +355,15 @@ class Passkeys_Test extends Rsx_Test_Abstract
 
         $authenticator = static::__register_passkey();
 
-        Passkeys::assertion_options($id);
-        Passkeys::verify_assertion($authenticator->assertion_response(static::__stored_challenge(), 9));
+        Passkeys::assertion_options(Rsx_Two_Factor::class, $id);
+        Passkeys::verify_assertion(Rsx_Two_Factor::class, $authenticator->assertion_response(static::__stored_challenge(), 9));
 
         // The same counter again - a genuine authenticator would never do this.
-        Passkeys::assertion_options($id);
+        Passkeys::assertion_options(Rsx_Two_Factor::class, $id);
 
         static::__assert_throws(
             WebAuthnException::class,
-            fn () => Passkeys::verify_assertion($authenticator->assertion_response(static::__stored_challenge(), 9))
+            fn () => Passkeys::verify_assertion(Rsx_Two_Factor::class, $authenticator->assertion_response(static::__stored_challenge(), 9))
         );
 
         $credential = Two_Factor_Credential_Model::where('login_user_id', $id)
@@ -385,21 +385,21 @@ class Passkeys_Test extends Rsx_Test_Abstract
         $authenticator = static::__register_passkey();
         $stranger = static::__authenticator();
 
-        Passkeys::assertion_options($id);
+        Passkeys::assertion_options(Rsx_Two_Factor::class, $id);
         $challenge = static::__stored_challenge();
 
         // A credential this server has never seen.
         static::__assert_throws(
             Two_Factor_Failed_Exception::class,
-            fn () => Passkeys::verify_assertion($stranger->assertion_response($challenge, 1))
+            fn () => Passkeys::verify_assertion(Rsx_Two_Factor::class, $stranger->assertion_response($challenge, 1))
         );
 
-        static::__assert_null(Session::get_value(Passkeys::CHALLENGE_KEY), 'the challenge was spent anyway');
+        static::__assert_null(Session::get_value(Rsx_Two_Factor::WEBAUTHN_CHALLENGE_KEY), 'the challenge was spent anyway');
 
         // And the genuine key cannot now reuse that same challenge.
         static::__assert_throws(
             Two_Factor_Failed_Exception::class,
-            fn () => Passkeys::verify_assertion($authenticator->assertion_response($challenge, 3)),
+            fn () => Passkeys::verify_assertion(Rsx_Two_Factor::class, $authenticator->assertion_response($challenge, 3)),
             'expired'
         );
     }
@@ -415,13 +415,13 @@ class Passkeys_Test extends Rsx_Test_Abstract
 
         static::__register_passkey();
 
-        Passkeys::assertion_options((int) $login_user->id);
+        Passkeys::assertion_options(Rsx_Two_Factor::class, (int) $login_user->id);
 
         $stranger = static::__authenticator();
 
         $thrown = static::__assert_throws(
             Two_Factor_Failed_Exception::class,
-            fn () => Passkeys::verify_assertion($stranger->assertion_response(static::__stored_challenge(), 1))
+            fn () => Passkeys::verify_assertion(Rsx_Two_Factor::class, $stranger->assertion_response(static::__stored_challenge(), 1))
         );
 
         static::__assert_false(
@@ -450,11 +450,11 @@ class Passkeys_Test extends Rsx_Test_Abstract
             ->where('type_id', Two_Factor_Credential_Model::TYPE_PASSKEY)
             ->update(['confirmed_at' => null]);
 
-        Passkeys::assertion_options($id);
+        Passkeys::assertion_options(Rsx_Two_Factor::class, $id);
 
         static::__assert_throws(
             Two_Factor_Failed_Exception::class,
-            fn () => Passkeys::verify_assertion($authenticator->assertion_response(static::__stored_challenge(), 4))
+            fn () => Passkeys::verify_assertion(Rsx_Two_Factor::class, $authenticator->assertion_response(static::__stored_challenge(), 4))
         );
     }
 

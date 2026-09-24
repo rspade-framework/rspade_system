@@ -288,6 +288,21 @@ class Rsx_Portal
     }
 
     /**
+     * A portal-namespace path as the browser addresses it: prefixed in prefix mode
+     * ('/login' -> '/_portal/login'), unchanged on a dedicated portal domain.
+     *
+     * For a framework path that is not a route target - a ceremony URL, a redirect after a
+     * failure. Anything that IS a route target is Route().
+     *
+     * @param string $path A path in the portal's own namespace, starting with '/'.
+     * @return string
+     */
+    public static function portal_path(string $path): string
+    {
+        return self::_apply_portal_base($path);
+    }
+
+    /**
      * Apply portal domain or prefix to a path
      *
      * @param string $path The route path (e.g., '/dashboard')

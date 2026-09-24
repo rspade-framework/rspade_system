@@ -33,7 +33,7 @@ class Totp_Enrollment extends Component {
     }
 
     async on_load() {
-        this.data.setup = await Rsx_Two_Factor_Controller.totp_begin();
+        this.data.setup = await Rsx_Two_Factor.controller().totp_begin();
     }
 
     on_render() {
@@ -81,7 +81,7 @@ class Totp_Enrollment extends Component {
         let result;
 
         try {
-            result = await Rsx_Two_Factor_Controller.totp_confirm({ code: code });
+            result = await Rsx_Two_Factor.controller().totp_confirm({ code: code });
         } catch (e) {
             // The ONE catch: a wrong or expired code is what this screen exists to handle.
             // The message is the server's, phrased for the person at the keyboard.

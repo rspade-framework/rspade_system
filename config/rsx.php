@@ -1800,7 +1800,8 @@ return [
     | the browser - only {key, label, begin_url, icon_svg} reaches window.rsxapp.sso.
     |
     | The redirect URI to register in each provider's console is
-    | <APP_URL>/_sso/<key>/callback. See: php artisan rsx:man sso
+    | <APP_URL>/_sso/<key>/callback - plus the portal's own callback when
+    | 'portal_enabled' is on. See: php artisan rsx:man sso
     |
     */
     'sso' => [
@@ -1902,6 +1903,16 @@ return [
         // Entra tenant with conditional access, say - so that a second challenge is
         // duplicated ceremony rather than a second factor.
         'skip_two_factor' => false,
+
+        // Federated sign-in on the CLIENT PORTAL (Rsx_Portal_Sso). OFF by default, and an
+        // application decision rather than a deployment one, so it is config and not .env:
+        // switching a provider on for staff must not quietly put a button on the portal.
+        // When true, every provider enabled above is also offered on the portal login page,
+        // through the portal's own ceremony URLs - register the portal callback
+        // (Rsx_Portal_Sso::callback_url('<key>'): <portal host>[/_portal]/_sso/<key>/callback)
+        // as a second redirect URI in each provider's console - and portal policy is answered
+        // by the portal.sso.* hooks, never by the staff sso.* ones.
+        'portal_enabled' => false,
 
         // A SECURITY WINDOW, NOT AN OPERATION TIMEOUT (see the timeout mandate in
         // CLAUDE.md), and the exact analogue of rsx.two_factor.

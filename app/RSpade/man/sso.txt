@@ -2,7 +2,7 @@ SSO(1)                           RSpade Manual                           SSO(1)
 
 NAME
     sso - federated sign-in: Google, Microsoft, Facebook, Apple, X, and any
-    Socialite provider you install
+    Socialite provider you install - for staff and the client portal
 
 SYNOPSIS
     use App\RSpade\Core\Sso\Rsx_Sso;
@@ -37,6 +37,16 @@ SYNOPSIS
         return null;        // decline -> "No account is connected to this sign-in."
     }
 
+    # The client portal has its own realm: a switch, a facade, its own hooks
+    'sso' => ['portal_enabled' => true]            // rsx/resource/config/rsx.php
+
+    #[OnEvent('portal.sso.identity.unlinked')]
+    public static function portal_unlinked($data)
+    {
+        // ... resolve a Portal_User_Model of Portal_Session::get_site_id() ...
+        return Rsx_Portal_Sso::consume_pending_and_login($portal_user);
+    }
+
     # The operator path
     php artisan rsx:users:sso:dump   --user=alice@example.com
     php artisan rsx:users:sso:unlink --user=1 --id=7
@@ -62,9 +72,16 @@ OVERVIEW
     hooks (THE POLICY HOOKS), and every one of them FAILS CLOSED - an
     application that has said nothing gets no behaviour invented for it.
 
-    Rsx_Sso is the only class application code touches. Socialite_Bridge,
-    Sso_Identity_Model and Rsx_Sso_Controller are implementation behind it,
-    and no application ever sees a Socialite object. That boundary is what
+    TWO REALMS, ONE ENGINE. The subsystem is written once (Rsx_Sso_Abstract)
+    and bound to each authentication realm by a facade with the identical
+    API: Rsx_Sso signs in STAFF login identities, Rsx_Portal_Sso signs in
+    CLIENT PORTAL users. They share the provider REGISTRY (one Google client
+    id serves both) and nothing else - see THE CLIENT PORTAL REALM.
+
+    Those two facades are the only classes application code touches.
+    Socialite_Bridge, the identity models and the ceremony controllers are
+    implementation behind them, and no application ever sees a Socialite
+    object. That boundary is what
     lets a provider's quirks be absorbed - Apple's minted client secret, X's
     PKCE, a downstream adapter's extra config keys - without a call site
     moving.
@@ -362,11 +379,16 @@ THE CEREMONY
 
         The exemption is path-exact: /_sso/google/callback and
         /_sso/apple/callbackx are enforced normally, and the test suite pins
-        that pair.
+        that pair. The client portal's Apple callback
+        (Rsx_Portal_Sso::apple_callback_path() - /_portal/_sso/apple/callback
+        in prefix mode) is exempted beside it for the same reason: its POST
+        leg is the same do-nothing 303, to the portal callback.
 
 THE POLICY HOOKS
-    Five hooks, all resolved through the ordinary event system with handlers
-    in /rsx/handlers/. The first is the policy; the rest are wiring. Every one
+    Five hooks per realm, all resolved through the ordinary event system with
+    handlers in /rsx/handlers/. The staff names are below; the client portal
+    fires the same five as portal.sso.* with 'portal_user' in each payload
+    (THE CLIENT PORTAL REALM). The first is the policy; the rest are wiring. Every one
     fails closed or fails loud when absent - deleting a handler switches a
     behaviour off, it never opens one up.
 
@@ -598,7 +620,8 @@ TWO-FACTOR INTERPLAY
     into this account", and a user who deliberately enrolled a factor here did
     not consent to it being skippable by signing in another way.
 
-    So when Rsx_Two_Factor::is_enabled($login_user) and
+    So when Rsx_Two_Factor::is_enabled($login_user) (Rsx_Portal_Two_Factor on
+    the portal) and
     rsx.sso.skip_two_factor is false, _complete_login() resolves
     sso.two_factor.verify_url, begins the challenge - which LOGS THE SESSION
     OUT - and redirects there. Nothing is signed in until the factor passes,
@@ -608,6 +631,12 @@ TWO-FACTOR INTERPLAY
     THE VERIFY URL IS RESOLVED BEFORE THE CHALLENGE BEGINS. Resolving
     afterwards and failing would leave a browser logged out, holding a pending
     challenge, with nowhere to answer it.
+
+    AN IDENTITY THAT HOLDS A PASSKEY STILL FACES THE CHALLENGE, and may answer
+    it with that passkey. A passkey can also sign in on its own
+    (Rsx_Two_Factor::verify_passkey_login(), rsx:man two_factor), but that is
+    a different door: is_enabled() asks "does a PASSWORD or FEDERATED sign-in
+    owe a second factor", and that question is unchanged.
 
     rsx.sso.skip_two_factor => true is for ONE situation: the identity
     provider IS the organization's authentication authority and already
@@ -713,6 +742,11 @@ THE COMPONENT
         already visible in the authorize URL the button leads to.
 
 THE FACADE
+    Rsx_Sso (staff) and Rsx_Portal_Sso (portal) both expose exactly this API;
+    the signatures below say Rsx_Sso. $lu takes an int id or the realm's
+    identity model - Login_User_Model for Rsx_Sso, Portal_User_Model for
+    Rsx_Portal_Sso - and a model of the other realm THROWS.
+
     Roster
         Rsx_Sso::enabled_providers(): array
             [{key, label, begin_url, icon_svg}] for every live provider.
@@ -721,6 +755,9 @@ THE FACADE
         Rsx_Sso::provider(string $key): array
             One live provider, fully resolved, or a throw.
         Rsx_Sso::begin_path($key) / ::callback_path($key): string
+        Rsx_Sso::callback_url($key): string
+            The callback as an ABSOLUTE URL on the realm's host - the exact
+            redirect URI to register in the provider's console.
 
     The ceremony (called by Rsx_Sso_Controller, not by applications)
         Rsx_Sso::begin(string $key, string $intent = 'login'): RedirectResponse
@@ -731,30 +768,32 @@ THE FACADE
             The parked identity, or null when it is absent OR expired - the
             same answer, which is the only one a finish-registration screen
             needs. Safe to render.
-        Rsx_Sso::link_pending(Login_User_Model|int $lu): Sso_Identity_Model
+        Rsx_Sso::link_pending(int|model $lu): the link row
             Connect it and consume it. Throws Sso_Failed_Exception when
             nothing is pending or it belongs to somebody else.
-        Rsx_Sso::consume_pending_and_login(Login_User_Model $lu): string
+        Rsx_Sso::consume_pending_and_login(model $lu): string
             link_pending() plus the sign-in; returns the destination URL. What
             an sso.identity.unlinked handler calls once it has said yes.
         Rsx_Sso::abandon_pending(): void
 
     Connections
-        Rsx_Sso::identities_list(int|Login_User_Model $lu): array
+        Rsx_Sso::identities_list(int|model $lu): array
             METADATA ONLY, oldest first: {id, provider_key, provider_label,
             email, name, last_login_at, created_at}.
-        Rsx_Sso::unlink(int|Login_User_Model $lu, int $identity_id): void
+        Rsx_Sso::unlink(int|model $lu, int $identity_id): void
             Scoped to that identity; a row that is not theirs is a no-op.
             Refuses while impersonating.
-        Rsx_Sso::unlink_all(int|Login_User_Model $lu): void
+        Rsx_Sso::unlink_all(int|model $lu): void
             The operator/account-deletion path. Does NOT consult
             impersonation.
 
     Constants
         Rsx_Sso::GOOGLE / MICROSOFT / FACEBOOK / APPLE / X name the BUILT-INS,
         never the permitted set. STATE_KEY / PENDING_KEY are the session-value
-        keys; INTENT_LOGIN / INTENT_LINK the two intents; BASE_PATH the
-        '/_sso' prefix; APPLE_CALLBACK_PATH the one CSRF-exempt path.
+        keys (each facade has its own); INTENT_LOGIN / INTENT_LINK the two
+        intents; BASE_PATH the staff '/_sso' prefix; APPLE_CALLBACK_PATH the
+        staff realm's CSRF-exempt path (the portal's is
+        Rsx_Portal_Sso::apple_callback_path(), exempt beside it).
 
 FRAMEWORK ENDPOINTS
     Rsx_Sso_Controller, class-gated #[Auth('public')] - the ceremony URLs are
@@ -780,6 +819,79 @@ FRAMEWORK ENDPOINTS
     Rsx_Two_Factor_Controller: the buttons render on the LOGIN page (its own
     bundle, outside the SPA) and the connections list in a settings SPA, while
     its PHP source is framework core and therefore in no bundle's file set.
+
+    Rsx_Portal_Sso_Controller is the portal twin (#[Auth_Realm('portal')],
+    force-included the same way): the same ceremony pair declared with
+    #[Portal_Route] - so '/_portal/_sso/:provider/begin|callback' in prefix
+    mode, '/_sso/...' on a dedicated portal domain - and the same three Ajax
+    endpoints behind the portal's is_logged_in, on the portal's Ajax channel.
+
+THE CLIENT PORTAL REALM
+    Rsx_Portal_Sso gives portal users (Portal_User_Model) federated sign-in
+    with the API above. Worked example:
+    system/app/RSpade/resource/reference_app/handlers/Portal_Sso_Handlers.php
+    and portal/auth/portal_login_index.blade.php.
+
+    IT IS OFF UNTIL THE APPLICATION SWITCHES IT ON: rsx.sso.portal_enabled
+    (config, false by default - an application decision, not a deployment
+    one). Switching a provider on for staff must not quietly put a button on
+    the client portal. With it off the portal roster is empty and the
+    ceremony refuses to start. With it on, every provider live for staff is
+    also offered on the portal.
+
+    ITS OWN CEREMONY URLS, AND A SECOND REDIRECT URI. A portal ceremony runs
+    entirely inside PORTAL dispatch - that is where the application declares
+    the portal's site, and every lookup, link and sign-in is scoped to it -
+    and must finish on the host whose cookie jar started it. So the portal
+    callback is its own URL, and it must be registered in each provider's
+    console BESIDE the staff one: Rsx_Portal_Sso::callback_url('google')
+    prints it (https://<host>/_portal/_sso/google/callback in prefix mode,
+    https://<portal domain>/_sso/google/callback with rsx.portal.domain).
+
+    ITS OWN HOOKS, NEVER THE STAFF ONES. The portal fires DISTINCT hook names,
+    each payload carrying 'portal_user' where the staff one carries
+    'login_user':
+
+        portal.sso.identity.unlinked      (resolve) - the policy decision
+        portal.sso.login.authorize        (gate)
+        portal.sso.two_factor.verify_url  (resolve) - REQUIRED once any portal
+                                          user holds a factor
+        portal.sso.login.destination      (resolve)
+        portal.sso.link.destination       (resolve)
+
+    They are separate names, not the staff names with a realm field, so that
+    an application's staff policy can never find itself governing clients: a
+    staff handler that matches a verified address against login_users must
+    not be able to sign a client in as a staff member. Every portal hook
+    fails closed exactly as its staff twin does.
+
+    WHAT ELSE DIFFERS:
+
+        storage     _portal_sso_identities, owned by portal_user_id, with
+                    site_id stored and UNIQUE (site_id, provider_key,
+                    provider_user_key) - portal users are site-scoped, so one
+                    Google account may be a portal user of two sites. Every
+                    lookup is scoped to the declared site.
+        admission   a portal user is signed in only when
+                    Portal_User_Model::can_login() accepts them and they
+                    belong to the declared site; a refusal is answered like a
+                    denied gate.
+        recording   no login history: each failure feeds
+                    Login_Throttle::record_failure() directly, exactly once.
+        two factor  Rsx_Portal_Two_Factor.
+        impersonation
+                    "View as Client" refuses linking and unlinking.
+        failure     back to the PORTAL login page (the portal's '/login').
+
+    A PORTAL POLICY FOR AN INVITE-ONLY PORTAL. A portal account usually
+    exists because a contact was invited. The reference app therefore
+    connects only a VERIFIED provider address that matches a portal user this
+    site already has (Portal_User_Model::find_by_email(Portal_Session::
+    get_site_id(), ...)) and declines everything else. Microsoft, Facebook and
+    X assert no verified email, so on such a portal they connect through the
+    settings screen's Connect button - by a portal user who is already signed
+    in - or through an invite-acceptance flow that calls link_pending() while
+    it creates the account.
 
 CLI COMMANDS
     --user=<id|email> is REQUIRED on both and resolves against login_users.
@@ -860,7 +972,7 @@ THE TABLE - _sso_identities
     metadata assembled by identities_list(), never a row.
 
 CONFIGURATION
-    config('rsx.sso') - four keys.
+    config('rsx.sso') - five keys.
 
         'providers'
             The five built-ins, each {enabled, client_id, client_secret},
@@ -873,6 +985,10 @@ CONFIGURATION
         'skip_two_factor' => false
             Whether a provider sign-in skips this application's own second
             factor. See TWO-FACTOR INTERPLAY.
+
+        'portal_enabled' => false
+            Whether the CLIENT PORTAL offers federated sign-in. Config, not
+            .env: it is an application decision. See THE CLIENT PORTAL REALM.
 
         'pending_window_minutes' => 10
             A SECURITY WINDOW, NOT AN OPERATION TIMEOUT, and the exact
@@ -949,11 +1065,20 @@ NOTES AND GOTCHAS
     - A pending identity confers NOTHING. It is safe to render and it is not a
       login.
 
+    - A staff link does not sign anybody in on the portal, and the reverse:
+      the realms read different tables. A person who uses both connects the
+      provider account in each.
+
+    - The portal callback is a SECOND redirect URI. A provider console that
+      lists only the staff one fails every portal sign-in with the provider's
+      own redirect_uri_mismatch error.
+
 SEE ALSO
     session      - Login_History's status vocabulary, Login_Throttle,
                    impersonation, the session-value store
     auth         - the identity model (login_users + users), RsxAuth
     two_factor   - the second factor a federated sign-in still faces
+    portal       - the client portal realm: Portal_Session, the declared site
     event_hooks  - the trigger kinds the five policy hooks use
     csrf         - the exemption list the Apple callback path sits on
     turnstile    - human verification on the password form beside the buttons

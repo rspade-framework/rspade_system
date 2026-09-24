@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\TwoFactor\Recovery_Codes;
+use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
 use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
 
 /**
@@ -99,10 +100,10 @@ class Recovery_Codes_Test extends Rsx_Test_Abstract
         $login_user = static::__make_login_user();
         $codes = Recovery_Codes::generate();
 
-        Recovery_Codes::store_for((int) $login_user->id, $codes);
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, (int) $login_user->id, $codes);
 
         static::__assert_equals(Recovery_Codes::COUNT, static::__rows_for((int) $login_user->id), 'ten rows');
-        static::__assert_equals(Recovery_Codes::COUNT, Recovery_Codes::remaining((int) $login_user->id));
+        static::__assert_equals(Recovery_Codes::COUNT, Recovery_Codes::remaining(Rsx_Two_Factor::class, (int) $login_user->id));
 
         $rows = Two_Factor_Credential_Model::where('login_user_id', $login_user->id)
             ->where('type_id', Two_Factor_Credential_Model::TYPE_RECOVERY_CODE)
@@ -129,20 +130,20 @@ class Recovery_Codes_Test extends Rsx_Test_Abstract
         $id = (int) $login_user->id;
 
         $first = Recovery_Codes::generate();
-        Recovery_Codes::store_for($id, $first);
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, $id, $first);
 
         $second = Recovery_Codes::generate();
-        Recovery_Codes::store_for($id, $second);
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, $id, $second);
 
         static::__assert_equals(Recovery_Codes::COUNT, static::__rows_for($id), 'still ten rows, not twenty');
 
         static::__assert_false(
-            Recovery_Codes::consume($id, $first[0]),
+            Recovery_Codes::consume(Rsx_Two_Factor::class, $id, $first[0]),
             'a code from the superseded sheet no longer works'
         );
 
         static::__assert_true(
-            Recovery_Codes::consume($id, $second[0]),
+            Recovery_Codes::consume(Rsx_Two_Factor::class, $id, $second[0]),
             'a code from the current sheet works'
         );
     }
@@ -161,13 +162,13 @@ class Recovery_Codes_Test extends Rsx_Test_Abstract
         $id = (int) $login_user->id;
 
         $codes = Recovery_Codes::generate();
-        Recovery_Codes::store_for($id, $codes);
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, $id, $codes);
 
-        static::__assert_true(Recovery_Codes::consume($id, $codes[3]), 'the first presentation works');
-        static::__assert_equals(Recovery_Codes::COUNT - 1, Recovery_Codes::remaining($id), 'one fewer remains');
+        static::__assert_true(Recovery_Codes::consume(Rsx_Two_Factor::class, $id, $codes[3]), 'the first presentation works');
+        static::__assert_equals(Recovery_Codes::COUNT - 1, Recovery_Codes::remaining(Rsx_Two_Factor::class, $id), 'one fewer remains');
 
-        static::__assert_false(Recovery_Codes::consume($id, $codes[3]), 'the second presentation does not');
-        static::__assert_equals(Recovery_Codes::COUNT - 1, Recovery_Codes::remaining($id), 'and spends nothing');
+        static::__assert_false(Recovery_Codes::consume(Rsx_Two_Factor::class, $id, $codes[3]), 'the second presentation does not');
+        static::__assert_equals(Recovery_Codes::COUNT - 1, Recovery_Codes::remaining(Rsx_Two_Factor::class, $id), 'and spends nothing');
     }
 
     /**
@@ -180,14 +181,14 @@ class Recovery_Codes_Test extends Rsx_Test_Abstract
         $id = (int) $login_user->id;
 
         $codes = Recovery_Codes::generate();
-        Recovery_Codes::store_for($id, $codes);
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, $id, $codes);
 
         foreach ($codes as $index => $code) {
-            static::__assert_true(Recovery_Codes::consume($id, $code), 'code ' . $index . ' redeems');
+            static::__assert_true(Recovery_Codes::consume(Rsx_Two_Factor::class, $id, $code), 'code ' . $index . ' redeems');
         }
 
-        static::__assert_equals(0, Recovery_Codes::remaining($id), 'the set is empty');
-        static::__assert_false(Recovery_Codes::consume($id, $codes[0]), 'and nothing is left to redeem');
+        static::__assert_equals(0, Recovery_Codes::remaining(Rsx_Two_Factor::class, $id), 'the set is empty');
+        static::__assert_false(Recovery_Codes::consume(Rsx_Two_Factor::class, $id, $codes[0]), 'and nothing is left to redeem');
     }
 
     /**
@@ -200,20 +201,20 @@ class Recovery_Codes_Test extends Rsx_Test_Abstract
         $id = (int) $login_user->id;
 
         $codes = Recovery_Codes::generate();
-        Recovery_Codes::store_for($id, $codes);
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, $id, $codes);
 
         static::__assert_true(
-            Recovery_Codes::consume($id, strtolower($codes[0])),
+            Recovery_Codes::consume(Rsx_Two_Factor::class, $id, strtolower($codes[0])),
             'lower case is the same code'
         );
 
         static::__assert_true(
-            Recovery_Codes::consume($id, str_replace('-', '', $codes[1])),
+            Recovery_Codes::consume(Rsx_Two_Factor::class, $id, str_replace('-', '', $codes[1])),
             'without the hyphen is the same code'
         );
 
         static::__assert_true(
-            Recovery_Codes::consume($id, ' ' . str_replace('-', ' ', $codes[2]) . ' '),
+            Recovery_Codes::consume(Rsx_Two_Factor::class, $id, ' ' . str_replace('-', ' ', $codes[2]) . ' '),
             'spaced and padded is the same code'
         );
     }
@@ -228,19 +229,19 @@ class Recovery_Codes_Test extends Rsx_Test_Abstract
         $theirs = static::__make_login_user();
 
         $my_codes = Recovery_Codes::generate();
-        Recovery_Codes::store_for((int) $mine->id, $my_codes);
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, (int) $mine->id, $my_codes);
 
         $their_codes = Recovery_Codes::generate();
-        Recovery_Codes::store_for((int) $theirs->id, $their_codes);
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, (int) $theirs->id, $their_codes);
 
         static::__assert_false(
-            Recovery_Codes::consume((int) $mine->id, $their_codes[0]),
+            Recovery_Codes::consume(Rsx_Two_Factor::class, (int) $mine->id, $their_codes[0]),
             'their code does not open my account'
         );
 
         static::__assert_equals(
             Recovery_Codes::COUNT,
-            Recovery_Codes::remaining((int) $theirs->id),
+            Recovery_Codes::remaining(Rsx_Two_Factor::class, (int) $theirs->id),
             'and does not spend their row'
         );
     }
@@ -254,13 +255,13 @@ class Recovery_Codes_Test extends Rsx_Test_Abstract
         $login_user = static::__make_login_user();
         $id = (int) $login_user->id;
 
-        Recovery_Codes::store_for($id, Recovery_Codes::generate());
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, $id, Recovery_Codes::generate());
 
         foreach (['', '   ', '-', 'ZZZZ-ZZZZ', 'not a code at all'] as $garbage) {
-            static::__assert_false(Recovery_Codes::consume($id, $garbage), 'refused: "' . $garbage . '"');
+            static::__assert_false(Recovery_Codes::consume(Rsx_Two_Factor::class, $id, $garbage), 'refused: "' . $garbage . '"');
         }
 
-        static::__assert_equals(Recovery_Codes::COUNT, Recovery_Codes::remaining($id), 'nothing was spent');
+        static::__assert_equals(Recovery_Codes::COUNT, Recovery_Codes::remaining(Rsx_Two_Factor::class, $id), 'nothing was spent');
     }
 
     /**
@@ -270,7 +271,7 @@ class Recovery_Codes_Test extends Rsx_Test_Abstract
     {
         $login_user = static::__make_login_user();
 
-        static::__assert_equals(0, Recovery_Codes::remaining((int) $login_user->id));
-        static::__assert_false(Recovery_Codes::consume((int) $login_user->id, 'ABCD-EFGH'));
+        static::__assert_equals(0, Recovery_Codes::remaining(Rsx_Two_Factor::class, (int) $login_user->id));
+        static::__assert_false(Recovery_Codes::consume(Rsx_Two_Factor::class, (int) $login_user->id, 'ABCD-EFGH'));
     }
 }

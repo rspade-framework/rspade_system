@@ -17,7 +17,11 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
 use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
 
 /**
- * Rsx_Two_Factor_Controller - the browser's whole view of the second-factor subsystem.
+ * Rsx_Two_Factor_Controller - the browser's whole view of the second-factor subsystem, in the
+ * STAFF realm. Its portal twin is Rsx_Portal_Two_Factor_Controller: the same endpoints, method
+ * for method, over Rsx_Portal_Two_Factor. Rsx_Two_Factor.js picks between the two from the
+ * page's experience (Rsx_Portal.is_portal()), so the shipped components need no realm
+ * argument.
  *
  * The framework owns second factors, so it owns the endpoints that manage them: the
  * enrollment screens, the settings list and the login challenge all talk to this class, and
@@ -42,15 +46,16 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  *   Rsx_Two_Factor::begin_challenge), so a gate demanding a login could never be satisfied
  *   by the very screen that exists to produce one. They are public in the gate sense only:
  *   each answers exclusively from the pending challenge parked on the caller's own session,
- *   and a caller with nothing pending learns nothing.
+ *   and a caller with nothing pending learns nothing. passkey_login_options() is public for
+ *   the same reason and reveals even less: it names no identity at all.
  *
- * WHAT IS DELIBERATELY NOT HERE: verifying the challenge. Rsx_Two_Factor::verify_challenge()
- * signs the user in, and where they land afterwards is application logic - a redirect the
- * app captured before the login, a portal versus staff destination, an interstitial the app
- * requires. So the APPLICATION owns the verification endpoint, calls verify_challenge()
- * itself, and decides the destination; <Two_Factor_Challenge> is pointed at that endpoint
- * with $controller and $method. A framework endpoint here would have to guess the answer to
- * a question only the app can answer.
+ * WHAT IS DELIBERATELY NOT HERE: verifying a challenge or a passwordless sign-in.
+ * Rsx_Two_Factor::verify_challenge() and verify_passkey_login() sign the user in, and where
+ * they land afterwards is application logic - a redirect the app captured before the login,
+ * a site picker, an interstitial the app requires. So the APPLICATION owns both verification
+ * endpoints, calls the facade itself, and decides the destination; <Two_Factor_Challenge> and
+ * <Passkey_Sign_In> are pointed at those endpoints with $controller and $method. A framework
+ * endpoint here would have to guess the answer to a question only the app can answer.
  *
  * ERROR SHAPE. Two_Factor_Failed_Exception carries a user-safe message by contract, so it is
  * caught and returned as an ERROR_VALIDATION whose reason IS that message - the component
@@ -253,6 +258,26 @@ class Rsx_Two_Factor_Controller extends Rsx_Controller_Abstract
         } catch (Two_Factor_Failed_Exception $e) {
             return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // Passwordless sign-in
+    // -------------------------------------------------------------------------
+
+    /**
+     * The arguments for navigator.credentials.get() for a PASSWORDLESS sign-in: no identity
+     * named, no allowCredentials list, user verification required. The challenge parks on
+     * the caller's own session.
+     *
+     * The verification is the application's endpoint - see the class docblock.
+     *
+     * @return array
+     */
+    #[Ajax_Endpoint]
+    #[Auth('public')]
+    public static function passkey_login_options(Request $request, array $params = [])
+    {
+        return Rsx_Two_Factor::begin_passkey_login();
     }
 
     // -------------------------------------------------------------------------

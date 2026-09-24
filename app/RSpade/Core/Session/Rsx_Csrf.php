@@ -99,8 +99,11 @@ class Rsx_Csrf
         // POST handler immediately 303-redirects to the same path as a GET with the code
         // and state on the query string; the state check and the token exchange happen on
         // that top-level GET navigation, which does carry the Lax cookie. Path-exact, one
-        // provider, one path.
-        if ($path === \App\RSpade\Core\Sso\Rsx_Sso::APPLE_CALLBACK_PATH) {
+        // provider, one path PER REALM: the client portal runs its own ceremony and its own
+        // callback (Rsx_Portal_Sso), whose Apple leg is the same do-nothing 303 - computed
+        // only because the portal prefix is configuration.
+        if ($path === \App\RSpade\Core\Sso\Rsx_Sso::APPLE_CALLBACK_PATH
+            || $path === \App\RSpade\Core\Sso\Rsx_Portal_Sso::apple_callback_path()) {
             return;
         }
 

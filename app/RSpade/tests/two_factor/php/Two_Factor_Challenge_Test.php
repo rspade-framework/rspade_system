@@ -558,7 +558,7 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
         $authenticator = new Webauthn_Authenticator_Fixture(Passkeys::relying_party_id());
         Rsx_Two_Factor::begin_passkey_registration();
         Rsx_Two_Factor::confirm_passkey_registration(
-            $authenticator->attestation_response((string) Session::get_value(Passkeys::CHALLENGE_KEY)),
+            $authenticator->attestation_response((string) Session::get_value(Rsx_Two_Factor::WEBAUTHN_CHALLENGE_KEY)),
             'Test key'
         );
 
@@ -573,7 +573,7 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
 
         $returned = Rsx_Two_Factor::verify_challenge([
             'assertion' => $authenticator->assertion_response(
-                (string) Session::get_value(Passkeys::CHALLENGE_KEY),
+                (string) Session::get_value(Rsx_Two_Factor::WEBAUTHN_CHALLENGE_KEY),
                 11
             ),
         ]);
@@ -601,7 +601,7 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
         $their_key = new Webauthn_Authenticator_Fixture(Passkeys::relying_party_id());
         Rsx_Two_Factor::begin_passkey_registration();
         Rsx_Two_Factor::confirm_passkey_registration(
-            $their_key->attestation_response((string) Session::get_value(Passkeys::CHALLENGE_KEY)),
+            $their_key->attestation_response((string) Session::get_value(Rsx_Two_Factor::WEBAUTHN_CHALLENGE_KEY)),
             'Attacker key'
         );
 
@@ -614,7 +614,7 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
         $victim_key = new Webauthn_Authenticator_Fixture(Passkeys::relying_party_id());
         Rsx_Two_Factor::begin_passkey_registration();
         Rsx_Two_Factor::confirm_passkey_registration(
-            $victim_key->attestation_response((string) Session::get_value(Passkeys::CHALLENGE_KEY)),
+            $victim_key->attestation_response((string) Session::get_value(Rsx_Two_Factor::WEBAUTHN_CHALLENGE_KEY)),
             'Victim key'
         );
 
@@ -626,7 +626,7 @@ class Two_Factor_Challenge_Test extends Rsx_Test_Abstract
             Two_Factor_Failed_Exception::class,
             fn () => Rsx_Two_Factor::verify_challenge([
                 'assertion' => $their_key->assertion_response(
-                    (string) Session::get_value(Passkeys::CHALLENGE_KEY),
+                    (string) Session::get_value(Rsx_Two_Factor::WEBAUTHN_CHALLENGE_KEY),
                     13
                 ),
             ]),

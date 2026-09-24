@@ -1,0 +1,64 @@
+<%--
+Passkey_Sign_In
+
+"Sign in with a passkey" as one drop-in control for a login page: no password, no email - the
+browser offers whatever passkey it holds for this site, and the application's endpoint signs
+in the identity that answered.
+
+    <Passkey_Sign_In $controller="Login_Controller" $method="passkey_login" />
+
+WHY IT TAKES AN ENDPOINT. Exactly the reason <Two_Factor_Challenge> does: where a signed-in
+user lands is application logic, so the APPLICATION owns the verification endpoint and this
+component posts to it.
+
+THE ENDPOINT'S CONTRACT, both directions:
+  it receives  {assertion: {id, clientDataJSON, authenticatorData, signature}}
+  it calls     Rsx_Two_Factor::verify_passkey_login($params['assertion'])
+               (Rsx_Portal_Two_Factor on a portal login page)
+  it returns   {redirect: '/somewhere'} - followed with window.location
+  it rejects   with a user-safe message, rendered inline here - the throttle refusal
+               included, which must reach the screen as itself
+
+ONE REALM, CHOSEN BY THE PAGE. The ceremony's options come from Rsx_Two_Factor.controller(),
+so on a portal page this starts a PORTAL ceremony with no argument saying so.
+
+RENDERS NOTHING WHERE PASSKEYS CANNOT WORK - an old browser, an insecure origin. A login page
+already offers a password; a sign-in button that cannot run is worse than none. The root then
+carries Passkey_Sign_In--unsupported (display: none), which a host page can select on to hide
+the divider it placed above this control when nothing else follows it.
+
+LAYOUT-NEUTRAL: a full-width button and an error line, no card, no heading. The "or" divider
+between this and the password form is the page's job.
+
+Args:
+  $controller (required) - the application controller holding the verification endpoint.
+  $method     (required) - the endpoint's method name.
+  $label      (optional) - the button text. Default 'Sign in with a passkey'.
+
+Events:
+  signed_in - the endpoint accepted the assertion; fired just before the navigation.
+
+See: php artisan rsx:man two_factor
+--%>
+<Define:Passkey_Sign_In tag="div">
+    <% if (!this.args.controller || !this.args.method) { throw new Error('Passkey_Sign_In requires $controller and $method'); } %>
+
+    <% if (this.state.supported) { %>
+        <button type="button" class="btn btn-outline-secondary Passkey_Sign_In__button" $sid="sign_in">
+            <%-- Inline SVG, not an icon-font glyph: framework core, and the auth screens it is
+                 wired into do not load the application theme's icon stylesheet. --%>
+            <svg class="Passkey_Sign_In__icon" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+                 stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <circle cx="5.5" cy="8" r="3"></circle>
+                <path d="M8.5 8h6"></path>
+                <path d="M12.5 8v2.2"></path>
+                <path d="M14.5 8v1.6"></path>
+            </svg>
+            <span><%= this.args.label || 'Sign in with a passkey' %></span>
+        </button>
+
+        <% if (this.state.error) { %>
+            <div class="Passkey_Sign_In__error"><%= this.state.error %></div>
+        <% } %>
+    <% } %>
+</Define:Passkey_Sign_In>

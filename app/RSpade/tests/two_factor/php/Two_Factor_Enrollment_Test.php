@@ -406,8 +406,8 @@ class Two_Factor_Enrollment_Test extends Rsx_Test_Abstract
         static::__assert_empty(array_intersect($original, $replacement), 'a genuinely new set');
         static::__assert_equals(Recovery_Codes::COUNT, Rsx_Two_Factor::recovery_codes_remaining($login_user));
 
-        static::__assert_false(Recovery_Codes::consume($id, $original[0]), 'the old sheet is dead');
-        static::__assert_true(Recovery_Codes::consume($id, $replacement[0]), 'the new one works');
+        static::__assert_false(Recovery_Codes::consume(Rsx_Two_Factor::class, $id, $original[0]), 'the old sheet is dead');
+        static::__assert_true(Recovery_Codes::consume(Rsx_Two_Factor::class, $id, $replacement[0]), 'the new one works');
     }
 
     /**
@@ -486,7 +486,7 @@ class Two_Factor_Enrollment_Test extends Rsx_Test_Abstract
     {
         $login_user = static::__signed_in_user();
 
-        Recovery_Codes::store_for((int) $login_user->id, Recovery_Codes::generate());
+        Recovery_Codes::store_for(Rsx_Two_Factor::class, (int) $login_user->id, Recovery_Codes::generate());
 
         static::__assert_equals(Recovery_Codes::COUNT, Rsx_Two_Factor::recovery_codes_remaining($login_user));
         static::__assert_false(Rsx_Two_Factor::is_enabled($login_user), 'codes alone are not a factor');

@@ -134,12 +134,15 @@ class Webauthn_Authenticator_Fixture
      * @param string $challenge_b64url The challenge, as stored in the session.
      * @param int $sign_count The counter to report. Must exceed the stored one or the
      *                        library refuses the assertion as a possible clone.
+     * @param bool $user_verified Whether the UV flag is set. False models an authenticator
+     *                            that proved presence (a touch) but not the user (no PIN or
+     *                            biometric) - which a passwordless sign-in must refuse.
      * @return array {id, clientDataJSON, authenticatorData, signature}
      */
-    public function assertion_response(string $challenge_b64url, int $sign_count): array
+    public function assertion_response(string $challenge_b64url, int $sign_count, bool $user_verified = true): array
     {
-        // UP|UV, and no attested credential data on a get.
-        $auth_data = $this->_auth_data(0x05, $sign_count);
+        // UP (0x01), plus UV (0x04) when verified, and no attested credential data on a get.
+        $auth_data = $this->_auth_data($user_verified ? 0x05 : 0x01, $sign_count);
         $client_data = $this->_client_data('webauthn.get', $challenge_b64url);
 
         // The spec's signature preimage: authData concatenated with the SHA-256 of the

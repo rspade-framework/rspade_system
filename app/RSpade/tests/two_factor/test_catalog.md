@@ -1,7 +1,7 @@
 # Test catalog: two_factor
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues) | `planned`.
-Type: php / cli / asset / http / playwright. Last updated: 2026-09-02.
+Type: php / cli / asset / http / playwright. Last updated: 2026-09-24.
 
 ## Totp_Test (php, no transactions - pure logic) - RFC 6238 correctness and the rules verify() adds
 
@@ -231,6 +231,41 @@ the only path to it is application code.
 | tfa-http-05 | the challenge screen renders and carries a CSRF token | GET /login/verify | 200 hosting `<Two_Factor_Challenge>`, window.rsxapp.csrf present | implemented |
 | tfa-chal-18 | a live code completes the login, stamps last_login, and writes exactly ONE success row | POST verify_2fa with a live code | {redirect}, the landing page 200, last_login changed, success rows +1 | implemented |
 | tfa-chal-19 | the ambient throttle refuses a locked-out client, as itself and never as a wrong code | wrong codes until the budget is spent | a refusal saying "too fast" before the 25th attempt; no wrong code ever succeeds | implemented |
+
+## Passkey_Login_Test (php, default isolation) - passwordless sign-in, staff realm
+
+A passkey as the FIRST and only credential: begin_passkey_login() + verify_passkey_login(),
+against the simulated authenticator. A user-verified passkey is a complete sign-in (framework
+ruling), so the success case also asserts that no second-factor challenge is owed.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| tfa-pwl-01 | the begin names no identity and requires user verification | begin_passkey_login() | no allowCredentials, userVerification 'required', rpId the hostname, nobody signed in | implemented |
+| tfa-pwl-02 | the passwordless challenge parks under its own key | a second-factor ceremony challenge already parked | both challenges present, the second-factor one untouched | implemented |
+| tfa-pwl-03 | a verified passkey signs its owner in outright | registered key, UV assertion | the credential's owner signed in, no challenge pending, one success row, challenge spent | implemented |
+| tfa-pwl-04 | presence without user verification is refused | assertion with UP but not UV | Two_Factor_Failed_Exception, not signed in | implemented |
+| tfa-pwl-05 | an unknown credential answers with the one sentence | a key never registered | "could not sign you in", not signed in | implemented |
+| tfa-pwl-06 | the challenge is single use | the same assertion twice | first signs in, second refused | implemented |
+| tfa-pwl-07 | a disabled membership is refused and counted exactly once | valid key, users.is_enabled = 0 | refused, per-email failures +1, no success row | implemented |
+| tfa-pwl-08 | a passwordless sign-in supersedes a pending password-stage challenge | begin_challenge() then a passkey sign-in | signed in, nothing left pending | implemented |
+
+## Portal_Two_Factor_Test (php, default isolation) - the portal realm boundary
+
+Rsx_Portal_Two_Factor, run as a portal request declaring its site. The engine is the staff
+one; what is pinned here is the REALM: separate tables, prefixed user handles, the declared
+site, the portal's admission rule and "View as Client".
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| tfa-portal-01 | a portal enrollment writes only the portal table, under a prefixed handle | portal passkey registration | user.id = 'portal-<id>', row in _portal_two_factor_credentials, none in the staff table | implemented |
+| tfa-portal-02 | "View as Client" cannot enroll | impersonator set | RuntimeException from passkey and TOTP enrollment | implemented |
+| tfa-portal-03 | the facade refuses an identity of the other realm | Login_User_Model to Rsx_Portal_Two_Factor | RuntimeException naming Portal_User_Model | implemented |
+| tfa-portal-04 | a portal passkey signs its portal user in, passwordless | portal key, UV assertion | Portal_User_Model returned, portal signed in, staff not | implemented |
+| tfa-portal-05 | a staff passkey cannot sign in on the portal | staff key on a portal ceremony | refused, nobody signed in | implemented |
+| tfa-portal-06 | a portal passkey cannot sign in as staff | portal key on a staff ceremony | refused, nobody signed in | implemented |
+| tfa-portal-07 | a passkey of another site's portal user is refused | key enrolled on site B, ceremony on site A | refused | implemented |
+| tfa-portal-08 | the portal's admission rule refuses a suspended portal user | valid key, status suspended | refused | implemented |
+| tfa-portal-09 | the portal second-factor challenge answers with a portal passkey | begin_challenge() + challenge assertion | signed in to the portal, nothing pending in either realm | implemented |
 
 ## Deferred / planned
 

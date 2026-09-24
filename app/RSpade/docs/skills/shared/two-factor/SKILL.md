@@ -1,15 +1,15 @@
 ---
 name: two-factor
-description: "Wiring RSpade's second factor into an application - Rsx_Two_Factor (is_enabled / begin_challenge / verify_challenge), the two-stage login with RsxAuth::attempt(record: false, touch_last_login: false), <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove operator commands, and a forced-enrollment interstitial driven from pre_dispatch. Use when adding 2FA, TOTP or passkeys to a login flow, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA, or when hitting 'That code is not valid.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', or a passkey refused after moving hosts."
+description: "Wiring RSpade's second factor and passkey sign-in into an application - Rsx_Two_Factor (is_enabled / begin_challenge / verify_challenge / begin_passkey_login / verify_passkey_login) and its client-portal twin Rsx_Portal_Two_Factor, the two-stage login with RsxAuth::attempt(record: false, touch_last_login: false), passwordless 'Sign in with a passkey' with <Passkey_Sign_In $controller $method>, <Two_Factor_Challenge $controller $method>, <Totp_Enrollment> / <Passkey_Register>, the rsx:users:2fa:setup / :dump / :remove operator commands, and a forced-enrollment interstitial driven from pre_dispatch. Use when adding 2FA, TOTP or passkeys to a staff or portal login flow, offering passwordless passkey sign-in, building an enrollment or Security settings screen, requiring a factor per user (the reference app's own is_2fa_required column), recording STATUS_FAILED_2FA or STATUS_FAILED_PASSKEY, or when hitting 'That passkey could not sign you in.', 'operates on Portal_User_Model',  'That code is not valid.', 'Your verification window has expired. Please sign in again.', 'Two_Factor_Challenge requires $controller and $method', or a passkey refused after moving hosts."
 ---
 
 # Two-factor authentication
 
-`Rsx_Two_Factor` is the whole subsystem's front door. `Totp`, `Passkeys`, `Recovery_Codes` and `Two_Factor_Credential_Model` are implementation - never touch them from application code.
+Two front doors, one engine: **`Rsx_Two_Factor`** for staff (credentials of the login identity, `login_users`, like the password) and **`Rsx_Portal_Two_Factor`** for the client portal (credentials of a `Portal_User_Model`) - the identical API over separate tables. `Totp`, `Passkeys`, `Recovery_Codes` and the credential models are implementation - never touch them from application code.
 
-Three kinds: **TOTP** (RFC 6238, six digits), **PASSKEY** (WebAuthn), **RECOVERY_CODE** (ten single-use codes, minted automatically alongside the first real factor). Credentials belong to the **login identity** (`login_users`), like the password. The client portal (`Portal_User_Model`) is not covered.
+Three kinds: **TOTP** (RFC 6238, six digits), **PASSKEY** (WebAuthn), **RECOVERY_CODE** (ten single-use codes, minted automatically alongside the first real factor). A passkey is also a **first factor**: passwordless sign-in (below).
 
-**No global enable switch.** 2FA is per identity: `Rsx_Two_Factor::is_enabled($login_user)`. A requirement policy is the application's (see the forced-2FA recipe).
+**No global enable switch.** 2FA is per identity: `is_enabled($identity)`. A requirement policy is the application's (see the forced-2FA recipe).
 
 **Prefer passkeys.** The template ships both modes as a worked example; passkeys are phishing-resistant (the signature is origin-bound) where a TOTP code can be phished and replayed inside its window. Removing the TOTP option and offering `<Passkey_Register />` alone is encouraged unless the user base cannot use platform authenticators. Full rationale: `rsx:man two_factor`.
 
@@ -90,6 +90,58 @@ Worked example: `system/app/RSpade/resource/reference_app/app/login/login_contro
 
 ---
 
+## The passwordless recipe - "Sign in with a passkey"
+
+Any registered passkey can sign its owner in with no password (every passkey is discoverable). The app owns the endpoint, because the destination is app logic:
+
+```php
+#[Ajax_Endpoint]                        // class is #[Auth('public')]
+public static function passkey_login(Request $request, array $params = [])
+{
+    if (!is_array($params['assertion'] ?? null)) {
+        return response_error(Ajax::ERROR_VALIDATION, 'That passkey could not sign you in.');
+    }
+
+    try {
+        $login_user = Rsx_Two_Factor::verify_passkey_login($params['assertion']);
+    } catch (Auth_Throttled_Exception | Two_Factor_Failed_Exception $e) {
+        return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+    }
+
+    return ['redirect' => static::post_login_destination((int) $login_user->id, null)];
+}
+```
+
+```html
+<div class="login-alternatives">
+    <div class="login-divider"><span>or</span></div>
+    <Passkey_Sign_In $controller="Login_Controller" $method="passkey_login" />
+</div>
+```
+
+In a browser without WebAuthn the control renders nothing and marks its root `Passkey_Sign_In--unsupported`; hide the whole block then, or the "or" rule hangs over nothing: `.login-alternatives:not(:has(.Passkey_Sign_In:not(.Passkey_Sign_In--unsupported), .Sso_Buttons)) { display: none; }`.
+
+- **It is a complete sign-in; no second factor follows** (framework ruling). User verification is REQUIRED on this ceremony, so the passkey is two factors on its own; an assertion without the UV flag is refused.
+- **`is_enabled()` keeps its meaning** - "a PASSWORD or FEDERATED sign-in owes a challenge" - and SSO still reads it: a Google sign-in by an identity with a passkey still faces the challenge, and can answer it with that passkey.
+- `verify_passkey_login()` does the whole sign-in: throttle first, one recorded failure (`STATUS_FAILED_PASSKEY`) and one sentence whatever went wrong, the membership refusal (`STATUS_FAILED_DISABLED`), `last_login`, the success row, and it forgets any pending password-stage challenge.
+- No Turnstile on the endpoint - the component posts only `{assertion}`, and the throttle is spent first.
+
+Worked examples: `reference_app/app/login/login_controller.php` (`passkey_login`) and `reference_app/portal/auth/Portal_Login_Controller.php`.
+
+---
+
+## The client portal
+
+`Rsx_Portal_Two_Factor` is the same API for portal users - TOTP, passkeys, recovery codes, the challenge, passwordless sign-in. What differs: credentials in `_portal_two_factor_credentials`; admission is `Portal_User_Model::can_login()` AND the site the app declared (`Portal_Session::set_site_id`) - a passkey of another tenant's portal user is refused; failures feed `Login_Throttle::record_failure()` directly (the portal has no login history); the rpId is the dedicated portal domain when configured; "View as Client" refuses enrollment and removal.
+
+**The realms never cross.** Separate tables, separate session keys, `'portal-<id>'` user handles: a staff passkey signs nobody in on the portal and the reverse. Handing a `Login_User_Model` to `Rsx_Portal_Two_Factor` (or the reverse) throws.
+
+**The components pick the realm from the page.** `Rsx_Two_Factor.controller()` answers `Rsx_Portal_Two_Factor_Controller` on a portal page, and every shipped component uses it - drop `<Passkey_Sign_In>`, `<Two_Factor_Challenge>`, `<Passkey_Register>` or `<Totp_Enrollment>` on a portal page with no realm argument.
+
+The portal password login becomes two-stage the same way: after `check_password()` + `can_login()`, when `Rsx_Portal_Two_Factor::is_enabled($portal_user)`, park the destination with `Portal_Session::put_value()`, `begin_challenge($portal_user)`, and redirect to a verify page hosting `<Two_Factor_Challenge>` instead of calling `set_portal_user_id()`. Worked example: `reference_app/portal/auth/Portal_Login_Controller.php` and `reference_app/portal/settings/Portal_Settings_Security.jqhtml`.
+
+---
+
 ## The enrollment recipe
 
 Anywhere a signed-in user can reach (the template uses Settings > Password & Security):
@@ -149,10 +201,11 @@ if (str_starts_with($handler, 'Rsx\App\Frontend')) {
 | `<Totp_Enrollment />` | none | fires `enrolled` when the user acknowledges the code sheet (the factor is already live) |
 | `<Passkey_Register />` | none | fires `registered`; renders a plain notice instead of a button when WebAuthn is absent |
 | `<Two_Factor_Challenge $controller $method />` | both REQUIRED | posts `{code}` or `{assertion}`; expects `{redirect}` and follows it with `window.location`; fires `no_challenge` when nothing is pending |
+| `<Passkey_Sign_In $controller $method [$label] />` | endpoint REQUIRED | runs the passwordless ceremony, posts `{assertion}`, expects `{redirect}`; fires `signed_in`; renders nothing without WebAuthn |
 
-All three are **layout-neutral by contract** - no card, no heading, no width. The host page owns the box. One input takes both an authenticator code and a recovery code; the server tries both.
+All four are **layout-neutral by contract** - no card, no heading, no width. The host page owns the box. One input takes both an authenticator code and a recovery code; the server tries both. All four pick the realm from the page.
 
-JS helpers: `Rsx_Two_Factor.is_supported()`, `register_passkey(label)`, `authenticate_passkey()` (returns the assertion; it does not post it).
+JS helpers: `Rsx_Two_Factor.is_supported()`, `controller()` (the page realm's controller), `register_passkey(label)`, `authenticate_passkey()` and `sign_in_with_passkey()` (each returns the assertion; neither posts it).
 
 ---
 
@@ -164,6 +217,7 @@ JS helpers: `Rsx_Two_Factor.is_supported()`, `register_passkey(label)`, `authent
 - **A dismissed browser prompt is not an error.** `NotAllowedError` is caught and answered as `null`; say nothing and leave the button available.
 - **No Turnstile on the verification endpoint.** `<Two_Factor_Challenge>` renders no widget, so there is no `__turnstile` field and the completeness guard stays silent. The surface is still guarded: it answers only from the caller's own pending challenge, and `verify_challenge()` spends the brute-force budget first.
 - **`credential_key`, not `credential_id`** - it is an opaque string handle from an authenticator, and `SCHEMA-TYPE-01` reserves `_id` for integers.
+- **Staff and portal passkeys are separate.** A person who uses both enrolls one in each; the realm that did not issue a credential simply does not know it.
 - **A passkey is bound to the hostname it was enrolled on** (the relying party id is the bare host). Moving environments invalidates it; that is the spec, not a bug.
 - **Recovery-code plaintext exists exactly once.** A lost sheet is regenerated, never reprinted.
 - **`challenge_state` returning `null` is not an error** - expired, already signed in, or a direct visit all read the same, and all three send the visitor back to `/login`.
@@ -173,7 +227,7 @@ JS helpers: `Rsx_Two_Factor.is_supported()`, `register_passkey(label)`, `authent
 
 ## Operator commands
 
-`--user=<id|email>` is required on all three; `--json` uses the standard envelope.
+`--user=<id|email>` is required on all three; `--json` uses the standard envelope. They act on STAFF login identities only.
 
 ```
 php artisan rsx:users:2fa:setup  --user=alice@example.com    # bootstrap/recovery: prints seed + codes ONCE, refuses a second seed

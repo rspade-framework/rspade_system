@@ -8,12 +8,11 @@
 namespace App\RSpade\Core\TwoFactor;
 
 use lbuchs\WebAuthn\WebAuthn;
-use App\RSpade\Core\Models\Login_User_Model;
+use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
-use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
 use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
 
 /**
@@ -40,8 +39,22 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  *
  * THE CHALLENGE LIVES IN THE SESSION, NOT IN THE PAYLOAD. A challenge the client hands
  * back to us is not a challenge - it is whatever the client chose. It is written to a
- * session value under CHALLENGE_KEY and read from there when the response arrives, so the
- * only thing that can satisfy a ceremony is the browser that started it.
+ * session value and read from there when the response arrives, so the only thing that can
+ * satisfy a ceremony is the browser that started it. There are TWO keys per realm: the
+ * realm's WEBAUTHN_CHALLENGE_KEY, shared by registration and the second-factor assertion
+ * (a browser is doing one or the other, never both), and its PASSKEY_LOGIN_CHALLENGE_KEY,
+ * for a passwordless sign-in. The second is separate because a login page can offer "sign
+ * in with a passkey" while a second-factor challenge is pending in the same browser, and
+ * one ceremony must never overwrite the other's challenge.
+ *
+ * EVERY CALL NAMES ITS REALM - the facade class (Rsx_Two_Factor for staff login identities,
+ * Rsx_Portal_Two_Factor for portal users). The realm supplies the credential table, the
+ * owner column, the session keys, the relying party id and the user handle. Staff and portal
+ * credentials live in DIFFERENT TABLES, and that is what makes the lookup in
+ * verify_assertion() realm-scoped: both realms usually share one relying party (one host),
+ * so a browser will happily offer a staff passkey on the portal's sign-in page, and the only
+ * thing standing between that and a staff credential answering a portal challenge is that
+ * the portal realm never looks in the staff table.
  *
  * BINARY CROSSES THE WIRE BASE64URL ENCODED, in both directions. The library is
  * constructed with its base64url mode on, so the args it produces serialize that way
@@ -55,22 +68,13 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Failed_Exception;
  * among them) never implement a counter and report zero forever, which the library treats
  * as "no counter" rather than as a clone - see processGet().
  *
- * Every method is static. Application code talks to Rsx_Two_Factor, not to this class.
+ * Every method is static. Application code talks to Rsx_Two_Factor or Rsx_Portal_Two_Factor,
+ * never to this class.
  *
  * See: php artisan rsx:man two_factor
  */
 class Passkeys
 {
-    /**
-     * Session value key holding the in-flight ceremony challenge (base64url).
-     *
-     * ONE key for both ceremonies - registration and assertion. They cannot overlap: a
-     * browser is either enrolling a key or logging in with one, never both at once, and
-     * sharing the key means an abandoned ceremony is overwritten rather than left lying
-     * around next to the live one.
-     */
-    public const CHALLENGE_KEY = 'two_factor.webauthn_challenge';
-
     /**
      * The only attestation format accepted. See the class docblock.
      */
@@ -87,30 +91,43 @@ class Passkeys
      * GLOBAL base64url flag as a side effect, so a cached instance would leave the encoding
      * mode dependent on which code ran first.
      *
+     * @param string $realm The realm facade.
      * @return WebAuthn
      */
-    private static function _server(): WebAuthn
+    private static function _server(string $realm): WebAuthn
     {
         return new WebAuthn(
             Rsx_Two_Factor::issuer(),
-            self::relying_party_id(),
+            $realm::_relying_party_id(),
             self::FORMATS,
             true
         );
     }
 
     /**
-     * The relying party id: the bare hostname, no scheme, no port.
+     * The application's relying party id: the bare APP_URL hostname, no scheme, no port.
+     *
+     * The staff realm's rpId, and the portal's too unless the portal is served from a
+     * dedicated domain (see Rsx_Portal_Two_Factor::_relying_party_id()).
      *
      * @return string
      */
     public static function relying_party_id(): string
     {
-        $hostname = Rsx::get_hostname();
+        return self::bare_host(Rsx::get_hostname());
+    }
 
+    /**
+     * A hostname reduced to what WebAuthn accepts as an rpId: lower case, no port.
+     *
+     * @param string $hostname
+     * @return string
+     */
+    public static function bare_host(string $hostname): string
+    {
         // get_hostname() already strips a port, but a passkey enrolled against the wrong
         // rpId is unusable forever rather than merely broken today, so this does not trust
-        // that and re-checks. Cheap insurance on a value that cannot be corrected later.
+        // any caller and re-checks. Cheap insurance on a value that cannot be corrected later.
         if (str_contains($hostname, ':')) {
             $hostname = explode(':', $hostname)[0];
         }
@@ -138,17 +155,24 @@ class Passkeys
      * contract with the user and not a deadline on any work of ours. We neither set it nor
      * enforce it.
      *
-     * @param Login_User_Model $login_user The identity enrolling.
+     * THE USER HANDLE COMES FROM THE REALM. An authenticator files a resident credential
+     * under (rpId, user handle) and REPLACES an existing one with the same pair, so a staff
+     * identity and a portal user sharing a numeric id on one host would silently overwrite
+     * each other's passkey. The portal realm's handle is prefixed for exactly that reason.
+     *
+     * @param string $realm The realm facade.
+     * @param Rsx_Model_Abstract $identity The identity enrolling.
      * @return array JSON-safe creation args.
      */
-    public static function registration_options(Login_User_Model $login_user): array
+    public static function registration_options(string $realm, Rsx_Model_Abstract $identity): array
     {
-        $server = self::_server();
+        $server = self::_server($realm);
+        $model = $realm::_credential_model();
 
         $existing = [];
 
-        $rows = Two_Factor_Credential_Model::where('login_user_id', $login_user->id)
-            ->where('type_id', Two_Factor_Credential_Model::TYPE_PASSKEY)
+        $rows = $model::where($realm::_owner_column(), $identity->id)
+            ->where('type_id', $model::TYPE_PASSKEY)
             ->whereNotNull('credential_key')
             ->result_set();
 
@@ -157,14 +181,14 @@ class Passkeys
         }
 
         $args = $server->getCreateArgs(
-            userId: (string) $login_user->id,
-            userName: (string) $login_user->email,
-            userDisplayName: (string) $login_user->email,
+            userId: $realm::_user_handle((int) $identity->id),
+            userName: (string) $identity->email,
+            userDisplayName: (string) $identity->email,
             requireResidentKey: true,
             excludeCredentialIds: $existing
         );
 
-        self::_store_challenge($server);
+        self::_store_challenge($server, $realm::WEBAUTHN_CHALLENGE_KEY);
 
         return self::_to_array($args);
     }
@@ -176,20 +200,21 @@ class Passkeys
      * docblock. It is forgotten as soon as it is read, so one challenge satisfies exactly
      * one ceremony whether that ceremony succeeds or fails.
      *
+     * @param string $realm The realm facade.
      * @param array $attestation {clientDataJSON, attestationObject}, both base64url.
      * @return array {credential_key, public_key, sign_count}
      * @throws Two_Factor_Failed_Exception When the ceremony is stale or malformed.
      * @throws \lbuchs\WebAuthn\WebAuthnException When the attestation does not verify.
      */
-    public static function verify_registration(array $attestation): array
+    public static function verify_registration(string $realm, array $attestation): array
     {
-        $challenge = self::_consume_challenge();
+        $challenge = self::_consume_challenge($realm::WEBAUTHN_CHALLENGE_KEY);
 
         if (!isset($attestation['clientDataJSON'], $attestation['attestationObject'])) {
             throw new Two_Factor_Failed_Exception('That security key response was incomplete. Please try again.');
         }
 
-        $server = self::_server();
+        $server = self::_server($realm);
 
         $data = $server->processCreate(
             self::base64url_decode($attestation['clientDataJSON']),
@@ -219,17 +244,19 @@ class Passkeys
      * caller is responsible for not offering the passkey option in that case, which
      * Rsx_Two_Factor::challenge_pending() reports through has_passkey.
      *
-     * @param int $login_user_id
+     * @param string $realm The realm facade.
+     * @param int $identity_id
      * @return array JSON-safe request args.
      */
-    public static function assertion_options(int $login_user_id): array
+    public static function assertion_options(string $realm, int $identity_id): array
     {
-        $server = self::_server();
+        $server = self::_server($realm);
+        $model = $realm::_credential_model();
 
         $credential_ids = [];
 
-        $rows = Two_Factor_Credential_Model::where('login_user_id', $login_user_id)
-            ->where('type_id', Two_Factor_Credential_Model::TYPE_PASSKEY)
+        $rows = $model::where($realm::_owner_column(), $identity_id)
+            ->where('type_id', $model::TYPE_PASSKEY)
             ->whereNotNull('confirmed_at')
             ->whereNotNull('credential_key')
             ->result_set();
@@ -240,7 +267,36 @@ class Passkeys
 
         $args = $server->getGetArgs($credential_ids);
 
-        self::_store_challenge($server);
+        self::_store_challenge($server, $realm::WEBAUTHN_CHALLENGE_KEY);
+
+        return self::_to_array($args);
+    }
+
+    /**
+     * The arguments for navigator.credentials.get() for a PASSWORDLESS sign-in: no identity
+     * is named, so there is no allowCredentials list and the authenticator offers whatever
+     * discoverable credential it holds for this relying party.
+     *
+     * USER VERIFICATION IS REQUIRED here and nowhere else. As a second factor a passkey only
+     * has to prove possession - the password already proved knowledge. As the ONLY credential
+     * it has to be two factors on its own: possession of the authenticator plus the PIN or
+     * biometric that unlocked it. 'required' in the options tells the browser to insist; the
+     * matching verify_assertion(..., passwordless: true) refuses an assertion whose UV flag is
+     * not set, because the options are advice to a client and the flag is the proof.
+     *
+     * The challenge parks under the realm's PASSKEY_LOGIN_CHALLENGE_KEY, never the key the
+     * second-factor ceremony uses - see the class docblock.
+     *
+     * @param string $realm The realm facade.
+     * @return array JSON-safe request args.
+     */
+    public static function discoverable_assertion_options(string $realm): array
+    {
+        $server = self::_server($realm);
+
+        $args = $server->getGetArgs([], requireUserVerification: true);
+
+        self::_store_challenge($server, $realm::PASSKEY_LOGIN_CHALLENGE_KEY);
 
         return self::_to_array($args);
     }
@@ -253,25 +309,37 @@ class Passkeys
      * what makes a passkey assertion able to identify the user as well as authenticate
      * them.
      *
+     * The lookup is in the REALM's table only, so a credential from the other realm is simply
+     * unknown here - see the class docblock.
+     *
      * The stored counter is passed as prevSignatureCnt so the library performs the
      * anti-cloning check, and the row is updated only after the signature verifies.
      *
+     * @param string $realm The realm facade.
      * @param array $assertion {id, clientDataJSON, authenticatorData, signature}.
-     * @return Two_Factor_Credential_Model The credential that authenticated.
+     * @param bool $passwordless True for a passwordless sign-in: the challenge is read from
+     *                           the realm's PASSKEY_LOGIN_CHALLENGE_KEY and user verification
+     *                           is REQUIRED. False for the second-factor assertion.
+     * @return Rsx_Model_Abstract The credential row that authenticated.
      * @throws Two_Factor_Failed_Exception When the ceremony is stale, malformed, or names
-     *                                     a credential this server does not know.
-     * @throws \lbuchs\WebAuthn\WebAuthnException When the signature does not verify.
+     *                                     a credential this realm does not know.
+     * @throws \lbuchs\WebAuthn\WebAuthnException When the signature does not verify, or a
+     *                                           passwordless assertion is not user-verified.
      */
-    public static function verify_assertion(array $assertion): Two_Factor_Credential_Model
+    public static function verify_assertion(string $realm, array $assertion, bool $passwordless = false): Rsx_Model_Abstract
     {
-        $challenge = self::_consume_challenge();
+        $challenge = self::_consume_challenge(
+            $passwordless ? $realm::PASSKEY_LOGIN_CHALLENGE_KEY : $realm::WEBAUTHN_CHALLENGE_KEY
+        );
 
         if (!isset($assertion['id'], $assertion['clientDataJSON'], $assertion['authenticatorData'], $assertion['signature'])) {
             throw new Two_Factor_Failed_Exception('That security key response was incomplete. Please try again.');
         }
 
-        $credential = Two_Factor_Credential_Model::where('credential_key', (string) $assertion['id'])
-            ->where('type_id', Two_Factor_Credential_Model::TYPE_PASSKEY)
+        $model = $realm::_credential_model();
+
+        $credential = $model::where('credential_key', (string) $assertion['id'])
+            ->where('type_id', $model::TYPE_PASSKEY)
             ->whereNotNull('confirmed_at')
             ->first();
 
@@ -282,7 +350,7 @@ class Passkeys
             throw new Two_Factor_Failed_Exception('That security key is not valid.');
         }
 
-        $server = self::_server();
+        $server = self::_server($realm);
 
         $server->processGet(
             self::base64url_decode($assertion['clientDataJSON']),
@@ -290,7 +358,8 @@ class Passkeys
             self::base64url_decode($assertion['signature']),
             $credential->secret,
             $challenge,
-            (int) $credential->counter
+            (int) $credential->counter,
+            $passwordless
         );
 
         $new_counter = $server->getSignatureCounter();
@@ -318,12 +387,13 @@ class Passkeys
      * completed must not stay satisfiable indefinitely.
      *
      * @param WebAuthn $server
+     * @param string $key The session value key this ceremony parks under.
      * @return void
      */
-    private static function _store_challenge(WebAuthn $server): void
+    private static function _store_challenge(WebAuthn $server, string $key): void
     {
         Session::put_value(
-            self::CHALLENGE_KEY,
+            $key,
             self::base64url_encode($server->getChallenge()->getBinaryString()),
             Rsx_Two_Factor::challenge_expires_at()
         );
@@ -337,14 +407,15 @@ class Passkeys
      * attempt leaves it live for a retry, which is precisely the replay a challenge exists
      * to prevent.
      *
+     * @param string $key The session value key the ceremony parked under.
      * @return string The raw challenge bytes.
      * @throws Two_Factor_Failed_Exception When there is nothing in flight.
      */
-    private static function _consume_challenge(): string
+    private static function _consume_challenge(string $key): string
     {
-        $stored = Session::get_value(self::CHALLENGE_KEY);
+        $stored = Session::get_value($key);
 
-        Session::forget_value(self::CHALLENGE_KEY);
+        Session::forget_value($key);
 
         if (!is_string($stored) || $stored === '') {
             throw new Two_Factor_Failed_Exception('That security key request has expired. Please try again.');

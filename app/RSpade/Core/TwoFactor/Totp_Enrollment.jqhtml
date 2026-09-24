@@ -20,7 +20,8 @@ THREE STATES, in the order the template tests them:
   otherwise              the QR code, the secret, the proof   -> the enrollment form
 
 Args: none. The component always enrolls the signed-in identity - the server offers no
-other spelling, deliberately (Rsx_Two_Factor::_enrolling_identity).
+other spelling, deliberately (Rsx_Two_Factor_Abstract::__enrolling_identity). On a portal
+page it enrolls the signed-in PORTAL user, through the portal realm's controller.
 
 Events:
   enrolled  - fired when the user acknowledges the recovery codes. The factor is already

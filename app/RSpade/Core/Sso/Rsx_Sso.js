@@ -12,8 +12,13 @@
  * page that was served with no key at all, and a login page renders no divider and no
  * buttons rather than an empty row of chrome.
  *
+ * THE ROSTER IS THE PAGE'S REALM'S. A staff page is served Rsx_Sso::enabled_providers(); a
+ * client-portal page is served Rsx_Portal_Sso::enabled_providers(), whose begin_url is the
+ * portal's own ceremony and which is empty unless the portal realm is switched on. So this
+ * reader, and <Sso_Buttons> over it, never need to know which realm they are in.
+ *
  * WHAT IS IN A PROVIDER ENTRY is public by contract, and it is exactly what the server's
- * Rsx_Sso::enabled_providers() returns: {key, label, begin_url, icon_svg}. No client id, no
+ * enabled_providers() returns: {key, label, begin_url, icon_svg}. No client id, no
  * secret, nothing that is not already visible in the authorize URL the button leads to.
  *
  * See: php artisan rsx:man sso

@@ -1560,6 +1560,23 @@ class BundleCompiler
             }
         }
 
+        // The portal twins of the two controllers above, for the same reason again: the
+        // components that drive them are the SAME components (they pick their controller from
+        // the page's experience), and the portal login page is a bundle carrying no
+        // application controller that would pull either stub in.
+        $portal_auth_controller_sources = [
+            'app/RSpade/Core/TwoFactor/Rsx_Portal_Two_Factor_Controller.php',
+            'app/RSpade/Core/Sso/Rsx_Portal_Sso_Controller.php',
+        ];
+        foreach ($portal_auth_controller_sources as $portal_auth_controller_source) {
+            if (isset($manifest_files[$portal_auth_controller_source]['js_stub'])) {
+                $portal_auth_stub = rsx_project_file_path($manifest_files[$portal_auth_controller_source]['js_stub']);
+                if (file_exists($portal_auth_stub)) {
+                    $stubs[] = $portal_auth_stub;
+                }
+            }
+        }
+
         console_debug('BUNDLE', 'Found ' . count($stubs) . ' JS stubs total');
 
         return array_unique($stubs);

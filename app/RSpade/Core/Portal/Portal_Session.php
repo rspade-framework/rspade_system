@@ -408,6 +408,55 @@ class Portal_Session
         return Session::verify_csrf_token($token);
     }
 
+    // =====================================================================
+    // Session values - the browser's one value store, from portal code
+    // =====================================================================
+
+    /**
+     * Store a value against this browser's session - the SAME store Session::put_value()
+     * writes, exposed here so portal code never reaches for the staff facade.
+     *
+     * The store belongs to the browser's one session row, not to either identity, so a
+     * value written here is readable from a staff request on the same browser and the
+     * reverse. Portal code namespaces its keys ('portal_...') for exactly that reason. A
+     * value survives a portal logout (the row survives it), which is what lets a login flow
+     * park something across a second-factor challenge. See Session::put_value() for the
+     * writer semantics and the optional expiry.
+     *
+     * @param string $key
+     * @param mixed $value
+     * @param string|null $expires_at ISO datetime, or null to live as long as the session
+     * @return void
+     */
+    public static function put_value(string $key, $value, ?string $expires_at = null): void
+    {
+        Session::put_value($key, $value, $expires_at);
+    }
+
+    /**
+     * Read a value stored against this browser's session. A reader: creates nothing. An
+     * expired value reads as absent. See Session::get_value().
+     *
+     * @param string $key
+     * @param mixed $default
+     * @return mixed
+     */
+    public static function get_value(string $key, $default = null)
+    {
+        return Session::get_value($key, $default);
+    }
+
+    /**
+     * Remove a value stored against this browser's session. See Session::forget_value().
+     *
+     * @param string $key
+     * @return void
+     */
+    public static function forget_value(string $key): void
+    {
+        Session::forget_value($key);
+    }
+
     /**
      * Log the portal user out: clears the portal properties, leaving the browser's
      * session (and any staff login on it) intact.

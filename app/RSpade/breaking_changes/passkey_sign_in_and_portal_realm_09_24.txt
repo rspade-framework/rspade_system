@@ -1,0 +1,139 @@
+PASSWORDLESS PASSKEY SIGN-IN, AND PASSKEYS / 2FA / SSO FOR THE CLIENT PORTAL - THE ENGINE SHIPS, THE SCREENS DO NOT
+Date: 2026-09-24
+
+IF YOU DO NOTHING: nothing breaks and nothing changes - your staff login page
+    offers no "Sign in with a passkey", your portal users still sign in with a
+    password alone (no second factor, no passkey, no Google/Microsoft), and
+    the new framework surfaces stay dormant until you port the screens
+    described below.
+
+SUMMARY
+    Three capabilities arrived with the pull:
+
+    1. PASSWORDLESS SIGN-IN. A passkey can now be the FIRST and only
+       credential: Rsx_Two_Factor::begin_passkey_login() /
+       verify_passkey_login(), driven by the new <Passkey_Sign_In> component.
+       User verification is required, and a passwordless sign-in is COMPLETE -
+       it owes no second factor (framework ruling; rsx:man two_factor,
+       PASSWORDLESS SIGN-IN). Every passkey your users already registered can
+       do this; nothing needs re-enrolling.
+
+    2. THE PORTAL REALM FOR SECOND FACTORS AND PASSKEYS. Rsx_Portal_Two_Factor
+       is the identical API for Portal_User_Model - TOTP, passkeys, recovery
+       codes, the challenge and passwordless sign-in - in its own table
+       (_portal_two_factor_credentials, created by the framework migration).
+
+    3. THE PORTAL REALM FOR FEDERATED SIGN-IN. Rsx_Portal_Sso is the
+       identical API to Rsx_Sso for portal users, with its own table, its own
+       ceremony URLs and its own portal.sso.* hooks. It is OFF until you set
+       rsx.sso.portal_enabled.
+
+    The staff facades kept their names and signatures; nothing you wrote
+    against Rsx_Two_Factor or Rsx_Sso changes.
+
+    Full contract: php artisan rsx:man two_factor, rsx:man sso, rsx:man portal
+    Recipes: skills rspade:two-factor, rspade:sso, rspade:portal-core
+
+WHAT YOU ALREADY HAVE
+    Nothing to do in this section - it is all in system/ and it is all live.
+
+    Rsx_Two_Factor::begin_passkey_login() / verify_passkey_login()
+                                  Passwordless sign-in, staff realm.
+    Rsx_Portal_Two_Factor         The whole second-factor API for portal users.
+    Rsx_Portal_Two_Factor_Controller
+                                  Its browser endpoints (portal realm),
+                                  force-included in every bundle.
+    Rsx_Portal_Sso, Rsx_Portal_Sso_Controller
+                                  Portal federated sign-in: /_sso/:provider/
+                                  begin|callback under the portal prefix or
+                                  domain, and the Connected Accounts endpoints.
+    <Passkey_Sign_In $controller $method />
+                                  The "Sign in with a passkey" control.
+    Portal_Session::put_value() / get_value() / forget_value()
+                                  The session-value store, from portal code.
+    rsx.sso.portal_enabled        The portal SSO switch (false).
+
+    The shipped components (<Two_Factor_Challenge>, <Passkey_Register>,
+    <Totp_Enrollment>, <Sso_Buttons>, <Passkey_Sign_In>) pick their realm from
+    the page, so they work on a portal page with no argument.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    The interface in /rsx/, without which nobody can reach the new
+    capabilities:
+
+    - Staff cannot sign in with a passkey: the login page has no button and
+      there is no endpoint for it to post to.
+    - Portal users cannot enroll a passkey or an authenticator app: the
+      portal settings screen has no section for it.
+    - A portal user who did enroll would not be challenged: the portal login
+      signs in straight after the password, and there is no verify page.
+    - Portal users cannot sign in with Google or Microsoft: the switch is
+      off, no portal.sso.* policy handler exists, and the login page shows no
+      buttons.
+
+THE REFERENCE IMPLEMENTATION
+    Every file below is release-current under
+    system/app/RSpade/resource/reference_app/:
+
+    app/login/login_controller.php
+        passkey_login() - the staff passwordless endpoint: verify_passkey_login()
+        then post_login_destination().
+    app/login/login_index.blade.php, login_index.scss
+        One .login-alternatives block: the "or" divider, then
+        <Passkey_Sign_In $controller="Login_Controller" $method="passkey_login" />,
+        then the SSO buttons - hidden as a whole when nothing in it is visible
+        (a browser without passkeys marks the control --unsupported).
+
+    portal/auth/Portal_Login_Controller.php
+        index() is TWO-STAGE: after check_password() + can_login(), a portal
+        user with Rsx_Portal_Two_Factor::is_enabled() is parked
+        (begin_challenge()) and redirected to verify() instead of being signed
+        in; the invited-client id rides Portal_Session::put_value(). verify()
+        (/login/verify), verify_2fa() and passkey_login() are new;
+        post_auth_destination() is now public and raises the welcome flash.
+    portal/auth/portal_login_verify.blade.php
+        <Two_Factor_Challenge $controller="Portal_Login_Controller"
+        $method="verify_2fa" />.
+    portal/auth/portal_login_index.blade.php, portal_login_index.scss
+        The divider, <Passkey_Sign_In ...passkey_login />, and <Sso_Buttons />
+        behind Rsx_Portal_Sso::is_enabled().
+    handlers/Portal_Sso_Handlers.php
+        The five portal.sso.* hooks: a verified provider email matching a
+        portal user of the declared site is connected and signed in; anything
+        else declines.
+    portal/settings/Portal_Settings_Security.jqhtml|.js|.scss, and one line in
+    portal/settings/Portal_Settings_Action.jqhtml
+        Passkeys and authenticator app (list, remove, <Passkey_Register />, an
+        on-demand <Totp_Enrollment />, recovery codes) and Connected Accounts
+        (list, disconnect, <Sso_Buttons $intent="link" />).
+
+PORTING IT
+    Copy the pieces you want - they are independent:
+
+    - Staff passwordless only: the login_controller.php method and the three
+      lines of login_index.blade.php. Adjust the destination call to yours.
+    - Portal second factors: the Portal_Login_Controller changes, the verify
+      blade and the settings region. If your portal login controller has
+      diverged, port the BRANCH, not the file: the is_enabled() test sits
+      between can_login() and set_portal_user_id().
+    - Portal SSO: set 'sso' => ['portal_enabled' => true] in
+      rsx/resource/config/rsx.php, copy Portal_Sso_Handlers.php (rewrite
+      match_verified_email() to your onboarding policy - an invite-based
+      portal may resolve an open invitation there instead), and REGISTER THE
+      PORTAL CALLBACK in each provider's console beside the staff one -
+      https://<APP_URL host>/_portal/_sso/<key>/callback in prefix mode, or
+      https://<portal domain>/_sso/<key>/callback with rsx.portal.domain
+      (Rsx_Portal_Sso::callback_url('<key>') returns the exact string).
+
+    A portal that already has a second factor of its own (a bespoke TOTP)
+    migrates its users by removing the bespoke enrollment and asking them to
+    enroll through Portal_Settings_Security; the framework cannot read another
+    implementation's seeds.
+
+VERIFICATION
+    - php artisan rsx:debug /login - the passkey control renders beneath the
+      Sign In button (a headless browser without WebAuthn renders nothing,
+      which is the component's contract).
+    - php artisan rsx:debug /settings --portal --portal-user=<id> - the
+      Passkeys section loads with no console error.
+    - rsx:man two_factor, THE CLIENT PORTAL REALM, for what each realm admits.

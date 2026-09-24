@@ -9,7 +9,6 @@ namespace App\RSpade\Core\TwoFactor;
 
 use Illuminate\Support\Facades\Hash;
 use App\RSpade\Core\Time\Rsx_Time;
-use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
 
 /**
  * Recovery_Codes - the printed way back in when the second factor is gone.
@@ -26,6 +25,11 @@ use App\RSpade\Core\TwoFactor\Two_Factor_Credential_Model;
  * correct property and not a limitation: a code the server can still read is a code an
  * attacker with database access can read, which would make the recovery path weaker than
  * the password it backs up.
+ *
+ * EVERY STORAGE CALL NAMES ITS REALM - the facade class, Rsx_Two_Factor (staff, the
+ * login identity) or Rsx_Portal_Two_Factor (a portal user). The realm answers which table
+ * and which owner column the rows live in, so a staff code can never be spent against a
+ * portal account or the reverse: the two sets are not in the same table.
  *
  * CONSUME-ONCE, BY DELETION. A used code has its ROW DELETED rather than a used_at column
  * set. There is nothing to audit in a spent code and nothing that may ever match it again,
@@ -115,22 +119,26 @@ class Recovery_Codes
      * prove - the code was minted by the server and handed to the user in the same breath,
      * and there is no enrollment ceremony that could still fail.
      *
-     * @param int $login_user_id
+     * @param string $realm The realm facade (Rsx_Two_Factor or Rsx_Portal_Two_Factor).
+     * @param int $identity_id The owning identity, in that realm.
      * @param array $codes Plaintext codes, as returned by generate().
      * @return void
      */
-    public static function store_for(int $login_user_id, array $codes): void
+    public static function store_for(string $realm, int $identity_id, array $codes): void
     {
-        Two_Factor_Credential_Model::where('login_user_id', $login_user_id)
-            ->where('type_id', Two_Factor_Credential_Model::TYPE_RECOVERY_CODE)
+        $model = $realm::_credential_model();
+        $owner = $realm::_owner_column();
+
+        $model::where($owner, $identity_id)
+            ->where('type_id', $model::TYPE_RECOVERY_CODE)
             ->delete();
 
         $now = Rsx_Time::now_iso();
 
         foreach ($codes as $code) {
-            $row = new Two_Factor_Credential_Model();
-            $row->login_user_id = $login_user_id;
-            $row->type_id = Two_Factor_Credential_Model::TYPE_RECOVERY_CODE;
+            $row = new $model();
+            $row->$owner = $identity_id;
+            $row->type_id = $model::TYPE_RECOVERY_CODE;
             $row->secret = Hash::make(self::_normalize($code));
             $row->counter = 0;
             $row->confirmed_at = $now;
@@ -156,11 +164,12 @@ class Recovery_Codes
      * succeeds exactly once even if the two presentations overlap - the second finds no
      * row to match.
      *
-     * @param int $login_user_id
+     * @param string $realm The realm facade.
+     * @param int $identity_id
      * @param string $code The code the user typed.
      * @return bool
      */
-    public static function consume(int $login_user_id, string $code): bool
+    public static function consume(string $realm, int $identity_id, string $code): bool
     {
         $code = self::_normalize($code);
 
@@ -168,8 +177,10 @@ class Recovery_Codes
             return false;
         }
 
-        $rows = Two_Factor_Credential_Model::where('login_user_id', $login_user_id)
-            ->where('type_id', Two_Factor_Credential_Model::TYPE_RECOVERY_CODE)
+        $model = $realm::_credential_model();
+
+        $rows = $model::where($realm::_owner_column(), $identity_id)
+            ->where('type_id', $model::TYPE_RECOVERY_CODE)
             ->whereNotNull('confirmed_at')
             ->result_set();
 
@@ -192,13 +203,16 @@ class Recovery_Codes
      * A plain COUNT, because a spent code has no row. The UI uses it to tell a user they
      * are running low, which is the only warning they will get before the set is empty.
      *
-     * @param int $login_user_id
+     * @param string $realm The realm facade.
+     * @param int $identity_id
      * @return int
      */
-    public static function remaining(int $login_user_id): int
+    public static function remaining(string $realm, int $identity_id): int
     {
-        return Two_Factor_Credential_Model::where('login_user_id', $login_user_id)
-            ->where('type_id', Two_Factor_Credential_Model::TYPE_RECOVERY_CODE)
+        $model = $realm::_credential_model();
+
+        return $model::where($realm::_owner_column(), $identity_id)
+            ->where('type_id', $model::TYPE_RECOVERY_CODE)
             ->whereNotNull('confirmed_at')
             ->count();
     }

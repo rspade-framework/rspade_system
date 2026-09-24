@@ -1,0 +1,32 @@
+// Passkey_Sign_In - the "Sign in with a passkey" control.
+//
+// LAYOUT-NEUTRAL: a full-width button and an error line. The login page owns the card and the
+// "or" divider around it.
+.Passkey_Sign_In {
+    display: block;
+
+    // No WebAuthn in this browser: the control renders nothing and takes no space.
+    &--unsupported {
+        display: none;
+    }
+
+    &__button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        width: 100%;
+    }
+
+    &__icon {
+        width: 16px;
+        height: 16px;
+        flex: 0 0 auto;
+    }
+
+    &__error {
+        margin-top: 8px;
+        color: var(--bs-danger);
+        text-align: center;
+    }
+}

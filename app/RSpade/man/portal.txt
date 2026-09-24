@@ -278,6 +278,14 @@ PORTAL SESSIONS
                       Each sign-in also clears the portal properties off the
                       user's oldest sessions beyond
                       rsx.sessions.max_web_sessions_per_user.
+      values          put_value($key, $value, $expires_at = null),
+                      get_value($key, $default = null), forget_value($key) - the
+                      browser's session-value store, the SAME store
+                      Session::put_value() writes, so portal code never reaches
+                      for the staff facade. It belongs to the one row, not to an
+                      identity: namespace portal keys ('portal_...'). A value
+                      survives a portal logout, which is how a login flow parks
+                      something across a second-factor challenge.
 
     THE SITE CONTRACT
       A portal session is site-scoped: every row carries a site_id, and every
@@ -463,6 +471,28 @@ PORTAL LOGIN FLOW
       5. Portal_Session::set_portal_user_id($portal_user->id) - no site argument;
          the session is created for the declared site.
       6. Flash + redirect to the post-auth destination.
+
+    SECOND FACTORS, PASSKEYS AND FEDERATED SIGN-IN are framework-owned in the
+    portal realm too, each a separate facade with its own table, so nothing a
+    staff identity holds ever signs anybody in here:
+
+      Rsx_Portal_Two_Factor  TOTP, passkeys, recovery codes, the second-factor
+                             challenge and PASSWORDLESS passkey sign-in
+                             (rsx:man two_factor, THE CLIENT PORTAL REALM)
+      Rsx_Portal_Sso         federated sign-in, off until
+                             rsx.sso.portal_enabled (rsx:man sso, THE CLIENT
+                             PORTAL REALM)
+
+    With a second factor the handler above becomes TWO-STAGE: after step 4,
+    when Rsx_Portal_Two_Factor::is_enabled($portal_user), park whatever the
+    destination needs with Portal_Session::put_value(), call
+    Rsx_Portal_Two_Factor::begin_challenge($portal_user) and redirect to a
+    verify page hosting <Two_Factor_Challenge> INSTEAD of step 5. Both
+    facades admit only a portal user can_login() accepts, of the declared
+    site, and both refuse enrollment and linking during "View as Client".
+    The shipped components (<Passkey_Sign_In>, <Passkey_Register>,
+    <Totp_Enrollment>, <Two_Factor_Challenge>, <Sso_Buttons>) pick the portal
+    realm on a portal page by themselves.
 
     WHERE THE SITE DECLARATION GOES - three patterns:
       Mono-site            Portal_Main::init() reads the app's own config key.
@@ -1171,7 +1201,9 @@ SEE ALSO
     rsx:man dispatch
     rsx:man class_override
     rsx:man file_upload - Staff_Authorizable, the staff twin of Portal_Authorizable
+    rsx:man two_factor - Rsx_Portal_Two_Factor: passkeys and second factors for portal users
+    rsx:man sso - Rsx_Portal_Sso: federated sign-in for portal users
     rsx:man config_rsx
     rsx:man migrations
 
-RSX Framework              Last updated 2026-09-01                  PORTAL(3)
+RSX Framework              Last updated 2026-09-24                  PORTAL(3)

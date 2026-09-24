@@ -21,9 +21,16 @@
  * caught here; every other failure (no authenticator, a refused attestation, a server
  * rejection) surfaces.
  *
- * authenticate_passkey() RETURNS the assertion rather than posting it. The verification
- * endpoint belongs to the application, because where a signed-in user lands is application
- * logic - see Rsx_Two_Factor_Controller's docblock and <Two_Factor_Challenge>.
+ * authenticate_passkey() and sign_in_with_passkey() RETURN the assertion rather than posting
+ * it. The verification endpoint belongs to the application, because where a signed-in user
+ * lands is application logic - see Rsx_Two_Factor_Controller's docblock, <Two_Factor_Challenge>
+ * and <Passkey_Sign_In>.
+ *
+ * ONE CLASS, BOTH REALMS. The server has a controller per realm - Rsx_Two_Factor_Controller
+ * for staff, Rsx_Portal_Two_Factor_Controller for the client portal, same method names - and
+ * controller() picks the one this page belongs to from its experience (Rsx_Portal.is_portal()).
+ * Every ceremony here, and every shipped two-factor component, goes through it, so none of
+ * them takes a realm argument and a portal page can never start a staff ceremony.
  *
  * See: php artisan rsx:man two_factor
  */
@@ -40,6 +47,16 @@ class Rsx_Two_Factor {
         return !!window.PublicKeyCredential;
     }
 
+    /**
+     * The second-factor controller for THIS page's realm.
+     *
+     * @returns {object} Rsx_Portal_Two_Factor_Controller on a portal page, else
+     *                   Rsx_Two_Factor_Controller.
+     */
+    static controller() {
+        return Rsx_Portal.is_portal() ? Rsx_Portal_Two_Factor_Controller : Rsx_Two_Factor_Controller;
+    }
+
     // -------------------------------------------------------------------------
     // Ceremonies
     // -------------------------------------------------------------------------
@@ -52,7 +69,7 @@ class Rsx_Two_Factor {
      *                                 dismissed the browser's prompt.
      */
     static async register_passkey(label) {
-        const options = await Rsx_Two_Factor_Controller.passkey_register_begin();
+        const options = await Rsx_Two_Factor.controller().passkey_register_begin();
 
         const public_key = Rsx_Two_Factor._decode_creation_options(options.publicKey);
 
@@ -80,7 +97,7 @@ class Rsx_Two_Factor {
             attestationObject: Rsx_Two_Factor._to_base64url(credential.response.attestationObject),
         };
 
-        return await Rsx_Two_Factor_Controller.passkey_register_confirm({
+        return await Rsx_Two_Factor.controller().passkey_register_confirm({
             attestation: attestation,
             label: label === undefined ? null : label,
         });
@@ -94,8 +111,33 @@ class Rsx_Two_Factor {
      *                                 null if the user dismissed the browser's prompt.
      */
     static async authenticate_passkey() {
-        const options = await Rsx_Two_Factor_Controller.challenge_passkey_options();
+        const options = await Rsx_Two_Factor.controller().challenge_passkey_options();
 
+        return await Rsx_Two_Factor._get_assertion(options);
+    }
+
+    /**
+     * Sign in with a passkey ALONE - no password, nothing pending: the authenticator offers
+     * whatever discoverable credential it holds for this site, and the wire-ready assertion
+     * is handed back for the application's own verification endpoint, which calls
+     * verify_passkey_login() on the realm's facade.
+     *
+     * @returns {Promise<object|null>} {id, clientDataJSON, authenticatorData, signature}, or
+     *                                 null if the user dismissed the browser's prompt.
+     */
+    static async sign_in_with_passkey() {
+        const options = await Rsx_Two_Factor.controller().passkey_login_options();
+
+        return await Rsx_Two_Factor._get_assertion(options);
+    }
+
+    /**
+     * Run navigator.credentials.get() over the server's request args and encode the result.
+     *
+     * @param {object} options The server's {publicKey} request args.
+     * @returns {Promise<object|null>} The assertion, or null for a dismissed prompt.
+     */
+    static async _get_assertion(options) {
         const public_key = Rsx_Two_Factor._decode_request_options(options.publicKey);
 
         let credential = null;

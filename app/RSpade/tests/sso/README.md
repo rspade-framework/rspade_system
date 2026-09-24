@@ -3,9 +3,13 @@
 ## Domain overview & applicability
 
 Federated sign-in: "Continue with Google/Microsoft/Facebook/Apple/X" on a login page, and
-the connected-accounts list behind a settings screen. `Rsx_Sso` is the ONLY class
-application code touches; `Socialite_Bridge`, `Sso_Identity_Model` and `Rsx_Sso_Controller`
-are implementation behind it, and no application ever sees a Socialite object.
+the connected-accounts list behind a settings screen. The engine is written once
+(`Rsx_Sso_Abstract`) and bound to two realms: `Rsx_Sso` for staff login identities and
+`Rsx_Portal_Sso` for portal users (its own table, its own ceremony URLs, its own
+`portal.sso.*` hooks, off unless `rsx.sso.portal_enabled`). Those two facades are the ONLY
+classes application code touches; `Socialite_Bridge`, the identity models and the two
+controllers are implementation behind them, and no application ever sees a Socialite object.
+`Portal_Sso_Test` pins the portal realm.
 
 The division of labour IS the design, and most of what is tested here follows from it. The
 framework owns the CEREMONY - state, PKCE, the token exchange, the throttle, the failure
@@ -34,8 +38,12 @@ them through).
 
 ## Source files
 
-- `app/RSpade/Core/Sso/Rsx_Sso.php` - the facade: the roster, the ceremony, the pending
-  identity, linking and removal
+- `app/RSpade/Core/Sso/Rsx_Sso_Abstract.php` - the engine: the roster, the ceremony, the
+  pending identity, linking and removal, over realm hooks
+- `app/RSpade/Core/Sso/Rsx_Sso.php` / `Rsx_Portal_Sso.php` - the staff and portal facades
+- `app/RSpade/Core/Sso/Portal_Sso_Identity_Model.php` - the `_portal_sso_identities` model
+- `app/RSpade/Core/Sso/Rsx_Portal_Sso_Controller.php` - the portal ceremony routes
+  (`#[Portal_Route]`) and the portal settings Ajax surface
 - `app/RSpade/Core/Sso/Socialite_Bridge.php` - the only class that knows Socialite exists;
   carries the stateless/PKCE/Apple spike findings in its class docblock
 - `app/RSpade/Core/Sso/Sso_Identity_Model.php` - the `_sso_identities` model
@@ -56,7 +64,7 @@ them through).
   class delegates its JSON envelope to `Api_Key_Cli_Support`, as `Two_Factor_Cli_Support` does
 - `database/migrations/2026_09_04_110416_create_sso_identities_table.php`
 - Config: `config/rsx.php`, the `sso` block (`providers`, `custom`, `skip_two_factor`,
-  `pending_window_minutes`)
+  `pending_window_minutes`, `portal_enabled`)
 
 The APPLICATION half, which the framework deliberately does not own, is `rsx/handlers/`
 (the five hooks), the login page's `<Sso_Buttons />`, and the settings screen's Connected

@@ -5,9 +5,14 @@
 Second-factor authentication: the credentials an identity may add on top of its password,
 and the login challenge that redeems them. Three factor kinds share one table and one
 facade - an authenticator app (TOTP, RFC 6238), a passkey (WebAuthn), and the recovery
-codes that back both up. `Rsx_Two_Factor` is the ONLY class application code touches;
-`Totp`, `Passkeys`, `Recovery_Codes` and `Two_Factor_Credential_Model` are implementation
-behind it.
+codes that back both up - plus PASSWORDLESS sign-in, a passkey as the only credential. The
+engine is written once (`Rsx_Two_Factor_Abstract`) and bound to two realms: `Rsx_Two_Factor`
+for the staff login identity and `Rsx_Portal_Two_Factor` for portal users, each with its own
+credential table. Those two facades are the ONLY classes application code touches; `Totp`,
+`Passkeys`, `Recovery_Codes` and the credential models are implementation behind them.
+`Passkey_Login_Test` pins the passwordless flow and `Portal_Two_Factor_Test` the realm
+boundary (separate tables, prefixed user handles, the declared site, the portal's admission
+rule).
 
 The subsystem's central property is the shape of the login flow. A login function verifies
 the password with `RsxAuth::attempt(record: false, touch_last_login: false)`, and if the

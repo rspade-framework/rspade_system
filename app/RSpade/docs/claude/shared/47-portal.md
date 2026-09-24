@@ -14,4 +14,6 @@ A second authenticated experience for external users (clients, vendors), running
 
 **"View as Client" impersonation is READ-ONLY, and enforcing that is the APP'S JOB** — the framework only exposes `is_impersonating()`, and since every Ajax endpoint is a POST (reads too), a blanket POST block breaks the portal: guard each MUTATING endpoint. Test with `rsx:debug /path --portal --portal-user=<id|email>`.
 
+**Sign-in beyond the password is framework-owned here too** — `Rsx_Portal_Two_Factor` (second factors, passkeys, passwordless sign-in) and `Rsx_Portal_Sso` (off until `rsx.sso.portal_enabled`), each with its own table so no staff credential or link ever signs anybody in on the portal; the portal-side session-value store is `Portal_Session::put_value()`/`get_value()`/`forget_value()`, never `Session::`.
+
 Skill `rspade:portal-core`: routing and site-declaration recipes, the `Portal_Session` API, record-rule patterns, the internal-endpoint channel, impersonation handoff. The shipped screens, layouts and invite/membership model are the app skill `portal-app` (ships in `rsx/resource/skills/`). Details: `rsx:man portal`.

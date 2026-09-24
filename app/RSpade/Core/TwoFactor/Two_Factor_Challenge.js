@@ -39,7 +39,7 @@ class Two_Factor_Challenge extends Component {
     }
 
     async on_load() {
-        this.data.challenge = await Rsx_Two_Factor_Controller.challenge_state();
+        this.data.challenge = await Rsx_Two_Factor.controller().challenge_state();
         this.data.loaded = true;
     }
 

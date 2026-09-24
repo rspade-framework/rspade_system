@@ -1,6 +1,6 @@
 ---
 name: portal-core
-description: "The framework's client-portal machinery - [Portal_Route] and @portal_spa routing, Portal_Main_Abstract::init() and the mandatory Portal_Session::set_site_id() declaration, the Portal_Session facade over the shared session row, the portal auth realm, Portal_Permission_Abstract, portal_fetch()/portal_can_read() and PORTAL-MODEL-FETCH-01, the internal-endpoint channel and Ajax.upload(), the impersonation handoff, and Portal_Notification_Model. Use when adding a portal page or endpoint, when Portal_Session::get_site_id() throws, when a portal Ajax call resolves in the staff realm, when exposing a model to portal JavaScript, or when enforcing read-only during impersonation."
+description: "The framework's client-portal machinery - [Portal_Route] and @portal_spa routing, the portal's own second factors / passkeys (Rsx_Portal_Two_Factor) and federated sign-in (Rsx_Portal_Sso, rsx.sso.portal_enabled), Portal_Session::put_value(), Portal_Main_Abstract::init() and the mandatory Portal_Session::set_site_id() declaration, the Portal_Session facade over the shared session row, the portal auth realm, Portal_Permission_Abstract, portal_fetch()/portal_can_read() and PORTAL-MODEL-FETCH-01, the internal-endpoint channel and Ajax.upload(), the impersonation handoff, and Portal_Notification_Model. Use when adding a portal page or endpoint, when Portal_Session::get_site_id() throws, when a portal Ajax call resolves in the staff realm, when exposing a model to portal JavaScript, or when enforcing read-only during impersonation."
 ---
 
 # The portal framework
@@ -111,6 +111,10 @@ Portal_Session::logout(): void
 Portal_Session::get_session_id(): int         // the browser's session id (SHARED with Session)
 Portal_Session::get_csrf_token(): ?string     // the browser's ONE token (SHARED)
 Portal_Session::verify_csrf_token(string): bool
+Portal_Session::put_value($key, $value, ?$expires_at) / get_value($key, $default) / forget_value($key)
+                                              // the browser's session-value store (SHARED with
+                                              // Session - namespace portal keys 'portal_...');
+                                              // survives a portal logout
 Portal_Session::_testing_reset(): void        // the RUNNER's per-test clean slate
 
 // device sessions ("your sessions" screen)
@@ -273,6 +277,8 @@ Who may impersonate is the app's call.
 `Portal_User_Model` (framework-core, table `portal_users`, site-scoped) is the **account/identity**: `STATUS_*`, `can_login()`, `check_password()`, `set_password()`, `touch_last_login()`, `find_by_email($site_id, $email)`, plus `portal_fetch()`/`portal_can_read()` (own record only). Override it by EXTENDING its base - `class Portal_User_Model extends Portal_User_Model_Abstract` in `rsx/models/`, declaring only what changes (`get_printed_name()`, `get_view_profile_url()` and `portal_can_read()` are `#[Replaceable]` there; a copy of the framework file is refused at manifest build - `rsx:man class_override`). **Keep app concepts (CRM links, memberships) in separate app models**, never bolted onto the core model.
 
 **Onboarding is invite-only by default** - no open self-registration. Staff invite a contact, a single-use expiring code is emailed, the recipient sets a password. **The invitation proves email ownership, so accounts are created already verified** (`is_verified = true`) with no separate verification step. **An app adding open signup must verify the email itself.**
+
+**Second factors, passkeys and federated sign-in are framework-owned in this realm too** - `Rsx_Portal_Two_Factor` (TOTP, passkeys, recovery codes, the challenge, passwordless sign-in; skill `rspade:two-factor`) and `Rsx_Portal_Sso` (off until `rsx.sso.portal_enabled`; skill `rspade:sso`). Each keeps its own table, so a staff credential or a staff Google link never signs anybody in here; both admit only a portal user `can_login()` accepts on the declared site, and both refuse enrollment and linking during "View as Client". A portal login with a factor becomes two-stage: park the destination with `Portal_Session::put_value()`, `Rsx_Portal_Two_Factor::begin_challenge()`, redirect to a page hosting `<Two_Factor_Challenge>` - never `set_portal_user_id()` first.
 
 **Everything past the account model is the application's** - memberships, the client concept, what an invite grants, which screens exist. The shipped model is described by the app skill `portal-app`.
 

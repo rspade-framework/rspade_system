@@ -1,11 +1,11 @@
 ---
 name: sso
-description: "Wiring federated sign-in (Google, Microsoft, Facebook, Apple, X, or any Socialite provider) into an application - Rsx_Sso (enabled_providers / pending / link_pending / consume_pending_and_login / identities_list / unlink), the sso.identity.unlinked, sso.login.authorize, sso.two_factor.verify_url, sso.login.destination and sso.link.destination hooks, <Sso_Buttons /> and its $intent=\"link\" spelling, Rsx_Sso_Controller's identities_list / identity_unlink / link_begin endpoints, and rsx:users:sso:dump / :unlink. Use when adding 'Continue with Google' to a login page, building a Connected Accounts settings section, choosing an account policy (verified-email match, auto-provision, invite-only, finish registration), adding a provider through rsx.sso.custom, or when hitting 'No account is connected to this sign-in.', 'That sign-in took too long. Please try again.', 'That account is already connected to a different sign-in.', 'is enabled but SSO_GOOGLE_CLIENT_SECRET is not set', a 404 on /_sso/<key>/begin, or 'Connected accounts cannot be changed while impersonating another user.'"
+description: "Wiring federated sign-in (Google, Microsoft, Facebook, Apple, X, or any Socialite provider) into an application's staff login or client portal - Rsx_Sso and its portal twin Rsx_Portal_Sso (rsx.sso.portal_enabled, the portal.sso.* hooks, the portal callback URL), Rsx_Sso (enabled_providers / pending / link_pending / consume_pending_and_login / identities_list / unlink), the sso.identity.unlinked, sso.login.authorize, sso.two_factor.verify_url, sso.login.destination and sso.link.destination hooks, <Sso_Buttons /> and its $intent=\"link\" spelling, Rsx_Sso_Controller's identities_list / identity_unlink / link_begin endpoints, and rsx:users:sso:dump / :unlink. Use when adding 'Continue with Google' to a login page, building a Connected Accounts settings section, choosing an account policy (verified-email match, auto-provision, invite-only, finish registration), adding a provider through rsx.sso.custom, offering Google or Microsoft sign-in on the client portal, or when hitting 'No account is connected to this sign-in.', 'That sign-in took too long. Please try again.', 'That account is already connected to a different sign-in.', 'is enabled but SSO_GOOGLE_CLIENT_SECRET is not set', a 404 on /_sso/<key>/begin, or 'Connected accounts cannot be changed while impersonating another user.'"
 ---
 
 # Federated sign-in (SSO)
 
-`Rsx_Sso` is the whole subsystem's front door. `Socialite_Bridge`, `Sso_Identity_Model` and `Rsx_Sso_Controller` are implementation - application code never touches them and never sees a Socialite object.
+Two front doors, one engine: **`Rsx_Sso`** signs in STAFF login identities and **`Rsx_Portal_Sso`** signs in CLIENT PORTAL users - the identical API, sharing only the provider registry (one Google client id serves both). `Socialite_Bridge`, the identity models and the controllers are implementation - application code never touches them and never sees a Socialite object.
 
 **Switching a provider on is configuration, not code.** Five built-ins ship: `google`, `microsoft`, `facebook`, `apple`, `x`. An `.env` flag plus credentials makes the button appear and the ceremony work. A sixth provider is one composer package and one config block.
 
@@ -141,11 +141,46 @@ php artisan rsx:composer require socialiteproviders/okta
 
 The same seam is the **test seam**: register a fake provider under `rsx.sso.custom` and drive `begin()` / `handle_callback()` against it - no network, no credentials.
 
+## The client portal
+
+`Rsx_Portal_Sso` - same API, its own realm:
+
+- **Off until you switch it on**: `'sso' => ['portal_enabled' => true]` in `rsx/resource/config/rsx.php` (config, not `.env`). Off, the portal roster is empty and `begin()` throws, so a provider switched on for staff never quietly appears on the portal.
+- **Its own ceremony URLs** (`#[Portal_Route]`, `Rsx_Portal_Sso_Controller`) - the ceremony runs inside portal dispatch, where the app declares the portal's site, and finishes on the host that started it. **Register the portal callback as a SECOND redirect URI** in each console: `Rsx_Portal_Sso::callback_url('google')`.
+- **Its own hooks, never the staff ones**: `portal.sso.identity.unlinked`, `portal.sso.login.authorize`, `portal.sso.two_factor.verify_url`, `portal.sso.login.destination`, `portal.sso.link.destination`, each payload carrying `portal_user`. Separate names so a staff policy (matching addresses against `login_users`) can never govern a client.
+- **Links are site-scoped**: `_portal_sso_identities`, unique per `(site_id, provider_key, provider_user_key)` - one Google account may be a portal user of two sites. Lookups see only the declared site's.
+- **Admission** is `Portal_User_Model::can_login()` plus the declared site; failures feed `Login_Throttle` directly (no portal login history); 2FA is `Rsx_Portal_Two_Factor`; "View as Client" refuses linking.
+- `<Sso_Buttons />` on a portal page reads the PORTAL roster by itself (`window.rsxapp.sso` is the page realm's), so the buttons start the portal ceremony with no argument. Gate the divider on `Rsx_Portal_Sso::is_enabled()`.
+
+A policy for an invite-only portal (the reference app's `reference_app/handlers/Portal_Sso_Handlers.php`):
+
+```php
+#[OnEvent('portal.sso.identity.unlinked', priority: 10)]
+public static function match_verified_email($data)
+{
+    $email = trim((string) ($data['email'] ?? ''));
+
+    if ($email === '' || empty($data['email_verified'])) {
+        return null;                               // fail closed
+    }
+
+    $portal_user = Portal_User_Model::find_by_email(Portal_Session::get_site_id(), $email);
+
+    return $portal_user ? Rsx_Portal_Sso::consume_pending_and_login($portal_user) : null;
+}
+```
+
+Microsoft asserts no `email_verified`, so on such a portal Microsoft connects through the settings screen's Connect button (a signed-in portal user) or inside an invite-acceptance flow calling `link_pending()`.
+
 ## Redirect URI, for every console
 
 ```
-https://<APP_URL host>/_sso/<provider key>/callback
+https://<APP_URL host>/_sso/<provider key>/callback               staff
+https://<APP_URL host>/_portal/_sso/<provider key>/callback       portal, prefix mode
+https://<portal domain>/_sso/<provider key>/callback              portal, rsx.portal.domain
 ```
+
+`Rsx_Sso::callback_url($key)` / `Rsx_Portal_Sso::callback_url($key)` print the exact string.
 
 Matched exactly by providers. Apple's `client_id` is the **Services ID** (`com.example.web`), never a bundle id, and takes three more credentials because its client secret is an ES256 JWT minted offline per exchange.
 
@@ -157,7 +192,7 @@ Matched exactly by providers. Apple's `client_id` is the **Services ID** (`com.e
 
 - **A PKCE provider (X, and custom adapters) runs behind an in-memory session store** that is never persisted and never a cookie; the verifier is lifted out and parked in `sso.state`. Nothing above the bridge changes.
 
-- **Apple posts back cross-site** (`response_mode=form_post`), with no session cookie. `Rsx_Csrf::enforce()` exempts exactly `/_sso/apple/callback`, path-exactly, and that leg **does no work** - it 303s to the GET leg carrying `code`, `state`, `user` (a whitelist). Never add work to it; the exemption's safety is that promise.
+- **Apple posts back cross-site** (`response_mode=form_post`), with no session cookie. `Rsx_Csrf::enforce()` exempts exactly `/_sso/apple/callback` (and the portal's own Apple callback beside it), path-exactly, and that leg **does no work** - it 303s to the GET leg carrying `code`, `state`, `user` (a whitelist). Never add work to it; the exemption's safety is that promise.
 
 - **X may return `email = null`** (the `users.email` scope needs approval) and Facebook's may be declined. Every policy must survive it.
 
@@ -180,5 +215,7 @@ Matched exactly by providers. Apple's `client_id` is the **Services ID** (`com.e
 - **Switching a provider off deletes nothing.** Dormant connections stay listed (`provider_label` falls back to the key; the CLI prints `(no longer configured)`) and work again when credentials return.
 
 - **`unlink()` does not check that a password remains.** SSO-only accounts are legitimate; that policy is the application's.
+
+- **A staff link never signs anybody in on the portal**, and the reverse - the realms read different tables. A person who uses both connects the provider in each.
 
 - **Never commit an enabled provider** to make a rendering test pass - it is a live misconfiguration on every install that pulls it.

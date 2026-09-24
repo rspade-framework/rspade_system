@@ -1,7 +1,7 @@
 # Test catalog: sso
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues) | `planned`.
-Type: php / cli / asset / http / playwright. Last updated: 2026-09-04.
+Type: php / cli / asset / http / playwright. Last updated: 2026-09-24.
 
 ## Sso_Providers_Test (php, no transactions - pure configuration) - the roster
 
@@ -93,6 +93,23 @@ nothing else, so nothing an unauthenticated cross-site caller sends is ever acte
 | sso-ctl-13 | the mutating endpoints refuse while impersonating | impersonated session | RuntimeException from both | implemented |
 | sso-ctl-14 | `identity_unlink` with nothing named is a refusal, not a delete of row zero | no id | ERROR_VALIDATION | implemented |
 | sso-ctl-15 | `identities_list` answers for the SIGNED-IN identity and reads no argument | a foreign id in params | the signed-in identity's list | implemented |
+
+## Portal_Sso_Test (php, default isolation) - the portal realm
+
+Rsx_Portal_Sso driven through the same in-process fake provider, as a portal request declaring
+its site. The ceremony engine is Rsx_Sso's and is pinned above; this pins what the portal realm
+adds: its own switch, URLs and state, its own hooks (never the staff ones), site-scoped links,
+and the portal's admission rule.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sso-portal-01 | the realm is off until switched on | rsx.sso.portal_enabled false | empty portal roster (staff roster intact), begin() throws | implemented |
+| sso-portal-02 | the portal ceremony uses the portal URLs and state | begin('fake') | begin_url and redirect_uri are the portal's; parked under the portal key only | implemented |
+| sso-portal-03 | an unlinked identity fires only the portal hook and fails closed | staff handler registered, no portal handler | staff handler never runs; redirect to the portal login; nobody signed in, nothing pending | implemented |
+| sso-portal-04 | a staff link does not sign anybody in on the portal | _sso_identities row for the subject | portal hook fires (unconnected), neither realm signed in | implemented |
+| sso-portal-05 | the portal hook links and signs in; the link then signs in directly | consume_pending_and_login(portal_user) | portal signed in, gate payload carries portal_user, link on the declared site, second ceremony signs straight in | implemented |
+| sso-portal-06 | links are site-scoped | one subject linked on two sites | two rows; a ceremony on site A signs in site A's portal user | implemented |
+| sso-portal-07 | a suspended portal user is refused | linked, then suspended | redirect to the portal login, not signed in | implemented |
 
 ## sso_http_surface.sh (http) - what only the dispatcher and the CSRF seam decide
 

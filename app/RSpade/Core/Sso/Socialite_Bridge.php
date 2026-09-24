@@ -101,12 +101,14 @@ class Socialite_Bridge
      *
      * @param array $provider A resolved entry from Rsx_Sso::provider().
      * @param string $state The state RSpade minted for this ceremony.
+     * @param string $callback_url The ABSOLUTE redirect URI - the realm's callback, which is
+     *                             what the provider console must list.
      * @return array {url, state, code_verifier} - code_verifier null for a non-PKCE provider.
      */
-    public static function begin(array $provider, string $state): array
+    public static function begin(array $provider, string $state, string $callback_url): array
     {
-        $request = Request::create(rsx_absolute_url(Rsx_Sso::callback_path($provider['key'])), 'GET');
-        $driver = self::_build($provider, $request);
+        $request = Request::create($callback_url, 'GET');
+        $driver = self::_build($provider, $request, $callback_url);
 
         if (!self::_uses_pkce($driver)) {
             $url = $driver->stateless()->with(['state' => $state])->redirect()->getTargetUrl();
@@ -141,15 +143,17 @@ class Socialite_Bridge
      * @param array $provider A resolved entry from Rsx_Sso::provider().
      * @param Request $request The callback request, carrying code and state.
      * @param array $parked The value Rsx_Sso parked at begin() - {state, code_verifier}.
+     * @param string $callback_url The same absolute redirect URI begin() was given - a token
+     *                             exchange must name the redirect URI the authorization used.
      * @return array The normalized identity - see _normalize().
      */
-    public static function identity(array $provider, Request $request, array $parked): array
+    public static function identity(array $provider, Request $request, array $parked, string $callback_url): array
     {
         // The request is CLONED before a session store is attached to it. The incoming
         // request belongs to the dispatcher and is read by everything downstream; giving it
         // a session it never had is not this class's business.
         $sso_request = clone $request;
-        $driver = self::_build($provider, $sso_request);
+        $driver = self::_build($provider, $sso_request, $callback_url);
 
         if (!self::_uses_pkce($driver)) {
             return self::_normalize($provider['key'], $driver->stateless()->user());
@@ -172,11 +176,11 @@ class Socialite_Bridge
      *
      * @param array $provider
      * @param Request $request
+     * @param string $redirect_url The absolute callback URL of the realm running the ceremony.
      * @return \Laravel\Socialite\Two\AbstractProvider
      */
-    private static function _build(array $provider, Request $request)
+    private static function _build(array $provider, Request $request, string $redirect_url)
     {
-        $redirect_url = rsx_absolute_url(Rsx_Sso::callback_path($provider['key']));
         $client_id = (string) $provider['client_id'];
         $client_secret = (string) ($provider['client_secret'] ?? '');
 

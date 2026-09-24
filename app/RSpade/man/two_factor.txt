@@ -1,7 +1,8 @@
 TWO_FACTOR(1)                    RSpade Manual                    TWO_FACTOR(1)
 
 NAME
-    two_factor - second-factor authentication: TOTP, passkeys, recovery codes
+    two_factor - second factors and passkey sign-in: TOTP, passkeys, recovery
+    codes, passwordless sign-in - for staff and the client portal
 
 SYNOPSIS
     use App\RSpade\Core\TwoFactor\Rsx_Two_Factor;
@@ -32,6 +33,17 @@ SYNOPSIS
     <Totp_Enrollment />
     <Passkey_Register />
 
+    # PASSWORDLESS: a passkey as the only credential. The app's endpoint again:
+    $login_user = Rsx_Two_Factor::verify_passkey_login($params['assertion']);
+    return ['redirect' => $destination];
+
+    <Passkey_Sign_In $controller="Login_Controller" $method="passkey_login" />
+
+    # The client portal: the same API over portal users
+    use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
+    Rsx_Portal_Two_Factor::is_enabled($portal_user);
+    Rsx_Portal_Two_Factor::verify_passkey_login($params['assertion']);
+
     # The operator escape hatch
     php artisan rsx:users:2fa:setup  --user=alice@example.com
     php artisan rsx:users:2fa:dump   --user=1
@@ -53,21 +65,34 @@ DESCRIPTION
         RECOVERY_CODE  Ten single-use codes, minted automatically alongside
                        the first real factor. Never enrolled on its own.
 
-    Rsx_Two_Factor is the ONLY class application code touches. Totp, Passkeys,
-    Recovery_Codes and Two_Factor_Credential_Model are implementation behind
-    it, and that boundary is what lets the storage shape, the WebAuthn library
-    and the encryption of a seed move without a call site moving.
+    A PASSKEY IS ALSO A FIRST FACTOR. Beyond answering a second-factor
+    challenge, a passkey can sign an identity in ON ITS OWN - no password, no
+    email typed - through begin_passkey_login() / verify_passkey_login(). See
+    PASSWORDLESS SIGN-IN.
 
-    CREDENTIALS BELONG TO A LOGIN IDENTITY, NOT A SITE USER. They hang off
-    login_users, exactly like the password does - a second factor proves who
-    is holding the browser, and a users row is an authorization scope inside
-    one tenant. Enrolling a phone once per tenant would be wrong. The client
-    portal (Portal_User_Model) is a different identity model and is NOT
-    covered by this subsystem.
+    TWO REALMS, ONE ENGINE. The subsystem is written once
+    (Rsx_Two_Factor_Abstract) and bound to each authentication realm by a
+    facade with the identical API:
+
+        Rsx_Two_Factor         staff - credentials of a LOGIN IDENTITY
+                               (login_users), in _two_factor_credentials
+        Rsx_Portal_Two_Factor  client portal - credentials of a PORTAL USER
+                               (portal_users), in _portal_two_factor_credentials
+
+    Those two facades are the ONLY classes application code touches. Totp,
+    Passkeys, Recovery_Codes and the credential models are implementation
+    behind them, and that boundary is what lets the storage shape, the
+    WebAuthn library and the encryption of a seed move without a call site
+    moving. See THE CLIENT PORTAL REALM for what differs.
+
+    STAFF CREDENTIALS BELONG TO A LOGIN IDENTITY, NOT A SITE USER. They hang
+    off login_users, exactly like the password does - a second factor proves
+    who is holding the browser, and a users row is an authorization scope
+    inside one tenant. Enrolling a phone once per tenant would be wrong.
 
     THERE IS NO GLOBAL ENABLE SWITCH, deliberately. 2FA is per identity: an
     identity either holds a confirmed factor or it does not, and
-    is_enabled($login_user) is the whole question. A framework-wide "2FA on"
+    is_enabled($identity) is the whole question. A framework-wide "2FA on"
     flag would have to decide what happens to every account that has not
     enrolled yet, which is a policy only an application can hold. THE
     FRAMEWORK READS NO SUCH COLUMN. The reference application's example of
@@ -102,10 +127,12 @@ PICKING METHODS - PREFER PASSKEYS, AND CONSIDER REMOVING TOTP
     <Passkey_Register /> alone. Nothing in the framework requires both.
 
 HOW IT WORKS
-    STORAGE - _two_factor_credentials
-        One row per credential, one table for all three kinds, discriminated
-        by type_id. Owned by login_user_id, ON DELETE CASCADE. Three columns
-        mean three things:
+    STORAGE - _two_factor_credentials (staff), _portal_two_factor_credentials
+        One row per credential, one table per realm for all three kinds,
+        discriminated by the same type_id vocabulary. Owned by login_user_id
+        (staff) or portal_user_id (portal), ON DELETE CASCADE - the realm
+        boundary IS the table boundary, because a foreign key names one table.
+        Three columns mean three things, identically in both tables:
 
             secret          TOTP: the RFC 6238 seed, ENCRYPTED at rest
                             (Crypt::encryptString).
@@ -170,9 +197,26 @@ HOW IT WORKS
         actually have.
 
         The ceremony CHALLENGE lives in a session value, never in the payload
-        - a challenge the client hands back is whatever the client chose. The
-        same session key serves both ceremonies; a browser is either
-        enrolling a key or signing in with one, never both.
+        - a challenge the client hands back is whatever the client chose. One
+        key per realm serves registration and the second-factor assertion (a
+        browser is doing one or the other, never both); the PASSWORDLESS
+        ceremony parks under its own key, because a login page can offer a
+        passkey sign-in while a second-factor ceremony is in flight in the
+        same browser. The realms' keys differ too: both realms' values can sit
+        on the one session row a browser has.
+
+        THE LOOKUP IS REALM-SCOPED. An assertion is resolved by credential_key
+        in the REALM'S OWN TABLE. Staff and portal usually share one relying
+        party (one host), so a browser will offer a staff passkey on the
+        portal sign-in page - and it is simply unknown there. A portal
+        credential can never satisfy a staff challenge, or the reverse.
+
+        THE USER HANDLE IS REALM-PREFIXED FOR THE PORTAL. An authenticator
+        files a resident credential under (rpId, user handle) and REPLACES an
+        existing one with the same pair, so a staff identity and a portal user
+        sharing a numeric id on one host would overwrite each other's passkey.
+        Staff handles are the bare login_users id; portal handles are
+        'portal-<id>'.
 
         ANTI-CLONE: an authenticator increments a signature counter on every
         assertion, and one that does not advance means two copies of a key
@@ -200,10 +244,9 @@ HOW IT WORKS
         bearer tokens that log somebody in with no second step at all.
 
     THE CHALLENGE STATE MACHINE
-        begin_challenge($login_user)
-            Writes {login_user_id, email} to the session value
-            Rsx_Two_Factor::CHALLENGE_KEY with an expiry, and then LOGS THE
-            SESSION OUT. The order is load-bearing: put_value() is a writer,
+        begin_challenge($identity)
+            Writes {identity_id, email} to the realm's CHALLENGE_KEY session
+            value with an expiry, and then SIGNS THE REALM OUT. The order is load-bearing: put_value() is a writer,
             so it establishes the session row the value hangs off; the logout
             clears the row's IDENTITY but not the row, and _session_values
             hang off it by FK, so the parked value survives.
@@ -278,26 +321,37 @@ HOW IT WORKS
         The CLI is the sanctioned exception (see CLI COMMANDS).
 
 THE FACADE
-    App\RSpade\Core\TwoFactor\Rsx_Two_Factor
+    App\RSpade\Core\TwoFactor\Rsx_Two_Factor          (staff)
+    App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor   (client portal)
 
-    Every $login_user parameter takes an int id or a Login_User_Model.
+    Both expose exactly this API. Every $identity parameter takes an int id or
+    the realm's identity model - a Login_User_Model for Rsx_Two_Factor, a
+    Portal_User_Model for Rsx_Portal_Two_Factor - and a model of the OTHER
+    realm THROWS (read as an id it would name a different person). Every
+    method that returns an identity returns the realm's model.
 
     READING
-        is_enabled($login_user): bool
+        is_enabled($identity): bool
             True when at least one CONFIRMED TOTP or passkey credential
             exists. Recovery codes are EXCLUDED: they are the way back in
             when a factor is lost, and an identity holding only recovery
-            codes has no factor to be challenged for.
+            codes has no factor to be challenged for. This is the question a
+            PASSWORD or FEDERATED sign-in asks; a passwordless sign-in does
+            not ask it.
 
-        list_credentials($login_user): array
+        has_passkey($identity): bool
+            Holds a confirmed passkey. Not is_enabled(): an identity with only
+            an authenticator app has a second factor and no passkey.
+
+        list_credentials($identity): array
             One row per factor, newest confirmation last:
             {id, type_id, type_id__label, label, confirmed_at, last_used_at}.
             METADATA ONLY, by contract - never a secret, a hash or a public
             key. Its output reaches a browser, and no column on that table
             has any business there.
 
-        recovery_codes_remaining($login_user): int
-        has_confirmed_totp($login_user): bool
+        recovery_codes_remaining($identity): int
+        has_confirmed_totp($identity): bool
         issuer(): string
             config('rsx.two_factor.issuer'), or the hostname when null. A
             colon is stripped - the Key URI Format uses one to separate
@@ -327,21 +381,21 @@ THE FACADE
             Replaces the set. The previous sheet stops working immediately.
 
     REMOVAL
-        remove_credential($login_user, int $credential_id): void
+        remove_credential($identity, int $credential_id): void
             Removes one factor, and the recovery codes with it if it was the
             last. Naming a row that is not this identity's is a NO-OP, not an
             error: a stale settings screen is a race, not an attack.
-        remove_all($login_user): void
+        remove_all($identity): void
             The administrative unlock, and what an account deletion runs.
 
     THE CHALLENGE
-        begin_challenge(Login_User_Model $login_user): void
+        begin_challenge($identity): void
         challenge_pending(): ?array
         challenge_passkey_options(): array
-        verify_challenge(array $input): Login_User_Model
+        verify_challenge(array $input): identity
             $input is {code: '123456'} or {assertion: {...}}. On success the
-            caller is LOGGED IN, last_login is stamped and the success row is
-            written; the method returns the identity. Order:
+            caller is SIGNED IN, last_login is stamped and the success is
+            recorded; the method returns the identity. Order:
 
                 1. require_not_throttled()   - throws Auth_Throttled_Exception
                 2. the pending identity, or the window has closed
@@ -350,10 +404,17 @@ THE FACADE
                    THEN against the recovery codes - recovery LAST, so a
                    string that is a live TOTP code never burns a recovery
                    code
-                4. on failure: record_failure(STATUS_FAILED_2FA) and throw
+                4. on failure: record the failure ONCE through the realm
+                   (staff: Login_History STATUS_FAILED_2FA; portal: the
+                   throttle directly) and throw
                    Two_Factor_Failed_Exception('That code is not valid.')
-                5. on success: forget the pending value, RsxAuth::login(),
-                   Login_History::record_success()
+                5. on success: forget the pending value, sign in through the
+                   realm (staff: RsxAuth::login(); portal:
+                   Portal_Session::set_portal_user_id()), record the success
+                6. an identity the realm will not admit (staff: no enabled
+                   site membership; portal: can_login() false, or a portal
+                   user of another site) is recorded STATUS_FAILED_DISABLED
+                   and fails with the wrong-code message
 
             A passkey assertion is additionally checked to BELONG to the
             pending identity. Proving the signature came from a credential
@@ -362,14 +423,38 @@ THE FACADE
             complete anybody else's challenge.
         abandon_challenge(): void
 
+    PASSWORDLESS SIGN-IN (anonymous caller; no password, nothing pending)
+        begin_passkey_login(): array
+            The navigator.credentials.get() arguments for a DISCOVERABLE
+            credential: no allowCredentials list (no identity is named), and
+            userVerification 'required'. The challenge parks under the realm's
+            own passwordless key.
+        verify_passkey_login(array $assertion): identity
+            Verifies the assertion and SIGNS IN the identity that answered.
+            Order, and the same guarantees verify_challenge() gives:
+
+                1. require_not_throttled()   - throws Auth_Throttled_Exception
+                2. the assertion verified in the REALM's table, with the UV
+                   (user verified) flag REQUIRED; the identity comes from the
+                   credential row, never from the client
+                3. on failure: recorded ONCE (STATUS_FAILED_PASSKEY) and one
+                   sentence whatever went wrong - 'That passkey could not
+                   sign you in.' - so nothing says whether a key exists
+                4. any pending password-stage challenge is forgotten
+                5. the realm signs the identity in, refusing one it will not
+                   admit (recorded STATUS_FAILED_DISABLED, same sentence)
+                6. the success is recorded
+
+            NO SECOND FACTOR FOLLOWS - see PASSWORDLESS SIGN-IN.
+
     THE OPERATOR PATH (a shell, not a request - never call from a request)
-        cli_setup_totp(Login_User_Model $login_user, ?string $label): array
+        cli_setup_totp($identity, ?string $label): array
             {secret, otpauth_uri, recovery_codes}. Writes the row CONFIRMED
             immediately: there is no browser to type a live code into, and
             the operator is already a higher privilege than any identity in
             the application. Refuses when a confirmed TOTP credential exists.
             The recovery set REPLACES whatever the identity held.
-        cli_dump_credentials($login_user): array
+        cli_dump_credentials($identity): array
             Every factor WITH the TOTP seeds decrypted, unconfirmed rows
             included. The deliberate opposite of list_credentials(): this
             output reaches a terminal that already holds shell access and the
@@ -383,12 +468,15 @@ THE FACADE
         surface loudly.
 
 FRAMEWORK ENDPOINTS AND COMPONENTS
-    Rsx_Two_Factor_Controller is the browser's whole view of the subsystem,
-    and every method is a thin wrapper over the facade. Its JS stub is
+    Rsx_Two_Factor_Controller is the browser's whole view of the subsystem in
+    the STAFF realm, and Rsx_Portal_Two_Factor_Controller (#[Auth_Realm
+    ('portal')], served on the portal's own Ajax channel) is its portal twin
+    - the same endpoints under the same names, over Rsx_Portal_Two_Factor.
+    Every method is a thin wrapper over the facade. Both JS stubs are
     FORCE-INCLUDED IN EVERY BUNDLE (like Realtime_Controller), because the
-    three screens that drive it live in three different bundles: the
-    challenge is on the login page, enrollment is in a settings SPA, and a
-    passkey prompt may be raised from anywhere.
+    screens that drive them live in different bundles: the challenge and the
+    passkey sign-in are on a login page, enrollment is in a settings SPA, and
+    a passkey prompt may be raised from anywhere.
 
         #[Auth('is_logged_in')]     - the enrollment population
             totp_begin, totp_confirm {code}
@@ -406,6 +494,8 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
             challenge_state         -> {email_masked, has_totp, has_passkey}
                                         or NULL, which is not an error
             challenge_passkey_options
+            passkey_login_options   -> the passwordless get() arguments;
+                                        names no identity at all
 
         The public pair is public in the GATE sense only: between the
         password and the second factor the session is deliberately not logged
@@ -414,12 +504,19 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         challenge parked on the CALLER'S OWN session, and a caller with
         nothing pending learns nothing.
 
-    WHY VERIFICATION IS NOT HERE. verify_challenge() signs the user in, and
-    where they land afterwards is application logic - a captured redirect,
-    a staff versus portal destination, an interstitial the app requires. A
-    framework endpoint would have to guess the answer to a question only the
-    app can answer. So the APPLICATION owns the verification endpoint and
-    <Two_Factor_Challenge> is pointed at it.
+    WHY VERIFICATION IS NOT HERE. verify_challenge() and
+    verify_passkey_login() sign the user in, and where they land afterwards
+    is application logic - a captured redirect, a site picker, an
+    interstitial the app requires. A framework endpoint would have to guess
+    the answer to a question only the app can answer. So the APPLICATION
+    owns both verification endpoints, and <Two_Factor_Challenge> and
+    <Passkey_Sign_In> are pointed at them.
+
+    THE COMPONENTS PICK THEIR REALM FROM THE PAGE. Rsx_Two_Factor.controller()
+    answers Rsx_Portal_Two_Factor_Controller on a portal page
+    (Rsx_Portal.is_portal()) and Rsx_Two_Factor_Controller otherwise, and
+    every shipped component goes through it - so none of them takes a realm
+    argument, and a portal page can never start a staff ceremony.
 
     <Totp_Enrollment />
         The whole authenticator ceremony: QR code, manual-entry secret, the
@@ -457,14 +554,34 @@ FRAMEWORK ENDPOINTS AND COMPONENTS
         that only rendered messages it recognised would swallow the most
         important one.
 
-        All three components are LAYOUT-NEUTRAL by contract: no card, no
+    <Passkey_Sign_In $controller $method [$label] />
+        "Sign in with a passkey" for a login page: runs the PASSWORDLESS
+        ceremony and posts it to the application's endpoint.
+        Args:   $controller, $method (both REQUIRED) - the endpoint;
+                $label - the button text (default 'Sign in with a passkey').
+        Posts:  {assertion: {id, clientDataJSON, authenticatorData,
+                signature}} - the endpoint calls verify_passkey_login() on
+                the realm's facade with $params['assertion'].
+        Expects: {redirect: '/somewhere'}, followed with window.location.
+        Events: signed_in - fired just before the navigation.
+        RENDERS NOTHING in a browser without WebAuthn: a login page already
+        offers a password, and a button that cannot work is worse than none.
+        The root then carries Passkey_Sign_In--unsupported (display: none).
+        The "or" divider around it is the page's - wrap both in one block and
+        hide the block when nothing in it is visible (PASSWORDLESS SIGN-IN).
+
+        All four components are LAYOUT-NEUTRAL by contract: no card, no
         border, no heading, no width. The host page owns the box.
 
     Rsx_Two_Factor (JavaScript)
         is_supported(): boolean          - navigator.credentials is present
+        controller()                     - the page realm's controller class
         register_passkey(label)          - the create ceremony
-        authenticate_passkey()           - the get ceremony; RETURNS the
-                                           assertion rather than posting it
+        authenticate_passkey()           - the second-factor get ceremony;
+                                           RETURNS the assertion rather than
+                                           posting it
+        sign_in_with_passkey()           - the passwordless get ceremony;
+                                           RETURNS the assertion
         A dismissed browser prompt raises NotAllowedError, which is caught
         and answered as NULL. A person changing their mind is not an error
         and must not be reported as one.
@@ -635,6 +752,107 @@ IMPLEMENTING 2FA IN AN APPLICATION
         realtime user refresh to take effect before their next full load. The
         reference application pushes one on a confirmed change of its flag.
 
+PASSWORDLESS SIGN-IN
+    A passkey as the FIRST and only credential: the visitor presses "Sign in
+    with a passkey", the authenticator offers the discoverable credential it
+    holds for this site, and the identity that owns it is signed in. Every
+    passkey this subsystem registers is discoverable (requireResidentKey), so
+    any registered passkey can do this with no extra enrollment.
+
+    A PASSWORDLESS SIGN-IN IS COMPLETE; IT OWES NO SECOND FACTOR (framework
+    ruling). User verification is REQUIRED on this ceremony - the
+    authenticator must have checked a PIN or biometric, and an assertion
+    without the UV flag is refused - so the passkey is two factors on its
+    own: the device, and what unlocked it. verify_passkey_login() therefore
+    signs the identity in outright.
+
+    is_enabled() KEEPS ITS ONE MEANING: "this identity holds a confirmed
+    second factor, so a PASSWORD or FEDERATED sign-in owes a challenge". It is
+    not asked by a passwordless sign-in. The SSO path reads it unchanged: a
+    Google sign-in by an identity holding a passkey still faces the
+    challenge (unless rsx.sso.skip_two_factor), and may answer it with that
+    same passkey.
+
+    WIRING IT (the reference app's login pages do exactly this):
+
+        #[Ajax_Endpoint]
+        public static function passkey_login(Request $request, array $params = [])
+        {
+            if (!is_array($params['assertion'] ?? null)) {
+                return response_error(Ajax::ERROR_VALIDATION, 'That passkey could not sign you in.');
+            }
+
+            try {
+                $login_user = Rsx_Two_Factor::verify_passkey_login($params['assertion']);
+            } catch (Auth_Throttled_Exception | Two_Factor_Failed_Exception $e) {
+                return response_error(Ajax::ERROR_VALIDATION, $e->getMessage());
+            }
+
+            return ['redirect' => static::post_login_destination((int) $login_user->id, null)];
+        }
+
+        <div class="login-alternatives">
+            <div class="login-divider"><span>or</span></div>
+            <Passkey_Sign_In $controller="Login_Controller" $method="passkey_login" />
+        </div>
+
+        // SCSS: hide the block when nothing in it is visible
+        .login-alternatives:not(:has(.Passkey_Sign_In:not(.Passkey_Sign_In--unsupported), .Sso_Buttons)) {
+            display: none;
+        }
+
+    No Turnstile on that endpoint, for the reason there is none on the
+    challenge endpoint: the component posts only {assertion}, and the
+    endpoint spends the brute-force budget as its first statement.
+
+THE CLIENT PORTAL REALM
+    Rsx_Portal_Two_Factor gives portal users (Portal_User_Model) the whole
+    subsystem - TOTP, passkeys, recovery codes, the second-factor challenge
+    and passwordless sign-in - with the API documented above. Worked example:
+    system/app/RSpade/resource/reference_app/portal/auth/Portal_Login_Controller.php
+    (the two-stage login, verify_2fa, passkey_login) and
+    portal/settings/Portal_Settings_Security.jqhtml (enrollment).
+
+    WHAT DIFFERS FROM THE STAFF REALM:
+
+        storage     _portal_two_factor_credentials, owned by portal_user_id.
+                    No site_id: a portal user belongs to one site, so the
+                    row is site-scoped through its owner.
+        session     Portal_Session. begin_challenge() signs the PORTAL out;
+                    a staff login on the same session is untouched.
+        admission   a portal user is signed in only when
+                    Portal_User_Model::can_login() accepts them (active and
+                    verified) AND they belong to the site the application
+                    declared (Portal_Session::set_site_id). A credential row
+                    names its owner by a global id, so the site check is what
+                    keeps one tenant's passkey from signing in on another's
+                    portal. A refusal answers like a wrong answer.
+        recording   the portal has no login history (_login_history is the
+                    staff identity's store): each failure feeds
+                    Login_Throttle::record_failure() directly, exactly once,
+                    and a success records nothing beyond the last_login stamp.
+        rpId        the dedicated portal domain (rsx.portal.domain) when one
+                    is configured, otherwise the application's hostname
+                    (shared with staff - safe, see PASSKEYS above).
+        user handle 'portal-<id>'.
+        endpoints   Rsx_Portal_Two_Factor_Controller.
+        impersonation
+                    "View as Client" (Portal_Session::is_impersonating())
+                    refuses every enrollment and removal: a staff member
+                    viewing a client's portal must never be able to enroll a
+                    passkey onto that client's account.
+
+    THE PORTAL LOGIN IS TWO-STAGE THE SAME WAY. The portal verifies its own
+    password, so the shape is: check the password and can_login(); when
+    Rsx_Portal_Two_Factor::is_enabled($portal_user), begin_challenge() and
+    redirect to the portal's verify page INSTEAD of set_portal_user_id();
+    otherwise sign in as before. The verify page hosts
+    <Two_Factor_Challenge $controller="Portal_Login_Controller"
+    $method="verify_2fa" />, whose endpoint calls
+    Rsx_Portal_Two_Factor::verify_challenge().
+
+    The rsx:users:2fa:* operator commands act on staff login identities only.
+
 CLI COMMANDS
     THE BOOTSTRAP AND RECOVERY PATH, and deliberately not a general
     enrollment channel. The web flow can only ever act on the signed-in
@@ -709,8 +927,13 @@ NOTES AND GOTCHAS
       sheet regenerates it; an operator's only path is a remove plus
       rsx:users:2fa:setup.
 
-    - The client portal is NOT covered. Portal_User_Model is a separate
-      identity model with its own login; this subsystem is login_users only.
+    - Staff and portal credentials are separate: a passkey registered on
+      the staff app does not sign anybody in on the portal, and the reverse.
+      A person who uses both enrolls a passkey in each.
+
+    - A passwordless assertion must carry the UV flag. An authenticator that
+      proves only presence (a bare touch) can answer a second-factor
+      challenge but cannot sign anybody in on its own.
 
 SEE ALSO
     session     - the two-stage login recipe in context, Login_History's
@@ -723,5 +946,7 @@ SEE ALSO
                   the page it is answered on
     auth_gates  - #[Auth] on every surface, and why the challenge pair is
                   'public'
+    portal      - the client portal realm: Portal_Session, the declared site,
+                  "View as Client"
 
 TWO_FACTOR(1)                    RSpade Manual                    TWO_FACTOR(1)
