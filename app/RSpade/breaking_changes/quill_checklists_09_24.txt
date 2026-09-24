@@ -1,10 +1,11 @@
-QUILL 2 CHECKLISTS SURVIVE safe_html(); THE READ VIEW THAT DRAWS THEM IS A TEMPLATE PORT
+QUILL 2 CHECKLISTS SURVIVE safe_html(); THE TOOLBAR BUTTON AND THE READ VIEW ARE A TEMPLATE PORT
 Date: 2026-09-24
 
-IF YOU DO NOTHING: a checklist authored in a rich-text field now keeps its ticks
-    through save and reload, but your read view (your copy of
-    Rich_Text_Display) shows each checklist item as a plain bullet, so a
-    reader cannot see which items are ticked.
+IF YOU DO NOTHING: your rich-text editor offers no checklist button, and a
+    checklist that reaches a field anyway (pasted, or from another client)
+    keeps its ticks through save but shows in your read view (your copy of
+    Rich_Text_Display) as plain bullets, so a reader cannot see which items
+    are ticked.
 
 SUMMARY
     Quill 2 stores a checklist item's state as li[data-list="checked"] or
@@ -16,6 +17,10 @@ SUMMARY
     Contract: php artisan rsx:man safe_html (CHECKLISTS)
 
 THE REFERENCE IMPLEMENTATION
+    system/app/RSpade/resource/reference_app/theme/components/inputs/wysiwyg/
+    wysiwyg_input.js
+        { 'list': 'check' } in the toolbar's list group, beside ordered and
+        bullet.
     system/app/RSpade/resource/reference_app/theme/components/view/
     rich_text_display/rich_text_display.scss
         The block commented "A checklist item": li[data-list="checked"] and
@@ -24,9 +29,11 @@ THE REFERENCE IMPLEMENTATION
 
 PORTING IT
     Copy that block into your Rich_Text_Display stylesheet (or whatever
-    component prints your rich-text type). To let authors make checklists, add
-    { list: 'check' } to a Wysiwyg_Input toolbar - the shipped toolbar does not
-    offer it.
+    component prints your rich-text type), and add { 'list': 'check' } to the
+    list group of your Wysiwyg_Input toolbar, beside ordered and bullet - the
+    reference app's theme/components/inputs/wysiwyg/wysiwyg_input.js is the
+    worked example. Bullet and checklist stay distinct formats: a bullet item
+    stores as a plain li, a checklist item as li[data-list].
 
 VERIFICATION
     Author a checklist, tick an item, save, reload the edit page: the tick is
