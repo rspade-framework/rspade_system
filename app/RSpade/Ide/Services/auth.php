@@ -14,11 +14,8 @@
  * secret NEVER crosses the wire except as this bearer over TLS. There is NO
  * network endpoint that mints or returns a token.
  *
- * Two accepted paths:
- * 1. X-Ide-Token matches the on-disk grant token (the normal path, remote or local).
- * 2. Strict loopback bypass (defense-in-depth for pure-local http://localhost dev):
- *    host 'localhost' + http + loopback REMOTE_ADDR + no X-* proxy headers + not
- *    production. Never the sole gate.
+ * ONE accepted path: X-Ide-Token matches the on-disk grant token. There is no loopback
+ * exemption - the network position of a caller is not proof of local file access.
  *
  * HARD GATE FIRST: the bridge exists in DEVELOPMENT MODE AND NOWHERE ELSE. RSX_MODE is
  * the single mode switch and anything but 'development' is refused here, before any
@@ -127,113 +124,72 @@ $request_uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $service_path = str_replace('/_ide/service', '', $request_uri);
 $service_path = trim($service_path, '/');
 
-// Authentication data populated by whichever grant path succeeds below.
-$auth_data = [];
+// THE TOKEN IS ALWAYS REQUIRED. There is no loopback or Host-based exemption: whether a
+// request "came from localhost" is a statement about the network topology in front of
+// this process (a proxy on the same box makes every request loopback), never proof that
+// the caller can read local files - which is what the grant actually proves.
+// Local-file grant: the caller must present the contents of the on-disk
+// ide-grant-<random>.token file. Only a process with local read access to the
+// (docroot-excluded, mode-restricted) bridge dir could have obtained it, so
+// possession is the grant. Verified constant-time; fail closed.
+$presented = trim((string) ($_SERVER['HTTP_X_IDE_TOKEN'] ?? ''));
+if ($presented === '') {
+    ide_auth_error_response('Authentication required', 401);
+}
 
-// Localhost bypass for IDE integration
-$is_localhost_bypass = false;
-$request_host = $_SERVER['HTTP_HOST'] ?? '';
-$request_scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-$remote_addr = $_SERVER['REMOTE_ADDR'] ?? '';
+$bridge_dir = ide_auth_storage_path('rsx-ide-bridge');
+$token_files = glob($bridge_dir . '/ide-grant-*.token') ?: [];
+if (empty($token_files)) {
+    ide_auth_error_response('IDE bridge grant not established', 401);
+}
 
-// Any X-* header (proxy forwarding, or a token-bearing request that should use the
-// grant path instead) disqualifies the pure-loopback bypass.
-$has_proxy_headers = false;
-foreach ($_SERVER as $key => $value) {
-    if (str_starts_with($key, 'HTTP_X_')) {
-        $has_proxy_headers = true;
+// ONLY THE TWO NEWEST GRANTS AUTHENTICATE (Ide_Bridge_Token::ACTIVE_GRANTS).
+//
+// Rotation retires everything older, so in a healthy tree this slice is the whole
+// directory. It is applied here anyway because auth is where the consequence lands:
+// if a rotation ever fails to delete - a permissions problem, a half-finished
+// manual copy - retired secrets would otherwise keep opening the bridge for as long
+// as the files sat there, which is exactly the property rotation exists to remove.
+//
+// Newest FIRST by the document's own issued_at (filemtime has one-second
+// granularity and cannot separate two grants minted in the same second). The count
+// is duplicated as a literal rather than read from Ide_Bridge_Token::ACTIVE_GRANTS
+// because this file is included before the autoloader.
+$issued_at = [];
+foreach ($token_files as $token_file) {
+    $document = json_decode((string) file_get_contents($token_file), true);
+    $issued_at[$token_file] = is_array($document) && isset($document['issued_at']) && is_numeric($document['issued_at'])
+        ? (float) $document['issued_at']
+        : 0.0;
+}
+usort($token_files, static function ($a, $b) use ($issued_at) {
+    $order = $issued_at[$b] <=> $issued_at[$a];
+    return $order !== 0 ? $order : strcmp($b, $a);
+});
+$token_files = array_slice($token_files, 0, 2);
+
+// The grant file is a JSON document {"secret": ..., "app_url": ...}; only the
+// secret authenticates. A file that does not parse, or carries no secret, is not
+// a grant - it is skipped, never treated as a match.
+$grant_ok = false;
+foreach ($token_files as $token_file) {
+    $decoded = json_decode((string) file_get_contents($token_file), true);
+    if (!is_array($decoded) || !isset($decoded['secret']) || !is_string($decoded['secret'])) {
+        continue;
+    }
+    $secret = trim($decoded['secret']);
+    if ($secret !== '' && hash_equals($secret, $presented)) {
+        $grant_ok = true;
         break;
     }
 }
-
-// Check if request is from loopback
-$is_loopback_ip = (
-    !$has_proxy_headers &&
-    ($remote_addr === '127.0.0.1' ||
-     $remote_addr === '::1' ||
-     str_starts_with($remote_addr, '127.'))
-);
-
-// The mode is not tested again here: anything but development was refused by the hard
-// gate above, so reaching this line already means a development box.
-
-// All conditions must be true for bypass
-if (
-    $request_host === 'localhost' &&
-    $request_scheme === 'http' &&
-    $is_loopback_ip
-) {
-    $is_localhost_bypass = true;
-    $auth_data = ['session' => 'localhost-bypass'];
+if (!$grant_ok) {
+    ide_auth_error_response('Invalid IDE token', 401);
 }
 
-if (!$is_localhost_bypass) {
-    // Local-file grant: the caller must present the contents of the on-disk
-    // ide-grant-<random>.token file. Only a process with local read access to the
-    // (docroot-excluded, mode-restricted) bridge dir could have obtained it, so
-    // possession is the grant. Verified constant-time; fail closed.
-    $presented = trim((string) ($_SERVER['HTTP_X_IDE_TOKEN'] ?? ''));
-    if ($presented === '') {
-        ide_auth_error_response('Authentication required', 401);
-    }
 
-    $bridge_dir = ide_auth_storage_path('rsx-ide-bridge');
-    $token_files = glob($bridge_dir . '/ide-grant-*.token') ?: [];
-    if (empty($token_files)) {
-        ide_auth_error_response('IDE bridge grant not established', 401);
-    }
-
-    // ONLY THE TWO NEWEST GRANTS AUTHENTICATE (Ide_Bridge_Token::ACTIVE_GRANTS).
-    //
-    // Rotation retires everything older, so in a healthy tree this slice is the whole
-    // directory. It is applied here anyway because auth is where the consequence lands:
-    // if a rotation ever fails to delete - a permissions problem, a half-finished
-    // manual copy - retired secrets would otherwise keep opening the bridge for as long
-    // as the files sat there, which is exactly the property rotation exists to remove.
-    //
-    // Newest FIRST by the document's own issued_at (filemtime has one-second
-    // granularity and cannot separate two grants minted in the same second). The count
-    // is duplicated as a literal rather than read from Ide_Bridge_Token::ACTIVE_GRANTS
-    // because this file is included before the autoloader.
-    $issued_at = [];
-    foreach ($token_files as $token_file) {
-        $document = json_decode((string) file_get_contents($token_file), true);
-        $issued_at[$token_file] = is_array($document) && isset($document['issued_at']) && is_numeric($document['issued_at'])
-            ? (float) $document['issued_at']
-            : 0.0;
-    }
-    usort($token_files, static function ($a, $b) use ($issued_at) {
-        $order = $issued_at[$b] <=> $issued_at[$a];
-        return $order !== 0 ? $order : strcmp($b, $a);
-    });
-    $token_files = array_slice($token_files, 0, 2);
-
-    // The grant file is a JSON document {"secret": ..., "app_url": ...}; only the
-    // secret authenticates. A file that does not parse, or carries no secret, is not
-    // a grant - it is skipped, never treated as a match.
-    $grant_ok = false;
-    foreach ($token_files as $token_file) {
-        $decoded = json_decode((string) file_get_contents($token_file), true);
-        if (!is_array($decoded) || !isset($decoded['secret']) || !is_string($decoded['secret'])) {
-            continue;
-        }
-        $secret = trim($decoded['secret']);
-        if ($secret !== '' && hash_equals($secret, $presented)) {
-            $grant_ok = true;
-            break;
-        }
-    }
-    if (!$grant_ok) {
-        ide_auth_error_response('Invalid IDE token', 401);
-    }
-
-    $auth_data = ['session' => 'file-grant'];
-}
-
-// Authentication passed - store auth data for handlers to use if needed
+// Authentication passed
 define('IDE_AUTH_PASSED', true);
-define('IDE_AUTH_DATA', json_encode($auth_data));
-define('IDE_AUTH_IS_LOCALHOST_BYPASS', $is_localhost_bypass);
 
 // Suppress console_debug output for IDE service requests
 // These are programmatic API calls, not user-facing pages

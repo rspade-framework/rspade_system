@@ -28,6 +28,9 @@ use App\RSpade\Core\Rsx;
  *      permanently unreachable.
  *   3. Web requests only.
  *
+ * ONLY A BROWSER ON THIS MACHINE (is_loopback_ip()) is offered the form or may submit
+ * it. Anyone else is answered 403 with the other way in: RSPADE_DEFAULT_* plus migrate.
+ *
  * Unlike the APP_URL screen this needs the DATABASE, so it cannot be a pre-boot
  * guard - it runs from the dispatcher, beside the hostname tripwire. It still
  * renders a self-contained page rather than a view, so the three setup screens
@@ -63,6 +66,13 @@ class Rsx_First_User_Setup
         }
 
         if (!self::__needs_setup()) {
+            return;
+        }
+
+        // THIS MACHINE ONLY: the first account is the most privileged one there is, and
+        // whoever browses a fresh box first must not be the one who creates it.
+        if (!is_loopback_ip()) {
+            self::__render_remote_notice();
             return;
         }
 
@@ -294,6 +304,23 @@ class Rsx_First_User_Setup
         );
     }
 
+    /**
+     * What a caller that is not on this machine sees: no form, and the two ways to create
+     * the account. Answered 403 so nothing reads it as the page it asked for.
+     */
+    private static function __render_remote_notice(): void
+    {
+        self::__render_page(
+            'Create your first account',
+            'This application has no users yet.',
+            '<p class="note">The first account can be created from this screen only by a
+      browser on this machine. From anywhere else, set <code>RSPADE_DEFAULT_EMAIL</code> and
+      <code>RSPADE_DEFAULT_PASSWORD</code> in <code>.env</code> and run
+      <code>php artisan migrate</code>, which creates it.</p>',
+            403
+        );
+    }
+
     private static function __render_success(
         string $email,
         string $password,
@@ -330,9 +357,9 @@ class Rsx_First_User_Setup
      * necessity as much as taste: this renders mid-dispatch on an application
      * that may never have compiled an asset bundle.
      */
-    private static function __render_page(string $title, string $subtitle, string $body): void
+    private static function __render_page(string $title, string $subtitle, string $body, int $status = 200): void
     {
-        http_response_code(200);
+        http_response_code($status);
         header('Content-Type: text/html; charset=UTF-8');
         header('Cache-Control: no-store');
 

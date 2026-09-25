@@ -492,7 +492,7 @@ class Document_Render_Service extends Rsx_Service_Abstract
                 throw new Exception('Failed to publish rendition file');
             }
         } finally {
-            static::__rmdir_recursive($work_dir);
+            rmdir_recursive($work_dir);
         }
     }
 
@@ -569,37 +569,5 @@ class Document_Render_Service extends Rsx_Service_Abstract
             'unindexed' => File_Storage_Model::where('is_indexed', 0)->count(),
             'renditions' => File_Rendition_Service::get_statistics(),
         ];
-    }
-
-    /**
-     * Recursively remove a directory tree (best-effort cleanup of the temp work dir).
-     *
-     * @param string $dir
-     * @return void
-     */
-    protected static function __rmdir_recursive(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-
-        $items = scandir($dir);
-        if ($items === false) {
-            return;
-        }
-
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $path = $dir . '/' . $item;
-            if (is_dir($path)) {
-                static::__rmdir_recursive($path);
-            } else {
-                @unlink($path);
-            }
-        }
-
-        @rmdir($dir);
     }
 }

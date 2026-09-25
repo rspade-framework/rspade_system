@@ -22,11 +22,11 @@ A 32-byte random token, minted ONCE when the session is created and stored on `_
 
 ## Portal parity
 
-There is **one session per browser** - one `rsx` cookie, one `_sessions` row, one token - shared by the staff app and the portal. So there is exactly one token and nothing to fork on: a staff form and a portal form carry the same value, both dispatchers verify against the same row, and `Rsx_Csrf::enforce()` takes no realm argument. Portal code writes `@csrf` exactly like staff code; **a hand-rolled portal variant is always wrong.**
+There is **one session per browser** - one `rsx` cookie, one `_sessions` row, one token - shared by the staff app and the portal. So there is exactly one token and nothing to fork on: a staff form and a portal form carry the same value, both realms verify against the same row, and `Rsx_Csrf::enforce()` takes no realm argument. Portal code writes `@csrf` exactly like staff code; **a hand-rolled portal variant is always wrong.**
 
 ## Enforcement point and failure shape
 
-One POST-gated call (`App\RSpade\Core\Session\Rsx_Csrf::enforce($request)`) in the staff Dispatcher and an identical one in `Portal_Dispatcher`, placed after the external-API branch. It covers `/_ajax/:controller/:action`, `/_ajax/_batch`, `/_upload` and native `#[Route(POST)]` controllers, on both the staff and portal spellings of those paths.
+One POST-gated call (`App\RSpade\Core\Session\Rsx_Csrf::enforce($request)`) in the `Dispatcher`, run for both realms (the external API is a channel of its own and never reaches it). It covers `/_ajax/<Controller>/<action>`, `/_ajax/_batch`, `/_upload` and native `#[Route(POST)]` controllers, on both the staff and portal spellings of those paths.
 
 A failure returns a clean auth-style error with no stack trace - the Ajax error contract for `/_ajax` and `/_upload`, a **419** for native form POSTs. The rejection is an already-rendered response carried by an `HttpResponseException` honored **before** the handler chain, so no error handler can replace it with a 500. The check uses `has_session()` and never creates a session for a token-less anonymous caller.
 

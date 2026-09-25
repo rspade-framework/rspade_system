@@ -5,7 +5,6 @@ namespace App\RSpade\CodeQuality\Rules\PHP;
 use Exception;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Manifest\Manifest;
-use App\RSpade\Core\Naming\Rsx_Paths;
 
 class NoImplements_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -248,36 +247,5 @@ class NoImplements_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Otherwise return as-is
         return $simple_name;
-    }
-
-    /**
-     * Check if a file in /app/RSpade/ is in an allowed subdirectory
-     * Based on scan_directories configuration
-     */
-    private function is_in_allowed_rspade_directory(string $file_path): bool
-    {
-        // Get allowed subdirectories from config
-        $scan_directories = config('rsx.manifest.scan_directories', []);
-
-        // Extract allowed RSpade subdirectories
-        $allowed_subdirs = [];
-        foreach ($scan_directories as $scan_dir) {
-            if (Rsx_Paths::is_framework($scan_dir)) {
-                $subdir = Rsx_Paths::framework_subpath($scan_dir);
-                if ($subdir) {
-                    $allowed_subdirs[] = $subdir;
-                }
-            }
-        }
-
-        // Check if file is in any allowed subdirectory
-        foreach ($allowed_subdirs as $subdir) {
-            if (str_contains($file_path, '/app/RSpade/' . $subdir . '/') ||
-                str_contains($file_path, '/app/RSpade/' . $subdir)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

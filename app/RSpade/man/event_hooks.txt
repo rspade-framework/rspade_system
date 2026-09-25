@@ -612,17 +612,16 @@ FRAMEWORK EVENT CATALOG
 
         rsx.post_dispatch (action)
             Fired from: EVERY handler-invocation seam, immediately after the
-                        handler returns and BEFORE any response shaping - browser
-                        Ajax (Ajax::handle_browser_request), every Ajax::internal()
-                        call including each batch sub-call, the external API
-                        (Api_Dispatcher), plain #[Route] dispatch (Dispatcher), and
-                        #[Portal_Route] dispatch (Portal_Dispatcher). SUCCESS PATH
+                        handler returns and BEFORE any response shaping - every
+                        Ajax call (Ajax::execute(): direct, each batched call, and
+                        every Ajax::internal() call), the external API
+                        (Api_Dispatcher), and page dispatch in both realms
+                        (Dispatcher: #[Route] and #[Portal_Route]). SUCCESS PATH
                         ONLY: a handler that threw never reaches it.
             Data: {request: Request, params: array|null, result: mixed}
                   params is whatever that seam hands its handler, and the seams
-                  differ: the Ajax seams pass the ajax params (which DO carry the
-                  submitted body); the plain and portal seams pass GET + route
-                  params, into which the POST body is NEVER merged, so a handler
+                  differ: the Ajax seam passes the ajax params (which DO carry the
+                  submitted body); the page seam passes GET + route params, into which the POST body is NEVER merged, so a handler
                   reading a submitted field must read it off the Request there.
                   The API seam adds a fifth key, raw_input - what arrived before
                   #[Api_Param] validation, params being the VALIDATED set.
@@ -635,9 +634,10 @@ FRAMEWORK EVENT CATALOG
             feature, not a hazard. A handler must NOT mutate result: the payload is
             an observation of what the handler returned, and the response is built
             from the seam's own variable regardless.
-            NESTING: a single HTTP request fires it more than once - the transport
-            route around an Ajax call is itself a dispatch, and a batch fires once
-            per sub-call plus once for the batch. Handlers must be idempotent.
+            NESTING: a single HTTP request can fire it more than once - a batch
+            fires once per call, and a handler that makes an Ajax::internal() call
+            fires it for that call and again for itself. Handlers must be
+            idempotent.
             FLAGSHIP CONSUMER: the Turnstile completeness guard
             (Rsx_Turnstile::_guard_unvalidated_token). It throws when a request
             submitted a __turnstile value but the endpoint never called

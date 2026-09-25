@@ -39,9 +39,9 @@ Three behaviours define the concern:
 - `app/RSpade/Core/Turnstile/Turnstile_Input.jqhtml` / `.js` / `turnstile_input.scss` - the
   widget component (real hidden `__turnstile` input; not a `Form_Input_Abstract`)
 - `app/RSpade/Core/Js/Turnstile.js` - the one-script loader + callback queue
-- The five `rsx.post_dispatch` seams: `Core/Ajax/Ajax.php` (`internal()` and
-  `handle_browser_request()`), `Core/Dispatch/Dispatcher.php`, `Core/Api/Api_Dispatcher.php`,
-  `Core/Portal/Portal_Dispatcher.php`
+- The three `rsx.post_dispatch` seams: `Core/Ajax/Ajax.php` (`execute()`, behind every
+  Ajax call - direct, batched and `internal()`), `Core/Dispatch/Dispatcher.php` (page
+  routes, both realms), `Core/Api/Api_Dispatcher.php`
 - `app/RSpade/Core/Api/Api_Param_Validator.php` - `__turnstile` exempted from the
   undeclared-parameter 422
 - `app/RSpade/Core/Bundle/Rsx_Bundle_Abstract.php` - the conditional

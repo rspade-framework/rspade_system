@@ -10,6 +10,7 @@ namespace App\RSpade\Commands\Rsx;
 use Illuminate\Console\Command;
 use Symfony\Component\Process\Process;
 use App\RSpade\Core\Debug\Debugger;
+use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Debug\Dev_Auth_Token;
 use App\RSpade\Core\Health\Playwright_Stack;
 use App\RSpade\Core\Ide\Ide_Bridge_Token;
@@ -182,7 +183,35 @@ class Route_Debug_Command extends Command
     /**
      * Execute the console command.
      */
+    /**
+     * One rsx:debug at a time per box.
+     *
+     * Two runs that overlap share the harness's browser and dev-auth state and fail each
+     * other with spurious errors, so every run holds a system lock (an flock on this box)
+     * for its whole length. A second run WAITS - for as long as the first takes - and says
+     * once, on stderr, that it is waiting. The zero-second attempt only decides whether to
+     * say so; the wait itself is unbounded.
+     */
     public function handle()
+    {
+        try {
+            $lock_token = RsxLocks::system_lock(self::DEBUG_LOCK_NAME, 0);
+        } catch (\RuntimeException $e) {
+            fwrite(STDERR, "[rsx:debug] Waiting for another rsx:debug to finish...\n");
+            $lock_token = RsxLocks::system_lock(self::DEBUG_LOCK_NAME);
+        }
+
+        try {
+            return $this->__run();
+        } finally {
+            RsxLocks::release_lock($lock_token);
+        }
+    }
+
+    /** The system lock that serializes rsx:debug runs on this box. */
+    private const DEBUG_LOCK_NAME = 'rsx_debug';
+
+    private function __run()
     {
         // DEVELOPMENT ONLY, and the question is Rsx::is_development() - RSX_MODE is the
         // one mode switch, and "not production" would leave this live on a sealed debug
@@ -569,8 +598,10 @@ class Route_Debug_Command extends Command
         // PHP-vs-MySQL clock skew and can only ever reach other harness rows.
         $run_started_at = Rsx_Time::to_database(Rsx_Time::subtract(Rsx_Time::now(), 60));
 
+        // The harness browser must not inherit this run's rsx_debug flock: a Chromium that
+        // outlived the run would hold the lock forever and wedge every later rsx:debug.
         $process = new Process(
-            $command_args,
+            RsxLocks::command_without_inherited_locks($command_args),
             base_path(),
             $env,
             null,

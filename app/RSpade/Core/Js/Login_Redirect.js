@@ -87,7 +87,7 @@ class Login_Redirect {
             return '';
         }
 
-        return '<input type="hidden" name="' + html(Login_Redirect.#PARAM) + '" value="' + html(value) + '">';
+        return '<input type="hidden" name="' + escape_html(Login_Redirect.#PARAM) + '" value="' + escape_html(value) + '">';
     }
 
     /**

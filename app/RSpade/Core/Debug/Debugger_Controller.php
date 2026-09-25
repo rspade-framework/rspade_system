@@ -30,6 +30,7 @@ class Debugger_Controller extends Rsx_Controller_Abstract
      * @param array $params
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function log_console_messages(Request $request, array $params = [])
     {
         return Debugger::log_console_messages($request, $params);
@@ -42,6 +43,7 @@ class Debugger_Controller extends Rsx_Controller_Abstract
      * @param array $params
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function log_browser_errors(Request $request, array $params = [])
     {
         return Debugger::log_browser_errors($request, $params);

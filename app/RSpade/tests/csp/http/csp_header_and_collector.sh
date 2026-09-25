@@ -135,5 +135,56 @@ if ! tail -1 "$LOG" | grep -q "${marker}-invalid"; then
 fi
 echo "[TEST] 5. OK - recorded as invalid, still 204" >&2
 
+# ---------------------------------------------------------------------------
+# Step 6: an oversized body is one line naming its size, never parsed or stored.
+# ---------------------------------------------------------------------------
+echo "[TEST] 6. An oversized body appends one 'oversized' line..." >&2
+before="$(wc -l < "$LOG")"
+big="/tmp/csp_big_$$.json"
+head -c 70000 /dev/zero | tr '\0' 'a' > "$big"
+status="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+    -H 'Content-Type: application/csp-report' \
+    --data-binary "@${big}" "${BASE}/_csp-report" 2>/dev/null)"
+rm -f "$big"
+
+if [ "$status" != "204" ]; then
+    echo "FAIL: $TEST_NAME - an oversized body answered $status (expected 204)"
+    exit 1
+fi
+
+after="$(wc -l < "$LOG")"
+if [ "$after" -ne $((before + 1)) ] || ! tail -1 "$LOG" | grep -q '"oversized":70000'; then
+    echo "FAIL: $TEST_NAME - an oversized body was not recorded as one oversized line"
+    exit 1
+fi
+echo "[TEST] 6. OK - one line, size only" >&2
+
+# ---------------------------------------------------------------------------
+# Step 7: a batch longer than the cap appends the cap plus one 'dropped' line.
+# ---------------------------------------------------------------------------
+echo "[TEST] 7. A long Reporting API batch is capped..." >&2
+before="$(wc -l < "$LOG")"
+batch="["
+for i in $(seq 1 60); do
+    [ "$i" -gt 1 ] && batch="${batch},"
+    batch="${batch}{\"type\":\"csp-violation\",\"n\":${i}}"
+done
+batch="${batch}]"
+status="$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+    -H 'Content-Type: application/reports+json' \
+    --data "$batch" "${BASE}/_csp-report" 2>/dev/null)"
+
+if [ "$status" != "204" ]; then
+    echo "FAIL: $TEST_NAME - a long batch answered $status (expected 204)"
+    exit 1
+fi
+
+after="$(wc -l < "$LOG")"
+if [ "$after" -ne $((before + 51)) ] || ! tail -1 "$LOG" | grep -q '"dropped":10'; then
+    echo "FAIL: $TEST_NAME - the batch appended $((after - before)) lines (expected 50 plus one dropped line)"
+    exit 1
+fi
+echo "[TEST] 7. OK - 50 lines plus dropped:10" >&2
+
 echo "PASS: $TEST_NAME"
 exit 0

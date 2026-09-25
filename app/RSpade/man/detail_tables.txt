@@ -154,7 +154,8 @@ CODEGEN (spans base + detail as one logical model)
       detail columns into the base model's column map). Forms bind
       $max_length=Model.field_length('first_name') even though first_name is on a detail.
     - rsx:constants:regenerate documents detail columns in the base model's @property
-      docblock, each annotated "(detail: <table>)".
+      docblock, each annotated "(detail: <table>)" - after the base columns, one group
+      per detail table, each group sorted by column name.
     - The JS stub bakes the discriminator + a value->accessor map and emits the embedded-
       resolving detail accessors.
     - $enums declared on detail columns work like any column (the detail model is a real

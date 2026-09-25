@@ -161,6 +161,12 @@ FRAMEWORK INVENTORY
         FPC                         all
         Hostname                    debug, prod   a .dev. hostname gates every
                                                   outbound email and SMS
+        Ignition Read-Only          all           security; the debug page
+                                                  exists in development
+        ImageMagick Coder Policy    all           security; uploads are
+                                                  rasterised in every mode
+        Laravel Route Table         all           security; a Laravel route
+                                                  bypasses CSRF, #[Auth], CSP
         LibreOffice (soffice)       all           reports the IMAGE, not the
                                                   host, when the sandbox is on
         Lock Server                 all
@@ -250,6 +256,29 @@ FRAMEWORK INVENTORY
                                  read Sent or Suppressed, and nobody is told.
                                  Remediation: set APP_URL to the production hostname,
                                  then rsx:build --force.
+        Ignition Read-Only       Laravel's debug page cannot act: ignition's
+                                 enable_runnable_solutions and enable_share_button
+                                 are both false (system/config/ignition.php ships
+                                 them as literals) and /_ignition/health-check is
+                                 not answered by Ignition. FAIL otherwise - a
+                                 runnable solution is an anonymous POST that can
+                                 rotate APP_KEY or rewrite .env.
+        Laravel Route Table      the booted Laravel router holds no route. The
+                                 framework provider clears the route table once every
+                                 provider has booted (RSX dispatch never consults it),
+                                 so a route a package registers does not exist. FAIL
+                                 naming each route found - a regression that could
+                                 make a route reachable around CSRF, #[Auth] and CSP.
+                                 OK otherwise.
+        ImageMagick Coder Policy the ImageMagick policy refuses the SVG, MSVG, MVG,
+                                 MSL, TEXT and LABEL coders, each PROBED with a
+                                 harmless read (queryFormats() lists a coder whether
+                                 or not policy lets it read). FAIL naming each live
+                                 coder: through them an uploaded SVG rasterises a
+                                 local file. The RSpade image installs
+                                 resource/docker/imagemagick/policy.xml (raster
+                                 coders plus PDF only); another host installs it by
+                                 hand. INFO when the imagick extension is absent.
         Document Sandbox         whether soffice and pdftotext run on the host or
                                  inside a throwaway container
                                  (rsx.libreoffice.sandbox). 'none' is an INFO in

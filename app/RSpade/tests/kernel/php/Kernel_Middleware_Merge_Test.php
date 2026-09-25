@@ -15,11 +15,13 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * app/Http/Kernel.php is a framework-OWNED file, so an application never registers
- * middleware by editing it - it declares middleware in config('rsx.middleware') and the
- * kernel folds that in at bootstrap. These cases drive that merge helper directly, over a
- * kernel built on a THROWAWAY router (the real router must not inherit fixture middleware),
- * pinning the two things ownership makes load-bearing: the merge is APPEND-ONLY, and every
- * bad declaration fails LOUDLY instead of silently doing nothing.
+ * middleware by editing it - it declares middleware in config('rsx.middleware.global') and
+ * the kernel folds that in at bootstrap. These cases drive that merge helper directly, over
+ * a kernel built on a THROWAWAY router (the real kernel must not inherit fixture
+ * middleware), pinning what ownership makes load-bearing: the merge is APPEND-ONLY, and
+ * every bad declaration fails LOUDLY instead of silently doing nothing - including route
+ * middleware ('web', 'api', 'aliases'), which could never run because RSX requests do not
+ * pass through Laravel's router.
  *
  * Pure logic, no DB.
  */
@@ -78,79 +80,41 @@ class Kernel_Middleware_Merge_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A group key names an EXISTING group and appends to its end; sibling groups are
-     * untouched.
+     * Route middleware never runs - the kernel hands every request to the RSX front
+     * controller, not to Laravel's router - so a non-empty 'web', 'api' or 'aliases'
+     * declaration throws, naming the key, instead of silently doing nothing.
      */
-    public static function test_group_middleware_is_appended_to_that_group_only()
+    public static function test_route_middleware_keys_throw_naming_the_key()
     {
         $kernel = self::_kernel();
-        $before = self::_read($kernel, 'middlewareGroups');
 
-        self::_merge($kernel, ['web' => [self::EXTRA_A]]);
-
-        $after = self::_read($kernel, 'middlewareGroups');
-        static::__assert_equals($before['api'], $after['api']);
-        static::__assert_equals($before['web'], array_slice($after['web'], 0, count($before['web'])));
-        static::__assert_equals(self::EXTRA_A, end($after['web']));
+        foreach (['web' => [self::EXTRA_A], 'api' => [self::EXTRA_A], 'aliases' => ['x' => self::EXTRA_A]] as $key => $entries) {
+            static::__assert_throws(
+                RuntimeException::class,
+                function () use ($kernel, $key, $entries) {
+                    self::_merge($kernel, [$key => $entries]);
+                },
+                "rsx.middleware.{$key}') declares route middleware"
+            );
+        }
     }
 
     /**
-     * A group key the kernel does not declare is a typo, not a request to create a group.
-     * It throws, naming the key and the valid ones.
+     * Any other key is a typo. It throws, naming the key and the one valid key.
      */
-    public static function test_unknown_group_key_throws_naming_the_valid_keys()
+    public static function test_an_unknown_key_throws_naming_the_valid_key()
     {
         $kernel = self::_kernel();
 
         $e = static::__assert_throws(
             RuntimeException::class,
             function () use ($kernel) {
-                self::_merge($kernel, ['wbe' => [self::EXTRA_A]]);
+                self::_merge($kernel, ['globl' => [self::EXTRA_A]]);
             },
-            "unknown middleware group 'wbe'"
+            "unknown key 'globl'"
         );
 
-        static::__assert_contains('web', $e->getMessage());
-        static::__assert_contains('api', $e->getMessage());
-    }
-
-    /**
-     * A new alias joins the framework aliases.
-     */
-    public static function test_a_new_alias_is_merged()
-    {
-        $kernel = self::_kernel();
-
-        self::_merge($kernel, ['aliases' => ['no_empty_strings' => self::EXTRA_A]]);
-
-        $aliases = self::_read($kernel, 'middlewareAliases');
-        static::__assert_equals(self::EXTRA_A, $aliases['no_empty_strings']);
-        static::__assert_equals(\App\Http\Middleware\Authenticate::class, $aliases['auth']);
-    }
-
-    /**
-     * Rebinding an alias the framework already owns would break every route using it,
-     * somewhere else entirely. It throws, naming BOTH classes.
-     */
-    public static function test_alias_collision_throws_naming_both_classes()
-    {
-        $kernel = self::_kernel();
-
-        $e = static::__assert_throws(
-            RuntimeException::class,
-            function () use ($kernel) {
-                self::_merge($kernel, ['aliases' => ['auth' => self::EXTRA_A]]);
-            },
-            "already bound to"
-        );
-
-        static::__assert_contains(self::EXTRA_A, $e->getMessage());
-        static::__assert_contains(\App\Http\Middleware\Authenticate::class, $e->getMessage());
-        static::__assert_contains("'auth'", $e->getMessage());
-
-        // And the framework binding survived the refusal.
-        $aliases = self::_read($kernel, 'middlewareAliases');
-        static::__assert_equals(\App\Http\Middleware\Authenticate::class, $aliases['auth']);
+        static::__assert_contains("'global'", $e->getMessage());
     }
 
     /**
@@ -168,88 +132,58 @@ class Kernel_Middleware_Merge_Test extends Rsx_Test_Abstract
             },
             'App\Http\Middleware\Nope_Middleware'
         );
-
-        static::__assert_throws(
-            RuntimeException::class,
-            function () use ($kernel) {
-                self::_merge($kernel, ['aliases' => ['nope' => 'App\Http\Middleware\Nope_Middleware']]);
-            },
-            'which does not exist'
-        );
     }
 
     /**
-     * Declaring something already present is a silent no-op, in every bucket - so the merge
-     * is idempotent and re-running bootstrap can never double the stack.
+     * Declaring something already present is a silent no-op - so the merge is idempotent
+     * and re-running bootstrap can never double the stack.
      */
     public static function test_declaring_something_already_present_is_a_silent_no_op()
     {
         $kernel = self::_kernel();
-        $config = [
-            'global' => [\App\Http\Middleware\TrimStrings::class, self::EXTRA_A],
-            'web' => [\Illuminate\Routing\Middleware\SubstituteBindings::class],
-            'aliases' => ['auth' => \App\Http\Middleware\Authenticate::class],
-        ];
+        $config = ['global' => [\App\Http\Middleware\TrimStrings::class, self::EXTRA_A]];
 
         self::_merge($kernel, $config);
-        $once = [
-            'middleware' => self::_read($kernel, 'middleware'),
-            'middlewareGroups' => self::_read($kernel, 'middlewareGroups'),
-            'middlewareAliases' => self::_read($kernel, 'middlewareAliases'),
-        ];
+        $once = self::_read($kernel, 'middleware');
 
         self::_merge($kernel, $config);
-        static::__assert_equals($once['middleware'], self::_read($kernel, 'middleware'));
-        static::__assert_equals($once['middlewareGroups'], self::_read($kernel, 'middlewareGroups'));
-        static::__assert_equals($once['middlewareAliases'], self::_read($kernel, 'middlewareAliases'));
-
-        static::__assert_equals(1, count(array_keys($once['middleware'], \App\Http\Middleware\TrimStrings::class, true)));
-        static::__assert_equals(
-            1,
-            count(array_keys($once['middlewareGroups']['web'], \Illuminate\Routing\Middleware\SubstituteBindings::class, true))
-        );
+        static::__assert_equals($once, self::_read($kernel, 'middleware'));
+        static::__assert_equals(1, count(array_keys($once, \App\Http\Middleware\TrimStrings::class, true)));
     }
 
     /**
      * The block ships EMPTY, and the framework declares no middleware of its own - so the
-     * shipped configuration must leave the kernel exactly as declared. This is the case
-     * every real request exercises.
+     * shipped configuration must leave the kernel exactly as declared. Empty route-middleware
+     * keys (an application config written before they were retired) change nothing either.
      */
     public static function test_the_shipped_empty_config_changes_nothing()
     {
         $kernel = self::_kernel();
-        $before = [
-            self::_read($kernel, 'middleware'),
-            self::_read($kernel, 'middlewareGroups'),
-            self::_read($kernel, 'middlewareAliases'),
-        ];
+        $before = self::_read($kernel, 'middleware');
 
         self::_merge($kernel, []);
         self::_merge($kernel, ['global' => [], 'web' => [], 'api' => [], 'aliases' => []]);
 
-        static::__assert_equals($before[0], self::_read($kernel, 'middleware'));
-        static::__assert_equals($before[1], self::_read($kernel, 'middlewareGroups'));
-        static::__assert_equals($before[2], self::_read($kernel, 'middlewareAliases'));
+        static::__assert_equals($before, self::_read($kernel, 'middleware'));
+        static::__assert_equals([], self::_read($kernel, 'middlewareGroups'), 'the kernel declares no route groups');
+        static::__assert_equals([], self::_read($kernel, 'middlewareAliases'), 'the kernel declares no aliases');
 
         // The framework's own config block is empty: nothing ships declared.
-        static::__assert_equals(
-            ['global' => [], 'web' => [], 'api' => [], 'aliases' => []],
-            (array) config('rsx.middleware', [])
-        );
+        static::__assert_equals(['global' => []], (array) config('rsx.middleware', []));
     }
 
     /**
-     * A ':parameters' suffix is Laravel's own spelling and must survive: the class part is
-     * what gets existence-checked, the full string is what gets registered.
+     * Laravel's `Class::class.':params'` spelling survives: the class part is what gets
+     * existence-checked, the full string is what gets registered.
      */
     public static function test_a_parameterised_entry_is_accepted_whole()
     {
         $kernel = self::_kernel();
         $entry = \Illuminate\Routing\Middleware\ThrottleRequests::class . ':30,1';
 
-        self::_merge($kernel, ['web' => [$entry]]);
+        self::_merge($kernel, ['global' => [$entry]]);
 
-        $groups = self::_read($kernel, 'middlewareGroups');
-        static::__assert_equals($entry, end($groups['web']));
+        $middleware = self::_read($kernel, 'middleware');
+        static::__assert_equals($entry, end($middleware));
     }
 }

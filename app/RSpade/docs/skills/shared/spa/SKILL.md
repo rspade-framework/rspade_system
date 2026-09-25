@@ -98,7 +98,10 @@ URLs are always generated with `Rsx::Route()` / `Rsx.Route()`, never hardcoded:
 ```php
 Rsx::Route('Contacts_Index_Action')       // /contacts
 Rsx::Route('Contacts_View_Action', 123)   // /contacts/123
+Rsx.Route('Clients_View_Action', 5, {tab: 'portal'})   // /clients/view/5#tab=portal
 ```
+
+The third argument is the **fragment state** `Rsx.url_hash_get()` reads (a tab, a grid filter, a URL-addressed dialog), serialized by the reader's own encoder in both languages - **never append `'#...'` to a Route() result by hand** (`$.param` writes a space as `+`, which reads back as a literal `+`). Values are strings or integers; null/`''` drop the key; anything else throws; the `at` anchor stays in the params and comes last. `rsx:man routing`, URL FRAGMENT STATE.
 
 ## URL parameters
 

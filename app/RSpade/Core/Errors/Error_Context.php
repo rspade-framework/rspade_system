@@ -18,8 +18,10 @@ namespace App\RSpade\Core\Errors;
  * READONLY, because the funnel builds it once and the page only renders it.
  *
  * detail is the exception block (class, message, file, line, frames) and is
- * populated for a 500 only - and never when Rsx::is_production(), because an
- * error page is fully inspectable with curl.
+ * populated for a 500 only - and only for a caller Rsx_Diagnostics admits (a
+ * developer, outside production), because an error page is fully inspectable
+ * with curl. Every other 500 carries error_id instead: the reference under
+ * which the full detail was logged, for the page to show.
  *
  * preview is true when the context was fabricated by a development browse of
  * /error/<code>, so a page can say so if it wants to; every other field is the
@@ -39,7 +41,8 @@ class Error_Context
      * @param string $realm Auth_Gates::REALM_STAFF or REALM_PORTAL
      * @param string $home_url The realm's home
      * @param bool $preview True when rendered from a development /error/<code> browse
-     * @param array|null $detail Exception detail for a 500, outside production only
+     * @param array|null $detail Exception detail for a 500, developer callers only
+     * @param string|null $error_id The log reference of a redacted 500's detail
      */
     public function __construct(
         public readonly int $status,
@@ -50,7 +53,8 @@ class Error_Context
         public readonly string $realm,
         public readonly string $home_url,
         public readonly bool $preview,
-        public readonly ?array $detail
+        public readonly ?array $detail,
+        public readonly ?string $error_id = null
     ) {
     }
 }

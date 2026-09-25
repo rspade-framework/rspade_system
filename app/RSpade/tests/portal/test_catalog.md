@@ -91,6 +91,10 @@ portal row returns the staff site.
 | PORTAL-SEAM-07 | a site-scoped Rsx_Settings value stores under the portal site | php | set on staff then on portal | two rows; each experience reads its own | implemented | 2026-08-10 |
 | PORTAL-SEAM-08 | the Rsx_Throttle bucket is keyed on the portal site | php | same action+user on both experiences | portal call not throttled by the staff one; row filed under B | implemented | 2026-08-10 |
 | PORTAL-SEAM-09 | Rsx_Sms files a queue row + blocklist lookup under the portal site | php | portal request send() | _sms_queue.site_id == B | deferred - no portal SMS caller exists yet; the fork is identical to Rsx_Mail's, which is covered by the mail concern | 2026-08-10 |
+| PORTAL-IMP-RO-01 | the #[Portal_Impersonation_Readable] mark is baked into the surface index | php | fixture controller, marked `read` + unmarked `write` | `impersonation_readable` true / absent | implemented (`Portal_Impersonation_Read_Only_Test`) | 2026-09-25 |
+| PORTAL-IMP-RO-02 | while impersonating, an unmarked portal Ajax endpoint is refused before it runs; a marked one runs | php | `Ajax::internal` in the portal realm with an impersonator set | AjaxUnauthorizedException "read-only session", write never ran; read ran | implemented (`Portal_Impersonation_Read_Only_Test`) | 2026-09-25 |
+| PORTAL-IMP-RO-03 | without impersonation both run | php | same, no impersonator | both counters 1 | implemented (`Portal_Impersonation_Read_Only_Test`) | 2026-09-25 |
+| PORTAL-IMP-RO-04 | the framework's portal-reachable reads a portal page needs carry the mark | php | surface index | Orm fetch / fetch_relationship, Spa_Session get_state, Realtime tokens, File_Preview info marked | implemented (`Portal_Impersonation_Read_Only_Test`) | 2026-09-25 |
 
 Notes:
 - All `php` rows live in `php/Portal_Realm_Site_Seams_Test.php`.
@@ -100,3 +104,17 @@ Notes:
   declaration was NEUTRALIZED and a full portal login + site-scoped portal Ajax was run
   over HTTP (workspaces returned the portal tenant's own rows). That proved portal
   tenancy no longer rides the staff line.
+
+## Portal_Route_Parity_Test (php) + playwright/portal_route_parity.js - one URL generator
+
+Rsx_Portal::Route() / Rsx_Portal.Route() select and generate with Rsx's own routines and add
+only the portal base, so the reserved `at` key rides the #at= anchor on a portal URL exactly as
+on a staff one (rsx:man anchors).
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| PORTAL-ROUTE-01 | staff URL: whole-token replacement, query, anchor last | php | fixture `/test-route-parity/:id/:id_type`, `{id:5,id_type:7,at:'a b',x:1}` | `/test-route-parity/5/7?x=1#at=a%20b` | implemented | 2026-09-25 |
+| PORTAL-ROUTE-02 | portal URL is the staff URL with the portal base | php | the portal twin fixture, same params | `portal_path()` of the staff URL | implemented | 2026-09-25 |
+| PORTAL-ROUTE-03 | an empty anchor appends nothing | php | `at => ''` | no fragment | implemented | 2026-09-25 |
+| PORTAL-ROUTE-04 | the JS twin: same parity, #at= not ?at=, non-string action refused, a portal SPA action resolved by name | playwright | probe routes written into `Rsx._routes` / `Rsx_Portal._routes` on `/_sys`, a probe portal SPA class | identical URLs; refusal names "must be a string" | implemented (`playwright/portal_route_parity.js`) | 2026-09-25 |
+| PORTAL-ROUTE-05 | the hash argument: the portal URL carries the hash state before the anchor, identical to the staff URL with the portal base (the JS twin is DISP-53 d) | php | `['tab' => 'a b', 'gone' => null]` with the PORTAL-ROUTE-01 params | `portal_path('/test-route-parity/5/7?x=1#tab=a%20b&at=a%20b')` | implemented (`Portal_Route_Parity_Test`) | 2026-09-25 |

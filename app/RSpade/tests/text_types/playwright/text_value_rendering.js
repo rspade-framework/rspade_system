@@ -231,6 +231,44 @@ async function probe_input_accepts(page) {
     });
 }
 
+/**
+ * The browser sanitizer is held to the server's allow-list, so a value filtered by an editor
+ * is exactly what the server stores. Each expected string is what PHP
+ * sanitize_rich_text_html() returns for the same input: no class, no style, no input target
+ * or rel, only http/https/mailto/relative URLs, and target="_blank" rel="noreferrer noopener"
+ * forced on a link to an absolute URL.
+ */
+async function probe_sanitizer_matches_server(page) {
+    return await page.evaluate(() => {
+        const cases = [
+            ['<a href="https://x.com/a" target="_top" class="foo" title="t">x</a>', '<a href="https://x.com/a" title="t" target="_blank" rel="noreferrer noopener">x</a>'],
+            ['<a href="/local" target="_blank">l</a>', '<a href="/local">l</a>'],
+            ['<a href="//x.com/p">pr</a>', '<a href="//x.com/p" target="_blank" rel="noreferrer noopener">pr</a>'],
+            ['<a href="mailto:a@b.c">m</a>', '<a href="mailto:a@b.c">m</a>'],
+            ['<p class="ql-align-center" title="z">c</p>', '<p>c</p>'],
+            ['<a href="javascript:alert(1)">j</a>', '<a>j</a>'],
+            ['<a href="ftp://x.com/f">f</a>', '<a>f</a>'],
+            ['<ul><li data-list="checked">a</li><li data-list="Bogus">b</li></ul>', '<ul><li data-list="checked">a</li><li>b</li></ul>'],
+            ['<span style="color:red" title="s">s</span>', '<span>s</span>'],
+        ];
+        const mismatches = [];
+        for (const [input, expected] of cases) {
+            const actual = sanitize_rich_text_html(input);
+            if (actual !== expected) {
+                mismatches.push(`${input} -> ${actual} (expected ${expected})`);
+            }
+        }
+        if (sanitize_rich_text_html('<img src="data:image/png;base64,AAA" alt="a">').includes('data:')) {
+            mismatches.push('a data: image URL survived');
+        }
+        // The hooks are scoped to the one call: a plain DOMPurify caller afterwards keeps class.
+        if (!DOMPurify.sanitize('<p class="k">x</p>').includes('class="k"')) {
+            mismatches.push('a sanitizer hook leaked into a later DOMPurify call');
+        }
+        return { mismatches: mismatches, escaped: escape_html('<b>"&') };
+    });
+}
+
 /** toString() throws rather than yielding [object Object] - the silent-wrong-render guard. */
 async function probe_tostring_throws(page) {
     return await page.evaluate(() => {
@@ -348,8 +386,16 @@ async function probe_tostring_throws(page) {
             fail(`toString() did not throw; it produced ${JSON.stringify(coercion.coerced)}`);
         }
 
+        const sanitizer = await probe_sanitizer_matches_server(page);
+        for (const mismatch of sanitizer.mismatches) {
+            fail(`sanitize_rich_text_html() diverges from the server allow-list: ${mismatch}`);
+        }
+        if (sanitizer.escaped !== '&lt;b&gt;&quot;&amp;') {
+            fail(`escape_html() did not escape: ${sanitizer.escaped}`);
+        }
+
         if (!process.exitCode) {
-            console.log('PASS: text value rendering - printer chain, escaping rules, dynamic component names, typed inputs');
+            console.log('PASS: text value rendering - printer chain, escaping rules, dynamic component names, typed inputs, sanitizer parity');
         }
     } catch (error) {
         fail(error.message);

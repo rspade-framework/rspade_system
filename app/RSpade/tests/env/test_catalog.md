@@ -115,6 +115,17 @@ longer rotates the cookie underneath the open form (the 2026-09-14 field report)
 | env-frtok-05 | malformed cookies replaced | empty, short, uppercase, non-hex, too long, newline | never reused; fresh well-formed token | implemented |
 | env-frtok-06 | only the named cookie counts | the first-user screen's cookie present | not reused | implemented |
 
+## First_Run_Loopback_Test (php, no transactions) - the first-run screens accept a submit from this machine only
+
+The APP_URL screen runs pre-boot and carries its own copy of `is_loopback_ip()`,
+`rsx_first_run_is_loopback()`; the first-user screen calls `is_loopback_ip()` itself.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| fr-loop-01 | the pre-boot predicate: loopback peer and every declared hop | bare 127.0.0.1 / ::1; remote peer; remote X-Forwarded-For / X-Real-IP anywhere; forwarded with no client named; a port on the entry; no peer | true / false as listed | implemented |
+| fr-loop-02 | the copy agrees with `is_loopback_ip()` on every shape | the fr-loop-01 cases, as bound requests | equal answers | implemented |
+| fr-loop-03 | a non-loopback POST to the APP_URL screen is 403 and writes nothing; the first-user screen answers a remote caller 403 with no form | a remote browser on a box with a blank APP_URL / an empty login_users | 403 | planned (needs a box in first-run state; verified by reading) |
+
 ## Deferred / planned
 
 | ID | Purpose | Type | Status | Last updated |

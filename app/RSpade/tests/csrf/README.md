@@ -3,9 +3,10 @@
 ## Domain overview & applicability
 
 CSRF protection for state-changing (POST) requests. `App\RSpade\Core\Session\Rsx_Csrf::enforce()`
-is invoked at the staff and portal dispatcher POST seams (`Dispatcher.php:118`,
-`Portal_Dispatcher.php:89`), after the cookie-less external-API branch and before route handling,
-so one seam covers `/_ajax/:ctrl/:action`, `/_ajax/_batch`, `/_upload`, and native `#[Route(POST)]`.
+is invoked at the dispatcher's POST seam (`Dispatcher::dispatch()`, both realms; the
+cookie-less external API is a channel of its own and never reaches it) before the AJAX channel
+and route handling, so one seam covers `/_ajax/<Controller>/<action>`, `/_ajax/_batch`,
+`/_upload`, and native `#[Route(POST)]`.
 
 Two complementary layers:
 1. **Origin/Referer** (all POSTs): a present Origin (or Referer) whose host is not this host is
@@ -21,7 +22,7 @@ the hidden field via a global submit listener); application developers do nothin
 ## Source files
 
 - `app/RSpade/Core/Session/Rsx_Csrf.php` - the enforcement (`enforce`, `__origin_ok`, `__reject`)
-- `app/RSpade/Core/Dispatch/Dispatcher.php:117-119`, `app/RSpade/Core/Portal/Portal_Dispatcher.php:89` - call sites
+- `app/RSpade/Core/Dispatch/Dispatcher.php` (`dispatch()`) - the one call site, both realms
 - `app/RSpade/Core/Session/Session.php` / `Portal/Portal_Session.php` - token mint + `verify_csrf_token`
 - `app/RSpade/Core/Js/Rsx_Csrf.js`, `Core/Js/Rsx_Jq_Helpers.js` - client transport (native form + ajax)
 - `app/RSpade/Core/Providers/Rsx_Bundle_Provider.php` - the realm-aware `@csrf` blade directive

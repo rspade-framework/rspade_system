@@ -46,18 +46,18 @@ use App\RSpade\Core\Models\User_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: user_profiles
  *
- * @property int $id
- * @property int $user_id
- * @property int $site_id
- * @property string $title
- * @property string $department
  * @property string $bio
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property string $department
+ * @property int $id
+ * @property int $site_id
+ * @property string $title
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
+ * @property int $user_id
  *
  * @mixin \Eloquent
  */

@@ -33,10 +33,16 @@ use App\RSpade\Core\Session\Session;
  * the rest of their lifetime would be filed under the first unit's transaction. Hence
  * _reset_request_state(), called at each of those boundaries:
  *
- *   - Dispatcher::dispatch() and Api_Dispatcher::dispatch()  (one web / API request)
- *   - Ajax::internal()                                       (one batched or nested call)
+ *   - Rsx_Front_Controller::handle() and Api_Dispatcher     (one web / API request)
+ *   - Ajax::execute()                                        (one Ajax endpoint call)
  *   - Task_Worker_Command and Task::internal()               (one task)
  *   - Rsx_Test_Abstract                                      (one test)
+ *   - system/script.php                                      (one script run)
+ *
+ * Code that performs MANY logical units inside one of those - an import script, a
+ * long-running task walking thousands of records - declares its own boundaries through
+ * the public seam: begin_unit_of_work() closes the current unit and begins the next, and
+ * unit_of_work() runs a callable as its own unit and hands the caller its unit back.
  *
  * Nothing here is a Laravel database transaction. Revisions are written on the SAME
  * connection as the record write they describe, immediately - so a real DB transaction
@@ -291,6 +297,62 @@ class Revision
     }
 
     /**
+     * Close the current unit of work and begin the next: the next revisioned write mints a
+     * fresh transaction.
+     *
+     * For code that performs many logical units in one process - an import script, a
+     * long-running task - so each record (or batch) it writes is its own honest entry in
+     * the history rather than one transaction covering the whole run.
+     *
+     * The SOURCE is not a parameter: the new unit keeps the source of the one it replaces
+     * (declared by the enclosing boundary, or derived - 'cli' for a script), so the same
+     * call is correct from a script, a task or a test. The ENDPOINT is kept too unless one
+     * is given. The description is never carried over; it describes one unit.
+     *
+     * Cheap to call with nothing recorded: the mint is lazy, so a unit that writes nothing
+     * leaves no row. Safe inside an open DB::transaction(): nothing here is a database
+     * transaction. A unit whose DB transaction rolls back loses its _transactions row with
+     * its revisions, so begin the unit OUTSIDE the DB transaction it wraps (or use
+     * unit_of_work() around it).
+     *
+     * @param string|null $description The operator-facing description (as describe() sets it)
+     * @param string|null $endpoint What the unit is serving; null keeps the current one
+     */
+    public static function begin_unit_of_work(?string $description = null, ?string $endpoint = null): void
+    {
+        self::__begin(self::_current_source_id(), $endpoint ?? self::$endpoint);
+        self::$description = $description;
+    }
+
+    /**
+     * Run $callable as its OWN unit of work, then restore the caller's unit exactly as it
+     * was, and return whatever $callable returns.
+     *
+     * The closure form of begin_unit_of_work(), for wrapping one record's import: the
+     * writes inside are one transaction, and writes the caller makes afterwards continue
+     * under the caller's transaction. The caller's state is restored in a finally, so a
+     * throw inside the callable cannot leave it on the inner unit. Nests: an inner call is
+     * its own unit and hands the outer one back.
+     *
+     * @param string $description The operator-facing description of this unit
+     * @param callable $callable
+     * @param string|null $endpoint What the unit is serving; null keeps the caller's
+     * @return mixed
+     */
+    public static function unit_of_work(string $description, callable $callable, ?string $endpoint = null)
+    {
+        $previous = self::_snapshot_request_state();
+
+        try {
+            self::begin_unit_of_work($description, $endpoint);
+
+            return $callable();
+        } finally {
+            self::_restore_request_state($previous);
+        }
+    }
+
+    /**
      * Record the _api_request_log row this unit of work produced.
      *
      * Called by Api_Dispatcher after the log row is written, which is AFTER the endpoint
@@ -319,9 +381,17 @@ class Revision
             throw new RuntimeException('Revision::_reset_request_state(): unknown source "' . $source . '". Known sources: ' . implode(', ', array_keys(self::SOURCES)) . '.');
         }
 
+        self::__begin(self::SOURCES[$source], $endpoint);
+    }
+
+    /**
+     * The one place a unit of work begins: every boundary, framework-declared or public.
+     */
+    private static function __begin(int $source_id, ?string $endpoint): void
+    {
         self::$transaction = null;
         self::$revisions = [];
-        self::$source_id = self::SOURCES[$source];
+        self::$source_id = $source_id;
         self::$endpoint = $endpoint;
         self::$api_request_log_id = null;
         self::$description = null;
@@ -329,7 +399,7 @@ class Revision
 
     /**
      * The whole per-process state, for a caller that must restore it afterwards
-     * (Ajax::internal() gives each nested/batched call its OWN transaction and then hands
+     * (Ajax::execute() gives each endpoint call its OWN transaction and then hands
      * the calling scope its own back, exactly as it does with the Turnstile latch).
      *
      * @return array<string, mixed>
@@ -420,9 +490,10 @@ class Revision
      * The source for a transaction minted right now.
      *
      * Every reset point declares one, so in service this is always the declared value. The
-     * DEFAULT covers a write that happens before any reset point runs - boot code, a one-off
-     * artisan command calling straight into a model - and it is derived, not guessed: a CLI
-     * process is 'cli', and anything else reached the framework over HTTP and is 'web'.
+     * DEFAULT covers a write that happens before any reset point runs - boot code, an
+     * artisan command that is not a task calling straight into a model - and it is derived,
+     * not guessed: a CLI process is 'cli', and anything else reached the framework over HTTP
+     * and is 'web'.
      * Both are true statements about where the write came from, which is all the column
      * claims.
      */

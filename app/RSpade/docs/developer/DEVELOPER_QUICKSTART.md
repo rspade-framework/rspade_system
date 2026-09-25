@@ -93,7 +93,7 @@ you to own — and that RSpade has already answered.
 | A queue service, workers, a scheduler daemon | `#[Task]` makes a method dispatchable; `#[Schedule('daily at 3am')]` makes it recurring. One cron line drives everything. |
 | Two date libraries that disagree across the wire | `Rsx_Time` and `Rsx_Date`, identical API in PHP and JavaScript, ISO strings everywhere. No serialization surprises. |
 | Form binding, dirty tracking, error placement | Give a form `$data` and matching field names. Values bind themselves; a validation error returned from the controller lands on the right field. |
-| A utility library per language, chosen and versioned by you | One shared standard library. `is_email()`, `array_get()`, `debounce()`, `html()` exist in both languages with the same names. |
+| A utility library per language, chosen and versioned by you | One shared standard library. `is_email()`, `array_get()`, `debounce()`, `escape_html()` exist in both languages with the same names. |
 | Migration DSLs and rollback theatre | Forward-only raw SQL, with an automatic database snapshot before every run and an automatic rollback on failure. |
 
 None of this is achieved by hiding things. It is achieved by **deciding** things:

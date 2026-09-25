@@ -174,14 +174,54 @@ App\RSpade\Core\Paths\Rsx_Project_Paths::ensure_tmp_tree();
 //
 // A production-like mode still creates nothing: there the whole build tree - this
 // directory included - is the build's to produce, and its absence must stay loud.
-$rsx_mode = rsx_paths_env_value('RSX_MODE');
+require_once __DIR__ . '/rsx_mode.php';
 
-if ($rsx_mode === '' || $rsx_mode === 'development') {
+if (rsx_preboot_mode() === 'development') {
     $rsx_laravel_cache_dir = App\RSpade\Core\Paths\Rsx_Project_Paths::laravel_cache_dir();
 
     if (!is_dir($rsx_laravel_cache_dir)) {
         @mkdir($rsx_laravel_cache_dir, 0775, true);
     }
+}
+
+// Laravel's package and service-provider caches (packages.php, services.php) list provider
+// CLASSES from the vendor tree they were written against. A framework update that removes
+// a package leaves them naming a class that no longer exists, and the very next boot - the
+// update's own rebuild included - dies with "Class ... not found" before any command runs.
+// Composer rewrites vendor/composer/installed.json on every install, so a cache OLDER than
+// it was written against a different vendor tree. Development and the build discard such a
+// cache (Laravel rewrites it on this boot); any other process in a production-like mode
+// refuses, because there the build tree is the build's to write.
+$rsx_installed_json = __DIR__ . '/../vendor/composer/installed.json';
+$rsx_laravel_caches = [
+    App\RSpade\Core\Paths\Rsx_Project_Paths::laravel_cache_dir() . '/packages.php',
+    App\RSpade\Core\Paths\Rsx_Project_Paths::laravel_cache_dir() . '/services.php',
+];
+
+foreach ($rsx_laravel_caches as $rsx_laravel_cache) {
+    if (!is_file($rsx_laravel_cache) || filemtime($rsx_laravel_cache) >= filemtime($rsx_installed_json)) {
+        continue;
+    }
+
+    $rsx_may_rewrite = rsx_preboot_mode() === 'development'
+        || (PHP_SAPI === 'cli' && !defined('RSX_SCRIPT_MODE') && ($_SERVER['argv'][1] ?? '') === 'rsx:build');
+
+    if (!$rsx_may_rewrite) {
+        rsx_paths_fail([
+            "Laravel's provider cache predates the installed vendor tree: {$rsx_laravel_cache}",
+            '',
+            '  It may name a package this framework release no longer ships. Rebuild:',
+            '      php artisan rsx:build --force',
+        ]);
+    }
+
+    foreach ($rsx_laravel_caches as $rsx_stale_cache) {
+        if (is_file($rsx_stale_cache) && !unlink($rsx_stale_cache)) {
+            rsx_paths_fail(["Could not discard the stale Laravel cache: {$rsx_stale_cache}"]);
+        }
+    }
+
+    break;
 }
 
 // Keep the contents of the three user-data directories out of git without ignoring
@@ -250,8 +290,12 @@ $app->singleton(
 | - Example handlers:
 |   - app/RSpade/Core/Exceptions/Cli_Exception_Handler.php
 |   - app/RSpade/Core/Exceptions/Ajax_Exception_Handler.php
+|   - app/RSpade/Core/Exceptions/Api_Exception_Handler.php
 |   - app/RSpade/Core/Debug/Playwright_Exception_Handler.php
-|   - app/RSpade/Core/Providers/Rsx_Dispatch_Bootstrapper_Handler.php
+|   - app/RSpade/Core/Exceptions/Web_Exception_Handler.php
+|
+| A handler FORMATS a failure; none dispatches. RSX dispatch has one entry point,
+| Rsx_Front_Controller, which the HTTP kernel calls in place of Laravel's router.
 |
 */
 

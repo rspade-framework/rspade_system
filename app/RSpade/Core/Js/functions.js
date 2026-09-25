@@ -277,50 +277,91 @@ function value_unless_numeric_string_then_numeric_value(val) {
 // ============================================================================
 
 /**
- * Escapes HTML special characters (uses Lodash escape)
- * @param {string} str - String to escape
+ * Escapes HTML special characters: plain text in, text safe to place in markup out.
+ *
+ * The twin of PHP escape_html(). Not to be confused with jQuery's `.html()` method, which
+ * INSERTS markup; this function neutralises it.
+ *
+ * @param {string} str - Plain text to escape
  * @returns {string} HTML-escaped string
  */
-function html(str) {
+function escape_html(str) {
     return _.escape(str);
 }
 
 /**
- * Sanitizes HTML from WYSIWYG editors to prevent XSS attacks
+ * Sanitizes rich-text HTML (WYSIWYG editor output) with DOMPurify: untrusted HTML in, HTML
+ * holding only the rich-text allow-list out.
  *
- * Uses DOMPurify to filter potentially malicious HTML while preserving
- * safe formatting tags. Suitable for user-generated rich text content.
+ * The twin of PHP sanitize_rich_text_html(), and held to the IDENTICAL allow-list, so a
+ * value filtered in the browser is exactly what the server will store:
  *
- * @param {string} html_string - HTML string to sanitize
- * @returns {string} Sanitized HTML safe for display
+ * - tags: p br strong b em i u s strike a ul ol li blockquote h1-h6 pre code img table
+ *   thead tbody tr th td div span
+ * - attributes, per element: a[href|title], img[src|alt|title|width|height],
+ *   li[data-list] - no class, no style, no target, no rel from the input
+ * - URLs: http, https, mailto, or relative; nothing else (no data:, no javascript:)
+ * - a link to an absolute URL is given target="_blank" rel="noreferrer noopener"
+ *
+ * li[data-list] is a Quill 2 list item's kind, and for a checklist it IS the state; it is
+ * held to Quill's four values. Returns a STRING: assigned to a declared text column a string
+ * is plain text, so a value bound for one is built with the type (the type's from_editor()).
+ *
+ * @param {string} html_string - Untrusted HTML to sanitize
+ * @returns {string} Sanitized HTML
  */
-function safe_html(html_string) {
-    // li[data-list] is a Quill 2 list item's kind, and for a checklist it IS the state.
-    // Held to Quill's four values on an <li>, exactly as the PHP safe_html() holds it. The
-    // hook is added and removed around this one synchronous call, so no other DOMPurify
-    // caller sees it.
+function sanitize_rich_text_html(html_string) {
+    const element_attributes = {
+        A: ['href', 'title'],
+        IMG: ['src', 'alt', 'title', 'width', 'height'],
+        LI: ['data-list'],
+    };
+    const list_kinds = ['checked', 'unchecked', 'ordered', 'bullet'];
+
+    // Both hooks are added and removed around this one synchronous call, so no other
+    // DOMPurify caller sees them.
     DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
-        if (data.attrName !== 'data-list') {
+        const allowed = element_attributes[node.nodeName] || [];
+        if (!allowed.includes(data.attrName)) {
+            data.keepAttr = false;
             return;
         }
-        const value = String(data.attrValue).toLowerCase();
-        data.keepAttr = node.nodeName === 'LI' && ['checked', 'unchecked', 'ordered', 'bullet'].includes(value);
-        data.attrValue = value;
+        // DOMPurify admits a data: URL on an <img> whatever ALLOWED_URI_REGEXP says; the
+        // server's scheme list does not, so neither does this one.
+        if ((data.attrName === 'src' || data.attrName === 'href') && /^\s*data:/i.test(String(data.attrValue))) {
+            data.keepAttr = false;
+            return;
+        }
+        if (data.attrName === 'data-list') {
+            const value = String(data.attrValue).toLowerCase();
+            data.keepAttr = list_kinds.includes(value);
+            data.attrValue = value;
+        }
+    });
+
+    DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+        if (node.nodeName === 'A' && /^(https?:)?\/\/[^/]/i.test(node.getAttribute('href') || '')) {
+            node.setAttribute('target', '_blank');
+            node.setAttribute('rel', 'noreferrer noopener');
+        }
     });
 
     try {
         return DOMPurify.sanitize(html_string, {
             ALLOWED_TAGS: ['p', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'strike', 'a', 'ul', 'ol', 'li', 'blockquote', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', 'code', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'div', 'span'],
-            ALLOWED_ATTR: ['href', 'title', 'target', 'src', 'alt', 'width', 'height', 'class', 'data-list'],
+            ALLOWED_ATTR: ['href', 'title', 'src', 'alt', 'width', 'height', 'data-list'],
+            ALLOWED_URI_REGEXP: /^(?:(?:https?|mailto):|[^a-z]|[a-z+.\-]+(?:[^a-z+.\-:]|$))/i,
             ALLOW_DATA_ATTR: false,
         });
     } finally {
+        DOMPurify.removeHook('afterSanitizeAttributes');
         DOMPurify.removeHook('uponSanitizeAttribute');
     }
 }
 
 /**
- * Converts newlines to HTML line breaks
+ * Converts newlines to HTML line breaks. It does NOT escape: the input must already be
+ * HTML-safe (escape_html() it first when it is plain text).
  * @param {string} str - String to convert
  * @returns {string} String with newlines replaced by <br />
  */
@@ -329,15 +370,6 @@ function nl2br(str) {
         return '';
     }
     return (str + '').replace(/([^>\r\n]?)(\r\n|\n\r|\r|\n)/g, '$1<br />$2');
-}
-
-/**
- * Escapes HTML and converts newlines to <br />
- * @param {string} str - String to process
- * @returns {string} HTML-escaped string with line breaks
- */
-function htmlbr(str) {
-    return nl2br(html(str));
 }
 
 /**
@@ -440,25 +472,6 @@ function ucwords(input) {
 }
 
 /**
- * Make a string safe for use as a variable/function name
- * @param {string} string - Input string
- * @param {number} [max_length=64] - Maximum length
- * @returns {string} Safe string
- */
-function safe_string(string, max_length = 64) {
-    // Replace non-alphanumeric with underscores
-    string = String(string).replace(/[^a-zA-Z0-9_]+/g, '_');
-
-    // Ensure first character is not a number
-    if (string === '' || /^[0-9]/.test(string)) {
-        string = '_' + string;
-    }
-
-    // Trim to max length
-    return string.substring(0, max_length);
-}
-
-/**
  * Convert snake_case to camelCase
  * @param {string} string - Snake case string
  * @param {boolean} [capitalize_first=false] - Whether to capitalize first letter (PascalCase)
@@ -493,117 +506,6 @@ function camel_to_snake(string) {
         .replace(/^[A-Z]/, (letter) => letter.toLowerCase())
         .replace(/[A-Z]/g, (letter) => '_' + letter.toLowerCase())
         .replace(/_+/g, '_');
-}
-
-/**
- * Common TLDs for domain detection in linkify functions
- * @type {string}
- */
-const LINKIFY_TLDS = 'com|org|net|edu|gov|io|co|me|info|biz|us|uk|ca|au|de|fr|es|it|nl|ru|jp|cn|in|br|mx|app|dev|xyz|online|site|tech|store|blog|shop';
-
-/**
- * Convert plain text to HTML with URLs converted to hyperlinks
- *
- * First escapes the text to HTML, then converts URLs (with protocols) and
- * domain-like text (with known TLDs) into clickable hyperlinks.
- *
- * @param {string|null} content - Plain text content
- * @param {boolean} [new_window=true] - Whether to add target="_blank" to links
- * @returns {string} HTML with clickable links
- */
-function linkify_text(content, new_window = true) {
-    if (content == null || content === '') {
-        return '';
-    }
-
-    // First escape HTML
-    const escaped = html(String(content));
-
-    return _linkify_content(escaped, new_window);
-}
-
-/**
- * Convert URLs in HTML to hyperlinks, preserving existing links
- *
- * Converts URLs (with protocols) and domain-like text (with known TLDs)
- * into clickable hyperlinks, but only for text not already inside <a> tags.
- *
- * @param {string|null} content - HTML content
- * @param {boolean} [new_window=true] - Whether to add target="_blank" to links
- * @returns {string} HTML with clickable links
- */
-function linkify_html(content, new_window = true) {
-    if (content == null || content === '') {
-        return '';
-    }
-
-    // Split content into segments: inside <a> tags and outside
-    const pattern = /(<a\s[^>]*>.*?<\/a>)/gi;
-    const segments = String(content).split(pattern);
-
-    let result = '';
-    for (const segment of segments) {
-        // Check if this segment is an <a> tag
-        if (/^<a\s/i.test(segment)) {
-            // Already a link, keep as-is
-            result += segment;
-        } else {
-            // Not inside a link, linkify it
-            result += _linkify_content(segment, new_window);
-        }
-    }
-
-    return result;
-}
-
-/**
- * Internal helper to convert URLs/domains to links in content
- *
- * @param {string} content - Content to process
- * @param {boolean} new_window - Whether to add target="_blank"
- * @returns {string} Content with URLs converted to links
- * @private
- */
-function _linkify_content(content, new_window) {
-    const target = new_window ? ' target="_blank" rel="noopener noreferrer"' : '';
-
-    // Pattern for URLs with protocol
-    const url_pattern = /(https?:\/\/[^\s<>\[\]()]+)/gi;
-
-    // Pattern for domain-like text
-    const domain_pattern = new RegExp(
-        '\\b((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\\.)+(' + LINKIFY_TLDS + ')(?:\\/[^\\s<>\\[\\]()]*)?)\\b',
-        'gi'
-    );
-
-    // First, replace URLs with protocol
-    content = content.replace(url_pattern, (match) => {
-        // Clean trailing punctuation that's likely not part of URL
-        const url = match.replace(/[.,;:!?)'\"]+$/, '');
-        const trailing = match.slice(url.length);
-        return '<a href="' + url + '"' + target + '>' + url + '</a>' + trailing;
-    });
-
-    // Then, replace domain-like text only in segments NOT inside <a> tags
-    // (the URL replacement above may have created <a> tags)
-    const link_pattern = /(<a\s[^>]*>.*?<\/a>)/gi;
-    const segments = content.split(link_pattern);
-
-    content = segments.map(segment => {
-        // Skip segments that are already links
-        if (/^<a\s/i.test(segment)) {
-            return segment;
-        }
-        // Apply domain pattern to non-link segments
-        return segment.replace(domain_pattern, (match) => {
-            // Clean trailing punctuation
-            const domain = match.replace(/[.,;:!?)'\"]+$/, '');
-            const trailing = match.slice(domain.length);
-            return '<a href="https://' + domain + '"' + target + '>' + domain + '</a>' + trailing;
-        });
-    }).join('');
-
-    return content;
 }
 
 // ============================================================================

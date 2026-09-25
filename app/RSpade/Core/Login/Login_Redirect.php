@@ -3,8 +3,8 @@
 namespace App\RSpade\Core\Login;
 
 use Illuminate\Http\Request;
+use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Dispatch\Dispatcher;
-use App\RSpade\Core\Portal\Portal_Dispatcher;
 use App\RSpade\Core\Portal\Rsx_Portal;
 
 /**
@@ -264,7 +264,7 @@ class Login_Redirect
      * landing root (namespace path '/' with no query string - a just-authenticated
      * user lands there anyway; a bare root WITH a query is kept), and targets that
      * are not routable in the active context (no REGISTERED GET route handles the
-     * URL - staff Dispatcher or portal Portal_Dispatcher). The routability gate
+     * URL - the staff or the portal route table). The routability gate
      * confirms only that a route pattern exists; it is NOT a record-existence (404)
      * probe and NOT an authorization check, and matches on GET only.
      */
@@ -338,14 +338,14 @@ class Login_Redirect
 
         // Routability: the target must be handled by a REGISTERED route in the
         // active context - staff PHP/SPA routes (Dispatcher) or portal routes
-        // (Portal_Dispatcher). A structurally-valid path that no route pattern
+        // (Dispatcher, portal realm). A structurally-valid path that no route pattern
         // handles would dead-end post-login, so degrade to the default instead.
         // This only confirms a route is registered for the URL - NOT that the
         // requested record exists (no 404 probe) and NOT that this user is
         // authorized (no permission probe). GET only (capture already rejects
         // non-GET), so a POST-only endpoint reads as "not a page to return to".
         $routable = Rsx_Portal::is_portal_request()
-            ? Portal_Dispatcher::resolve_url_to_route($path_only, 'GET')
+            ? Dispatcher::resolve_url_to_route($path_only, 'GET', Auth_Gates::REALM_PORTAL)
             : Dispatcher::resolve_url_to_route($path_only, 'GET');
         if ($routable === null) {
             return null;

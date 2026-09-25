@@ -575,9 +575,10 @@ FILE TYPE DETECTION
         or opaque binary it is built on. An extension two formats share (.key)
         is deliberately unnamed. Anything else reads "XYZ File".
 
-        It is a stored VARCHAR(64) column on _file_attachments, indexed
-        (idx_file_attachments_file_type_label), so a file listing sorts and
-        filters on it in SQL:
+        It is a stored VARCHAR(64) column on _file_attachments, indexed per
+        tenant (idx_file_attachments_site_type_label, on site_id and
+        file_type_label), so a site-scoped file listing sorts and filters on it
+        in SQL:
 
             $query->orderBy('file_type_label');
             $query->where('file_type_label', 'Excel Spreadsheet');
@@ -696,6 +697,31 @@ UNPARSEABLE IMAGE DEGRADE
         is NOT transactional (the row + blob persist before process_file()), so
         it catches the exception, delete()s its own orphan row (cascading blob
         cleanup), and re-throws; the /_upload endpoint returns HTTP 422.
+
+SVG
+
+    An SVG is a document that can carry script, so it is handled apart from every
+    other image type (App\RSpade\Core\Files\Svg_Upload_Sanitizer). A file is an
+    SVG when its sniffed type is image/svg+xml or its extension is svg / svgz
+    ($attachment->is_svg()).
+
+        - SANITIZED BEFORE STORAGE. create_from_upload() - the door every creation
+          path goes through - stores the sanitized document, never the received
+          bytes (enshrined/svg-sanitize: element and attribute allow-list, remote
+          references removed, DOCTYPE stripped). An .svgz is decompressed,
+          sanitized and recompressed.
+        - UNPARSEABLE IS REFUSED. An SVG the sanitizer cannot parse throws
+          Unparseable_Svg_Exception before any row or blob exists; both upload
+          endpoints answer 422, code unparseable_svg, "This SVG image could not be
+          read and was not accepted." There is no degrade mode.
+        - NEVER RASTERISED. process_file() skips ImageMagick for an SVG (width and
+          height stay null), and its thumbnail is the extension icon. The shipped
+          ImageMagick policy refuses the SVG coder outright (rsx:health, "ImageMagick
+          Coder Policy"). An app that rasterises SVG safely itself takes the
+          thumbnail over through document.thumbnail_render.
+
+    It is still an image to the viewer: <img src="/_inline/<key>"> shows it, and a
+    browser never runs script in an <img>.
 
 EXTENSION ALLOWLIST
 
@@ -941,6 +967,23 @@ DOWNLOAD AND INLINE VIEWING
     sniffed mime (a security choice, see FILE TYPE DETECTION). Cache-Control:
     public, max-age=31536000.
 
+    EVERY FILE-BYTES RESPONSE IS SANDBOXED. /_download, /_inline (a handler's
+    serve-takeover included), /_download_zip, the thumbnail routes, the icon route
+    and the PDF renditions all carry
+
+        Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox
+        X-Content-Type-Options: nosniff
+
+    (File_Attachment_Controller::harden_file_response(); a response that brings a
+    policy of its own, like the spreadsheet rendition, keeps it). A PDF response
+    carries nosniff but no policy: Chromium's built-in viewer refuses to render a
+    document served under `sandbox`, and the viewer never runs a PDF's script in
+    the application's origin. A stored HTML or
+    SVG file opened in a tab is therefore an inert document with an opaque origin:
+    no script, no request, no access to the application's cookies. An <img>, a
+    download or a pdf.js fetch of the same URL is unaffected - a CSP governs the
+    document a response becomes, not how another page embeds it.
+
         <img src="/_inline/<?= $file->key ?>">
         <a href="/_download/<?= $file->key ?>">Download</a>
 
@@ -1155,7 +1198,9 @@ FILE TYPE ICONS
 
     GET /_icon_by_extension/:extension
 
-    A PNG file-type icon for displaying types visually.
+    A PNG file-type icon for displaying types visually. Every icon is a PNG on
+    disk (generic ones are 512px rasters of the SVG artwork beside them), because
+    ImageMagick reads raster coders only.
         extension  alphanumeric, no dot ('pdf', 'jpg', 'stl')
         width      query param, 10..256, default 64
         height     query param, 10..256, default 64

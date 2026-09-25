@@ -21,9 +21,9 @@ contract that the prelaunch checklist audits.
 - `app/RSpade/Core/Js/Login_Redirect.js` - identical-API JS mirror (rides Core_Bundle;
   the routability gate is server-only, so the JS mirror has the no-op-root rule but
   NOT the routability rule)
-- `app/RSpade/Core/Dispatch/Dispatcher.php` (`resolve_url_to_route`) and
-  `app/RSpade/Core/Portal/Portal_Dispatcher.php` (`resolve_url_to_route`) - the
-  route-registration lookups the routability gate calls (staff / portal context)
+- `app/RSpade/Core/Dispatch/Dispatcher.php` (`resolve_url_to_route`, with
+  `Auth_Gates::REALM_PORTAL` for the portal) - the route-registration lookup the
+  routability gate calls (staff / portal context)
 - `config/rsx.php` - `login_redirect.excluded_prefixes` (staff loop-prevention) and
   `login_redirect.portal_excluded_prefixes` (portal loop-prevention, namespace-relative)
 - `rsx/portal_main.php`, `rsx/portal/auth/Portal_Login_Controller.php`,
@@ -62,7 +62,7 @@ contract that the prelaunch checklist audits.
   `capture()`; a bare root WITH a query is kept. (php - no DB)
 - Routability gate: the target must resolve to a REGISTERED GET route in the
   active context (staff `Dispatcher::resolve_url_to_route`, portal
-  `Portal_Dispatcher::resolve_url_to_route`); an unroutable path is dropped. This
+  `Dispatcher::resolve_url_to_route(..., Auth_Gates::REALM_PORTAL)`); an unroutable path is dropped. This
   is route-registration only - NOT a record-existence (404) probe and NOT an
   authorization check; GET only. The portal rejection branch is un-triggerable in
   this template (the app registers a portal `/*` catch-all); the portal ACCEPT

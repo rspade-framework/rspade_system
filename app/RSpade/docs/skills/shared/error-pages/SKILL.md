@@ -53,7 +53,8 @@ One argument beyond the request: `$params['error']`, a readonly `App\RSpade\Core
 | `realm` | staff or portal |
 | `home_url` | the realm's home (portal prefix, or the portal root on a dedicated domain) |
 | `preview` | true when a development `/error/<code>` browse fabricated this context |
-| `detail` | `{class, message, file, line, frames[]}` — a **500 only**, and **null in any sealed build** (`Rsx::is_production()` is true in debug mode too) |
+| `detail` | `{class, message, file, line, frames[]}` — a **500 only**, and only for a **developer caller** in development or debug mode (`Rsx_Diagnostics::caller_sees_detail()`); null for everybody else and in strict production |
+| `error_id` | a redacted 500's reference (logged as `[error_id=<id>]`); null when `detail` is shown — print it |
 
 **The context is everything a page has.** The failing request is over, its controller never ran, the caller may be anonymous, and the page is fully inspectable with curl. So: no record lookup, no session read, no service call — and no mode check to hide `detail`, which is already redacted server-side.
 

@@ -186,16 +186,17 @@ class Rsx_Project_Paths
     }
 
     /**
-     * One of Laravel's five cached-artifact files.
+     * One of Laravel's cached-artifact files. (RSX has no route cache: Laravel's router is
+     * not in the request path.)
      *
-     * @param string $name 'config' | 'routes-v7' | 'events' | 'services' | 'packages'
+     * @param string $name 'config' | 'events' | 'services' | 'packages'
      */
     public static function laravel_cache_file(string $name): string
     {
         return self::build_path('laravel/' . $name . '.php');
     }
 
-    /** Directory holding the five Laravel cache files. */
+    /** Directory holding the Laravel cache files. */
     public static function laravel_cache_dir(): string
     {
         return self::build_path('laravel');
@@ -418,6 +419,16 @@ class Rsx_Project_Paths
     public static function maintenance_flag_file(): string
     {
         return self::state_path('.maintenance.mode.framework.update');
+    }
+
+    /**
+     * The migration flag: present while `migrate` runs against a snapshot. Its CONTENT is
+     * JSON ({started_at, ...}). While it exists, public/index.php answers every web request
+     * with a pre-boot 503.
+     */
+    public static function migrating_flag_file(): string
+    {
+        return self::state_path('.migrating');
     }
 
     /** Fingerprint of the environment-update scripts last applied. */

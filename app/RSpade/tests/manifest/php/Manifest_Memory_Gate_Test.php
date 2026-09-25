@@ -80,7 +80,7 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
         static::$build_root = Rsx_Project_Paths::tmp_path('manifest-gate/' . getmypid() . '/build');
         static::$scratch_tmp = Rsx_Project_Paths::tmp_path('manifest-gate/' . getmypid() . '/tmp');
 
-        static::__remove_directory(dirname(static::$build_root));
+        rmdir_recursive(dirname(static::$build_root));
         ensure_directory(static::$build_root);
         ensure_directory(static::$scratch_tmp);
 
@@ -93,7 +93,7 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
             '--_manifest-report-peak',
         ], $output);
 
-        static::__remove_directory(dirname(static::$build_root));
+        rmdir_recursive(dirname(static::$build_root));
 
         static::__assert_equals(
             0,
@@ -113,24 +113,6 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
         );
 
         return 0;
-    }
-
-    private static function __remove_directory(string $directory): void
-    {
-        if ($directory === '' || !is_dir($directory)) {
-            return;
-        }
-
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-
-        foreach ($iterator as $entry) {
-            $entry->isDir() ? @rmdir($entry->getPathname()) : @unlink($entry->getPathname());
-        }
-
-        @rmdir($directory);
     }
 
     private static function __megabytes(int $bytes): string
@@ -189,7 +171,7 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
                 . ' parsed. Profile it (docs.dev/manifest_review/05_PROFILING.md).'
             );
         } finally {
-            static::__remove_directory(base_path(static::$synthetic));
+            rmdir_recursive(base_path(static::$synthetic));
         }
     }
 
@@ -212,7 +194,7 @@ class Manifest_Memory_Gate_Test extends Rsx_Test_Abstract
         static::$synthetic = 'app/RSpade/temp/manifest_synthetic' . getmypid();
 
         $root = base_path(static::$synthetic);
-        static::__remove_directory($root);
+        rmdir_recursive($root);
         ensure_directory($root);
 
         $namespace_root = 'App\\RSpade\\Temp\\ManifestSynthetic' . getmypid();

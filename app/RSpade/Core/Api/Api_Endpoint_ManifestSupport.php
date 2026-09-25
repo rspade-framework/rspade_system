@@ -25,7 +25,8 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  * ```
  *
  * Enforced constraints:
- * - Pattern MUST match #^/api/v[0-9]+/# (a segment after the version is required).
+ * - Pattern MUST match #^/api/v[0-9]+/# (a segment after the version is required), and that
+ *   segment is neither an optional :token? nor a wildcard.
  * - methods MUST be a non-empty subset of {GET, POST}.
  * - Declaring class MUST extend Rsx_Api_Controller_Abstract.
  * - Every :param token in the pattern MUST have a matching #[Api_Param].
@@ -35,14 +36,18 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  *   there is no multipart body on a GET, a URL segment is not a file, and there is no such
  *   thing as a default upload.
  * - The method MUST NOT also carry #[FPC], #[Route], #[SPA], or #[Ajax_Endpoint].
- * - API-GET-PURE-01: a GET-only handler's body MUST NOT contain a write call
- *   (->save( / ->delete( / ->update( / ::create( / ->raw_bulk( / DB::statement|insert|
- *   update|delete( / Task::dispatch(). This is the BUILD-TIME half of the read-only
- *   guarantee - the runtime half is _api_keys.read_only, a key that may execute GET
- *   requests only - and a read-only key is a label rather than a promise if a GET can
- *   mutate. Escape hatch: '@API-GET-PURE-01-EXCEPTION <rationale>' in the method docblock,
- *   rationale required; waive it for incidental bookkeeping (a log row, a last-used stamp),
- *   never for a user-visible mutation.
+ * - An endpoint is GET or POST, never both: GET is for reads and POST for writes, and a
+ *   handler reachable by both is a write a read-only key can reach.
+ * - API-GET-PURE-01: a GET handler's body MUST NOT contain a write call (the
+ *   GET_MUTATION_TOKENS list below: saves, deletes, updates, creates, relation writes,
+ *   increments, raw DB writes, Task::dispatch ...). This is the BUILD-TIME half of the
+ *   read-only guarantee - the runtime half is _api_keys.read_only, a key that may execute
+ *   GET requests only. It is a GUARDRAIL, not a proof: only the handler's own body is
+ *   read, a helper it calls is not followed, and a dynamic call is invisible to it. A
+ *   handler body that cannot be located is a build failure, never a silent pass. Escape
+ *   hatch: '@API-GET-PURE-01-EXCEPTION <rationale>' in the method docblock, rationale
+ *   required; waive it for incidental bookkeeping (a log row, a last-used stamp), never
+ *   for a user-visible mutation.
  *
  * Docblock parsing:
  * - description: the first PARAGRAPH (consecutive non-tag lines).
@@ -65,22 +70,32 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
     private const CONFLICTING_ATTRIBUTES = ['FPC', 'Route', 'SPA', 'Ajax_Endpoint'];
 
     /**
-     * API-GET-PURE-01: call shapes that write, searched for in a GET-only handler's body
-     * with every comment, string literal and space already removed. Deliberately a small
-     * literal list rather than a general effect analysis - it catches the realistic cases,
-     * names exactly what it found, and has an explicit escape for the rest.
+     * API-GET-PURE-01: call shapes that write, searched for in a GET handler's body with
+     * every comment, string literal and space already removed, case-insensitively (PHP
+     * method names are). A literal list rather than a general effect analysis - it catches
+     * the realistic cases, names exactly what it found, and has an explicit escape for the
+     * rest. Collection-shaped names that are also reads (push, put, merge) are left out
+     * deliberately: a false positive on every list builder would train people to reach for
+     * the escape hatch.
      */
     private const GET_MUTATION_TOKENS = [
-        '->save(',
-        '->delete(',
-        '->update(',
-        '::create(',
-        '->raw_bulk(',
-        'DB::statement(',
-        'DB::insert(',
-        'DB::update(',
-        'DB::delete(',
-        'Task::dispatch(',
+        // Eloquent record writes
+        '->save(', '->saveQuietly(', '->delete(', '->deleteQuietly(', '->forceDelete(',
+        '->restore(', '->update(', '->updateQuietly(', '->touch(', '->increment(', '->decrement(',
+        '->incrementEach(', '->decrementEach(',
+        // Creation, on a model or through a relation
+        '::create(', '->create(', '::forceCreate(', '->forceCreate(', '->createMany(', '->saveMany(',
+        '::firstOrCreate(', '->firstOrCreate(', '::updateOrCreate(', '->updateOrCreate(',
+        '::destroy(', '::insert(', '->insert(', '->insertGetId(', '->insertOrIgnore(',
+        '::upsert(', '->upsert(', '->updateOrInsert(', '::truncate(', '->truncate(',
+        // Relation pivots
+        '->attach(', '->detach(', '->sync(', '->syncWithoutDetaching(', '->syncWithPivotValues(',
+        '->toggle(', '->updateExistingPivot(',
+        // RSpade model and file writes
+        '->raw_bulk(', '->force_destroy(', '->undelete(', '->attach_to(', '->add_to(',
+        // Raw SQL and deferred work
+        'DB::statement(', 'DB::unprepared(', 'DB::affectingStatement(', 'DB::insert(', 'DB::update(',
+        'DB::delete(', 'Task::dispatch(',
     ];
 
     // The docblock tag that waives API-GET-PURE-01 for one handler.
@@ -206,8 +221,19 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
                 );
             }
 
+            // The first segment after the version must be present in every URL the pattern
+            // matches: an optional token (/api/v1/:x?) or a wildcard there would match a URL
+            // outside /api/vN/, which is not the API channel at all.
+            if (preg_match('#^/api/v[0-9]+/(:\w+\?|[^/]*\*)#', $pattern)) {
+                throw new \RuntimeException(
+                    "Invalid #[Api_Endpoint] pattern '{$pattern}': {$location}\n" .
+                    "  The segment after /api/vN/ may not be an optional :token? or a wildcard -\n" .
+                    "  every URL the pattern matches must be under /api/vN/<segment>."
+                );
+            }
+
             // Verbs must be a non-empty subset of {GET, POST}.
-            $methods = array_map('strtoupper', (array) $methods);
+            $methods = array_values(array_unique(array_map('strtoupper', (array) $methods)));
             if (empty($methods)) {
                 throw new \RuntimeException(
                     "Invalid #[Api_Endpoint] methods for '{$pattern}': {$location}\n" .
@@ -221,6 +247,17 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
                         "  Only GET and POST are permitted."
                     );
                 }
+            }
+
+            // GET is for reads and POST is for writes; one handler serving both is a write
+            // that a read-only key reaches with GET.
+            if (count($methods) > 1) {
+                throw new \RuntimeException(
+                    "Invalid #[Api_Endpoint] methods for '{$pattern}': {$location}\n" .
+                    "  An endpoint is GET or POST, never both. GET is for reads and is what a\n" .
+                    "  read-only key may call; a handler reachable by both is a write that key\n" .
+                    "  can reach. Split it into a GET endpoint and a POST endpoint."
+                );
             }
 
             // Normalize and validate #[Api_Param] declarations for this method.
@@ -606,12 +643,18 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
         }
 
         $body = static::_read_method_body($file_path, $method_name);
-        if ($body === '') {
-            return;
+        if ($body === null) {
+            throw new \RuntimeException(
+                "Invalid #[Api_Endpoint] GET handler: {$location}\n" .
+                "  API-GET-PURE-01: the body of {$method_name}() could not be located in {$file_path},\n" .
+                "  so it cannot be checked for writes. A GET handler that cannot be checked is refused."
+            );
         }
 
+        $lower_body = strtolower($body);
+
         foreach (self::GET_MUTATION_TOKENS as $token) {
-            if (!str_contains($body, $token)) {
+            if (!str_contains($lower_body, strtolower($token))) {
                 continue;
             }
 
@@ -653,75 +696,29 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
      * replaced with a placeholder, and all whitespace removed - so a literal search for
      * '->save(' cannot be fooled by formatting, and cannot fire on prose or on data.
      *
-     * Returns '' when the file or the method cannot be read (a synthetic manifest entry
-     * pointing at no file, exactly as the docblock reader behaves).
+     * The body is located by Php_Parser::method_body_span(), which matches the method name
+     * by its text (a handler named after a reserved word - list, print, match ... - is
+     * found) and counts braces on tokens.
+     *
+     * Returns null when the file, the method or its body cannot be found - the caller
+     * refuses that, because an unchecked handler is not a checked one.
      */
-    private static function _read_method_body(string $file_path, string $method_name): string
+    private static function _read_method_body(string $file_path, string $method_name): ?string
     {
         if (!file_exists($file_path)) {
-            return '';
+            return null;
         }
 
-        $tokens = @token_get_all(\App\RSpade\Core\Manifest\Manifest::build()->source_cache()->content($file_path));
-        if (!is_array($tokens)) {
-            return '';
+        $tokens = token_get_all(\App\RSpade\Core\Manifest\Manifest::build()->source_cache()->content($file_path));
+
+        $span = \App\RSpade\Core\PHP\Php_Parser::method_body_span($tokens, $method_name);
+        if ($span === null) {
+            return null;
         }
 
-        $count = count($tokens);
-
-        // Locate "function <method_name>".
-        $start = null;
-        for ($i = 0; $i < $count; $i++) {
-            if (!is_array($tokens[$i]) || $tokens[$i][0] !== T_FUNCTION) {
-                continue;
-            }
-
-            for ($j = $i + 1; $j < $count; $j++) {
-                $token = $tokens[$j];
-                if (is_array($token) && ($token[0] === T_WHITESPACE || $token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT)) {
-                    continue;
-                }
-                if (is_array($token) && $token[0] === T_STRING && $token[1] === $method_name) {
-                    $start = $j;
-                }
-                break;
-            }
-
-            if ($start !== null) {
-                break;
-            }
-        }
-
-        if ($start === null) {
-            return '';
-        }
-
-        // Walk to the body's opening brace, then brace-match to its close. An abstract or
-        // interface declaration ends at ';' and has no body.
-        $depth = 0;
         $body = '';
-        for ($i = $start; $i < $count; $i++) {
+        for ($i = $span[0] + 1; $i < $span[1]; $i++) {
             $token = $tokens[$i];
-            $text = is_array($token) ? $token[1] : $token;
-
-            if ($depth === 0) {
-                if ($text === ';') {
-                    return '';
-                }
-                if ($text === '{') {
-                    $depth = 1;
-                }
-                continue;
-            }
-
-            if ($text === '{') {
-                $depth++;
-            } elseif ($text === '}') {
-                $depth--;
-                if ($depth === 0) {
-                    break;
-                }
-            }
 
             if (is_array($token)) {
                 if ($token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT) {
@@ -732,9 +729,11 @@ class Api_Endpoint_ManifestSupport extends Full_ManifestSupport_Abstract
                     $body .= "'_'";
                     continue;
                 }
+                $body .= $token[1];
+                continue;
             }
 
-            $body .= $text;
+            $body .= $token;
         }
 
         return preg_replace('/\s+/', '', $body);

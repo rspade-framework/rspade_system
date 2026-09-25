@@ -1,0 +1,53 @@
+TEXT-TYPE AND HTML-HELPER RENAMES: THE NAMES SAY WHAT GOES IN AND WHAT COMES OUT
+Date: 2026-09-25
+
+IF YOU DO NOTHING: every text type of yours that still declares filter_set()
+    or escape_string() fails the manifest build as an unimplemented abstract,
+    and any call to a renamed or removed helper throws "undefined function"
+    (PHP) or "is not a function" (JS).
+
+SUMMARY
+    The old names mixed four ideas without saying which one applied: escaping
+    (plain text in, safe HTML out), sanitizing (untrusted HTML filtered),
+    trust, and whether a string or a value object comes back. Each name now
+    states it. The vocabulary is "encoded": the form a text type stores (HTML
+    for Rich_Text). There are no aliases.
+
+        safe_html()                  -> sanitize_rich_text_html()   (PHP and JS)
+        html()  (JS)                 -> escape_html()   (and a new PHP escape_html())
+        filter_set()                 -> sanitize_encoded()
+        escape_string()              -> encode_plain_text()
+        Type::from_string()          -> Type::from_plain_text()
+        Type::from_untrusted()       -> Type::from_untrusted_encoded()
+        ->to_text()                  -> ->to_plain_text()
+        Model.text_type(col)  (JS)   -> Model.text_type_or_null(col)
+        Model.editor_for(col) (JS)   -> Model.editor_component_for(col)
+        rsx:man safe_html            -> rsx:man sanitize_rich_text_html
+
+    Removed, having no callers: htmlbr(), linkify_text(), linkify_html(),
+    text_to_html_with_whitespace(), safe_string(). For escaped text with line
+    breaks in a template use <%br= %>; nl2br() is unchanged and does NOT escape.
+
+    The two sanitizers now keep exactly the same markup: `class` is dropped on
+    both sides, and a link to an absolute URL gets target="_blank"
+    rel="noreferrer noopener" on both sides, where the JS side used to keep class
+    and did not force target.
+
+    Contract: php artisan rsx:man text_types, rsx:man sanitize_rich_text_html
+
+ACTION REQUIRED - CODE
+    Find every use:
+        grep -rnwE 'safe_html|filter_set|escape_string|from_string|from_untrusted|to_text|from_wire|editor_for|htmlbr|linkify_text|linkify_html|text_to_html_with_whitespace|safe_string' rsx/
+        grep -rnP '(?<![\w.$])html\(' rsx/ --include='*.js' --include='*.jqhtml'
+        grep -rnE '\.text_type\(' rsx/ --include='*.js' --include='*.jqhtml'
+        grep -rn 'rsx:man safe_html' rsx/
+    Rename each per the table. In your text types (rsx/lib/text_types/ in the
+    template), rename the two required methods in the PHP class and the
+    optional sanitize_encoded() in its JS twin:
+        system/app/RSpade/resource/reference_app/lib/text_types/rich_text/rich_text.php
+        system/app/RSpade/resource/reference_app/lib/text_types/rich_text/rich_text.js
+    `.html(` on a jQuery object is unrelated and stays.
+
+VERIFICATION
+    The manifest builds; a rich-text field saves and redisplays with its
+    formatting; rsx:check reports nothing.

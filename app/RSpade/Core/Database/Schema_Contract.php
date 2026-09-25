@@ -40,9 +40,9 @@ namespace App\RSpade\Core\Database;
  *     and what an ALTER realistically removes; a narrowed type is the province of the
  *     SchemaQuality rules and of check_consistency.
  *   - Columns the framework only DECLARES on a model and never reads (users.phone,
- *     user_profiles.title/department/bio, ip_addresses' geocoding columns). A column
- *     nothing reads cannot break anything by being absent.
- *   - Tables no framework code names. The framework models 12 application-owned tables;
+ *     user_profiles.title/department/bio). A column nothing reads cannot break
+ *     anything by being absent.
+ *   - Tables no framework code names. The framework models 9 application-owned tables;
  *     every other non-underscore table in a database belongs to the application alone.
  *
  * EXTENDING IT. A new framework read or write of an application-owned table adds its
@@ -245,29 +245,6 @@ class Schema_Contract
                 'unique' => [],
             ],
 
-            'user_invites' => [
-                'migration' => '2025_09_03_054951_create_user_invites_table',
-                'columns' => [
-                    'user_id' => ['where' => 'Login_User_Model::invites() - holds a login_users.id despite the name'],
-                    'site_id' => ['where' => 'the tenant the invitation is into'],
-                    'invite_code' => ['where' => 'invitation redemption (never_export)'],
-                    'expires_at' => ['where' => 'invitation expiry'],
-                ],
-                'unique' => [],
-            ],
-
-            'user_verifications' => [
-                'migration' => '2025_09_03_054951_create_user_verifications_table',
-                'columns' => [
-                    'email' => ['where' => 'Login_User_Model::verifications() - joined on EMAIL, not on a key'],
-                    'verification_code' => ['where' => 'verification redemption (never_export)'],
-                    'verification_type_id' => ['where' => 'which verification this is'],
-                    'verified_at' => ['where' => 'verification state'],
-                    'expires_at' => ['where' => 'verification expiry'],
-                ],
-                'unique' => [],
-            ],
-
             // -----------------------------------------------------------------
             // Geography - the two Select inputs 500 without them
             // -----------------------------------------------------------------
@@ -291,15 +268,6 @@ class Schema_Contract
                     'name' => ['where' => 'Select_State_Input option label'],
                     'type' => ['where' => 'Region_Model'],
                     'enabled' => ['where' => 'Select_State_Input option filter'],
-                ],
-                'unique' => [],
-            ],
-
-            'ip_addresses' => [
-                'migration' => '2025_09_03_054950_create_ip_addresses_table',
-                'columns' => [
-                    'id' => ['where' => '_sessions.login_ip_address_id / last_ip_address_id point at it'],
-                    'ip_address' => ['where' => 'Ip_Address_Model::find_or_create()'],
                 ],
                 'unique' => [],
             ],
@@ -397,13 +365,6 @@ class Schema_Contract
                 'references' => 'users',
                 'referenced_column' => 'id',
                 'why' => 'User_Model::profile() hasOne',
-            ],
-            [
-                'table' => 'user_invites',
-                'column' => 'user_id',
-                'references' => 'login_users',
-                'referenced_column' => 'id',
-                'why' => 'the column holds a login_users id despite the name',
             ],
             [
                 'table' => 'portal_users',

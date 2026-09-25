@@ -83,7 +83,7 @@ class Module_Scaffold_Test extends Rsx_Test_Abstract
             // The SPA module root holds no Blade page files.
             static::__assert_count(0, glob("{$module_path}/*.blade.php"), 'SPA module should generate no Blade views');
         } finally {
-            self::__remove_directory($module_path);
+            rmdir_recursive($module_path);
         }
     }
 
@@ -116,7 +116,7 @@ class Module_Scaffold_Test extends Rsx_Test_Abstract
                 'Blade controller stub must not carry a pre_dispatch stub (authorization is declared with #[Auth])'
             );
         } finally {
-            self::__remove_directory($module_path);
+            rmdir_recursive($module_path);
         }
     }
 
@@ -158,20 +158,6 @@ class Module_Scaffold_Test extends Rsx_Test_Abstract
     {
         static::__assert_true(file_exists($path), "Expected generated file missing: {$path}");
         return (string) file_get_contents($path);
-    }
-
-    private static function __remove_directory(string $path)
-    {
-        if (!is_dir($path)) {
-            return;
-        }
-
-        foreach (array_diff(scandir($path), ['.', '..']) as $entry) {
-            $child = $path . '/' . $entry;
-            is_dir($child) ? self::__remove_directory($child) : unlink($child);
-        }
-
-        rmdir($path);
     }
 
     /**

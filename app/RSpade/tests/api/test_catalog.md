@@ -69,7 +69,7 @@ paths there are inert literals that resolve to nothing.
 | KEY-FUTURE | a future-expiry key still resolves | php | expires_at future | not null | implemented | 2026-07-23 |
 | KEY-IS-VALID | is_valid reflects active/revoked/expired | php | three keys | true/false/false | implemented | 2026-07-23 |
 | LOG-PERSIST | a log row persists and reads back intact | php | explicit fields | fields match | implemented | 2026-07-23 |
-| LOG-CASCADE | purging a key CASCADE-deletes its request-log rows | php | key + row, then $key->delete() | the row is gone | implemented | 2026-08-27 |
+| LOG-CASCADE | purging a key keeps its request-log rows with api_key_id NULL (ON DELETE SET NULL) | php | key + row, then $key->delete() | the row survives, `api_key_id` NULL | implemented | 2026-09-25 |
 | LOG-REVOKE-KEEPS | revoking a key preserves its request-log rows | php | key + row, then revoke() | the row survives | implemented | 2026-08-27 |
 | LOG-ERROR-ENVELOPE | an error row records the envelope code + message + byte size | php | 422-shaped row | code/message/bytes match | implemented | 2026-08-27 |
 | LOG-NULLABLE | nullable identity columns accept null | php | 401-shaped row | nulls preserved | implemented | 2026-07-23 |
@@ -108,7 +108,7 @@ paths there are inert literals that resolve to nothing.
 | HTTP-LOGGED | 401 (null key) and 200 (populated key) rows written | http | after the run | both log rows present | implemented | 2026-07-23 |
 | SCOPE-VALID-LITERAL | validate accepts literal paths | php | /api/v1/me, /api/v1/clients/42/view | no throw | implemented | 2026-09-01 |
 | SCOPE-VALID-WILDCARD | validate accepts ?, # and * as whole segments | php | four scopes | no throw | implemented | 2026-09-01 |
-| SCOPE-VALID-VERSION | validate accepts a wildcard version (? and #) | php | /api/?/clients, /api/#/clients | no throw | implemented | 2026-09-01 |
+| SCOPE-VALID-VERSION | validate accepts a wildcard version (?) and refuses '#' there (a version is never all digits) | php | /api/?/clients; /api/#/clients | no throw; "the version segment must be vN or ?" | implemented | 2026-09-25 |
 | SCOPE-VALID-SLASHQUERY | a trailing slash and a query string validate (both stripped) | php | /api/v1/clients/, /api/v1/clients?page=2 | no throw | implemented | 2026-09-01 |
 | SCOPE-BAD-PARTIAL | a wildcard inside a segment is refused | php | /api/v1/foo/bar*, ?bar/view, b#r, *x | "a wildcard must be a whole segment" | implemented | 2026-09-01 |
 | SCOPE-BAD-STAR | '*' anywhere but last is refused | php | /api/v1/*/view, /api/*/clients | "'*' may only be the last segment" | implemented | 2026-09-01 |
@@ -123,7 +123,7 @@ paths there are inert literals that resolve to nothing.
 | SCOPE-MATCH-QUESTION | '?' takes exactly one segment of any shape | php | /api/v1/clients/?/view | 42 and settings yes, 0 and 2 segments no | implemented | 2026-09-01 |
 | SCOPE-MATCH-HASH | '#' takes exactly one all-digits segment | php | /api/v1/clients/#/view | 42 yes, settings/4a no | implemented | 2026-09-01 |
 | SCOPE-MATCH-STAR | '*' is prefix-inclusive and covers everything below | php | /api/v1/foo/baz/* | baz, baz/x, baz/x/y yes; foo, bazz no | implemented | 2026-09-01 |
-| SCOPE-MATCH-VERSION | a wildcard version matches any vN; '#' matches none | php | /api/?/clients, /api/#/clients | true/true/false | implemented | 2026-09-01 |
+| SCOPE-MATCH-VERSION | a wildcard version matches any vN | php | /api/?/clients | true/true/false | implemented | 2026-09-25 |
 | SCOPE-MATCH-SLASH | a trailing slash on either side changes nothing | php | three spellings | true | implemented | 2026-09-01 |
 | SCOPE-MATCH-QUERY | the query string is not part of the match | php | ?page=2 | true | implemented | 2026-09-01 |
 | SCOPE-PARSEALL-SPLIT | parse_all splits valid from malformed with reasons | php | mixed text | valid[], malformed[text=>reason] | implemented | 2026-09-01 |
@@ -215,6 +215,30 @@ paths there are inert literals that resolve to nothing.
 | SCAN-GET-PURE-BARE | the exception tag without a rationale throws | php | fixture bare_tag_get | RuntimeException "requires a rationale" | implemented | 2026-08-30 |
 | SCAN-GET-PURE-PROSE | write words in a comment or string do not trip it | php | fixture pure_get | route bakes | implemented | 2026-08-30 |
 | SCAN-GET-PURE-POST | the rule does not apply to a POST handler | php | fixture as POST | route bakes | implemented | 2026-08-30 |
+| SCAN-GET-PURE-RESERVED | a handler named after a reserved word (list, print) is found and checked | php | fixture print (writes) | RuntimeException "calls '->save('" | implemented | 2026-09-25 |
+| SCAN-GET-PURE-RELATION | a pivot write in odd case is caught | php | fixture pivot_get (`->ATTACH(`) | RuntimeException "calls '->attach('" | implemented | 2026-09-25 |
+| SCAN-GET-PURE-NOBODY | a GET handler whose body cannot be located is refused | php | fixture file, absent method | RuntimeException "could not be located" | implemented | 2026-09-25 |
+| SCAN-GET-AND-POST | one endpoint declaring GET and POST is refused | php | fixture pure_get as GET+POST | RuntimeException "GET or POST, never both" | implemented | 2026-09-25 |
+| SCAN-GET-DEDUPE | a repeated GET is one GET and is checked | php | fixture mutating_get as GET,get | RuntimeException "API-GET-PURE-01" | implemented | 2026-09-25 |
 | SCAN-RESPONSE-DOCBLOCK | @api-response / description parsing off a real fixture file | php | fixture controller | parsed description + response example | deferred (docblock reader returns '' for synthetic entries; a fixture-file parse test is a candidate) | 2026-07-23 |
 | VAL-PRECEDENCE | route > GET > body precedence in raw assembly | http | overlapping keys | route param wins | deferred (precedence lives in Api_Dispatcher::_collect_raw_input, a private method; covered indirectly by the http path) | 2026-07-23 |
 | EXC-HANDLER-500 | an uncaught endpoint throwable renders JSON 500 | http | forced-throw endpoint | 500 JSON, never HTML | deferred (no throwing endpoint exists to hit; candidate once a fixture endpoint lands) | 2026-07-23 |
+| MAIN-HOOK-RUNS | `Main_Abstract::pre_dispatch()` runs for an API call with `_handler` / `_method`, and null continues | php | `Api_Dispatcher::dispatch()` GET `/api/v1/me`, probe Main | 200; hook called once with the controller as `_handler` | implemented (`Api_Main_Pre_Dispatch_Test`) | 2026-09-25 |
+| MAIN-HOOK-REFUSES | a non-null return is 403 `account_refused`, logged | php | probe returns false | 403, code `account_refused`, `_api_request_log` row 403 | implemented (`Api_Main_Pre_Dispatch_Test`) | 2026-09-25 |
+| MAIN-HOOK-AFTER-AUTH | an unauthenticated call never reaches the hook | php | bad bearer key | 401, hook not called | implemented (`Api_Main_Pre_Dispatch_Test`) | 2026-09-25 |
+| VERB-LOG-TOKEN | a non-standard or over-long verb is logged as `UNKNOWN`, never a varchar(8) 500 | http | `-X LONGVERBHERE` at the php-fpm hop | 405 `method_not_allowed`, log verb `UNKNOWN` | planned (probed by hand 2026-09-25; the FPC proxy answers an unknown verb 400 before PHP) | 2026-09-25 |
+| CORS-API-ONLY | `/api/*` answers `Access-Control-Allow-Origin: *` with no credentials; `/_ajax`, a page and `/sanctum/csrf-cookie` send no CORS header | http | OPTIONS/GET with a foreign Origin | as described | implemented (`http/api_cors.sh`) | 2026-09-25 |
+| CODED-FAILURE-STATUS | a coded failure inside an endpoint answers its own status, never a 500, and the log row records it | php | `Api_Abort_Fixture_Api_Controller`: `abort(404)`, `abort(418, 'msg')`, a thrown `AjaxUnauthorizedException` | 404 `not_found`; 418 `http_418` carrying 'msg'; 403 `forbidden`; each `_api_request_log` row with that status | implemented (`Api_Coded_Failure_Test`) | 2026-09-25 |
+| SCAN-OPTIONAL-FIRST-SEGMENT | the segment after /api/vN/ may not be an optional token or a wildcard (it would match a URL outside the API channel) | php | `/api/v1/:x?`, `/api/v1/*`, `/api/v1/items*` | RuntimeException "may not be an optional :token? or a wildcard" | implemented (`Api_Scan_Validation_Test`) | 2026-09-25 |
+| LOG-NO-ANON-BODY | a request that fails authentication is logged without its body | php | POST /api/v1/me, bad bearer, JSON body with a password | 401; `request_body` NULL | implemented (`Api_Request_Hardening_Test`) | 2026-09-25 |
+| LOG-UNPARSEABLE-MARKER | an unparseable JSON body is stored as a size marker, never its text | php | POST /api/v1/files, valid key, broken JSON carrying a password | 400; `request_body` = `[unparseable JSON body, N bytes, not stored]` | implemented (`Api_Request_Hardening_Test`) | 2026-09-25 |
+| LOG-PURGE-KEEPS-HISTORY | purging a key keeps its log rows with api_key_id NULL (ON DELETE SET NULL) | php | one logged call, then DELETE the key row | row survives, `api_key_id` NULL | implemented (`Api_Request_Hardening_Test`) | 2026-09-25 |
+| BEARER-CASE | the Bearer scheme name is case-insensitive | php | `bearer`, `BEARER`, `Bearer`; `Basic` | token read / null | implemented (`Api_Request_Hardening_Test`) | 2026-09-25 |
+| INT-PARAM-STRICT | an int param is whole-string digits inside PHP's integer range | php | `-0042`, PHP_INT_MAX; `5\n`, +/-20 digits, `1e3`, ` 5` | -42 / valid; each refused | implemented (`Api_Request_Hardening_Test`) | 2026-09-25 |
+| IDENTITY-ENDS-WITH-RESPONSE | the API identity is torn down after the response is rendered, and the current key cleared | php | a successful GET through the front controller | `Session::is_api_request()` false, `current_key()` null afterwards | implemented (`Api_Request_Hardening_Test`) | 2026-09-25 |
+| SCOPE-HIDDEN-NO-REQUIRED | an insufficient_scope refusal for an @api-hidden endpoint names no `required` pattern | php | - | - | planned (the framework ships no @api-hidden endpoint to scope against; verified by reading `Api_Catalog::is_hidden_pattern`) | 2026-09-25 |
+| ADOPT-TESTER-KEY | adopting a key in the API console requires a signed-in caller and a key the API would accept | php | anonymous; a key whose holder lost API access; an unknown key; a working key | unauthorized; one "not valid" form error for both rejections; adopted | implemented (`Api_Tester_Key_Adopt_Test`) | 2026-09-25 |
+| ADOPT-TESTER-KEY-THROTTLE | a rejected key feeds Login_Throttle for the caller's address | http | - | - | planned (a CLI caller has no address and is never throttled; verified by reading) | 2026-09-25 |
+| KEY-PREFIX-LENGTH | a configured key prefix + environment the key_prefix column cannot hold is refused before any key exists | php | rsx.api.key_prefix = acme_widgets_ | RuntimeException naming rsx.api.key_prefix | implemented (`Api_Key_Model_Test`) | 2026-09-25 |
+| KEY-HASH-UNIQUE | one `_api_keys` row per `key_hash`, enforced by the schema | php | a second row with an existing key's hash | QueryException naming `uk_api_keys_key_hash` | implemented (`Api_Key_Model_Test`) | 2026-09-25 |
+| KEY-HASH-EXACT | `key_hash` compares byte for byte | php | the upper-cased digest | matches nothing; the exact digest matches one row | implemented (`Api_Key_Model_Test`) | 2026-09-25 |

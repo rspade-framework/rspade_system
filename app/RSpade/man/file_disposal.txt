@@ -28,7 +28,8 @@ DESCRIPTION
     undelete() for rsx.files.deleted_retention_days (default 30). After the window,
     the daily disposal task permanently DESTROYS it - stamping destroyed_at (the row
     PERSISTS FOREVER as an audit tombstone, only its claim on the blob released) and
-    releasing the blob once no attachment still pins it.
+    releasing the blob once no attachment still pins it. A retention of 0 means KEEP
+    FOREVER (see KEEP FOREVER below).
 
     Unlike Laravel, where deleting a model deletes the row, an RSpade file delete is
     always a reversible retention step; permanent destruction is a separate,
@@ -63,9 +64,10 @@ RECOVERY API
     $attachment->force_destroy(): void
         Permanently destroy NOW, bypassing BOTH the retention window and the
         destroy.hold gate. Stamps deleted_at + destroyed_at (the tombstone row
-        persists) and releases the blob immediately if nothing else pins it. Does
-        NOT fire the file.attachment.destroyed hook (out-of-band erasure, not the
-        scheduled lifecycle).
+        persists) and releases the blob immediately if nothing else pins it. The
+        hold gate is skipped, but file.attachment.destroyed DOES fire (the attachment
+        is gone either way); a throwing listener is logged and the destruction
+        proceeds, unlike the scheduled path. Unaffected by the retention setting.
 
 DESTRUCTION HOOKS (app integration seam)
     The daily destroy pass fires two events per attachment, in the framework event
@@ -93,6 +95,12 @@ SCHEDULED TASKS (File_Disposal_Service)
     referenced) held for the whole pass, however long it runs - see `rsx:man locks`. All are keyset-paginated for bounded
     memory over hundreds of thousands of rows.
 
+    EVERY PASS SPANS EVERY SITE. Retention is install policy and the blob store is
+    deduplicated across the whole install, so each task runs outside the site scope
+    (without_site_scope) and a worker's declared site never narrows what it sees. The
+    refcount in release_blob_if_orphaned() counts every site's attachments wherever it
+    is called from: a blob one tenant released may still be another tenant's file.
+
     sweep_unclaimed_uploads   #[Schedule('every 6 hours')]
         The CLAIM WINDOW. An upload arrives UNATTACHED and is reachable only by its
         unguessable key until app code claims it with attach_to()/add_to(); this task
@@ -111,12 +119,12 @@ SCHEDULED TASKS (File_Disposal_Service)
     run_daily_disposal   #[Schedule('0 2 * * *')]
         (a) DESTROY pass: attachments with deleted_at older than the retention window
             and destroyed_at NULL -> destroy.hold gate -> destroyed action -> stamp
-            destroyed_at.
+            destroyed_at. Does not run at all when the retention is 0.
         (b) BLOB-RELEASE pass: for blobs referenced by attachments destroyed within
             rsx.files.disposal_lookback_days (default 60), recompute the
             retention-aware refcount and release at zero (unlink the blob + its
             rendition + thumbnail caches; the search-index row cascades on the storage
-            delete).
+            delete). Runs under every retention setting.
 
     run_monthly_deep_sweep   #[Schedule('0 2 * * 0')] + first-Sunday guard
         Classic cron cannot express "first Sunday", so it fires every Sunday and
@@ -134,8 +142,33 @@ SCHEDULED TASKS (File_Disposal_Service)
     bound; the 6-hourly claim-window sweep is the tight one, and the monthly pass is
     the backstop that also reconciles blobs and disk.
 
+KEEP FOREVER
+    rsx.files.deleted_retention_days = 0 keeps every deleted attachment recoverable,
+    and its blob on disk, indefinitely - for a deployment that must retain deleted
+    files for audit. Set it in rsx/resource/config/rsx.php. The same convention as
+    rsx.revisions.retention_days.
+
+    - The daily DESTROY pass never runs, so nothing is ever stamped destroyed_at by
+      the schedule.
+    - Everything else already asks destroyed_at, never a date: the retention-aware
+      refcount, the monthly sweep's blob reconciliation, undelete(),
+      get_deleted_files() and get_deleted_attachments(). A deleted attachment is
+      therefore retained, restorable and pinning its blob for as long as the setting
+      holds. The daily task's destroy cutoff is the only place the number is read.
+    - force_destroy() still erases at once, and the daily BLOB-RELEASE pass still
+      frees the bytes of attachments destroyed that way (once no other attachment
+      pins the blob).
+    - Stale unattached uploads are still swept (soft-deleted) by the claim-window and
+      monthly passes; under keep-forever they then stay in retention forever too.
+    - Turning keep-forever OFF later makes the next daily run destroy every
+      attachment deleted before the new window, all at once.
+
+    A negative (or non-integer) value is a configuration error: the daily task
+    throws naming the key, and destroys nothing.
+
 CONFIG (config('rsx.files.*'))
-    deleted_retention_days     30   recoverable window before permanent destruction
+    deleted_retention_days     30   recoverable window before permanent destruction;
+                                    0 = keep forever, negative throws
     disposal_lookback_days     60   blob-release pass window (daily task)
     disk_orphan_min_age_days   14   age guard for the monthly disk / unassigned sweep
 

@@ -215,8 +215,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * under the portal's own base, so a portal upload is dispatched as a portal
      * request and its CSRF token verifies against the portal session. The site
      * resolution below already reads Portal_Session first, and the app's
-     * file.upload.authorize gate sees the correct realm. See
-     * Ajax_Endpoint_Controller::dispatch().
+     * file.upload.authorize gate sees the correct realm.
      *
      * @param Request $request
      * @param array $params
@@ -339,6 +338,53 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     // ============================================================================================
 
     /**
+     * The Content-Security-Policy every response carrying FILE BYTES is served with.
+     *
+     * A stored file is attacker-authored content served from the application's own origin:
+     * an SVG or an HTML file opened in a tab would otherwise run its script with the
+     * signed-in user's cookies. This policy makes such a document inert - no script, no
+     * outbound request, no plugin, and `sandbox` gives it a unique opaque origin - while an
+     * <img>, a download or a pdf.js fetch of the same bytes is unaffected (a CSP governs the
+     * document the response BECOMES, never how another page embeds it).
+     */
+    public const FILE_RESPONSE_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+
+    /**
+     * Stamp a file-bytes response with FILE_RESPONSE_CSP and X-Content-Type-Options: nosniff.
+     *
+     * Every file-serving route passes its response through here: /_download, /_inline (a
+     * handler's serve-takeover included), /_download_zip, the thumbnail routes, the icon
+     * route, and File_Preview_Controller's renditions. A response that already carries a
+     * policy of its own (the spreadsheet rendition's stricter one) keeps it, and a PDF gets
+     * none (see the body); nosniff is always set, so a browser never second-guesses the
+     * stored mime type.
+     *
+     * @param \Symfony\Component\HttpFoundation\Response $response
+     * @return \Symfony\Component\HttpFoundation\Response The same response
+     */
+    public static function harden_file_response($response)
+    {
+        if (!$response instanceof \Symfony\Component\HttpFoundation\Response) {
+            shouldnt_happen('harden_file_response() was handed ' . get_debug_type($response) . ', not a Response');
+        }
+
+        // A PDF is the one exception: Chromium's built-in viewer refuses to render a document
+        // served under a `sandbox` policy ("This page has been blocked"), so "open in browser"
+        // would break. The viewer runs a PDF's own script in its own isolated context, never in
+        // this origin, so the policy buys nothing there; nosniff still applies below.
+        $content_type = strtolower((string) $response->headers->get('Content-Type'));
+        $is_pdf = str_starts_with($content_type, 'application/pdf');
+
+        if (!$is_pdf && !$response->headers->has('Content-Security-Policy')) {
+            $response->headers->set('Content-Security-Policy', static::FILE_RESPONSE_CSP);
+        }
+
+        $response->headers->set('X-Content-Type-Options', 'nosniff');
+
+        return $response;
+    }
+
+    /**
      * Download file as attachment (forces download dialog)
      *
      * Route: /_download/:key
@@ -396,7 +442,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // short-lived pre-authorized URL). Called AFTER auth gates.
         $override = $attachment->handler_serve_download($request);
         if ($override !== null) {
-            return $override;
+            return static::harden_file_response($override);
         }
 
         // Materialize external bytes if needed, then serve the resident blob.
@@ -414,11 +460,11 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Return file with attachment disposition
-        return Response::download(
+        return static::harden_file_response(Response::download(
             $storage->get_full_path(),
             $attachment->file_name,
             $headers
-        );
+        ));
     }
 
     /**
@@ -478,7 +524,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // A handler may fully take over serving. Called AFTER auth gates.
         $override = $attachment->handler_serve_inline($request);
         if ($override !== null) {
-            return $override;
+            return static::harden_file_response($override);
         }
 
         // Materialize external bytes if needed, then serve the resident blob.
@@ -499,10 +545,10 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         }
 
         // Return file with inline disposition
-        return Response::file(
+        return static::harden_file_response(Response::file(
             $storage->get_full_path(),
             $headers
-        );
+        ));
     }
 
     /**
@@ -690,6 +736,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         });
 
         $response->headers->set('Content-Type', 'application/zip');
+        static::harden_file_response($response);
         $response->headers->set('Content-Disposition', 'attachment; filename="' . $zip_name . '"');
         // Defeat nginx proxy buffering so the archive streams to the client immediately.
         $response->headers->set('X-Accel-Buffering', 'no');
@@ -1156,14 +1203,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         );
 
         // Generate and serve
-        return static::__generate_and_serve_thumbnail(
+        return static::harden_file_response(static::__generate_and_serve_thumbnail(
             $attachment,
             $type,
             $width,
             $height,
             'preset',
             $cache_filename
-        );
+        ));
     }
 
     /**
@@ -1244,14 +1291,14 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         );
 
         // Generate and serve
-        return static::__generate_and_serve_thumbnail(
+        return static::harden_file_response(static::__generate_and_serve_thumbnail(
             $attachment,
             $type,
             $width,
             $height,
             'dynamic',
             $cache_filename
-        );
+        ));
     }
 
     // ============================================================================================
@@ -1369,6 +1416,18 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
                 }
             }
 
+            return File_Attachment_Icons::render_icon_as_thumbnail(
+                $attachment->file_extension,
+                $width,
+                $height ?? $width
+            );
+        }
+
+        // An SVG is never rasterised: ImageMagick's SVG coder follows references inside the
+        // document (a local-file read), and the shipped ImageMagick policy refuses it. Its
+        // picture is the extension icon. An app that renders SVG safely itself takes it over
+        // through the document.thumbnail_render chain above.
+        if ($attachment->is_svg()) {
             return File_Attachment_Icons::render_icon_as_thumbnail(
                 $attachment->file_extension,
                 $width,
@@ -1774,10 +1833,10 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         $png_data = File_Attachment_Icons::get_icon_as_png($extension, $width, $height);
 
         // Return PNG with inline disposition
-        return Response::make($png_data, 200, [
+        return static::harden_file_response(Response::make($png_data, 200, [
             'Content-Type' => 'image/png',
             'Content-Disposition' => 'inline',
             'Cache-Control' => 'public, max-age=86400', // 1 day
-        ]);
+        ]));
     }
 }

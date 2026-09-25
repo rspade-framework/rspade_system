@@ -4,7 +4,6 @@ namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\CodeQuality\Support\FileSanitizer;
-use App\RSpade\Core\Naming\Rsx_Paths;
 
 class ReflectionAttributes_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -15,7 +14,6 @@ class ReflectionAttributes_CodeQualityRule extends CodeQualityRule_Abstract
     private const WHITELISTED_FILES = [
         'Manifest.php',
         'Php_ManifestModule.php',
-        'RsxReflection.php',  // Core reflection utility that may be used before manifest is available
     ];
     
     public function get_id(): string
@@ -119,36 +117,5 @@ class ReflectionAttributes_CodeQualityRule extends CodeQualityRule_Abstract
                 );
             }
         }
-    }
-
-    /**
-     * Check if a file in /app/RSpade/ is in an allowed subdirectory
-     * Based on scan_directories configuration
-     */
-    private function is_in_allowed_rspade_directory(string $file_path): bool
-    {
-        // Get allowed subdirectories from config
-        $scan_directories = config('rsx.manifest.scan_directories', []);
-
-        // Extract allowed RSpade subdirectories
-        $allowed_subdirs = [];
-        foreach ($scan_directories as $scan_dir) {
-            if (Rsx_Paths::is_framework($scan_dir)) {
-                $subdir = Rsx_Paths::framework_subpath($scan_dir);
-                if ($subdir) {
-                    $allowed_subdirs[] = $subdir;
-                }
-            }
-        }
-
-        // Check if file is in any allowed subdirectory
-        foreach ($allowed_subdirs as $subdir) {
-            if (str_contains($file_path, '/app/RSpade/' . $subdir . '/') ||
-                str_contains($file_path, '/app/RSpade/' . $subdir)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

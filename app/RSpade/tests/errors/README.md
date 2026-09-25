@@ -14,7 +14,7 @@ Server side (`App\RSpade\Core\Errors\Error_Screens`), one funnel and one
 |---------|-------------|--------|
 | Denial | `unauthorized(Request, ?realm)` | 302 to the realm's login route (no session) or a 403 page |
 | Unmatched URL | `not_found(Request)` | 404 page |
-| Crash | `fatal(Request, ?Throwable)` | 500 page, detail redacted in production |
+| Crash | `fatal(Request, ?Throwable)` | 500 page; detail only for a developer caller (`Rsx_Diagnostics`), an error id otherwise |
 | CSRF on a native form | `expired(Request)` | 419 page |
 | Coded validation on a web GET | `bad_request(Request, string)` | 400 page carrying the reason |
 | Any other abort() status | `http_status(Request, int, string)` | that status, as a page |
@@ -33,8 +33,10 @@ the live layout's content area using the app-owned theme components in
 
 - The unauthorized SPLIT (login redirect vs 403) lives here and nowhere else -
   both dispatchers and the exception chain call into it.
-- Production redaction is a security property, not a formatting choice: an error
-  page is fully inspectable with curl.
+- Redaction is a security property keyed on the CALLER, not a formatting choice:
+  an error page is fully inspectable with curl, and a development site may be
+  public. `Rsx_Diagnostics::caller_sees_detail()` is the one predicate every
+  channel asks (web, Ignition, Ajax, batch, API).
 - The exception-chain seam must stay BEHIND the dispatch bootstrapper. RSX
   routing is a Laravel 404 the bootstrapper catches; a handler claiming 404s
   ahead of it would take every RSX route offline.
@@ -48,8 +50,7 @@ the live layout's content area using the app-owned theme components in
 - `app/RSpade/Core/Session/Rsx_Csrf.php` (the native 419)
 - `resources/views/errors/rsx_error.blade.php`
 - `app/RSpade/Core/Exceptions/Web_Exception_Handler.php`
-- `app/RSpade/Core/Dispatch/Dispatcher.php` (terminal paths)
-- `app/RSpade/Core/Portal/Portal_Dispatcher.php` (terminal paths)
+- `app/RSpade/Core/Dispatch/Dispatcher.php` (terminal paths, `page_failure_response()`; both realms)
 - `app/RSpade/Core/SPA/Error_Screens.js`, `app/RSpade/Core/SPA/Spa.js`
 
 ## Test fixtures

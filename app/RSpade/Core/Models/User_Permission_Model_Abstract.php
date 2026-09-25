@@ -23,16 +23,16 @@ use App\RSpade\Core\Realtime\Realtime;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: user_permissions
  *
- * @property int $id
- * @property int $user_id
- * @property int $permission_id
- * @property int $is_grant
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property int $id
+ * @property int $is_grant
+ * @property int $permission_id
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
+ * @property int $user_id
  *
  * @mixin \Eloquent
  */

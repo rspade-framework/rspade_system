@@ -16,12 +16,11 @@ use App\RSpade\Core\Time\Rsx_Time;
  *
  * REVOKES by default rather than deleting the row. Revocation is immediate and total - the
  * key fails at Api_Key_Model::find_by_key(), before any endpoint runs - and it keeps the row,
- * which matters because _api_request_log rows reference api_key_id: destroying the key would
- * leave every logged call it ever made pointing at nothing, exactly when someone is trying to
- * work out what it did.
+ * which matters because _api_request_log rows reference api_key_id: a purged key's logged
+ * calls survive with api_key_id cleared (ON DELETE SET NULL), no longer saying which key made
+ * them, exactly when someone is trying to work out what it did.
  *
- * --purge removes the row outright, for a key created in error that has no history worth
- * keeping.
+ * --purge removes the row outright, for a key created in error.
  *
  * The key is named by ID, not by --user: an id already identifies exactly one key across
  * every user and site, and asking for the owner as well would only create a way to name the
@@ -92,7 +91,7 @@ class Api_Key_Delete_Command extends Command
 
         if (!$forced) {
             $question = $purge
-                ? 'Permanently delete this key? Its request-log rows will reference a key that no longer exists.'
+                ? 'Permanently delete this key? Its request-log rows are kept, but will no longer name the key.'
                 : 'Revoke this key? Anything using it stops working immediately.';
 
             if (!$this->confirm($question, false)) {

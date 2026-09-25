@@ -7,6 +7,13 @@ namespace App\RSpade\Core\Files;
  *
  * Provides static methods for determining the appropriate icon resource
  * for different file types based on file extension.
+ *
+ * EVERY ICON THIS CLASS RASTERISES IS A PNG. ImageMagick is configured to read raster
+ * coders only (resource/docker/imagemagick/policy.xml, and the "ImageMagick Coder Policy"
+ * rsx:health row), because its SVG coder is a local-file-read primitive. The generic
+ * icons are drawn as SVG (resource/icons/*.svg, the source artwork) and shipped as
+ * 512px PNG rasters of those files beside them; README.md there has the command that
+ * regenerates them.
  */
 class File_Attachment_Icons
 {
@@ -27,133 +34,133 @@ class File_Attachment_Icons
             'psd' => 'psd.png',
             'ai' => 'ai.png',
 
-            // Images - Generic SVG
-            'jpg' => 'image.svg',
-            'jpeg' => 'image.svg',
-            'png' => 'image.svg',
-            'gif' => 'image.svg',
-            'bmp' => 'image.svg',
-            'svg' => 'image.svg',
-            'webp' => 'image.svg',
-            'ico' => 'image.svg',
-            'tiff' => 'image.svg',
-            'tif' => 'image.svg',
-            'heic' => 'image.svg',
-            'heif' => 'image.svg',
-            'raw' => 'image.svg',
-            'cr2' => 'image.svg',
-            'nef' => 'image.svg',
+            // Images - generic
+            'jpg' => 'image.png',
+            'jpeg' => 'image.png',
+            'png' => 'image.png',
+            'gif' => 'image.png',
+            'bmp' => 'image.png',
+            'svg' => 'image.png',
+            'webp' => 'image.png',
+            'ico' => 'image.png',
+            'tiff' => 'image.png',
+            'tif' => 'image.png',
+            'heic' => 'image.png',
+            'heif' => 'image.png',
+            'raw' => 'image.png',
+            'cr2' => 'image.png',
+            'nef' => 'image.png',
 
             // Videos
-            'mp4' => 'video.svg',
-            'avi' => 'video.svg',
-            'mov' => 'video.svg',
-            'wmv' => 'video.svg',
-            'flv' => 'video.svg',
-            'mkv' => 'video.svg',
-            'webm' => 'video.svg',
-            'mpeg' => 'video.svg',
-            'mpg' => 'video.svg',
-            'm4v' => 'video.svg',
-            '3gp' => 'video.svg',
+            'mp4' => 'video.png',
+            'avi' => 'video.png',
+            'mov' => 'video.png',
+            'wmv' => 'video.png',
+            'flv' => 'video.png',
+            'mkv' => 'video.png',
+            'webm' => 'video.png',
+            'mpeg' => 'video.png',
+            'mpg' => 'video.png',
+            'm4v' => 'video.png',
+            '3gp' => 'video.png',
 
             // Audio
-            'mp3' => 'audio.svg',
-            'wav' => 'audio.svg',
-            'flac' => 'audio.svg',
-            'aac' => 'audio.svg',
-            'ogg' => 'audio.svg',
-            'm4a' => 'audio.svg',
-            'wma' => 'audio.svg',
-            'aiff' => 'audio.svg',
-            'alac' => 'audio.svg',
+            'mp3' => 'audio.png',
+            'wav' => 'audio.png',
+            'flac' => 'audio.png',
+            'aac' => 'audio.png',
+            'ogg' => 'audio.png',
+            'm4a' => 'audio.png',
+            'wma' => 'audio.png',
+            'aiff' => 'audio.png',
+            'alac' => 'audio.png',
 
             // Archives
-            'zip' => 'archive.svg',
-            'rar' => 'archive.svg',
-            '7z' => 'archive.svg',
-            'tar' => 'archive.svg',
-            'gz' => 'archive.svg',
-            'bz2' => 'archive.svg',
-            'xz' => 'archive.svg',
-            'iso' => 'archive.svg',
-            'dmg' => 'archive.svg',
+            'zip' => 'archive.png',
+            'rar' => 'archive.png',
+            '7z' => 'archive.png',
+            'tar' => 'archive.png',
+            'gz' => 'archive.png',
+            'bz2' => 'archive.png',
+            'xz' => 'archive.png',
+            'iso' => 'archive.png',
+            'dmg' => 'archive.png',
 
             // Text files
-            'txt' => 'text.svg',
-            'md' => 'text.svg',
-            'rtf' => 'text.svg',
-            'log' => 'text.svg',
+            'txt' => 'text.png',
+            'md' => 'text.png',
+            'rtf' => 'text.png',
+            'log' => 'text.png',
 
             // Code files
-            'php' => 'code.svg',
-            'js' => 'code.svg',
-            'ts' => 'code.svg',
-            'jsx' => 'code.svg',
-            'tsx' => 'code.svg',
-            'html' => 'code.svg',
-            'css' => 'code.svg',
-            'scss' => 'code.svg',
-            'sass' => 'code.svg',
-            'less' => 'code.svg',
-            'json' => 'code.svg',
-            'xml' => 'code.svg',
-            'yaml' => 'code.svg',
-            'yml' => 'code.svg',
-            'py' => 'code.svg',
-            'java' => 'code.svg',
-            'c' => 'code.svg',
-            'cpp' => 'code.svg',
-            'h' => 'code.svg',
-            'cs' => 'code.svg',
-            'rb' => 'code.svg',
-            'go' => 'code.svg',
-            'rs' => 'code.svg',
-            'swift' => 'code.svg',
-            'kt' => 'code.svg',
-            'sql' => 'code.svg',
-            'sh' => 'code.svg',
-            'bash' => 'code.svg',
+            'php' => 'code.png',
+            'js' => 'code.png',
+            'ts' => 'code.png',
+            'jsx' => 'code.png',
+            'tsx' => 'code.png',
+            'html' => 'code.png',
+            'css' => 'code.png',
+            'scss' => 'code.png',
+            'sass' => 'code.png',
+            'less' => 'code.png',
+            'json' => 'code.png',
+            'xml' => 'code.png',
+            'yaml' => 'code.png',
+            'yml' => 'code.png',
+            'py' => 'code.png',
+            'java' => 'code.png',
+            'c' => 'code.png',
+            'cpp' => 'code.png',
+            'h' => 'code.png',
+            'cs' => 'code.png',
+            'rb' => 'code.png',
+            'go' => 'code.png',
+            'rs' => 'code.png',
+            'swift' => 'code.png',
+            'kt' => 'code.png',
+            'sql' => 'code.png',
+            'sh' => 'code.png',
+            'bash' => 'code.png',
 
             // 3D Models
-            'stl' => '3d_model.svg',
-            'obj' => '3d_model.svg',
-            'fbx' => '3d_model.svg',
-            'dae' => '3d_model.svg',
-            'blend' => '3d_model.svg',
-            '3ds' => '3d_model.svg',
-            'f3d' => '3d_model.svg',
-            'step' => '3d_model.svg',
-            'stp' => '3d_model.svg',
+            'stl' => '3d_model.png',
+            'obj' => '3d_model.png',
+            'fbx' => '3d_model.png',
+            'dae' => '3d_model.png',
+            'blend' => '3d_model.png',
+            '3ds' => '3d_model.png',
+            'f3d' => '3d_model.png',
+            'step' => '3d_model.png',
+            'stp' => '3d_model.png',
 
             // Documents
-            'doc' => 'document.svg',
-            'docx' => 'document.svg',
-            'odt' => 'document.svg',
-            'pages' => 'document.svg',
+            'doc' => 'document.png',
+            'docx' => 'document.png',
+            'odt' => 'document.png',
+            'pages' => 'document.png',
 
             // Spreadsheets
-            'xls' => 'spreadsheet.svg',
-            'xlsx' => 'spreadsheet.svg',
-            'ods' => 'spreadsheet.svg',
-            'numbers' => 'spreadsheet.svg',
-            'csv' => 'spreadsheet.svg',
+            'xls' => 'spreadsheet.png',
+            'xlsx' => 'spreadsheet.png',
+            'ods' => 'spreadsheet.png',
+            'numbers' => 'spreadsheet.png',
+            'csv' => 'spreadsheet.png',
 
             // Presentations
-            'ppt' => 'presentation.svg',
-            'pptx' => 'presentation.svg',
-            'odp' => 'presentation.svg',
-            'key' => 'presentation.svg',
+            'ppt' => 'presentation.png',
+            'pptx' => 'presentation.png',
+            'odp' => 'presentation.png',
+            'key' => 'presentation.png',
         ];
 
-        $icon_file = $icon_map[$extension] ?? 'file.svg';
+        $icon_file = $icon_map[$extension] ?? 'file.png';
         return $base_path . '/' . $icon_file;
     }
 
     /**
      * Get icon as PNG at specified dimensions
      *
-     * Loads the appropriate icon file (SVG or PNG) for the given extension
+     * Loads the appropriate icon file (always a PNG) for the given extension
      * and converts it to PNG at the target dimensions using "fit" mode
      * (maintains aspect ratio, no cropping).
      *
@@ -169,26 +176,11 @@ class File_Attachment_Icons
         $full_path = dirname(base_path()) . '/' . ltrim($icon_path, '/');
 
         if (!file_exists($full_path)) {
-            // Safety*: Use generic icon if specific icon file missing from disk
-            $full_path = base_path('app/RSpade/Core/Files/resource/icons/file.svg');
+            shouldnt_happen("File type icon missing from the framework tree: {$full_path}");
         }
 
-        // Determine if source is SVG or PNG
-        $is_svg = pathinfo($full_path, PATHINFO_EXTENSION) === 'svg';
-
-        // Load image with Imagick
         $image = new \Imagick();
-
-        if ($is_svg) {
-            // For SVG: Set background to transparent and target size before reading
-            $image->setBackgroundColor(new \ImagickPixel('transparent'));
-            $image->setResolution($width, $height);
-            $image->readImage($full_path);
-            $image->setImageFormat('png');
-        } else {
-            // For PNG: Read then resize
-            $image->readImage($full_path);
-        }
+        $image->readImage($full_path);
 
         // Get original dimensions
         $original_width = $image->getImageWidth();
@@ -274,21 +266,11 @@ class File_Attachment_Icons
             $full_path = dirname(base_path()) . '/' . ltrim($icon_path, '/');
 
             if (!file_exists($full_path)) {
-                $full_path = base_path('app/RSpade/Core/Files/resource/icons/file.svg');
+                shouldnt_happen("File type icon missing from the framework tree: {$full_path}");
             }
 
-            $is_svg = pathinfo($full_path, PATHINFO_EXTENSION) === 'svg';
-
-            // Load icon
             $image = new \Imagick();
-
-            if ($is_svg) {
-                $image->setBackgroundColor(new \ImagickPixel('transparent'));
-                $image->setResolution($width, $height);
-                $image->readImage($full_path);
-            } else {
-                $image->readImage($full_path);
-            }
+            $image->readImage($full_path);
 
             // Get original dimensions
             $original_width = $image->getImageWidth();

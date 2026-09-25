@@ -59,16 +59,15 @@ Keys that are application PREFERENCES rather than framework requirements already
 ```php
 // rsx/resource/config/rsx.php
 'middleware' => [
-    'global'  => [\App\Http\Middleware\Request_Stamp_Middleware::class],
-    'web'     => [],                      // key must name a group the kernel declares
-    'api'     => [],
-    'aliases' => ['stamp' => \App\Http\Middleware\Request_Stamp_Middleware::class],
+    'global' => [\App\Http\Middleware\Request_Stamp_Middleware::class],
 ],
 ```
 
-**Append-only, by construction.** Your middleware runs AFTER the framework stack, at the END of a group, or beside the existing aliases. There is no spelling that reorders or removes framework middleware - if you genuinely need that, file a framework change request. (Same philosophy as `csp.additional_sources`: widen, never narrow.)
+**`global` is the only key.** The kernel hands every request to `Rsx_Front_Controller`, never to Laravel's router, so there are no route middleware groups and no aliases: a non-empty `web`, `api` or `aliases` key throws at bootstrap. A global middleware wraps EVERY request (pages, Ajax, the API, build artifacts) - one that concerns only some of them returns `$next($request)` early for the rest.
 
-**Validation is loud at bootstrap**, naming what is wrong: a class that does not exist, an unknown group key (it lists the valid ones), an alias already bound to a different class (it names both). Re-declaring something already present is a silent no-op.
+**Append-only, by construction.** Your middleware runs AFTER the framework stack. There is no spelling that reorders or removes framework middleware - if you genuinely need that, file a framework change request. (Same philosophy as `csp.additional_sources`: widen, never narrow.)
+
+**Validation is loud at bootstrap**, naming what is wrong: a class that does not exist, a route-middleware key, any other unknown key. Re-declaring something already present is a silent no-op.
 
 Full contract: `php artisan rsx:man config_rsx`.
 

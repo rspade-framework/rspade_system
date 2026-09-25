@@ -75,9 +75,10 @@ DESCRIPTION
     - Laravel: FormRequest rules          RSX: #[Api_Param] specs (also drive docs)
     - Laravel: API Resource / transformer RSX: the model's redacting toArray()
 
-    A request to /api/vN/... is handled by a dedicated Api_Dispatcher branch,
-    NOT the main dispatcher: there is no cookie read, no _sessions row, and no
-    Set-Cookie on any response. The bearer key resolves to a real user + site,
+    A request to /api/vN/... is its own channel: the front controller
+    classifies it before assets, Ajax and pages (rsx:man dispatch) and hands it
+    to Api_Dispatcher, NOT the page dispatcher: there is no cookie read, no
+    _sessions row, and no Set-Cookie on any response. The bearer key resolves to a real user + site,
     and from then on Session:: reports that identity to ordinary controller code
     exactly as a browser session would - so a model's global site scope, an
     endpoint's Permission:: checks, and Rsx::Route() all work unchanged.
@@ -162,6 +163,9 @@ DECLARING ENDPOINTS
     build with a RuntimeException - loud, immediate, non-bypassable):
         - pattern does not match #^/api/v[0-9]+/# (or has no segment after vN)
         - a verb outside {GET, POST}
+        - BOTH GET and POST on one endpoint (repeated verbs are one verb) -
+          GET is for reads, POST for writes, and a handler reachable by both is
+          a write a read-only key can reach
         - the class does not extend Rsx_Api_Controller_Abstract
         - a :token with no matching #[Api_Param]
         - duplicate #[Api_Param] names
@@ -172,8 +176,8 @@ DECLARING ENDPOINTS
         - type 'file' carrying a default
         - #[FPC], #[Route], #[SPA], or #[Ajax_Endpoint] on the same method
         - a duplicate route pattern
-        - API-GET-PURE-01: a write call in a GET-only handler's body (see KEY
-          SCOPES)
+        - API-GET-PURE-01: a write call in a GET handler's body, or a GET
+          handler whose body cannot be located (see KEY SCOPES)
       The converse guard lives in Route_ManifestSupport: a NON-API #[Route] (or
       an SPA route) under /api/vN/ also throws - the /api/vN namespace is
       reserved for the external API.
@@ -203,7 +207,9 @@ PARAMETERS AND VALIDATION
                      "fields": {"page": "Expected int"}}}
 
     Coercion rules:
-        int    matches /^-?\d+$/           float  is_numeric()
+        int    whole-string digits (\A-?\d+\z - no trailing newline), inside
+               PHP's integer range ("Integer out of range" otherwise)
+        float  is_numeric()
         bool   truthy: 1 true yes on       falsy: 0 false no off
         string passthrough, except an ENCODED TEXT VALUE (below)
 
@@ -289,7 +295,8 @@ SERIALIZATION
       worrying about leaking private columns.
 
 AUTHENTICATION
-    Authorization: Bearer rsx_... is the ONLY accepted credential. There is no
+    Authorization: Bearer rsx_... is the ONLY accepted credential (the scheme
+    name is case-insensitive, per RFC 7235: 'bearer' is accepted). There is no
     X-API-Key header and no api_key query parameter. Auth runs FIRST, before
     any route matching, so every /api/vN/ path returns a UNIFORM 401 for a bad
     or missing key (an attacker cannot probe which endpoints exist):
@@ -706,7 +713,7 @@ KEY SCOPES
     THE GRAMMAR.
 
       - a scope starts with '/', and its first two segments are 'api' and a
-        VERSION - a 'vN' literal, or '?' or '#';
+        VERSION - a 'vN' literal, or '?';
       - '?', '#' and '*' are the ONLY wildcards, and each occupies a WHOLE
         segment. '/api/v1/foo/bar*', '/api/v1/?_id' and '/api/v1/b#r' are
         REFUSED: a half-segment wildcard reads as a literal and would silently
@@ -741,9 +748,9 @@ KEY SCOPES
         /api/v1/clients     matches /api/v1/clients  and /api/v1/clients/
                             not     /api/v1/clients/view
 
-    '#' IS ACCEPTED AS THE VERSION SEGMENT even though no 'vN' literal is all
-    digits, so it matches nothing there. It is grammar, not a special case:
-    every wildcard is legal in every position the grammar allows one.
+    '#' IS REFUSED AS THE VERSION SEGMENT. A version is always 'vN', which is
+    never all digits, so '#' there could match no path at all - a scope that
+    reads as a grant and grants nothing is a typo the grammar catches.
 
     THE PATH IS THE SCOPE NAMESPACE, deliberately. There is no derived
     resource:action vocabulary to keep in step with the routes and no
@@ -861,7 +868,8 @@ KEY SCOPES
     two the same way, and without the distinction they are indistinguishable.
     'required' is the matched ROUTE PATTERN, not the request path: it names the
     thing a scope would have to reach, and its ':id' tokens say which segments
-    are the caller's to fill in.
+    are the caller's to fill in. An @api-hidden endpoint's refusal carries NO
+    'required': its pattern is published nowhere, the refusal included.
 
     Every scope denial reaches _api_request_log like every other outcome, so
     "why did this call stop working" stays answerable from the log.
@@ -881,17 +889,29 @@ KEY SCOPES
     API-GET-PURE-01 - A GET ENDPOINT MAY NOT MUTATE. This is the build-time half
     of the read-only guarantee; the runtime half is the key's read_only flag. See
     GET IS FOR READS, POST IS FOR WRITES below for the design rule both enforce.
-    Api_Endpoint_ManifestSupport fails the manifest build when a GET-only
-    handler's body contains
-
-        ->save(   ->delete(   ->update(   ::create(   ->raw_bulk(
-        DB::statement(  DB::insert(  DB::update(  DB::delete(
-        Task::dispatch(
+    Api_Endpoint_ManifestSupport fails the manifest build when a GET
+    handler's body contains a write call - record writes (->save( ->delete(
+    ->forceDelete( ->restore( ->update( ->touch( ->increment( ->decrement(),
+    creation on a model or a relation (::create( ->create( ->createMany(
+    ->saveMany( ::firstOrCreate( ::updateOrCreate( ::insert( ::upsert(
+    ::destroy( ::truncate(), relation pivots (->attach( ->detach( ->sync(
+    ->toggle( ...), RSpade writes (->raw_bulk( ->force_destroy( ->undelete(
+    ->attach_to( ->add_to(), raw SQL (DB::statement( DB::insert( DB::update(
+    DB::delete( DB::unprepared() and Task::dispatch( - the full list is
+    Api_Endpoint_ManifestSupport::GET_MUTATION_TOKENS.
 
     The body is read from source and tokenized, so comments and string literals
-    cannot trigger the rule and spacing cannot evade it. ONLY THE HANDLER'S OWN
-    BODY IS INSPECTED - a private helper it calls is not followed, which is the
-    honest limit of a literal-token rule and the reason the escape exists:
+    cannot trigger the rule, and spacing and letter case cannot evade it. The
+    handler is found by its name's TEXT, so a method named after a reserved word
+    (list, print) is checked like any other, and a GET handler whose body cannot
+    be located fails the build rather than passing unchecked.
+
+    IT IS A GUARDRAIL, NOT A PROOF. ONLY THE HANDLER'S OWN BODY IS INSPECTED: a
+    helper it calls is not followed, a dynamic call ($model->$verb()) is
+    invisible, and a write through a method the list does not name passes. That
+    is the honest limit of a literal-token rule; the read-only promise rests on
+    the handler's author as much as on the rule, and the escape exists for the
+    legitimate case:
 
         /**
          * @API-GET-PURE-01-EXCEPTION records a read receipt the caller asked
@@ -984,8 +1004,9 @@ GET IS FOR READS, POST IS FOR WRITES
     TWO HALVES, AND NEITHER IS WORTH ANYTHING ALONE.
 
       - BUILD TIME, on the HANDLER: API-GET-PURE-01 (see KEY SCOPES above) fails
-        the manifest build when a GET-only handler's body carries a write call.
-        The handler cannot lie about what it is.
+        the manifest build when a GET handler's body carries a write call, and an
+        endpoint may not be both GET and POST. A guardrail over the handler's own
+        body, not a proof about everything it calls.
       - RUN TIME, on the CALLER: _api_keys.read_only refuses every non-GET
         request made with that key, with 403 read_only_key. The credential
         cannot be used for anything but reads.
@@ -1186,7 +1207,9 @@ DOCS AND TESTER PAGE
     scoped to the KEY'S user rather than the viewer's - the console is answering
     "what can this integration do". With no key the sidebar lists NOTHING and
     the landing card says why, because the key IS the question being asked.
-    Supplying one calls _Apidocs_Controller::adopt_tester_key and RELOADS: the
+    Supplying one calls _Apidocs_Controller::adopt_tester_key (signed-in callers
+    only; a rejected key counts as a login failure for the caller's address, so
+    it is throttled like a password guess) and RELOADS: the
     catalog is baked into the page at render, so a key adopted afterwards
     changes nothing until the page is built again.
 
@@ -1372,10 +1395,17 @@ REQUEST LOGGING
     response_bytes (0 when it declares none) - the log never buffers a download
     just to measure it.
 
-    PURGING A KEY DESTROYS ITS HISTORY. api_key_id is a foreign key with
-    ON DELETE CASCADE, so `rsx:api:key:delete <id> --purge` takes that key's rows
-    with it. Revoking does NOT - it sets _api_keys.is_revoked and keeps the row,
-    which is the difference between the two operations. Indexes cover the three
+    PURGING A KEY KEEPS ITS HISTORY. api_key_id is a foreign key with
+    ON DELETE SET NULL, so after `rsx:api:key:delete <id> --purge` that key's
+    rows remain as an audit record with api_key_id cleared - user_id, site_id
+    and handler still say who called what. Revoking sets _api_keys.is_revoked
+    and keeps the key row, so its rows stay linked to it.
+
+    WHAT IS NOT STORED. A request that failed authentication (the uniform 401,
+    and the 404/405 answered before a key is read) is logged WITHOUT its body:
+    an anonymous caller cannot make the log hold its payload. A JSON body that
+    does not parse cannot be redacted, so it is stored as the marker
+    "[unparseable JSON body, N bytes, not stored]", never as its text. Indexes cover the three
     ways the table is read: by key, by ip, and by created_at (date range).
 
     RETENTION. config('rsx.api.log_retention_days') (default 30) is consumed by
@@ -1385,16 +1415,45 @@ REQUEST LOGGING
     deployment fact).
 
 EXCEPTION HANDLING
-    An uncaught Throwable inside an API dispatch is logged as a 500 row, then
-    rendered as JSON by Api_Exception_Handler (priority 25, between the Ajax and
-    Playwright handlers). It gates on Api_Dispatcher::is_api_dispatch() so it
-    ONLY touches API requests (returns null - declines - otherwise), and it
-    never emits HTML:
+    A CODED failure is an answer, not a fault. Thrown or aborted anywhere in
+    the dispatch - the endpoint, Main::pre_dispatch, a helper it calls - it
+    becomes the JSON error for its status, the message being the raiser's (or
+    the status text when it gave none), and the _api_request_log row records
+    that status:
 
-        dev/debug:   {"error": {"code": "internal_error",
+        abort(404)                    404  code not_found
+        abort(403)                    403  code forbidden
+        abort(401)                    401  code unauthenticated
+        abort(<other>, 'msg')         <other>  code http_<other>, message 'msg'
+        AjaxNotFoundException         404  code not_found
+        AjaxUnauthorizedException     403  code forbidden (what
+                                           Permission::require_permission()
+                                           throws)
+        AjaxAuthRequiredException     401  code unauthenticated
+
+    Api_Exception_Handler gives a coded failure raised outside the endpoint
+    (a global middleware) the same answer (Api_Dispatcher::
+    coded_error_response()).
+
+    Any other uncaught Throwable inside an API dispatch is logged as a 500 row, then
+    rendered as JSON by Api_Exception_Handler (priority 25, between the Ajax and
+    Playwright handlers), which the front controller hands it to exactly once.
+    It answers when the request's classified channel is the API
+    (Rsx_Request_Channel::current()), so it ONLY touches API requests (returns
+    null - declines - otherwise) - a failure in a global middleware before
+    dispatch included - and it never emits HTML:
+
+        developer:   {"error": {"code": "internal_error",
                                 "message": "<message> (<ExceptionClass>)"}}
-        production:  {"error": {"code": "internal_error",
-                                "message": "Internal server error"}}
+        everybody    {"error": {"code": "internal_error",
+        else:                   "message": "Internal server error",
+                                "error_id": "<16 hex>"}}
+
+    A "developer" is Rsx_Diagnostics::caller_sees_detail(): development or debug
+    mode AND a loopback caller or a valid rsx:debug credential (a bearer identity
+    is never a signed-in developer). An integrator's call from off the box is
+    redacted in every mode; the full detail is logged as "[error_id=<id>] ...".
+    The request log stores a non-standard verb as the fixed token UNKNOWN.
 
     Do NOT wrap endpoint bodies in blanket try/catch to format errors - let them
     bubble; the handler formats. Catch only genuinely expected failures.
@@ -1409,16 +1468,40 @@ ENVIRONMENT INTERACTIONS AND CAVEATS
     VerifyCsrfToken is disabled framework-wide regardless. Bearer auth is the
     entire authentication story.
 
-    FPC (full-page cache). Never applies to an API route - the Api_Dispatcher
-    branch exits before any FPC logic, and #[FPC] on an API endpoint throws at
-    scan time.
+    CORS. /api/* answers any origin (Access-Control-Allow-Origin: *) and never
+    allows credentials: a browser integration sends its bearer key itself, and
+    no cookie ever authenticates an API call. config/cors.php names api/* and
+    nothing else, so every other path - pages, /_ajax, uploads, file bytes -
+    sends no Access-Control-* header and stays same-origin.
 
-    Main_Abstract::pre_dispatch. Deliberately SKIPPED for API dispatch (the same
-    precedent the Portal dispatcher sets). An endpoint's OWN controller
-    pre_dispatch(Request, $params) IS honored (a non-null return short-circuits);
-    it is the place for per-controller non-auth concerns, never for auth - the
-    dispatcher has already authenticated the key AND evaluated the #[Auth]
-    gates by the time it runs.
+    FPC (full-page cache). Never applies to an API route - the API channel never
+    reaches the page pipeline that sets the cache marker, and #[FPC] on an API
+    endpoint throws at scan time.
+
+    The portal's dedicated domain. When the client portal runs on a host of its
+    own (config('rsx.portal.domain')), the API does not exist on that host:
+    every /api/ path there answers 404 {"error": {"code": "not_found"}} before
+    any credential is read. Call the API on the staff host. With the portal
+    under a path prefix on the staff host, /api/vN/... on that host is the API
+    as usual (and <portal-prefix>/api/... is an ordinary portal URL).
+
+    Main_Abstract::pre_dispatch. RUNS for API dispatch, after the bearer identity,
+    the scope check and the #[Auth] gates, before the controller - so an
+    application's own account policy (suspended, unpaid, terms not accepted,
+    rsx:man session MID-SESSION) covers its keys as well as its pages. $params
+    carries _handler (the endpoint's controller class) and _method, as the page
+    dispatcher's does. ANY non-null return refuses the call with
+
+        403 {"error": {"code": "account_refused",
+                       "message": "This account may not use the API at this time."}}
+
+    because an API client cannot follow a redirect or an interstitial. The
+    identity is headless: Session::is_api_request() is true, and the session
+    writers (Session::logout() and friends) are unavailable, so a hook that ends
+    a browser session branches on it first. An endpoint's OWN controller
+    pre_dispatch(Request, $params) runs next and IS honored (a non-null return
+    short-circuits); it is the place for per-controller non-auth concerns, never
+    for auth.
 
 TEMPLATE ENDPOINTS
     The starter template ships three reference API controllers

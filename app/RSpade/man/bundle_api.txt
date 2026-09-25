@@ -370,7 +370,7 @@ ROUTE EXTRACTION (include_routes)
 
     EXAMPLE
         // In frontend JavaScript (with login routes extracted)
-        const logout_url = Rsx.Route('Login_Controller', 'logout');
+        const logout_url = Rsx.Route('Login_Controller::logout');
         // Returns: '/logout'
 
 ALWAYS-PUBLISHED ROUTES
@@ -448,10 +448,11 @@ PUBLIC ASSET INCLUDES
     AMBIGUITY ERRORS
         If multiple files match the same path, compilation fails:
 
-            RuntimeException: Ambiguous public asset request:
-            'sneat/css/demo.css' matches multiple files:
-            'rsx/public/sneat/css/demo.css',
-            'rsx/theme/public/sneat/css/demo.css'
+            Ambiguous public asset request: 'sneat/css/demo.css' exists in
+            the public/ directory of more than one module: '_root', 'theme'
+
+        The message names the modules, never absolute paths ('_root' is
+        rsx/public/ itself).
 
         Solution: Use more specific paths or rename files to avoid conflicts.
 
@@ -478,6 +479,14 @@ BUNDLE RENDERING
         <script src="/_compiled/Dashboard__app.def456.js"></script>
 
     Never call from controllers - only from Blade files.
+
+    ON-DEMAND COMPILE. In development a request for a /_compiled/ file that is not
+    on disk compiles the named bundle first - but only when the name is a concrete
+    MODULE bundle (a manifest class extending Rsx_Bundle_Abstract, not abstract, not
+    an asset bundle; AssetHandler::_is_on_demand_bundle()). The hash in the filename
+    is computed BY the compile, so the requested file is served only if the compile
+    produced it; any other name or hash is a 404 and compiles nothing. A compile
+    failure propagates as the error it is. Sealed builds never compile on request.
 
 VENDOR/APP SPLIT
     Files automatically split:

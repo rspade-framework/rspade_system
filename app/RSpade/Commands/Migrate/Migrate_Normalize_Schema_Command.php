@@ -153,7 +153,7 @@ class Migrate_Normalize_Schema_Command extends Command
         // Set query logging to destructive-only mode for normalize
         AppServiceProvider::set_query_log_mode(AppServiceProvider::QUERY_LOG_DESTRUCTIVE_STDOUT);
 
-        $flag_file = '/var/www/html/.migrating';
+        $flag_file = \App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file();
 
         // Check if we're in production mode (either via flag or environment)
         $is_production = $this->option('production') || app()->environment('production');
@@ -243,19 +243,25 @@ class Migrate_Normalize_Schema_Command extends Command
                         }
                     }
 
-                    // Create created_at index
+                    // Every table carries an index LEADING with created_at and one leading with
+                    // updated_at. Coverage is decided by the leading column, never by the index
+                    // name: a migration that declared `idx_foo_created_at (created_at)` or a
+                    // composite `(created_at, id)` already satisfies it, and a second
+                    // single-column copy under the name `created_at` would be pure write cost.
+                    // A composite that merely CONTAINS the column - `(site_id, created_at)` - does
+                    // not lead with it and does not count.
                     //
                     // __column_exists_or_pending() rather than Schema::hasColumn(): the ADD COLUMN
                     // above is queued, not executed, so hasColumn() would still say false. Batching
                     // therefore closes a LATENT GAP - before it, the index on a column this pass had
                     // just added only landed on the NEXT pass, and for a table created by the LAST
                     // migration of a run there is no next pass, so it never landed at all.
-                    if ($this->__column_exists_or_pending($tableName, 'created_at') && !$this->columnHasIndex($tableName, 'created_at')) {
+                    if ($this->__column_exists_or_pending($tableName, 'created_at') && !$this->__column_leads_an_index($tableName, 'created_at')) {
                         $this->__add_index($tableName, 'created_at', "ADD INDEX created_at(created_at)");
                     }
 
                     // Create updated_at index
-                    if ($this->__column_exists_or_pending($tableName, 'updated_at') && !$this->columnHasIndex($tableName, 'updated_at')) {
+                    if ($this->__column_exists_or_pending($tableName, 'updated_at') && !$this->__column_leads_an_index($tableName, 'updated_at')) {
                         $this->__add_index($tableName, 'updated_at', "ADD INDEX updated_at(updated_at)");
                     }
 
@@ -494,15 +500,26 @@ class Migrate_Normalize_Schema_Command extends Command
         }
     }
 
-    private function columnHasIndex($tableName, $columnName)
+    /**
+     * Does some index on this table have $columnName as its FIRST column, counting an index
+     * already queued for this table's ALTER?
+     *
+     * The leading column is what makes an index usable for a filter or sort on that column
+     * alone, so it is the whole question; the index's name is irrelevant. The pending entry
+     * is keyed by the column because this pass names every index it adds after its column.
+     */
+    private function __column_leads_an_index(string $tableName, string $columnName): bool
     {
         if (isset($this->__pending_indexes_added[$tableName][$columnName])) {
             return true;
         }
 
-        $indexes = DB::select("SHOW INDEXES FROM $tableName WHERE Key_name = ?", [$columnName]);
+        $leading = DB::select(
+            "SHOW INDEXES FROM `$tableName` WHERE Seq_in_index = 1 AND Column_name = ?",
+            [$columnName]
+        );
 
-        return count($indexes) > 0;
+        return count($leading) > 0;
     }
 
     /**

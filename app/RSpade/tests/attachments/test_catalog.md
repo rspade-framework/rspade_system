@@ -69,3 +69,11 @@
 | SAU-01 | `can_view()` default is permissive - the framework supplies a seam, never a policy | php | attachment, no override | true | implemented | 2026-09-07 |
 | SAU-02 | `scope_can_view()` returns the SAME builder with no clause added | php | `File_Attachment_Model::query()` | identical builder, identical SQL | implemented | 2026-09-07 |
 | SAU-03 | A model that states a policy of its own beats the trait (a class's own method wins) | php | fixture adopting the trait AND declaring the pair | fixture's answers, not the trait's | implemented | 2026-09-07 |
+| SVG-01 | An uploaded SVG is stored sanitized: script and event handlers gone, drawing kept | php | hostile SVG through `create_from_upload()` | stored bytes carry `<rect`, no `<script`, no `onload` | implemented (`Svg_Upload_Test`) | 2026-09-25 |
+| SVG-02 | An SVG never reaches ImageMagick: no dimensions, thumbnail is the extension icon | php | hostile SVG with a `text:` image reference | `width` null; thumbnail bytes == `render_icon_as_thumbnail('svg')` | implemented (`Svg_Upload_Test`) | 2026-09-25 |
+| SVG-03 | An unparseable SVG is refused and nothing is stored | php | truncated SVG | `Unparseable_Svg_Exception`, attachment count unchanged | implemented (`Svg_Upload_Test`) | 2026-09-25 |
+| SVG-04 | SVG is detected by sniffed type or by .svg / .svgz extension | php | four type/extension pairs | true, true, true, false | implemented (`Svg_Upload_Test`) | 2026-09-25 |
+| SVG-05 | File responses carry the sandboxing CSP and nosniff; a response with its own policy keeps it | php | `harden_file_response()` on two responses | headers as specified | implemented (`Svg_Upload_Test`) | 2026-09-25 |
+| SVG-06 | Every mapped file-type icon is a PNG on disk (ImageMagick reads raster only) | php | several extensions | `.png`, file exists | implemented (`Svg_Upload_Test`) | 2026-09-25 |
+| SVG-07 | `/_upload` answers an unparseable SVG with 422 `unparseable_svg` | http | authenticated multipart upload | 422 JSON | planned | 2026-09-25 |
+| SVG-08 | `/_inline` of an SVG answers with the sandboxing CSP and nosniff | http | authenticated GET | both headers present | planned | 2026-09-25 |

@@ -1108,6 +1108,108 @@ class Php_Parser
     }
 
     /**
+     * Where one method's body sits in a token_get_all() stream: [open, close], the indexes of
+     * the body's opening '{' and its matching '}'. Null when no "function <name>" has a body
+     * - the method is absent, or it is an abstract or interface declaration ending at ';'.
+     *
+     * The method name is matched by its TEXT, case-insensitively, whatever token the lexer
+     * made of it: a method named after a reserved word (list, print, match ...) is not a
+     * T_STRING, and a T_STRING-only match leaves every such method unfound. A by-reference
+     * "function &name" matches too. Braces are counted on TOKENS, so a brace inside a string
+     * literal or a comment cannot miscount, and "${" opens a brace its plain "}" closes.
+     *
+     * The first declaration in the stream wins; a class file declares a method name once.
+     *
+     * Takes TOKENS rather than source so the caller decides how they were produced - a
+     * code-quality rule obtains them through its Source_Cache and never tokenizes itself.
+     *
+     * @param array $tokens token_get_all() output
+     * @return array{0:int,1:int}|null
+     */
+    public static function method_body_span(array $tokens, string $method_name): ?array
+    {
+        $count = count($tokens);
+
+        $start = null;
+        for ($i = 0; $i < $count && $start === null; $i++) {
+            if (!is_array($tokens[$i]) || $tokens[$i][0] !== T_FUNCTION) {
+                continue;
+            }
+
+            for ($j = $i + 1; $j < $count; $j++) {
+                $token = $tokens[$j];
+                if (is_array($token) && ($token[0] === T_WHITESPACE || $token[0] === T_COMMENT || $token[0] === T_DOC_COMMENT)) {
+                    continue;
+                }
+                $text = is_array($token) ? $token[1] : $token;
+                if ($text === '&') {
+                    continue;
+                }
+                if (strcasecmp($text, $method_name) === 0) {
+                    $start = $j;
+                }
+                break;
+            }
+        }
+
+        if ($start === null) {
+            return null;
+        }
+
+        $open = null;
+        $depth = 0;
+        for ($i = $start; $i < $count; $i++) {
+            $token = $tokens[$i];
+            $text = is_array($token) ? $token[1] : $token;
+
+            if ($open === null) {
+                if ($text === ';') {
+                    return null;
+                }
+                if ($text === '{') {
+                    $open = $i;
+                    $depth = 1;
+                }
+                continue;
+            }
+
+            if ($text === '{' || (is_array($token) && $token[0] === T_DOLLAR_OPEN_CURLY_BRACES)) {
+                $depth++;
+            } elseif ($text === '}') {
+                $depth--;
+                if ($depth === 0) {
+                    return [$open, $i];
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * One method's body as source text, from its opening '{' through its closing '}'
+     * inclusive, exactly as it appears in the stream (so line offsets from the brace are
+     * preserved). Null when method_body_span() finds no body.
+     *
+     * @param array $tokens token_get_all() output
+     */
+    public static function method_body(array $tokens, string $method_name): ?string
+    {
+        $span = self::method_body_span($tokens, $method_name);
+
+        if ($span === null) {
+            return null;
+        }
+
+        $body = '';
+        for ($i = $span[0]; $i <= $span[1]; $i++) {
+            $body .= is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i];
+        }
+
+        return $body;
+    }
+
+    /**
      * Convert decorator format from parser to compact array format
      * @param array $decorators Array of decorator objects from parser
      * @return array Compact array format [[name, [args]], ...]

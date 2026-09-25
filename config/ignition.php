@@ -62,14 +62,14 @@ return [
     | Sharing
     |--------------------------------------------------------------------------
     |
-    | You can share local errors with colleagues or others around the world.
-    | Sharing is completely free and doesn't require an account on Flare.
-    |
-    | If necessary, you can completely disable sharing below.
+    | RSpade: always off, as a literal with no env read. Sharing uploads the
+    | error report (code frames, request, environment) to a third party, and
+    | the Ignition page renders only for a developer caller (Rsx_Diagnostics).
+    | rsx:health FAILs when this is anything but false.
     |
     */
 
-    'enable_share_button' => env('IGNITION_SHARING_ENABLED', true),
+    'enable_share_button' => false,
 
     /*
     |--------------------------------------------------------------------------
@@ -144,20 +144,16 @@ return [
     | Runnable Solutions
     |--------------------------------------------------------------------------
     |
-    | Some solutions that Ignition displays are runnable and can perform
-    | various tasks. By default, runnable solutions are only enabled when your
-    | app has debug mode enabled and the environment is `local` or
-    | `development`.
-    |
-    | Using the `IGNITION_ENABLE_RUNNABLE_SOLUTIONS` environment variable, you
-    | can override this behaviour and enable or disable runnable solutions
-    | regardless of the application's environment.
-    |
-    | Default: env('IGNITION_ENABLE_RUNNABLE_SOLUTIONS')
+    | RSpade: always off, as a literal with no env read. A runnable solution
+    | is an unauthenticated, CSRF-free POST that can rotate APP_KEY, run
+    | migrations or rewrite .env, and Ignition's "local caller" test reads
+    | request()->ip(), which is the proxy hop behind the FPC. With this false
+    | every /_ignition/* route answers 404 (RunnableSolutionsEnabled).
+    | rsx:health FAILs when this is anything but false.
     |
     */
 
-    'enable_runnable_solutions' => env('IGNITION_ENABLE_RUNNABLE_SOLUTIONS'),
+    'enable_runnable_solutions' => false,
 
     /*
     |--------------------------------------------------------------------------

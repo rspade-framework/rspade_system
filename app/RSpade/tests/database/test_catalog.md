@@ -185,3 +185,11 @@ schema-derived row above is driven against a framework model on a framework tabl
 when the application has none. ENUM resolution is declared in PHP and needs no schema at all,
 so the enum rows are driven against the two fixture models - which is also the only way to
 prove the per-class memos are not shared.
+
+## Check_Indexes_Advice_Test (php, no DB) - rsx:db:check_indexes recommends only what changes a plan
+
+| ID | Purpose | Input | Expected | Status | Last updated |
+|----|---------|-------|----------|--------|--------------|
+| db-ci-01 | a requirement leading with the primary key needs no index | `(id, site_id)`, `(id)` | null | implemented | 2026-09-25 |
+| db-ci-02 | a trailing primary key is dropped from the requirement | `(site_id, id)`; `(user_id, site_id)` | `(site_id)`; untouched | implemented | 2026-09-25 |
+| db-ci-03 | an existing index serves a requirement by its leading columns | `(thread_id)` vs `(thread_id, created_at)`; `(status_id)` vs `(site_id, status_id)` | served; not served | implemented | 2026-09-25 |

@@ -8,7 +8,7 @@ SYNOPSIS
     Globals - no import, available in every bundle:
 
         if (empty(this.data.rows)) { ... }
-        this.$sid('note').html(htmlbr(record.notes));
+        this.$sid('note').html(nl2br(escape_html(record.notes)));
 
         await sleep(250);
 
@@ -30,8 +30,8 @@ DESCRIPTION
     ALWAYS use these instead of hand-rolling. This is not a style preference:
     debounce() has behavioural guarantees a hand-rolled setTimeout does not,
     hash() ignores the jqhtml `$` reference that would otherwise hash the DOM,
-    and safe_html() is the ONE sanitizer. A local reimplementation diverges
-    silently.
+    and sanitize_rich_text_html() is the ONE sanitizer. A local reimplementation
+    diverges silently.
 
     Several of these names SHADOW a JavaScript builtin or reserved-looking word
     on purpose - isset, empty, count, clone, foreach - because the PHP twin is
@@ -42,9 +42,9 @@ DESCRIPTION
 
     PHP/JS parity list - same name, same semantics in both languages:
 
-        safe_html()  htmlbr()  nl2br()  bytes_to_human()  linkify_text()
-        linkify_html()  snake_to_camel()  camel_to_snake()  safe_string()
-        ucwords()  console_debug()  shouldnt_happen()  urlencode()/urldecode()
+        escape_html()  sanitize_rich_text_html()  nl2br()  bytes_to_human()
+        snake_to_camel()  camel_to_snake()  ucwords()  console_debug()
+        shouldnt_happen()  urlencode()/urldecode()
         json_encode()/json_decode()  full_url_to_short_url()
         short_url_to_full_url()  is_numeric()  is_string()  is_array()
         is_object()  isset()  empty()  count()
@@ -91,27 +91,22 @@ API REFERENCE
 
   Strings and HTML
 
-    html(str)                        escape HTML entities. The default for any
+    escape_html(str)                 escape HTML entities. The default for any
                                      user-supplied string going into markup.
-    safe_html(html_string)           DOMPurify sanitization for content that is
-                                     MEANT to carry markup (WYSIWYG output).
-    nl2br(str)                       newlines to <br>
-    htmlbr(str)                      escape + nl2br - the common pairing for
-                                     plain text with line breaks
+                                     Not jQuery's .html(), which INSERTS markup.
+    sanitize_rich_text_html(html_string)
+                                     DOMPurify sanitization for content that is
+                                     MEANT to carry markup (WYSIWYG output), held
+                                     to the same allow-list as the PHP twin -
+                                     rsx:man sanitize_rich_text_html.
+    nl2br(str)                       newlines to <br>. Does NOT escape: plain
+                                     text is nl2br(escape_html(str)).
     urlencode(str) / urldecode(str)
     json_encode(val) / json_decode(str)
     replace_all(string, search, replace)
     ucwords(input)                   capitalize each word
-    safe_string(string, max_length = 64)
-                                     reduce to an identifier-safe string
     snake_to_camel(string, capitalize_first = false)
     camel_to_snake(string)
-    linkify_text(content, new_window = true)
-                                     escape plain text, then link bare URLs,
-                                     hostnames and email addresses
-    linkify_html(content, new_window = true)
-                                     the same for content that already contains
-                                     markup - existing anchors are left alone
     bytes_to_human(bytes, precision = 2)
                                      "1.5 MB"; "---" for a non-number. The exact
                                      mirror of the PHP function, unit table and
@@ -121,8 +116,9 @@ API REFERENCE
     csv_to_array_trim(str_csv)       split on commas, trimming each element.
                                      Does NOT handle quoted or escaped fields.
 
-    html() vs safe_html() is a SECURITY decision, not a style one: escape by
-    default; sanitize only content that is supposed to be markup.
+    escape_html() vs sanitize_rich_text_html() is a SECURITY decision, not a
+    style one: escape by default; sanitize only content that is supposed to be
+    markup.
 
   Collections
 
@@ -259,10 +255,10 @@ EXAMPLES
     Escaping vs sanitizing:
 
         // The value is TEXT the user typed - escape it, keep the line breaks.
-        this.$sid('notes').html(htmlbr(record.notes));
+        this.$sid('notes').html(nl2br(escape_html(record.notes)));
 
         // The value came from the WYSIWYG editor and is SUPPOSED to be markup.
-        this.$sid('body').html(safe_html(record.body_html));
+        this.$sid('body').html(sanitize_rich_text_html(record.body_html));
 
     Debouncing a search box (decorator form):
 
@@ -314,7 +310,7 @@ RSX VS LARAVEL
 
     RSX provides one set of globals with the SAME NAMES AS THE PHP HELPERS, so a
     developer moving between a controller and a component keeps one vocabulary:
-    htmlbr() escapes and breaks lines in both languages; bytes_to_human()
+    escape_html() escapes in both languages; bytes_to_human()
     produces the same string on both sides; shouldnt_happen() throws in both.
 
     Two consequences to keep in mind:

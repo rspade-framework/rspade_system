@@ -480,34 +480,8 @@ class Task_Instance
             return;
         }
 
-        $this->delete_directory_recursive($this->temp_dir);
+        rmdir_recursive($this->temp_dir);
         $this->temp_dir = null;
-    }
-
-    /**
-     * Recursively delete directory and contents
-     *
-     * @param string $dir Directory path
-     */
-    private function delete_directory_recursive(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-
-        $files = array_diff(scandir($dir), ['.', '..']);
-
-        foreach ($files as $file) {
-            $path = $dir . '/' . $file;
-
-            if (is_dir($path)) {
-                $this->delete_directory_recursive($path);
-            } else {
-                unlink($path);
-            }
-        }
-
-        rmdir($dir);
     }
 
     /**

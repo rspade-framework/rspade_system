@@ -120,6 +120,19 @@ exercised over real nikic/php-parser output without touching the manifest.
 | SEALED-EXCEPTION | `@SEALED-01-EXCEPTION` on the line above the declaration suppresses | php | child with the marker | 0 violations | implemented | 2026-08-09 |
 | SEALED-NO-PROPS | a subclass declaring no properties cannot violate a seal (early out) | php | child with only a method | 0 violations | implemented | 2026-08-09 |
 
+## MODEL-FETCH-SYSTEM-01 - no fetch surface on a system table
+
+`Model_Fetch_System_Table_Rule_Test`, over synthetic fixture files through `evaluate_file()`.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MFS-SYSTEM-TABLE | a fetch surface on a model whose `$table` starts with `_` is flagged | php | fixture with `$table = '_probe_queue'` | 1 violation naming the table | implemented | 2026-09-25 |
+| MFS-APP-TABLE | an ordinary table passes | php | fixture with `$table = 'probe_records'` | 0 violations | implemented | 2026-09-25 |
+| MFS-EXCEPTION | `@MODEL-FETCH-SYSTEM-01-EXCEPTION` in the member docblock suppresses | php | fixture with the marker | 0 violations | implemented | 2026-09-25 |
+| MFS-REAL-UNMARKED | the real `File_Attachment_Model_Abstract` with its two markers removed is flagged twice | php | copy with markers stripped | 2 violations | planned (demonstrated manually 2026-09-25) | 2026-09-25 |
+| MFS-QUEUES | the mail and SMS queue models expose no fetch surface | php | `Auth_Gates::get_surfaces()` | no `Email_Queue_Model::fetch` / `Sms_Queue_Model::fetch` | implemented | 2026-09-25 |
+| MFS-INHERITED-TABLE | a `$table` inherited from an ancestor is resolved through the lineage | php | shell class extending an abstract that declares `$table` | 1 violation | planned | 2026-09-25 |
+
 ## ACTOR-01 - actor model contract
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
@@ -458,3 +471,21 @@ handed to the `evaluate_class()` seam.
 End-to-end (during implementation): planting `protected $casts = ['description' => 'string']`
 on the reference app's `Project_Model` aborted `rsx:manifest:build` with the rule's message;
 removing it built clean. The tree carries zero violations.
+
+REALTIME-AUTH-01, PORTAL-MODEL-FETCH-01 and META-INHERIT-01 lineage handling, and the shared
+method-body locator. The two security rules used to scope by the IMMEDIATE parent, so an
+intermediate base took every class beneath it out of the rule; META-INHERIT-01 now flags that
+comparison in rule files. The realtime fixtures are real classes in `php/` (indexed while the
+suite runs); the portal cases use hand-built metadata over a temp fixture plus a real
+framework model's own record.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RT-LIN-01 | a checked intermediate topic base is clean, and a leaf declaring nothing inherits its verdict | php | `Realtime_Lineage_Fixture_Checked_Topic_Abstract`, `..._Inheriting_Topic` | 0 violations each | implemented (`Realtime_Topic_Lineage_Rule_Test`) | 2026-09-25 |
+| RT-LIN-02 | a leaf overriding a checked base with an open body is flagged | php | `..._Override_Topic` (`return true;`) | 1 high violation | implemented | 2026-09-25 |
+| RT-LIN-03 | an intermediate declaring `$requires_auth = false` is flagged for review; a leaf beneath it is not "missing auth" | php | `..._Public_Topic_Abstract`, `..._Public_Leaf_Topic` | 1 medium / 0 | implemented | 2026-09-25 |
+| PMF-LIN-01 | a Rsx_Site_Model_Abstract child exposing portal_fetch() without portal_can_read() is flagged | php | metadata extends Rsx_Site_Model_Abstract | 1 violation | implemented (`Portal_Model_Fetch_Lineage_Rule_Test`) | 2026-09-25 |
+| PMF-LIN-02 | portal_can_read() on an intermediate base counts; an uncalled one is still flagged in a hand-rolled portal_fetch() | php | metadata extends Portal_Notification_Model_Abstract | 0 / 1 violation | implemented | 2026-09-25 |
+| PMF-LIN-03 | an abstract base is not required to declare portal_can_read(); the real framework model and its base pass | php | `abstract` metadata; Portal_Notification_Model records | 0 violations | implemented | 2026-09-25 |
+| META-INH-01 | `$metadata['extends'] === 'X'` (either operand order) is flagged in a rule file; a fast path followed by `*_is_subclass_of()` is not | php | fixture rule bodies under a `CodeQuality/Rules/` scratch dir | 1 / 1 / 0 / 0 | implemented (`Meta_Inherit_Extends_Comparison_Rule_Test`) | 2026-09-25 |
+| PARSE-BODY-01 | Php_Parser::method_body() finds a reserved-word or by-reference method, is case-insensitive, is not ended early by a brace in a string or comment, and returns null for an abstract or absent method | php | a nowdoc fixture class | bodies / null | implemented (`Php_Parser_Method_Body_Test`) | 2026-09-25 |

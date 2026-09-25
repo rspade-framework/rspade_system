@@ -434,9 +434,11 @@ class Check_Indexes_Command extends Command
         string $type
     ): void {
         // Filter out empty columns
-        $columns = array_filter($columns);
+        $columns = array_values(array_filter($columns));
 
-        if (empty($columns)) {
+        $columns = static::requirement_without_primary_key($columns, $this->_primary_key_columns($table));
+
+        if ($columns === null) {
             return;
         }
 
@@ -621,12 +623,12 @@ class Check_Indexes_Command extends Command
         foreach ($this->recommendations as $table => $recommendations) {
             $existing = $this->_get_table_indexes($table);
 
-            // Find indexes to drop (auto-generated but not in recommendations)
+            // Find indexes to drop (auto-generated and serving no recommendation)
             foreach ($existing as $idx) {
                 if ($this->_is_auto_generated_index($idx['name'])) {
                     $found = false;
                     foreach ($recommendations as $rec) {
-                        if ($this->_indexes_match($idx['columns'], $rec['columns'])) {
+                        if (static::is_served_by_existing($rec['columns'], [$idx])) {
                             $found = true;
                             break;
                         }
@@ -638,17 +640,10 @@ class Check_Indexes_Command extends Command
                 }
             }
 
-            // Find indexes to create (recommended but not existing)
+            // Find indexes to create: a requirement some existing index already serves - the
+            // primary key included - by its leading columns needs nothing new.
             foreach ($recommendations as $rec) {
-                $found = false;
-                foreach ($existing as $idx) {
-                    if ($this->_indexes_match($idx['columns'], $rec['columns'])) {
-                        $found = true;
-                        break;
-                    }
-                }
-
-                if (!$found) {
+                if (!static::is_served_by_existing($rec['columns'], $existing)) {
                     $diff['creates'][$table][] = $rec;
                 }
             }
@@ -666,11 +661,72 @@ class Check_Indexes_Command extends Command
     }
 
     /**
-     * Check if two index column arrays match
+     * A requirement restated with the primary key taken out, or null when the primary key
+     * alone already answers it.
+     *
+     * InnoDB clusters every table on its primary key and appends the primary key to every
+     * secondary index, so:
+     *   - a requirement LEADING with the primary key is a primary-key lookup: nothing to add;
+     *   - a requirement ENDING with the primary key is served by the same index without it:
+     *     (site_id, id) is exactly what an index on (site_id) already is.
+     *
+     * @param string[] $columns The columns a query or relationship filters on, in order.
+     * @param string[] $primary_key The table's primary key columns ([] when unknown).
+     * @return string[]|null
      */
-    protected function _indexes_match(array $cols1, array $cols2): bool
+    public static function requirement_without_primary_key(array $columns, array $primary_key): ?array
     {
-        return $cols1 === $cols2;
+        $columns = array_values($columns);
+
+        if (!empty($primary_key)) {
+            if (array_slice($columns, 0, count($primary_key)) === array_values($primary_key)) {
+                return null;
+            }
+
+            while (count($columns) > count($primary_key)
+                && array_slice($columns, -count($primary_key)) === array_values($primary_key)) {
+                $columns = array_slice($columns, 0, count($columns) - count($primary_key));
+            }
+        }
+
+        return empty($columns) ? null : $columns;
+    }
+
+    /**
+     * Whether some index in $indexes serves a filter on $needed: its leading columns are
+     * exactly $needed, in order. (thread_id) is served by (thread_id, created_at); it is
+     * not served by (site_id, thread_id).
+     *
+     * @param string[] $needed
+     * @param array<int, array{columns: string[]}> $indexes As returned by _get_table_indexes().
+     */
+    public static function is_served_by_existing(array $needed, array $indexes): bool
+    {
+        $needed = array_values($needed);
+
+        foreach ($indexes as $index) {
+            if (array_slice(array_values($index['columns']), 0, count($needed)) === $needed) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * The table's primary key columns, in order; [] when the table has none or is absent.
+     *
+     * @return string[]
+     */
+    protected function _primary_key_columns(string $table): array
+    {
+        foreach ($this->_get_table_indexes($table) as $index) {
+            if ($index['name'] === 'PRIMARY') {
+                return $index['columns'];
+            }
+        }
+
+        return [];
     }
 
     /**

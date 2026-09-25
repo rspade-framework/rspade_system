@@ -18,7 +18,7 @@ class Route_Cache_Command extends Command
      *
      * @var string
      */
-    protected $description = '[RESTRICTED] The route cache is a build output - use rsx:build';
+    protected $description = '[RESTRICTED] RSX has no route cache - Laravel\'s router is not in the request path';
 
     /**
      * Hide this command from artisan list
@@ -36,12 +36,12 @@ class Route_Cache_Command extends Command
     {
         $this->error('This command has been restricted in RSX.');
         $this->line('');
-        $this->info('The route cache is a build output. Build it with:');
-        $this->line('  php artisan rsx:build --force');
+        $this->info('RSX has no route cache. Every request is dispatched by the RSX front');
+        $this->info('controller from the manifest\'s route table, which rsx:build builds;');
+        $this->info('Laravel\'s router is never consulted and holds no routes.');
         $this->line('');
-        $this->comment('rsx:build writes it into build/ along with the manifest, the bundles and');
-        $this->comment('the other Laravel caches.');
-        
+        $this->comment('See: php artisan rsx:man dispatch');
+
         return 1;
     }
 }

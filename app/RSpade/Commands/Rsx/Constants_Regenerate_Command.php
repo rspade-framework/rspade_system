@@ -393,8 +393,12 @@ class Constants_Regenerate_Command extends Command
         $enums = $reflector->getStaticPropertyValue('enums', []);
 
         // ---- @property lines for every base-table column ----
+        // Columns are listed by NAME, never in physical (ORDINAL_POSITION) order: a column added
+        // by ALTER TABLE lands last while the same column restored from a CREATE TABLE sits in
+        // its declared place, so physical order is a property of how the schema was BUILT. By
+        // name, two databases with the same schema generate byte-identical files.
         $properties = [];
-        foreach (Schema::getColumnListing($table) as $column) {
+        foreach (static::__columns_by_name($table) as $column) {
             $php_type = $this->map_database_type_to_php(DB::getSchemaBuilder()->getColumnType($table, $column));
             $properties[] = " * @property {$php_type} \${$column}";
         }
@@ -418,7 +422,8 @@ class Constants_Regenerate_Command extends Command
                     'created_by_id', 'created_by_type', 'updated_by_id', 'updated_by_type',
                     'deleted_by_id', 'deleted_by_type',
                 ];
-                foreach (Schema::getColumnListing($detail_table) as $column) {
+                // Sorted by name within each detail table; the groups keep $detail_tables order.
+                foreach (static::__columns_by_name($detail_table) as $column) {
                     if (in_array($column, $structural, true)) {
                         continue;
                     }
@@ -508,6 +513,19 @@ class Constants_Regenerate_Command extends Command
         file_put_contents_safe($file_path, $new_content);
 
         return true;
+    }
+
+    /**
+     * The table's column names in byte order - a function of the schema's content alone.
+     *
+     * @return string[]
+     */
+    private static function __columns_by_name(string $table): array
+    {
+        $columns = Schema::getColumnListing($table);
+        sort($columns, SORT_STRING);
+
+        return $columns;
     }
 
     protected function map_database_type_to_php(string $db_type): string

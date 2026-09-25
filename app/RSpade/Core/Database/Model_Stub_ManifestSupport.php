@@ -16,7 +16,7 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
  * Model_ManifestSupport because the list says so, and it reads that module's column map.
  *
  * WHAT IT WILL NOT DO IS WRITE FOR NOTHING. Three gates, cheapest first: the newest mtime in
- * the model's LINEAGE, the model metadata hash (recomputed only when a lineage file's hash
+ * the model's LINEAGE (and of this generator), the model metadata hash (recomputed only when a lineage file's hash
  * moved - the reflection behind it is the expensive part), and finally a content compare
  * against the file on disk.
  * A rebuild that changes no model rewrites no stub, so no bundle recompiles on a churned
@@ -51,6 +51,10 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
 
         // Track generated stub files for cleanup
         $generated_stubs = [];
+
+        // This file's own identity, folded into every stub's gates below.
+        $generator_hash = sha1_file(__FILE__);
+        $generator_mtime = filemtime(__FILE__);
 
         // Get all models from the manifest
         $model_entries = Manifest::php_get_extending('Rsx_Model_Abstract');
@@ -109,11 +113,14 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
             // gate says "unchanged" and the browser keeps the old surface.
             $source_hash = Model_Lineage_Fingerprint::lineage_hash($class_name, $manifest_data);
             $columns_hash = md5(json_encode($manifest_data['data']['models'][$class_name]['columns'] ?? []));
-            $inputs_hash = $source_hash . ':' . $columns_hash;
+            // THE GENERATOR IS AN INPUT TOO. A stub is this file's output as much as the
+            // model's, so a change to what this file emits must reach every stub, not only
+            // the ones whose model happened to move.
+            $inputs_hash = $source_hash . ':' . $columns_hash . ':' . $generator_hash;
 
             if (file_exists($stub_full_path)) {
                 // The newest mtime anywhere in the lineage, for the same reason.
-                $source_mtime = Model_Lineage_Fingerprint::lineage_mtime($class_name, $manifest_data);
+                $source_mtime = max(Model_Lineage_Fingerprint::lineage_mtime($class_name, $manifest_data), $generator_mtime);
                 $stub_mtime = filemtime($stub_full_path);
 
                 // Only regenerate if source is newer than stub
@@ -132,7 +139,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
                         $model_metadata_hash = $stored;
                     } else {
                         $model_metadata = static::_get_model_metadata_for_hash($fqcn, $class_name, $manifest_data);
-                        $model_metadata_hash = md5(json_encode($model_metadata));
+                        $model_metadata_hash = md5(json_encode($model_metadata) . $generator_hash);
 
                         if ($model_metadata_hash === ($stored ?? '')) {
                             $needs_regeneration = false;
@@ -158,7 +165,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
                 // Store the metadata hash for future comparisons if not already done
                 if (!isset($manifest_data['data']['files'][$file_path]['model_metadata_hash'])) {
                     $model_metadata = static::_get_model_metadata_for_hash($fqcn, $class_name, $manifest_data);
-                    $manifest_data['data']['files'][$file_path]['model_metadata_hash'] = md5(json_encode($model_metadata));
+                    $manifest_data['data']['files'][$file_path]['model_metadata_hash'] = md5(json_encode($model_metadata) . $generator_hash);
                     $manifest_data['data']['files'][$file_path]['model_metadata_inputs'] = $inputs_hash;
                 }
             }
@@ -643,7 +650,7 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
         $content .= "     * @param {string} column - Column name\n";
         $content .= "     * @returns {Function|null} The text type class\n";
         $content .= "     */\n";
-        $content .= "    static text_type(column) {\n";
+        $content .= "    static text_type_or_null(column) {\n";
         $content .= "        const types = " . json_encode($text_types, JSON_FORCE_OBJECT) . ";\n";
         $content .= "        const name = types[column] ?? null;\n";
         $content .= "        return name === null ? null : Manifest.get_class_by_name(name);\n";
@@ -651,12 +658,12 @@ class Model_Stub_ManifestSupport extends ManifestSupport_Abstract
 
         $content .= "    /**\n";
         $content .= "     * The input component that edits a column, for a dynamic tag:\n";
-        $content .= "     *     <{Project_Model.editor_for('description')} \$name=\"description\" />\n";
+        $content .= "     *     <{Project_Model.editor_component_for('description')} \$name=\"description\" />\n";
         $content .= "     * @param {string} column - Column name\n";
         $content .= "     * @returns {string} Component name\n";
         $content .= "     */\n";
-        $content .= "    static editor_for(column) {\n";
-        $content .= "        const type = this.text_type(column);\n";
+        $content .= "    static editor_component_for(column) {\n";
+        $content .= "        const type = this.text_type_or_null(column);\n";
         $content .= "        if (!type) {\n";
         $content .= "            shouldnt_happen(`\${this.name}.\${column} has no declared text type, so no editor is derivable from it. Name the input component directly.`);\n";
         $content .= "        }\n";

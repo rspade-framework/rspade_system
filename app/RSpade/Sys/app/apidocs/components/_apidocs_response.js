@@ -22,7 +22,7 @@
 function api_render_response_note($target, prefix, message, level) {
     const cls = prefix + '__response-note ' + prefix + '__response-note--' + (level || 'warn');
 
-    $target.html('<div class="' + cls + '">' + html(message) + '</div>');
+    $target.html('<div class="' + cls + '">' + escape_html(message) + '</div>');
 }
 
 /**
@@ -44,7 +44,7 @@ function api_render_response($target, prefix, status, status_text, ms, pretty) {
 
     const parts = [];
     parts.push('<div class="' + prefix + '__response-head">');
-    parts.push('<span class="' + prefix + '__status ' + badge_cls + '">' + status + ' ' + html(status_text || '') + '</span>');
+    parts.push('<span class="' + prefix + '__status ' + badge_cls + '">' + status + ' ' + escape_html(status_text || '') + '</span>');
     parts.push('<span class="' + prefix + '__timing">' + ms + ' ms</span>');
     parts.push('</div>');
     // An insufficient_scope refusal is the one error whose REMEDY is not in the message.
@@ -56,7 +56,7 @@ function api_render_response($target, prefix, status, status_text, ms, pretty) {
 
     if (required !== null) {
         parts.push('<div class="' + prefix + '__response-note ' + prefix + '__response-note--error">'
-            + 'This API key is not scoped for this endpoint. Requires: <code>' + html(required) + '</code>'
+            + 'This API key is not scoped for this endpoint. Requires: <code>' + escape_html(required) + '</code>'
             + '</div>');
     }
 

@@ -165,7 +165,8 @@ THE BUILD
                        (package:discover) is run IN THIS PROCESS rather than
                        through composer's hook, which would spawn a bare
                        artisan that the seal gate refuses mid-build.
-        7. laravel     route, event and VIEW caches, all into build/.
+        7. laravel     event and VIEW caches, into build/ (RSX has no
+                       route cache: Laravel's route table is empty).
                        Precompiling Blade is what lets a served request read
                        the build tree without writing to it; a template that
                        fails to precompile fails the build.

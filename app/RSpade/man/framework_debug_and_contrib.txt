@@ -532,7 +532,7 @@ SUBSYSTEM PRIMERS
         The entry script runs a series of PRE-BOOT handlers, before composer's
         autoloader, so that they still answer when the tree is half-synced.
         In order, after the path resolver (bootstrap/rsx_paths.php) and the
-        page shell the two 503 answers below share
+        page shell the 503 answers below share
         (bootstrap/rsx_preboot_page.php - the pre-boot twin of the framework
         error screen, carrying the same look with no autoloader and no Blade):
 
@@ -542,7 +542,8 @@ SUBSYSTEM PRIMERS
             3  submodule revision sync - 503 when the checked-out framework
                revision is not the one the application recorded
             4  .env heal - reconcile against the tracked defaults file
-            5  first-run screen when the app URL has not been set
+            5  first-run screen when the app URL has not been set (its
+               submit is accepted from a loopback caller only)
             6  the /_ide/service* endpoints - authorised FIRST, then an
                explicit handler allowlist, then exit. Deliberately placed
                BEFORE the maintenance gate so the editor keeps working
@@ -551,8 +552,11 @@ SUBSYSTEM PRIMERS
                constant for the process
             8  the maintenance gate - 503 with Retry-After and an HTML page
                quoting the operator's own reason text
-            9  composer autoload
-           10  bootstrap/app.php, then the HTTP kernel
+            9  the migration gate - 503 "Database migration in progress"
+               (Retry-After 30) while storage/state/.migrating exists, i.e.
+               while migrate runs against a snapshot
+           10  composer autoload
+           11  bootstrap/app.php, then the HTTP kernel
 
         Note what is NOT here, because it is a common wrong assumption:
         static assets and the CSP report endpoint are ordinary framework
@@ -570,7 +574,10 @@ SUBSYSTEM PRIMERS
         Provider order is fixed in the app config, and one provider must
         precede Laravel's router provider in order to swap in the restricted
         router (GET and POST only, resource routes throw). Laravel's own
-        session provider is COMMENTED OUT - RSpade has its own.
+        session provider is COMMENTED OUT - RSpade has its own. Once every
+        provider has booted, the framework provider CLEARS Laravel's route
+        table, so a route a package registers does not exist; the rsx:health
+        row "Laravel Route Table" FAILs when the booted router holds any.
 
         The framework provider's register() merges the framework config, then
         deep-merges the application's config over it. Its boot() enforces the
@@ -583,46 +590,66 @@ SUBSYSTEM PRIMERS
         MAIN::INIT() RUNS IN PROVIDER BOOT - once per process, on artisan
         commands too. It is not per-dispatch and cannot eject anybody.
 
-    The dispatcher is reached through a 404
-        This surprises everyone. The framework registers no route table with
-        Laravel. An exception handler at low priority catches Laravel's
-        NotFoundHttpException and calls Dispatcher::dispatch(). So an RSX
-        action always runs INSIDE Laravel's exception handling, which is why
-        an abort() inside an action is caught and converted explicitly -
-        otherwise it would throw during handling of the first exception and
-        surface as a 500. Under the Playwright test header a different
-        handler dispatches RSX at a much higher priority instead, so the
-        usual bootstrapper never fires; that is worth knowing before you set
-        a breakpoint while debugging through the render harness.
+    One front controller, and no Laravel router
+        App\Http\Kernel's router destination is Rsx_Front_Controller::
+        handle(): after the global middleware, every request goes there and
+        Laravel's router is never consulted, so no Laravel route (a vendor
+        package's included) is reachable. The front controller refuses to be
+        entered twice in one request, classifies the request ONCE
+        (Rsx_Request_Channel: ASSET, API, AJAX, PAGE, plus the staff/portal
+        realm), runs the preamble, hands the channel to its pipeline, and
+        catches any Throwable into that channel's error policy - the
+        exception chain, handed the failure exactly once, or plain text for a
+        build artifact. Nothing that renders an error dispatches.
 
-    Dispatcher::dispatch(), in order
-            revision/transaction state reset for this request
-            Manifest::init()
-            route-attribute validation (non-production)
-            hostname guard, first-user setup
-            PORTAL FORK -> Portal_Dispatcher, returns
-            /api/vN FORK -> Api_Dispatcher, returns (before assets, before
-              the FPC marker, so an API response never gets either)
+    Rsx_Front_Controller::handle(), in order
+            re-entrancy guard
+            classification (read afterwards by Rsx_Portal::is_portal_request()
+              and by the Ajax/API exception handlers)
+            revision/transaction state reset for this request (the API
+              declares its own)
+            Manifest::init(), hostname guard
+            ASSET -> AssetHandler::serve_build_artifact() (a miss is a
+              plain-text 404, never a route)
+            API -> Api_Dispatcher (the portal's dedicated domain answers
+              404 not_found; before the FPC marker, so an API response never
+              gets it)
+            first-user setup (AJAX and PAGE only)
+            AJAX and PAGE, either realm -> Dispatcher
+
+    Dispatcher::dispatch(), in order (one pipeline, parameterized by a
+    realm descriptor: route table, Main hooks, site membership, FPC,
+    default route, dev-auth header, CSP realm)
+            Manifest::init() (idempotent)
+            portal realm: Portal_Main::init(), once per process - the
+              documented place to declare the portal's site
             CSRF enforcement, POST only
-            development signed-identity header (after CSRF, before gates,
-              so a harness identity is visible to #[Auth])
-            asset handler - and a MISS FALLS THROUGH to the route table,
-              which is what lets a route serve a generated file at a
+            development signed-identity header for the realm (after CSRF,
+              before gates, so a harness identity is visible to #[Auth])
+            AJAX channel -> Ajax::handle_batch_request() for /_ajax/_batch,
+              Ajax::handle_browser_request() for /_ajax/<Controller>/<action>,
+              the not_found envelope for any other /_ajax/ path
+            public-file handler - and a MISS FALLS THROUGH to the route
+              table, which is what lets a route serve a generated file at a
               natural filename
             HEAD rewritten to GET, original method remembered
             route lookup
-            no match -> the default controller/action pattern, then
-              Main::pre_dispatch, then Main::unhandled_route, then the
-              404 error screen. It is never Laravel's 404.
+            no match -> the default controller/action pattern (staff),
+              then the realm's Main::pre_dispatch, then its
+              Main::unhandled_route, then the 404 error screen. It is never
+              Laravel's 404.
             parameter merge: extra params, then query string, then route
               params
-            full-page-cache eligibility
+            full-page-cache eligibility (staff)
             handler class loaded
+            site membership (staff)
             #[Auth] GATES EVALUATED
             Main::pre_dispatch, then the controller's own pre_dispatch -
               neither wrapped in a try/catch, because a throwing
               pre_dispatch is a denial and must not be swallowed
-            the action
+            the action - an abort() or a thrown coded exception from
+              pre_dispatch, the action or the response build is answered
+              at this seam by Dispatcher::page_failure_response()
             the post-dispatch action event
             response build, cache marker, transform
 
@@ -631,15 +658,13 @@ SUBSYSTEM PRIMERS
         pre_dispatch performs no authorization anywhere - by the time it
         runs, authorization has already happened.
 
-    The parallel portal dispatcher
-        Same shape, different table and different realm. Its distinguishing
-        steps are a once-per-process Portal_Main::init() - the documented
-        place to declare the portal's site - and a URL normalisation that
-        strips the portal prefix before matching. CSRF is the identical call
-        into the identical implementation. Gate evaluation names the portal
-        realm explicitly, and a denial renders the portal-flavoured screen.
-        One ordering difference: the staff dispatcher runs its development
-        identity header AFTER CSRF, the portal one BEFORE.
+    The portal realm
+        The same pipeline with the portal descriptor: the portal route table
+        matched with the prefix stripped (Rsx_Portal::strip_prefix()),
+        Portal_Main's hooks, no site membership, no FPC, no default route,
+        the portal identity header, and the portal CSP. Gate evaluation
+        names the portal realm, and a denial renders the portal-flavoured
+        screen.
 
     References
       Man pages: dispatch, routing, controller, auth_gates, csrf, portal,
@@ -647,8 +672,9 @@ SUBSYSTEM PRIMERS
       Colocated: Core/CLAUDE.md, Core/Portal/CLAUDE.md.
       Source: system/public/index.php, system/bootstrap/,
       Core/Providers/Rsx_Framework_Provider.php,
-      Core/Providers/Rsx_Dispatch_Bootstrapper_Handler.php,
-      Core/Dispatch/Dispatcher.php, Core/Portal/Portal_Dispatcher.php,
+      Core/Dispatch/Rsx_Front_Controller.php,
+      Core/Dispatch/Rsx_Request_Channel.php,
+      Core/Dispatch/Dispatcher.php,
       Core/Base/Main_Abstract.php, system/app/Http/Kernel.php,
       system/config/app.php, system/bin/fpc-proxy.js,
       resource/docker/nginx/site.conf.
@@ -886,12 +912,14 @@ SUBSYSTEM PRIMERS
     which has already happened by then.
 
     THE GATES. #[Auth] is mandatory on every dispatchable surface, and
-    CLOSED BY DEFAULT IS A MANIFEST-BUILD RULE, NOT A RUNTIME ONE. The build
-    fails with a per-violation worklist when a surface has no gate; the
-    dispatcher itself simply skips evaluation when the gate list is empty.
-    That distinction matters when you are debugging: a surface reaching an
-    action ungated means the INDEX says it has no gates, which is a build
-    problem, not a dispatcher problem.
+    CLOSED BY DEFAULT HOLDS AT BUILD TIME AND AT RUN TIME. The build fails
+    with a per-violation worklist when a surface has no gate, or when a row
+    names a surface the auth index does not hold; every seam resolves its
+    gates through Auth_Gates::surface_gates(), which refuses a missing or
+    gateless surface with shouldnt_happen(). When debugging, a request dying
+    with "is being dispatched, but the auth index has no entry for it" means
+    the build and the request disagree - a framework defect in how the index
+    was built, never a gate to add at the call site.
 
     Evaluation happens at six seams, one per transport, and each calls into
     Auth_Gates:
@@ -974,24 +1002,33 @@ SUBSYSTEM PRIMERS
 
     THE URLS, all POST:
 
-        /_ajax/:controller/:action     an endpoint
+        /_ajax/<Controller>/<action>   an endpoint
         /_ajax/_batch                  the batching transport
         /_ajax/Orm_Controller/fetch    model fetch
         /_ajax/Orm_Controller/fetch_relationship
         /_upload                       the browser upload transport
         /_csp-report                   CSP violation reports
 
-    Each has a portal twin declared as a second attribute on the SAME
-    handler, and the client rebases the path onto the portal prefix. The
-    transport controller itself is declared public: authorization happens one
-    level down, on the target endpoint.
+    The /_ajax/ paths are the AJAX channel and have no route row: the
+    Dispatcher hands /_ajax/_batch to Ajax::handle_batch_request() and
+    /_ajax/<Controller>/<action> to Ajax::handle_browser_request(), in the
+    request's realm, and answers any other /_ajax/ path with the not_found
+    envelope. /_upload and /_csp-report are routes, the upload with a portal
+    twin declared as a second attribute on the SAME handler. The client
+    rebases every path onto the portal prefix on a portal page.
+    Authorization happens on the target endpoint.
 
-    THE SERVER PATH, in order: mark the response mode, find the class by
-    basename in the manifest, verify it is a controller, verify the method
-    carries the attribute, reset the revision/transaction state for this
-    call, EVALUATE THE GATES, extract parameters, run the controller's
-    pre_dispatch, call the endpoint, fire the post-dispatch event, branch on
-    a special response, and format.
+    THE SERVER PATH is ONE core, Ajax::execute(), run by the direct call,
+    by each batched call (on the real request, with that call's params as
+    its input) and by Ajax::internal(): find the class by basename in the
+    manifest, verify it is a controller and the method carries the
+    attribute, EVALUATE THE REALM AND #[Auth] GATES, hydrate text
+    envelopes, open a fresh Turnstile latch and revision transaction for
+    the call, run the controller's pre_dispatch, call the endpoint, and fire
+    the post-dispatch event. Ajax::call_envelope() then builds the envelope
+    from the result, or from a thrown failure through
+    Ajax::error_envelope() - the same function the Ajax exception handler
+    uses.
 
     EVERY RESPONSE IS HTTP 200, success and failure alike, because the
     envelope carries the outcome:
@@ -1001,8 +1038,8 @@ SUBSYSTEM PRIMERS
         {_success:false, error_code, reason, metadata, _server_time,
          _user_timezone, [console_debug], [flash_alerts]}
 
-    The one exception is a FATAL, which throws and is rendered by the Ajax
-    exception handler. Note the wire field names: reason and metadata - not
+    A FATAL is an envelope too (error_code "fatal", with an error block
+    whose detail only a developer caller sees). Note the wire field names: reason and metadata - not
     message and errors. The error codes are validation, not_found,
     unauthorized, auth_required, fatal and generic, plus two the client
     raises on its own (a server error for any 5xx, a network error for a
@@ -1051,8 +1088,7 @@ SUBSYSTEM PRIMERS
       Man pages: ajax_error_handling, model_fetch, controller, csrf,
       external_api, routing.
       Colocated: Core/Ajax/CLAUDE.md.
-      Source: Core/Ajax/ (Ajax.php, Ajax_Batch_Controller),
-      Core/Dispatch/Ajax_Endpoint_Controller.php,
+      Source: Core/Ajax/Ajax.php, Core/Dispatch/Dispatcher.php,
       Core/Controller/Controller_BundleIntegration.php,
       Core/Database/Orm_Controller.php, Core/Js/Ajax.js,
       Core/Js/Rsx_Jq_Helpers.js, Core/Js/Rsx_Js_Model.js,
@@ -1128,7 +1164,7 @@ SUBSYSTEM PRIMERS
       Colocated: Core/Portal/CLAUDE.md.
       Source: Core/Session/ (Session.php, Rsx_Csrf.php),
       Core/Portal/ (Portal_Session.php, Rsx_Portal.php,
-      Portal_Dispatcher.php, Portal_Main_Abstract.php),
+      Portal_Main_Abstract.php),
       Core/Auth/ (RsxAuth.php, Login_Throttle.php, Login_History.php),
       Core/Js/Rsx_Csrf.js.
       Skills: rspade:session-auth, rspade:portal, rspade:permissions-acl.
@@ -2346,10 +2382,14 @@ SUBSYSTEM PRIMERS
     chain and is returned verbatim - which is how the CSRF rejection and an
     explicit abort-with-response reach the client unembellished. The
     registered contexts, in priority order, are CLI, Ajax, API, the render
-    harness, the RSX dispatch bootstrapper, and finally the web renderer.
+    harness, and finally the web renderer. No context dispatches: the front
+    controller hands each in-dispatch failure to the chain exactly once, and
+    the Ajax and API contexts answer by the request's classified channel.
 
-        CLI            ANSI text to stderr, then exit 1. It returns no
-                       response, so nothing downstream runs. Class, relative
+        CLI            ANSI text to stderr, then exit 1 - except for a
+                       failure inside an in-process front-controller
+                       dispatch, which the channel's own context renders.
+                       It returns no response, so nothing downstream runs. Class, relative
                        file and line, wrapped message, the last ten frames,
                        and the console-debug block outside production.
         Ajax           HTTP 200 ALWAYS. Strict production returns a generic
@@ -2357,11 +2397,11 @@ SUBSYSTEM PRIMERS
                        debug add all of them plus the debug output.
         API            HTTP 500 with a coded error object; the message is
                        generic in production.
-        Web            A 404 or 403 renders the themed screen; ANY OTHER
-                       HTTP STATUS RETURNS NULL and keeps Laravel's own view.
-                       In development with the debug flag it also returns
-                       null, so the rich developer error page renders.
-                       Otherwise the themed fatal screen.
+        Web            Every HTTP status renders its themed screen (a
+                       non-HTML request gets the bare status and one line).
+                       In development with the debug flag, for a developer
+                       caller, it returns null, so the rich developer error
+                       page renders. Otherwise the themed fatal screen.
 
     The error screens render through a standalone view with NO BUNDLE, NO
     MANIFEST AND NO SPA - deliberately, so that the error screen survives a

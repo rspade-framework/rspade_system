@@ -204,7 +204,7 @@ CREATE TABLE `_flash_alerts` (
     `updated_by_type` BIGINT DEFAULT NULL,
     `updated_at` TIMESTAMP(3) NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`id`),
-    KEY `idx_session_id` (`session_id`),
+    KEY `idx_flash_alerts_session` (`session_id`, `is_portal`, `created_at`),
     KEY `created_at` (`created_at`),
     KEY `updated_at` (`updated_at`),
     CONSTRAINT `flash_alerts_session_fk` FOREIGN KEY (`session_id`)
@@ -215,9 +215,9 @@ CREATE TABLE `_flash_alerts` (
 `session_id` points at `_sessions` - one row per browser, shared by both experiences.
 This is the only session FK in the schema, and it is correct: a flash alert genuinely
 dies with its session. `is_portal` is the experience discriminator the shared session
-cannot supply. No index over the pair: `idx_session_id` already narrows to one session,
-whose rows are capped at `rsx.flash.max_alerts_per_session` per experience and live at
-most a minute.
+cannot supply. `idx_flash_alerts_session` is the shape of every read - `session_id = ?
+AND is_portal = ? ORDER BY created_at`, on every page render and every Ajax response -
+and its leading `session_id` is what the foreign key binds to.
 
 **Model:** `Flash_Alert_Model` with type_id enum definition. No `$realtime`, no
 lifecycle-hook overrides - a bulk write on this model is one raw statement by design.

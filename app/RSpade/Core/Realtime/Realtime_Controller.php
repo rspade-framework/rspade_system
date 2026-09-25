@@ -43,6 +43,7 @@ class Realtime_Controller extends Rsx_Controller_Abstract
      * Get a connection token for WebSocket authentication
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function get_connection_token(Request $request, array $params = [])
     {
         return ['token' => Realtime::connection_token()];
@@ -56,6 +57,7 @@ class Realtime_Controller extends Rsx_Controller_Abstract
      *   filter - Optional filter object (e.g., {id: 5})
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function get_subscribe_token(Request $request, array $params = [])
     {
         $topic = $params['topic'] ?? null;

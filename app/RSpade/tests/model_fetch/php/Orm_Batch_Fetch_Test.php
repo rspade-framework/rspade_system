@@ -292,6 +292,37 @@ class Orm_Batch_Fetch_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * A MorphTo relationship resolves the stored type-ref INTEGER to its class through the
+     * morph map and serves the related record through that model's own fetch(); a
+     * soft-deleted subject is absent (the related model's scopes apply).
+     */
+    public static function test_relationship_morph_to_resolves_the_type_ref()
+    {
+        $parent_id = static::__make_parents(1)[0];
+
+        $child = new Model_Fetch_Child_Fixture_Model();
+        $child->parent_fixture_id = $parent_id;
+        $child->subject()->associate(Model_Fetch_Parent_Fixture_Model::find($parent_id));
+        $child->save();
+
+        $raw_type = DB::table(self::CHILD_TABLE)->where('id', $child->id)->value('subject_type');
+        static::__assert_true(is_numeric($raw_type), 'the stored subject_type is a type-ref integer');
+
+        $call = fn () => Orm_Controller::fetch_relationship(static::__ajax_request(), [
+            'model' => 'Model_Fetch_Child_Fixture_Model',
+            'id' => (int) $child->id,
+            'relationship' => 'subject',
+        ]);
+
+        $result = $call();
+        static::__assert_instance_of(Model_Fetch_Parent_Fixture_Model::class, $result);
+        static::__assert_equals($parent_id, (int) $result->id);
+
+        Model_Fetch_Parent_Fixture_Model::find($parent_id)->delete();
+        static::__assert_null($call(), 'a soft-deleted subject is absent');
+    }
+
+    /**
      * The plural relationship branch preloads too: its related ids go through the same
      * one-query-then-fetch-each path, and the per-id lookups are eliminated.
      *

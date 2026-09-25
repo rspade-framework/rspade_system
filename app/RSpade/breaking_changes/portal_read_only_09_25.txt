@@ -1,0 +1,30 @@
+VIEW AS CLIENT IS READ-ONLY BY DEFAULT
+Date: 2026-09-25
+
+IF YOU DO NOTHING: while a staff user is viewing the portal as a client, every
+    portal Ajax endpoint of yours that is not marked
+    #[Portal_Impersonation_Readable] is refused ("This is a read-only session;
+    changes are disabled"), so screens that load through it stay empty.
+
+SUMMARY
+    During "View as Client" impersonation the framework refuses every
+    portal-realm Ajax endpoint unless it carries #[Portal_Impersonation_Readable].
+    Forgetting the mark fails safe: the endpoint is refused, never allowed to
+    write. The per-endpoint Portal_Permission::is_read_only() guards the
+    template carried are gone - the framework now refuses before the endpoint
+    runs. A #[Portal_Route] page that handles a POST still guards itself.
+
+    Contract: rsx:man portal (VIEW AS CLIENT)
+
+ACTION REQUIRED - PORTAL ENDPOINTS
+    List your portal Ajax endpoints:
+        grep -rn "Ajax_Endpoint" rsx/portal/
+    Add #[Portal_Impersonation_Readable] to each one that only READS (lists,
+    gets, counts, feeds). Leave writes unmarked. Remove your own
+    is_read_only() refusals from endpoints the framework now covers.
+
+        system/app/RSpade/resource/reference_app/portal/workspaces/portal_workspaces_controller.php
+
+VERIFICATION
+    Start "View as Client" on a contact: every portal screen renders, and a write
+    (mark all read, post a message) is refused.

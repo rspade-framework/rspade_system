@@ -45,7 +45,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
 
     public static function test_from_untrusted_applies_the_type_filter()
     {
-        $value = Text_Fixture_Loud_Text::from_untrusted('  hello  ');
+        $value = Text_Fixture_Loud_Text::from_untrusted_encoded('  hello  ');
 
         static::__assert_equals('HELLO', $value->to_storage(), 'the type filter ran exactly once');
     }
@@ -66,7 +66,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
         static::__assert_throws(\LogicException::class, fn () => str_contains($value, 'h'));
 
         // The named methods are how you say what you mean.
-        static::__assert_equals('hi', $value->to_text());
+        static::__assert_equals('hi', $value->to_plain_text());
     }
 
     // ------------------------------------------------------------------
@@ -77,7 +77,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
     {
         // The claimed type is a class that does NOT exist. If hydration resolved names,
         // this would fail here; the whole point is that it cannot, because it never tries.
-        $params = Rsx_Text_Abstract::hydrate_request_value([
+        $params = Rsx_Text_Abstract::wrap_request_envelopes([
             'body' => ['__TEXT' => 'No_Such_Class_Anywhere', 'raw' => 'x', 'empty' => false],
         ]);
 
@@ -87,7 +87,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
 
     public static function test_request_wrapper_refuses_to_be_a_string()
     {
-        $params = Rsx_Text_Abstract::hydrate_request_value([
+        $params = Rsx_Text_Abstract::wrap_request_envelopes([
             'body' => ['__TEXT' => 'Text_Fixture_Loud_Text', 'raw' => 'shout', 'empty' => false],
         ]);
 
@@ -97,7 +97,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
 
     public static function test_request_wrapper_answers_emptiness_from_the_client_after_its_own_checks()
     {
-        $wrap = fn ($raw, $empty) => Rsx_Text_Abstract::hydrate_request_value([
+        $wrap = fn ($raw, $empty) => Rsx_Text_Abstract::wrap_request_envelopes([
             'v' => ['__TEXT' => 'Text_Fixture_Plain_Text', 'raw' => $raw, 'empty' => $empty],
         ])['v'];
 
@@ -109,14 +109,14 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
         static::__assert_false($wrap('<p>x</p>', false)->is_empty());
 
         // A missing flag means not-empty; the flag can only ADD emptiness.
-        static::__assert_false(Rsx_Text_Abstract::hydrate_request_value([
+        static::__assert_false(Rsx_Text_Abstract::wrap_request_envelopes([
             'v' => ['__TEXT' => 'Text_Fixture_Plain_Text', 'raw' => 'x'],
         ])['v']->is_empty());
     }
 
     public static function test_request_wrapper_echoes_the_claim_back_unresolved()
     {
-        $params = Rsx_Text_Abstract::hydrate_request_value([
+        $params = Rsx_Text_Abstract::wrap_request_envelopes([
             'v' => ['__TEXT' => 'Whatever_The_Client_Said', 'raw' => 'r', 'empty' => false],
         ]);
 
@@ -132,7 +132,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
 
     public static function test_from_request_resolves_a_wrapper_through_the_named_types_filter()
     {
-        $params = Rsx_Text_Abstract::hydrate_request_value([
+        $params = Rsx_Text_Abstract::wrap_request_envelopes([
             'body' => ['__TEXT' => 'Text_Fixture_Loud_Text', 'raw' => '  shout  ', 'empty' => false],
         ]);
 
@@ -144,7 +144,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
 
     public static function test_from_request_refuses_a_wrapper_whose_claim_disagrees()
     {
-        $params = Rsx_Text_Abstract::hydrate_request_value([
+        $params = Rsx_Text_Abstract::wrap_request_envelopes([
             'body' => ['__TEXT' => 'Text_Fixture_Plain_Text', 'raw' => 'x', 'empty' => false],
         ]);
 
@@ -177,17 +177,17 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
 
     public static function test_from_string_escapes_then_filters()
     {
-        // A bare string is PLAIN TEXT: escape_string() converts it into the encoding and
-        // filter_set() still runs on the result, so the plain-text door cannot skip the filter.
-        static::__assert_equals('[  HELLO  ]', Text_Fixture_Loud_Text::from_string('  hello  ')->to_storage());
-        static::__assert_equals('<p>a &lt;b&gt; c</p>', Text_Fixture_Wrapped_Text::from_string('a <b> c')->to_storage());
+        // A bare string is PLAIN TEXT: encode_plain_text() converts it into the encoding and
+        // sanitize_encoded() still runs on the result, so the plain-text door cannot skip the filter.
+        static::__assert_equals('[  HELLO  ]', Text_Fixture_Loud_Text::from_plain_text('  hello  ')->to_storage());
+        static::__assert_equals('<p>a &lt;b&gt; c</p>', Text_Fixture_Wrapped_Text::from_plain_text('a <b> c')->to_storage());
     }
 
     public static function test_a_type_is_complete_with_only_its_filter()
     {
-        // filter_set() and escape_string() are the requirements. A type declaring nothing else can be
+        // sanitize_encoded() and encode_plain_text() are the requirements. A type declaring nothing else can be
         // constructed, stored, and asked the one question every endpoint asks.
-        $value = Text_Fixture_Bare_Text::from_untrusted('  content  ');
+        $value = Text_Fixture_Bare_Text::from_untrusted_encoded('  content  ');
 
         static::__assert_equals('  content  ', $value->to_storage());
         static::__assert_false($value->is_empty());
@@ -198,10 +198,10 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
     {
         $value = Text_Fixture_Bare_Text::from_storage('x');
 
-        // to_text() and to_html() are CONVENTIONS - names application code can rely on
+        // to_plain_text() and to_html() are CONVENTIONS - names application code can rely on
         // when a type chooses to offer them - not requirements. Asking a type that never
         // defined one must fail loudly, never guess a rendition.
-        static::__assert_throws(\LogicException::class, fn () => $value->to_text(), 'does not define to_text()');
+        static::__assert_throws(\LogicException::class, fn () => $value->to_plain_text(), 'does not define to_plain_text()');
         static::__assert_throws(\LogicException::class, fn () => $value->to_html(), 'does not define to_html()');
     }
 
@@ -230,7 +230,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
 
     public static function test_request_hydration_wraps_recursively_and_leaves_everything_else_alone()
     {
-        $params = Rsx_Text_Abstract::hydrate_request_value([
+        $params = Rsx_Text_Abstract::wrap_request_envelopes([
             'name' => 'an ordinary string',
             'body' => ['__TEXT' => 'Text_Fixture_Loud_Text', 'raw' => 'shout'],
             'nested' => [['__TEXT' => 'Text_Fixture_Plain_Text', 'raw' => 'deep']],
@@ -246,7 +246,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
 
     public static function test_request_hydration_passes_a_null_raw_through()
     {
-        $params = Rsx_Text_Abstract::hydrate_request_value([
+        $params = Rsx_Text_Abstract::wrap_request_envelopes([
             'body' => ['__TEXT' => 'Text_Fixture_Plain_Text', 'raw' => null],
         ]);
 
@@ -258,7 +258,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
         static::__assert_throws(
             \InvalidArgumentException::class,
             function () {
-                Rsx_Text_Abstract::hydrate_request_value([
+                Rsx_Text_Abstract::wrap_request_envelopes([
                     'body' => ['__TEXT' => 'Text_Fixture_Plain_Text', 'raw' => ['nested' => 'object']],
                 ]);
             },
@@ -281,7 +281,7 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
         foreach ($malformed as $envelope) {
             static::__assert_throws(
                 \InvalidArgumentException::class,
-                fn () => Rsx_Text_Abstract::hydrate_request_value(['body' => $envelope])
+                fn () => Rsx_Text_Abstract::wrap_request_envelopes(['body' => $envelope])
             );
         }
     }
@@ -289,29 +289,29 @@ class Text_Value_Contract_Test extends Rsx_Test_Abstract
     public static function test_a_request_string_is_an_envelope_only_when_it_is_a_json_object_with_a_text_key()
     {
         $envelope = json_encode(['__TEXT' => 'Text_Fixture_Loud_Text', 'raw' => '<b>x</b>', 'empty' => false]);
-        $wrapped = Rsx_Text_Abstract::hydrate_request_string($envelope);
+        $wrapped = Rsx_Text_Abstract::wrap_api_param_envelope($envelope);
 
         static::__assert_instance_of(Rsx_Text_Request_Value::class, $wrapped);
         static::__assert_equals('<b>x</b>', $wrapped->_raw(), 'unfiltered until it reaches a column');
 
         // Each of these is an ordinary string - plain text to a declared column.
         foreach (['plain', '{hello}', '{"raw": "x"}', ' ' . $envelope, '[' . $envelope . ']'] as $ordinary) {
-            static::__assert_equals($ordinary, Rsx_Text_Abstract::hydrate_request_string($ordinary));
+            static::__assert_equals($ordinary, Rsx_Text_Abstract::wrap_api_param_envelope($ordinary));
         }
 
-        static::__assert_null(Rsx_Text_Abstract::hydrate_request_string('{"__TEXT": "Text_Fixture_Plain_Text", "raw": null}'));
+        static::__assert_null(Rsx_Text_Abstract::wrap_api_param_envelope('{"__TEXT": "Text_Fixture_Plain_Text", "raw": null}'));
     }
 
     public static function test_a_request_string_identified_as_an_envelope_faces_the_ajax_shape_check()
     {
         static::__assert_throws(
             \InvalidArgumentException::class,
-            fn () => Rsx_Text_Abstract::hydrate_request_string('{"__TEXT": "Text_Fixture_Plain_Text", "raw": ["x"]}'),
+            fn () => Rsx_Text_Abstract::wrap_api_param_envelope('{"__TEXT": "Text_Fixture_Plain_Text", "raw": ["x"]}'),
             'non-string raw form'
         );
         static::__assert_throws(
             \InvalidArgumentException::class,
-            fn () => Rsx_Text_Abstract::hydrate_request_string('{"__TEXT": "Text_Fixture_Plain_Text"}'),
+            fn () => Rsx_Text_Abstract::wrap_api_param_envelope('{"__TEXT": "Text_Fixture_Plain_Text"}'),
             'no raw form'
         );
     }

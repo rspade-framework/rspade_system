@@ -187,7 +187,7 @@ static on_app_modules_define() {
   / `prompt` are a recommended contract - `rsx:man form_conventions`, QUESTIONS.
 - A non-form caller sees `error.code === Ajax.ERROR_QUESTION` with `metadata.key` /
   `metadata.question`, and may run the same handler with `Rsx_Form.ask()`. In PHP an
-  in-process `Ajax::call()` raises `AjaxQuestionException`.
+  in-process `Ajax::internal()` raises `AjaxQuestionException`.
 
 Worked example: `system/app/RSpade/resource/reference_app/lib/modal/modal.js` and
 `.../reference_app/app/frontend/contacts/contacts_controller.php`.

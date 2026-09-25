@@ -610,7 +610,11 @@ abstract class Rsx_Bundle_Abstract
         // Pretty print rsxapp for browser-devtools readability in development and
         // debug (both non-production); compact in strict production (smaller payload,
         // and no need to expose a neatly-indented app-state blob to end users).
-        $rsxapp_json_flags = JSON_UNESCAPED_SLASHES;
+        //
+        // The HEX flags are what make it safe to print inside <script>: params carries the
+        // query string, so a value like `</script><form ...>` would otherwise close the
+        // element and inject markup. Encoded as \u003C etc., it stays a JS string.
+        $rsxapp_json_flags = JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT;
         if (!Rsx::is_production()) {
             $rsxapp_json_flags |= JSON_PRETTY_PRINT;
         }

@@ -109,13 +109,14 @@ never reads a string literal.
 
 Every panel surface declares `#[Auth('is_sysadmin')]` (JS actions:
 `@auth('is_sysadmin')`). `is_sysadmin` is a framework `#[Auth_Check]` on
-`Permission_Abstract`, staff realm, and its body today is
-`Session::is_logged_in()` - the loosest useful default.
+`Permission_Abstract`, staff realm, and its body is `Session::is_developer()`
+- developers only (`login_users.is_developer`, set by hand); any other signed-in
+identity gets a 403.
 
-To narrow it there is exactly one documented mechanism: the check is
+To change the audience there is exactly one documented mechanism: the check is
 `#[Replaceable]`, so an application that CLASS-OVERRIDES the permission class
 (a same-named class in `rsx/`, copy-and-replace - `rsx:man class_override`)
-redeclares `is_sysadmin()` with a tighter body, and every
+redeclares `is_sysadmin()` with its own body, and every
 `#[Auth('is_sysadmin')]` surface follows with no call-site change. There is no
 config key, registry or hook. If that shape does not fit, it is a framework
 change request, not a local workaround.

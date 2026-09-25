@@ -9,10 +9,9 @@ namespace App\RSpade\Core\Debug;
 
 use Illuminate\Http\Request;
 use Log;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
 use App\RSpade\Core\Debug\Debugger;
-use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
 use App\RSpade\Core\Rsx;
 
@@ -27,7 +26,9 @@ use App\RSpade\Core\Rsx;
  * - Error message, file, and line
  * - Stack trace (last 10 calls)
  * - Console debug messages (if enabled)
- * - Special 404 handling (tries RSX dispatch first)
+ *
+ * A coded HTTP outcome (HttpExceptionInterface) is declined, so the harness sees the
+ * same status page a browser gets. This handler never dispatches.
  *
  * SECURITY: this handler answers ONLY the local harness - development mode AND a
  * loopback caller AND the X-Playwright-Test marker. The marker is unsigned, so it is
@@ -72,27 +73,11 @@ class Playwright_Exception_Handler extends Rsx_Exception_Handler_Abstract
         Log::debug('Exception handler triggered for Playwright test, exception: ' . get_class($e));
         console_debug('DISPATCH', 'Exception handler triggered for Playwright test, exception:', get_class($e));
 
-        // Special handling for 404s - check RSX routes first
-        if ($e instanceof NotFoundHttpException) {
-            // Get the requested path
-            $path = '/' . ltrim($request->path(), '/');
-
-            Log::debug("Exception handler: attempting RSX dispatch for path: $path");
-            console_debug('DISPATCH', 'Exception handler: attempting RSX dispatch for', $path);
-
-            // Try RSX dispatch
-            $response = Dispatcher::dispatch($path, $request->method(), [], $request);
-
-            Log::debug('RSX dispatch returned: ' . ($response ? 'response' : 'null'));
-
-            // If RSX found a route, return the response
-            if ($response !== null) {
-                return $response;
-            }
-
-            // No RSX route found - return 404 as plain text
-            return response('404 Not Found', 404)
-                ->header('Content-Type', 'text/plain');
+        // A coded outcome (abort(404), abort(403), a thrown AjaxUnauthorizedException) is
+        // not a crash: the harness sees the page a browser would, through the page
+        // channel's own policy.
+        if ($e instanceof HttpExceptionInterface || \App\RSpade\Core\Dispatch\Dispatcher::coded_failure($e) !== null) {
+            return null;
         }
 
         // Build error output

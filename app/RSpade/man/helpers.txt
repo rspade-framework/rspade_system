@@ -10,7 +10,7 @@ SYNOPSIS
         return response_form_error('Validation failed', ['email' => 'Required']);
 
         $host = array_get($config, 'services.mail.host', 'localhost');
-        $safe = safe_html($params['body']);
+        $text = escape_html($user->display_name);
         $size = bytes_to_human($file->size);
 
         exec_safe('mysqldump ' . escapeshellarg($db), $output, $exit);
@@ -33,9 +33,9 @@ DESCRIPTION
 
     Many of these functions exist in BOTH languages with matching semantics, so
     a value formatted server-side and the same value formatted client-side read
-    identically: safe_html(), htmlbr(), bytes_to_human(), linkify_text(),
-    linkify_html(), snake_to_camel(), camel_to_snake(), safe_string(),
-    console_debug(), full_url_to_short_url(), short_url_to_full_url(),
+    identically: escape_html(), sanitize_rich_text_html(), bytes_to_human(),
+    snake_to_camel(), camel_to_snake(), console_debug(),
+    full_url_to_short_url(), short_url_to_full_url(),
     json_encode()/json_decode() (JS only, wrapping the natives) and
     shouldnt_happen(). See rsx:man js_functions for the JavaScript side.
 
@@ -52,7 +52,7 @@ DESCRIPTION
     optional callback and default the removed helpers took.
 
     Functions prefixed with a single underscore (_rsx_file_hash_for_build,
-    _linkify_content, _paths_on_same_filesystem, ...) are framework-internal.
+    _paths_on_same_filesystem, ...) are framework-internal.
     Do not call them from application code.
 
 API REFERENCE
@@ -109,31 +109,24 @@ API REFERENCE
 
   Strings and HTML
 
-    safe_html(string $html): string
-        HTMLPurifier sanitization for WYSIWYG/rich-text content that is MEANT to
-        carry markup. Use when the string is supposed to contain HTML.
+    escape_html(string $text): string
+        Plain text in, text safe to place in markup out: htmlspecialchars()
+        with ENT_QUOTES | ENT_SUBSTITUTE in UTF-8, so both quote kinds are
+        escaped and an invalid byte sequence is replaced rather than emptying
+        the result. The twin of JS escape_html().
 
-    htmlbr(?string $str): string
-        Escape, then convert newlines to <br>. The common pairing for plain text
-        that has line breaks. NOT interchangeable with safe_html(): htmlbr()
-        assumes the input is TEXT and escapes any markup in it; safe_html()
-        assumes the input is MARKUP and filters the dangerous parts out.
+    sanitize_rich_text_html(string $html): string
+        HTMLPurifier sanitization for rich-text content that is MEANT to carry
+        markup: untrusted HTML in, the rich-text allow-list out. NOT
+        interchangeable with escape_html(): escape_html() assumes the input is
+        TEXT and neutralises any markup in it; sanitize_rich_text_html() assumes
+        the input is MARKUP and filters the dangerous parts out. Returns a
+        string - a declared text column takes Type::from_untrusted_encoded()
+        instead. rsx:man sanitize_rich_text_html.
 
-    text_to_html_with_whitespace(string $text): string
-        Escape and preserve indentation and runs of spaces as well as newlines -
-        for rendering log output, stack traces, or pasted plain text.
-
-    linkify_text(?string $content, bool $new_window = true): string
-        Escape plain text and turn bare URLs, hostnames and email addresses into
-        anchors.
-
-    linkify_html(?string $content, bool $new_window = true): string
-        Same, for content that ALREADY contains markup - existing anchors are
-        left alone rather than nested.
-
-    safe_string(string $string, int $max_length = 64): string
-        Reduce a string to something usable as an identifier (variable, function
-        or file-name fragment).
+    nl2br() is PHP's own and does NOT escape: it is safe only on text that is
+    already HTML-safe, so plain text with line breaks is
+    nl2br(escape_html($text)).
 
     snake_to_camel(string $string, bool $capitalize_first = false): string
     camel_to_snake(string $string): string
@@ -317,13 +310,14 @@ EXAMPLES
     Escaping vs sanitizing - a security decision, not a style one:
 
         // The field is PLAIN TEXT the user typed. Escape it; keep line breaks.
-        $notes_html = htmlbr($record->notes);
+        $notes_html = nl2br(escape_html($record->notes));
 
         // The field came from a WYSIWYG editor and is SUPPOSED to be markup.
-        $body_html = safe_html($record->body_html);
+        $body_html = sanitize_rich_text_html($record->body_html);
 
-        // NEVER the other way around: safe_html() on plain text lets a user's
-        // literal "<b>" become bold; htmlbr() on editor output shows the tags.
+        // NEVER the other way around: sanitize_rich_text_html() on plain text
+        // lets a user's literal "<b>" become bold; escape_html() on editor
+        // output shows the tags.
 
     Running a subprocess safely:
 
@@ -405,8 +399,8 @@ TROUBLESHOOTING
         json_decode($raw, true).
 
     "My HTML shows up as tags" / "my user's HTML rendered as markup."
-        The escape/sanitize pair is backwards. Plain text -> htmlbr(); editor
-        markup -> safe_html(). See the EXAMPLES.
+        The escape/sanitize pair is backwards. Plain text -> escape_html();
+        editor markup -> sanitize_rich_text_html(). See the EXAMPLES.
 
     "exec_safe() reports success but the command clearly failed."
         Check $return_var, not the return value: the return value is the last

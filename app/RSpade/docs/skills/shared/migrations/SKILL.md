@@ -111,6 +111,8 @@ The system auto-normalizes types after migration. You can write simpler SQL:
 
 **Never reference them positionally (`AFTER updated_by`) or by a pre-pair name** - the rename would leave your `ALTER` pointing at a column that no longer exists.
 
+**Every table keeps an index LEADING with `created_at` and one leading with `updated_at`.** The pass adds `created_at(created_at)` / `updated_at(updated_at)` only when no index already leads with that column - coverage is by leading column, never by name - so declare your own `(created_at, ...)` freely and it counts. A site-first composite such as `(site_id, created_at)` does NOT lead with it: add it BESIDE the timestamp index, never in its place.
+
 ---
 
 ## A Migration Never References Application Code
@@ -170,7 +172,7 @@ A text type exists so the encoding of a TEXT column (sanitized HTML from a WYSIW
 `{{Entity:id}}` notation) is stated once and every print, edit, export and index asks the
 value instead of remembering. **Converting an existing plain-text column is two acts**: a
 raw-SQL migration that re-encodes the rows into the type's storage form (this rule forbids
-calling the type class here; reproduce what its `from_string()` produces), then the
+calling the type class here; reproduce what its `from_plain_text()` produces), then the
 `$text_types` declaration.
 
 ---

@@ -25,7 +25,7 @@ The pull then **commits the new submodule pointer** in your repo — one commit 
 
 **There is no `--force`, and nothing to force.** The tamper gate, the release inventory and the owned-zone reconciliation it used to override are all gone: the update already overwrites everything under `system/` unconditionally, so a "restore my missing framework file" flag has nothing left to mean. A missing or modified file is simply corrected by running the pull.
 
-**`system/app/Http/Kernel.php` is framework-owned like everything else under `system/`.** Declare your own HTTP middleware in `config('rsx.middleware')` (append-only; `rsx:man config_rsx`).
+**`system/app/Http/Kernel.php` is framework-owned like everything else under `system/`.** Declare your own HTTP middleware in `config('rsx.middleware.global')` (append-only; `rsx:man config_rsx`).
 
 ### Migration from the vendored model
 

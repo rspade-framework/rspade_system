@@ -6,6 +6,14 @@ this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1
 Patch versions are assigned automatically by the build, so entries below are grouped
 by the date the work landed rather than by individual build number.
 
+## [0.1.238] - 2026-09-25
+
+### Changed
+- **The manifest rebuild request is a POST.** The IDE bridge now accepts `manifest_build`,
+  `format`, `refactor`, `git` and `git/diff` over POST only, and always requires the
+  `X-Ide-Token` grant (there is no loopback exemption), so the extension sends
+  `manifest_build` as POST like the others.
+
 ## [0.1.237] - 2026-09-07
 
 ### Changed

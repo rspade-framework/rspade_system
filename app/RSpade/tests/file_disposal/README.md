@@ -25,7 +25,7 @@ file as recoverable. The tests pin both halves of that contract.
 `php artisan rsx:man file_disposal` (the full contract), plus
 `system/app/RSpade/Core/Files/CLAUDE.md` for the surrounding attachment API.
 
-Config: `rsx.files.deleted_retention_days` (30), `rsx.files.disposal_lookback_days` (60),
+Config: `rsx.files.deleted_retention_days` (30; 0 = keep forever), `rsx.files.disposal_lookback_days` (60),
 `rsx.files.disk_orphan_min_age_days` (14).
 
 Hooks: `file.attachment.destroy.hold` (GATE - framework convention, `true` PERMITS) and
@@ -58,9 +58,10 @@ The hooks are observed through a fixture listener (`File_Disposal_Test_Listener`
 | Daily destroy pass: stamps `destroyed_at`, fires the action, releases the blob | php | implemented (`File_Disposal_Test`) |
 | `destroy.hold` gate defers, then releases on a later run | php | implemented (`File_Disposal_Test`) |
 | `force_destroy()` is immediate, announces itself, ignores a hold, survives a throwing listener | php | implemented (`File_Disposal_Test`) |
+| Every pass spans every site: another site's attachment is destroyed and swept, and its hold on a shared blob is counted | php | implemented (`File_Disposal_All_Sites_Test`) |
 | Monthly deep sweep: disk/refcount reconciliation + `disk_orphan_min_age_days` guard | php | not implemented - the sweep walks the real storage tree; needs a seeded orphan-on-disk fixture |
 | 6-hourly `sweep_unclaimed_uploads` claim window (`rsx.attachments` claim hours) | php | not implemented - covered indirectly by the attachments concern's ownership tests, not by a clock-advanced sweep |
-| Retention window boundary honors `deleted_retention_days` config rather than the hardcoded 30 | php | not implemented - every test backdates 40 days, so an off-by-one at the boundary would pass |
+| `deleted_retention_days`: 0 keeps forever through the daily and monthly passes; a positive value honoured at its boundary; a negative value throws | php | implemented (`File_Disposal_Retention_Config_Test`) |
 | Staff "Recently Deleted" recovery screen | playwright | not implemented |
 
 ## Related concerns

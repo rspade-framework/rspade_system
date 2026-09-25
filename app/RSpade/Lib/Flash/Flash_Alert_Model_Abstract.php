@@ -20,17 +20,17 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _flash_alerts
  *
- * @property int $id
- * @property int $session_id
- * @property int $is_portal
- * @property int $type_id
- * @property string $message
  * @property string $created_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property int $id
+ * @property int $is_portal
+ * @property string $message
+ * @property int $session_id
+ * @property int $type_id
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
- * @property string $updated_at
  *
  * @property-read string $type_id__label
  * @property-read string $type_id__constant

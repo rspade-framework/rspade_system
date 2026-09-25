@@ -185,8 +185,15 @@ AUTOMATIC NORMALIZATION
             (only for soft-delete tables - a hard delete leaves no row)
 
        3. Indexes Added:
-          - INDEX on created_at
-          - INDEX on updated_at
+          - INDEX created_at(created_at), unless some index already LEADS with
+            created_at
+          - INDEX updated_at(updated_at), on the same rule
+          Coverage is decided by the LEADING column, never by the index name: a
+          migration's own `idx_x_created_at (created_at)` or `(created_at, id)`
+          satisfies it and no second copy is added; `(site_id, created_at)` does
+          not lead with created_at and does not count. Every table therefore
+          keeps an index leading with each timestamp - a site-first composite is
+          ADDED beside it, never in its place.
           - INDEX order_idx on an `order` column, with its auto-increment triggers
 
           Normalization is DATABASE-DRIVEN: it reads SHOW TABLES and
@@ -558,6 +565,15 @@ SNAPSHOT PROTECTION
        mechanism is available: --framework-only (a schema-only subset used by
        tooling) and the framework-internal --_no-snapshot (a caller that already
        holds a full dump, e.g. rsx:db:rebuild_provision_cache_snapshot).
+
+       THE MIGRATION WINDOW. For the length of a snapshot-protected run migrate
+       raises the flag storage/state/.migrating
+       (Rsx_Project_Paths::migrating_flag_file(); it follows RSX_STORAGE_PATH).
+       While it exists, public/index.php answers EVERY web request, before Laravel
+       boots, with a 503 "Database migration in progress" (Retry-After: 30) - the
+       same pre-boot shape as the maintenance gate, with the IDE bridge exempt. A
+       run that completes or rolls back clears it; one that was interrupted leaves
+       it for php artisan migrate:restore (or the next migrate) to clear.
 
        ANYWHERE ELSE THE RUN PROCEEDS BARE, and prints every reason protection is
        off, so an operator can tell WHICH condition disabled the undo:

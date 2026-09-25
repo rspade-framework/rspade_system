@@ -14,7 +14,7 @@ The Config directory contains Laravel configuration files that define how the ap
 | auth.php | 3,665 bytes | Authentication configuration with web guard as default, App\Models\User model, 60-minute password reset timeout, and 3-hour password confirmation window. Defines authentication guards, user providers, and password reset options. |
 | broadcasting.php | 2,091 bytes | Event broadcasting configuration supporting Pusher, Ably, Redis, and other drivers. Used for real-time events and notifications. |
 | cache.php | 3,272 bytes | Cache system settings with support for file, database, Redis, Memcached, and other cache stores. Configures default cache driver and store options. |
-| cors.php | 846 bytes | Cross-Origin Resource Sharing settings for API routes, specifying allowed origins, methods, and headers for cross-domain requests. |
+| cors.php | 956 bytes | Cross-Origin Resource Sharing: the external API (`api/*`) only, any origin, no credentials. Every other path answers no Access-Control-* header. |
 | database.php | 5,289 bytes | Database connection settings for MySQL, PostgreSQL, SQLite, and SQL Server, plus Redis configuration. Defines connection parameters, pool settings, and migration table name. |
 | filesystems.php | 2,370 bytes | File storage configuration with local, public, and S3 disk options. Sets up where uploaded files, public assets, and private data are stored. |
 | hashing.php | 1,572 bytes | Password hashing settings with bcrypt and Argon2 options, defining algorithm and computational costs for secure password storage. |
@@ -24,7 +24,6 @@ The Config directory contains Laravel configuration files that define how the ap
 | multi-tenant.php | 2,631 bytes | Custom multi-tenant system configuration with single-user tenant mode option, 48-hour invitation expiry, session key for current site ID ('current_site_id'), and site creation permissions. |
 | queue.php | 2,906 bytes | Queue system configuration with sync, database, Redis, SQS, and other queue drivers for asynchronous task processing. |
 | rspade.php | 1,223 bytes | RSpade application-specific settings including app name, description, 10 items per page default, todo list limits, and feature toggles for public profiles, sharing, and markdown support. |
-| sanctum.php | 2,294 bytes | Laravel Sanctum configuration for API token authentication with token expiration and middleware settings. |
 | services.php | 2,668 bytes | Third-party service credentials for Mailgun, Postmark, AWS, and Twilio. |
 | session.php | 7,079 bytes | Session handling configuration with 365-day session lifetime, HTTP-only cookies, and 'lax' same-site policy. Defines session driver, storage, and cookie settings. |
 | view.php | 1,053 bytes | View compilation path settings, defining where compiled Blade templates are stored. |

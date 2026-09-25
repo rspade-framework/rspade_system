@@ -56,19 +56,21 @@ DESCRIPTION
         portal_permission.php - is.
 
     The portal is a complete, separate authenticated experience that runs
-    PARALLEL to the main application. It has its own session, its own dispatch,
-    its own routing table, and its own user identity - none of which touch the
-    staff-facing Session/Dispatcher. Use it for customers, clients, vendors, or
+    PARALLEL to the main application. It has its own session facade, its own
+    routing table, its own hooks and its own user identity, and is dispatched by
+    the one Dispatcher in the PORTAL realm (rsx:man dispatch) - none of it
+    touches the staff-facing Session. Use it for customers, clients, vendors, or
     any external audience that must log in but must never see the internal app.
 
     The portal is served either from a dedicated domain (production) or from a
     URL prefix (development); see URL DETECTION. A request is routed to the
-    portal stack when Portal_Dispatcher::is_portal_request() matches.
+    portal realm when the front controller classifies it so, and the one
+    Dispatcher then reads the portal's route table, hooks, dev-auth header and
+    CSP realm (rsx:man dispatch, THE REALM DESCRIPTOR).
 
     Framework vs application:
       Framework (App\RSpade\Core\Portal\, App\RSpade\Core\Models\)
         - Portal_Session       session, CSRF, login/logout, device sessions
-        - Portal_Dispatcher    request -> portal route resolution and dispatch
         - Rsx_Portal (PHP+JS)  context detection and type-safe URL generation
         - Portal_Main_Abstract portal-wide middleware hook contract
         - Portal_User_Model    the portal identity (overridable core model)
@@ -84,20 +86,32 @@ URL DETECTION
       - domain null   -> portal is every request whose path starts with prefix
                          (default '/_portal'); the prefix is stripped before
                          routes are matched.
-    Rsx_Portal::is_portal_request() / Rsx_Portal.is_portal() report context;
-    Rsx_Portal::get_normalized_path() returns the path with the prefix removed.
+    The decision is made ONCE per request, before anything is dispatched, by
+    Rsx_Request_Channel::classify() (rsx:man dispatch); Rsx_Portal::
+    is_portal_request() / Rsx_Portal.is_portal() report it, and
+    Rsx_Portal::set_portal_request() declares it outside a request (CLI, tests).
+    Rsx_Portal::get_normalized_path() returns the path with the prefix removed;
+    Rsx_Portal::strip_prefix($url) does the same for any URL.
+
+    The external API is the staff host's. On a dedicated portal domain every
+    /api/ path answers the API's 404 not_found; in prefix mode /api/vN/... on
+    the staff host is the API and <prefix>/api/... is an ordinary portal URL
+    (rsx:man external_api).
 
 INTERNAL ENDPOINTS (AJAX, BATCH, UPLOAD)
     The framework internal endpoints are served on BOTH channels by the SAME
-    handlers - each carries a #[Route] and a #[Portal_Route]:
+    handlers:
 
-        /_ajax/:controller/:action    Ajax_Endpoint_Controller::dispatch
-        /_ajax/_batch                 Ajax_Batch_Controller::batch
+        /_ajax/<Controller>/<action>  the AJAX channel -> Ajax::handle_browser_request
+        /_ajax/_batch                 the AJAX channel -> Ajax::handle_batch_request
         /_upload                      File_Attachment_Controller::upload
+                                      (#[Route] and #[Portal_Route])
 
-    A portal page calls them under the portal's own base - /_portal/_ajax/...
-    in prefix mode, /_ajax/... on the portal domain (the host already selects
-    Portal_Dispatcher). The client derives that automatically:
+    The AJAX channel (a POST under /_ajax/) has no route row; the Dispatcher
+    hands it to the one Ajax core in the request's realm (rsx:man
+    ajax_error_handling). A portal page calls them under the portal's own base
+    - /_portal/_ajax/... in prefix mode, /_ajax/... on the portal domain (the
+    host already selects the portal realm). The client derives that automatically:
 
         Rsx_Portal.internal_url('/_ajax/Foo/bar')
           staff page               -> /_ajax/Foo/bar
@@ -137,26 +151,40 @@ ROUTES
         class Name_Action extends Spa_Action { }
       The portal counterpart of @spa. Routes are GET, served through the single
       Portal_Spa_Controller bootstrap, and navigate client-side. Use these for
-      the authenticated portal screens.
+      the authenticated portal screens. The named method must carry
+      #[Portal_Route] - its gates are what the Dispatcher evaluates for
+      every URL the action serves - or the build fails.
 
 PORTAL MAIN HOOKS
     An application MUST provide one Portal_Main extending Portal_Main_Abstract
-    (in /rsx/portal_main.php). Called by Portal_Dispatcher:
+    (in /rsx/portal_main.php). Called by the Dispatcher for a portal request:
       init()                       once per process, at the top of the first
                                    portal request - the FIRST application code to
                                    run in the portal stack. Declare the portal's
                                    site here (Portal_Session::set_site_id, see
                                    PORTAL SESSIONS) and init the session.
-      pre_dispatch($req, $params)  before every route, AFTER the #[Auth] gates
-                                   have already run; return null to continue, or
-                                   a Response to halt. NOT for authorization -
-                                   gates own that (see AUTHORIZATION).
-      unhandled_route($req,$params) when no portal route matches; return null
-                                   for the default 404, or a Response
-    Order: Portal_Main::init -> dev auth -> CSRF -> route match -> #[Auth] gates ->
+      pre_dispatch($req, $params)  before every matched route, AFTER the #[Auth]
+                                   gates have already run, and for an unmatched
+                                   URL; return null to continue, or a Response
+                                   to halt. NOT for authorization - gates own
+                                   that (see AUTHORIZATION).
+      unhandled_route($req,$params) when no portal route matches (after
+                                   pre_dispatch); return null for the 404 page,
+                                   or a Response
+    For an unmatched URL both hooks receive the query string as $params. For a
+    matched route $params carries the synthetic keys _method, _route and
+    _handler, exactly as in the staff realm.
+    Order: Portal_Main::init -> CSRF -> dev auth -> route match -> #[Auth] gates ->
     Portal_Main::pre_dispatch -> controller pre_dispatch (if any) -> handler.
     init() runs before every one of those, which is why it is where the site is
     declared: each of them may ask for it.
+
+    Return values and failures are handled exactly as in the staff realm: a
+    string is an HTML body, an Rsx_Response_Abstract (response_unauthorized()
+    and friends) gets the full-page split, and an abort() or a thrown coded
+    exception (AjaxUnauthorizedException from require_permission() etc.) is
+    answered with the portal's own page - login redirect or 403, 404, 400
+    (rsx:man dispatch, CODED FAILURES).
 
 SESSION & AUTH
     use App\RSpade\Core\Portal\Portal_Session;
@@ -224,7 +252,7 @@ SESSION & AUTH
       terminate_all_sessions_for_user(int $id, ?int $except = null): int
 
     Auth pattern: DECLARATIVE. Every portal surface carries an #[Auth(...)] /
-    @auth(...) gate naming portal-realm checks, and Portal_Dispatcher evaluates
+    @auth(...) gate naming portal-realm checks, and the Dispatcher evaluates
     it before any application code:
 
       #[Portal_Route('/dashboard')]
@@ -551,7 +579,7 @@ PORTAL USER MODEL
 
 AUTHORIZATION
     Portal authorization mirrors staff authorization exactly: DECLARATIVE #[Auth]
-    gates on every surface (evaluated by Portal_Dispatcher, resolved against the
+    gates on every surface (evaluated by the Dispatcher, resolved against the
     portal realm's Portal_Permission), plus record-level rules in function bodies.
     There is one way to do each thing.
 
@@ -608,7 +636,7 @@ AUTHORIZATION
   Route gating
     Declared, not detected. Public portal controllers (login, register, password
     reset, logout) carry #[Auth('public')]; everything else names portal-realm
-    checks. Portal_Dispatcher evaluates the gate before any application code, and
+    checks. The Dispatcher evaluates the gate before any application code, and
     the manifest build FAILS on a portal surface that declares none. There is no
     exempt-handler scan and no pre_dispatch authorization.
 
@@ -618,9 +646,11 @@ AUTHORIZATION
                         carries a gate naming a defined portal check; the build
                         fails by file and member otherwise (rsx:man auth_gates).
     PORTAL-MODEL-FETCH-01 (rsx:check) a model exposing portal_fetch() must declare
-                        portal_can_read(); a hand-rolled portal_fetch() must call
-                        it. This is the RECORD-level layer, which gates do not
-                        cover.
+                        portal_can_read() (on itself or an intermediate base);
+                        a hand-rolled portal_fetch() must call it. Every model
+                        is in scope, however many abstract bases stand between
+                        it and Rsx_Model_Abstract. This is the RECORD-level
+                        layer, which gates do not cover.
 
 ACTIVITY & NOTIFICATIONS
     use App\RSpade\Core\Models\Portal_Notification_Model;
@@ -808,9 +838,10 @@ REQUESTS (firm <-> client conversation thread)
 
 IMPERSONATION (VIEW AS CLIENT)
     Staff can open the portal AS a contact, to see exactly what that client sees,
-    in a READ-ONLY session. The framework provides the session-auth machinery; the
-    APPLICATION owns the policy (who may impersonate), the entry UI, and -
-    critically - the read-only enforcement and experience.
+    in a READ-ONLY session. The framework provides the session-auth machinery and
+    the read-only enforcement; the APPLICATION owns the policy (who may
+    impersonate), the entry UI, the read-only experience, and marking which of
+    its portal endpoints are reads.
 
     For the staff-side equivalent - a staff user impersonating another STAFF user
     through the MAIN session - see rsx:man session (IMPERSONATION). That case is a
@@ -860,32 +891,44 @@ IMPERSONATION (VIEW AS CLIENT)
     leaves the staff member's own staff login untouched: it lives in different
     columns on the same row.
 
-    APPLICATION RESPONSIBILITY - read-only is NOT enforced by the framework.
-    The framework only EXPOSES is_impersonating(); the app MUST enforce read-only.
-    Two duties:
-      1. Block writes. Guard every MUTATING portal endpoint on the impersonation
-         flag. A blanket pre_dispatch POST block does NOT work - all Ajax endpoints
-         are POST, including reads (datagrid/profile/model fetch), so a blanket
-         block breaks the portal's ability to even load. Guard per write endpoint:
+    READ-ONLY IS ENFORCED BY THE FRAMEWORK, DENY BY DEFAULT.
+    Every Ajax call is a POST, reads included, so a write cannot be told from a
+    read by its verb. While Portal_Session::is_impersonating(), a PORTAL-realm
+    Ajax endpoint runs only when it declares #[Portal_Impersonation_Readable];
+    every other one is refused (ERROR_UNAUTHORIZED, "This is a read-only session;
+    changes are disabled.") by Ajax::execute, after the gates and before any
+    endpoint code - both transports, batched calls included. A forgotten mark
+    fails SAFE: the read is refused, never a write left open. Staff-realm calls
+    are untouched. The mark is baked into the auth surface index at manifest
+    build ('impersonation_readable').
 
              #[Ajax_Endpoint]
-             public static function reply(Request $request, array $params = []) {
-                 if (Portal_Permission::is_read_only()) {
-                     return response_unauthorized('This is a read-only session; '
-                         . 'changes are disabled.');
-                 }
-                 // ... normal write ...
-             }
+             #[Portal_Impersonation_Readable]
+             public static function list(Request $request, array $params = []) { ... }
 
-         The template app adds an app-level Portal_Permission::is_read_only()
-         (returns Portal_Session::is_impersonating()) and guards every portal write
-         (settings change_password / terminate_session, notifications mark_read /
-         mark_all_read, request reply, invitation accept / decline). A real app must
-         guard ALL of its writes - unguarded endpoints remain writable.
+             #[Ajax_Endpoint]                 // a write: no mark, refused
+             public static function reply(Request $request, array $params = []) { ... }
+
+    The framework marks its own portal-reachable reads (Orm_Controller::fetch /
+    fetch_relationship, Spa_Session_Controller::get_state, the Realtime tokens,
+    File_Preview_Controller, the reference-data lists, the console-log sink, and
+    the portal 2FA / SSO credential lists). Its portal second-factor and SSO
+    WRITES are unmarked, so they are refused too.
+
+    The seam covers Ajax endpoints. A #[Portal_Route] page answering a POST is not
+    an Ajax endpoint: guard such a form handler yourself on
+    Portal_Session::is_impersonating().
+
+    APPLICATION RESPONSIBILITY:
+      1. Mark every portal READ endpoint #[Portal_Impersonation_Readable], or
+         "View as Client" cannot load the screen that calls it. The template
+         marks its reads (workspaces, documents, request threads get/list,
+         notifications feed/unread_count, invitations pending, settings
+         get_profile/get_sessions) and leaves its writes unmarked.
       2. Show a read-only experience. Render a persistent banner and disable submit
          controls when Rsx_Portal.is_impersonating() (the template adds the banner
          with an "Exit read-only view" link to Portal_Impersonate_Controller::stop).
-         The server check is the boundary; the JS is affordance only.
+         The server refusal is the boundary; the JS is affordance only.
 
     Replacing the staff member's own portal identity in that browser is acceptable
     and expected (the new tab shares the browser's one session). Permission to
@@ -897,11 +940,16 @@ URL GENERATION
       Rsx_Portal::Route('Portal_Login_Controller')          // /_portal/login
       Rsx_Portal::Route('Portal_Project_View_Action', 123)  // id param
       Rsx_Portal::Route('...Action', ['id'=>1,'tab'=>'x'])  // named + query
-      Rsx_Portal::url($action, $params)                     // absolute
+      Rsx_Portal::Route('...Action', 1, ['tab'=>'files'])   // + #tab=files
+      Rsx_Portal::url($action, $params, $hash)              // absolute
     JavaScript: Rsx_Portal.Route(...), Rsx_Portal.is_portal(), Rsx_Portal.user()
     (the current portal user payload), Rsx_Portal.is_impersonating() (see
     IMPERSONATION). Integer param -> 'id'; array -> named params; extras become the
-    query string.
+    query string, and the reserved `at` key becomes the #at= anchor (rsx:man
+    anchors); the third argument is the hash state (rsx:man routing, URL
+    FRAGMENT STATE). Selection, token replacement and encoding are Rsx::Route()'s own
+    routines; the portal adds only its base (prefix, or nothing on a dedicated
+    domain) and its own route table.
 
 CONFIGURATION
     Framework defaults live in config/rsx.php; an app layers overrides via

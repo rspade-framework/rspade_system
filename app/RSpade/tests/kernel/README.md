@@ -18,23 +18,24 @@ Ownership without a seam would be a dead end, so the kernel folds
 
 ```php
 'middleware' => [
-    'global'  => [My_Middleware::class],   // appended to the global stack
-    'web'     => [],                       // appended to a declared GROUP
-    'api'     => [],
-    'aliases' => ['x' => My_Middleware::class],
+    'global' => [My_Middleware::class],   // appended to the global stack
 ],
 ```
 
+The kernel's router destination is `Rsx_Front_Controller::handle()`: Laravel's router is
+never consulted, so there are no route middleware groups and no aliases.
+
 Invariants the tests exist to hold:
 
-- **APPEND-ONLY.** App middleware lands at the END of the framework stack / group /
-  alias map. No config spelling reorders or removes framework middleware (the
-  `csp.additional_sources` philosophy: widen, never narrow).
-- **Loud validation.** A class that does not exist, an unknown group key, and an alias
-  already bound to a different class each throw a `RuntimeException` naming the
-  offender - a typo must never silently do nothing.
-- **Idempotent.** Re-declaring a class or an alias already present is a silent no-op,
-  so the merge survives being run twice.
+- **APPEND-ONLY.** App middleware lands at the END of the framework stack. No config
+  spelling reorders or removes framework middleware (the `csp.additional_sources`
+  philosophy: widen, never narrow).
+- **Loud validation.** A class that does not exist, a non-empty `web` / `api` /
+  `aliases` key (route middleware, which could never run) and any other unknown key each
+  throw a `RuntimeException` naming the offender - a declaration must never silently do
+  nothing.
+- **Idempotent.** Re-declaring a class already present is a silent no-op, so the merge
+  survives being run twice.
 - **Timing.** The rsx config merge happens INSIDE `parent::bootstrap()`
   (`Rsx_Framework_Provider::register()` under the `RegisterProviders` bootstrapper),
   so `config('rsx.middleware')` is only readable after the parent call.
@@ -43,7 +44,7 @@ Invariants the tests exist to hold:
 
 | File | Role |
 |------|------|
-| `app/Http/Kernel.php` | `bootstrap()` override + `__merge_configured_middleware()` |
+| `app/Http/Kernel.php` | `dispatchToRouter()` (the front controller), `bootstrap()` override + `__merge_configured_middleware()` |
 | `config/rsx.php` | The `'middleware'` block (ships empty) |
 | `bin/framework-pull-upstream.sh.dist` | `OWNED_FILES` - the ownership half of the pair |
 | `app/RSpade/Core/Framework/Framework_Mutations.php` | `OWNED_ZONE_FILES` - its mandatory twin |
@@ -55,7 +56,7 @@ Invariants the tests exist to hold:
 ## Testable surface
 
 - **php** - the merge helper, driven directly over a Kernel built on a throwaway
-  Router: append order, group append, aliases, every refusal, dedupe, empty config.
+  Router: append order, every refusal, dedupe, empty config.
 - **cli** - the ownership pair is covered by `framework_update/cli t25` (hard sync of
   `app/Http/Kernel.php`, tamper gate, `--force` restore); not duplicated here.
 - **http** - not applicable: proving a declared middleware runs over the wire would

@@ -150,6 +150,7 @@ class Rsx_Portal_Two_Factor_Controller extends Rsx_Controller_Abstract
      * @return array {credentials, recovery_codes_remaining, is_enabled}
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     #[Auth('is_logged_in')]
     public static function credentials_list(Request $request, array $params = [])
     {

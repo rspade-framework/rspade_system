@@ -186,27 +186,6 @@ user_profiles
   Usage: Developers customize profile fields for their application
   Schema: user_id (FK), bio, avatar, preferences (JSON), custom fields
 
-user_verifications
-  Purpose: Email verification and password reset token storage
-  Managed by: Authentication subsystem
-  Records: Temporary verification codes with expiration
-  Lifecycle: Created on request, validated once, then deleted or expired
-  Schema: user_id (FK), token, type (email_verify, password_reset), expires_at
-
-user_invites
-  Purpose: User invitation system
-  Managed by: User invitation subsystem
-  Records: Pending invitations with expiration (48 hours default)
-  Lifecycle: Created by admin, accepted by invitee, then marked used or expired
-  Schema: site_id (FK), email, token, invited_by (FK), expires_at, accepted_at
-
-ip_addresses
-  Purpose: IP address tracking and audit trail
-  Managed by: Security/audit subsystem
-  Records: IP addresses associated with user actions
-  Usage: Developers query for login history, security audit reports
-  Schema: ip_address, user_id (FK), action_type, created_at
-
 file_attachments (DEPRECATED - will become _file_attachments)
   See SYSTEM TABLES section above. Currently core, moving to system.
 
@@ -263,13 +242,12 @@ regions
 THE FRAMEWORK CONTRACT ON APPLICATION TABLES
 -------------------------------------------
 An application-owned table - one with no leading underscore - may be altered by
-the application that owns it. Twelve of them are nonetheless MODELLED BY THE
+the application that owns it. Nine of them are nonetheless MODELLED BY THE
 FRAMEWORK, which reads and writes named columns on them, joins them, and in four
 places points a foreign key from one of its own `_`-prefixed tables into them:
 
   users, login_users, sites, portal_users, user_permissions, user_profiles,
-  user_invites, user_verifications, countries, regions, ip_addresses,
-  portal_notifications
+  countries, regions, portal_notifications
 
 Examples of what the framework reads by name: users.login_user_id and
 users.site_id (Session::get_user(), the Site_Scoped global scope),

@@ -44,6 +44,8 @@ class Model_Fetch_Fixture_Tables
         DB::statement('CREATE TABLE model_fetch_child_fixtures (
             id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
             parent_fixture_id BIGINT NOT NULL,
+            subject_type BIGINT NULL,
+            subject_id BIGINT NULL,
             title VARCHAR(255) NULL,
             created_at TIMESTAMP(3) NULL DEFAULT NULL,
             updated_at TIMESTAMP(3) NULL DEFAULT NULL,

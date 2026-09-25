@@ -27,8 +27,8 @@ namespace App\RSpade\Core\Database;
  * so its lifetime is ONE endpoint invocation. That is what makes it safe to hold model
  * instances at all: identity, site and realm cannot change while it holds data, so a row
  * loaded under one caller's scopes can never be served to another. Same scoping rule as
- * the Turnstile per-sub-call latch (Ajax.php:243-249), which resets its state around each
- * Ajax::internal() invocation for the same reason.
+ * the Turnstile per-call latch, which Ajax::execute() resets around each endpoint call for
+ * the same reason.
  */
 class Orm_Fetch_Preload
 {

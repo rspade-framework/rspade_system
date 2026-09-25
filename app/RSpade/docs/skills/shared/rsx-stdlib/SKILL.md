@@ -1,6 +1,6 @@
 ---
 name: rsx-stdlib
-description: "The RSpade shared utility library in both languages - JS global functions (type checks, html/safe_html, foreach/clone/coalesce), async helpers (sleep, debounce, rwlock), hash/deep_equal, browser helpers, Rsx_Storage, URL hash state, PHP helpers (response_*, array_*, bytes_to_human, random_hash, rsxrealpath), and the Manifest reflection API. Use before writing any utility by hand - debouncing, deep comparison, HTML escaping, dot-path array access, byte/duration formatting, class-hierarchy lookups - and when you need the exact signature of one of these functions."
+description: "The RSpade shared utility library in both languages - JS global functions (type checks, escape_html/sanitize_rich_text_html, foreach/clone/coalesce), async helpers (sleep, debounce, rwlock), hash/deep_equal, browser helpers, Rsx_Storage, URL hash state, PHP helpers (response_*, array_*, bytes_to_human, random_hash, rsxrealpath), and the Manifest reflection API. Use before writing any utility by hand - debouncing, deep comparison, HTML escaping, dot-path array access, byte/duration formatting, class-hierarchy lookups - and when you need the exact signature of one of these functions."
 ---
 
 # RSpade standard library
@@ -12,12 +12,12 @@ Before hand-rolling anything, search first:
 | Where | What |
 |---|---|
 | `php artisan rsx:man helpers` | **PHP** globals (`helpers.php`): `response_*`, `array_*`, string/HTML, filesystem/paths, `exec_safe`, formatting, `random_hash`, debug and `shouldnt_happen`. |
-| `php artisan rsx:man js_functions` | **JS** globals (`functions.js`, `async.js`, `hash.js`, `error.js`, `browser.js`): type checks and conversion, `html`/`safe_html`, collections, `sleep`/`debounce`/`rwlock`, `hash`/`deep_equal`, browser helpers. |
+| `php artisan rsx:man js_functions` | **JS** globals (`functions.js`, `async.js`, `hash.js`, `error.js`, `browser.js`): type checks and conversion, `escape_html`/`sanitize_rich_text_html`, collections, `sleep`/`debounce`/`rwlock`, `hash`/`deep_equal`, browser helpers. |
 | `Manifest.php` (below) | reflection - **check for an existing manifest function before hand-rolling any of it.** |
 
 Those two man pages carry the full rosters with exact signatures. The judgment worth repeating here:
 
-- **`html()` vs `safe_html()` is a security decision, not a style one.** Escape by default; sanitize only content that is SUPPOSED to be markup (WYSIWYG output). Same rule in PHP: `htmlbr()` for text, `safe_html()` for markup.
+- **`escape_html()` vs `sanitize_rich_text_html()` is a security decision, not a style one.** Escape by default; sanitize only content that is SUPPOSED to be markup (WYSIWYG output). Same names, same rule in PHP. `nl2br()` does NOT escape - plain text with line breaks is `nl2br(escape_html($text))`. The sanitizer returns a STRING: markup bound for a declared text column goes through `Type::from_untrusted_encoded()`, never a sanitized string (a string is plain text there).
 - **`debounce(fn, delay)` - always use it, never a hand-rolled timer.** The behavioural gotcha: the delay timer starts AFTER your callback completes, so a slow callback cannot stack up behind itself. Decorator form `@debounce(250)` (with the `/** @decorator */` comment).
 - **`clone()` is SHALLOW** and **`empty(0)` is true** - these globals follow PHP semantics, not JavaScript ones.
 - **`hash()` ignores the `$` key by default**, because jqhtml component data carries a jQuery reference that would otherwise hash the DOM. Supplying your own `ignored_keys` REPLACES that default.
@@ -58,6 +58,7 @@ Persist UI-only view state (filters, tab selection, dropdown values) to the URL 
 | `Rsx.url_hash_get_all()` | all params as an object |
 | `Rsx.url_hash_set_single(key, value)` | write one key (`null`/`''` removes it) |
 | `Rsx.url_hash_set({k1: v1, k2: null})` | bulk write/remove |
+| `Rsx.Route(action, params, {k: v})` / `Rsx::Route($action, $params, ['k' => $v])` | a LINK landing on hash state, same encoder (never append `'#...'` by hand) |
 
 **Convention — only persist deviations from defaults** so the URL stays clean:
 

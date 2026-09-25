@@ -62,7 +62,9 @@ DESCRIPTION
     A surface dispatches only if it declares an #[Auth(...)] (PHP) or
     @auth(...) (JS) gate list AND every named check returns true for the
     current user. A surface with no gate does not deploy: the manifest build
-    fails, naming the file and member (see ENFORCEMENT).
+    fails, naming the file and member (see ENFORCEMENT). The rule holds at
+    run time too: a dispatch seam refuses a surface the auth index does not
+    know, or knows with an empty gate list - absence is never "open".
 
     A "surface" is any of:
 
@@ -439,7 +441,7 @@ CONDITIONAL LINKS - JQHTML / SPA
 
 ENFORCEMENT
     Manifest-time, ONE batched pass that runs BEFORE the manifest is saved -
-    so a violation aborts the build and writes nothing. Three findings, each
+    so a violation aborts the build and writes nothing. Each finding is
     reported per surface:
 
         MISSING GATE     the surface declares no #[Auth] / @auth, directly
@@ -452,12 +454,28 @@ ENFORCEMENT
                          declares a restricting gate - gates AND, so the
                          member opens nothing. (A class-level 'public' plus
                          a member 'public' is merely redundant, not fatal.)
+        NO SURFACE       a route, portal route, SPA or API row - or an
+                         #[Ajax_Endpoint] / #[Ajax_Endpoint_Model_Fetch]
+                         member - names a surface the auth index does not
+                         hold, so no gate could be resolved at dispatch
+        NOT STATIC       #[Route], #[SPA], #[Portal_Route], #[Api_Endpoint]
+                         or #[Ajax_Endpoint] on a public INSTANCE method: a
+                         dispatchable surface is a public static method
+        UNMARKED FETCH OVERRIDE
+                         a model redeclares fetch(), portal_fetch() or a
+                         relationship that its nearest declaring ancestor
+                         marks #[Ajax_Endpoint_Model_Fetch], without marking
+                         the redeclaration - the override is the body that
+                         runs, so it states its attribute and #[Auth] itself
 
     Separately fatal at scan time, before that pass: an #[Auth_Check] that is
     parameterized, not ': bool', or on an instance method; a duplicate or
     silently-unmarked-override check name; a non-string #[Auth] argument; a
     malformed or conflicting #[Auth_Realm]; a non-string or empty @auth
-    argument on an action.
+    argument on an action; an @spa target that is not a public static
+    method carrying #[SPA], or an @portal_spa target without #[Portal_Route]
+    (the named method's gates are what the server evaluates for every URL
+    the action serves).
 
     THE ERROR MESSAGE IS THE WORKLIST, and is written to be acted on rather
     than read. It opens with the violation count and the closed-by-default
@@ -480,6 +498,13 @@ ENFORCEMENT
     the failure.
 
     Dispatch-time: the seams in HOW THE CHECKS RUN, strict `!== true` = deny.
+    CLOSED BY DEFAULT IS ALSO A RUNTIME RULE. Every seam resolves the gate
+    list of the surface it is about to dispatch from the auth index
+    (Auth_Gates::surface_gates()), and a surface that is not indexed, or is
+    indexed with an empty gate list, is REFUSED with shouldnt_happen() - the
+    build and the request disagree about what is deployed, and the one wrong
+    answer is to run the body. Permission::can_access() refuses such a
+    target the same way; Auth_Gates::accessible_route() answers null.
     At a SEAM an unknown check name DENIES and logs a warning rather than
     throwing - a misconfigured surface must not 500 a page render, and
     denial is the fail-closed direction. Called programmatically
@@ -518,12 +543,12 @@ PORTAL
     has needs a client id, so none of them can be a gate.
 
     TWO INTERNAL-ENDPOINT CHANNELS. The framework internal endpoints - the Ajax
-    transport (/_ajax/:controller/:action), the batch transport (/_ajax/_batch)
-    and the upload transport (/_upload) - are served on BOTH channels by the
-    same handlers: the staff dispatcher answers the bare path, and
-    Portal_Dispatcher answers the same path under the portal's own base
-    (/_portal/_ajax/... in prefix mode; /_ajax/... on the portal domain, where
-    the HOST already selects the portal dispatcher). The client picks the
+    transport (/_ajax/<Controller>/<action>), the batch transport
+    (/_ajax/_batch) and the upload transport (/_upload) - are served on BOTH
+    channels by the same handlers: the one Dispatcher answers the bare path in
+    the staff realm, and the same path under the portal's own base in the
+    portal realm (/_portal/_ajax/... in prefix mode; /_ajax/... on the portal
+    domain, where the HOST already selects the portal realm). The client picks the
     channel from the page it is on - Rsx_Portal.internal_url() - so every
     generated controller stub keeps ONE spelling and acquires the channel at
     call time.
@@ -586,9 +611,9 @@ ERROR SCREENS
     THE SPLIT IS REALM-AWARE. Error_Screens::unauthorized(Request $request,
     ?string $realm = null) consults the PORTAL session and the PORTAL login
     route for a portal request. A caller that KNOWS its realm passes it
-    (Portal_Dispatcher passes REALM_PORTAL); everyone else omits it and the
-    realm is detected from the request context. Omitting it is correct on the
-    staff dispatcher and in the exception handler; passing the wrong one would
+    (the Dispatcher passes the request's realm); everyone else omits it and the
+    realm is detected from the request context. Omitting it is correct in the
+    exception handler; passing the wrong one would
     send a denied portal visitor to the staff login.
 
     An in-body response_unauthorized() or response_auth_required() lands on the

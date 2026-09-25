@@ -7,11 +7,17 @@ OVERVIEW
     - Encodes success/failure in response body via _success field
     - Differentiates between business logic errors and fatal PHP errors
     - Provides consistent error display across dev and production modes
-    - Uses the same response envelope for direct and batched calls
+    - Uses the same response envelope for direct and batched calls: both
+      transports run ONE core (Ajax::execute()) and build ONE envelope, so the
+      same endpoint outcome is byte-for-byte the same wire shape either way
 
 RESPONSE FORMATS
 
     All Ajax endpoints return HTTP 200 with one of these formats:
+
+    Every envelope also carries "_server_time" and "_user_timezone" (the
+    client syncs its clock from them), "console_debug" when there are debug
+    messages, and "flash_alerts" when flash messages are pending.
 
     Success Response
     ----------------
@@ -25,17 +31,29 @@ RESPONSE FORMATS
     -----------------------------------------
     {
         "_success": false,
-        "error_code": "validation|not_found|unauthorized|auth_required",
+        "error_code": "validation|not_found|unauthorized|auth_required|question|generic",
         "reason": "User-friendly message",
         "metadata": { /* optional, e.g., field-specific validation errors */ },
         "console_debug": [ /* optional debug messages */ ]
     }
 
+    The code is the same whether the endpoint RETURNED the coded response or
+    THREW the coded exception: AjaxUnauthorizedException (what
+    Permission::require_permission() and the guarded Session::terminate_*()
+    throw) is "unauthorized", AjaxNotFoundException "not_found",
+    AjaxFormErrorException "validation", AjaxQuestionException "question",
+    AjaxAuthRequiredException "auth_required". An abort() inside an endpoint is
+    the envelope too, never an HTML page: 404 is "not_found", 403
+    "unauthorized", 401 "auth_required", any other status "generic" with the
+    abort's message.
+
     Fatal PHP Errors (Uncaught Exceptions)
     ---------------------------------------
     {
         "_success": false,
-        "error_type": "fatal",
+        "error_code": "fatal",
+        "reason": "The exception message (a developer caller) or a generic sentence",
+        "metadata": {},
         "error": {
             "file": "path/to/file.php",
             "line": 123,
@@ -333,16 +351,22 @@ CLIENT-SIDE IMPLEMENTATION
     - Used automatically for uncaught Ajax errors
     - Displays error message in monospace pre format
 
-DEVELOPER VS PRODUCTION MODE
+WHO SEES FATAL-ERROR DETAIL
 
-    The redaction is SERVER-SIDE, keyed off the application mode (Rsx::is_production()).
-    Development and debug (both non-production) send the full fatal-error detail over
-    the wire; strict production sends ONLY a generic message - the file/line/SQL/
-    backtrace never leave the server, so the response is safe to inspect via devtools
-    or curl. (The client's Modal display choice is a separate, additional gate.)
+    The redaction is SERVER-SIDE, keyed on the CALLER, never on the mode alone:
+    Rsx_Diagnostics::caller_sees_detail() is true only in development or debug mode
+    AND for a caller that is a signed-in developer (login_users.is_developer), a
+    request carrying a valid rsx:debug credential, or a loopback caller (the peer and
+    every forwarded hop are local). A development-mode site may be public, so an
+    anonymous caller is redacted there too. Strict production redacts for everybody.
+    (The client's Modal display choice is a separate, additional gate.)
 
-    Development / Debug (non-production)
-    ------------------------------------
+    The same predicate governs every channel: the Ajax and batch envelopes, the
+    external API's internal_error, the full-page error screen and the Ignition debug
+    page (rsx:man error_pages).
+
+    Developer caller (development or debug mode)
+    --------------------------------------------
     Fatal errors show:
     - Full exception message
     - File path and line number
@@ -359,39 +383,63 @@ DEVELOPER VS PRODUCTION MODE
 
         vendor/laravel/framework/src/Illuminate/Database/Connection.php:829
 
-    Production (strict)
-    -------------------
+    Everybody else
+    --------------
     Fatal errors show:
     - Generic message: "An unexpected error occurred. Please try again."
+    - An error_id (16 hex characters): error.error_id, on the direct and the
+      batched envelope alike
     - No file paths, SQL, backtrace, or exception message in the response body
-    - Errors logged server-side for admin review
+    The full detail is logged server-side as "[error_id=<id>] ..." so a user's
+    reference finds the trace.
 
-    Validation/auth errors show same user-friendly messages in both modes.
+    Not an endpoint
+    ---------------
+    A target that is no class, not a controller, or not an #[Ajax_Endpoint] fails
+    with ONE message for a non-developer caller ("<Controller>::<action> is not an
+    Ajax endpoint"), so the channel cannot be used to probe which class names exist.
+    A developer caller gets the specific reason.
+
+    Validation/auth errors show the same user-friendly messages to every caller.
 
 BATCH REQUESTS
 
     Outside development mode the client coalesces concurrent calls onto
-    POST /_ajax/_batch (Ajax_Batch_Controller), sending batch_calls - an
-    array of {call_id, controller, action, params}.
+    POST /_ajax/_batch, sending batch_calls - an array of {call_id,
+    controller, action, params}. The client flushes at 20 pending calls.
 
-    The response is a MAP keyed "C_<call_id>", each value being the same
-    envelope a direct call returns:
+    The response is a MAP keyed "C_<call_id>", each value being EXACTLY the
+    envelope a direct call to that endpoint returns - the same core runs each
+    call, and the same envelope is built for it:
 
     {
-        "C_0": {"_success": true, "_ajax_return_value": {...}},
-        "C_1": {"_success": false, "error_code": "not_found", "reason": "...", "metadata": {...}},
-        "C_2": {"_success": false, "error_code": "fatal", "reason": "...", "metadata": {}}
+        "C_0": {"_success": true, "_ajax_return_value": {...}, "_server_time": "..."},
+        "C_1": {"_success": false, "error_code": "not_found", "reason": "...", "metadata": {...}, ...},
+        "C_2": {"_success": false, "error_code": "fatal", "reason": "...", "metadata": {}, "error": {...}, ...}
     }
 
     HTTP status: Always 200
     Each result: Has own _success field, and its own error_code
     Client: Distributes each result to its originating caller
 
-    A sub-call's error_code is the one its exception carries, not_found
-    included - client code that branches on Ajax.ERROR_NOT_FOUND (the ORM
-    fetch path does) behaves identically batched and unbatched. A pending question is
-    re-encoded the same way, as error_code "question" with its {key, question}
-    metadata, so a form can answer one from inside a batch.
+    Each batched call runs on the REAL request - the caller's address,
+    headers, cookies and session - with only that call's params as its input,
+    and each call is its own unit: its own Turnstile verification and its own
+    revision transaction.
+
+    Two deliberate differences from a sequence of direct calls: pending flash
+    alerts are read once, after the last call, and ride on the LAST call's
+    envelope; console_debug messages ride on the call that produced them.
+
+    A batch is REFUSED WHOLE with HTTP 400 {"error": "..."} - nothing in it
+    runs - when:
+    - it carries more calls than config('rsx.ajax.batch_max_calls')
+      (default 100; the error names the key);
+    - it is not a non-empty array of calls;
+    - a call has no call_id, one that is not a non-negative integer, or one
+      repeated in the batch;
+    - a call has no controller or action, or params that are not an object.
+    The client never sends such a batch.
 
 TESTING
 

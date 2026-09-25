@@ -123,12 +123,32 @@ class Spa_ManifestSupport extends Full_ManifestSupport_Abstract
 
         [$php_controller_file, $php_controller_fqcn] = $controller;
 
+        // The named method must BE the bootstrap: a public static method carrying #[SPA].
+        // Its gates are what the dispatcher evaluates for every URL this action serves, and
+        // only an #[SPA] method is indexed as a surface - so naming any other method would
+        // record rows that point at no gate at all.
+        $php_controller_metadata = $manifest_data['data']['files'][$php_controller_file] ?? [];
+        $bootstrap_attributes = $php_controller_metadata['public_static_methods'][$php_controller_method]['attributes'] ?? [];
+
+        if (!isset($bootstrap_attributes['SPA'])) {
+            throw new RuntimeException(
+                "Spa action '{$class_name}' names @spa('{$php_controller_class}::{$php_controller_method}'),\n" .
+                "but that method is not an #[SPA] bootstrap.\n" .
+                "  The @spa target must be a public static method on the controller carrying #[SPA]\n" .
+                "  (and its #[Auth] gate) - that method's gates are what the server evaluates for\n" .
+                "  every URL this action serves. Add #[SPA] to it, or point @spa at the module's\n" .
+                "  bootstrap method.\n" .
+                "  Action: {$action_metadata['file']}\n" .
+                "  Controller: {$php_controller_file}\n" .
+                "  See: php artisan rsx:man spa"
+            );
+        }
+
         // Server-side gates come from the PHP bootstrap declaration; the action's
         // @auth list rides alongside as the client gate.
-        $php_controller_metadata = $manifest_data['data']['files'][$php_controller_file] ?? [];
         Auth_ManifestSupport::merge_gate_lists(
             $php_controller_metadata['attributes'] ?? null,
-            $php_controller_metadata['public_static_methods'][$php_controller_method]['attributes'] ?? null,
+            $bootstrap_attributes,
             "{$php_controller_class}::{$php_controller_method} in {$php_controller_file}"
         );
 

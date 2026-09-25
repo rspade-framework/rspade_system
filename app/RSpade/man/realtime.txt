@@ -200,7 +200,10 @@ TOPICS
     controller that mints tokens does not know or care which.
 
     REALTIME-AUTH-01 (rsx:check): every Realtime_Topic_Abstract subclass is
-    checked. If $requires_auth is true (default), can_subscribe() must
+    checked, including through intermediate bases; the nearest declaration of
+    can_subscribe() / $requires_auth is what is checked, and each class is
+    judged on what it declares (a topic inheriting both from a checked base
+    reports nothing). If $requires_auth is true (default), can_subscribe() must
     contain a recognizable auth-check pattern or the rule flags it high
     severity. If $requires_auth = false is declared, the rule flags it for
     mandatory manual review (medium severity) until suppressed with

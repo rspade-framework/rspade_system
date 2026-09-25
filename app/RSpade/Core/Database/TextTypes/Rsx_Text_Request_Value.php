@@ -44,7 +44,7 @@ namespace App\RSpade\Core\Database\TextTypes;
  * from the stored, typed value on every read, so the lie survives one request's validation
  * and reaches nobody else.
  *
- * @see Rsx_Text_Abstract::hydrate_request_value() - where these are made
+ * @see Rsx_Text_Abstract::wrap_request_envelopes() - where these are made
  * @see Rsx_Text_Abstract::from_request()          - resolving one to a type, explicitly
  * @see Rsx_Text_Cast::set()                        - resolving one to a column, implicitly
  */

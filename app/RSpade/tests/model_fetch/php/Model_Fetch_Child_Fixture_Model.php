@@ -30,6 +30,8 @@ class Model_Fetch_Child_Fixture_Model extends Rsx_Model_Abstract
 
     public static $enums = [];
 
+    protected static $type_ref_columns = ['subject_type'];
+
     #[Ajax_Endpoint_Model_Fetch]
     #[Auth('is_logged_in')]
     public static function fetch($id)
@@ -45,5 +47,16 @@ class Model_Fetch_Child_Fixture_Model extends Rsx_Model_Abstract
     public function owner()
     {
         return $this->belongsTo(Model_Fetch_Parent_Fixture_Model::class, 'parent_fixture_id');
+    }
+
+    /**
+     * A polymorphic singular relation: subject_type holds a type-ref INTEGER, resolved to
+     * the related class by the morph map.
+     */
+    #[Relationship]
+    #[Ajax_Endpoint_Model_Fetch]
+    public function subject()
+    {
+        return $this->morphTo('subject', 'subject_type', 'subject_id');
     }
 }

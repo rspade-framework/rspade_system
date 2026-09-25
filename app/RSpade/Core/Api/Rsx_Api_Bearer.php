@@ -44,7 +44,8 @@ class Rsx_Api_Bearer
     {
         $auth_header = $request->header('Authorization');
 
-        if (!$auth_header || !str_starts_with($auth_header, 'Bearer ')) {
+        // The scheme name is case-insensitive (RFC 7235 section 2.1, RFC 6750).
+        if (!$auth_header || strncasecmp($auth_header, 'Bearer ', 7) !== 0) {
             return null;
         }
 

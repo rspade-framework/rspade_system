@@ -4,8 +4,10 @@ namespace App\RSpade\Core\Files;
 
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Files\File_Attachment_Model;
+use App\RSpade\Core\Files\Unparseable_Svg_Exception;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Rsx;
@@ -167,6 +169,14 @@ class Rsx_File_Upload
 
         try {
             $attachment = File_Attachment_Model::create_from_upload($file, $upload_params);
+        } catch (Unparseable_Svg_Exception $e) {
+            // The SVG could not be parsed, so it could not be sanitized, so it is not stored.
+            // Nothing was persisted: the refusal happens before the blob is written.
+            return static::__failure(
+                'unparseable_svg',
+                'This SVG image could not be read and was not accepted.',
+                422
+            );
         } catch (Unparseable_Upload_Exception $e) {
             // Strict reject-mode (config rsx.attachments.reject_unparseable_images): the image
             // bytes could not be parsed. create_from_upload() already cleaned up the orphan row
@@ -177,7 +187,13 @@ class Rsx_File_Upload
                 422
             );
         } catch (\Exception $e) {
-            return static::__failure('upload_failed', 'File upload failed: ' . $e->getMessage(), 500);
+            // The exception message describes the deployment (paths, SQL); only a caller
+            // Rsx_Diagnostics admits sees it, everyone else gets an error id to quote.
+            $message = Rsx_Diagnostics::caller_sees_detail()
+                ? 'File upload failed: ' . $e->getMessage()
+                : 'File upload failed (error id ' . Rsx_Diagnostics::report_redacted($e, 'upload') . ').';
+
+            return static::__failure('upload_failed', $message, 500);
         }
 
         // Event: file.upload.complete (action) - logging, notifications, etc.

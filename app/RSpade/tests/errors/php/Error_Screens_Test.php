@@ -156,9 +156,10 @@ class Error_Screens_Test extends Rsx_Test_Abstract
     // =========================================================================
 
     /**
-     * Outside production the page carries the detail a developer needs.
+     * Outside production a DEVELOPER caller gets the detail it needs. The console's
+     * ambient request is a loopback caller, which Rsx_Diagnostics admits.
      */
-    public static function test_fatal_renders_detail_outside_production()
+    public static function test_fatal_renders_detail_to_a_developer_outside_production()
     {
         static::__with_mode(Rsx::MODE_DEVELOPMENT, function () {
             $e = new RuntimeException('probe exception message');
@@ -174,9 +175,39 @@ class Error_Screens_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * A remote, anonymous caller in DEVELOPMENT mode gets no detail - a development
+     * site may be public - and is shown the reference the detail was logged under.
+     */
+    public static function test_fatal_redacts_for_a_remote_caller_in_development()
+    {
+        static::__with_mode(Rsx::MODE_DEVELOPMENT, function () {
+            static::__as_remote_caller(function () {
+                $response = Error_Screens::fatal(
+                    Request::create('/anything', 'GET'),
+                    new RuntimeException('probe exception message')
+                );
+                $content = $response->getContent();
+
+                static::__assert_equals(500, $response->getStatusCode());
+                static::__assert_true(
+                    !str_contains($content, 'probe exception message'),
+                    'a remote caller must not see the exception message in development'
+                );
+                static::__assert_true(
+                    !str_contains($content, 'Error_Screens_Test.php'),
+                    'a remote caller must not see the exception origin in development'
+                );
+                static::__assert_true(
+                    (bool) preg_match('/Reference: [0-9a-f]{16}/', $content),
+                    'a redacted 500 shows the error id its detail was logged under'
+                );
+            });
+        });
+    }
+
+    /**
      * Production renders NOTHING about the exception - not the message, not the
-     * class, not the file. An error page is fully inspectable with curl, so the
-     * detail must never leave the server (same rule as the ajax channel).
+     * class, not the file - to anybody, a loopback caller included.
      */
     public static function test_fatal_redacts_everything_in_production()
     {
@@ -204,21 +235,29 @@ class Error_Screens_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Debug mode is production for redaction purposes - it is a sealed, shipped
-     * build, and it agrees with Ajax_Exception_Handler's predicate.
+     * Debug mode is the sealed build for reproducing a production issue, so a developer
+     * caller keeps the detail there - and a remote caller is redacted exactly as in
+     * development.
      */
-    public static function test_fatal_redacts_in_debug_mode_too()
+    public static function test_fatal_in_debug_mode_follows_the_caller()
     {
         static::__with_mode(Rsx::MODE_DEBUG, function () {
             $response = Error_Screens::fatal(
                 Request::create('/anything', 'GET'),
                 new RuntimeException('probe exception message')
             );
+            static::__assert_contains('probe exception message', $response->getContent());
 
-            static::__assert_true(
-                !str_contains($response->getContent(), 'probe exception message'),
-                'debug-mode builds redact with production'
-            );
+            static::__as_remote_caller(function () {
+                $response = Error_Screens::fatal(
+                    Request::create('/anything', 'GET'),
+                    new RuntimeException('probe exception message')
+                );
+                static::__assert_true(
+                    !str_contains($response->getContent(), 'probe exception message'),
+                    'debug mode redacts for a remote caller'
+                );
+            });
         });
     }
 
@@ -342,26 +381,77 @@ class Error_Screens_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The handler runs AFTER the dispatch bootstrapper. If it ever claimed a 404
-     * first, every RSX route would go offline - RSX routing IS a Laravel 404 the
-     * bootstrapper catches.
+     * Development with app.debug on still keeps the debug page away from a remote
+     * caller: Ignition renders only for a developer.
      */
-    public static function test_handler_runs_after_the_dispatch_bootstrapper()
+    public static function test_handler_renders_the_screen_for_a_remote_caller_in_development()
     {
-        static::__assert_greater_than(
-            \App\RSpade\Core\Providers\Rsx_Dispatch_Bootstrapper_Handler::get_priority(),
-            Web_Exception_Handler::get_priority()
-        );
+        $original_debug = config('app.debug');
+        config(['app.debug' => true]);
+
+        try {
+            static::__with_mode(Rsx::MODE_DEVELOPMENT, function () {
+                static::__as_remote_caller(function () {
+                    $handler = new Web_Exception_Handler();
+
+                    $response = $handler->handle(
+                        new RuntimeException('probe exception message'),
+                        Request::create('/anything', 'GET')
+                    );
+
+                    static::__assert_not_empty($response);
+                    static::__assert_equals(500, $response->getStatusCode());
+                    static::__assert_true(
+                        !str_contains($response->getContent(), 'probe exception message'),
+                        'a remote caller gets the redacted screen, not the debug page'
+                    );
+                });
+            });
+        } finally {
+            config(['app.debug' => $original_debug]);
+        }
+    }
+
+    /**
+     * The handler is registered and runs LAST: it answers every failure it is handed,
+     * so any handler ordered after it could never run.
+     */
+    public static function test_handler_runs_last_in_the_chain()
+    {
+        $handlers = config('rsx.exception_handlers', []);
 
         static::__assert_true(
-            in_array(Web_Exception_Handler::class, config('rsx.exception_handlers', []), true),
+            in_array(Web_Exception_Handler::class, $handlers, true),
             'the handler must be registered in config/rsx.php exception_handlers'
         );
+
+        foreach ($handlers as $handler) {
+            if ($handler !== Web_Exception_Handler::class) {
+                static::__assert_greater_than($handler::get_priority(), Web_Exception_Handler::get_priority(), $handler);
+            }
+        }
     }
 
     // =========================================================================
     // HELPERS
     // =========================================================================
+
+    /**
+     * Run a closure as an anonymous caller from off the box: the ambient request's peer
+     * becomes a documentation-range address, restored afterwards.
+     */
+    private static function __as_remote_caller(callable $fn): void
+    {
+        $server = request()->server;
+        $original = $server->get('REMOTE_ADDR');
+        $server->set('REMOTE_ADDR', '203.0.113.9');
+
+        try {
+            $fn();
+        } finally {
+            $server->set('REMOTE_ADDR', $original);
+        }
+    }
 
     /**
      * Run a closure with the application mode forced, restoring it afterwards.

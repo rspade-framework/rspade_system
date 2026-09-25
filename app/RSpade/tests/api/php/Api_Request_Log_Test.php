@@ -66,9 +66,9 @@ class Api_Request_Log_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * PURGING a key destroys its request history - the cascade, at the database.
+     * PURGING a key keeps its request history, with api_key_id cleared (ON DELETE SET NULL).
      */
-    public static function test_purging_a_key_cascades_its_log_rows()
+    public static function test_purging_a_key_keeps_its_log_rows()
     {
         $key = static::__make_key('cascade');
 
@@ -85,7 +85,9 @@ class Api_Request_Log_Test extends Rsx_Test_Abstract
 
         $key->delete();
 
-        static::__assert_null(Api_Request_Log_Model::find($log_id), 'purging the key took its history');
+        $after = Api_Request_Log_Model::find($log_id);
+        static::__assert_not_null($after, 'purging the key kept its history');
+        static::__assert_null($after->api_key_id, 'and the row no longer names the key');
     }
 
     /**

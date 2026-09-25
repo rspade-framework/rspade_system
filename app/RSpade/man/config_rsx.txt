@@ -150,47 +150,59 @@ ROUTING AND DISPATCH
     point at (loop prevention). portal_excluded_prefixes is the portal-side
     list in portal-namespace terms. See: php artisan rsx:man login_redirect
 
+    'ajax' => [
+        'batch_max_calls' => 100,
+    ]
+
+    batch_max_calls      The most calls one /_ajax/_batch request may carry.
+                         A larger batch is refused WHOLE with HTTP 400 naming
+                         this key, and nothing in it runs. The client flushes
+                         at 20 pending calls, so only a hand-built batch meets
+                         the cap. See rsx:man ajax_error_handling.
+
     'exception_handlers' => [ ... ]
 
-    Ordered handler chain run when exceptions occur (Cli 10, Ajax 20,
-    Api 25, Playwright 30, Rsx dispatch bootstrapper 1000). Lower priority
-    runs first; a handler returns a response or null to pass along.
+    Ordered handler chain that formats a failure (Cli 10, Ajax 20, Api 25,
+    Playwright 30, Web 1100). Lower priority runs first; a handler returns a
+    response or null to pass along. A handler FORMATS - none dispatches. The
+    front controller hands the chain each in-dispatch failure exactly once
+    (build-artifact failures excepted); see rsx:man error_handling.
 
 HTTP MIDDLEWARE
     'middleware' => [
-        'global'  => [],
-        'web'     => [],
-        'api'     => [],
-        'aliases' => [],
+        'global' => [],
     ]
 
     The sanctioned seam for an application's own HTTP middleware.
     system/app/Http/Kernel.php is a FRAMEWORK-OWNED file - every framework
-    update overwrites it - ALL of system/ is framework property - so it carries
-    a local edit - so an app never registers middleware by editing the
-    kernel. It declares it here and the kernel folds it in at bootstrap.
+    update overwrites it, as it does all of system/ - so an app never registers
+    middleware by editing the kernel. It declares it here and the kernel folds
+    it in at bootstrap.
 
-    global               Appended to the global stack (runs on every request).
-    <group>              Appended to that middleware GROUP. The key must name
-                         a group the kernel declares ('web', 'api'); anything
-                         else is a loud error, not a new group.
-    aliases              alias => class map, merged beside the framework's
-                         route-middleware aliases.
+    global               Appended to the global stack. It wraps EVERY request,
+                         around Rsx_Front_Controller (rsx:man dispatch); a
+                         middleware concerned with some requests returns early
+                         for the rest.
+
+    'global' is the only key. The kernel's router destination is the RSX front
+    controller and Laravel's router is never consulted, so there are no route
+    middleware groups ('web', 'api') and no middleware aliases - nothing would
+    run them. A non-empty 'web', 'api' or 'aliases' key throws at bootstrap,
+    saying so; an empty one is ignored.
 
     APPEND-ONLY, deliberately. Declared middleware runs AFTER the framework
-    stack, at the end of the group, or beside the existing aliases. There is
-    no spelling that reorders or removes framework middleware; needing that
-    is a framework change request, not a config key. (Same philosophy as
-    csp.additional_sources: widen, never narrow.)
+    stack. There is no spelling that reorders or removes framework middleware;
+    needing that is a framework change request, not a config key. (Same
+    philosophy as csp.additional_sources: widen, never narrow.)
 
     Validation is loud, at bootstrap, naming what is wrong:
     - a class that does not exist                RuntimeException, class named
-    - an unknown group key                       RuntimeException, valid keys listed
-    - an alias already bound to another class    RuntimeException, BOTH classes named
-    Declaring a class or alias that is already present is a silent no-op, so
-    the block is idempotent.
+    - route middleware ('web', 'api', 'aliases') RuntimeException, key named
+    - any other key                              RuntimeException, 'global' named
+    Declaring a class that is already present is a silent no-op, so the block
+    is idempotent.
 
-    A ':parameters' suffix is honored (Throttle::class.':api'); the class part
+    A ':parameters' suffix is honored (Throttle::class.':60,1'); the class part
     is what gets existence-checked.
 
     The framework declares none - the block ships empty.
@@ -474,6 +486,9 @@ FILE SUBSYSTEM
                their handlers in user config.
 
     'files' => [
+        'deleted_retention_days' => 30,        # 0 = keep forever
+        'disposal_lookback_days' => 60,
+        'disk_orphan_min_age_days' => 14,
         'document_mime_by_extension' => [...], # ext => canonical mime
     ]
 
@@ -483,6 +498,16 @@ FILE SUBSYSTEM
     thumbnail and rendition caches follow the tmp root. See rsx:man
     storage_directories.
 
+    deleted_retention_days      Days a deleted attachment stays recoverable
+                                before the daily disposal task destroys it and
+                                releases its blob. 0 means KEEP FOREVER (nothing
+                                is ever destroyed on schedule; force_destroy()
+                                still erases). Negative throws. See rsx:man
+                                file_disposal.
+    disposal_lookback_days      Window of recently-destroyed attachments whose
+                                blobs the daily task re-checks for release.
+    disk_orphan_min_age_days    Age guard for the monthly disk and unassigned-
+                                upload sweep.
     document_mime_by_extension  Extension => mime map that drives PROCESSING
                                 (viewer/rendition/extractor/thumbnail routing),
                                 NOT serving. Extension wins over the byte sniff

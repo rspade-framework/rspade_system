@@ -49,29 +49,29 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _sms_queue
  *
- * @property int $id
- * @property int $site_id
- * @property string $to_number
+ * @property int $attempt_count
  * @property string $body
  * @property int $category_id
- * @property int $status_id
- * @property string $last_error
- * @property int $attempt_count
- * @property string $next_attempt_at
- * @property string $dev_original_to
- * @property string $sent_at
- * @property int $related_type
- * @property int $related_id
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
- * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $dedupe_key
+ * @property string $dev_original_to
+ * @property int $id
+ * @property string $last_attempt_at
+ * @property string $last_error
+ * @property string $next_attempt_at
+ * @property int $related_id
+ * @property int $related_type
+ * @property string $sent_at
+ * @property int $site_id
+ * @property int $status_id
+ * @property string $to_number
  * @property string $transport
  * @property string $transport_response
- * @property string $last_attempt_at
- * @property string $dedupe_key
+ * @property string $updated_at
+ * @property int $updated_by_id
+ * @property int $updated_by_type
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
@@ -153,25 +153,6 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
             3 => ['constant' => 'CATEGORY_MARKETING', 'label' => 'Marketing', 'badge' => 'bg-secondary'],
         ],
     ];
-
-    /**
-     * Ajax model fetch - load one SMS record for a developer-facing SMS
-     * Transaction Log detail view. No aliasing; toArray() includes the enum BEM
-     * props (status_id__label/__badge, category_id__label/__badge). Auth: any
-     * logged-in staff user for now (narrow to a developer check app-side later).
-     */
-    #[Replaceable]
-    #[Ajax_Endpoint_Model_Fetch]
-    #[Auth('is_logged_in')]
-    public static function fetch($id)
-    {
-        $sms = static::find($id);
-        if (!$sms) {
-            return false;
-        }
-
-        return $sms->toArray();
-    }
 
     /**
      * Create a queued SMS record.
@@ -370,7 +351,8 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
      * The Email_Queue_Model twin, and the reasoning is identical: the drain is
      * #[Exclusive], so when it starts no other runner exists and a row in SENDING was
      * left by one that died mid-message. No age threshold and no timeout - exclusivity
-     * is the proof. The attempt is not counted; the site scope is claim_next()'s.
+     * is the proof. The attempt is not counted; the site scope is claim_next()'s (the drain
+     * runs both outside it).
      *
      * @return int How many stranded rows were reclaimed.
      */

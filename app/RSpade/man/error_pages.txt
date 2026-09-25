@@ -80,7 +80,7 @@ DECLARING ERROR PAGES
     declare nothing at all, and the framework's own page answers.
 
     THE PREFIX IS RESERVED. A pattern under /error/ is never served by ordinary
-    route matching in any mode - the dispatchers intercept the path before route
+    route matching in any mode - the dispatcher intercepts the path before route
     lookup - so an error page can never answer 200 at its own URL.
 
     ROUTE-ERROR-01 (manifest-build FATAL) keeps every declaration one the funnel
@@ -117,9 +117,14 @@ WHAT A PAGE RECEIVES
         preview     bool     true when a development browse of /error/<code>
                              fabricated this context
         detail      ?array   {class, message, file, line, frames[]} - a 500 only,
-                             and NULL whenever Rsx::is_production(), which is
-                             every SEALED build: strict production and the
-                             debug mode beside it
+                             and only for a DEVELOPER caller in development or
+                             debug mode (Rsx_Diagnostics::caller_sees_detail():
+                             a signed-in developer, a valid rsx:debug
+                             credential, a loopback caller). NULL for everybody
+                             else, and for everybody in strict production
+        error_id    ?string  a redacted 500's reference: the full detail is
+                             logged as "[error_id=<id>] ...". NULL when detail
+                             is shown. Print it; it is what a user reports
 
     The framework's titles and messages, by status: 400 Bad Request; 403 Access
     Denied; 404 Page Not Found; 419 Page Expired; 500 Something Went Wrong. Any
@@ -128,7 +133,7 @@ WHAT A PAGE RECEIVES
     DISCLOSURE. The context is the disclosure boundary, and it is the same object
     an application page and the framework page receive - so an application page
     cannot disclose more than the framework page would. detail is redacted
-    server-side, which is why a page needs no mode check of its own. Nothing that
+    server-side, by caller, which is why a page needs no check of its own. Nothing that
     is not already in the context belongs on a page: no record lookup, no session
     chrome, no "you were trying to reach X" beyond the path the context holds.
 
@@ -136,25 +141,32 @@ WHICH FAILURES RENDER A PAGE
     status  raised by
     ------  ---------------------------------------------------------------
     404     no route matched, after Main::unhandled_route declined; abort(404);
-            response_not_found() returned from a web route, GET included
+            response_not_found() returned from a web route, GET included;
+            a thrown AjaxNotFoundException
     403     a gate denial for an IDENTIFIED caller; abort(403);
             response_unauthorized() / response_auth_required() for an
-            identified caller
+            identified caller; a thrown AjaxUnauthorizedException (what
+            Permission::require_permission() throws) or
+            AjaxAuthRequiredException for an identified caller
     419     a CSRF failure on a native form POST (Rsx_Csrf::__reject)
-    400     response_form_error() returned from a web GET route, carrying the
-            reason as the message
+    400     response_form_error() returned from a web GET route, or a thrown
+            AjaxFormErrorException on a GET, carrying the reason as the message
     500     any uncaught exception reaching the top of a full-page request
     other   any other abort() status on a browsed request (405, 429, 503 ...),
             through Error_Screens::http_status(), carrying the raiser's message
 
     A POST is not on this table for 400 and 404: a POST is a form submission, and
     the user is standing in front of the form that failed, so the reason is
-    flashed and the same URL is re-issued as a GET. That is unchanged.
+    flashed and the same URL is re-issued as a GET.
 
-    500 IN DEVELOPMENT is the one status a mode changes: with the interactive
-    debugger active, an uncaught exception renders the debug page rather than the
-    error page, because a stack trace is what a developer needs at that moment.
-    Browse /error/500 (or /error/generic) to see the page itself.
+    500 IN DEVELOPMENT, FOR A DEVELOPER, is the one case the page is skipped: with
+    app.debug on (development mode) and a caller Rsx_Diagnostics admits, an uncaught
+    exception renders the Ignition debug page rather than the error page, because a
+    stack trace is what a developer needs at that moment. Ignition is read-only:
+    config/ignition.php hard-codes runnable solutions and sharing off, every
+    /_ignition/* route answers 404, and rsx:health FAILs otherwise. An anonymous
+    remote caller gets the error page with an error_id, in every mode. Browse
+    /error/500 (or /error/generic) to see the page itself.
 
 WHAT NEVER RENDERS A PAGE
     An ANONYMOUS DENIAL. A caller with no session cannot fix a denial by being
@@ -251,7 +263,7 @@ THE FRAMEWORK PAGE
     links no bundle because a bundle needs a manifest, and the manifest is one of
     the things that can be broken when this page is what is left. It follows the
     browser's light/dark preference and carries the same redaction rules as any
-    other page: no exception detail in production.
+    other page: exception detail for a developer caller only, error_id otherwise.
 
     ITS PRE-BOOT TWIN is bootstrap/rsx_preboot_page.php, the hand-written shell
     the guards that run before Laravel emit. The two carry the same tokens, class
@@ -275,8 +287,8 @@ WRITING A PAGE
     exist in a given application is a page that fails for that application.
 
     KEEP IT SHORT. A status, a sentence, one action. The generic page is the
-    place for a detail block, and it needs no mode check because detail is
-    already null in production.
+    place for a detail block and an error_id line, and it needs no check because
+    detail is already null for anybody who may not see it.
 
     NO /error/500 IS A REASONABLE CHOICE. The generic page answers it, which
     makes the fallback visible in the application rather than theoretical.
@@ -304,8 +316,9 @@ COMMON MISTAKES
         controller never ran; there is nothing loaded, and a throw here costs
         the reader the page entirely.
 
-    Branching on the mode to hide a stack trace. detail is null in production
-        already. A page that adds its own check has two rules to keep in step.
+    Branching on the mode to hide a stack trace. detail is already null for any
+        caller who may not see it. A page that adds its own check has two rules
+        to keep in step.
 
     Declaring /error/404 with methods: ['GET','POST'], a :param, or without
         #[Auth('public')]. Each is a ROUTE-ERROR-01 build failure.
@@ -325,8 +338,9 @@ FILES
     system/app/RSpade/Core/Errors/Error_Pages.php      which route answers
     system/app/RSpade/Core/Errors/Error_Screens.php    the funnel
     system/app/RSpade/Core/Dispatch/Dispatcher.php     render_error_route, the
-                                                       preview intercept
-    system/app/RSpade/Core/Portal/Portal_Dispatcher.php   the portal twins
+                                                       preview intercept,
+                                                       page_failure_response
+                                                       (both realms)
     system/app/RSpade/Core/Dispatch/Route_ManifestSupport.php
                                                        ROUTE-ERROR-01
     system/app/RSpade/Core/Exceptions/Web_Exception_Handler.php

@@ -1,5 +1,7 @@
 <?php
 
+require_once __DIR__ . '/../bootstrap/rsx_mode.php';
+
 return [
     // Where to store source maps - a derived artifact of a compile, so tmp/.
     'source_maps_path' => App\RSpade\Core\Paths\Rsx_Project_Paths::tmp_path('jqhtml-sourcemaps'),
@@ -7,13 +9,13 @@ return [
     // Show source code context in errors
     // Derived from RSX_MODE (the single mode switch); APP_DEBUG is not read
     // anywhere. Config files cannot call config(), hence the repeated expression.
-    'show_source_context' => env('RSX_MODE', 'development') !== 'production',
+    'show_source_context' => rsx_preboot_mode() !== 'production',
 
     // Lines of context around errors
     'context_lines' => 5,
 
     // Enable source map generation
-    'enable_source_maps' => env('RSX_MODE', 'development') !== 'production',
+    'enable_source_maps' => rsx_preboot_mode() !== 'production',
 
     // Source map mode: 'inline', 'external', or 'both'
     'source_map_mode' => 'external',

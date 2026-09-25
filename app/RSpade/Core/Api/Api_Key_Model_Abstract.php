@@ -53,23 +53,23 @@ use App\RSpade\Core\Models\User_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _api_keys
  *
- * @property int $id
- * @property int $user_id
- * @property string $name
- * @property string $key_hash
- * @property string $key_prefix
- * @property int $user_role_id
- * @property string $last_used_at
- * @property string $expires_at
- * @property int $is_revoked
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property string $expires_at
+ * @property int $id
+ * @property int $is_revoked
+ * @property string $key_hash
+ * @property string $key_prefix
+ * @property string $last_used_at
+ * @property string $name
+ * @property int $read_only
+ * @property string $scopes
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
- * @property string $scopes
- * @property int $read_only
+ * @property int $user_id
+ * @property int $user_role_id
  *
  * @mixin \Eloquent
  */
@@ -143,6 +143,18 @@ abstract class Api_Key_Model_Abstract extends Rsx_System_Model_Abstract
         $random = Str::random(32);
         $plaintext_key = "{$key_prefix}{$environment}_{$random}";
         $prefix = "{$key_prefix}{$environment}_" . substr($random, 0, 4) . '...';
+
+        // The display prefix is stored in a fixed-width column; a long configured prefix or
+        // environment would overflow it, so the combination is refused before a key exists.
+        $prefix_max = static::field_length('key_prefix');
+        if (strlen($prefix) > $prefix_max) {
+            throw new \RuntimeException(
+                "API key display prefix '{$prefix}' is " . strlen($prefix) . " characters; the "
+                . "_api_keys.key_prefix column holds {$prefix_max}. Shorten config('rsx.api.key_prefix') "
+                . "('{$key_prefix}') or the environment ('{$environment}'): together they may be at most "
+                . ($prefix_max - 8) . ' characters.'
+            );
+        }
 
         $model = new static();
         $model->user_id = $user_id;

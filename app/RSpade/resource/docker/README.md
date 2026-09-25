@@ -59,6 +59,7 @@ runs it as root before the application serves traffic.
 | Browser libraries | yes (`rsx:debug`) | no |
 | Blank credentials | generated + printed once | **refuses to start** |
 | LibreOffice, poppler | yes | yes — document preview is a runtime feature |
+| ImageMagick policy (`imagemagick/policy.xml`) | raster coders only | raster coders only |
 
 ## Services
 
@@ -100,6 +101,17 @@ sibling containers when it can. Three things are worth knowing:
   them the daemon says so in one line and exits without restarting, and the test
   runner runs sequentially. The full flag list and its `docker-compose.yml`
   equivalent are in `rsx:man testing`.
+
+## ImageMagick reads raster coders only
+
+`imagemagick/policy.xml` replaces the distribution's `/etc/ImageMagick-6/policy.xml`. It
+denies every coder and then allows the raster formats plus PDF (a document's first page,
+through Ghostscript). The vector and scripting coders an uploaded file could reach are
+refused: SVG/MSVG (an `<image href="text:/etc/passwd">` inside an SVG rasterises a local
+file into the thumbnail), MVG, MSL, TEXT, LABEL. The framework never asks for them — an SVG
+upload is sanitized and its thumbnail is the extension icon, and the icons are PNG — and
+`rsx:health` FAILs its "ImageMagick Coder Policy" row on a box where any is readable. A host
+running the framework outside this image installs the same file by hand.
 
 ## Two things that look wrong and are not
 

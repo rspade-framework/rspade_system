@@ -18,7 +18,8 @@ use App\RSpade\Core\Time\Rsx_Time;
  * File_Disposal_Service - the SOLE authority that releases blob bytes.
  *
  * File_Attachment_Model uses SoftDeletes: delete() means "enter the retention window"
- * (recoverable for rsx.files.deleted_retention_days). Nothing is destroyed inline. This
+ * (recoverable for rsx.files.deleted_retention_days; 0 = forever). Nothing is destroyed
+ * inline. This
  * service owns the whole back half of the lifecycle:
  *   - the daily disposal task (destroy pass + blob-release pass), see Phase 2 methods,
  *   - the 6-hourly claim-window sweep of unattached uploads,
@@ -59,11 +60,15 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     {
         $token = RsxLocks::named_write_lock('FILE_BLOB_DISPOSAL');
         try {
-            // Retention-aware refcount: still pinned by any live-or-retained attachment.
-            $pinned = File_Attachment_Model::withTrashed()
-                ->where('file_storage_id', $storage_id)
-                ->whereNull('destroyed_at')
-                ->exists();
+            // Retention-aware refcount: still pinned by any live-or-retained attachment. The
+            // blob is deduplicated across the whole install, so EVERY site's attachments
+            // count - a site-scoped count would release bytes another tenant still holds.
+            $pinned = File_Attachment_Model::without_site_scope(
+                fn () => File_Attachment_Model::withTrashed()
+                    ->where('file_storage_id', $storage_id)
+                    ->whereNull('destroyed_at')
+                    ->exists()
+            );
             if ($pinned) {
                 return false;
             }
@@ -145,72 +150,104 @@ class File_Disposal_Service extends Rsx_Service_Abstract
      *   (a) DESTROY: attachments whose retention window has elapsed (deleted_at < now -
      *       deleted_retention_days, destroyed_at still NULL) go through the destroy.hold gate
      *       + the file.attachment.destroyed action, then get stamped destroyed_at (a permanent
-     *       audit tombstone).
+     *       audit tombstone). SKIPPED when deleted_retention_days is 0 (keep forever).
      *   (b) BLOB-RELEASE: for blobs referenced by attachments destroyed within
      *       disposal_lookback_days, recompute the retention-aware refcount and release the
-     *       bytes at zero.
+     *       bytes at zero. Runs under every retention setting: it only ever frees bytes whose
+     *       every referrer is DESTROYED, which under keep-forever means force_destroy()ed.
+     *
+     * Every other "is it retained?" answer (the refcount, the monthly sweep, undelete(),
+     * get_deleted_files()) is keyed on destroyed_at, never on a date, so this destroy pass
+     * is the ONLY place the retention period is read.
      */
     #[Task('Dispose of attachments past their retention window and release orphaned blobs')]
     #[Exclusive]
     #[Schedule('0 2 * * *')]
     public static function run_daily_disposal(Task_Instance $task, array $params = [])
     {
-        $chunk = 1000;
-        $retention_days = (int) config('rsx.files.deleted_retention_days', 30);
-        $lookback_days = (int) config('rsx.files.disposal_lookback_days', 60);
+        // Retention is install policy and the blob store is shared, so every pass below walks
+        // every site's attachments; a worker's declared site says nothing about what is due.
+        return File_Attachment_Model::without_site_scope(function () use ($task, $params) {
+            $chunk = 1000;
+            $retention_days = self::__deleted_retention_days();
+            $lookback_days = (int) config('rsx.files.disposal_lookback_days', 60);
 
-        // (a) DESTROY PASS.
-        $destroy_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $retention_days * 86400);
-        $destroyed = 0;
-        $held = 0;
-        // Keyset-walked: a HELD attachment keeps destroyed_at NULL and so stays in the
-        // predicate, but the cursor has already passed its id - no re-visit, no spin.
-        $past_retention = File_Attachment_Model::withTrashed()
-            ->whereNotNull('deleted_at')
-            ->whereNull('destroyed_at')
-            ->where('deleted_at', '<', $destroy_cutoff)
-            ->result_set($chunk);
+            // (a) DESTROY PASS. 0 = keep forever: nothing is ever past retention.
+            $destroyed = 0;
+            $held = 0;
+            if ($retention_days > 0) {
+                $destroy_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $retention_days * 86400);
+                // Keyset-walked: a HELD attachment keeps destroyed_at NULL and so stays in the
+                // predicate, but the cursor has already passed its id - no re-visit, no spin.
+                $past_retention = File_Attachment_Model::withTrashed()
+                    ->whereNotNull('deleted_at')
+                    ->whereNull('destroyed_at')
+                    ->where('deleted_at', '<', $destroy_cutoff)
+                    ->result_set($chunk);
 
-        foreach ($past_retention as $attachment) {
-            if (self::__destroy_attachment($attachment, $task)) {
-                $destroyed++;
-            } else {
-                $held++;
-            }
-            $task->heartbeat();
-        }
-
-        // (b) BLOB-RELEASE PASS: distinct blobs of recently-destroyed attachments.
-        $release_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $lookback_days * 86400);
-        $released = 0;
-        $last_sid = 0;
-        while (true) {
-            $storage_ids = File_Attachment_Model::withTrashed()
-                ->whereNotNull('destroyed_at')
-                ->where('destroyed_at', '>=', $release_cutoff)
-                ->whereNotNull('file_storage_id')
-                ->where('file_storage_id', '>', $last_sid)
-                ->orderBy('file_storage_id')
-                ->distinct()
-                ->limit($chunk)
-                ->pluck('file_storage_id');
-            if ($storage_ids->isEmpty()) {
-                break;
-            }
-            foreach ($storage_ids as $sid) {
-                $last_sid = (int) $sid;
-                if (self::release_blob_if_orphaned((int) $sid)) {
-                    $released++;
+                foreach ($past_retention as $attachment) {
+                    if (self::__destroy_attachment($attachment, $task)) {
+                        $destroyed++;
+                    } else {
+                        $held++;
+                    }
+                    $task->heartbeat();
                 }
             }
-            $task->heartbeat();
-        }
 
-        if ($destroyed || $held || $released) {
-            $task->info("Destroyed {$destroyed} attachment(s), {$held} held; released {$released} blob(s).");
-        }
+            // (b) BLOB-RELEASE PASS: distinct blobs of recently-destroyed attachments.
+            $release_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $lookback_days * 86400);
+            $released = 0;
+            $last_sid = 0;
+            while (true) {
+                $storage_ids = File_Attachment_Model::withTrashed()
+                    ->whereNotNull('destroyed_at')
+                    ->where('destroyed_at', '>=', $release_cutoff)
+                    ->whereNotNull('file_storage_id')
+                    ->where('file_storage_id', '>', $last_sid)
+                    ->orderBy('file_storage_id')
+                    ->distinct()
+                    ->limit($chunk)
+                    ->pluck('file_storage_id');
+                if ($storage_ids->isEmpty()) {
+                    break;
+                }
+                foreach ($storage_ids as $sid) {
+                    $last_sid = (int) $sid;
+                    if (self::release_blob_if_orphaned((int) $sid)) {
+                        $released++;
+                    }
+                }
+                $task->heartbeat();
+            }
 
-        return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => $released];
+            if ($destroyed || $held || $released) {
+                $task->info("Destroyed {$destroyed} attachment(s), {$held} held; released {$released} blob(s).");
+            }
+
+            return ['destroyed' => $destroyed, 'held' => $held, 'blobs_released' => $released];
+        });
+    }
+
+    /**
+     * config('rsx.files.deleted_retention_days'), validated: a whole number of days, 0
+     * meaning keep forever. A negative or non-integer value THROWS - read as a number it
+     * would put the destroy cutoff in the future (or at "now") and destroy every deleted
+     * attachment on the next run.
+     */
+    private static function __deleted_retention_days(): int
+    {
+        $value = config('rsx.files.deleted_retention_days', 30);
+        if (is_string($value) && preg_match('/^-?\d+$/', $value)) {
+            $value = (int) $value;
+        }
+        if (!is_int($value) || $value < 0) {
+            throw new \RuntimeException(
+                "config('rsx.files.deleted_retention_days') must be a whole number of days >= 0 "
+                . '(0 keeps deleted attachments forever); got ' . var_export($value, true) . '. See rsx:man file_disposal.'
+            );
+        }
+        return $value;
     }
 
     /**
@@ -231,69 +268,72 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     #[Schedule('0 2 * * 0')]
     public static function run_monthly_deep_sweep(Task_Instance $task, array $params = [])
     {
-        if (empty($params['force']) && (int) date('j') > 7) {
-            return ['skipped' => 'not the first Sunday of the month'];
-        }
-
-        $chunk = 1000;
-        $min_age_days = (int) config('rsx.files.disk_orphan_min_age_days', 14);
-
-        // (a) DB SIDE: storage rows with zero retention-aware references. Raw DB::table so the
-        // SoftDeletes global scope does not hide the retained rows that must still count.
-        $released = 0;
-        $last_sid = 0;
-        while (true) {
-            $orphan_ids = DB::table('_file_storage as s')
-                ->where('s.id', '>', $last_sid)
-                ->whereNotExists(function ($q) {
-                    $q->select(DB::raw(1))
-                        ->from('_file_attachments as a')
-                        ->whereColumn('a.file_storage_id', 's.id')
-                        ->whereNull('a.destroyed_at');
-                })
-                ->whereNotExists(function ($q) {
-                    $q->select(DB::raw(1))
-                        ->from('_email_attachments as e')
-                        ->whereColumn('e.file_storage_id', 's.id');
-                })
-                ->orderBy('s.id')
-                ->limit($chunk)
-                ->pluck('s.id');
-            if ($orphan_ids->isEmpty()) {
-                break;
+        // Every site's attachments, for the reason run_daily_disposal() gives.
+        return File_Attachment_Model::without_site_scope(function () use ($task, $params) {
+            if (empty($params['force']) && (int) date('j') > 7) {
+                return ['skipped' => 'not the first Sunday of the month'];
             }
-            foreach ($orphan_ids as $sid) {
-                $last_sid = (int) $sid;
-                if (self::release_blob_if_orphaned((int) $sid)) {
-                    $released++;
+
+            $chunk = 1000;
+            $min_age_days = (int) config('rsx.files.disk_orphan_min_age_days', 14);
+
+            // (a) DB SIDE: storage rows with zero retention-aware references. Raw DB::table so the
+            // SoftDeletes global scope does not hide the retained rows that must still count.
+            $released = 0;
+            $last_sid = 0;
+            while (true) {
+                $orphan_ids = DB::table('_file_storage as s')
+                    ->where('s.id', '>', $last_sid)
+                    ->whereNotExists(function ($q) {
+                        $q->select(DB::raw(1))
+                            ->from('_file_attachments as a')
+                            ->whereColumn('a.file_storage_id', 's.id')
+                            ->whereNull('a.destroyed_at');
+                    })
+                    ->whereNotExists(function ($q) {
+                        $q->select(DB::raw(1))
+                            ->from('_email_attachments as e')
+                            ->whereColumn('e.file_storage_id', 's.id');
+                    })
+                    ->orderBy('s.id')
+                    ->limit($chunk)
+                    ->pluck('s.id');
+                if ($orphan_ids->isEmpty()) {
+                    break;
                 }
+                foreach ($orphan_ids as $sid) {
+                    $last_sid = (int) $sid;
+                    if (self::release_blob_if_orphaned((int) $sid)) {
+                        $released++;
+                    }
+                }
+                $task->heartbeat();
             }
-            $task->heartbeat();
-        }
 
-        // (b) DISK SIDE.
-        $disk_deleted = self::__sweep_disk_orphans($task, $min_age_days, $chunk);
+            // (b) DISK SIDE.
+            $disk_deleted = self::__sweep_disk_orphans($task, $min_age_days, $chunk);
 
-        // (c) UNASSIGNED UPLOADS: soft-delete stale plain-local unattached uploads.
-        $upload_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $min_age_days * 86400);
-        $uploads_swept = 0;
-        $stale_uploads = File_Attachment_Model::whereNull('fileable_id')
-            ->whereNull('handler_class')          // plain local uploads only (never WP-A external)
-            ->whereNotNull('file_storage_id')
-            ->where('created_at', '<', $upload_cutoff)
-            ->result_set($chunk);
+            // (c) UNASSIGNED UPLOADS: soft-delete stale plain-local unattached uploads.
+            $upload_cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $min_age_days * 86400);
+            $uploads_swept = 0;
+            $stale_uploads = File_Attachment_Model::whereNull('fileable_id')
+                ->whereNull('handler_class')          // plain local uploads only (never WP-A external)
+                ->whereNotNull('file_storage_id')
+                ->where('created_at', '<', $upload_cutoff)
+                ->result_set($chunk);
 
-        foreach ($stale_uploads as $attachment) {
-            $attachment->delete();   // soft-delete -> enters the retention window
-            $uploads_swept++;
-            $task->heartbeat();
-        }
+            foreach ($stale_uploads as $attachment) {
+                $attachment->delete();   // soft-delete -> enters the retention window
+                $uploads_swept++;
+                $task->heartbeat();
+            }
 
-        if ($released || $disk_deleted || $uploads_swept) {
-            $task->info("Released {$released} orphaned blob(s); removed {$disk_deleted} orphaned disk file(s); swept {$uploads_swept} stale unassigned upload(s).");
-        }
+            if ($released || $disk_deleted || $uploads_swept) {
+                $task->info("Released {$released} orphaned blob(s); removed {$disk_deleted} orphaned disk file(s); swept {$uploads_swept} stale unassigned upload(s).");
+            }
 
-        return ['blobs_released' => $released, 'disk_files_removed' => $disk_deleted, 'uploads_swept' => $uploads_swept];
+            return ['blobs_released' => $released, 'disk_files_removed' => $disk_deleted, 'uploads_swept' => $uploads_swept];
+        });
     }
 
     /**
@@ -320,34 +360,37 @@ class File_Disposal_Service extends Rsx_Service_Abstract
     #[Schedule('every 6 hours')]
     public static function sweep_unclaimed_uploads(Task_Instance $task, array $params = [])
     {
-        $window_hours = (int) config('rsx.attachments.unattached_claim_window_hours', 24);
-        if ($window_hours <= 0) {
-            return ['skipped' => 'claim-window sweep disabled', 'swept' => 0];
-        }
+        // Every site's attachments, for the reason run_daily_disposal() gives.
+        return File_Attachment_Model::without_site_scope(function () use ($task, $params) {
+            $window_hours = (int) config('rsx.attachments.unattached_claim_window_hours', 24);
+            if ($window_hours <= 0) {
+                return ['skipped' => 'claim-window sweep disabled', 'swept' => 0];
+            }
 
-        $cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $window_hours * 3600);
+            $cutoff = Rsx_Time::subtract(Rsx_Time::now_iso(), $window_hours * 3600);
 
-        // Keyset-walked (result_set): an unbounded table, and a backlog of abandoned uploads
-        // is exactly the shape that grows without warning. Each delete() removes the row from
-        // the predicate, and the cursor only moves forward, so there is no re-visit or spin.
-        $swept = 0;
-        $unclaimed = File_Attachment_Model::whereNull('fileable_type')
-            ->whereNull('fileable_id')
-            ->whereNull('handler_class')          // plain local uploads only (never WP-A external)
-            ->where('created_at', '<', $cutoff)
-            ->result_set(1000);
+            // Keyset-walked (result_set): an unbounded table, and a backlog of abandoned uploads
+            // is exactly the shape that grows without warning. Each delete() removes the row from
+            // the predicate, and the cursor only moves forward, so there is no re-visit or spin.
+            $swept = 0;
+            $unclaimed = File_Attachment_Model::whereNull('fileable_type')
+                ->whereNull('fileable_id')
+                ->whereNull('handler_class')          // plain local uploads only (never WP-A external)
+                ->where('created_at', '<', $cutoff)
+                ->result_set(1000);
 
-        foreach ($unclaimed as $attachment) {
-            $attachment->delete();   // soft-delete -> enters the retention window
-            $swept++;
-            $task->heartbeat();
-        }
+            foreach ($unclaimed as $attachment) {
+                $attachment->delete();   // soft-delete -> enters the retention window
+                $swept++;
+                $task->heartbeat();
+            }
 
-        if ($swept) {
-            $task->info("Swept {$swept} unattached upload(s) past the {$window_hours}h claim window.");
-        }
+            if ($swept) {
+                $task->info("Swept {$swept} unattached upload(s) past the {$window_hours}h claim window.");
+            }
 
-        return ['swept' => $swept, 'window_hours' => $window_hours];
+            return ['swept' => $swept, 'window_hours' => $window_hours];
+        });
     }
 
     /**

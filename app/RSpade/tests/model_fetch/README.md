@@ -39,7 +39,7 @@ Two invariants govern the whole thing:
 | `app/Database/RestrictedEloquentBuilder.php` | `find()` override + its guards |
 | `Core/Js/Rsx_Js_Model.js` | Client batcher, `fetch`/`fetch_or_null`/`fetch_cached` |
 | `Core/Js/Ajax.js` | Transport (`_pending_calls` pruning after distribution) |
-| `Core/Ajax/Ajax_Batch_Controller.php` | Batched sub-call error codes (`not_found` arm) |
+| `Core/Ajax/Ajax.php` | `handle_batch_request()` - batched call error codes (the same envelope as a direct call) |
 | `config/rsx.php` | `rsx.model_fetch.batch_max_ids`, `max_relationship_records` |
 
 Behavior of record: `php artisan rsx:man model_fetch`. Gate evaluation on these surfaces

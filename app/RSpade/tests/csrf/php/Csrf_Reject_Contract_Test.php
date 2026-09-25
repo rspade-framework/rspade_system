@@ -21,9 +21,9 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Why this class exists (regression, CR 2026_08_04_flash_alert_portal_realm finding 1b):
  * a rejection is not an error - Rsx_Csrf::__reject() builds the response the client must
- * see (ajax contract, or 419) and throws it inside an HttpResponseException. RSX dispatch
- * runs INSIDE Laravel's exception rendering (the 404 -> Rsx_Dispatch_Bootstrapper_Handler
- * seam), so that throw re-enters the handler chain, where every handler renders SOME error
+ * see (ajax contract, or 419) and throws it inside an HttpResponseException. Rsx_Front_Controller
+ * returns that response verbatim itself; the exception handler chain honours it too, because
+ * a failure OUTSIDE dispatch reaches the chain directly, where every handler renders SOME error
  * surface for a Throwable it does not recognize: Web_Exception_Handler's fatal screen
  * (anywhere outside development+app.debug), Playwright_Exception_Handler's plain-text dump,
  * or an app-registered handler. Any of them turns the documented contract into an HTTP 500.

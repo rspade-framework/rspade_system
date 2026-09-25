@@ -388,18 +388,19 @@ return [
     | is the sanctioned seam for an application's own HTTP middleware.
     |
     | Shape:
-    |   'global'  => [My_Middleware::class]          appended to the global stack
-    |   'web'     => [...]                           appended to a middleware GROUP
-    |   'api'     => [...]                           (any group the kernel declares)
-    |   'aliases' => ['my_alias' => Class::class]    route-middleware aliases
+    |   'global' => [My_Middleware::class]    appended to the global stack
     |
-    | APPEND-ONLY. Declared middleware runs AFTER the framework stack; nothing here
-    | can reorder or remove framework middleware. If you genuinely need that, file a
-    | framework change request - do not edit the kernel.
+    | 'global' is the only key. RSX requests never pass through Laravel's router
+    | (the kernel hands every request to Rsx_Front_Controller), so there are no route
+    | middleware groups or aliases; a non-empty 'web', 'api' or 'aliases' key throws
+    | at bootstrap, as does any other key.
     |
-    | Validation is loud: an unknown group key, a class that does not exist, and an
-    | alias already bound to a different class each throw at bootstrap. Declaring
-    | something already present is a silent no-op.
+    | APPEND-ONLY. Declared middleware runs AFTER the framework stack, around every
+    | request; nothing here can reorder or remove framework middleware. If you
+    | genuinely need that, file a framework change request - do not edit the kernel.
+    |
+    | Validation is loud: an unknown key and a class that does not exist each throw at
+    | bootstrap. Declaring something already present is a silent no-op.
     |
     | The framework itself declares none; the block ships empty for apps to extend.
     |
@@ -408,9 +409,6 @@ return [
     */
     'middleware' => [
         'global' => [],
-        'web' => [],
-        'api' => [],
-        'aliases' => [],
     ],
 
     /*
@@ -445,12 +443,29 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Ajax
+    |--------------------------------------------------------------------------
+    |
+    | batch_max_calls: the most calls one /_ajax/_batch request may carry. A
+    | larger batch is refused WHOLE with a 400 naming this key, and none of its
+    | calls runs. The client flushes a batch at 20 pending calls (Ajax.MAX_BATCH_SIZE
+    | in Ajax.js), so the cap refuses only a request no RSX page sends - it bounds
+    | how much work one request can ask for. See rsx:man ajax_error_handling.
+    |
+    */
+    'ajax' => [
+        'batch_max_calls' => 100,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Client Portal
     |--------------------------------------------------------------------------
     |
     | Framework defaults for the client portal - a second authenticated
     | experience for external users (customers, clients, vendors) served by
-    | Portal_Dispatcher / Portal_Session, parallel to the main app.
+    | the portal realm of the page dispatcher and Portal_Session, parallel to
+    | the main app.
     |
     | An application merges its own overrides on top of these (see
     | rsx/resource/config/rsx.php), e.g. to wire PORTAL_DOMAIN from .env or add
@@ -850,10 +865,14 @@ return [
     | with lower numbers running first.
     |
     | Handler Priority Ranges:
-    | - 1-50: Critical/environment-specific (CLI, AJAX, Playwright)
+    | - 1-50: Critical/environment-specific (CLI, AJAX, API, Playwright)
     | - 51-100: Standard handlers
     | - 101-500: Low priority handlers
-    | - 501+: Fallback* or catch-all handlers (RSX dispatch bootstrapper)
+    | - 501+: Fallback / catch-all handlers (Web_Exception_Handler, the page channel)
+    |
+    | A handler FORMATS a failure; none dispatches. A failure inside dispatch reaches the
+    | chain once, from Rsx_Front_Controller; the AJAX and API handlers choose by the
+    | request's classified channel (Rsx_Request_Channel).
     |
     | Users can add custom handlers or reorder existing ones by modifying this array.
     |
@@ -863,7 +882,6 @@ return [
         \App\RSpade\Core\Exceptions\Ajax_Exception_Handler::class,             // Priority 20
         \App\RSpade\Core\Exceptions\Api_Exception_Handler::class,        // Priority 25
         \App\RSpade\Core\Debug\Playwright_Exception_Handler::class,            // Priority 30
-        \App\RSpade\Core\Providers\Rsx_Dispatch_Bootstrapper_Handler::class,   // Priority 1000
         \App\RSpade\Core\Exceptions\Web_Exception_Handler::class,              // Priority 1100
     ],
 
@@ -988,8 +1006,13 @@ return [
         | attachment SOFT-deletes it into a recoverable retention window; a scheduled task
         | permanently destroys it after the window and releases the blob once no live or
         | retained attachment still pins it. See rsx:man file_disposal.
+        |
+        | deleted_retention_days: days a deleted attachment stays recoverable before the
+        | daily task destroys it. 0 means KEEP FOREVER - the destroy pass never runs, every
+        | deleted attachment stays restorable and its blob stays pinned; force_destroy()
+        | still erases at once. A negative value is a config error, thrown by the daily task.
         */
-        'deleted_retention_days'   => 30,   // recoverable window before permanent destruction
+        'deleted_retention_days'   => 30,   // recoverable window before permanent destruction; 0 = forever
         'disposal_lookback_days'   => 60,   // blob-release pass window for the daily task
         'disk_orphan_min_age_days' => 14,   // age guard for the monthly disk/unassigned sweep
 

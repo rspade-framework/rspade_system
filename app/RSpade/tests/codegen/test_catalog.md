@@ -29,6 +29,8 @@
 | CODEGEN-31 | B-108: an already-correct `Rsx\` import of an overridden class survives two fixer passes - the delete pass and the re-add pass agree | php | same map, import already correct | import unchanged after two passes | implemented (Php_Fixer_Class_Override_Import_Test) | 2026-09-08 |
 | CODEGEN-32 | B-108: resolution is deterministic - rsx/ wins whatever order the file map is iterated in | php | file map reversed | same rewrite | implemented (Php_Fixer_Class_Override_Import_Test) | 2026-09-08 |
 | CODEGEN-26 | Command output spans CTI detail columns `(detail: <table>)`, emits BEM/typed enum members, and DATE/DATETIME as `string` not Carbon | php | `build_metadata(Party_Model)` | detail lines + `type_id__label` + `string $created_at` present, no `\Carbon\Carbon` | implemented (Constants_Regenerate_Metadata_Test) | 2026-07-30 |
+| CODEGEN-ORDER-01 | Generated `@property` lines are sorted by column NAME within the base group and within each `(detail: <table>)` group, base group first | php | Column_Order_Fixture_Model tables built by CREATE TABLE in non-alphabetical order | both groups in byte order, no detail column in the base group | implemented (Constants_Regenerate_Order_Test) | 2026-09-25 |
+| CODEGEN-ORDER-02 | One schema reached by two histories (CREATE TABLE vs CREATE + ALTER TABLE ADD COLUMN) generates byte-identical docblock and constants block | php | same fixture, rebuilt with ALTER-appended columns | physical orders differ (precondition); build_metadata() output identical | implemented (Constants_Regenerate_Order_Test) | 2026-09-25 |
 
 Php_Fixer source safety (backlog B-68 + the relationship-attribute defect), via
 `Php_Fixer_Import_Safety_Test`. Php_Fixer REWRITES SOURCE on every build, so these are

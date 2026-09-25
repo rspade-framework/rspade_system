@@ -43,20 +43,20 @@ use App\RSpade\Core\Models\Sms_Queue_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _sms_recipients
  *
- * @property int $id
- * @property int $site_id
- * @property string $number
- * @property int $is_blocked_notification
- * @property int $is_blocked_marketing
- * @property int $is_blocked_all
- * @property int $total_sent
- * @property int $total_failed
- * @property string $last_sent_at
- * @property string $unsubscribed_at
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property int $id
+ * @property int $is_blocked_all
+ * @property int $is_blocked_marketing
+ * @property int $is_blocked_notification
+ * @property string $last_sent_at
+ * @property string $number
+ * @property int $site_id
+ * @property int $total_failed
+ * @property int $total_sent
+ * @property string $unsubscribed_at
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
  *
@@ -86,18 +86,23 @@ abstract class Sms_Recipient_Model_Abstract extends Rsx_Site_Model_Abstract
     {
         $number = trim($number);
 
-        $recipient = static::where('site_id', $site_id)
-            ->where('number', $number)
-            ->first();
+        // The site is NAMED by the caller, so the ambient scope must not narrow it: the queue
+        // drain asks for every tenant's recipients while declaring no tenant of its own, and
+        // the creating hook would otherwise overwrite the site_id assigned below.
+        return static::without_site_scope(function () use ($site_id, $number) {
+            $recipient = static::where('site_id', $site_id)
+                ->where('number', $number)
+                ->first();
 
-        if (!$recipient) {
-            $recipient = new static();
-            $recipient->site_id = $site_id;
-            $recipient->number = $number;
-            $recipient->save();
-        }
+            if (!$recipient) {
+                $recipient = new static();
+                $recipient->site_id = $site_id;
+                $recipient->number = $number;
+                $recipient->save();
+            }
 
-        return $recipient;
+            return $recipient;
+        });
     }
 
     /**

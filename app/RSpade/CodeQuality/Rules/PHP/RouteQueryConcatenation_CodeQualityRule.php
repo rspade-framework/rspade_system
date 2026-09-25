@@ -18,7 +18,7 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
  * - Rsx::Route(...) . '?param=value'
  * - Rsx::Route(...) . "?param=value"
  *
- * Query parameters should be passed as the third argument to Rsx::Route() as an array.
+ * Query parameters should be passed as the second argument to Rsx::Route() as an array.
  */
 class RouteQueryConcatenation_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -69,7 +69,7 @@ class RouteQueryConcatenation_CodeQualityRule extends CodeQualityRule_Abstract
      */
     public function get_description(): string
     {
-        return 'Detects query strings concatenated onto Rsx::Route() calls and suggests using the third parameter array instead';
+        return 'Detects query strings concatenated onto Rsx::Route() calls and suggests using the second parameter array instead';
     }
 
     /**
@@ -139,7 +139,7 @@ class RouteQueryConcatenation_CodeQualityRule extends CodeQualityRule_Abstract
                     $line_num + 1,
                     "Query string concatenated onto Rsx::Route() call",
                     $line,
-                    "Query parameters should be passed as the third argument to Rsx::Route() as an array.\n\n" .
+                    "Query parameters should be passed as the second argument to Rsx::Route() as an array.\n\n" .
                     "WRONG:\n" .
                     "  Rsx::Route('Controller::method') . '?param=value&other=test'\n\n" .
                     "CORRECT:\n" .

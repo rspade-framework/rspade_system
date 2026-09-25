@@ -32,9 +32,10 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * API that is the single-use, tenant-scoped attachment key an upload hands back, and it
  * is the thing you most need to see when tracing an attach.
  *
- * api_key_id carries ON DELETE CASCADE, so PURGING a key destroys its request history
- * with it. Revoking does not - that sets _api_keys.is_revoked and keeps the row, which
- * is the difference between the two operations.
+ * api_key_id carries ON DELETE SET NULL: PURGING a key keeps its request history as an
+ * audit record, with api_key_id cleared (user_id, site_id and handler still say who and
+ * what). Revoking sets _api_keys.is_revoked and keeps the key row, so its history stays
+ * linked to it.
  *
  * Infrastructure table: writes are observability, never user-facing data anyone
  * subscribes to, so realtime emission is suppressed. Pruned by Api_Cleanup_Service
@@ -71,26 +72,26 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _api_request_log
  *
- * @property int $id
  * @property int $api_key_id
- * @property int $user_id
- * @property int $site_id
- * @property string $verb
- * @property string $path
- * @property string $handler
- * @property int $status
- * @property int $duration_ms
- * @property string $ip
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
- * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property int $duration_ms
+ * @property string $handler
+ * @property int $id
+ * @property string $ip
+ * @property string $path
  * @property string $request_body
+ * @property int $response_bytes
  * @property string $response_error_code
  * @property string $response_error_message
- * @property int $response_bytes
+ * @property int $site_id
+ * @property int $status
+ * @property string $updated_at
+ * @property int $updated_by_id
+ * @property int $updated_by_type
+ * @property int $user_id
+ * @property string $verb
  *
  * @mixin \Eloquent
  */

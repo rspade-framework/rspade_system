@@ -1,0 +1,45 @@
+THREE TEMPLATE TABLE MIGRATIONS MOVE TO rsx/; ip_addresses, user_invites AND user_verifications ARE DROPPED
+Date: 2026-09-25
+
+IF YOU DO NOTHING: a database built by replaying migrations from nothing
+    (without the shipped schema cache) has no action_logs, action_log_related,
+    notifications, user_groups or user_group_members tables, so your
+    activity-log, notification and group code fails; and if your code wrote to
+    ip_addresses, user_invites or user_verifications through Ip_Address_Model,
+    User_Invite_Model, User_Verification_Model or Login_User_Model::invites() /
+    verifications(), those rows are deleted by the next migrate and the calls
+    fail with class-not-found.
+
+SUMMARY
+    1. The migrations that create action_logs/action_log_related, notifications
+       and user_groups/user_group_members belong to the template application,
+       not the framework - only rsx/ code models or queries those tables. They
+       moved from system/database/migrations to the template's
+       rsx/resource/migrations under the SAME filenames, so an existing database
+       sees no new migration. Your rsx/ tree is your own, so a framework update
+       removes them from system/ without adding them to your rsx/.
+    2. ip_addresses, user_invites and user_verifications had no reader or
+       writer anywhere in the framework or the template (staff invites live in
+       users.invite_code). A framework migration drops them, and their models
+       and relations are deleted.
+
+    Contract: php artisan rsx:man migrations
+
+ACTION REQUIRED - COPY THE THREE MIGRATIONS
+    Copy these into rsx/resource/migrations/ unchanged, and add each filename
+    to that directory's migration whitelist:
+        system/app/RSpade/resource/reference_app/resource/migrations/2025_12_11_061551_create_groups_and_group_users_tables.php
+        system/app/RSpade/resource/reference_app/resource/migrations/2026_01_29_070242_create_action_logs_tables.php
+        system/app/RSpade/resource/reference_app/resource/migrations/2026_01_29_081902_create_notifications_table.php
+    If your application removed those features and dropped the tables, skip
+    this step.
+
+ACTION REQUIRED - THE DROPPED TABLES
+    grep -rn "Ip_Address_Model\|User_Invite_Model\|User_Verification_Model\|->invites()\|->verifications()" rsx/
+    If anything matches and the data matters, create your own table and model
+    for it in rsx/ BEFORE running the migrate that carries this change, and copy
+    the rows across in that same migration.
+
+VERIFICATION
+    php artisan migrate:status lists the three create migrations as ran, and
+    php artisan rsx:health shows every Schema Contract row OK.

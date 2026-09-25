@@ -22,7 +22,7 @@ class Optimize_Cache_Command extends Command
      *
      * @var string
      */
-    protected $description = 'Cache all cacheable Laravel components (config, routes, views, events)';
+    protected $description = 'Build the Laravel event cache and the precompiled views (part of rsx:build)';
 
     /**
      * Execute the console command.
@@ -34,12 +34,12 @@ class Optimize_Cache_Command extends Command
         // THE BUILD OWNS THESE CACHES. They are build outputs like any other - they land
         // in build/ and a served request only reads them - so the one context permitted to
         // write them is the build (rsx:build, which forwards its context to this child).
-        // Running it by hand in development would freeze routes and Blade against a tree
+        // Running it by hand in development would freeze events and Blade against a tree
         // that is still changing, which is the confusion the whole mode exists to avoid.
         if (!Rsx_Build_Context::is_active()) {
             throw new \RuntimeException(
                 "optimize:cache is part of the build, not a command to run by hand.\n\n" .
-                "It writes the route, event and compiled-view caches into build/, and only a\n" .
+                "It writes the event cache and the compiled views into build/, and only a\n" .
                 "build may write there.\n\n" .
                 "  Build everything: php artisan rsx:build --force\n" .
                 '  See:              php artisan rsx:man prod'
@@ -71,9 +71,12 @@ class Optimize_Cache_Command extends Command
         // compiling one. The set and the path spelling are RSX's own (_compile_views()),
         // not Laravel's view:cache walk.
         //
-        // Route, event and view caching do NOT skip Dotenv loading, so all three are safe.
+        // NO ROUTE CACHE. RSX dispatch never consults Laravel's router (App\Http\Kernel hands
+        // every request to Rsx_Front_Controller) and the route table is empty, so there is
+        // nothing to cache; route:cache is a restricted stub.
+        //
+        // Event and view caching do NOT skip Dotenv loading, so both are safe.
         $steps = [
-            'routes' => 'Routes',
             'events' => 'Events',
             'views' => 'Views',
         ];
@@ -119,16 +122,12 @@ class Optimize_Cache_Command extends Command
      */
     protected function cache_component($type)
     {
-        // RSX overrides config:cache / route:cache / view:cache / event:cache with
+        // RSX overrides config:cache / view:cache / event:cache (and route:cache) with
         // restricted stubs, so calling them BY NAME (Artisan registry) would just
         // hit the stub. We instead construct and run the ORIGINAL Laravel command
         // object directly, which bypasses the name registry entirely. Their own
         // internal *:clear calls are not overridden, so they run cleanly.
         switch ($type) {
-            case 'routes':
-                $command = new \Illuminate\Foundation\Console\RouteCacheCommand(app('files'));
-                break;
-
             case 'events':
                 $command = new \Illuminate\Foundation\Console\EventCacheCommand();
                 break;

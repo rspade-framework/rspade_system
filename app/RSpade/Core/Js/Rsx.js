@@ -207,6 +207,14 @@ class Rsx {
     static _setup_exception_handlers() {
         // Handle uncaught JavaScript errors
         window.addEventListener('error', function (event) {
+            if (Rsx._is_resize_observer_notice(event)) {
+                // Not an error: nothing threw, and the browser resumes delivery on the next
+                // frame. Visible on the RESIZE_OBSERVER channel so a genuinely looping observer
+                // can still be seen while developing.
+                console_debug('RESIZE_OBSERVER', event.message);
+                return;
+            }
+
             // Pass the Error object directly if available, otherwise create one
             const exception = event.error || new Error(event.message);
             // Attach additional metadata if not already present
@@ -237,6 +245,27 @@ class Rsx {
 
             Rsx._handle_unhandled_exception(exception, { source: 'unhandled_rejection' });
         });
+    }
+
+    /**
+     * True for the browser's ResizeObserver delivery-overrun notice, and for nothing else.
+     *
+     * When a ResizeObserver callback changes layout so that notifications are still pending as
+     * the batch ends, the browser dispatches an ErrorEvent at window with one of these exact
+     * messages, no error object and no stack, and delivers the rest on the next frame. The page
+     * is working, so it is not an unhandled exception. Matched on the exact message text AND the
+     * absence of an error object: a real Error carrying the same text is still an error.
+     *
+     * @param {ErrorEvent} event
+     * @returns {boolean}
+     */
+    static _is_resize_observer_notice(event) {
+        if (event.error) {
+            return false;
+        }
+
+        return event.message === 'ResizeObserver loop completed with undelivered notifications.'
+            || event.message === 'ResizeObserver loop limit exceeded';
     }
 
     /**
@@ -498,6 +527,10 @@ class Rsx {
      * });
      * // Returns: /contacts/C001?tab=history
      *
+     * // Hash state (the fragment Rsx.url_hash_get() reads back)
+     * const url = Rsx.Route('Clients_View_Action', 5, {tab: 'portal'});
+     * // Returns: /clients/5#tab=portal
+     *
      * // Placeholder route
      * const url = Rsx.Route('Future_Controller::#index');
      * // Returns: #
@@ -505,9 +538,11 @@ class Rsx {
      *
      * @param {string} action Controller class, SPA action, or "Class::method". Defaults to 'index' method if not specified.
      * @param {number|Object} [params=null] Route parameters. Integer sets 'id', object provides named params.
+     * @param {Object} [hash=null] Fragment state, key -> string|integer, encoded by _serialize_hash() - the
+     *        encoder url_hash_get() reads back. A null/undefined/'' value drops its key. See rsx:man url_hash.
      * @returns {string} The generated URL
      */
-    static Route(action, params = null) {
+    static Route(action, params = null, hash = null) {
         if (typeof action !== 'string') {
             throw new Error('Rsx.Route: action must be a string, got ' + typeof action);
         }
@@ -568,7 +603,32 @@ class Rsx {
         }
 
         // Generate URL from pattern
-        return Rsx._generate_url_from_pattern(pattern, params_obj);
+        return Rsx._generate_url_from_pattern(pattern, params_obj, hash);
+    }
+
+    /**
+     * One route token: an optional leading slash, ':' and a whole name, and an optional '?'.
+     * The name is greedy, so ':id' is never read as a prefix of ':id_two'. A fresh global
+     * regex per call, so no lastIndex state is shared. Mirrors Rsx::ROUTE_TOKEN_REGEX.
+     *
+     * @returns {RegExp}
+     */
+    static _route_token_regex() {
+        return /(\/?):([a-zA-Z_][a-zA-Z0-9_]*)(\?)?/g;
+    }
+
+    /**
+     * The tokens of a route pattern, in order, as [name, optional] pairs.
+     *
+     * @param {string} pattern
+     * @returns {Array<Array>}
+     */
+    static _route_tokens(pattern) {
+        const tokens = [];
+        for (const m of pattern.matchAll(Rsx._route_token_regex())) {
+            tokens.push([m[2], m[3] === '?']);
+        }
+        return tokens;
     }
 
     /**
@@ -587,20 +647,13 @@ class Rsx {
         const satisfiable = [];
 
         for (const pattern of patterns) {
-            // Extract required parameters from pattern
-            const required_params = [];
-            const matches = pattern.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g);
-            if (matches) {
-                // Remove the : prefix from each match
-                for (const match of matches) {
-                    required_params.push(match.substring(1));
-                }
-            }
-
-            // Check if all required parameters are provided
+            // Satisfiable when every REQUIRED token is provided
             let can_satisfy = true;
-            for (const required of required_params) {
-                if (!(required in params_obj)) {
+            let filled = 0;
+            for (const [name, optional] of Rsx._route_tokens(pattern)) {
+                if (name in params_obj) {
+                    filled++;
+                } else if (!optional) {
                     can_satisfy = false;
                     break;
                 }
@@ -609,7 +662,7 @@ class Rsx {
             if (can_satisfy) {
                 satisfiable.push({
                     pattern: pattern,
-                    param_count: required_params.length
+                    param_count: filled
                 });
             }
         }
@@ -628,26 +681,23 @@ class Rsx {
     /**
      * Generate URL from route pattern by replacing parameters
      *
+     * The ONE generator for both realms: Rsx_Portal.Route() calls it (and
+     * _select_best_route_pattern()) and applies the portal base to the result, so a portal
+     * URL carries the same tokens, query string, `at` anchor and hash state as a staff URL.
+     *
      * @param {string} pattern The route pattern (e.g., '/users/:id/view')
      * @param {Object} params Parameters to fill into the route
+     * @param {Object} [hash=null] Fragment state (see Route())
      * @returns {string} The generated URL
      */
-    static _generate_url_from_pattern(pattern, params) {
-        // Extract required parameters from the pattern
-        const required_params = [];
-        const matches = pattern.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g);
-        if (matches) {
-            // Remove the : prefix from each match
-            for (const match of matches) {
-                required_params.push(match.substring(1));
-            }
-        }
+    static _generate_url_from_pattern(pattern, params, hash = null) {
+        const tokens = Rsx._route_tokens(pattern);
 
         // Check for required parameters
         const missing = [];
-        for (const required of required_params) {
-            if (!(required in params)) {
-                missing.push(required);
+        for (const [name, optional] of tokens) {
+            if (!optional && !(name in params)) {
+                missing.push(name);
             }
         }
 
@@ -655,17 +705,20 @@ class Rsx {
             throw new Error(`Required parameters [${missing.join(', ')}] are missing for route ${pattern}`);
         }
 
-        // Build the URL by replacing parameters
-        let url = pattern;
+        // Build the URL: each whole token is replaced once, by name (':id' never touches
+        // ':id_two'). An optional token with no value is dropped together with its slash,
+        // exactly the URL the router matches for it. Mirrors Rsx::_generate_url_from_pattern.
         const used_params = {};
+        let url = pattern.replace(Rsx._route_token_regex(), (whole, slash, name, question) => {
+            used_params[name] = true;
+            const value = params[name];
 
-        for (const param_name of required_params) {
-            const value = params[param_name];
-            // URL encode the value
-            const encoded_value = encodeURIComponent(value);
-            url = url.replace(':' + param_name, encoded_value);
-            used_params[param_name] = true;
-        }
+            if ((value === null || value === undefined || value === '') && question === '?') {
+                return '';
+            }
+
+            return slash + encodeURIComponent(value === null || value === undefined ? '' : value);
+        });
 
         // Collect any extra parameters for query string
         // Filter out internal parameters that should not appear in URLs
@@ -678,7 +731,8 @@ class Rsx {
             }
 
             // The reserved anchor key rides the hash, not the query string, so
-            // Rsx.Route('Action', {at: 'install'}) deep-links to a section.
+            // Rsx.Route('Action', {at: 'install'}) deep-links to a section, and
+            // Rsx_Portal.Route() gets the same through this routine.
             // Mirrors Rsx::HASH_ANCHOR_KEY handling in Core/Rsx.php.
             // See: php artisan rsx:man anchors
             if (key === Rsx.HASH_ANCHOR_KEY) {
@@ -697,12 +751,80 @@ class Rsx {
             url += '?' + query_string;
         }
 
-        // Anchor last - a fragment always terminates the URL
-        if (anchor !== null && anchor !== undefined && anchor !== '') {
-            url += '#' + Rsx.HASH_ANCHOR_KEY + '=' + encodeURIComponent(anchor);
+        // The fragment last - it always terminates the URL
+        return url + Rsx._route_hash_fragment(hash, anchor);
+    }
+
+    /**
+     * The URL fragment for Route()'s hash state plus the `at` anchor: the hash keys in order,
+     * the anchor last, serialized by _serialize_hash() - the encoder url_hash_get() reads
+     * back. Byte-identical to Rsx::__hash_fragment() in Core/Rsx.php. '' when nothing is left.
+     *
+     * A null/undefined/'' value drops its key (url_hash_set()'s rule). Anything else that is
+     * not a string or an integer THROWS: the fragment reader only ever returns strings, and a
+     * value it could not read back is a caller bug, never something to drop.
+     *
+     * @param {Object|null} hash key -> string|integer
+     * @param {*} anchor The `at` value from the route params (rsx:man anchors), or null
+     * @returns {string}
+     */
+    static _route_hash_fragment(hash, anchor) {
+        const state = {};
+
+        if (hash !== null && hash !== undefined) {
+            const proto = typeof hash === 'object' ? Object.getPrototypeOf(hash) : undefined;
+            if (proto !== Object.prototype && proto !== null) {
+                throw new Error('Route() hash must be a plain object of key -> value, got ' +
+                    (Array.isArray(hash) ? 'an array' : typeof hash));
+            }
+
+            for (const key of Object.keys(hash)) {
+                // A JS object iterates integer keys first and PHP turns them into ints, so
+                // an integer key could never produce the same fragment in both languages.
+                if (key === '' || /^(0|[1-9][0-9]*)$/.test(key)) {
+                    throw new Error('Route() hash keys must be non-empty, non-integer strings; got ' + JSON.stringify(key) + '.');
+                }
+
+                if (key === Rsx.HASH_ANCHOR_KEY) {
+                    throw new Error("Route() hash may not carry the reserved anchor key '" + Rsx.HASH_ANCHOR_KEY + "'; " +
+                        'pass it in the route params instead (rsx:man anchors).');
+                }
+
+                const value = hash[key];
+                if (value === null || value === undefined || value === '') {
+                    continue;
+                }
+
+                state[key] = Rsx._route_hash_value(key, value);
+            }
         }
 
-        return url;
+        if (anchor !== null && anchor !== undefined && anchor !== '') {
+            state[Rsx.HASH_ANCHOR_KEY] = Rsx._route_hash_value(Rsx.HASH_ANCHOR_KEY, anchor);
+        }
+
+        return Rsx._serialize_hash(state);
+    }
+
+    /**
+     * One hash value as the string the fragment carries: a string, or an integer in decimal.
+     *
+     * @param {string} key For the error message
+     * @param {*} value
+     * @returns {string}
+     */
+    static _route_hash_value(key, value) {
+        // A safe integer only: beyond 2^53 String() would print what PHP's int cannot hold.
+        if (Number.isSafeInteger(value)) {
+            return String(value);
+        }
+
+        if (typeof value !== 'string') {
+            throw new Error(`Route() hash value for '${key}' must be a string or an integer; got ` +
+                (value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value) + '.');
+        }
+
+        return value;
     }
 
     /**

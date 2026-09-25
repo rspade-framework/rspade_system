@@ -204,20 +204,9 @@ class Manifest_Show_Command extends FrameworkDeveloperCommand
             if (!Rsx_Identifier::is_path_visible_to_developer($path)) { continue; }
 
             $class = !empty($info['class']) ? ' [' . $info['class'] . ']' : '';
-            $size = $this->format_bytes($info['size'] ?? 0);
+            $size = bytes_to_human($info['size'] ?? 0);
             $clean_path = str_replace('\\', '/', $path);
             $this->line(sprintf('  %s (%s)%s', $clean_path, $size, $class));
-        }
-    }
-    
-    protected function format_bytes($bytes)
-    {
-        if ($bytes < 1024) {
-            return $bytes . 'B';
-        } elseif ($bytes < 1048576) {
-            return round($bytes / 1024, 1) . 'KB';
-        } else {
-            return round($bytes / 1048576, 1) . 'MB';
         }
     }
 }

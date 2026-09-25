@@ -1,0 +1,63 @@
+QUEUE MODELS ARE PHP-ONLY, /_sys IS DEVELOPER-ONLY, SVG IS NEVER RASTERISED, AND MAIN::PRE_DISPATCH RUNS FOR THE API
+Date: 2026-09-25
+
+IF YOU DO NOTHING: JavaScript that calls Email_Queue_Model.fetch() or
+    Sms_Queue_Model.fetch() fails; staff who are not developers get a 403 on
+    /_sys; a Main::pre_dispatch() that returns non-null without checking the
+    request, or that calls a session writer such as Session::logout(), now
+    refuses or throws on that user's external API calls; application Imagick
+    code that reads SVG, text: or label: input fails under the new ImageMagick
+    policy.
+
+SUMMARY
+    Four changes from one security pass reach application code.
+
+    1. Email_Queue_Model and Sms_Queue_Model no longer have fetch() or
+       #[Ajax_Endpoint_Model_Fetch]. A queue row holds rendered bodies and
+       template data (invite and reset links among them), so it is not a
+       browser-fetchable record. The new manifest rule MODEL-FETCH-SYSTEM-01
+       refuses a model-fetch surface on any model whose table starts with `_`.
+    2. Permission_Abstract::is_sysadmin(), the /_sys gate, is now
+       Session::is_developer() (login_users.is_developer). It stays
+       #[Replaceable].
+    3. An uploaded SVG is sanitized on upload and is never handed to Imagick:
+       its thumbnail is the extension icon and it has no width/height. The
+       development image ships an ImageMagick policy that reads raster formats
+       and PDF only.
+    4. The external API now runs your Main::pre_dispatch() after the key and
+       the #[Auth] gates, before the endpoint. A non-null return answers
+       403 account_refused - so account suspension written there, as rsx:man
+       session shows, now covers API keys too.
+
+    Contract: php artisan rsx:man external_api, rsx:man session,
+    rsx:man sys_panel, rsx:man file_upload
+
+ACTION REQUIRED - CODE
+    Queue model fetches:
+        grep -rn "Email_Queue_Model.fetch\|Sms_Queue_Model.fetch" rsx/
+    Replace each with an Ajax endpoint of your own, gated as your screen
+    requires, returning only the fields that screen shows.
+
+    Main::pre_dispatch(): read it. Anything that should apply to browser
+    pages only - an interstitial redirect, a forced-enrollment screen - must
+    check the request first, for example by the handler prefix in
+    $params['_handler'] (rsx/main.php's 2FA rule does this) or
+    Session::is_api_request(). A session writer (Session::logout()) must not
+    run for an API request; return a non-null value instead.
+
+        system/app/RSpade/resource/reference_app/main.php
+
+    /_sys access: to let a role in rather than developers only, override
+    is_sysadmin() in your Permission class.
+
+ACTION REQUIRED - OPERATOR (existing boxes)
+    Install system/app/RSpade/resource/docker/imagemagick/policy.xml as
+    /etc/ImageMagick-6/policy.xml, or recreate the container from the rebuilt
+    development image. rsx:health's "ImageMagick Coder Policy" row fails until
+    then.
+
+VERIFICATION
+    php artisan rsx:health shows "ImageMagick Coder Policy" and "Ignition
+    Read-Only" passing. rsx:debug /_sys --user=<a non-developer> answers 403.
+    An API call made with a key belonging to a user your pre_dispatch()
+    refuses answers 403 account_refused.

@@ -345,27 +345,6 @@ function random_hash($bytes = 32)
 }
 
 /**
- * Make a string safe for use as a variable/function name
- *
- * @param string $string Input string
- * @param int $max_length Maximum length (default: 64)
- * @return string Safe string
- */
-function safe_string($string, $max_length = 64)
-{
-    // Replace non-alphanumeric with underscores
-    $string = preg_replace('/[^a-zA-Z0-9_]+/', '_', $string);
-
-    // Ensure first character is not a number
-    if (empty($string) || is_numeric($string[0])) {
-        $string = '_' . $string;
-    }
-
-    // Trim to max length
-    return substr($string, 0, $max_length);
-}
-
-/**
  * Get file extension handling double extensions (e.g., .blade.php)
  *
  * @param string $path File path
@@ -1511,15 +1490,41 @@ function is_loopback_ip(): bool
 }
 
 /**
- * Sanitize HTML from WYSIWYG editors to prevent XSS attacks
+ * Escape plain text for placement in HTML: `<`, `>`, `&`, `"` and `'` become entities, and
+ * an invalid UTF-8 sequence is replaced rather than emptying the result.
  *
- * Uses HTMLPurifier to filter potentially malicious HTML while preserving
- * safe formatting tags. Suitable for user-generated rich text content.
+ * The twin of JS escape_html(). Plain text in, HTML-safe text out - for untrusted HTML that
+ * must keep its markup, sanitize_rich_text_html() is the tool instead.
  *
- * @param string $html The HTML string to sanitize
- * @return string Sanitized HTML safe for display
+ * @param string $text Plain text
+ * @return string HTML-escaped text
  */
-function safe_html(string $html): string
+function escape_html(string $text): string
+{
+    return htmlspecialchars($text, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+}
+
+/**
+ * Sanitize rich-text HTML (WYSIWYG editor output) with HTMLPurifier: untrusted HTML in, HTML
+ * holding only the rich-text allow-list out.
+ *
+ * The twin of JS sanitize_rich_text_html(), held to the IDENTICAL allow-list:
+ *
+ * - tags: p br strong b em i u s strike a ul ol li blockquote h1-h6 pre code img table
+ *   thead tbody tr th td div span
+ * - attributes, per element: a[href|title], img[src|alt|title|width|height],
+ *   li[data-list] - no class, no style, no target, no rel from the input
+ * - URLs: http, https, mailto, or relative; nothing else (no data:, no javascript:)
+ * - a link to an absolute URL is given target="_blank" rel="noreferrer noopener"
+ *
+ * Returns a STRING. Assigned to a declared text column a string is PLAIN TEXT, so sanitized
+ * markup bound for one goes through its type instead: Type::from_untrusted_encoded($html),
+ * which runs the type's own sanitizer.
+ *
+ * @param string $html Untrusted HTML
+ * @return string Sanitized HTML
+ */
+function sanitize_rich_text_html(string $html): string
 {
     static $purifier = null;
 
@@ -1537,7 +1542,7 @@ function safe_html(string $html): string
         $config->set('Cache.SerializerPermissions', null);  // Disable chmod (Docker compatibility)
 
         // Allow common formatting elements
-        $config->set('HTML.Allowed', 'p,br,strong,b,em,i,u,s,strike,a[href|title|target],ul,ol,li[data-list],blockquote,h1,h2,h3,h4,h5,h6,pre,code,img[src|alt|title|width|height],table,thead,tbody,tr,th,td,div,span');
+        $config->set('HTML.Allowed', 'p,br,strong,b,em,i,u,s,strike,a[href|title],ul,ol,li[data-list],blockquote,h1,h2,h3,h4,h5,h6,pre,code,img[src|alt|title|width|height],table,thead,tbody,tr,th,td,div,span');
 
         // li[data-list] is a Quill 2 list item's kind, and for a checklist it IS the
         // state: 'checked' / 'unchecked'. It is the only editor attribute that has to
@@ -1546,14 +1551,11 @@ function safe_html(string $html): string
         // HTMLPurifier caches the definition by id + revision, and the revision is derived
         // from the values, so changing them retires the cached definition by itself.
         $list_kinds = ['checked', 'unchecked', 'ordered', 'bullet'];
-        $config->set('HTML.DefinitionID', 'rsx-safe-html');
+        $config->set('HTML.DefinitionID', 'rsx-rich-text-html');
         $config->set('HTML.DefinitionRev', crc32(implode(',', $list_kinds)) & 0x7fffffff);
 
-
-        // Allow class attributes for styling
-        $config->set('Attr.AllowedClasses', null); // Allow all classes
-
-        // Link handling
+        // Link handling: a link to an absolute URL opens in a new window, and HTMLPurifier's
+        // TargetNoreferrer / TargetNoopener defaults add rel="noreferrer noopener" to it.
         $config->set('HTML.TargetBlank', true);
         $config->set('URI.AllowedSchemes', ['http' => true, 'https' => true, 'mailto' => true]);
 
@@ -1695,51 +1697,6 @@ function _rsx_relative_build_path(string $path): string
     }
 
     return $relative;
-}
-
-/**
- * Convert text to HTML preserving whitespace and indentation
- *
- * Converts plain text to HTML that displays with proper formatting:
- * - HTML special characters are escaped
- * - Leading spaces on each line are converted to &nbsp;
- * - Newlines are converted to <br> tags
- * - Trailing whitespace on lines is trimmed
- *
- * This is useful for displaying source code or formatted text in HTML
- * where you want to preserve the indentation and line breaks.
- *
- * @param string $text The plain text to convert
- * @return string HTML-formatted text
- */
-function text_to_html_with_whitespace(string $text): string
-{
-    // First, escape HTML special characters to prevent XSS
-    $text = htmlspecialchars($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-    // Split into lines
-    $lines = explode("\n", $text);
-
-    // Process each line
-    $processed_lines = [];
-    foreach ($lines as $line) {
-        // Trim trailing whitespace only (preserve leading spaces)
-        $line = rtrim($line);
-
-        // Count leading spaces
-        $leading_spaces = strlen($line) - strlen(ltrim($line));
-
-        if ($leading_spaces > 0) {
-            // Replace leading spaces with &nbsp;
-            $spaces_html = str_repeat('&nbsp;', $leading_spaces);
-            $line = $spaces_html . substr($line, $leading_spaces);
-        }
-
-        $processed_lines[] = $line;
-    }
-
-    // Join lines with <br>\n
-    return implode("<br>\n", $processed_lines);
 }
 
 /**
@@ -2027,27 +1984,6 @@ function validate_short_url(?string $url): bool
 }
 
 /**
- * Escape HTML and convert newlines to <br>
- *
- * Combines htmlspecialchars() and nl2br() for displaying user-generated
- * plain text as HTML with preserved line breaks.
- *
- * @param string|null $str String to process
- * @return string HTML-escaped string with line breaks
- */
-function htmlbr(?string $str): string
-{
-    if ($str === null || $str === '') {
-        return '';
-    }
-
-    return nl2br(htmlspecialchars($str, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
-}
-
-/**
- * Common TLDs for domain detection in linkify functions
- */
-/**
  * The largest a SINGLE argv element may be, in bytes.
  *
  * Linux MAX_ARG_STRLEN, fixed at 32 pages (32 * 4096) by the kernel and not configurable:
@@ -2057,116 +1993,6 @@ function htmlbr(?string $str): string
  * posix_spawn() error. A payload that can outgrow it belongs off argv entirely.
  */
 define('ARG_MAX_SINGLE_BYTES', 32 * 4096);
-
-define('LINKIFY_TLDS', 'com|org|net|edu|gov|io|co|me|info|biz|us|uk|ca|au|de|fr|es|it|nl|ru|jp|cn|in|br|mx|app|dev|xyz|online|site|tech|store|blog|shop');
-
-/**
- * Convert plain text to HTML with URLs converted to hyperlinks
- *
- * First escapes the text to HTML, then converts URLs (with protocols) and
- * domain-like text (with known TLDs) into clickable hyperlinks.
- *
- * @param string|null $content Plain text content
- * @param bool $new_window Whether to add target="_blank" to links
- * @return string HTML with clickable links
- */
-function linkify_text(?string $content, bool $new_window = true): string
-{
-    if ($content === null || $content === '') {
-        return '';
-    }
-
-    // First escape HTML
-    $html = htmlspecialchars($content, ENT_QUOTES | ENT_HTML5, 'UTF-8');
-
-    return _linkify_content($html, $new_window);
-}
-
-/**
- * Convert URLs in HTML to hyperlinks, preserving existing links
- *
- * Converts URLs (with protocols) and domain-like text (with known TLDs)
- * into clickable hyperlinks, but only for text not already inside <a> tags.
- *
- * @param string|null $content HTML content
- * @param bool $new_window Whether to add target="_blank" to links
- * @return string HTML with clickable links
- */
-function linkify_html(?string $content, bool $new_window = true): string
-{
-    if ($content === null || $content === '') {
-        return '';
-    }
-
-    // Split content into segments: inside <a> tags and outside
-    // Pattern matches <a ...>...</a> including nested content
-    $pattern = '/(<a\s[^>]*>.*?<\/a>)/is';
-    $segments = preg_split($pattern, $content, -1, PREG_SPLIT_DELIM_CAPTURE);
-
-    $result = '';
-    foreach ($segments as $segment) {
-        // Check if this segment is an <a> tag (starts with <a and contains </a>)
-        if (preg_match('/^<a\s/i', $segment)) {
-            // Already a link, keep as-is
-            $result .= $segment;
-        } else {
-            // Not inside a link, linkify it
-            $result .= _linkify_content($segment, $new_window);
-        }
-    }
-
-    return $result;
-}
-
-/**
- * Internal helper to convert URLs/domains to links in content
- *
- * @param string $content Content to process (should not contain <a> tags to linkify)
- * @param bool $new_window Whether to add target="_blank"
- * @return string Content with URLs converted to links
- */
-function _linkify_content(string $content, bool $new_window): string
-{
-    $target = $new_window ? ' target="_blank" rel="noopener noreferrer"' : '';
-    $tlds = LINKIFY_TLDS;
-
-    // Pattern for URLs with protocol
-    $url_pattern = '/(https?:\/\/[^\s<>\[\]()]+)/i';
-
-    // Pattern for domain-like text (domain.tld or subdomain.domain.tld with optional path)
-    $domain_pattern = '/\b((?:[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+(' . $tlds . ')(?:\/[^\s<>\[\]()]*)?)\b/i';
-
-    // First, replace URLs with protocol
-    $content = preg_replace_callback($url_pattern, function ($matches) use ($target) {
-        $url = $matches[1];
-        // Clean trailing punctuation that's likely not part of URL
-        $url = rtrim($url, '.,;:!?)\'\"');
-        return '<a href="' . $url . '"' . $target . '>' . $url . '</a>';
-    }, $content);
-
-    // Then, replace domain-like text only in segments NOT inside <a> tags
-    // (the URL replacement above may have created <a> tags)
-    $link_pattern = '/(<a\s[^>]*>.*?<\/a>)/is';
-    $segments = preg_split($link_pattern, $content, -1, PREG_SPLIT_DELIM_CAPTURE);
-
-    $result = '';
-    foreach ($segments as $segment) {
-        // Skip segments that are already links
-        if (preg_match('/^<a\s/i', $segment)) {
-            $result .= $segment;
-        } else {
-            // Apply domain pattern to non-link segments
-            $result .= preg_replace_callback($domain_pattern, function ($matches) use ($target) {
-                $domain = $matches[1];
-                // Clean trailing punctuation
-                $domain = rtrim($domain, '.,;:!?)\'\"');
-                return '<a href="https://' . $domain . '"' . $target . '>' . $domain . '</a>';
-            }, $segment);
-        }
-    }
-
-    return $result;
-}
 
 /**
  * Convert a relative URL path to an absolute URL for THIS installation.

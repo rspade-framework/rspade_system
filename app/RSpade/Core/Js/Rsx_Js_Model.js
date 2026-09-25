@@ -554,7 +554,7 @@ class Rsx_Js_Model {
                     );
                 }
 
-                return Text_Class.from_wire(data);
+                return Text_Class.from_envelope(data);
             }
 
             // Check if this object has a __MODEL property

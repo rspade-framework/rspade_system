@@ -21,21 +21,29 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
  *         'notes'       => Raw_Text::class,
  *     ];
  *
- * A value is IMMUTABLE and carries its own storage form. It enters through exactly two
- * doors - from_storage() trusts the database, everything else routes through
- * from_untrusted() and is filtered - and there is no third way to construct one. A BARE
- * STRING is plain text: from_string() escapes it into the encoding first (escape_string())
- * and then takes the same filtered door.
+ * A value is IMMUTABLE and carries its own storage form. The constructor is private, and
+ * four static constructors are the only ways to build one. Exactly one of them skips the
+ * type's sanitizer:
  *
- * A column with NO declaration keeps today's behaviour exactly: a naked PHP string, no
- * object, no filtering, nothing to migrate.
+ *     from_storage($raw)                  TRUSTED, unfiltered: content that came out of
+ *                                         the column. The one that skips the sanitizer.
+ *     from_untrusted_encoded($encoded)    content already in the type's encoding (HTML
+ *                                         for a rich-text type): sanitize_encoded() runs.
+ *     from_plain_text($plain)             plain text: encode_plain_text() converts it into
+ *                                         the encoding, then from_untrusted_encoded().
+ *     from_request($value)                a submitted value, resolved to this type: a
+ *                                         request envelope goes through
+ *                                         from_untrusted_encoded(), a bare string through
+ *                                         from_plain_text().
+ *
+ * A column with NO declaration is unaffected: a naked PHP string, no object, no filtering.
  *
  * ── What a type must supply, and what it merely may ─────────────────────────────────
  *
- * TWO methods are required: filter_set(), the trust boundary, and escape_string(), the
- * plain-text conversion every bare string goes through. Everything else is a
- * CONVENTION - a predictable name application code can rely on when a type chooses to
- * offer the capability - and throws by default so that asking a type for a rendition it
+ * TWO methods are required: sanitize_encoded(), the trust boundary, and
+ * encode_plain_text(), the plain-text conversion every bare string goes through. Everything
+ * else is a CONVENTION - a predictable name application code can rely on when a type
+ * chooses to offer the capability - and throws by default so that asking a type for a rendition it
  * never defined fails loudly instead of guessing.
  *
  * to_html() is a STATIC rendition for a server-generated document: an email, a PDF, an
@@ -43,13 +51,13 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
  * PRINTER component in the browser, and that is the only rendering most types ever need;
  * define to_html() only for the specific case where markup must be produced server-side.
  *
- * to_text() is the value as readable text: a CSV cell, an index, an excerpt. Also never
+ * to_plain_text() is the value as readable text: a CSV cell, an index, an excerpt. Also never
  * called by the framework. A type whose plain form means resolving references against the
  * database may reasonably never do that on the server, and is not made to carry the
  * method to exist. When it does exist it lives HERE and has no JavaScript counterpart:
  * the server can resolve synchronously, the browser cannot, and rather than be right in
  * one language and approximate in the other the browser throws on string coercion. So
- * does the server: to_text(), to_html() and is_empty() are the named ways to ask.
+ * does the server: to_plain_text(), to_html() and is_empty() are the named ways to ask.
  *
  * is_empty() is the one question every type answers, because assign-then-validate in
  * every endpoint depends on it. Its default is the raw form; a wrapping encoding overrides.
@@ -88,10 +96,10 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * Public, because a caller holding content that came out of the column (a stored
      * snapshot reduced to text, say) legitimately needs it, and UNFILTERED: whatever is
      * handed in is stored and rendered byte for byte. Anything that did not come out of
-     * the column - a request, an import, an API caller - goes through from_untrusted();
+     * the column - a request, an import, an API caller - goes through from_untrusted_encoded();
      * handing it here instead is a stored-XSS path.
      *
-     * The stored content is TRUSTED: it was filtered by from_untrusted() on the way in,
+     * The stored content is TRUSTED: it was filtered by from_untrusted_encoded() on the way in,
      * so a read performs no filtering at all. That matters - re-purifying on every read
      * would put an HTMLPurifier pass on every row of every list, and it would mean the
      * database is knowingly holding unsafe content that only looks safe because every
@@ -106,14 +114,16 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     }
 
     /**
-     * The ONLY door for content from a request, an import or an API caller.
+     * Content ALREADY IN THIS TYPE'S ENCODING (HTML for a rich-text type), from anywhere but
+     * the column: a request, an import, an API caller, markup server code built. The type's
+     * sanitize_encoded() runs on it. Plain text goes through from_plain_text() instead.
      *
      * @param string $raw
      * @return static
      */
-    final public static function from_untrusted(string $raw): static
+    final public static function from_untrusted_encoded(string $raw): static
     {
-        return new static(static::filter_set($raw));
+        return new static(static::sanitize_encoded($raw));
     }
 
     /**
@@ -127,7 +137,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     }
 
     // =========================================================================
-    // WHAT A CONCRETE TYPE SUPPLIES - filter_set() and escape_string() are required;
+    // WHAT A CONCRETE TYPE SUPPLIES - sanitize_encoded() and encode_plain_text() are required;
     // the rest are CONVENTIONS a type adopts only when it needs the capability.
     // =========================================================================
 
@@ -145,11 +155,11 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * @return string
      */
     #[Replaceable]
-    public function to_text(): string
+    public function to_plain_text(): string
     {
         throw new \LogicException(
-            class_basename(static::class) . ' does not define to_text(). A plain-text rendition '
-            . 'is optional - implement to_text() on the type if an export or an index needs one.'
+            class_basename(static::class) . ' does not define to_plain_text(). A plain-text rendition '
+            . 'is optional - implement to_plain_text() on the type if an export or an index needs one.'
         );
     }
 
@@ -198,7 +208,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * @param string $raw
      * @return string
      */
-    abstract public static function filter_set(string $raw): string;
+    abstract public static function sanitize_encoded(string $raw): string;
 
     /**
      * Plain text -> this type's encoding: the ESCAPE, REQUIRED of every type.
@@ -206,22 +216,22 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * A bare string carries no encoding, so the one thing it can honestly be taken to be is
      * plain text. This is what makes that true: every bare string assigned to a declared
      * column - an import, a seed, a CLI script, an /api/vN call, a plain form field - is
-     * converted by it, and the type's filter_set() then runs on the result. For an HTML
+     * converted by it, and the type's sanitize_encoded() then runs on the result. For an HTML
      * type this is `'<p>' . nl2br(htmlspecialchars($plain)) . '</p>'`, so `<`, `&` and line
      * breaks survive as the text they were instead of being read as markup.
      *
-     * Abstract for the same reason filter_set() is: a type whose encoding IS plain text
+     * Abstract for the same reason sanitize_encoded() is: a type whose encoding IS plain text
      * writes the passthrough down, with the reason beside it, rather than inheriting one.
      *
-     * CONTRACT: a pure string transform, exactly as filter_set().
+     * CONTRACT: a pure string transform, exactly as sanitize_encoded().
      *
      * @param string $plain
      * @return string
      */
-    abstract public static function escape_string(string $plain): string;
+    abstract public static function encode_plain_text(string $plain): string;
 
     /**
-     * Plain text -> a value of this type: escape_string(), then filter_set().
+     * Plain text -> a value of this type: encode_plain_text(), then sanitize_encoded().
      *
      * What the cast does with a bare string, and the explicit spelling for code that wants
      * the typed value without a column to assign it to. Final so that no type can build a
@@ -230,9 +240,9 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * @param string $plain
      * @return static
      */
-    final public static function from_string(string $plain): static
+    final public static function from_plain_text(string $plain): static
     {
-        return static::from_untrusted(static::escape_string($plain));
+        return static::from_untrusted_encoded(static::encode_plain_text($plain));
     }
 
     // =========================================================================
@@ -249,7 +259,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      *
      * Silent coercion would strip the markup, concatenate, and hand a plain string to the
      * cast, which would store it looking entirely plausible - the exact failure this whole
-     * system exists to prevent. Every legitimate need has a named method: to_text() for a
+     * system exists to prevent. Every legitimate need has a named method: to_plain_text() for a
      * CSV cell, a search index or a length check; to_html() for a document; is_empty() for
      * validation. Say which one you mean.
      *
@@ -258,7 +268,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     final public function __toString(): string
     {
         throw new \LogicException(
-            class_basename(static::class) . ' cannot be used as a string. Call ->to_text() '
+            class_basename(static::class) . ' cannot be used as a string. Call ->to_plain_text() '
             . 'for its readable text, ->to_html() for a document rendition, ->is_empty() to '
             . 'test for content, or assign it to its column.'
         );
@@ -273,7 +283,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
     #[Replaceable]
     public function is_empty(): bool
     {
-        // The RAW form, deliberately not to_text(): to_text() is optional, and emptiness
+        // The RAW form, deliberately not to_plain_text(): to_plain_text() is optional, and emptiness
         // is the one question every type must answer, because assign-then-validate in
         // every endpoint depends on it. A type whose encoding WRAPS its content overrides
         // this - an emptied WYSIWYG stores <p><br></p>, a non-empty string holding an
@@ -286,8 +296,9 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * Rsx_Text_Request_Value, recursively, leaving everything else untouched.
      *
      * Called once at the Ajax boundary (the external API's string params go through
-     * hydrate_request_string() instead, held to the same shape check). NOTHING IS RESOLVED HERE: the boundary holds a bag
-     * of keys and cannot know which column each is bound for, so it does not guess a type
+     * wrap_api_param_envelope() instead, held to the same shape check). NOTHING IS RESOLVED
+     * HERE: the boundary holds a bag of keys and cannot know which column each is bound
+     * for, so it does not guess a type
      * from the client's claim - the claim is carried as an opaque string and discarded when
      * the value reaches a column (the cast) or a type that names itself (from_request()).
      * That is what makes a `__TEXT` naming an arbitrary class harmless: no name from the
@@ -296,7 +307,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * @param mixed $value
      * @return mixed
      */
-    public static function hydrate_request_value(mixed $value): mixed
+    public static function wrap_request_envelopes(mixed $value): mixed
     {
         if (!is_array($value)) {
             return $value;
@@ -307,7 +318,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
         }
 
         foreach ($value as $key => $item) {
-            $value[$key] = static::hydrate_request_value($item);
+            $value[$key] = static::wrap_request_envelopes($item);
         }
 
         return $value;
@@ -332,7 +343,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      *                                            for an envelope whose raw form is null
      * @throws \InvalidArgumentException on an identified but malformed envelope
      */
-    public static function hydrate_request_string(string $value): string|Rsx_Text_Request_Value|null
+    public static function wrap_api_param_envelope(string $value): string|Rsx_Text_Request_Value|null
     {
         if (!str_starts_with($value, '{')) {
             return $value;
@@ -415,7 +426,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
      * Accepts a request wrapper (its client-claimed type must match - a mismatch is a
      * programming error and fatal, not a security control: the value resolves to THIS type
      * regardless), an already-typed value (must be this type), or a bare string (a plain
-     * field that never wrapped - PLAIN TEXT, converted by from_string()). Every path that
+     * field that never wrapped - PLAIN TEXT, converted by from_plain_text()). Every path that
      * carries untrusted input runs the filter.
      *
      * @param mixed $value
@@ -439,7 +450,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
                 );
             }
 
-            return static::from_untrusted($value->_raw());
+            return static::from_untrusted_encoded($value->_raw());
         }
 
         if ($value instanceof static) {
@@ -454,7 +465,7 @@ abstract class Rsx_Text_Abstract implements \JsonSerializable, \Stringable
         }
 
         if (is_string($value)) {
-            return static::from_string($value);
+            return static::from_plain_text($value);
         }
 
         throw new \InvalidArgumentException(

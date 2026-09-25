@@ -90,7 +90,7 @@ class Markdown_Rendition
     /**
      * Keep exactly what GFM produces and drop everything else.
      *
-     * safe_html() is deliberately not reused: its allowlist is written for user-entered rich
+     * sanitize_rich_text_html() is deliberately not reused: its allowlist is written for user-entered rich
      * text and carries neither the table elements nor the task-list checkbox, so a markdown
      * table would arrive as a run of unformatted words.
      *

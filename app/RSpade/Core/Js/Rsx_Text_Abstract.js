@@ -15,15 +15,15 @@
  *     }
  *
  * PRINTER is the jqhtml component that renders the value on a live page; EDITOR is the
- * input component that edits it. A type may also declare `static filter_set(raw)` to
+ * input component that edits it. A type may also declare `static sanitize_encoded(raw)` to
  * clean a value on the way out of its editor - defense in depth beside the server's
  * authoritative filter, never a replacement for it.
  *
- * ── Why there is no to_text() ────────────────────────────────────────────────────────
+ * ── Why there is no to_plain_text() ────────────────────────────────────────────────────────
  *
  * Asking what a block of rich text "is as a string" is a question the browser often
  * cannot answer: resolving an entity tag to a person's name needs the database. Where a
- * type offers to_text() at all - it is an optional convention, not a requirement - it
+ * type offers to_plain_text() at all - it is an optional convention, not a requirement - it
  * lives on the server, which can answer synchronously, and the wire carries only the raw
  * form.
  *
@@ -51,7 +51,7 @@ class Rsx_Text_Abstract {
      * @param {Object} envelope
      * @returns {Rsx_Text_Abstract|null}
      */
-    static from_wire(envelope) {
+    static from_envelope(envelope) {
         if (envelope.raw === null || envelope.raw === undefined) {
             return null;
         }
@@ -122,7 +122,7 @@ class Rsx_Text_Abstract {
      * @param {string} raw
      * @returns {string}
      */
-    static filter_set(raw) {
+    static sanitize_encoded(raw) {
         return raw;
     }
 
@@ -133,7 +133,7 @@ class Rsx_Text_Abstract {
      * @returns {Rsx_Text_Abstract}
      */
     static from_editor(raw) {
-        return new this(this.filter_set(String(raw ?? '')));
+        return new this(this.sanitize_encoded(String(raw ?? '')));
     }
 
     /**

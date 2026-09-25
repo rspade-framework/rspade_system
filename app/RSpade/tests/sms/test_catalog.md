@@ -47,3 +47,12 @@ subsystem is most likely to hide. There is deliberately no `stale_after_days` mi
 | SMS-41 | both supported modes are accepted | php | `suppressed`, `disabled` | `Rsx_Sms::delivery_mode()` returns each | implemented | 2026-08-31 |
 | SMS-42 | `suppressed` records every claimed row as undeliverable | php | drain in suppressed | `suppressed` > 0; row SUPPRESSED | implemented | 2026-08-31 |
 | SMS-43 | `disabled` FREEZES the queue - freezing is not suppressing | php | drain in disabled | counts 0; row still PENDING with no `last_error` | implemented | 2026-08-31 |
+
+## Sms_Drain_All_Sites_Test (php, default isolation) - the drain serves every site
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| SMS-50 | another site's message is processed by a drain declaring site 1 | php | row queued as site 2 | row SUPPRESSED, site_id still 2 | implemented | 2026-09-25 |
+| SMS-51 | the stranded-row reclaim reaches another site | php | site-2 row forced to SENDING | reclaimed > 0, then SUPPRESSED | implemented | 2026-09-25 |
+| SMS-52 | retention prunes every site's rows | php | site-2 row backdated 90 days, `cleanup` | row gone | implemented | 2026-09-25 |
+| SMS-53 | a recipient is found or created under the site NAMED, whatever the ambient site | php | `find_or_create_by_number(2, ...)` as site 1, twice | site_id 2; the same row both times | implemented | 2026-09-25 |

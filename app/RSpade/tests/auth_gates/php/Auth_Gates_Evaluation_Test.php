@@ -232,14 +232,18 @@ class Auth_Gates_Evaluation_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * An ungated surface is reachable (closed-by-default arrives with the
-     * validation pass, not with the engine).
+     * An ungated surface is never reachable: the build refuses one, so meeting one here
+     * is a build/request disagreement and can_access() refuses it loudly.
      */
-    public static function test_can_access_ungated_surface_passes()
+    public static function test_can_access_ungated_surface_is_refused()
     {
         static::__install();
 
-        static::__assert_true(Auth_Gates::can_access('Eval_Ungated_Controller::index', Auth_Gates::REALM_STAFF));
+        static::__assert_throws(
+            \RuntimeException::class,
+            fn () => Auth_Gates::can_access('Eval_Ungated_Controller::index', Auth_Gates::REALM_STAFF),
+            'empty gate list'
+        );
 
         Auth_Gates::_reset_for_testing();
     }

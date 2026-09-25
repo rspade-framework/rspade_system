@@ -8,7 +8,6 @@ namespace App\RSpade\Tests\Externals\Php;
 
 use Illuminate\Http\Request;
 use RuntimeException;
-use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use App\RSpade\Core\Bundle\Cdn_Cache;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
@@ -23,9 +22,10 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * What is pinned: a hit is served with the right type and the immutable/nosniff headers; a
  * name the naming rule could never have produced (a traversal, an old-shape name) is refused
- * before the filesystem is touched; and a MISS names the remedy that fits the mode -
- * rsx:cdn_externals:refresh in development (the compile that names the file never ran here),
- * rsx:build --force in a production build (the mirror is incomplete, which is a broken build).
+ * before the filesystem is touched (a plain-text 404); and a MISS names the remedy that fits
+ * the mode - rsx:cdn_externals:refresh in a development 404 (the compile that names the file
+ * never ran here), rsx:build --force in a production build's thrown failure (the mirror is
+ * incomplete, which is a broken build).
  *
  * No DB, no network.
  */
@@ -62,7 +62,7 @@ class Vendor_Route_Test extends Rsx_Test_Abstract
 
     private static function __serve(string $name)
     {
-        return AssetHandler::try_serve('/_vendor/' . $name, Request::create('/_vendor/' . $name));
+        return AssetHandler::serve_build_artifact('/_vendor/' . $name, Request::create('/_vendor/' . $name));
     }
 
     // -------------------------------------------------------------------------
@@ -95,38 +95,39 @@ class Vendor_Route_Test extends Rsx_Test_Abstract
 
     public static function test_a_traversal_name_is_refused()
     {
-        static::__assert_throws(
-            NotFoundHttpException::class,
-            fn () => static::__serve('../../.env'),
-            'Invalid vendor filename'
-        );
+        $response = static::__serve('../../.env');
+
+        static::__assert_equals(404, $response->getStatusCode());
+        static::__assert_contains('Invalid vendor filename', $response->getContent());
     }
 
     public static function test_an_old_shape_name_is_refused()
     {
-        static::__assert_throws(
-            NotFoundHttpException::class,
-            fn () => static::__serve('bootstrap_0123456789ab.css'),
-            'Invalid vendor filename'
-        );
+        $response = static::__serve('bootstrap_0123456789ab.css');
+
+        static::__assert_equals(404, $response->getStatusCode());
+        static::__assert_contains('Invalid vendor filename', $response->getContent());
     }
 
     // -------------------------------------------------------------------------
     // Misses - the remedy follows the mode
     // -------------------------------------------------------------------------
 
+    /**
+     * A development miss is a plain-text 404 RESPONSE (never a thrown exception), and a
+     * developer caller - the suite runs as one - is told the remedy.
+     */
     public static function test_a_development_miss_names_the_store_refresh_command()
     {
         Rsx::_testing_set_mode(Rsx::MODE_DEVELOPMENT);
 
         try {
-            $exception = static::__assert_throws(
-                NotFoundHttpException::class,
-                fn () => static::__serve('00000000000000000000000000000000_missing.js'),
-                'Vendor file not found'
-            );
+            $response = static::__serve('00000000000000000000000000000000_missing.js');
 
-            static::__assert_contains('rsx:cdn_externals:refresh', $exception->getMessage());
+            static::__assert_equals(404, $response->getStatusCode());
+            static::__assert_contains('text/plain', (string) $response->headers->get('Content-Type'));
+            static::__assert_contains('Vendor file not found', $response->getContent());
+            static::__assert_contains('rsx:cdn_externals:refresh', $response->getContent());
         } finally {
             Rsx::clear_mode_cache();
         }

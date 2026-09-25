@@ -103,6 +103,192 @@ class Security_Health_Checks
     }
 
     /**
+     * Ignition, Laravel's debug page, must be read-only: no runnable solutions, no
+     * sharing. A runnable solution is an unauthenticated, CSRF-free POST that can
+     * rotate APP_KEY, run migrations or rewrite .env, and Ignition's own "local caller"
+     * test is fooled by the proxy hop in front of php-fpm. config/ignition.php
+     * hard-codes both to false; this row FAILs when either is anything else, and when
+     * /_ignition/health-check is answered by Ignition over HTTP - which it never is while
+     * the HTTP kernel hands every request to Rsx_Front_Controller instead of Laravel's
+     * router, so that half guards the kernel wiring itself.
+     *
+     * @return array<string, mixed>
+     */
+    #[Health_Check('Ignition Read-Only')]
+    public static function ignition_read_only(): array
+    {
+        $problems = [];
+        foreach (['enable_runnable_solutions', 'enable_share_button'] as $key) {
+            if (config('ignition.' . $key) !== false) {
+                $problems[] = "ignition.{$key} is " . var_export(config('ignition.' . $key), true);
+            }
+        }
+
+        $base = rtrim((string) config('app.url'), '/');
+        if ($base !== '') {
+            try {
+                $response = Http::withOptions(['verify' => false, 'allow_redirects' => false])
+                    ->timeout(self::PROBE_TIMEOUT)
+                    ->get($base . '/_ignition/health-check');
+                // Content-matched, as the exposure probes are: an SPA catch-all can answer
+                // 200 for any path, and only Ignition's own answer names this key.
+                if ($response->status() === 200 && str_contains($response->body(), 'can_execute_commands')) {
+                    $problems[] = "{$base}/_ignition/health-check is served by Ignition";
+                }
+            } catch (\Throwable $e) {
+                // An unreachable own domain is reported by the Web Exposure row; the
+                // config half of this check still stands on its own.
+            }
+        }
+
+        if (!empty($problems)) {
+            return [
+                'status' => 'FAIL',
+                'detail' => implode('; ', $problems),
+                'remediation' => "set 'enable_runnable_solutions' => false and 'enable_share_button' => false "
+                    . 'as literals in system/config/ignition.php (the framework ships them that way)',
+            ];
+        }
+
+        return [
+            'status' => 'OK',
+            'detail' => 'runnable solutions and sharing off; /_ignition/* not served',
+            'remediation' => null,
+        ];
+    }
+
+    /**
+     * Laravel's route table must be EMPTY.
+     *
+     * RSX dispatch never consults Laravel's router: App\Http\Kernel hands every request to
+     * Rsx_Front_Controller, and the framework provider empties the route table once every
+     * provider has booted. A route in the table is therefore a regression in one of those
+     * two - the kernel pointed back at the router, or something registering routes AFTER
+     * boot - and a route that became reachable would bypass RSX's CSRF, #[Auth] gates and
+     * CSP. The row asks the booted router of this very process, which has run the same
+     * providers a web request runs; zero routes is OK, any route is a FAIL naming it.
+     * Console needs no route, so there is no allowance for one.
+     *
+     * @return array<string, mixed>
+     */
+    #[Health_Check('Laravel Route Table')]
+    public static function laravel_route_table(): array
+    {
+        $routes = app('router')->getRoutes()->getRoutes();
+
+        if (!empty($routes)) {
+            $names = array_map(
+                fn ($route) => implode('|', $route->methods()) . ' /' . ltrim($route->uri(), '/'),
+                $routes
+            );
+
+            return [
+                'status' => 'FAIL',
+                'detail' => count($routes) . ' Laravel route(s) registered: ' . implode(', ', $names),
+                'remediation' => 'RSX serves no Laravel route. Remove the registration (a routes file, a '
+                    . 'provider calling Route::*); confirm App\Http\Kernel::dispatchToRouter() still hands '
+                    . 'every request to Rsx_Front_Controller. See: php artisan rsx:man dispatch',
+            ];
+        }
+
+        return [
+            'status' => 'OK',
+            'detail' => 'no Laravel route is registered; every request is dispatched by RSX',
+            'remediation' => null,
+        ];
+    }
+
+    /**
+     * ImageMagick must refuse the vector and scripting coders. Its SVG/MSVG coder follows
+     * references inside a document (an <image href="text:/etc/passwd"> rasterises a local
+     * file), MVG and MSL are its own drawing and scripting languages, and TEXT/LABEL turn a
+     * file or a string into an image. The framework never asks for any of them (an SVG
+     * upload is never rasterised and the extension icons are PNG), so the shipped policy
+     * allows raster coders only: system/app/RSpade/resource/docker/imagemagick/policy.xml.
+     *
+     * Each coder is PROBED with a harmless input, because Imagick::queryFormats() lists a
+     * coder whether or not the policy lets it read: a read the policy refuses throws "not
+     * allowed by the security policy", and any other outcome means the coder is live.
+     *
+     * @return array<string, mixed>
+     */
+    #[Health_Check('ImageMagick Coder Policy')]
+    public static function imagemagick_coder_policy(): array
+    {
+        if (!extension_loaded('imagick')) {
+            return [
+                'status' => 'INFO',
+                'detail' => 'the imagick extension is not loaded - nothing to probe',
+                'remediation' => null,
+            ];
+        }
+
+        $dir = \App\RSpade\Core\Paths\Rsx_Project_Paths::tmp_path('health_imagick_' . bin2hex(random_bytes(6)));
+        ensure_directory($dir);
+
+        $inputs = [
+            'SVG' => ['svg', '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'],
+            'MSVG' => ['msvg', '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'],
+            'MVG' => ['mvg', "viewbox 0 0 1 1\n"],
+            // MSL is probed with an ABSENT script: the coder's policy check runs before the
+            // file is opened, and a real MSL script is a program - one ImageMagick 6 build
+            // segfaults on the smallest well-formed script there is.
+            'MSL' => ['msl', false],
+            'TEXT' => ['text', "x\n"],
+            'LABEL' => ['label', null],
+        ];
+
+        $readable = [];
+
+        try {
+            foreach ($inputs as $coder => [$prefix, $body]) {
+                if ($body === null) {
+                    $spec = $prefix . ':x';
+                } elseif ($body === false) {
+                    $spec = $prefix . ':' . $dir . '/absent.' . $prefix;
+                } else {
+                    $path = $dir . '/probe.' . $prefix;
+                    file_put_contents($path, $body);
+                    $spec = $prefix . ':' . $path;
+                }
+
+                try {
+                    $image = new \Imagick();
+                    $image->readImage($spec);
+                    $image->clear();
+                    $readable[] = $coder;
+                } catch (\Throwable $e) {
+                    if (!str_contains($e->getMessage(), 'security policy')) {
+                        $readable[] = $coder;
+                    }
+                }
+            }
+        } finally {
+            foreach (glob($dir . '/*') ?: [] as $file) {
+                unlink($file);
+            }
+            rmdir($dir);
+        }
+
+        if (!empty($readable)) {
+            return [
+                'status' => 'FAIL',
+                'detail' => 'ImageMagick policy permits: ' . implode(', ', $readable)
+                    . ' (an SVG can rasterise local files through these coders)',
+                'remediation' => 'install system/app/RSpade/resource/docker/imagemagick/policy.xml as '
+                    . 'the system ImageMagick policy (/etc/ImageMagick-6/policy.xml), which allows raster '
+                    . 'coders only; the RSpade docker image does this',
+            ];
+        }
+
+        return [
+            'status' => 'OK',
+            'detail' => 'SVG, MSVG, MVG, MSL, TEXT and LABEL are refused by policy',
+            'remediation' => null,
+        ];
+    }
+
+    /**
      * True if the base URL answers at all (any HTTP status, including a redirect, counts
      * as reachable; only a transport/connection failure counts as unreachable).
      *

@@ -11,8 +11,7 @@ use App\RSpade\Core\Rsx;
  * Rsx_Csp - the framework's Content-Security-Policy composer.
  *
  * ONE POLICY PER REALM, COMPOSED IN ONE PLACE. Every RSX page response gets its header from
- * here (Dispatcher::__transform_response for staff, Portal_Dispatcher::__build_response for
- * the portal), so there is exactly one description of what a page may load and it is derived,
+ * here (Dispatcher::__transform_response, with the request's realm), so there is exactly one description of what a page may load and it is derived,
  * never hand-written:
  *
  * - Framework inline scripts carry a NONCE. `'unsafe-inline'` never appears in script-src.

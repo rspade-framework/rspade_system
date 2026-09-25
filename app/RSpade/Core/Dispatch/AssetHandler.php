@@ -135,52 +135,94 @@ class AssetHandler
     protected static $directories_discovered = false;
     
     /**
-     * Check if a path is an asset request
+     * Is this path a BUILD ARTIFACT - a compiled bundle file under /_compiled/ or a
+     * mirrored external under /_vendor/ - by the strict filename rule each store uses?
+     *
+     * This is the ASSET channel's whole test (Rsx_Request_Channel). A path under either
+     * prefix that fails its pattern is not an artifact: it is an ordinary page path, and
+     * the page pipeline answers it (a 404 page).
+     *
+     * @param string $path
+     * @return bool
+     */
+    public static function is_build_artifact_request(string $path): bool
+    {
+        if (str_starts_with($path, '/_compiled/')) {
+            // BundleName__(vendor|app).(8 hex).(js|css) or BundleName__app.(16 hex).(js|css)
+            $filename = substr($path, 11);
+
+            return preg_match('/^[A-Za-z0-9_]+__(vendor|app)\.[a-f0-9]{8}\.(js|css)$/', $filename)
+                || preg_match('/^[A-Za-z0-9_]+__app\.[a-f0-9]{16}\.(js|css)$/', $filename);
+        }
+
+        // ONE pattern decides what the mirror can name, and it lives on Cdn_Cache - fonts
+        // and images are in there too, so a js|css-only test here would send a mirrored
+        // .woff2 to page dispatch and 404.
+        if (str_starts_with($path, '/_vendor/')) {
+            return (bool) preg_match(\App\RSpade\Core\Bundle\Cdn_Cache::FILENAME_PATTERN, substr($path, 9));
+        }
+
+        return false;
+    }
+
+    /**
+     * Serve a build artifact. Always answers: the file, or a plain-text 404.
+     *
+     * A miss is a 404 RESPONSE, never a thrown NotFoundHttpException and never a fall
+     * through to route dispatch - a build artifact is not a page, and a themed 404 is not
+     * something a <script> or <link> tag can use. A developer caller
+     * (Rsx_Diagnostics::caller_sees_detail()) is told why; everybody else gets the status.
+     *
+     * The one failure that is NOT a 404: a sealed build missing a file its own mirror was
+     * supposed to hold is a broken build, and it throws (the ASSET channel's error policy
+     * answers a plain-text 500).
+     *
+     * @param string $path A path is_build_artifact_request() accepted
+     * @param Request $request
+     * @return Response
+     */
+    public static function serve_build_artifact(string $path, Request $request): Response
+    {
+        if (str_starts_with($path, '/_compiled/')) {
+            return static::__serve_compiled_bundle($path, $request);
+        }
+
+        if (str_starts_with($path, '/_vendor/')) {
+            return static::__serve_vendor_cdn_cache($path, $request);
+        }
+
+        shouldnt_happen("AssetHandler::serve_build_artifact() was handed a path that is not a build artifact: {$path}");
+    }
+
+    /**
+     * Could this path name a PUBLIC file - a file under one of the rsx public/ directories?
+     * Decided on the extension alone; try_serve() answers whether one exists.
      *
      * @param string $path
      * @return bool
      */
     public static function is_asset_request($path)
     {
-        // Check if this is a compiled bundle request
-        if (str_starts_with($path, '/_compiled/')) {
-            // Validate filename format: BundleName__(vendor|app).(8 chars).(js|css) or BundleName__app.(16 chars).(js|css)
-            $filename = substr($path, 11); // Remove '/_compiled/'
-            return preg_match('/^[A-Za-z0-9_]+__(vendor|app)\.[a-f0-9]{8}\.(js|css)$/', $filename) ||
-                   preg_match('/^[A-Za-z0-9_]+__app\.[a-f0-9]{16}\.(js|css)$/', $filename);
-        }
-
-        // Check if this is a vendor CDN cache request. ONE pattern decides what the store
-        // can name, and it lives on Cdn_Cache - fonts and images are in there too now, so
-        // a js|css-only test here would send a mirrored .woff2 to route dispatch and 404.
-        if (str_starts_with($path, '/_vendor/')) {
-            $filename = substr($path, 9); // Remove '/_vendor/'
-            return (bool) preg_match(\App\RSpade\Core\Bundle\Cdn_Cache::FILENAME_PATTERN, $filename);
-        }
-
-        // Check if path has a file extension
         $extension = pathinfo($path, PATHINFO_EXTENSION);
 
         if (empty($extension)) {
             return false;
         }
 
-        // Check if extension is allowed
         return in_array(strtolower($extension), static::$allowed_extensions);
     }
-    
+
     /**
-     * Serve an asset file, or return NULL when the public directories hold no such file.
+     * Serve a PUBLIC file, or return NULL when the public directories hold no such file.
      *
      * A null return means "not a file" and nothing more - the caller decides what that
-     * means. Dispatcher and Portal_Dispatcher fall through to route dispatch on it, which
+     * means. Dispatcher falls through to route dispatch on it, in both realms, which
      * is what lets a #[Route] serve a GENERATED document at a natural filename
      * (/apidocs/openapi.json). Ordering is deliberate: a real file still wins, so no asset
      * that resolves today can be shadowed by a route pattern added tomorrow.
      *
-     * NOT null-returning for /_compiled/ and /_vendor/: those are framework-internal build
-     * artifacts, a miss is a build problem, and quietly falling through to a route scan
-     * would turn a loud, diagnosable failure into a generic 404.
+     * Build artifacts (/_compiled/, /_vendor/) are not public files and never reach here:
+     * they are the ASSET channel, served by serve_build_artifact().
      *
      * @param string $path The requested asset path
      * @param Request $request
@@ -188,16 +230,6 @@ class AssetHandler
      */
     public static function try_serve($path, Request $request)
     {
-        // Handle compiled bundle requests
-        if (str_starts_with($path, '/_compiled/')) {
-            return static::__serve_compiled_bundle($path, $request);
-        }
-
-        // Handle vendor CDN cache requests
-        if (str_starts_with($path, '/_vendor/')) {
-            return static::__serve_vendor_cdn_cache($path, $request);
-        }
-
         // Ensure directories are discovered
         static::__ensure_directories_discovered();
 
@@ -249,6 +281,29 @@ class AssetHandler
     }
 
     /**
+     * The plain-text 404 a build-artifact miss answers.
+     *
+     * The body is the status line for everybody; a developer caller also gets the reason
+     * (which can name a filesystem path, so it is theirs alone).
+     *
+     * @param string $reason Why the artifact is missing
+     * @return Response
+     */
+    protected static function __artifact_not_found(string $reason): Response
+    {
+        $body = 'Not Found';
+
+        if (\App\RSpade\Core\Debug\Rsx_Diagnostics::caller_sees_detail()) {
+            $body .= "\n\n" . $reason;
+        }
+
+        return new Response($body . "\n", 404, [
+            'Content-Type' => 'text/plain; charset=UTF-8',
+            'X-Content-Type-Options' => 'nosniff',
+        ]);
+    }
+
+    /**
      * Find a public asset by relative path with Redis caching
      *
      * Resolves paths like "sneat/css/demo.css" to full filesystem paths like
@@ -296,22 +351,22 @@ class AssetHandler
             $full_path = $directory . '/' . $relative_path;
 
             if (File::exists($full_path) && File::isFile($full_path)) {
-                // Check exclusion rules
+                // An excluded file answers exactly as a missing one does: a distinct status
+                // would tell an anonymous caller which excluded files exist.
                 if (static::__is_file_excluded($full_path, $relative_path)) {
-                    throw new HttpException(403, 'Access to this file is forbidden');
+                    throw new NotFoundHttpException("Public asset not found: {$relative_path}");
                 }
-                $matches[] = $full_path;
+                $matches[$module] = $full_path;
             }
         }
 
-        // Check for ambiguous matches
+        // Check for ambiguous matches. The message names the MODULES, never the absolute
+        // paths - it can reach an anonymous caller.
         if (count($matches) > 1) {
-            // Show first two matches in error
-            $first_two = array_slice($matches, 0, 2);
             throw new HttpException(
                 500,
-                "Ambiguous public asset request: '{$relative_path}' matches multiple files: '" .
-                implode("', '", $first_two) . "'"
+                "Ambiguous public asset request: '{$relative_path}' exists in the public/ directory of more than one module: '" .
+                implode("', '", array_keys($matches)) . "'"
             );
         }
 
@@ -321,7 +376,7 @@ class AssetHandler
         }
 
         // Single match - cache and return
-        $resolved_path = $matches[0];
+        $resolved_path = reset($matches);
         Redis::set($cache_key, $resolved_path);
 
         return $resolved_path;
@@ -656,8 +711,7 @@ class AssetHandler
      *
      * @param string $path The requested path (e.g., /_compiled/Demo_Bundle__vendor.abc12345.js)
      * @param Request $request
-     * @return Response
-     * @throws NotFoundHttpException
+     * @return Response The file, or a plain-text 404
      */
     protected static function __serve_compiled_bundle($path, Request $request)
     {
@@ -666,7 +720,7 @@ class AssetHandler
 
         // Validate filename format: BundleName__(vendor|app).(8 chars).(js|css) or BundleName__app.(16 chars).(js|css)
         if (!preg_match('/^([A-Za-z0-9_]+)__(vendor|app)\.([a-f0-9]{8}|[a-f0-9]{16})\.(js|css)$/', $filename, $matches)) {
-            throw new NotFoundHttpException("Invalid bundle filename: {$filename}");
+            return static::__artifact_not_found("Invalid bundle filename: {$filename}");
         }
 
         $bundle_name = $matches[1];
@@ -677,15 +731,16 @@ class AssetHandler
         // Build full path to file
         $file_path = Rsx_Project_Paths::bundles_dir() . '/' . $filename;
 
-        // In development mode, compile bundle on-the-fly if it doesn't exist
+        // In development mode, compile bundle on-the-fly if it doesn't exist. Only a real
+        // module bundle is ever compiled; the compile is what names the outputs, so a hash
+        // it did not produce is still a plain 404 below.
         if (Rsx::is_development() && !file_exists($file_path)) {
-            // Try to compile the bundle on-demand
-            static::__compile_bundle_on_demand($bundle_name, $type, $hash, $extension);
+            static::__compile_bundle_on_demand($bundle_name);
         }
 
         // Check if file exists
         if (!file_exists($file_path)) {
-            throw new NotFoundHttpException("Bundle not found: {$filename}");
+            return static::__artifact_not_found("Bundle not found: {$filename}");
         }
         
         // Create binary file response
@@ -720,8 +775,8 @@ class AssetHandler
      *
      * @param string $path The requested path (e.g., /_vendor/<md5>_lodash.js)
      * @param Request $request
-     * @return Response
-     * @throws NotFoundHttpException
+     * @return Response The file, or a plain-text 404
+     * @throws \RuntimeException A sealed build missing a mirrored file (a broken build)
      */
     protected static function __serve_vendor_cdn_cache($path, Request $request)
     {
@@ -731,7 +786,7 @@ class AssetHandler
         // Strict filename validation - only allow exactly what Cdn_Cache can produce
         // (md5 of the source URL, a safe readable tail, a known asset extension).
         if (!preg_match(\App\RSpade\Core\Bundle\Cdn_Cache::FILENAME_PATTERN, $filename)) {
-            throw new NotFoundHttpException("Invalid vendor filename: {$filename}");
+            return static::__artifact_not_found("Invalid vendor filename: {$filename}");
         }
 
         // Additional safety checks - no path traversal characters
@@ -739,7 +794,7 @@ class AssetHandler
             Log::warning('Attempted path traversal in vendor request', [
                 'filename' => $filename
             ]);
-            throw new NotFoundHttpException("Invalid vendor filename: {$filename}");
+            return static::__artifact_not_found("Invalid vendor filename: {$filename}");
         }
 
         // Get the CDN cache directory from the Cdn_Cache class
@@ -770,7 +825,7 @@ class AssetHandler
                 );
             }
 
-            throw new NotFoundHttpException(
+            return static::__artifact_not_found(
                 "Vendor file not found: {$filename}\n" .
                 '  Expected in: ' . \App\RSpade\Core\Bundle\Cdn_Cache::get_cache_directory() . "\n" .
                 "  The compile that names this file has never run on this box, or the store was\n" .
@@ -789,7 +844,7 @@ class AssetHandler
                 'filename' => $filename,
                 'resolved' => $real_file
             ]);
-            throw new NotFoundHttpException("Vendor file not found: {$filename}");
+            return static::__artifact_not_found("Vendor file not found: {$filename}");
         }
 
         // Create binary file response
@@ -825,41 +880,49 @@ class AssetHandler
     /**
      * Compile a bundle on-demand in development mode
      *
-     * @param string $bundle_name The bundle name from the requested filename
-     * @param string $type The bundle type (vendor or app)
-     * @param string $hash The hash from the requested filename
-     * @param string $extension The file extension (js or css)
+     * The requested name must be a concrete MODULE bundle: a manifest class extending
+     * Rsx_Bundle_Abstract that is neither abstract nor an asset bundle (asset bundles are
+     * pulled in by a module bundle and have no outputs of their own). Anything else returns
+     * without compiling, and the caller answers 404 - a URL naming an arbitrary class must
+     * not buy a compile.
+     *
+     * The output filename carries a content hash the compile itself computes, so it cannot
+     * be predicted without compiling. A real bundle is compiled, and the caller then serves
+     * the requested file only if the compile produced it.
+     *
+     * A compile failure PROPAGATES: a broken bundle in development is an error to see, not
+     * a 404 to puzzle over.
+     *
+     * @param string $bundle_name The bundle class name from the requested filename
      * @return void
      */
-    protected static function __compile_bundle_on_demand($bundle_name, $type, $hash, $extension)
+    protected static function __compile_bundle_on_demand(string $bundle_name): void
     {
-        // Find the bundle class matching the bundle name
-        try {
-            // Try to find by simple class name
-            $metadata = \App\RSpade\Core\Manifest\Manifest::php_get_metadata_by_class($bundle_name);
-            if (!isset($metadata['fqcn'])) {
-                return;
-            }
-            $fqcn = $metadata['fqcn'];
-
-            // Compile the bundle
-            try {
-                $compiler = new \App\RSpade\Core\Bundle\BundleCompiler();
-                $compiler->compile($fqcn);
-                return;
-            } catch (\Exception $e) {
-                // Log error but don't throw - let the file not found error happen
-                \Illuminate\Support\Facades\Log::error("Failed to compile bundle on-demand: {$fqcn}", [
-                    'error' => $e->getMessage(),
-                    'trace' => $e->getTraceAsString()
-                ]);
-            }
-        } catch (\RuntimeException $e) {
-            // Bundle class not found in manifest
+        if (!static::_is_on_demand_bundle($bundle_name)) {
             return;
         }
+
+        $fqcn = \App\RSpade\Core\Manifest\Manifest::php_get_metadata_by_class($bundle_name)['fqcn'];
+
+        $compiler = new \App\RSpade\Core\Bundle\BundleCompiler();
+        $compiler->compile($fqcn);
     }
-    
+
+    /**
+     * Is this name a concrete module bundle the on-demand compile may build?
+     *
+     * @param string $bundle_name A simple class name taken from a requested URL
+     * @return bool
+     */
+    public static function _is_on_demand_bundle(string $bundle_name): bool
+    {
+        $manifest = \App\RSpade\Core\Manifest\Manifest::class;
+
+        return $manifest::php_is_subclass_of($bundle_name, 'Rsx_Bundle_Abstract')
+            && !$manifest::php_is_subclass_of($bundle_name, 'Rsx_Asset_Bundle_Abstract')
+            && !$manifest::php_is_abstract($bundle_name);
+    }
+
     /**
      * Get discovered public directories
      * 

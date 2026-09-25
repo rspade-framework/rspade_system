@@ -22,14 +22,13 @@ class Reset_Command extends Command
 
     protected $description = 'Reset database by dropping and recreating it (restricted: see help for conditions)';
 
-    protected $flag_file = '/var/www/html/.migrating';
 
     public function handle()
     {
         $is_framework_developer = getenv('IS_FRAMEWORK_DEVELOPER') === 'true';
         $is_production = app()->environment('production');
         $is_claude_code = getenv('CLAUDECODE') === '1';
-        $in_migration_mode = file_exists($this->flag_file);
+        $in_migration_mode = file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file());
 
         // Always allow if framework developer
         if ($is_framework_developer) {

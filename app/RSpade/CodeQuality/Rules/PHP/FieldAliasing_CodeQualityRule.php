@@ -118,7 +118,7 @@ class FieldAliasing_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Check each relevant method
         foreach ($methods_to_check as $method_name => $method_info) {
-            $method_body = $this->extract_method_body($contents, $method_name);
+            $method_body = $this->method_body($contents, $method_name);
             if (!$method_body) {
                 continue;
             }
@@ -418,36 +418,6 @@ class FieldAliasing_CodeQualityRule extends CodeQualityRule_Abstract
         }
 
         return false;
-    }
-
-    /**
-     * Extract method body from file contents
-     */
-    private function extract_method_body(string $contents, string $method_name): ?string
-    {
-        // Pattern to match method definition
-        $pattern = '/public\s+static\s+function\s+' . preg_quote($method_name, '/') . '\s*\([^)]*\)[^{]*\{/s';
-
-        if (!preg_match($pattern, $contents, $matches, PREG_OFFSET_CAPTURE)) {
-            return null;
-        }
-
-        $start_pos = $matches[0][1] + strlen($matches[0][0]) - 1;
-        $brace_count = 1;
-        $pos = $start_pos + 1;
-        $length = strlen($contents);
-
-        while ($pos < $length && $brace_count > 0) {
-            $char = $contents[$pos];
-            if ($char === '{') {
-                $brace_count++;
-            } elseif ($char === '}') {
-                $brace_count--;
-            }
-            $pos++;
-        }
-
-        return substr($contents, $start_pos, $pos - $start_pos);
     }
 
     /**

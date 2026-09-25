@@ -25,9 +25,13 @@ use App\RSpade\Core\Manifest\Manifest;
  * is right there and running.
  *
  * So the surface is resolved the way `get_relationships()` already resolves `#[Relationship]`
- * and the auth-check registry already resolves `#[Auth_Check]`: by climbing the lineage and
- * taking the NEAREST declaration. An override that redeclares `fetch()` wins over the base,
- * which is exactly what an override is for.
+ * and the auth-check registry already resolves `#[Auth_Check]`: by climbing the lineage to
+ * the NEAREST declaration of the method name. An override that redeclares `fetch()` wins over
+ * the base, which is exactly what an override is for - and it wins whether or not it carries
+ * the attribute: a redeclaration WITHOUT `#[Ajax_Endpoint_Model_Fetch]` is not a fetch surface,
+ * because the body that runs is the override's. (The manifest build refuses that shape outright
+ * - `Auth_ManifestSupport`, UNMARKED FETCH OVERRIDE - so it only ever reaches this class through
+ * a build that has not yet run.)
  *
  * SECURITY NOTE. This widens WHERE a declaration may live; it never widens what a
  * declaration means. The `#[Auth]` gates recorded for the surface are still the ones the
@@ -42,8 +46,9 @@ use App\RSpade\Core\Manifest\Manifest;
 class Model_Fetch_Lineage
 {
     /**
-     * The nearest ancestor (starting with the class itself) that declares a STATIC method of
-     * this name carrying the given attribute.
+     * The nearest class in the lineage (starting with the class itself) that declares a
+     * STATIC method of this name, when that declaration carries the given attribute; null
+     * when the nearest declaration does not carry it, or nothing declares the name.
      *
      * @param string $class_name  Simple class name of the model.
      * @param string $method_name e.g. 'fetch' or 'portal_fetch'.
@@ -62,8 +67,9 @@ class Model_Fetch_Lineage
     }
 
     /**
-     * The nearest ancestor (starting with the class itself) that declares an INSTANCE method
-     * of this name carrying the given attribute. Fetchable relationships live here.
+     * The nearest class in the lineage (starting with the class itself) that declares an
+     * INSTANCE method of this name, when that declaration carries the given attribute.
+     * Fetchable relationships live here.
      *
      * @return array{class: string, file: string, method: array}|null
      */
@@ -128,8 +134,9 @@ class Model_Fetch_Lineage
     }
 
     /**
-     * The climb. Stops at the first class the resolver does not know (Eloquent's Model has
-     * no manifest entry, which is the natural terminator) and on a cycle.
+     * The climb. Stops at the NEAREST class that declares the method name - answering from
+     * that declaration alone - at the first class the resolver does not know (Eloquent's
+     * Model has no manifest entry, which is the natural terminator), and on a cycle.
      *
      * @return array{class: string, file: string, method: array}|null
      */
@@ -154,7 +161,15 @@ class Model_Fetch_Lineage
 
             $method = $record[$map_key][$method_name] ?? null;
 
-            if ($method !== null && isset($method['attributes'][$attribute])) {
+            // The NEAREST declaration of the name decides, marked or not. The body that runs
+            // is the most derived one, so a redeclaration without the attribute is the
+            // model saying "this member is not a fetch surface" - an ancestor's marker
+            // describes a body that no longer runs, and must never be climbed to.
+            if ($method !== null) {
+                if (!isset($method['attributes'][$attribute])) {
+                    return null;
+                }
+
                 return [
                     'class' => $current,
                     'file' => $record['file'] ?? '',

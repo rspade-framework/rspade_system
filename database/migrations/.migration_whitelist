@@ -237,11 +237,6 @@
             "created_by": "root",
             "command": "php artisan make:migration:safe create_login_history_table"
         },
-        "2025_12_11_061551_create_groups_and_group_users_tables.php": {
-            "created_at": "2025-12-11T06:15:51+00:00",
-            "created_by": "root",
-            "command": "php artisan make:migration:safe create_groups_and_group_users_tables"
-        },
         "2025_12_24_210213_add_timezone_to_login_users_table.php": {
             "created_at": "2025-12-24T21:02:13+00:00",
             "created_by": "root",
@@ -262,20 +257,10 @@
             "created_by": "root",
             "command": "php artisan make:migration:safe add_timezone_to_sites_table"
         },
-        "2026_01_29_070242_create_action_logs_tables.php": {
-            "created_at": "2026-01-29T07:02:42+00:00",
-            "created_by": "root",
-            "command": "php artisan make:migration:safe create_action_logs_tables"
-        },
         "2026_01_29_081808_create_throttle_table.php": {
             "created_at": "2026-01-29T08:18:08+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe create_throttle_table"
-        },
-        "2026_01_29_081902_create_notifications_table.php": {
-            "created_at": "2026-01-29T08:19:02+00:00",
-            "created_by": "root",
-            "command": "php artisan make:migration:safe create_notifications_table"
         },
         "2026_01_29_180540_create_portal_users_table.php": {
             "created_at": "2026-01-29T18:05:40+00:00",
@@ -566,6 +551,51 @@
             "created_at": "2026-09-24T09:06:30+00:00",
             "created_by": "root",
             "command": "php artisan make:migration:safe create_portal_sso_identities_table"
+        },
+        "2026_09_25_173504_api_request_log_key_fk_set_null.php": {
+            "created_at": "2026-09-25T17:35:04+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe api_request_log_key_fk_set_null"
+        },
+        "2026_09_25_193913_drop_unused_identity_tables.php": {
+            "created_at": "2026-09-25T19:39:13+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe drop_unused_identity_tables"
+        },
+        "2026_09_25_193915_reindex_task_queue_for_claim_and_identity.php": {
+            "created_at": "2026-09-25T19:39:15+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe reindex_task_queue_for_claim_and_identity"
+        },
+        "2026_09_25_193917_reindex_outbound_mail_and_sms_queues.php": {
+            "created_at": "2026-09-25T19:39:17+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe reindex_outbound_mail_and_sms_queues"
+        },
+        "2026_09_25_193918_reindex_sessions_and_flash_alerts.php": {
+            "created_at": "2026-09-25T19:39:18+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe reindex_sessions_and_flash_alerts"
+        },
+        "2026_09_25_193920_reindex_file_attachments_storage_and_search.php": {
+            "created_at": "2026-09-25T19:39:20+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe reindex_file_attachments_storage_and_search"
+        },
+        "2026_09_25_193921_reindex_identity_tables.php": {
+            "created_at": "2026-09-25T19:39:21+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe reindex_identity_tables"
+        },
+        "2026_09_25_193922_compare_credential_and_key_columns_exactly.php": {
+            "created_at": "2026-09-25T19:39:22+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe compare_credential_and_key_columns_exactly"
+        },
+        "2026_09_25_193924_reindex_logs_settings_revisions_and_geography.php": {
+            "created_at": "2026-09-25T19:39:24+00:00",
+            "created_by": "root",
+            "command": "php artisan make:migration:safe reindex_logs_settings_revisions_and_geography"
         }
     }
 }

@@ -1,6 +1,6 @@
 ---
 name: revisions
-description: "Recording and reading per-model revision history in RSpade - opting a model in with $revisions and $revision_exclude, filing a child's writes under its parent with #[Revision_Parent], the one transaction per unit of work, reading it back with revisions() / revisions_including_children() / Revision_Model::diff(), storing Revision::transaction_id() on an application activity row, and suppressing a backfill with Revision::without(). Use when a screen must show what changed and who changed it, when adding $revisions to a model, when responding to a REVISION-01 manifest-build failure, when a bulk write records too many or no revisions, or when a read throws \"unknown codec byte\" or \"unknown dictionary id\"."
+description: "Recording and reading per-model revision history in RSpade - opting a model in with $revisions and $revision_exclude, filing a child's writes under its parent with #[Revision_Parent], the one transaction per unit of work, reading it back with revisions() / revisions_including_children() / Revision_Model::diff(), storing Revision::transaction_id() on an application activity row, suppressing a backfill with Revision::without(), and declaring units of work in a script or long task with Revision::unit_of_work() / begin_unit_of_work(). Use when a screen must show what changed and who changed it, when adding $revisions to a model, when writing an import script or a task that saves many revisioned records, when one transaction holds a whole run's writes, when responding to a REVISION-01 manifest-build failure, when a bulk write records too many or no revisions, or when a read throws \"unknown codec byte\" or \"unknown dictionary id\"."
 ---
 
 # Revision history
@@ -141,6 +141,29 @@ so a throw inside the callable cannot leave recording off.
 `Revision::describe('Nightly contact import')` labels the unit of work; it works before or
 after the first revision, and nothing keys on it.
 
+## A script or long task declares its own units of work
+
+The framework closes a unit at each web request, Ajax call, API request, task and test. A
+**script** booted through `system/script.php` is ONE unit for its whole run (source `cli`,
+endpoint the script's file name), and a task is one unit per task. An import that writes
+thousands of records inside either is therefore ONE transaction claiming one action changed
+all of them - unless it declares each unit:
+
+```php
+foreach ($rows as $row) {
+    Revision::unit_of_work("Imported invoice {$row['number']}", function () use ($row) {
+        import_invoice($row);                  // its writes are one transaction
+    });
+}                                              // the caller's own unit is handed back
+```
+
+`Revision::begin_unit_of_work($description = null, $endpoint = null)` is the non-closure form:
+close the current unit, begin the next. Both keep the SOURCE (never a parameter, so the call
+is right in a script, a task or a test) and the endpoint unless one is given; the description
+is never carried over. Free when nothing is written (the mint is lazy). Safe around a
+`DB::transaction()`, but open the unit OUTSIDE it - a rollback takes the unit's row with it.
+Never call the internal `_reset_request_state()` / `_snapshot_request_state()` yourself.
+
 ## Gotchas
 
 - **Bulk.** `Model::where(...)->update()/->delete()` records ONE REVISION PER RECORD (it
@@ -162,6 +185,8 @@ after the first revision, and nothing keys on it.
   column a leading underscore. (`__` is the framework key prefix and is untouched.)
 - **An Ajax BATCH is one transaction PER CALL**, not one for the batch: each call snapshots
   the facade, resets it, runs and restores. A task worker starts a fresh one per task.
+- **One `_transactions` row holding a whole import** means the script or task never
+  declared its units - see above. Existing rows are not regrouped.
 - **A rolled-back database transaction takes its revisions with it.** They are written on
   the same connection, immediately - never `afterCommit`. That is the intended behavior.
 - **An update that changed nothing records nothing**, and an update whose every changed

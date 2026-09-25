@@ -299,9 +299,9 @@ class AbstractRegistryAttribute_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * One method map from the entry's two indexes. public_static_methods is a
-     * PUBLIC-OR-STATIC union (it carries public instance methods too), so the two maps
-     * overlap; merging by name keeps each method's attributes reported once.
+     * One method map from the entry's two indexes (public static and public instance).
+     * A name appears in at most one of them; merging by name keeps each method's
+     * attributes reported once.
      *
      * @return array<string, array>
      */

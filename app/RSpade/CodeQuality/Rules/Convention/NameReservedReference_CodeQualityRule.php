@@ -207,9 +207,9 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
             $id = $metadata['id'] ?? '';
 
             if ($extension === 'php' && $class !== '') {
-                $index['php'][$class] = static::__class_entry($normalized, $class, $metadata);
+                $index['php'][$class] = $this->__class_entry($normalized, $class, $metadata);
             } elseif (in_array($extension, ['js', 'jsx', 'ts', 'tsx'], true) && $class !== '') {
-                $index['js'][$class] = static::__class_entry($normalized, $class, $metadata);
+                $index['js'][$class] = $this->__class_entry($normalized, $class, $metadata);
             } elseif ($extension === 'jqhtml' && $id !== '') {
                 $index['jqhtml'][$id] = $normalized;
             } elseif ($extension === 'blade.php' && $id !== '') {
@@ -246,7 +246,7 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * One class row of the index.
      */
-    private static function __class_entry(string $path, string $class, array $metadata): array
+    private function __class_entry(string $path, string $class, array $metadata): array
     {
         $methods = [];
 
@@ -261,11 +261,38 @@ class NameReservedReference_CodeQualityRule extends CodeQualityRule_Abstract
             }
         }
 
+        // The manifest records only PUBLIC statics, and the statics this rule exists for - a
+        // framework class's `__`-prefixed helpers - are protected or private by convention
+        // (PHP-RSPADE-01). Their names come from the declaring source instead.
+        if (($metadata['extension'] ?? '') === 'php') {
+            foreach ($this->__php_static_method_names($path) as $name) {
+                $methods[$name] = 1;
+            }
+        }
+
         return [
             'path' => $path,
             'reserved' => Rsx_Identifier::is_framework_reserved($class),
             'methods' => $methods,
         ];
+    }
+
+    /**
+     * Every static method a PHP file declares, whatever its visibility.
+     *
+     * @return string[]
+     */
+    private function __php_static_method_names(string $path): array
+    {
+        $source = $this->source()->content($path);
+
+        preg_match_all(
+            '/\b(?:(?:public|protected|private|final|abstract)\s+)*static\s+(?:(?:public|protected|private|final)\s+)*function\s+&?\s*([A-Za-z_][A-Za-z0-9_]*)/',
+            $source,
+            $matches
+        );
+
+        return $matches[1];
     }
 
     /**

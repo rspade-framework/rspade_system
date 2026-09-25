@@ -35,18 +35,18 @@ use App\RSpade\Core\Models\Email_Queue_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _email_attachments
  *
- * @property int $id
- * @property int $email_queue_id
- * @property int $file_storage_id
- * @property string $file_name
- * @property string $mime_type
- * @property int $disposition_id
  * @property string $cid
- * @property int $sort_order
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property int $disposition_id
+ * @property int $email_queue_id
+ * @property string $file_name
+ * @property int $file_storage_id
+ * @property int $id
+ * @property string $mime_type
+ * @property int $sort_order
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
  *

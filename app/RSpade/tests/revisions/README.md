@@ -24,7 +24,9 @@ retention task, and the REVISION-01 declaration rule.
 - `app/RSpade/Core/Revisions/Revision.php` - the transaction facade: `transaction_id()`
   (the writer that mints), `current_transaction()`, `current_revisions()`, `describe()`,
   `without()`, `for_transaction()`, `transactions_for()`, `_record()`, and the
-  `_reset_request_state()` / `_snapshot_request_state()` unit boundaries.
+  `_reset_request_state()` / `_snapshot_request_state()` unit boundaries, and the public
+  seam over them, `begin_unit_of_work()` / `unit_of_work()`.
+- `system/script.php` - the one-unit-per-run boundary of an external script.
 - `app/RSpade/Core/Revisions/Transaction_Model.php`, `Revision_Model.php` - the two models,
   their type-ref pairs, their enums, and `Revision_Model::diff()`.
 - `app/RSpade/Core/Revisions/Revision_Parent_Registry.php` - `#[Revision_Parent]` discovery.
@@ -61,8 +63,10 @@ retention task, and the REVISION-01 declaration rule.
   writes that also rolled back.
 - **The transaction is minted LAZILY**, on the first revisioned write of a unit of work, so
   a request that changed nothing leaves nothing behind. A unit of work is one web request,
-  one API request, one batched or nested Ajax call, one task, one test - each of those
-  resets the facade.
+  one API request, one batched or nested Ajax call, one task, one test, one script run -
+  each of those resets the facade. Inside one, code declares further units with
+  `Revision::begin_unit_of_work()` / `unit_of_work()` (source and endpoint carried, the
+  caller's unit restored by the closure form).
 - **A create records every non-null column as `[null, value]`**; an update records only what
   changed; a delete (soft or hard) records an EMPTY document, because a delete does not
   change fields. A restore is recorded as its own operation.

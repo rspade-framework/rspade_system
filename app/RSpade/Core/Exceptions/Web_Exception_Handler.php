@@ -7,10 +7,10 @@
 
 namespace App\RSpade\Core\Exceptions;
 
-use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Illuminate\Http\Request;
-use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 use Throwable;
+use App\RSpade\Core\Debug\Rsx_Diagnostics;
+use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Errors\Error_Screens;
 use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
 use App\RSpade\Core\Rsx;
@@ -18,28 +18,27 @@ use App\RSpade\Core\Rsx;
 /**
  * Web_Exception_Handler - the full-page terminal outcome of an uncaught exception
  *
- * PRIORITY: 1100 (runs LAST, after Rsx_Dispatch_Bootstrapper_Handler at 1000)
+ * PRIORITY: 1100 (runs LAST)
  *
- * Everything a request can end as is an Error_Screens page: the dispatchers render
- * denials and unmatched routes themselves, and this handler covers what is left - an
- * exception that escaped all the way to the top of a full-page request.
+ * The PAGE channel's error policy, and the terminal handler for a failure outside dispatch (a
+ * provider or global middleware that threw). Everything a browsed request can end as is
+ * an Error_Screens page: the dispatchers render denials and unmatched routes themselves,
+ * and this handler covers an exception that escaped a page's dispatch, which
+ * Rsx_Front_Controller hands to the chain exactly once. Nothing here dispatches.
  *
- * IT ANSWERS EVERY HTTP EXCEPTION. Laravel's stock errors/{code}.blade.php views are
- * unreachable from RSX, so a status this handler declined would be the one terminal
- * outcome with no page behind it. A browsed request gets the Error_Screens page for
- * its status; a non-HTML request gets the bare status and one line of text.
+ * IT ANSWERS EVERY CODED FAILURE - every HTTP exception, and the coded exception family
+ * (AjaxUnauthorizedException is the 403 / login redirect, never a 500) - through
+ * Dispatcher::page_failure_response(), the answer the dispatcher gives at its own seam.
+ * Laravel's stock errors/{code}.blade.php views are unreachable from RSX, so a status
+ * this handler declined would be the one terminal outcome with no page behind it.
  *
- * IT MUST RUN AFTER THE BOOTSTRAPPER. RSX routing is driven by Laravel throwing
- * NotFoundHttpException and the bootstrapper (priority 1000) dispatching it into
- * the RSX Dispatcher. A handler that claimed 404s ahead of it would take every RSX
- * route offline. By the time this one runs, RSX has already declined the URL.
- *
- * DEVELOPMENT KEEPS ITS DEBUG PAGE. In development mode with config('app.debug')
- * on, this handler declines and Laravel renders the interactive debug error page
- * (Ignition) - by far the most useful thing to see while writing code. Every other
- * combination gets the themed screen: debug/production mode always (redacted, per
- * Error_Screens), and development with debug off (detail included - the environment
- * is not production).
+ * A DEVELOPER KEEPS THE DEBUG PAGE. In development mode with config('app.debug')
+ * on, and for a caller Rsx_Diagnostics::caller_sees_detail() admits (a signed-in
+ * developer, a valid dev-auth request, a loopback caller), this handler declines and
+ * Laravel renders the debug error page (Ignition, read-only: config/ignition.php
+ * hard-codes runnable solutions and sharing off). Everybody else gets the themed
+ * screen, which carries exception detail only for that same caller and an error id
+ * otherwise (Error_Screens).
  *
  * app.debug is DERIVED from RSX_MODE (config/app.php); there is no APP_DEBUG env
  * key any more. In development it is therefore always on unless something sets it
@@ -54,7 +53,7 @@ use App\RSpade\Core\Rsx;
 class Web_Exception_Handler extends Rsx_Exception_Handler_Abstract
 {
     /**
-     * Get priority - after the dispatch bootstrapper, last in the chain
+     * Get priority - last in the chain
      *
      * @return int
      */
@@ -72,58 +71,17 @@ class Web_Exception_Handler extends Rsx_Exception_Handler_Abstract
      */
     public function handle(Throwable $e, Request $request)
     {
-        // Coded HTTP outcomes raised by application code (abort(404), abort(403))
-        // land on the same screens the dispatchers use, so a page never depends on
-        // WHICH layer decided it was missing or denied.
-        //
-        // WHERE ABORT() IS ACTUALLY HONOURED depends on where it was called. Inside an
-        // RSX-dispatched action, Dispatcher::__http_exception_response() answers it at
-        // the seam that invoked the action - it has to, because that action runs inside
-        // the handling of Laravel's own NotFoundHttpException, and a second throw there
-        // escapes as a fatal 500 rather than reaching this handler. What arrives here is
-        // an abort() from everywhere else: a Laravel route, middleware, a view, or the
-        // framework itself.
-        if ($e instanceof HttpExceptionInterface) {
-            $status = $e->getStatusCode();
-
-            if ($request->acceptsHtml()) {
-                if ($status === 404) {
-                    return Error_Screens::not_found($request);
-                }
-
-                if ($status === 403) {
-                    return Error_Screens::unauthorized($request);
-                }
-
-                if ($status === 419) {
-                    return Error_Screens::expired($request);
-                }
-
-                // Every other status (405, 429, 503 ...) is a page too, carrying
-                // the raiser's own message. Nothing is left to Laravel's stock
-                // errors/{code}.blade.php views any more - RSX reaches none of
-                // them, and a status with no page of its own would otherwise be
-                // the one unthemed outcome in the framework.
-                return Error_Screens::http_status($request, $status, $e->getMessage());
-            }
-
-            // The non-HTML channel (an <img>, a fetch(), a probe) gets the bare
-            // status and one line of text, exactly as the dispatcher's own
-            // __http_exception_response answers it.
-            $headers = $e->getHeaders();
-            if (!isset($headers['Content-Type']) && !isset($headers['content-type'])) {
-                $headers['Content-Type'] = 'text/plain; charset=UTF-8';
-            }
-
-            $body = $e->getMessage();
-            if ($body === '') {
-                $body = SymfonyResponse::$statusTexts[$status] ?? '';
-            }
-
-            return new SymfonyResponse($body, $status, $headers);
+        // A CODED failure - abort() from anywhere in the page channel or from outside
+        // dispatch, or the coded exception family (AjaxUnauthorizedException from
+        // Permission::require_permission() and Session::terminate_*, AjaxNotFoundException
+        // ...) - is an answer, not a crash: the one page answer the dispatcher's own seam
+        // gives too (Dispatcher::page_failure_response()).
+        $coded = Dispatcher::page_failure_response($e, $request);
+        if ($coded !== null) {
+            return $coded;
         }
 
-        if (Rsx::is_development() && config('app.debug')) {
+        if (Rsx::is_development() && config('app.debug') && Rsx_Diagnostics::caller_sees_detail()) {
             return null;
         }
 

@@ -20,18 +20,18 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 class Text_Fixture_Plain_Text extends Rsx_Text_Abstract
 {
     /** Required of every type; a passthrough here because the fixture has no encoding to enforce. */
-    public static function filter_set(string $raw): string
+    public static function sanitize_encoded(string $raw): string
     {
         return $raw;
     }
 
     /** Required of every type; a passthrough here because the encoding IS plain text. */
-    public static function escape_string(string $plain): string
+    public static function encode_plain_text(string $plain): string
     {
         return $plain;
     }
 
-    public function to_text(): string
+    public function to_plain_text(): string
     {
         return $this->raw;
     }

@@ -62,18 +62,18 @@ use App\RSpade\Core\Realtime\Realtime;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: portal_notifications
  *
- * @property int $id
- * @property int $site_id
- * @property int $portal_user_id
- * @property string $type
- * @property int $subject_type
- * @property int $subject_id
- * @property array $payload
- * @property string $read_at
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property int $id
+ * @property array $payload
+ * @property int $portal_user_id
+ * @property string $read_at
+ * @property int $site_id
+ * @property int $subject_id
+ * @property int $subject_type
+ * @property string $type
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
  *

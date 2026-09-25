@@ -35,20 +35,20 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _search_indexes
  *
- * @property int $id
- * @property int $indexable_type
- * @property int $indexable_id
- * @property int $status_id
  * @property string $content
- * @property array $metadata
- * @property string $indexed_at
- * @property string $extraction_method
- * @property string $error
- * @property int $extractor_version
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property string $error
+ * @property string $extraction_method
+ * @property int $extractor_version
+ * @property int $id
+ * @property int $indexable_id
+ * @property int $indexable_type
+ * @property string $indexed_at
+ * @property array $metadata
+ * @property int $status_id
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
  *

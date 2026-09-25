@@ -102,7 +102,7 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
             // even if a locale edge case slips past the :UTF8 filter.
             return mb_convert_encoding($raw, 'UTF-8', 'UTF-8');
         } finally {
-            static::__rmdir_recursive($work_dir);
+            rmdir_recursive($work_dir);
         }
     }
 
@@ -314,37 +314,5 @@ class Libreoffice_Text_Extractor extends Rsx_Text_Extractor_Abstract
         // Defense-in-depth scrub (soffice flat XML is already UTF-8, but the FULLTEXT column must
         // never see a malformed byte).
         return mb_convert_encoding($out, 'UTF-8', 'UTF-8');
-    }
-
-    /**
-     * Recursively remove a directory tree (best-effort cleanup of the temp work dir).
-     *
-     * @param string $dir
-     * @return void
-     */
-    protected static function __rmdir_recursive(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-
-        $items = scandir($dir);
-        if ($items === false) {
-            return;
-        }
-
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $path = $dir . '/' . $item;
-            if (is_dir($path)) {
-                static::__rmdir_recursive($path);
-            } else {
-                @unlink($path);
-            }
-        }
-
-        @rmdir($dir);
     }
 }

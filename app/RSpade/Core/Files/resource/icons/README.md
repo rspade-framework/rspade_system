@@ -49,14 +49,26 @@ Icons are automatically selected by the `File_Attachment_Model::get_icon_resourc
 
 ## Icon Format
 
-- **SVG icons** are used for generic file type categories (scalable, smaller file size)
-- **PNG icons** are used for brand-specific applications (48x48px, higher visual quality for recognizable brands)
+Every icon the framework maps and rasterises is a **PNG**, because ImageMagick is configured
+to read raster coders only (its SVG coder can read local files; see
+`system/app/RSpade/resource/docker/imagemagick/policy.xml` and the "ImageMagick Coder Policy"
+`rsx:health` row).
+
+- **Generic category icons** are drawn as SVG (the `.svg` files here are the source artwork)
+  and shipped as 512x512 PNG rasters beside them (`file.svg` -> `file.png`).
+- **Brand-specific icons** are 48x48 PNG originals.
+
+Regenerate a raster after editing its SVG, on a box whose ImageMagick policy still permits
+SVG (a workstation, not a deployed container):
+
+```bash
+convert -background none -density 768 file.svg -resize 512x512 PNG32:file.png
+```
 
 ## Adding New Icons
 
 To add support for a new file type:
 
-1. Add the appropriate icon file to this directory
-2. Update the `$icon_map` array in `File_Attachment_Model::get_icon_resource()`
-3. Map the file extension to the icon filename
-4. Update this README with the icon source and license information
+1. Add the icon to this directory as a PNG (for vector artwork, the SVG plus its 512px raster)
+2. Map the file extension to the PNG filename in `File_Attachment_Icons::get_icon_resource_by_file_extension()`
+3. Update this README with the icon source and license information

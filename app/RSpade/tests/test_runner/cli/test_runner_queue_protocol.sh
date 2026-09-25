@@ -50,7 +50,7 @@ const path = require('path');
 
 const testd_dir = process.argv[2];
 const { Queue_Server } = require(path.join(testd_dir, 'lib', 'queue_server.js'));
-const { MAX_FRAME_BYTES } = require(path.join(testd_dir, 'lib', 'protocol.js'));
+const { MAX_FRAME_BYTES } = require(path.join(testd_dir, '..', 'rsx-lockd', 'lib', 'protocol.js'));
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rsx-queue-check-'));
 const socket_path = path.join(dir, 'orchestrator.sock');

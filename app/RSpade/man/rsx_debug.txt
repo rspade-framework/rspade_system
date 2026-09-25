@@ -271,7 +271,7 @@ Raw curl requests with X-Dev-Auth-User-Id will NOT authenticate.
 
 WHERE THE VERIFICATION LIVES: both realms are FRAMEWORK-CORE and always
 present - Dispatcher::__handle_dev_auth (staff) and
-Portal_Dispatcher::__handle_dev_auth (portal). Both call the one verifier,
+Dispatcher::__handle_portal_dev_auth (portal). Both call the one verifier,
 App\RSpade\Core\Debug\Dev_Auth_Token::verify(), which also documents the wire
 format byte for byte. An application declares nothing and carries no copy.
 

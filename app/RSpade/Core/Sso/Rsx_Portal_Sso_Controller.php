@@ -134,6 +134,7 @@ class Rsx_Portal_Sso_Controller extends Rsx_Controller_Abstract
      * @return array One row per connection, oldest first.
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     #[Auth('is_logged_in')]
     public static function identities_list(Request $request, array $params = [])
     {

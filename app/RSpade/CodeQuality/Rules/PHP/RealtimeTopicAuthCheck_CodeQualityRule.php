@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Manifest\Manifest;
 
 /**
  * RealtimeTopicAuthCheckRule - Validates realtime topic classes declare and honor
@@ -22,6 +23,13 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
  *    public. This is allowed, but flagged for mandatory manual review (a public
  *    topic must never leak site/tenant-scoped or otherwise sensitive data),
  *    requiring an explicit exception comment with rationale to suppress.
+ *
+ * Scope is every Realtime_Topic_Abstract subclass, through any number of intermediate
+ * bases, and each class is judged on what it DECLARES: a declared can_subscribe() has its
+ * body checked unless the nearest declaration of $requires_auth (its own or an
+ * ancestor's) is false; a declared $requires_auth = false is flagged for review; a class
+ * that declares neither inherits both, and the verdict was delivered at the ancestor that
+ * declared them.
  *
  * Exemption: add @REALTIME-AUTH-01-EXCEPTION (with rationale) anywhere in the
  * file before the class declaration.
@@ -74,13 +82,8 @@ class RealtimeTopicAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
     {
         $original_contents = $this->source()->content($file_path);
 
-        // File-level exception: suppresses both violation kinds for this topic.
+        // File-level exception: suppresses both violation kinds for the topic declared here.
         if (strpos($original_contents, '@' . $this->get_id() . '-EXCEPTION') !== false) {
-            return;
-        }
-
-        // Only classes extending Realtime_Topic_Abstract.
-        if (!isset($metadata['extends']) || $metadata['extends'] !== 'Realtime_Topic_Abstract') {
             return;
         }
 
@@ -89,14 +92,23 @@ class RealtimeTopicAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
+        // Every topic, however many intermediate bases stand between it and the abstract -
+        // Realtime::subscribe_token() accepts any subclass, so this rule checks any subclass.
+        if (!Manifest::php_is_subclass_of($class_name, 'Realtime_Topic_Abstract')) {
+            return;
+        }
+
         if (str_contains($file_path, '/archive/') || str_contains($file_path, '/archived/')) {
             return;
         }
 
-        $can_subscribe_line = $metadata['public_static_methods']['can_subscribe']['line'] ?? 1;
+        // Each class is judged on what it DECLARES. What it inherits was judged at the
+        // ancestor that declared it, so a class declaring neither reports nothing.
+        $declares_public = $this->declares_public_topic($contents);
+        $declares_can_subscribe = isset($metadata['public_static_methods']['can_subscribe']);
 
-        if ($this->declares_public_topic($original_contents)) {
-            $requires_auth_line = $this->find_requires_auth_line($original_contents);
+        if ($declares_public) {
+            $requires_auth_line = $this->find_requires_auth_line($contents);
 
             $this->add_violation(
                 $file_path,
@@ -110,7 +122,25 @@ class RealtimeTopicAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $method_body = $this->extract_method_body($contents, 'can_subscribe');
+        if (!$declares_can_subscribe) {
+            return;
+        }
+
+        // An inherited "$requires_auth = false" makes this topic public too: the body is
+        // then the reviewed public rule's business, not a missing auth check.
+        if ($this->inherits_public_declaration($metadata['extends'] ?? null)) {
+            return;
+        }
+
+        $can_subscribe = $metadata['public_static_methods']['can_subscribe'];
+        $can_subscribe_line = $can_subscribe['line'] ?? 1;
+
+        // A can_subscribe() mixed in from a trait has its body in the trait's file.
+        $body_source = isset($can_subscribe['file']) && rsxrealpath($can_subscribe['file']) !== rsxrealpath($file_path)
+            ? $this->source()->content($can_subscribe['file'])
+            : $contents;
+
+        $method_body = $this->method_body($body_source, 'can_subscribe');
         if ($method_body && $this->body_has_auth_check($method_body)) {
             return;
         }
@@ -123,6 +153,32 @@ class RealtimeTopicAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
             $this->build_missing_auth_suggestion($class_name),
             'high'
         );
+    }
+
+    /**
+     * Does the nearest ancestor that declares $requires_auth declare it false?
+     *
+     * Realtime_Topic_Abstract itself declares the default (true), so the walk ends on a
+     * declaration. The value is the declaration's literal default, read from the declaring
+     * class's parsed members - never from the file text, whose docblocks may quote the
+     * public spelling as an example.
+     */
+    private function inherits_public_declaration(?string $parent_class): bool
+    {
+        if ($parent_class === null || $parent_class === '') {
+            return false;
+        }
+
+        $declaring = $this->lineage_declaring_property($parent_class, 'requires_auth');
+
+        if ($declaring === null) {
+            return false;
+        }
+
+        $members = $this->source()->declared_members($declaring['file'], $declaring['class']);
+        $property = $members['properties']['requires_auth'] ?? null;
+
+        return $property !== null && !empty($property['has_default']) && $property['default'] === false;
     }
 
     private function declares_public_topic(string $contents): bool
@@ -150,32 +206,6 @@ class RealtimeTopicAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
             }
         }
         return false;
-    }
-
-    private function extract_method_body(string $contents, string $method_name): ?string
-    {
-        $pattern = '/public\s+static\s+function\s+' . preg_quote($method_name, '/') . '\s*\([^)]*\)[^{]*\{/s';
-
-        if (!preg_match($pattern, $contents, $matches, PREG_OFFSET_CAPTURE)) {
-            return null;
-        }
-
-        $start_pos = $matches[0][1] + strlen($matches[0][0]) - 1;
-        $brace_count = 1;
-        $pos = $start_pos + 1;
-        $length = strlen($contents);
-
-        while ($pos < $length && $brace_count > 0) {
-            $char = $contents[$pos];
-            if ($char === '{') {
-                $brace_count++;
-            } elseif ($char === '}') {
-                $brace_count--;
-            }
-            $pos++;
-        }
-
-        return substr($contents, $start_pos, $pos - $start_pos);
     }
 
     private function build_missing_auth_suggestion(string $class_name): string

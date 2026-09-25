@@ -212,7 +212,7 @@ class Rsx_Mail_Builder
 
             return $css;
         } finally {
-            static::_remove_directory($work_dir);
+            rmdir_recursive($work_dir);
         }
     }
 
@@ -531,32 +531,5 @@ class Rsx_Mail_Builder
         }
 
         return null;
-    }
-
-    /**
-     * Remove the temporary compile directory.
-     */
-    private static function _remove_directory(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-
-        foreach (scandir($dir) as $entry) {
-            if ($entry === '.' || $entry === '..') {
-                continue;
-            }
-
-            $path = $dir . '/' . $entry;
-
-            if (is_dir($path)) {
-                static::_remove_directory($path);
-                continue;
-            }
-
-            unlink($path);
-        }
-
-        rmdir($dir);
     }
 }

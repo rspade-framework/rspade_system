@@ -33,7 +33,7 @@ class JsFallbackLegacy_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Check JavaScript file for fallback/legacy code in comments and function calls (from line 1415)
+     * Check JavaScript file for fallback/legacy code in comments and function calls
      * Enforces fail-loud principle - no fallback implementations allowed
      */
     public function check(string $file_path, string $contents, array $metadata = []): void

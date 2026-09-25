@@ -110,9 +110,9 @@ class ModelFetchAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
     /**
      * Flag #[Ajax_Endpoint] attributes declared on a model class
      *
-     * Both Ajax entry points resolve the target class through Ajax::handle_browser_request()
-     * (the /_ajax/:controller/:action route) and Ajax::internal() (the batch route), and
-     * both refuse anything that is not a Rsx_Controller_Abstract subclass, so an
+     * Every Ajax call resolves the target class through the one core, Ajax::execute()
+     * (direct, batched and in-process alike), which refuses anything that is not a
+     * Rsx_Controller_Abstract subclass, so an
      * #[Ajax_Endpoint] on a model is never reachable. The attribute reads
      * as a live, audited endpoint while enforcing nothing - dead security metadata that
      * misleads every later reader and every audit.

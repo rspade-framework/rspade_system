@@ -16,12 +16,13 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Request_Value;
  * reaches this class and stays an ordinary string.
  *
  * Reads hydrate through from_storage() (trusted, unfiltered). A request value (the Ajax or
- * API envelope, already encoded) routes through from_untrusted(), so the common
+ * API envelope, already encoded) routes through from_untrusted_encoded(), so the common
  * `$record->body = $params['body']` is filtered by the type without the endpoint knowing
  * text types exist - which is the point. A BARE STRING is plain text and routes through
- * from_string(): the type escapes it into its encoding, then filters it. A value of the WRONG type is refused rather than coerced: text types do not
- * convert into one another, and a silent conversion is exactly the class of bug this
- * system exists to make impossible.
+ * from_plain_text(): the type encodes it (encode_plain_text()), then sanitizes it. A value
+ * of the WRONG type is refused rather than coerced: text types do not convert into one
+ * another, and a silent conversion is exactly the class of bug this system exists to make
+ * impossible.
  */
 #[Instantiatable]
 class Rsx_Text_Cast implements CastsAttributes, SerializesCastableAttributes
@@ -90,7 +91,7 @@ class Rsx_Text_Cast implements CastsAttributes, SerializesCastableAttributes
         // decided - by the column, never by the client's claim - and where the filter runs,
         // exactly once. The claim is discarded without being read.
         if ($value instanceof Rsx_Text_Request_Value) {
-            return $type::from_untrusted($value->_raw())->to_storage();
+            return $type::from_untrusted_encoded($value->_raw())->to_storage();
         }
 
         // A DIFFERENT text type. Never coerced: the two encodings mean different things,
@@ -100,8 +101,8 @@ class Rsx_Text_Cast implements CastsAttributes, SerializesCastableAttributes
             throw new \InvalidArgumentException(
                 get_class($model) . "::{$key} is " . class_basename($type) . ', got '
                 . class_basename($value) . '. Text types do not convert into one another - use '
-                . class_basename($type) . '::from_untrusted($value->to_storage()) to keep its markup, or '
-                . class_basename($type) . '::from_string($value->to_text()) to reinterpret it as plain text.'
+                . class_basename($type) . '::from_untrusted_encoded($value->to_storage()) to keep its markup, or '
+                . class_basename($type) . '::from_plain_text($value->to_plain_text()) to reinterpret it as plain text.'
             );
         }
 
@@ -116,8 +117,8 @@ class Rsx_Text_Cast implements CastsAttributes, SerializesCastableAttributes
         // float or bool, stringified (false becomes '', which is_empty()). It carries no
         // encoding, so it is PLAIN TEXT: the type escapes it into its encoding and filters
         // the result. Encoded content arrives as a typed value or a request envelope above;
-        // code holding an encoded string says so with Type::from_untrusted($encoded).
-        return $type::from_string((string) $value)->to_storage();
+        // code holding an encoded string says so with Type::from_untrusted_encoded($encoded).
+        return $type::from_plain_text((string) $value)->to_storage();
     }
 
     /**

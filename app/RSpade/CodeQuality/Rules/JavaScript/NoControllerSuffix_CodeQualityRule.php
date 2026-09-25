@@ -73,7 +73,7 @@ class NoControllerSuffix_CodeQualityRule extends CodeQualityRule_Abstract
             $resolution .= "WHY THIS IS PROHIBITED:\n";
             $resolution .= "The 'Controller' suffix is reserved exclusively for PHP controller classes because:\n";
             $resolution .= "1. It maintains clear separation between frontend and backend code\n";
-            $resolution .= "2. It prevents confusion when making Ajax_Endpoint_Controller calls from JavaScript\n";
+            $resolution .= "2. It prevents confusion when calling a PHP controller's Ajax endpoints from JavaScript\n";
             $resolution .= "3. It ensures consistent naming conventions across the codebase\n";
             $resolution .= "4. Controllers handle HTTP requests and must be server-side PHP classes\n\n";
             

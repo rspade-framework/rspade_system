@@ -7,7 +7,9 @@ namespace App\RSpade\Core\Portal;
 
 use RuntimeException;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
+use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Rsx;
 
 /**
  * Portal utility class
@@ -26,12 +28,6 @@ class Rsx_Portal
      * URL prefix for portal when no dedicated domain configured
      */
     public const URL_PREFIX = '/_portal';
-
-    /**
-     * Whether we're currently in a portal request context
-     * @var bool|null
-     */
-    protected static ?bool $_is_portal_request = null;
 
     /**
      * Current portal controller being executed
@@ -90,53 +86,51 @@ class Rsx_Portal
     // =========================================================================
 
     /**
-     * Check if current request is a portal request
+     * Is the current request a portal request?
      *
-     * Detection logic:
-     * 1. If portal domain configured: check if request host matches
-     * 2. If no domain: check if URL starts with portal prefix
+     * The answer is the request's REALM as Rsx_Request_Channel classified it, once, before
+     * anything was dispatched: the portal's dedicated domain, or its path prefix on the
+     * staff host. Outside a request (CLI, tests) it is false unless set_portal_request()
+     * declared otherwise.
      *
      * @return bool True if this is a portal request
      */
     public static function is_portal_request(): bool
     {
-        if (self::$_is_portal_request !== null) {
-            return self::$_is_portal_request;
-        }
-
-        // CLI mode: default to false (can be overridden)
-        if (php_sapi_name() === 'cli') {
-            self::$_is_portal_request = false;
-
-            return false;
-        }
-
-        $portal_domain = self::get_domain();
-
-        if (!empty($portal_domain)) {
-            // Domain-based detection
-            $request_host = $_SERVER['HTTP_HOST'] ?? '';
-            self::$_is_portal_request = (strtolower($request_host) === strtolower($portal_domain));
-        } else {
-            // Prefix-based detection
-            $request_uri = $_SERVER['REQUEST_URI'] ?? '/';
-            $prefix = self::get_prefix();
-            self::$_is_portal_request = str_starts_with($request_uri, $prefix . '/') ||
-                                        $request_uri === $prefix;
-        }
-
-        return self::$_is_portal_request;
+        return Rsx_Request_Channel::is_portal();
     }
 
     /**
-     * Manually set whether this is a portal request (for testing/CLI)
+     * Declare whether this is a portal request - the CLI/test seam. A real request is
+     * classified by the front controller and never needs it.
      *
      * @param bool $is_portal
      * @return void
      */
     public static function set_portal_request(bool $is_portal): void
     {
-        self::$_is_portal_request = $is_portal;
+        Rsx_Request_Channel::set_realm($is_portal ? Rsx_Request_Channel::REALM_PORTAL : Rsx_Request_Channel::REALM_STAFF);
+    }
+
+    /**
+     * A URL with the portal's path prefix removed - the path INSIDE the portal. Unchanged
+     * when the portal has a dedicated domain (there is no prefix) or the URL is not under
+     * the prefix.
+     *
+     * @param string $url
+     * @return string
+     */
+    public static function strip_prefix(string $url): string
+    {
+        if (!self::has_dedicated_domain()) {
+            $prefix = self::get_prefix();
+
+            if (str_starts_with($url, $prefix)) {
+                $url = substr($url, strlen($prefix)) ?: '/';
+            }
+        }
+
+        return $url;
     }
 
     /**
@@ -184,6 +178,10 @@ class Rsx_Portal
      * $url = Rsx_Portal::Route('Portal_Project_View_Action', 123);
      * // Development: /_portal/projects/123
      *
+     * // Hash state (the fragment Rsx.url_hash_get() reads back)
+     * $url = Rsx_Portal::Route('Portal_Project_View_Action', 123, ['tab' => 'files']);
+     * // Development: /_portal/projects/123#tab=files
+     *
      * // Placeholder route
      * $url = Rsx_Portal::Route('Future_Portal_Feature::#index');
      * // Returns: #
@@ -191,9 +189,10 @@ class Rsx_Portal
      *
      * @param string $action Controller class, SPA action, or "Class::method"
      * @param int|array|\stdClass|null $params Route parameters
+     * @param array|null $hash Fragment state, as Rsx::Route() takes it
      * @return string The generated URL (may include portal domain/prefix)
      */
-    public static function Route($action, $params = null): string
+    public static function Route($action, $params = null, ?array $hash = null): string
     {
         // Parse action into class_name and action_name
         if (str_contains($action, '::')) {
@@ -241,8 +240,10 @@ class Rsx_Portal
 
         $routes = $manifest['data']['portal_routes_by_target'][$target];
 
-        // Select best matching route
-        $selected_route = self::_select_best_route($routes, $params_array);
+        // Selection and generation are Rsx's own routines: a portal URL is a staff URL with
+        // the portal base applied, so tokens, the query string, the `at` anchor
+        // (rsx:man anchors) and the hash state behave identically in both realms.
+        $selected_route = Rsx::_select_best_route($routes, $params_array);
 
         if (!$selected_route) {
             throw new Rsx_Caller_Exception(
@@ -251,8 +252,7 @@ class Rsx_Portal
             );
         }
 
-        // Generate base URL from pattern
-        $path = self::_generate_url_from_pattern($selected_route['pattern'], $params_array);
+        $path = Rsx::_generate_url_from_pattern($selected_route['pattern'], $params_array, $class_name, $action_name, $hash);
 
         // Apply portal prefix/domain
         return self::_apply_portal_base($path);
@@ -263,11 +263,12 @@ class Rsx_Portal
      *
      * @param string $action Controller class, SPA action, or "Class::method"
      * @param int|array|\stdClass|null $params Route parameters
+     * @param array|null $hash Fragment state, as Rsx::Route() takes it
      * @return string Full URL including protocol and domain
      */
-    public static function url($action, $params = null): string
+    public static function url($action, $params = null, ?array $hash = null): string
     {
-        $path = self::Route($action, $params);
+        $path = self::Route($action, $params, $hash);
 
         // If already has domain, return as-is
         if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
@@ -322,100 +323,6 @@ class Rsx_Portal
         $prefix = self::get_prefix();
 
         return $prefix . $path;
-    }
-
-    /**
-     * Select the best matching route from available routes
-     *
-     * @param array $routes Array of route data from manifest
-     * @param array $params_array Provided parameters
-     * @return array|null Selected route data or null if none match
-     */
-    protected static function _select_best_route(array $routes, array $params_array): ?array
-    {
-        $satisfiable = [];
-
-        foreach ($routes as $route) {
-            $pattern = $route['pattern'];
-
-            // Extract required parameters from pattern
-            $required_params = [];
-            if (preg_match_all('/:([a-zA-Z_][a-zA-Z0-9_]*)/', $pattern, $matches)) {
-                $required_params = $matches[1];
-            }
-
-            // Check if all required parameters are provided
-            $can_satisfy = true;
-            foreach ($required_params as $required) {
-                if (!array_key_exists($required, $params_array)) {
-                    $can_satisfy = false;
-                    break;
-                }
-            }
-
-            if ($can_satisfy) {
-                $satisfiable[] = [
-                    'route' => $route,
-                    'param_count' => count($required_params),
-                ];
-            }
-        }
-
-        if (empty($satisfiable)) {
-            return null;
-        }
-
-        // Sort by parameter count descending (most parameters first)
-        usort($satisfiable, function ($a, $b) {
-            return $b['param_count'] <=> $a['param_count'];
-        });
-
-        return $satisfiable[0]['route'];
-    }
-
-    /**
-     * Generate URL from route pattern by replacing parameters
-     *
-     * @param string $pattern The route pattern
-     * @param array $params Parameters to fill in
-     * @return string The generated URL
-     */
-    protected static function _generate_url_from_pattern(string $pattern, array $params): string
-    {
-        // Extract required parameters from the pattern
-        $required_params = [];
-        if (preg_match_all('/:([a-zA-Z_][a-zA-Z0-9_]*)/', $pattern, $matches)) {
-            $required_params = $matches[1];
-        }
-
-        // Build the URL by replacing parameters
-        $url = $pattern;
-        $used_params = [];
-
-        foreach ($required_params as $param_name) {
-            if (!array_key_exists($param_name, $params)) {
-                throw new RuntimeException("Required parameter '{$param_name}' missing for route {$pattern}");
-            }
-            $value = $params[$param_name];
-            $encoded_value = urlencode((string) $value);
-            $url = str_replace(':' . $param_name, $encoded_value, $url);
-            $used_params[$param_name] = true;
-        }
-
-        // Collect extra parameters for query string
-        $query_params = [];
-        foreach ($params as $key => $value) {
-            if (!isset($used_params[$key])) {
-                $query_params[$key] = $value;
-            }
-        }
-
-        // Append query string if there are extra parameters
-        if (!empty($query_params)) {
-            $url .= '?' . http_build_query($query_params);
-        }
-
-        return $url;
     }
 
     // =========================================================================
@@ -488,7 +395,7 @@ class Rsx_Portal
      */
     public static function _clear_cache(): void
     {
-        static::$_is_portal_request = null;
+        Rsx_Request_Channel::reset();
         static::$current_controller = null;
         static::$current_action = null;
         static::$current_route_type = null;

@@ -1,11 +1,11 @@
 ---
 name: auth-gates
-description: "Annotating dispatchable surfaces with #[Auth] and defining the check vocabulary with #[Auth_Check] - covering routes, SPA actions, Ajax endpoints, model fetch, API endpoints, realm declaration with #[Auth_Realm], and can_access()/Auth_Gates::accessible_route() link visibility. Use when adding or gating any #[Route] / #[SPA] / #[Ajax_Endpoint] / #[Ajax_Endpoint_Model_Fetch] / #[Api_Endpoint] / @route action, when the manifest build fails with MISSING GATE / UNKNOWN CHECK / CONTRADICTION, when writing a new Permission check, when a link or nav item must hide itself, or when a portal endpoint is being denied for the wrong realm."
+description: "Annotating dispatchable surfaces with #[Auth] and defining the check vocabulary with #[Auth_Check] - covering routes, SPA actions, Ajax endpoints, model fetch, API endpoints, realm declaration with #[Auth_Realm], and can_access()/Auth_Gates::accessible_route() link visibility. Use when adding or gating any #[Route] / #[SPA] / #[Ajax_Endpoint] / #[Ajax_Endpoint_Model_Fetch] / #[Api_Endpoint] / @route action, when the manifest build fails with MISSING GATE / UNKNOWN CHECK / CONTRADICTION / NO SURFACE / NOT STATIC / UNMARKED FETCH OVERRIDE, when a request dies with "is being dispatched, but the auth index has no entry for it" or "is being dispatched with an empty gate list", when writing a new Permission check, when a link or nav item must hide itself, or when a portal endpoint is being denied for the wrong realm."
 ---
 
 # Auth Gates
 
-Every dispatchable surface in RSpade declares who may reach it, as an attribute. The framework evaluates it at the seam that owns the surface, **before any application code runs**. Surfaces are closed by default: one with no gate does not build. The always-on fragment carries the mandate; this skill is how to do the work.
+Every dispatchable surface in RSpade declares who may reach it, as an attribute. The framework evaluates it at the seam that owns the surface, **before any application code runs**. Surfaces are closed by default: one with no gate does not build, and a seam that meets an unindexed or gateless surface at run time refuses it. The always-on fragment carries the mandate; this skill is how to do the work.
 
 ---
 
@@ -237,15 +237,20 @@ App controllers rarely need it. (`Realtime_Controller` has no gate of its own by
 
 ## Part F - The build-failure worklist
 
-Enforcement is ONE batched manifest pass that runs **before the manifest is saved**, so a violation aborts the build and writes nothing. Three findings, each reported per surface:
+Enforcement is ONE batched manifest pass that runs **before the manifest is saved**, so a violation aborts the build and writes nothing. Each finding is reported per surface:
 
 | Finding | Meaning |
 |---|---|
 | `MISSING GATE` | the surface declares no `#[Auth]`/`@auth`, directly or on its class |
 | `UNKNOWN CHECK` | a named check is declared by no `#[Auth_Check]` method in that surface's realm (an `'any'` surface needs it in at least one) |
 | `CONTRADICTION` | a member declares `#[Auth('public')]` while its class declares a restricting gate - gates AND, so the member opens nothing |
+| `NO SURFACE` | a route / portal route / SPA / API row, or an `#[Ajax_Endpoint]` / `#[Ajax_Endpoint_Model_Fetch]` member, names a surface the auth index does not hold |
+| `NOT STATIC` | `#[Route]` / `#[SPA]` / `#[Portal_Route]` / `#[Api_Endpoint]` / `#[Ajax_Endpoint]` on a public INSTANCE method - a surface is a public static method |
+| `UNMARKED FETCH OVERRIDE` | a model redeclares `fetch()` / `portal_fetch()` / a relationship its nearest declaring ancestor marks `#[Ajax_Endpoint_Model_Fetch]`, without the attribute - the override is the body that runs, so it repeats the attribute and its `#[Auth]` |
 
-Separately fatal at scan time, before that pass: an `#[Auth_Check]` that is parameterized, not `: bool`, or on an instance method; a duplicate or silently-unmarked-override check name; a non-string `#[Auth]` argument; a malformed or conflicting `#[Auth_Realm]`; a non-string or empty `@auth` argument.
+Separately fatal at scan time, before that pass: an `#[Auth_Check]` that is parameterized, not `: bool`, or on an instance method; a duplicate or silently-unmarked-override check name; a non-string `#[Auth]` argument; a malformed or conflicting `#[Auth_Realm]`; a non-string or empty `@auth` argument; an `@spa` target without `#[SPA]` or an `@portal_spa` target without `#[Portal_Route]`.
+
+**The same rule at run time.** Every seam resolves the gates of the surface it is dispatching through `Auth_Gates::surface_gates()`, which refuses (`shouldnt_happen()`) a surface the index does not know or knows with an empty list - "Auth surface 'X' is being dispatched, but the auth index has no entry for it". Reaching that means the build and the request disagree; it is a framework defect to report, never a gate to add at the call site.
 
 **The error message IS the worklist.** It opens with the violation count and the closed-by-default rule, then lists per violation: the target, the file, the surface kind and realm, what is wrong, and **the exact line to add**, pre-filled with a real check name from that realm. It closes with AVAILABLE CHECK NAMES - every check currently defined in both realms, under its home file - so resolving a violation is a copy-paste, not a hunt. Fix the list and the build passes.
 

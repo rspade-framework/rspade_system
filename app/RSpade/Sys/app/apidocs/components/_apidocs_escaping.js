@@ -90,6 +90,6 @@ function api_js_literal(value) {
  * raw HTML by the caller, so the value is escaped here.
  */
 function api_missing_marker(name) {
-    return '<span class="_Apidocs_Code_Samples__missing" title="' + html(name) + ' is required">{'
-        + html(name) + '}</span>';
+    return '<span class="_Apidocs_Code_Samples__missing" title="' + escape_html(name) + ' is required">{'
+        + escape_html(name) + '}</span>';
 }

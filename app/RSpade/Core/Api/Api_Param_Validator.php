@@ -18,7 +18,7 @@ use App\RSpade\Core\Turnstile\Rsx_Turnstile;
  * - applies declared defaults for absent optional params;
  * - coerces present values to the declared scalar type (string/int/float/bool), reporting
  *   a per-field error when a value cannot be coerced;
- * - hands every string param to Rsx_Text_Abstract::hydrate_request_string(): a string that
+ * - hands every string param to Rsx_Text_Abstract::wrap_api_param_envelope(): a string that
  *   begins with `{`, parses as a JSON object and carries a `__TEXT` key is an ENCODED text
  *   value and becomes the same typeless Rsx_Text_Request_Value the Ajax boundary produces,
  *   under the same shape check - a malformed one is a per-field error, never plain text;
@@ -145,7 +145,7 @@ class Api_Param_Validator
                 // Identified and malformed is REFUSED: the caller claimed an encoding, and
                 // storing its JSON as literal text would silently reinterpret the claim.
                 try {
-                    $hydrated = Rsx_Text_Abstract::hydrate_request_string((string) $value);
+                    $hydrated = Rsx_Text_Abstract::wrap_api_param_envelope((string) $value);
                 } catch (\InvalidArgumentException $e) {
                     return ['ok' => false, 'value' => null, 'message' => $e->getMessage()];
                 }
@@ -155,8 +155,16 @@ class Api_Param_Validator
                 if (is_int($value)) {
                     return ['ok' => true, 'value' => $value];
                 }
-                if (is_string($value) && preg_match('/^-?\d+$/', $value)) {
-                    return ['ok' => true, 'value' => (int) $value];
+                // \z, not $: $ also matches before a trailing newline. A value outside
+                // PHP's integer range is refused rather than saturated to PHP_INT_MAX.
+                if (is_string($value) && preg_match('/\A-?\d+\z/', $value)) {
+                    $digits = ltrim(ltrim($value, '-'), '0');
+                    $canonical = $digits === '' ? '0' : (str_starts_with($value, '-') ? '-' : '') . $digits;
+                    if ((string) (int) $canonical !== $canonical) {
+                        return ['ok' => false, 'value' => null, 'message' => 'Integer out of range'];
+                    }
+
+                    return ['ok' => true, 'value' => (int) $canonical];
                 }
                 return ['ok' => false, 'value' => null];
 

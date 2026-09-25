@@ -38,7 +38,7 @@ DESCRIPTION
     A deployed RSpade box has three volatile roots beside the code:
 
         build/     Everything rsx:build produces: the manifest index, the
-                   compiled bundles, Laravel's route/event/package caches,
+                   compiled bundles, Laravel's event/package caches,
                    precompiled Blade, and the seal. In a prod mode this is
                    the deployment artifact, and NOTHING but the build writes
                    it.
@@ -419,9 +419,9 @@ ADMINISTRATION
         sealed. In a prod mode: preflight, rsx:clean --force, manifest,
         mirror externals, bundles (minified in strict production), optimized
         composer autoloader (classmap-authoritative in strict production),
-        Laravel route/event/view caches, then the seal. Refuses without
-        --force when a seal is already present, because rebuilding replaces
-        what the box is serving right now.
+        Laravel event/view caches (RSX has no route cache), then the seal.
+        Refuses without --force when a seal is already present, because
+        rebuilding replaces what the box is serving right now.
 
     rsx:clean [--force]
         Owns every wipe: quiesces the node daemons, empties build/ and tmp/,

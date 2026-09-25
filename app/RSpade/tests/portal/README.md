@@ -23,10 +23,13 @@ Framework core:
   boundary; it forks on the EXPERIENCE of the request (B-76)
 - `Core/Time/Rsx_Time.php`, `Core/Sms/Rsx_Sms.php`, `Core/Settings/Rsx_Settings.php`,
   `Core/Throttle/Rsx_Throttle.php` - the other site seams, same fork
+- `Core/Portal/Rsx_Portal.php`, `Core/Js/Rsx_Portal.js` - portal URL generation, which
+  selects and generates with `Rsx`'s own routines and adds only the portal base
 - `Lib/Flash/Flash_Alert.php` - flash alerts are EXPERIENCE-scoped (`_flash_alerts.is_portal`);
   the tests live in the `flash` concern
 - `CodeQuality/Rules/PHP/PortalModelFetchAuthCheck_CodeQualityRule.php` (PORTAL-MODEL-FETCH-01)
-  - the RECORD-level contract only (`portal_can_read()` declared and called).
+  - the RECORD-level contract only (`portal_can_read()` declared and called, both
+    resolved through the lineage; the lineage cases live in the `code_quality` concern).
     PORTAL-AUTH-01 was retired with the declarative auth-gate flip: a portal
     surface's gate is an `#[Auth(...)]` attribute and the manifest build fails
     without one (see the `auth_gates` concern).
@@ -34,7 +37,7 @@ Framework core:
 Application (template):
 - `rsx/portal_permission.php` - concrete `Portal_Permission` facade
 - `rsx/portal_main.php` - non-auth portal middleware (route gating is declarative:
-  `#[Auth]` on each portal surface, enforced at the Portal_Dispatcher seam)
+  `#[Auth]` on each portal surface, enforced by the Dispatcher in the portal realm)
 - `rsx/models/{portal_membership,shared_item,portal_project}_model.php` - per-model
   `portal_can_read()` rules
 
@@ -57,6 +60,8 @@ Application (template):
 - route gating: every portal surface carries `#[Auth]`/`@auth`; anonymous access to a
   gated route redirects to the portal login with the intended URL captured
 - the two code-quality rules fire on bad code and pass on the shipped code
+- portal URLs match staff URLs plus the portal base, `#at=` anchor included (php +
+  playwright)
 
 See `test_catalog.md` for the per-test breakdown. Note the migration-provisioning
 caveat in `issues_encountered.md` (ISSUE-1).

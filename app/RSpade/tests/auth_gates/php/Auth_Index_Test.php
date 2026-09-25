@@ -128,10 +128,6 @@ class Auth_Index_Test extends Rsx_Test_Abstract
                 'rest' => static::__method(['Api_Endpoint' => [['/api/v1/idx']]]),
                 'fetch' => static::__method(['Ajax_Endpoint_Model_Fetch' => [[]]]),
                 'portal_fetch' => static::__method(['Ajax_Endpoint_Model_Fetch' => [[]]]),
-                // The scanner's static map is filtered PUBLIC-or-STATIC, so a public
-                // INSTANCE method (a fetchable relationship) is listed here too. It
-                // must still be classified as a relationship, not a fetch entry point.
-                'related_items' => static::__method(['Ajax_Endpoint_Model_Fetch' => [[]]]),
             ], [
                 'related_items' => static::__method(['Ajax_Endpoint_Model_Fetch' => [[]]]),
             ]),

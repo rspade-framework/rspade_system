@@ -17,7 +17,7 @@ use App\RSpade\Core\Rsx;
  * as a chosen user. It asserts the identity in headers, signed so that only a process
  * with local disk access to this box can make the assertion. This class both MINTS the
  * assertion (Route_Debug_Command, the standalone Playwright scripts through their node
- * twin) and VERIFIES it (Dispatcher for staff, Portal_Dispatcher for portal) - one
+ * twin) and VERIFIES it (Dispatcher, in the staff and the portal realm) - one
  * class, so the two sides cannot drift.
  *
  * THREAT MODEL. Security is designed for DEVELOPMENT mode, because a development-mode

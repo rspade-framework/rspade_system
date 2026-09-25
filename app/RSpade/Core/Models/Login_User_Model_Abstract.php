@@ -7,9 +7,7 @@ use Illuminate\Auth\Passwords\CanResetPassword;
 use Illuminate\Foundation\Auth\Access\Authorizable;
 use Illuminate\Notifications\Notifiable;
 use App\RSpade\Core\Database\Models\Rsx_Actor_Model_Abstract;
-use App\RSpade\Core\Models\User_Invite_Model;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Models\User_Verification_Model;
 use App\RSpade\Core\Session\Session;
 /**
  * Login_User_Model_Abstract - Authentication identity for multi-tenant system
@@ -39,27 +37,27 @@ use App\RSpade\Core\Session\Session;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: login_users
  *
- * @property int $id
- * @property string $email
- * @property string $password
- * @property int $is_activated
- * @property int $is_verified
- * @property int $status_id
- * @property string $timezone
- * @property int $timezone_auto
- * @property int $dark_mode
- * @property string $remember_token
- * @property string $last_login
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
- * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property int $dark_mode
  * @property string $deleted_at
  * @property int $deleted_by_id
  * @property int $deleted_by_type
+ * @property string $email
+ * @property int $id
+ * @property int $is_activated
  * @property int $is_developer
+ * @property int $is_verified
+ * @property string $last_login
+ * @property string $password
+ * @property string $remember_token
+ * @property int $status_id
+ * @property string $timezone
+ * @property int $timezone_auto
+ * @property string $updated_at
+ * @property int $updated_by_id
+ * @property int $updated_by_type
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
@@ -233,28 +231,6 @@ abstract class Login_User_Model_Abstract extends Rsx_Actor_Model_Abstract implem
     public function sessions()
     {
         return $this->hasMany(Session_Model::class, 'login_user_id');
-    }
-
-    /**
-     * Get all verification records for this login user
-     *
-     * @return \Illuminate\Database\Eloquent\Relations\HasMany
-     */
-    #[Relationship]
-    public function verifications()
-    {
-        return $this->hasMany(User_Verification_Model::class, 'email', 'email');
-    }
-
-    /**
-     * Get all invites for this login user
-     *
-     * @return \Illuminate\Database\Eloquent\Relations\HasMany
-     */
-    #[Relationship]
-    public function invites()
-    {
-        return $this->hasMany(User_Invite_Model::class, 'user_id');
     }
 
     /**

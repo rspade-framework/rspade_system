@@ -2892,7 +2892,7 @@ ADVANCED: DYNAMIC COMPONENT TAGS
     WORKED EXAMPLE - the case this is for:
 
         <Form_Field $label="Description">
-            <{Project_Model.editor_for('description')} $name="description" />
+            <{Project_Model.editor_component_for('description')} $name="description" />
         </Form_Field>
 
     Note it asks the MODEL, not the value. The editor is a property of the

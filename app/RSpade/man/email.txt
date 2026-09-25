@@ -351,11 +351,14 @@ THE QUEUE AND ITS STATUSES
     Suppressed or Failed still carries exactly what would have gone out, which is the only
     way to answer "what did we almost send them" six months later.
 
-    Email_Queue_Model::fetch() is an #[Ajax_Endpoint_Model_Fetch] (login-gated) loading one
-    record for a developer-facing email log. The model is framework core and SPLIT: an app
+    Email_Queue_Model is PHP-ONLY: it has no browser fetch surface, because a row carries
+    rendered bodies and every invite and password-reset link ever sent. _email_queue is a
+    system table, and MODEL-FETCH-SYSTEM-01 refuses #[Ajax_Endpoint_Model_Fetch] on any
+    model stored in one (manifest-build FATAL). A screen that shows the queue - the
+    reference app's email log - asks its own #[Ajax_Endpoint], gated for that screen,
+    returning the fields it shows. The model is framework core and SPLIT: an app
     overrides it by declaring `class Email_Queue_Model extends Email_Queue_Model_Abstract`
-    in rsx/models/, carrying only what it changes (rsx:man class_override). fetch() is
-    #[Replaceable] there, so a redeclared one needs no parent:: call.
+    in rsx/models/, carrying only what it changes (rsx:man class_override).
 
 THE DRAIN AND THE FAILURE POLICY
 
@@ -366,6 +369,13 @@ THE DRAIN AND THE FAILURE POLICY
     sweeper. It needs the ordinary task cron:
 
         * * * * * php artisan rsx:task:process
+
+    THE DRAIN SERVES EVERY SITE. The queue is one table for the whole install and this
+    task is its only consumer, so the whole pass - reclaim, stale sweep, claim, the
+    row's own status writes and the recipient counters - runs outside the site scope
+    (without_site_scope): a worker's declared site says nothing about which messages are
+    due. Each row keeps the site_id it was queued under. The retention cleanup below
+    spans every site the same way.
 
     The pass, in order:
 

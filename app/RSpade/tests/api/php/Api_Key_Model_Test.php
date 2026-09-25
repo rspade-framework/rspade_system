@@ -59,6 +59,20 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
         static::__assert_true(str_ends_with($prefix, '...'), 'prefix is truncated with an ellipsis');
     }
 
+    public static function test_generate_refuses_a_display_prefix_the_column_cannot_hold()
+    {
+        $original = config('rsx.api.key_prefix');
+        config(['rsx.api.key_prefix' => 'acme_widgets_']);
+
+        try {
+            static::__assert_throws(\RuntimeException::class, function () {
+                Api_Key_Model::generate(self::USER_ID, 'overlong prefix');
+            }, "rsx.api.key_prefix");
+        } finally {
+            config(['rsx.api.key_prefix' => $original]);
+        }
+    }
+
     // -------------------------------------------------------------------------
     // find_by_key()
     // -------------------------------------------------------------------------
@@ -294,5 +308,49 @@ class Api_Key_Model_Test extends Rsx_Test_Abstract
         static::__assert_true($reloaded->has_malformed_scopes());
         static::__assert_false($reloaded->is_unrestricted(), 'a malformed scope still narrows the key');
         static::__assert_equals(['/api/v1/me'], $reloaded->get_scope_rules(), 'only the usable scopes are returned');
+    }
+    // -------------------------------------------------------------------------
+    // key_hash: one row per hash, compared exactly
+    // -------------------------------------------------------------------------
+
+    /**
+     * find_by_key() first()s on key_hash for every API call, so the schema - not luck -
+     * guarantees one row per hash.
+     */
+    public static function test_a_key_hash_is_unique()
+    {
+        $model = Api_Key_Model::generate(self::USER_ID, 'unique hash')['model'];
+
+        $thrown = static::__assert_throws(\Illuminate\Database\QueryException::class, function () use ($model) {
+            DB::table('_api_keys')->insert([
+                'user_id' => self::USER_ID,
+                'name' => 'duplicate hash',
+                'key_hash' => $model->key_hash,
+                'key_prefix' => $model->key_prefix,
+            ]);
+        });
+
+        static::__assert_contains('uk_api_keys_key_hash', $thrown->getMessage(), 'refused by the unique key on key_hash');
+    }
+
+    /**
+     * The column is a hex digest compared byte for byte: a hash differing only in case is
+     * a different hash, never a match for the stored one.
+     */
+    public static function test_a_key_hash_is_compared_exactly()
+    {
+        $model = Api_Key_Model::generate(self::USER_ID, 'exact hash')['model'];
+
+        static::__assert_equals(64, strlen($model->key_hash), 'a SHA-256 hex digest is 64 characters');
+        static::__assert_equals(
+            0,
+            DB::table('_api_keys')->where('key_hash', strtoupper($model->key_hash))->count(),
+            'an upper-cased digest matches nothing'
+        );
+        static::__assert_equals(
+            1,
+            DB::table('_api_keys')->where('key_hash', $model->key_hash)->count(),
+            'the exact digest matches its one row'
+        );
     }
 }

@@ -150,23 +150,104 @@ ROUTING AND DISPATCH
                         during the manifest scan and throws
                         YoureDoingItWrongException (FATAL - the build fails).
 
-    Resource Routes Prohibited
-        Change          Resource-route helpers throw RuntimeException.
-        Affected        Route::resource(), apiResource(), resources(),
-                        apiResources(), singleton(), singletons()
-        Reason          Enforce explicit route declarations; RSpade does not
-                        assume REST verb-to-method mapping.
-        Implementation  RestrictedRouter, installed by
-                        Rsx_Restricted_Routing_Provider (FATAL).
+    Laravel's Router Is Not In The Request Path
+        Change          App\Http\Kernel's router destination is
+                        Rsx_Front_Controller::handle(). Laravel's router is
+                        never consulted, so a route registered through the
+                        Route facade - in a routes file, a service provider or
+                        a vendor package (Ignition's /_ignition/* included) -
+                        is never reachable; its URL is an ordinary RSX 404.
+                        There are no routes/web.php or routes/api.php, no
+                        RouteServiceProvider, no route middleware groups
+                        ('web', 'api') and no middleware aliases.
+        Affected        Route::get()/post()/any()/resource() and every other
+                        Route facade registration; Kernel::$middlewareGroups
+                        and $middlewareAliases; config('rsx.middleware.web'|
+                        'api'|'aliases')
+        Supersedes      RSX dispatch run from inside Laravel's 404 exception
+                        renderer, with Laravel routes taking priority over RSX
+                        routes, and a restricted router that refused resource
+                        and non-GET/POST registrations.
+        Reason          A Laravel route outranked every RSX surface while
+                        bypassing its CSRF seam, its closed-by-default #[Auth]
+                        gates and its CSP; and dispatching from inside the
+                        exception renderer re-ran a request each time a failure
+                        was rendered. One entry point closes the first by
+                        construction and ends the second.
+        Implementation  Kernel::dispatchToRouter() override; a non-empty
+                        'web', 'api' or 'aliases' key under
+                        config('rsx.middleware') throws at bootstrap (FATAL).
+                        See rsx:man dispatch.
+
+    Laravel's Route Table Is Empty, And There Is No Route Cache
+        Change          The framework provider clears Laravel's route table
+                        once every provider has booted, so route:list shows
+                        none and a route a package registers (Ignition's
+                        /_ignition/* housekeeping endpoints) does not exist.
+                        There is no Route::rsx() macro and no route cache:
+                        route:cache is a restricted stub saying so, and
+                        rsx:build / optimize:cache cache events and views only.
+        Affected        Route facade registrations in any provider or package;
+                        route:list, route:cache; optimize:cache
+        Reason          A route in Laravel's table is a surface outside CSRF,
+                        #[Auth] and CSP. RSX dispatch never reads the table, so
+                        emptying it removes the one place such a surface could
+                        come from, and a cache of it would cache nothing.
+        Implementation  Rsx_Framework_Provider (after boot);
+                        Route_Cache_Command and Optimize_Cache_Command in
+                        App\RSpade\Commands\Restricted; the rsx:health row
+                        "Laravel Route Table" FAILs naming any route the booted
+                        router holds (rsx:man health).
 
     HTTP Methods Limited to GET and POST
-        Change          Non-GET/POST route registration throws RuntimeException.
-        Affected        Route::put(), patch(), delete(), options(), any()
+        Change          RSX routes are declared for GET and POST only; there
+                        are no PUT/PATCH/DELETE routes and no resource routes.
+        Affected        #[Route] / #[Portal_Route] methods: arguments
         Reason          Simplify HTTP semantics - POST performs every
                         modification. Browsers only ever emit GET and POST
                         natively, and the rest buy nothing but ceremony.
-        Implementation  RestrictedRouter blocks the helpers and addRoute()
-                        validates the allowed set (FATAL).
+        Implementation  ROUTE-VERB-01 (FATAL - the manifest build fails) on a
+                        #[Route] / #[Portal_Route] naming any other verb or an
+                        empty list; the external API's dispatcher refuses every
+                        other verb with 405 (rsx:man external_api).
+
+    HTTP Method Override Is Off
+        Change          A request's method is the verb on the wire. Neither a
+                        _method field nor an X-HTTP-Method-Override header
+                        changes it.
+        Affected        Illuminate\Http\Request::capture(), which enables the
+                        override; Symfony's X-HTTP-Method-Override handling
+        Reason          RSpade routes GET and POST only, so an override buys
+                        nothing, and it let a cross-site POST present itself as
+                        a PUT to a CSRF check that asked for POST.
+        Implementation  system/public/index.php calls
+                        Request::setAllowedHttpMethodOverride([]) before
+                        capture, and the dispatcher's CSRF seam (both realms) asks
+                        getRealMethod() (rsx:man csrf).
+
+    TrimStrings Skips Passwords By Pattern, And Text Envelopes
+        Change          Any input whose name contains "password" (any case, any
+                        depth) is never trimmed, and a text-type envelope
+                        ({__TEXT, raw, empty}) passes through whole. Laravel
+                        skips a fixed list of three names.
+        Affected        App\Http\Middleware\TrimStrings
+        Reason          A password with a trailing space is a different
+                        password, whatever the form calls the field; an encoded
+                        rich-text body is sanitized by its declared type, not
+                        by a middleware.
+        Implementation  TrimStrings::shouldSkip() and cleanValue() overrides
+                        (CONVENTION; covered by Trim_Strings_Test).
+
+    CORS Covers The External API Only; Sanctum Is Not Installed
+        Change          config/cors.php names api/* and nothing else: any origin,
+                        no credentials. laravel/sanctum and its
+                        /sanctum/csrf-cookie route are gone.
+        Affected        config/cors.php, the laravel/sanctum package
+        Reason          The API authenticates by bearer key alone, and every
+                        other surface is same-origin. Sanctum served no RSpade
+                        feature and published a CORS-open route.
+        Implementation  config/cors.php; the framework's own bearer auth
+                        (rsx:man external_api).
 
 AUTHORIZATION
 
@@ -262,15 +343,16 @@ QUERIES AND CACHING
                         keeps the predicate index-usable.
         Implementation  rsx:check rule PHP-DATE-CALC-01, severity MEDIUM.
 
-    Config and View Caching Dropped from optimize:cache
-        Change          optimize:cache caches ROUTES and EVENTS only, and
-                        refuses to run outside production. config:cache,
-                        view:cache, route:cache, event:cache and cache:clear are
-                        all overridden.
+    Config and Route Caching Dropped from optimize:cache
+        Change          optimize:cache caches EVENTS and VIEWS only, and runs
+                        only as part of rsx:build. config:cache, view:cache,
+                        route:cache, event:cache and cache:clear are all
+                        overridden.
         Reason          Laravel's config cache FREEZES env() at cache time,
                         which is fundamentally incompatible with RSpade's
                         runtime configuration model - a cached config silently
-                        serves stale deployment facts.
+                        serves stale deployment facts. Laravel's route table is
+                        empty, so a route cache would hold nothing.
         Implementation  Optimize_Cache_Command plus per-command overrides in
                         App\RSpade\Commands\Restricted.
         See also        rsx:man app_mode
@@ -373,10 +455,31 @@ ERROR MESSAGES
                         without a second mechanism.
         Implementation  Error_Screens (the funnel), Error_Pages (resolution),
                         Error_Context (what a page receives), the /error/
-                        intercept in both dispatchers, and ROUTE-ERROR-01,
+                        intercept in the dispatcher (both realms), and ROUTE-ERROR-01,
                         which FATALs the manifest build on a declaration the
                         funnel could not reach.
         See also        rsx:man error_pages
+
+    Exception Detail Is For A Developer Caller, And Ignition Is Read-Only
+        Change          Exception detail (Laravel's Ignition page, the RSpade
+                        error page's trace, the Ajax and API error bodies) is
+                        shown only to a DEVELOPER caller outside strict
+                        production - a signed-in login_users.is_developer
+                        identity, a valid rsx:debug credential, or a loopback
+                        caller. Everybody else gets the generic answer and an
+                        error id; the detail is logged under that id. Ignition's
+                        runnable solutions and sharing are off, as literals.
+        Affected        APP_DEBUG-style "debug means detail"; Ignition's
+                        /_ignition/* routes; config/ignition.php
+        Reason          A development-mode site may be public, so "not
+                        production" is not a security predicate; and a runnable
+                        solution is an anonymous, CSRF-free POST that can rotate
+                        APP_KEY or rewrite .env.
+        Implementation  Rsx_Diagnostics::caller_sees_detail() (the one
+                        predicate every channel asks) and report_redacted(); the
+                        rsx:health "Ignition Read-Only" row FAILs when either
+                        Ignition flag is not false.
+        See also        rsx:man error_pages, rsx:man ajax_error_handling
 
     Educational Exception Messages
         Change          Custom exceptions explain the rule, name the offending

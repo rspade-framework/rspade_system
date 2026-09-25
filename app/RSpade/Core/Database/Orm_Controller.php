@@ -57,19 +57,21 @@ class Orm_Controller extends Rsx_Controller_Abstract
      * - unknown model, non-model class -> ERROR_NOT_FOUND, one identical message
      * - model without the fetch attribute -> ERROR_UNAUTHORIZED (deliberately verbose)
      *
-     * SECURITY: This endpoint is a primary target for enumeration attacks.
-     * Error responses MUST be identical regardless of failure reason to prevent
-     * attackers from discovering valid class names or system architecture:
-     * - Class doesn't exist → "Model not found"
-     * - Class exists but isn't a model → "Model not found"
-     * - Model exists but missing attribute → "Model not found"
-     * All failures return the same generic error to prevent information leakage.
+     * SECURITY: This endpoint is a primary target for enumeration attacks, so a name
+     * that is not a model answers one message whatever the reason:
+     * - Class doesn't exist -> "Model <name> not found"
+     * - Class exists but isn't a model -> "Model <name> not found"
+     * The ONE deliberate exception: a model whose fetch() lacks #[Ajax_Endpoint_Model_Fetch]
+     * answers ERROR_UNAUTHORIZED naming the missing attribute (see the comment at that
+     * check) - the model name is already in the client bundle, and the message is what a
+     * developer needs to fix the declaration.
      *
      * @param Request $request
      * @param array $params Expected: model (string), ids (array of int)
      * @return mixed The records map, or an error response
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function fetch(Request $request, array $params = [])
     {
         $model_name = $params['model'] ?? null;
@@ -227,6 +229,7 @@ class Orm_Controller extends Rsx_Controller_Abstract
      * @return mixed Related model data or false
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function fetch_relationship(Request $request, array $params = [])
     {
         $model_name = $params['model'] ?? null;
@@ -240,6 +243,12 @@ class Orm_Controller extends Rsx_Controller_Abstract
         if ($id === null) {
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_VALIDATION, 'ID parameter is required');
         }
+        // The same id rule fetch() applies: one scalar numeric id, cast to int before any
+        // model code sees it. An array or an object never reaches (portal_)fetch().
+        if (!is_scalar($id) || !is_numeric($id)) {
+            return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_VALIDATION, 'id must be a numeric record id');
+        }
+        $id = (int) $id;
         if (!$relationship_name) {
             return response_error(\App\RSpade\Core\Ajax\Ajax::ERROR_VALIDATION, 'Relationship name is required');
         }
@@ -362,15 +371,24 @@ class Orm_Controller extends Rsx_Controller_Abstract
         if ($is_singular) {
             // For singular relationships, get the foreign key value directly
             if ($relation instanceof \Illuminate\Database\Eloquent\Relations\MorphTo) {
-                $related_id = $source_record->{$relation->getForeignKeyName()};
-                $related_type = $source_record->{$relation->getMorphType()};
-                if (!$related_id || !$related_type) {
+                if (!$source_record->{$relation->getForeignKeyName()} || !$source_record->{$relation->getMorphType()}) {
                     return null;
                 }
-                // For morphTo, we need to resolve the related model class
-                $related_class = $related_type;
+
+                // The stored _type is a type-ref INTEGER. Stock Eloquent resolves it to the
+                // related class through the morph map (Type_Ref_Registry::register_morph_map),
+                // and loads the row under the related model's own global scopes - the column
+                // value itself is never used as a class name here.
+                $related = $relation->getResults();
+                if (!$related) {
+                    return null;
+                }
+                $related_id = $related->id;
+                $related_class = get_class($related);
             } else {
-                $related_id = $relation->getQuery()->getQuery()->first()?->id ?? null;
+                // The relation's own Eloquent query, so the related model's global scopes
+                // (soft deletes, the site scope) apply exactly as they do everywhere else.
+                $related_id = $relation->first()?->id;
                 if (!$related_id) {
                     return null;
                 }
@@ -381,22 +399,12 @@ class Orm_Controller extends Rsx_Controller_Abstract
             $related_class_parts = explode('\\', $related_class);
             $related_model_name = end($related_class_parts);
 
-            // Check if related model has fetch() with attribute
-            try {
-                $related_metadata = Manifest::php_get_metadata_by_class($related_model_name);
-            } catch (\Exception $e) {
-                return null;
-            }
+            // Is the related model fetchable? Through the LINEAGE, exactly as for the source
+            // model: a core model declares fetch() on its abstract base, so its concrete's
+            // own file record never carries the attribute.
+            $related_fqcn = static::__fetchable_model_fqcn($related_model_name, $fetch_method_name);
 
-            $related_has_fetch = false;
-            if (isset($related_metadata['public_static_methods'][$fetch_method_name])) {
-                $fetch_method = $related_metadata['public_static_methods'][$fetch_method_name];
-                if (isset($fetch_method['attributes']['Ajax_Endpoint_Model_Fetch'])) {
-                    $related_has_fetch = true;
-                }
-            }
-
-            if (!$related_has_fetch) {
+            if ($related_fqcn === null) {
                 return null;
             }
 
@@ -409,7 +417,6 @@ class Orm_Controller extends Rsx_Controller_Abstract
             }
 
             // Fetch through the security filter
-            $related_fqcn = $related_metadata['fqcn'];
             return $related_fqcn::$fetch_method_name($related_id);
         } else {
             // For plural relationships, get the IDs efficiently - but never more than
@@ -439,22 +446,10 @@ class Orm_Controller extends Rsx_Controller_Abstract
             $related_class_parts = explode('\\', $related_class);
             $related_model_name = end($related_class_parts);
 
-            // Check if related model has fetch() with attribute
-            try {
-                $related_metadata = Manifest::php_get_metadata_by_class($related_model_name);
-            } catch (\Exception $e) {
-                return [];
-            }
+            // Is the related model fetchable? Through the lineage, as above.
+            $related_fqcn = static::__fetchable_model_fqcn($related_model_name, $fetch_method_name);
 
-            $related_has_fetch = false;
-            if (isset($related_metadata['public_static_methods'][$fetch_method_name])) {
-                $fetch_method = $related_metadata['public_static_methods'][$fetch_method_name];
-                if (isset($fetch_method['attributes']['Ajax_Endpoint_Model_Fetch'])) {
-                    $related_has_fetch = true;
-                }
-            }
-
-            if (!$related_has_fetch) {
+            if ($related_fqcn === null) {
                 return [];
             }
 
@@ -469,7 +464,6 @@ class Orm_Controller extends Rsx_Controller_Abstract
             // go through its own (portal_)fetch() - that is the authorization boundary -
             // but the primary-key lookup each of those bodies performs is served from ONE
             // preloaded query instead of one query per id (see Orm_Fetch_Preload).
-            $related_fqcn = $related_metadata['fqcn'];
             $results = [];
 
             try {
@@ -504,7 +498,8 @@ class Orm_Controller extends Rsx_Controller_Abstract
      *
      * The surface's declared realm is checked first, exactly as at the Ajax seam: a
      * realm-explicit member reached from the other realm is refused before any gate
-     * name is resolved (Auth_Gates::surface_realm_permits).
+     * name is resolved (Auth_Gates::surface_realm_permits). A member the index does not
+     * know, or knows without a gate, is refused loudly (Auth_Gates::require_surface).
      *
      * @param string $model_name Simple model class name
      * @param string $member fetch / portal_fetch / a relationship method
@@ -519,13 +514,37 @@ class Orm_Controller extends Rsx_Controller_Abstract
             return false;
         }
 
-        $gates = Auth_Gates::surface_gates($target);
+        return Auth_Gates::gates_pass_at_seam(Auth_Gates::surface_gates($target), $realm, $target);
+    }
 
-        if (empty($gates)) {
-            return true;
+    /**
+     * The FQCN of a related model whose (portal_)fetch() is a fetch surface, or null when
+     * the model is not indexed or its lineage declares no #[Ajax_Endpoint_Model_Fetch]
+     * on that method. Null reads as "no related record" at both call sites.
+     *
+     * @param string $model_name Simple class name of the related model
+     * @param string $fetch_method_name 'fetch' or 'portal_fetch'
+     * @return string|null
+     */
+    private static function __fetchable_model_fqcn(string $model_name, string $fetch_method_name): ?string
+    {
+        $record = Manifest::php_class_metadata($model_name);
+
+        if ($record === null) {
+            return null;
         }
 
-        return Auth_Gates::gates_pass_at_seam($gates, $realm, $target);
+        $declaration = Model_Fetch_Lineage::static_declaration(
+            $model_name,
+            $fetch_method_name,
+            'Ajax_Endpoint_Model_Fetch'
+        );
+
+        if ($declaration === null) {
+            return null;
+        }
+
+        return $record['fqcn'];
     }
 
     /**

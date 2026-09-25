@@ -24,17 +24,17 @@ use App\RSpade\Core\Models\Region_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: countries
  *
- * @property int $id
  * @property string $alpha2
  * @property string $alpha3
- * @property string $numeric
- * @property string $name
  * @property string $common_name
- * @property int $enabled
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property int $enabled
+ * @property int $id
+ * @property string $name
+ * @property string $numeric
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
  *

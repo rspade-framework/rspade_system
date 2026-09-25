@@ -4,8 +4,11 @@
  *
  * Handles lightweight IDE service requests bypassing Laravel for performance.
  * Authentication is enforced by auth.php BEFORE this file is loaded (local-file
- * grant: the caller presents the content of the on-disk ide-grant-*.token file,
- * or rides the strict loopback bypass). See auth.php for the full model.
+ * grant: the caller presents the content of the on-disk ide-grant-*.token file).
+ * See auth.php for the full model.
+ *
+ * The services that write (format, refactor) or run git (git, git/diff) are POST-only,
+ * so a page in the developer's browser cannot reach them with a navigation or an <img>.
  */
 
 // Error reporting for development
@@ -144,18 +147,65 @@ function error_response($message, $code = 400) {
     json_response(['success' => false, 'error' => $message], $code);
 }
 
+/**
+ * Is an absolute path the project root or inside it? Separator-aware: a sibling directory
+ * that merely shares the prefix (/var/www/html2 beside /var/www/html) is outside.
+ */
+function ide_path_within_project($full_path) {
+    return $full_path === IDE_BASE_PATH || str_starts_with($full_path, IDE_BASE_PATH . '/');
+}
+
+/**
+ * The absolute path a project-relative path the IDE SENT names, or null when it is outside
+ * the project. '.' and '..' segments are resolved lexically first, so a path whose
+ * directory does not exist cannot climb out; an existing directory is then resolved with
+ * realpath() so a symlink cannot point out either. The file itself need not exist (a
+ * .formatting.tmp file, or a file git diff reports as deleted).
+ */
+function ide_project_path($file) {
+    // Windows sends backslashes
+    $file = str_replace('\\', '/', (string) $file);
+
+    $segments = [];
+    foreach (explode('/', IDE_BASE_PATH . '/' . ltrim($file, '/')) as $segment) {
+        if ($segment === '' || $segment === '.') {
+            continue;
+        }
+        if ($segment === '..') {
+            array_pop($segments);
+            continue;
+        }
+        $segments[] = $segment;
+    }
+    $full_path = '/' . implode('/', $segments);
+
+    $dir = dirname($full_path);
+    if (is_dir($dir)) {
+        // @REALPATH-EXCEPTION - IDE service: runs standalone without framework helpers
+        $real_dir = realpath($dir);
+        if ($real_dir) {
+            $full_path = rtrim($real_dir, '/') . '/' . basename($full_path);
+        }
+    }
+
+    return ide_path_within_project($full_path) ? $full_path : null;
+}
+
 // Authentication already handled by auth.php before this file is loaded
 // Retrieve auth data from constants set by auth.php
 if (!defined('IDE_AUTH_PASSED')) {
     error_response('Authentication check did not run - this should never happen', 500);
 }
 
-$auth_data = json_decode(IDE_AUTH_DATA, true);
-
 // Parse request URI to get service
 $request_uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $service_path = str_replace('/_ide/service', '', $request_uri);
 $service_path = trim($service_path, '/');
+
+if (in_array($service_path, ['format', 'git', 'git/diff', 'refactor'], true)
+    && ($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+    error_response("The {$service_path} service accepts POST only", 405);
+}
 
 // Get request body
 $request_body = file_get_contents('php://input');
@@ -216,28 +266,9 @@ function handle_format_service($data) {
         error_response('No file provided');
     }
 
-    // Normalize path separators (Windows sends backslashes, convert to forward slashes)
-    $file = str_replace('\\', '/', $file);
-
-    // Build full path
-    $full_path = IDE_BASE_PATH . '/' . ltrim($file, '/');
-
-    // Normalize path without requiring file to exist (for .formatting.tmp files)
-    // Use realpath on the directory, then append the filename
-    $dir = dirname($full_path);
-    $filename = basename($full_path);
-
-    // Get real directory path
-    if (is_dir($dir)) {
-        // @REALPATH-EXCEPTION - IDE service: runs standalone without framework helpers
-        $real_dir = realpath($dir);
-        if ($real_dir) {
-            $full_path = $real_dir . '/' . $filename;
-        }
-    }
-
     // Security check - path must be within project
-    if (strpos($full_path, IDE_BASE_PATH) !== 0) {
+    $full_path = ide_project_path($file);
+    if ($full_path === null) {
         error_response('Invalid file path - must be within project');
     }
 
@@ -717,26 +748,18 @@ function handle_git_diff_service($data) {
         error_response('No file provided');
     }
 
-    // Normalize path separators (Windows sends backslashes, convert to forward slashes)
-    $file = str_replace('\\', '/', $file);
-
-    // Security check - file must be within project
-    $full_path = IDE_BASE_PATH . '/' . ltrim($file, '/');
-
-    // Normalize path without requiring file to exist (handles deleted files in git)
-    $dir = dirname($full_path);
-    $filename = basename($full_path);
-
-    if (is_dir($dir)) {
-        // @REALPATH-EXCEPTION - IDE service: runs standalone without framework helpers
-        $real_dir = realpath($dir);
-        if ($real_dir) {
-            $full_path = $real_dir . '/' . $filename;
-        }
+    // Security check - file must be within project (it need not exist: git may report it
+    // as deleted)
+    $full_path = ide_project_path($file);
+    if ($full_path === null) {
+        error_response('Invalid file path');
     }
 
-    // Validate path is within project
-    if (strpos($full_path, IDE_BASE_PATH) !== 0) {
+    // The pathspec handed to git is the PROJECT-RELATIVE form of the resolved path. A path
+    // that begins with '-' is refused outright (git would read '--output=...' as an option
+    // that writes a file), and the '--' below ends the option list as well.
+    $git_path = $full_path === IDE_BASE_PATH ? '.' : substr($full_path, strlen(IDE_BASE_PATH) + 1);
+    if ($git_path[0] === '-') {
         error_response('Invalid file path');
     }
 
@@ -746,7 +769,8 @@ function handle_git_diff_service($data) {
     $return_var = 0;
 
     // Get diff with line numbers, no context
-    \exec_safe('cd ' . escapeshellarg(IDE_BASE_PATH) . ' && git diff HEAD --unified=0 ' . escapeshellarg($file) . ' 2>&1', $output, $return_var);
+    // '--' ends the option list: everything after it is a pathspec.
+    \exec_safe('cd ' . escapeshellarg(IDE_BASE_PATH) . ' && git diff HEAD --unified=0 -- ' . escapeshellarg($git_path) . ' 2>&1', $output, $return_var);
 
     if ($return_var !== 0) {
         error_response('Git diff command failed: ' . implode("\n", $output), 500);

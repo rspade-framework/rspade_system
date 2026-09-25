@@ -47,16 +47,16 @@ use App\RSpade\Core\Time\Rsx_Time;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _zip_download_requests
  *
- * @property int $id
- * @property string $download_key
- * @property string $files
- * @property string $zip_name
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property string $download_key
+ * @property string $files
+ * @property int $id
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
+ * @property string $zip_name
  *
  * @mixin \Eloquent
  */

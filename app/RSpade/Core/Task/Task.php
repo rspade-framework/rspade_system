@@ -71,7 +71,11 @@ class Task
         $task_instance->mark_started();
 
         // One task is one unit of work for revision history - the in-process twin of the
-        // reset Task_Worker_Command performs per task.
+        // reset Task_Worker_Command performs per task. The caller's unit is handed back in
+        // the finally below, exactly as Ajax::execute() does for a nested call: a web
+        // request that runs a task in-process keeps filing its own later writes under its
+        // own transaction, not under the task's.
+        $previous_revision_state = \App\RSpade\Core\Revisions\Revision::_snapshot_request_state();
         \App\RSpade\Core\Revisions\Revision::_reset_request_state('task', $service_class . '::' . $rsx_task);
 
         try {
@@ -100,6 +104,8 @@ class Task
             // Mark as failed
             $task_instance->mark_failed($e->getMessage());
             throw $e;
+        } finally {
+            \App\RSpade\Core\Revisions\Revision::_restore_request_state($previous_revision_state);
         }
     }
 

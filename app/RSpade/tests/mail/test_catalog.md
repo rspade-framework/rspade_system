@@ -252,3 +252,14 @@ stopped writing. The cascade rides with them because the prefix arrived by a REN
 | MAIL-257 | an exception saying nothing about HTTP is a refusal, so it cannot stop the queue | php | `RuntimeException` | attempt counted, reason recorded | implemented | 2026-09-24 |
 | MAIL-258 | a Symfony `HttpTransportException` is read by its response status | php | an `HttpTransportException` carrying a 400 | a refusal | deferred (symfony/http-client-contracts is not installed, so no response object can be built; the same status path is covered by MAIL-252/256) | 2026-09-24 |
 | MAIL-259 | the Mail transport health row constructs an API transport and FAILs an unregistered one | php | the registered `fake-graph`, then `MAIL_MAILER` naming an unregistered driver | a registered driver is OK; an unregistered one FAILs naming `rsx.integrations.providers` | implemented | 2026-09-24 |
+
+## Mail_Drain_All_Sites_Test (php, default isolation) - the drain serves every site
+
+A message queued under a SECOND site is handled by a drain whose process declares site 1:
+the queue is one table for the install, and a worker's declared site never narrows it.
+
+| ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
+|----|--------------------------|------|-------|-------------------|--------|--------------|
+| MAIL-270 | another site's message is claimed, sent and recorded | php | row queued as site 2, drain as site 1 with an accepting stub | the stub received it; row SENT, site_id still 2; a site-2 recipient row counts one send | implemented | 2026-09-25 |
+| MAIL-271 | the stranded-row reclaim reaches another site | php | site-2 row forced to SENDING | reclaimed > 0, then SENT on the same pass | implemented | 2026-09-25 |
+| MAIL-272 | retention prunes every site's rows | php | site-2 SENT row backdated 90 days, `cleanup` (catcher pointed at nothing) | row gone | implemented | 2026-09-25 |

@@ -30,17 +30,17 @@ use App\RSpade\Core\Search\Search_Index_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _file_storage
  *
- * @property int $id
- * @property string $hash
- * @property int $size
- * @property int $is_indexed
- * @property int $render_status_id
- * @property string $rendered_at
- * @property string $render_error
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property string $hash
+ * @property int $id
+ * @property int $is_indexed
+ * @property string $render_error
+ * @property int $render_status_id
+ * @property string $rendered_at
+ * @property int $size
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
  *

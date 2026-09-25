@@ -239,9 +239,11 @@ THE VALIDATOR
     field errors and validate() does not return. The response is shaped for
     the channel the request arrived on, exactly as Rsx_Csrf does:
 
-        inside Ajax::internal()   AjaxFormErrorException, which the batch
-                                  controller maps into that one call's slot
-        /_ajax*, /_upload         the ajax error contract (HTTP 200,
+        any Ajax endpoint call    AjaxFormErrorException (metadata
+          (direct, batched or     {_message}); on the wire the 'validation'
+          Ajax::internal())       envelope (HTTP 200, _success:false), in a
+                                  batch in that one call's slot
+        /_upload                  the ajax error contract (HTTP 200,
                                   _success:false, error_code 'validation')
         native or portal POST     Flash_Alert::error() + redirect back
 
@@ -303,8 +305,9 @@ THE COMPLETENESS GUARD
     from an unwired one - the call it is looking for has not had a chance to
     happen yet. Only after the handler returns is "did it validate?" a
     question with an answer. rsx.post_dispatch fires at every
-    handler-invocation seam (browser Ajax, each Ajax::internal()/batch
-    sub-call, external API, plain routes, portal routes), immediately after
+    handler-invocation seam (every Ajax call through Ajax::execute() - direct,
+    batched or internal - the external API, and page routes in both realms),
+    immediately after
     the handler returns and before response shaping, on the SUCCESS path
     only. Handlers run INLINE and may throw - which is precisely how the
     guard works. See: php artisan rsx:man event_hooks
@@ -312,15 +315,15 @@ THE COMPLETENESS GUARD
     THE LATCH. validate() sets a per-request latch BEFORE reaching a verdict,
     so a validator that ran and REJECTED still counts as having run (without
     that, every genuine verification failure would draw a second, misleading
-    exception). Ajax::internal() saves the latch, resets it for the
-    sub-call, and restores it afterwards. Two consequences, both wanted: a
+    exception). Ajax::execute() saves the latch, resets it for each call, and
+    restores it afterwards. Two consequences, both wanted: a
     batch cannot launder one call's verification across its siblings, and a
     handler that validated its own request and then made an internal call
     has not lost its own proof.
 
     The guard is idempotent - it only reads state - which matters because
-    the event fires at nested seams (the Ajax handler AND the Dispatcher
-    transport route around it).
+    the event can fire at nested seams (a page handler that makes an
+    Ajax::internal() call).
 
 TESTING
 

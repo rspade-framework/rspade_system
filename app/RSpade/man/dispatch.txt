@@ -24,12 +24,21 @@ SYNOPSIS
         php artisan rsx:debug /dashboard --user=1
 
 DESCRIPTION
-    The dispatcher (App\RSpade\Core\Dispatch\Dispatcher) is the single entry
-    point that maps one incoming request to one handler and converts that
-    handler's return value into an HTTP response. It is a static class; there
-    is one method that matters, Dispatcher::dispatch($url, $method,
-    $extra_params, $request), called once per request by the framework's
-    controller shim.
+    Every HTTP request enters RSX at ONE place, Rsx_Front_Controller::handle()
+    (App\RSpade\Core\Dispatch). App\Http\Kernel's router destination calls it
+    after the global middleware (config('rsx.middleware.global') included), so
+    Laravel's router is never consulted: no Laravel route - one a vendor
+    package registers included - is reachable over HTTP. The front controller
+    classifies the request once, runs that channel's pipeline, and turns any
+    failure into a response through that channel's error policy (see THE
+    FRONT CONTROLLER).
+
+    The page pipeline (App\RSpade\Core\Dispatch\Dispatcher) maps one request
+    to one handler and converts that handler's return value into an HTTP
+    response. It is ONE pipeline for both realms - the staff application and
+    the client portal - parameterized by the realm the request was classified
+    in. It is a static class; the method that matters is
+    Dispatcher::dispatch($url, $method, $extra_params, $request).
 
     Routes are not declared in a route file. They are #[Route] (server-rendered
     / Blade / Ajax controllers) and #[SPA] (single-page bootstrap) attributes on
@@ -56,85 +65,167 @@ DESCRIPTION
     - Laravel names routes and resolves them by name. RSpade generates URLs
       type-safely from the class/method: Rsx::Route('Controller::method', ...).
 
+THE FRONT CONTROLLER
+    Rsx_Front_Controller::handle() runs, in this order:
+
+    1. The re-entrancy guard. RSX dispatch runs once per request; entering the
+       front controller again while a dispatch is in flight is shouldnt_happen().
+       Nothing calls a dispatcher from inside another, and no error renderer
+       dispatches, so a failure is rendered exactly once.
+
+    2. Classification (Rsx_Request_Channel::classify()), decided ONCE and read
+       by everything after it:
+
+         ASSET   /_compiled/<bundle file> or /_vendor/<mirrored file> (strict
+                 filename patterns). No session, CSRF or route scan; a miss is
+                 a plain-text 404.
+         API     /api/vN/... - the external API (rsx:man external_api), a staff
+                 identity on any host except the portal's DEDICATED domain,
+                 where every /api/ path answers the API's own 404 not_found.
+         AJAX    a POST under /_ajax/, in its realm.
+         PAGE    everything else, in its realm: public files, /error/*
+                 previews, routes, SPA bootstraps, the file routes.
+
+       The realm (staff or portal) is the portal's dedicated domain or its path
+       prefix on the staff host; Rsx_Portal::is_portal_request() reads it.
+
+    3. The preamble: the request's revision unit of work, Manifest::init(), the
+       development hostname tripwire (Rsx_Env_Hostname_Guard: a browsed host
+       that does not match APP_URL fatals; loopback is exempt), and - AJAX and
+       PAGE only - the development first-run setup screen (offered to, and
+       accepted from, a loopback caller only).
+
+    4. The channel's pipeline: AssetHandler (ASSET), Api_Dispatcher (API), or
+       this dispatcher (AJAX and PAGE, in either realm, below).
+
+    5. The error policy, per channel. A thrown HttpResponseException's own
+       response is sent verbatim on every channel. ASSET answers one line of
+       plain text (the status; a 500's detail only to a developer caller).
+       Every other channel is rendered by the exception handler chain
+       (config('rsx.exception_handlers'), rsx:man error_handling), whose
+       handlers choose by the classified channel: the Ajax envelope, the API's
+       JSON error, an Error_Screens page. Nothing in any of them dispatches. A
+       HEAD request's failure keeps its status and headers and loses its body.
+
+    BEFORE THE FRONT CONTROLLER, public/index.php answers a few requests
+    without booting Laravel at all: the IDE bridge (development), the
+    maintenance window (503, rsx:man maintenance_mode), and the migration
+    window - while `migrate` runs against a snapshot it raises
+    storage/state/.migrating, and every web request answers 503 until the run
+    clears it (rsx:man migrations).
+
+    LARAVEL'S ROUTE TABLE IS EMPTY. The framework provider clears it once every
+    provider has booted, so a route a package registers (Ignition's
+    /_ignition/* housekeeping endpoints) does not exist, and `route:list`
+    shows none. The rsx:health row "Laravel Route Table" FAILs, naming the
+    route, when the booted router holds any - a regression that could make a
+    route reachable around CSRF, #[Auth] and CSP. There is no route cache:
+    route:cache is a restricted command, and rsx:build caches events and
+    views only.
+
 THE DISPATCH PIPELINE
-    dispatch() runs these steps in this fixed order. There is no plugin or
-    attribute-processor pipeline - the sequence below IS the dispatch flow.
+    Dispatcher::dispatch() runs these steps in this fixed order. There is no
+    plugin or attribute-processor pipeline - the sequence below IS the dispatch
+    flow.
 
-    1. Manifest::init() - load or incrementally rebuild the manifest.
+    THE REALM DESCRIPTOR. What differs between the staff and the portal realm
+    is a short fixed list, and nothing else in the pipeline asks which realm it
+    is in:
 
-    2. Class-level route-attribute guard (non-production only). If any class
-       carries a #[Route]/#[Get]/#[Post]/#[Put]/#[Delete]/#[Patch] attribute at
-       the CLASS level (rather than on a method) the dispatcher throws a
-       RuntimeException naming the offending file. Route attributes belong on
-       static methods, never on the class.
+                            staff                  portal
+        route table         routes (#[Route],      portal_routes
+                            #[SPA])                (#[Portal_Route], @portal_spa)
+        application hooks   Main_Abstract          Portal_Main_Abstract
+        site membership     enforced               not asked (staff facade)
+        full-page cache     yes                    no
+        default route       /_/Controller/action   no
+        dev-auth header     X-Dev-Auth-User-Id     X-Dev-Auth-Portal-User-Id
+        CSP realm           staff                  portal
 
-    3. Hostname guard. Rsx_Env_Hostname_Guard::check() fatals in development if
-       the browsed host does not match the APP_URL host (catches a pasted .env
-       pointing at another instance). Loopback requests are exempt.
+    A portal path under the portal's prefix is matched with the prefix
+    removed (Rsx_Portal::strip_prefix()).
 
-    4. Portal delegation. If Rsx_Portal::is_portal_request() the request is
-       handed to Portal_Dispatcher::dispatch() and this dispatcher returns. The
-       portal is a parallel dispatch/session world (see rsx:man portal).
+    1. Portal realm only: the application's Portal_Main::init(), once per
+       process - the FIRST application code in a portal request and the place
+       the portal declares its site (Portal_Session::set_site_id()), which
+       everything after it may ask for. (Staff Main::init() runs at boot.)
 
-    5. External API delegation. If Api_Dispatcher::is_api_request($url) - the
-       path starts /api/vN/ - the request is handed to Api_Dispatcher and this
-       dispatcher returns. This branch precedes the asset, FPC, and HEAD logic
-       below, so a HEAD reaches the API dispatcher raw (it 405s it) and API
-       responses never acquire the FPC header (see rsx:man external_api).
+    2. CSRF. For POST only (the verb on the wire), Rsx_Csrf::enforce() runs.
+       One session per browser, one token: this seam covers Ajax, batches,
+       uploads and native POST routes in both realms. It is session-gated
+       (allowed when there is no session to forge against).
 
-    6. CSRF. For POST only, Rsx_Csrf::enforce() runs (staff session space). This
-       one seam covers Ajax endpoints, uploads, and native #[Route] POSTs. It is
-       session-gated (allowed when there is no session to forge against). GET
-       assets are unaffected.
+    3. Dev-auth. A signed rsx:debug identity header for the realm is honored
+       (development only) before any gate runs, and after CSRF, so a harness
+       POST keeps its session-less CSRF treatment.
 
-    7. Asset check. If AssetHandler::is_asset_request($url) the file is served
-       directly and dispatch returns. Assets are the /_compiled/... bundles,
-       /_vendor/... cached CDN assets, and any path whose extension is in the
-       allowed set. This is asset SERVING, not route dispatch.
+    4. AJAX channel: /_ajax/_batch and /_ajax/<Controller>/<action> go to the
+       one Ajax core (rsx:man ajax_error_handling); any other path under
+       /_ajax/ is the not_found envelope. There is no route row for either.
+       Everything below is the PAGE channel.
 
-    8. HEAD rewrite. A HEAD request is treated as GET for route matching and
+    5. Public file. If AssetHandler::is_asset_request($url) (an allowed
+       extension) and a public/ directory holds the file, it is served directly
+       and dispatch returns. No such file: dispatch continues to the route table,
+       so a route may serve a generated document at a natural filename.
+
+       Build artifacts (/_compiled/, /_vendor/) and the external API are
+       channels of their own and never reach this pipeline.
+
+    6. HEAD rewrite. A HEAD request is treated as GET for route matching and
        handler execution (the request method is set to GET so handlers see GET);
        the original method is remembered so the body can be stripped afterward
        (see HEAD REQUESTS).
 
-    9. Error-page namespace. A path matching /error/<3 digits> or
-       /error/generic is intercepted BEFORE route matching, in every mode: in
-       development it renders that error page as a preview, in a sealed build it
-       answers the 404 page. An error page is therefore never served by ordinary
-       matching and never answers 200 at its own URL (see rsx:man error_pages).
+    7. Error-page namespace. A path matching /error/<3 digits> or
+       /error/generic is intercepted BEFORE route matching, in every mode and
+       both realms: in development it renders that error page as a preview, in
+       a sealed build it answers the 404 page. An error page is therefore never
+       served by ordinary matching and never answers 200 at its own URL (see
+       rsx:man error_pages).
 
-    10. Route match. __find_route() sorts the manifest's route patterns by
-        specificity and returns the first whose pattern matches the URL and whose
-        method list includes the request method (see ROUTE MATCHING).
+    8. Route match. The realm's route patterns are sorted by specificity and
+       the first whose pattern matches the URL and whose method list includes
+       the request method wins (see ROUTE MATCHING).
 
-    11. No match. If nothing matched, three things are tried in order: the
-        default /_/{controller}/{action} route (see DEFAULT ROUTE), then
-        Main_Abstract::pre_dispatch, then Main_Abstract::unhandled_route (see
-        MAIN HOOKS). If all return null, the request renders the 404 error page -
-        the terminal outcome is the framework's to render, never Laravel's
-        unthemed default.
+    9. No match. If nothing matched, three things are tried in order: the
+       default /_/{Name}/{action} route (staff realm, see DEFAULT ROUTE), then
+       the realm's Main::pre_dispatch, then its Main::unhandled_route (see MAIN
+       HOOKS). If all return null, the request renders the realm's 404 error
+       page - the terminal outcome is the framework's to render, never
+       Laravel's unthemed default.
 
-    12. Param assembly. $params is built and the handler is loaded (see THE
+    10. Param assembly. $params is built and the handler is loaded (see THE
         $params ARRAY).
 
-    13. FPC detection (see FULL PAGE CACHE).
+    11. FPC detection (staff, see FULL PAGE CACHE).
 
-    14. AUTH GATES. The matched route's #[Auth] check list is evaluated for
-        the active realm - before Main_Abstract::pre_dispatch, before the
-        controller's pre_dispatch, before the action. A denial ends the
-        request here (see AUTHORIZATION AND PRE_DISPATCH).
+    12. Site membership (staff): a session whose membership was disabled or
+        deleted is ended, and the request gets the unauthorized answer.
 
-    15. pre_dispatch. Main_Abstract::pre_dispatch runs first; then, for a
+    13. AUTH GATES. The matched route's #[Auth] check list is evaluated in the
+        request's realm - before Main::pre_dispatch, before the controller's
+        pre_dispatch, before the action. A denial ends the request here (see
+        AUTHORIZATION AND PRE_DISPATCH).
+
+    14. pre_dispatch. The realm's Main::pre_dispatch runs first; then, for a
         controller, the controller's own static pre_dispatch runs immediately
         before the action. A non-null return from either halts dispatch and
         becomes the response. Neither performs authorization.
 
-    16. Action. The static method is invoked as $class::$method($request,
-        $params). Its return value is passed to response building.
+    15. Action. The static method is invoked as $class::$method($request,
+        $params). Its return value is passed to response building, after the
+        rsx.post_dispatch event (rsx:man event_hooks).
 
-    17. Response build + transform. The return value becomes an HTTP response
-        (see RETURN VALUES AND RESPONSES); the FPC header is added if step 13
-        armed it; the HEAD body is stripped if the request was HEAD.
+    16. Response build + transform. The return value becomes an HTTP response
+        (see RETURN VALUES AND RESPONSES); the FPC header is added if step 11
+        armed it; the HEAD body is stripped if the request was HEAD; the
+        realm's Content-Security-Policy is applied (rsx:man csp).
+
+    A CODED failure raised in steps 14-16 - an abort(), or the coded
+    exception family - is answered at this seam with the page its code
+    deserves (see CODED FAILURES). Any other exception propagates to the front
+    controller's error policy.
 
 ROUTES AND CONTROLLERS
     A controller extends App\RSpade\Core\Controller\Rsx_Controller_Abstract.
@@ -157,8 +248,11 @@ ROUTES AND CONTROLLERS
             }
         }
 
-    Only GET and POST are valid in the methods list. A method may list both to
-    handle a form GET and its POST submission in one place.
+    Only GET and POST are valid in the methods list, and the manifest build
+    enforces it: a #[Route] or #[Portal_Route] naming any other verb (PUT,
+    PATCH, DELETE, HEAD, OPTIONS) or an empty list is a FATAL (ROUTE-VERB-01).
+    Omitting methods means ['GET']; HEAD is served by every GET route. A method
+    may list both to handle a form GET and its POST submission in one place.
 
     SPA bootstrap controllers use #[SPA] instead of #[Route]; client-side
     actions carry @route/@spa decorators and are matched the same way (the route
@@ -167,7 +261,7 @@ ROUTES AND CONTROLLERS
 AUTHORIZATION AND PRE_DISPATCH
     Authorization is DECLARATIVE and the dispatcher enforces it. Each route
     carries #[Auth('check', ...)]; the dispatcher evaluates every named check
-    for the active realm at step 13 and, on any denial, hands the request to
+    for the request's realm at step 13 and, on any denial, hands the request to
     Error_Screens::unauthorized() - a 302 to the realm's login with the
     intended URL captured when nobody is identified, a 403 page when someone
     is. The action never runs. A class-level #[Auth] gates every surface in
@@ -202,9 +296,35 @@ AUTHORIZATION AND PRE_DISPATCH
 
     This is the FULL-PAGE path. An Ajax endpoint returning the same helper does
     NOT redirect - the Ajax layer renders a JSON error envelope
-    ({success:false, error_code:...}) that client code handles (see rsx:man
+    ({_success:false, error_code:...}) that client code handles (see rsx:man
     ajax_error_handling). One helper, two channels: the dispatcher does the
     full-page split, the Ajax layer does the JSON split.
+
+CODED FAILURES
+    A page may also FAIL with a code by throwing, and the answer is the same
+    page the equivalent return value gets - whichever layer raised it (the
+    action, a pre_dispatch, a view, the framework): the dispatcher answers it at
+    its own seam, and the page policy (Web_Exception_Handler) for anything
+    raised elsewhere, through one function, Dispatcher::page_failure_response().
+
+        abort(404)                      the 404 page
+        abort(403)                      the unauthorized screen (login redirect
+                                        when nobody is identified, 403 page)
+        abort(419)                      the expired page
+        abort(<other>, 'msg')           a page for that status carrying 'msg'
+        AjaxUnauthorizedException       the unauthorized screen - what
+                                        Permission::require_permission() and the
+                                        guarded Session::terminate_*() throw
+        AjaxAuthRequiredException       the unauthorized screen
+        AjaxNotFoundException           the 404 page
+        AjaxFormErrorException          as response_form_error() (POST: flash
+                                        and return to the form; GET: the 400
+                                        page)
+
+    A request whose Accept header does not prefer HTML (an <img>, a fetch())
+    gets an abort()'s bare status and one line of text instead of a page. The
+    Ajax channel maps the same family to its envelope codes, and the external
+    API to its JSON errors, so a thrown denial is never a 500 anywhere.
 
 MAIN HOOKS
     An application may define one /rsx/main.php extending Main_Abstract with
@@ -217,6 +337,11 @@ MAIN HOOKS
     - unhandled_route(Request $request, array $params) runs only when no route
       matched (and the default route did not apply). A non-null return becomes
       the response; null lets the request fall through to the 404 error page.
+
+    For an unmatched URL both hooks receive the query string as $params. The
+    portal's /rsx/portal_main.php (Portal_Main_Abstract) has the same two hooks,
+    called the same way for a portal request, plus init() (see step 1 of THE
+    DISPATCH PIPELINE).
 
 ROUTE MATCHING
     Supported pattern syntax (RouteResolver):
@@ -268,6 +393,8 @@ THE $params ARRAY
         $params['_route']    the matched route pattern
         $params['_handler']  the resolved handler class (FQCN)
 
+    The same in both realms.
+
 RETURN VALUES AND RESPONSES
     Whatever the action returns is converted to a response, by type:
 
@@ -276,8 +403,9 @@ RETURN VALUES AND RESPONSES
       as-is.
     - A View (rsx_view(...) / view(...)) is wrapped in a response.
     - An Rsx_Response_Abstract (the response_* helpers) takes the special
-      handling described in AUTHENTICATION AND PRE_DISPATCH.
+      handling described in AUTHORIZATION AND PRE_DISPATCH.
     - An array WITH a 'type' key is a typed response (below).
+    - A string is an HTML body.
     - Any other array or value is returned as JSON.
 
     Typed array responses give a handler an HTTP shape without constructing a
@@ -316,19 +444,34 @@ FULL PAGE CACHE
     normally. See rsx:man fpc.
 
 DEFAULT ROUTE
-    When no declared route matches, the dispatcher recognizes the pattern
-    /_/{Controller}/{action}. This gives every routed action a canonical
-    machine URL keyed on its class and method name:
+    When no declared route matches a staff request, the dispatcher recognizes
+    the pattern /_/{Name}/{action}, which addresses a target by name. The
+    JavaScript Rsx.Route() emits it for a target missing from the current
+    bundle's route table - which is how one module links to another module's
+    page. Two kinds of target qualify:
 
-    - PHP controller (extends Rsx_Controller_Abstract, the method exists and has
-      a #[Route]): a GET issues a 302 redirect to the method's proper URL
-      (built with Rsx::Route); a POST executes the action in place. If the class
-      or method does not qualify, dispatch falls through to 404.
-    - Otherwise, if the name is an SPA action class (extends Spa_Action) with a
-      @route decorator, a GET redirects to that action's route.
+    A #[Route] METHOD, when ALL of these hold:
+    - the class is a manifest class extending Rsx_Controller_Abstract;
+    - the method answers a staff #[Route] row in the route table, and is no
+      #[Ajax_Endpoint], model-fetch or #[Api_Endpoint] surface. A routed method
+      the auth index does not know (or knows without a gate) is refused
+      loudly, as a matched route is. An #[SPA] bootstrap does NOT qualify: it
+      has no URL of its own, its URLs are its JS actions';
+    - none of its routes is an /error/ page;
+    - every query-string value is a scalar.
 
-    This is the target Rsx::Route produces for a controller that has no explicit
-    pattern of its own; it is not a general fallback for arbitrary URLs.
+      GET (and HEAD) issue a 302 to the method's real URL, built by
+      Rsx::Route() from the query string; a URL whose :tokens the query string
+      cannot fill is a 404. POST RUNS the method in place - only when one of
+      its own routes accepts POST. Its $params are the query string (never the
+      POST body), and its #[Auth] gates, Main::pre_dispatch and the
+      controller's pre_dispatch run exactly as for a matched route.
+
+    A JS SPA ACTION (/_/<Action>/index), when the name is an indexed staff
+    js_action surface with gates and an @route URL the query string can fill:
+    GET issues a 302 to that URL, built by Rsx::Route(). POST never qualifies.
+
+    Anything else is the ordinary 404 page, and nothing runs.
 
 RESOLVING URLS
     Generate URLs, never hardcode them:
@@ -343,6 +486,9 @@ RESOLVING URLS
         // ['class' => ..., 'method' => ..., 'params' => ..., 'pattern' => ...]
         // or null if nothing matches
 
+        // The portal's route table (a prefixed URL is accepted):
+        Dispatcher::resolve_url_to_route('/_portal/dashboard', 'GET', Auth_Gates::REALM_PORTAL);
+
 TROUBLESHOOTING
     "Route attributes should be assigned to static methods... not on the class"
         A #[Route]/#[Get]/#[Post]/#[Put]/#[Delete]/#[Patch] attribute is on the
@@ -353,6 +499,10 @@ TROUBLESHOOTING
         The manifest has a route pointing at a method whose attribute is gone or
         was mis-scanned. Re-check the method's attribute; the manifest rebuilds
         automatically on the next request.
+
+    "ROUTE-VERB-01: ... a route accepts GET and POST only"
+        A #[Route]/#[Portal_Route] names a verb other than GET or POST. Declare
+        methods: ['GET'], ['POST'] or ['GET', 'POST'].
 
     A route does not match / the wrong one wins
         List and grep the live table with `php artisan rsx:routes`. Remember
@@ -386,26 +536,33 @@ RSX VS LARAVEL
     - Static actions with (Request $request, array $params = []) replace
       instance methods with dependency injection.
     - GET and POST only. No PUT/PATCH/DELETE, no Route::resource.
-    - No framework route middleware. Authorization is ONE attribute on the
-      surface, #[Auth('check', ...)], closed by default - a gateless route fails
-      the manifest build; public routes declare #[Auth('public')]. An app that
-      needs middleware of its own appends it through config('rsx.middleware');
-      app/Http/Kernel.php is framework-owned. See rsx:man config_rsx.
+    - No Laravel router. The HTTP kernel hands every request to
+      Rsx_Front_Controller; a route registered through Laravel's Route facade
+      (in a routes file, a service provider or a vendor package) is never
+      reachable.
+    - No route middleware. Authorization is ONE attribute on the surface,
+      #[Auth('check', ...)], closed by default - a gateless route fails the
+      manifest build; public routes declare #[Auth('public')]. An app that needs
+      middleware of its own appends it to the global stack through
+      config('rsx.middleware.global'); app/Http/Kernel.php is framework-owned.
+      See rsx:man config_rsx.
     - No named routes. URLs come from Rsx::Route('Class::method', ...).
+    - No route cache. Laravel's router holds no route, so route:cache is a
+      restricted command; the sealed build caches events and views.
     - Do NOT run `php artisan config:cache` for an RSpade deploy - config caching
-      freezes env() and breaks RSX runtime configuration (route/event caching is
-      handled by the sealed-build pipeline).
+      freezes env() and breaks RSX runtime configuration.
 
 SEE ALSO
     rsx:man auth_gates          (the #[Auth] gate system)
     rsx:man spa                 (client-side SPA routing / actions)
     rsx:man external_api        (/api/vN external REST dispatch)
-    rsx:man portal              (parallel portal dispatch/session)
+    rsx:man portal              (the portal realm: routes, session, hooks)
     rsx:man fpc                 (full-page cache proxy)
     rsx:man auth                (Session and permission checks)
     rsx:man login_redirect      (post-login return-URL threading)
     rsx:man ajax_error_handling (JSON error channel for endpoints)
-    rsx:man error_pages        (the /error/ pages a terminal outcome renders)
+    rsx:man error_pages         (the /error/ pages a terminal outcome renders)
+    rsx:man error_handling      (the exception handler chain, per channel)
     php artisan rsx:routes      (list all registered routes)
 
 DISPATCH(1)                      RSpade Manual                      DISPATCH(1)

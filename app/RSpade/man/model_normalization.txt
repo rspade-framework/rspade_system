@@ -94,13 +94,18 @@ When you run `php artisan migrate`:
      * created_by_id/created_by_type, updated_by_id/updated_by_type (audit authorship)
      * deleted_by_id/deleted_by_type (audit deletion - soft-delete tables only)
      * Trait-specific columns (site_id, version, etc.)
-   - Creates indexes on timestamp columns
+   - Ensures an index LEADING with created_at and one leading with updated_at
+     (by leading column, not by name - an existing covering index is enough)
    - Upgrades DATETIME/TIMESTAMP precision to milliseconds
 
 5. **Regenerate Constants** (Dev Mode Only)
    - Updates model constants from database schema
    - Exports enum values to JavaScript
-   - Generates IDE type hints
+   - Generates IDE type hints: one @property line per column, listed by column
+     NAME (base table first, then each detail table's group), never in physical
+     column order - a column added by ALTER TABLE sits last while the same column
+     restored from a schema snapshot sits where it was declared, so ordering by
+     name is what makes two databases with the same schema write identical files
 
 6. **SqlQueryTransformer Disabled**
    - Transformer only active during migration runs

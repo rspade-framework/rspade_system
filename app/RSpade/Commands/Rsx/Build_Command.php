@@ -300,7 +300,7 @@ class Build_Command extends Command
                     }
                 }
 
-                $this->line('        JS: ' . $this->_format_size($js_size) . ', CSS: ' . $this->_format_size($css_size));
+                $this->line('        JS: ' . bytes_to_human($js_size) . ', CSS: ' . bytes_to_human($css_size));
                 $compiled_count++;
             } catch (Exception $e) {
                 $this->error("        Failed: {$e->getMessage()}");
@@ -432,7 +432,7 @@ class Build_Command extends Command
 
         $this->info('[OK] Sealed ' . $seal['rsx_mode'] . " build ({$elapsed}s)");
         $this->line('     Build key:  ' . $seal['build_key']);
-        $this->line('     Assets:     ' . count($seal['assets']) . ' files, ' . $this->_format_size($total_bytes));
+        $this->line('     Assets:     ' . count($seal['assets']) . ' files, ' . bytes_to_human($total_bytes));
         $this->line('     Git commit: ' . ($seal['git_commit'] ?? 'unknown'));
         $this->line('     Sealed at:  ' . $seal['created_at']);
         $this->newLine();
@@ -441,17 +441,5 @@ class Build_Command extends Command
         $this->line('Return to development: php artisan rsx:prod:disable');
         $this->newLine();
         $this->line('Deployment recipes and the administration levers: php artisan rsx:man prod');
-    }
-
-    private function _format_size(int $bytes): string
-    {
-        if ($bytes < 1024) {
-            return "{$bytes} B";
-        }
-        if ($bytes < 1048576) {
-            return round($bytes / 1024, 1) . ' KB';
-        }
-
-        return round($bytes / 1048576, 2) . ' MB';
     }
 }

@@ -119,7 +119,8 @@ COMPOSER PACKAGES
         ezyang/htmlpurifier
             Sanitising HTML that came from a user or a third party. Reach for it
             before rendering rich text you did not generate. The framework's own
-            safe_html() path uses it - see rsx:man safe_html.
+            sanitize_rich_text_html() uses it - see
+            rsx:man sanitize_rich_text_html.
 
         brick/money
             Money arithmetic. Reach for it the moment an amount is added,
@@ -266,7 +267,7 @@ SEE ALSO
     dependencies         The two dependency layers, rsx:composer / rsx:npm
     health               rsx:health, and the extension tiers it reports
     breaking_changes     How a change to an exposed package reaches an app
-    safe_html            The framework's own HTML sanitising path
+    sanitize_rich_text_html  The framework's own HTML sanitising path
     npm                  JavaScript packages and Asset Bundles
     crud                 DataGrid_Abstract::build_csv and the export pattern
     csv_exports          league/csv in both directions, and the template's export

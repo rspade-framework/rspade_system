@@ -128,6 +128,7 @@ class Portal_Route_ManifestSupport extends Full_ManifestSupport_Abstract
                 "{$fqcn}::{$method_name} in {$file}"
             );
 
+            Route_ManifestSupport::assert_route_verbs($pattern, (array) $methods, $fqcn, $method_name, $file);
             Route_ManifestSupport::assert_error_route_shape($pattern, (array) $methods, $gates, $fqcn, $method_name, $file);
 
             // Check for duplicate portal route definition

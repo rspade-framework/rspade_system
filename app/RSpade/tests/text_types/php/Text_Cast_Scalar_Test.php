@@ -97,12 +97,12 @@ class Text_Cast_Scalar_Test extends Rsx_Test_Abstract
      */
     public static function test_a_different_type_is_refused_with_a_usable_suggestion()
     {
-        $other = Text_Fixture_Plain_Text::from_untrusted('x');
+        $other = Text_Fixture_Plain_Text::from_untrusted_encoded('x');
 
         $e = static::__assert_throws(\InvalidArgumentException::class, fn () => static::__store($other));
 
-        static::__assert_contains('from_untrusted($value->to_storage())', $e->getMessage(), 'naming the keep-the-markup conversion');
-        static::__assert_contains('from_string($value->to_text())', $e->getMessage(), 'and the reinterpret-as-text one');
+        static::__assert_contains('from_untrusted_encoded($value->to_storage())', $e->getMessage(), 'naming the keep-the-markup conversion');
+        static::__assert_contains('from_plain_text($value->to_plain_text())', $e->getMessage(), 'and the reinterpret-as-text one');
         static::__assert_false(str_contains($e->getMessage(), '(string)'), 'and never a string cast, which throws');
     }
 }

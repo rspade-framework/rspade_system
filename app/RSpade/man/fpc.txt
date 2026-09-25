@@ -218,9 +218,11 @@ CONFIGURATION
     There is no switch and no TTL here - see the DESCRIPTION and PER-ROUTE TTL.
     The remaining environment variables (in .env) are addresses:
 
-        FPC_PROXY_PORT      Port for FPC proxy (default: 3200). Mirrored as
-                            config('rsx.fpc.proxy_port') for the rsx:health
-                            liveness probe; the proxy reads .env itself.
+        FPC_PROXY_PORT      Port for FPC proxy (default: 3200), bound on
+                            127.0.0.1 only - nginx on the same box is its one
+                            client. Mirrored as config('rsx.fpc.proxy_port')
+                            for the rsx:health liveness probe; the proxy reads
+                            .env itself.
         FPC_BACKEND_PORT    Port for nginx backend (default: 3201)
         REDIS_HOST          Redis server host (default: 127.0.0.1)
         REDIS_PORT          Redis server port (default: 6379)

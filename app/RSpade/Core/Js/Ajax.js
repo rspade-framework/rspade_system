@@ -276,6 +276,7 @@ class Ajax {
                 action: action,
                 params: params,
                 callbacks: [{ resolve, reject }],
+                is_sent: false,
                 is_complete: false,
                 is_error: false,
                 result: null,
@@ -286,7 +287,9 @@ class Ajax {
             Ajax._pending_calls[call_key] = pending_call;
 
             // Count pending calls
-            const pending_count = Object.keys(Ajax._pending_calls).filter((key) => !Ajax._pending_calls[key].is_complete).length;
+            const pending_count = Object.keys(Ajax._pending_calls).filter(
+                (key) => !Ajax._pending_calls[key].is_complete && !Ajax._pending_calls[key].is_sent
+            ).length;
 
             // If we've hit the batch size limit, flush immediately
             if (pending_count >= Ajax.MAX_BATCH_SIZE) {
@@ -328,86 +331,13 @@ class Ajax {
                 dataType: 'json',
                 __local_integration: true, // Bypass $.ajax override
                 success: (response) => {
-                    // Handle console_debug messages
-                    if (response.console_debug && Array.isArray(response.console_debug)) {
-                        response.console_debug.forEach((msg) => {
-                            if (!Array.isArray(msg) || msg.length !== 2) {
-                                throw new Error('Invalid console_debug message format - expected [channel, [arguments]]');
-                            }
-                            const [channel, args] = msg;
-                            console.log(channel, ...args);
-                        });
-                    }
+                    Ajax._process_side_channels(response);
 
-                    // Sync time with server (only on first AJAX or timezone change)
-                    if (response._server_time || response._user_timezone) {
-                        Rsx_Time.sync_from_ajax({
-                            server_time: response._server_time,
-                            user_timezone: response._user_timezone
-                        });
-                    }
-
-                    // Handle flash_alerts from server
-                    if (response.flash_alerts && Array.isArray(response.flash_alerts)) {
-                        Server_Side_Flash.process(response.flash_alerts);
-                    }
-
-                    // Check if the response was successful
                     if (response._success === true) {
                         // @JS-AJAX-02-EXCEPTION - Unwrap server responses with _ajax_return_value
-                        const processed_value = Rsx_Js_Model._instantiate_models_recursive(response._ajax_return_value);
-                        resolve(processed_value);
+                        resolve(Rsx_Js_Model._instantiate_models_recursive(response._ajax_return_value));
                     } else {
-                        // Handle error responses
-                        // Server may use error_code or error_type
-                        const error_code = response.error_code || response.error_type || Ajax.ERROR_GENERIC;
-                        const reason = response.reason || 'An error occurred';
-                        const metadata = response.metadata || {};
-
-                        // Create error object
-                        const error = new Error(reason);
-                        error.code = error_code;
-                        error.metadata = metadata;
-
-                        // Handle fatal errors specially - detect PHP exceptions
-                        if (error_code === Ajax.ERROR_FATAL) {
-                            const fatal_error_data = response.error || {};
-
-                            // Check if this is a PHP exception (has file, line, error, backtrace)
-                            if (fatal_error_data.file && fatal_error_data.line && fatal_error_data.error) {
-                                error.code = Ajax.ERROR_PHP_EXCEPTION;
-                                error.message = fatal_error_data.error;
-                                error.metadata = {
-                                    file: fatal_error_data.file,
-                                    line: fatal_error_data.line,
-                                    error: fatal_error_data.error,
-                                    backtrace: fatal_error_data.backtrace || []
-                                };
-                                console.error('PHP Exception:', fatal_error_data.error, 'at', fatal_error_data.file + ':' + fatal_error_data.line);
-                            } else {
-                                error.message = fatal_error_data.error || 'Fatal error occurred';
-                                error.metadata = response.error;
-                                console.error('Ajax error response from server:', response.error);
-                            }
-
-                            // Log to server
-                            Debugger.log_error({
-                                message: `Ajax Fatal Error: ${error.message}`,
-                                type: 'ajax_fatal',
-                                endpoint: url,
-                                details: response.error,
-                            });
-                        }
-
-                        // Log auth errors for debugging
-                        if (error_code === Ajax.ERROR_AUTH_REQUIRED) {
-                            console.error('User is no longer authenticated');
-                        }
-                        if (error_code === Ajax.ERROR_UNAUTHORIZED) {
-                            console.error('User is unauthorized to perform this action');
-                        }
-
-                        reject(error);
+                        reject(Ajax._envelope_error(response, url));
                     }
                 },
                 error: (xhr, status, error) => {
@@ -462,7 +392,10 @@ class Ajax {
         for (const call_key in Ajax._pending_calls) {
             const pending_call = Ajax._pending_calls[call_key];
 
-            if (!pending_call.is_complete) {
+            // A call already sent by an earlier flush is in flight, not pending: sending
+            // it again would run the endpoint twice.
+            if (!pending_call.is_complete && !pending_call.is_sent) {
+                pending_call.is_sent = true;
                 calls_to_send.push({
                     call_id: pending_call.call_id,
                     controller: pending_call.controller,
@@ -500,16 +433,8 @@ class Ajax {
                 __local_integration: true, // Bypass $.ajax override
             });
 
-            // Sync time with server (only on first AJAX or timezone change)
-            if (response._server_time || response._user_timezone) {
-                Rsx_Time.sync_from_ajax({
-                    server_time: response._server_time,
-                    user_timezone: response._user_timezone
-                });
-            }
-
-            // Process batch response
-            // Response format: { C_0: {success, _ajax_return_value}, C_1: {...}, ..., _server_time, _user_timezone }
+            // Response format: { C_<call_id>: <envelope>, ... } - each envelope exactly what the
+            // direct transport would have answered for that call.
             for (const response_key in response) {
                 if (!response_key.startsWith('C_')) {
                     continue;
@@ -524,67 +449,25 @@ class Ajax {
                     continue;
                 }
 
-                // Handle console_debug messages if present
-                if (call_response.console_debug && Array.isArray(call_response.console_debug)) {
-                    call_response.console_debug.forEach((msg) => {
-                        if (!Array.isArray(msg) || msg.length !== 2) {
-                            throw new Error('Invalid console_debug message format - expected [channel, [arguments]]');
-                        }
-                        const [channel, args] = msg;
-                        console.log(channel, ...args);
-                    });
-                }
+                Ajax._process_side_channels(call_response);
 
                 // Mark call as complete
                 pending_call.is_complete = true;
 
-                // Check if successful
                 if (call_response._success === true) {
                     // @JS-AJAX-02-EXCEPTION - Batch system unwraps server responses with _ajax_return_value
                     const processed_value = Rsx_Js_Model._instantiate_models_recursive(call_response._ajax_return_value);
                     pending_call.result = processed_value;
 
-                    // Resolve all callbacks
                     pending_call.callbacks.forEach(({ resolve }) => {
                         resolve(processed_value);
                     });
                 } else {
-                    // Handle error
-                    // Server may use error_code or error_type
-                    const error_code = call_response.error_code || call_response.error_type || Ajax.ERROR_GENERIC;
-                    const error_message = call_response.reason || 'Unknown error occurred';
-                    const metadata = call_response.metadata || {};
-
-                    const error = new Error(error_message);
-                    error.code = error_code;
-                    error.metadata = metadata;
-
-                    // Handle fatal errors specially - detect PHP exceptions
-                    if (error_code === Ajax.ERROR_FATAL) {
-                        const fatal_error_data = call_response.error || {};
-
-                        // Check if this is a PHP exception (has file, line, error, backtrace)
-                        if (fatal_error_data.file && fatal_error_data.line && fatal_error_data.error) {
-                            error.code = Ajax.ERROR_PHP_EXCEPTION;
-                            error.message = fatal_error_data.error;
-                            error.metadata = {
-                                file: fatal_error_data.file,
-                                line: fatal_error_data.line,
-                                error: fatal_error_data.error,
-                                backtrace: fatal_error_data.backtrace || []
-                            };
-                            console.error('PHP Exception:', fatal_error_data.error, 'at', fatal_error_data.file + ':' + fatal_error_data.line);
-                        } else {
-                            error.message = fatal_error_data.error || 'Fatal error occurred';
-                            error.metadata = call_response.error;
-                            console.error('Ajax error response from server:', call_response.error);
-                        }
-                    }
+                    const error = Ajax._envelope_error(call_response, `/_ajax/${pending_call.controller}/${pending_call.action}`);
 
                     pending_call.is_error = true;
                     pending_call.error = error;
 
-                    // Reject all callbacks
                     pending_call.callbacks.forEach(({ reject }) => {
                         reject(error);
                     });
@@ -623,6 +506,85 @@ class Ajax {
         for (const call_id in call_map) {
             delete Ajax._pending_calls[call_map[call_id].call_key];
         }
+    }
+
+    /**
+     * The side channels every envelope may carry, direct or batched: console_debug
+     * messages, the server clock and the user's zone, and pending flash alerts.
+     * @private
+     */
+    static _process_side_channels(envelope) {
+        if (envelope.console_debug && Array.isArray(envelope.console_debug)) {
+            envelope.console_debug.forEach((msg) => {
+                if (!Array.isArray(msg) || msg.length !== 2) {
+                    throw new Error('Invalid console_debug message format - expected [channel, [arguments]]');
+                }
+                const [channel, args] = msg;
+                console.log(channel, ...args);
+            });
+        }
+
+        // Sync time with server (only on first AJAX or timezone change)
+        if (envelope._server_time || envelope._user_timezone) {
+            Rsx_Time.sync_from_ajax({
+                server_time: envelope._server_time,
+                user_timezone: envelope._user_timezone
+            });
+        }
+
+        if (envelope.flash_alerts && Array.isArray(envelope.flash_alerts)) {
+            Server_Side_Flash.process(envelope.flash_alerts);
+        }
+    }
+
+    /**
+     * The Error a failed envelope rejects with - one reading for both transports, since
+     * the server sends the same envelope for the same failure either way.
+     * @private
+     */
+    static _envelope_error(envelope, endpoint) {
+        const error_code = envelope.error_code || Ajax.ERROR_GENERIC;
+        const error = new Error(envelope.reason || 'An error occurred');
+        error.code = error_code;
+        error.metadata = envelope.metadata || {};
+
+        // A fatal envelope carries the PHP exception (file, line, backtrace) for a caller
+        // the server admits as a developer, and an error_id for everybody else.
+        if (error_code === Ajax.ERROR_FATAL) {
+            const fatal_error_data = envelope.error || {};
+
+            if (fatal_error_data.file && fatal_error_data.line && fatal_error_data.error) {
+                error.code = Ajax.ERROR_PHP_EXCEPTION;
+                error.message = fatal_error_data.error;
+                error.metadata = {
+                    file: fatal_error_data.file,
+                    line: fatal_error_data.line,
+                    error: fatal_error_data.error,
+                    backtrace: fatal_error_data.backtrace || []
+                };
+                console.error('PHP Exception:', fatal_error_data.error, 'at', fatal_error_data.file + ':' + fatal_error_data.line);
+            } else {
+                error.message = fatal_error_data.error || 'Fatal error occurred';
+                error.metadata = envelope.error;
+                console.error('Ajax error response from server:', envelope.error);
+            }
+
+            Debugger.log_error({
+                message: `Ajax Fatal Error: ${error.message}`,
+                type: 'ajax_fatal',
+                endpoint: endpoint,
+                details: envelope.error,
+            });
+        }
+
+        if (error_code === Ajax.ERROR_AUTH_REQUIRED) {
+            console.error('User is no longer authenticated');
+        }
+        if (error_code === Ajax.ERROR_UNAUTHORIZED) {
+            console.error('User is unauthorized to perform this action');
+        }
+
+        return error;
     }
 
     /**

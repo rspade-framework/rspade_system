@@ -10,7 +10,6 @@ class Migrate_Status_Command extends Command
     protected $signature = 'migrate:status';
     protected $description = 'Show the status of the current migration session';
     
-    protected $flag_file = '/var/www/html/.migrating';
     protected $backup_dir = '/var/lib/mysql_backup';
     
     public function handle()
@@ -21,7 +20,7 @@ class Migrate_Status_Command extends Command
         $this->info("");
         
         // Check if in migration mode
-        if (!file_exists($this->flag_file)) {
+        if (!file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
             $this->info('[OK] No migration session in progress');
             $this->info('');
             
@@ -38,7 +37,7 @@ class Migrate_Status_Command extends Command
         }
         
         // Migration session is active
-        $session_info = json_decode(file_get_contents($this->flag_file), true);
+        $session_info = json_decode(file_get_contents(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file()), true);
         $started_at = $session_info['started_at'] ?? 'unknown';
         $started_by = $session_info['started_by'] ?? 'unknown';
         
@@ -51,7 +50,7 @@ class Migrate_Status_Command extends Command
         // Check backup status
         if (is_dir($this->backup_dir)) {
             $backup_size = $this->get_directory_size($this->backup_dir);
-            $this->line('   Backup size: ' . $this->format_bytes($backup_size));
+            $this->line('   Backup size: ' . bytes_to_human($backup_size));
             $this->info('   Backup status: [OK] Available');
         } else {
             $this->error('   Backup status: [ERROR] Missing!');
@@ -100,19 +99,6 @@ class Migrate_Status_Command extends Command
         return $size;
     }
     
-    /**
-     * Format bytes to human readable
-     */
-    protected function format_bytes($bytes): string
-    {
-        $units = ['B', 'KB', 'MB', 'GB'];
-        $i = 0;
-        while ($bytes >= 1024 && $i < count($units) - 1) {
-            $bytes /= 1024;
-            $i++;
-        }
-        return round($bytes, 2) . ' ' . $units[$i];
-    }
     
     /**
      * Get count of pending migrations

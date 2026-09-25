@@ -40,7 +40,7 @@ point.
 **Modified ONLY here**, on a box with `IS_FRAMEWORK_DEVELOPER=true`; downstream all of
 `system/` is reset by `rsx:framework:pull`, and a panel change is a framework change request.
 The panel's own gate is `is_sysadmin` on `Permission_Abstract` (`#[Replaceable]`, body =
-`is_logged_in` today); its switch is `rsx.sys_panel.enabled`.
+`Session::is_developer()`); its switch is `rsx.sys_panel.enabled`.
 
 Deep docs live beside the code: `Sys/CLAUDE.md`, `Sys/app/sys/CLAUDE.md`,
 `Sys/app/apidocs/CLAUDE.md`. Contract tier: `rsx:man sys_panel`; skill `rspade:sys-panel`.

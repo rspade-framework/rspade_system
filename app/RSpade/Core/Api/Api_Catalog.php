@@ -55,6 +55,17 @@ class Api_Catalog
         return Manifest::$data['data']['api_endpoints'][$pattern]['api_params'] ?? [];
     }
 
+    /**
+     * Is the endpoint at this route pattern @api-hidden (left out of every catalogue)?
+     * An unknown pattern answers true: nothing says it may be named.
+     */
+    public static function is_hidden_pattern(string $pattern): bool
+    {
+        Manifest::init();
+
+        return (bool) (Manifest::$data['data']['api_endpoints'][$pattern]['hidden'] ?? true);
+    }
+
     public static function get_versions(): array
     {
         $versions = [];

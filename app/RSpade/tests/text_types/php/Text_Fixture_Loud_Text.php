@@ -15,18 +15,18 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
  */
 class Text_Fixture_Loud_Text extends Rsx_Text_Abstract
 {
-    public static function filter_set(string $raw): string
+    public static function sanitize_encoded(string $raw): string
     {
         return strtoupper(trim($raw));
     }
 
     /** Brackets mark the plain-text path, so a test can tell it from the encoded one. */
-    public static function escape_string(string $plain): string
+    public static function encode_plain_text(string $plain): string
     {
         return '[' . $plain . ']';
     }
 
-    public function to_text(): string
+    public function to_plain_text(): string
     {
         return strip_tags($this->raw);
     }

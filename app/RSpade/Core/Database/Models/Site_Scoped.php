@@ -130,7 +130,7 @@ trait Site_Scoped
      * ruling 12). It is deliberate and it is the whole point: the alternative - quietly
      * scoping to site 0, or to whatever tenant a co-resident staff cookie happens to be on -
      * is a cross-tenant read/write primitive that reports success. The window before
-     * Portal_Main::init() runs is not a real one for site-scoped models: Portal_Dispatcher
+     * Portal_Main::init() runs is not a real one for site-scoped models: the page dispatcher
      * calls it as the FIRST application code in a portal request, before dev auth, CSRF, the
      * #[Auth] gates and every controller.
      *

@@ -11,14 +11,14 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Laravel's five cached artifacts - config, routes, events, services, packages - are
+ * Laravel's cached artifacts - config, events, services, packages - are
  * BUILD OUTPUTS, and so is compiled Blade. They live in the build tree with everything
  * else the build produces, which is what lets that tree be read-only to the web user on
  * a production box.
  *
- * The five getters are overridden on Rsx_Application rather than bootstrapPath() itself,
+ * The four getters are overridden on Rsx_Application rather than bootstrapPath() itself,
  * because bootstrapPath() also resolves bootstrap/providers.php - a SOURCE file. So the
- * assertion worth making is that every one of the five moved and nothing else did.
+ * assertion worth making is that every one of the four moved and nothing else did.
  *
  * Pure logic, no DB.
  */
@@ -28,7 +28,7 @@ class Laravel_Cache_Paths_Test extends Rsx_Test_Abstract
 
     /**
      * The running application IS the subclass - a plain Illuminate Application would
-     * put all five back inside the framework checkout with nothing to report it.
+     * put all of them back inside the framework checkout with nothing to report it.
      */
     public static function test_the_container_is_the_rsx_application()
     {
@@ -36,7 +36,7 @@ class Laravel_Cache_Paths_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * All five cached-artifact getters answer inside build/laravel.
+     * Every cached-artifact getter answers inside build/laravel. (RSX has no route cache.)
      */
     public static function test_every_laravel_cache_file_is_in_the_build_tree()
     {
@@ -44,7 +44,6 @@ class Laravel_Cache_Paths_Test extends Rsx_Test_Abstract
 
         $expected = [
             'config' => $app->getCachedConfigPath(),
-            'routes-v7' => $app->getCachedRoutesPath(),
             'events' => $app->getCachedEventsPath(),
             'services' => $app->getCachedServicesPath(),
             'packages' => $app->getCachedPackagesPath(),

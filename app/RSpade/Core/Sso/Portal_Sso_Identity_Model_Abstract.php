@@ -36,21 +36,21 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _portal_sso_identities
  *
+ * @property string $avatar_url
+ * @property string $created_at
+ * @property int $created_by_id
+ * @property int $created_by_type
+ * @property string $email
  * @property int $id
- * @property int $site_id
+ * @property string $last_login_at
+ * @property string $name
  * @property int $portal_user_id
  * @property string $provider_key
  * @property string $provider_user_key
- * @property string $email
- * @property string $name
- * @property string $avatar_url
- * @property string $last_login_at
- * @property int $created_by_id
- * @property int $created_by_type
+ * @property int $site_id
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
- * @property string $created_at
- * @property string $updated_at
  *
  * @mixin \Eloquent
  */

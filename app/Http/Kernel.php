@@ -10,15 +10,18 @@
  *
  *     // rsx/resource/config/rsx.php
  *     'middleware' => [
- *         'global'  => [\App\Http\Middleware\My_Middleware::class],
- *         'web'     => [],
- *         'api'     => [],
- *         'aliases' => ['my_alias' => \App\Http\Middleware\My_Middleware::class],
+ *         'global' => [\App\Http\Middleware\My_Middleware::class],
  *     ],
  *
  * The declaration is APPEND-ONLY: your middleware always runs AFTER the
  * framework stack, and nothing in config can reorder or remove a framework
  * middleware. If you genuinely need that, file a framework change request.
+ *
+ * THERE IS NO LARAVEL ROUTER IN THE REQUEST PATH. The kernel's router destination
+ * is Rsx_Front_Controller::handle(): every request that survives the global
+ * middleware is dispatched by RSX, and no Laravel route - a vendor package's
+ * included - is reachable. So there are no route middleware groups ('web', 'api')
+ * and no middleware aliases: nothing would ever run them.
  *
  * See: php artisan rsx:man config_rsx
  *
@@ -31,6 +34,7 @@ namespace App\Http;
 
 use RuntimeException;
 use Illuminate\Foundation\Http\Kernel as HttpKernel;
+use App\RSpade\Core\Dispatch\Rsx_Front_Controller;
 
 class Kernel extends HttpKernel
 {
@@ -51,56 +55,23 @@ class Kernel extends HttpKernel
         // This allows developers to distinguish between "no value provided" and "empty value provided"
         // \Illuminate\Foundation\Http\Middleware\ConvertEmptyStringsToNull::class,
         // Custom RSX middleware
-        \App\Http\Middleware\CheckMigrationMode::class,
         \App\Http\Middleware\PlaywrightTestMode::class,
     ];
 
     /**
-     * The application's route middleware groups.
+     * The router destination: every request goes to the RSX front controller. Laravel's
+     * router is never consulted.
      *
-     * @var array<string, array<int, class-string|string>>
+     * @return \Closure
      */
-    protected $middlewareGroups = [
-        'web' => [
-            \App\Http\Middleware\EncryptCookies::class,
-            \Illuminate\Cookie\Middleware\AddQueuedCookiesToResponse::class,
-            // Session middleware removed for custom session handler
-            // \Illuminate\Session\Middleware\StartSession::class,
-            // \Illuminate\View\Middleware\ShareErrorsFromSession::class,
-            \Illuminate\Routing\Middleware\SubstituteBindings::class,
-            \Jqhtml\LaravelBridge\Middleware\JqhtmlErrorMiddleware::class,
-        ],
+    protected function dispatchToRouter()
+    {
+        return function ($request) {
+            $this->app->instance('request', $request);
 
-        'api' => [
-            // \Laravel\Sanctum\Http\Middleware\EnsureFrontendRequestsAreStateful::class,
-            \Illuminate\Routing\Middleware\ThrottleRequests::class.':api',
-            \Illuminate\Routing\Middleware\SubstituteBindings::class,
-        ],
-    ];
-
-    /**
-     * The application's middleware aliases.
-     *
-     * Aliases may be used instead of class names to conveniently assign middleware to routes and groups.
-     *
-     * @var array<string, class-string|string>
-     */
-    protected $middlewareAliases = [
-        'auth' => \App\Http\Middleware\Authenticate::class,
-        'auth.basic' => \Illuminate\Auth\Middleware\AuthenticateWithBasicAuth::class,
-        // 'auth.session' => \Illuminate\Session\Middleware\AuthenticateSession::class, // Removed for custom session handler
-        'cache.headers' => \Illuminate\Http\Middleware\SetCacheHeaders::class,
-        'can' => \Illuminate\Auth\Middleware\Authorize::class,
-        'guest' => \App\Http\Middleware\RedirectIfAuthenticated::class,
-        'password.confirm' => \Illuminate\Auth\Middleware\RequirePassword::class,
-        'precognitive' => \Illuminate\Foundation\Http\Middleware\HandlePrecognitiveRequests::class,
-        'signed' => \App\Http\Middleware\ValidateSignature::class,
-        'throttle' => \Illuminate\Routing\Middleware\ThrottleRequests::class,
-        'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
-        // DISABLED 2025-09-14: RsxMiddleware removed as RSX routing now handled via 404 exception handler
-        // To re-enable: rename RsxMiddleware.php.disabled back to .php and declare it in
-        // config('rsx.middleware') - 'aliases' => ['rsx' => ...] - never by editing this file.
-    ];
+            return Rsx_Front_Controller::handle($request);
+        };
+    }
 
     /**
      * Bootstrap the application, then fold in the application's declared middleware.
@@ -119,28 +90,20 @@ class Kernel extends HttpKernel
     /**
      * Append the middleware declared in config('rsx.middleware') to this kernel.
      *
-     * APPEND-ONLY by construction: entries land at the END of the framework stack,
-     * of a framework group, or beside the framework aliases. There is no spelling
-     * that reorders or removes framework middleware.
+     * APPEND-ONLY by construction: entries land at the END of the framework stack. There
+     * is no spelling that reorders or removes framework middleware.
      *
-     * Every declared class is validated LOUDLY (a typo must not silently do nothing).
-     * Declaring something already present is a silent no-op.
+     * 'global' is the only key. 'web', 'api' and 'aliases' declared route middleware,
+     * which RSX never runs (the router is not in the request path), so a non-empty one
+     * throws rather than silently doing nothing; any other key is a typo and throws too.
+     * Every declared class is validated LOUDLY. Declaring something already present is a
+     * silent no-op.
      *
-     * @param array $config The 'middleware' config block: 'global', 'aliases',
-     *                      plus one key per existing middleware group ('web', 'api').
+     * @param array $config The 'middleware' config block
      */
     protected function __merge_configured_middleware(array $config): void
     {
-        if (empty($config)) {
-            return;
-        }
-
         foreach ($config as $key => $entries) {
-            if ($key === 'aliases') {
-                $this->__merge_configured_aliases((array) $entries);
-                continue;
-            }
-
             if ($key === 'global') {
                 foreach ((array) $entries as $middleware) {
                     $this->__assert_middleware_class($middleware, 'rsx.middleware.global');
@@ -152,60 +115,23 @@ class Kernel extends HttpKernel
                 continue;
             }
 
-            if (!array_key_exists($key, $this->middlewareGroups)) {
-                throw new RuntimeException(
-                    "config('rsx.middleware') declares unknown middleware group '{$key}'. "
-                    . 'Valid keys are: global, aliases, ' . implode(', ', array_keys($this->middlewareGroups))
-                    . '. See: php artisan rsx:man config_rsx'
-                );
-            }
-
-            foreach ((array) $entries as $middleware) {
-                $this->__assert_middleware_class($middleware, "rsx.middleware.{$key}");
-
-                if (!in_array($middleware, $this->middlewareGroups[$key], true)) {
-                    $this->middlewareGroups[$key][] = $middleware;
-                }
-            }
-        }
-
-        // The router received its copy of the groups/aliases in the constructor,
-        // long before this ran.
-        $this->syncMiddlewareToRouter();
-    }
-
-    /**
-     * Merge declared middleware aliases. An alias already bound to a DIFFERENT class
-     * is a collision and throws naming both classes - silently shadowing a framework
-     * alias would break every route that uses it, somewhere else entirely.
-     *
-     * @param array $aliases alias => class map
-     */
-    private function __merge_configured_aliases(array $aliases): void
-    {
-        foreach ($aliases as $alias => $middleware) {
-            if (!is_string($alias) || $alias === '') {
-                throw new RuntimeException(
-                    "config('rsx.middleware.aliases') must be an alias => class map; "
-                    . 'got a non-string key. See: php artisan rsx:man config_rsx'
-                );
-            }
-
-            $this->__assert_middleware_class($middleware, "rsx.middleware.aliases.{$alias}");
-
-            if (array_key_exists($alias, $this->middlewareAliases)) {
-                if ($this->middlewareAliases[$alias] === $middleware) {
+            if (in_array($key, ['web', 'api', 'aliases'], true)) {
+                if (empty($entries)) {
                     continue;
                 }
 
                 throw new RuntimeException(
-                    "config('rsx.middleware.aliases') declares alias '{$alias}' as {$middleware}, "
-                    . "but it is already bound to {$this->middlewareAliases[$alias]}. "
-                    . 'Aliases are append-only; pick a different alias. See: php artisan rsx:man config_rsx'
+                    "config('rsx.middleware.{$key}') declares route middleware, which never runs: RSX "
+                    . "requests do not pass through Laravel's router, so there are no middleware groups "
+                    . "or aliases. Declare the middleware under 'global' (it then wraps every request) and "
+                    . 'return early for the requests it does not concern. See: php artisan rsx:man config_rsx'
                 );
             }
 
-            $this->middlewareAliases[$alias] = $middleware;
+            throw new RuntimeException(
+                "config('rsx.middleware') declares unknown key '{$key}'. The only key is 'global'. "
+                . 'See: php artisan rsx:man config_rsx'
+            );
         }
     }
 

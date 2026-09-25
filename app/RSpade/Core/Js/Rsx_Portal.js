@@ -139,13 +139,13 @@ class Rsx_Portal {
      * /_upload) onto the base the current page is served under.
      *
      * The framework serves each internal endpoint on BOTH channels: the staff
-     * dispatcher answers the bare path, and Portal_Dispatcher answers it under the
-     * portal's own base. Which one a page must call is decided entirely by the page
+     * dispatcher answers the bare path in the staff realm, and under the portal's own
+     * base in the portal realm. Which one a page must call is decided entirely by the page
      * itself, using the same two facts Rsx_Portal.Route() uses:
      *
      *   staff page                -> unchanged  (/_ajax/Foo/bar)
-     *   portal page, domain mode  -> unchanged  (the portal HOST already routes to
-     *                                            Portal_Dispatcher; adding the prefix
+     *   portal page, domain mode  -> unchanged  (the portal HOST is already the
+     *                                            portal realm; adding the prefix
      *                                            would produce a doubled portal path)
      *   portal page, prefix mode  -> prefixed   (/_portal/_ajax/Foo/bar)
      *
@@ -190,6 +190,10 @@ class Rsx_Portal {
      * const url = Rsx_Portal.Route('Portal_Project_View_Action', {id: 123, tab: 'files'});
      * // Development: /_portal/projects/123?tab=files
      *
+     * // Hash state (the fragment Rsx.url_hash_get() reads back)
+     * const url = Rsx_Portal.Route('Portal_Project_View_Action', 123, {tab: 'files'});
+     * // Development: /_portal/projects/123#tab=files
+     *
      * // Placeholder route
      * const url = Rsx_Portal.Route('Future_Portal_Feature::#index');
      * // Returns: #
@@ -197,9 +201,14 @@ class Rsx_Portal {
      *
      * @param {string} action Controller class, SPA action, or "Class::method"
      * @param {number|Object} [params=null] Route parameters
+     * @param {Object} [hash=null] Fragment state, as Rsx.Route() takes it
      * @returns {string} The generated URL (includes portal prefix in dev mode)
      */
-    static Route(action, params = null) {
+    static Route(action, params = null, hash = null) {
+        if (typeof action !== 'string') {
+            throw new Error('Rsx_Portal.Route: action must be a string, got ' + typeof action);
+        }
+
         // Parse action into class_name and action_name
         let class_name, action_name;
         if (action.includes('::')) {
@@ -231,7 +240,7 @@ class Rsx_Portal {
 
         if (Rsx_Portal._routes[class_name] && Rsx_Portal._routes[class_name][action_name]) {
             const route_patterns = Rsx_Portal._routes[class_name][action_name];
-            pattern = Rsx_Portal._select_best_route_pattern(route_patterns, params_obj);
+            pattern = Rsx._select_best_route_pattern(route_patterns, params_obj);
 
             if (!pattern) {
                 const route_list = route_patterns.join(', ');
@@ -252,8 +261,10 @@ class Rsx_Portal {
             }
         }
 
-        // Generate base URL from pattern
-        const path = Rsx_Portal._generate_url_from_pattern(pattern, params_obj);
+        // Selection and generation are Rsx's own routines: a portal URL is a staff URL with
+        // the portal base applied, so tokens, the query string, the `at` anchor
+        // (rsx:man anchors) and the hash state behave identically in both realms.
+        const path = Rsx._generate_url_from_pattern(pattern, params_obj, hash);
 
         // Apply portal prefix (in dev mode) or return as-is (domain mode)
         return Rsx_Portal._apply_portal_base(path);
@@ -278,115 +289,6 @@ class Rsx_Portal {
     }
 
     /**
-     * Select the best matching route pattern from available patterns
-     *
-     * @param {Array<string>} patterns Array of route patterns
-     * @param {Object} params_obj Provided parameters
-     * @returns {string|null} Selected pattern or null if none match
-     * @private
-     */
-    static _select_best_route_pattern(patterns, params_obj) {
-        const satisfiable = [];
-
-        for (const pattern of patterns) {
-            // Extract required parameters from pattern
-            const required_params = [];
-            const matches = pattern.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g);
-            if (matches) {
-                for (const match of matches) {
-                    required_params.push(match.substring(1));
-                }
-            }
-
-            // Check if all required parameters are provided
-            let can_satisfy = true;
-            for (const required of required_params) {
-                if (!(required in params_obj)) {
-                    can_satisfy = false;
-                    break;
-                }
-            }
-
-            if (can_satisfy) {
-                satisfiable.push({
-                    pattern: pattern,
-                    param_count: required_params.length
-                });
-            }
-        }
-
-        if (satisfiable.length === 0) {
-            return null;
-        }
-
-        // Sort by parameter count descending (most parameters first)
-        satisfiable.sort((a, b) => b.param_count - a.param_count);
-
-        return satisfiable[0].pattern;
-    }
-
-    /**
-     * Generate URL from route pattern by replacing parameters
-     *
-     * @param {string} pattern The route pattern (e.g., '/projects/:id')
-     * @param {Object} params Parameters to fill into the route
-     * @returns {string} The generated URL
-     * @private
-     */
-    static _generate_url_from_pattern(pattern, params) {
-        // Extract required parameters from the pattern
-        const required_params = [];
-        const matches = pattern.match(/:([a-zA-Z_][a-zA-Z0-9_]*)/g);
-        if (matches) {
-            for (const match of matches) {
-                required_params.push(match.substring(1));
-            }
-        }
-
-        // Check for required parameters
-        const missing = [];
-        for (const required of required_params) {
-            if (!(required in params)) {
-                missing.push(required);
-            }
-        }
-
-        if (missing.length > 0) {
-            throw new Error(`Required parameters [${missing.join(', ')}] are missing for portal route ${pattern}`);
-        }
-
-        // Build the URL by replacing parameters
-        let url = pattern;
-        const used_params = {};
-
-        for (const param_name of required_params) {
-            const value = params[param_name];
-            const encoded_value = encodeURIComponent(value);
-            url = url.replace(':' + param_name, encoded_value);
-            used_params[param_name] = true;
-        }
-
-        // Collect extra parameters for query string
-        const internal_params = ['_loader_title_hint'];
-        const query_params = {};
-        for (const key in params) {
-            if (!used_params[key] && !internal_params.includes(key)) {
-                query_params[key] = params[key];
-            }
-        }
-
-        // Append query string if there are extra parameters
-        if (Object.keys(query_params).length > 0) {
-            const query_string = Object.entries(query_params)
-                .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(value)}`)
-                .join('&');
-            url += '?' + query_string;
-        }
-
-        return url;
-    }
-
-    /**
      * Try to find a route pattern for a portal SPA action class
      *
      * @param {string} class_name The action class name
@@ -395,43 +297,30 @@ class Rsx_Portal {
      * @private
      */
     static _try_spa_action_route(class_name, params_obj) {
-        // Get all classes from manifest
-        const all_classes = Manifest.get_all_classes();
+        const class_object = Manifest.get_class_by_name(class_name);
 
-        // Find the class by name
-        for (const class_info of all_classes) {
-            if (class_info.class_name === class_name) {
-                const class_object = class_info.class_object;
-
-                // Check if it's a SPA action with portal routes
-                if (typeof Spa_Action !== 'undefined' &&
-                    class_object.prototype instanceof Spa_Action) {
-
-                    // Get route patterns from decorator metadata
-                    // Portal SPA actions use @route() decorator (stores in _spa_routes)
-                    // and @portal_spa() decorator (sets _is_portal_spa = true)
-                    const routes = class_object._spa_routes || [];
-
-                    // Only match if this is a portal SPA action
-                    if (routes.length > 0 && class_object._is_portal_spa) {
-                        const selected = Rsx_Portal._select_best_route_pattern(routes, params_obj);
-
-                        if (!selected) {
-                            throw new Error(
-                                `No suitable portal route found for SPA action ${class_name} with provided parameters. ` +
-                                `Available routes: ${routes.join(', ')}`
-                            );
-                        }
-
-                        return selected;
-                    }
-                }
-
-                return null;
-            }
+        if (!class_object || typeof Spa_Action === 'undefined' || !(class_object.prototype instanceof Spa_Action)) {
+            return null;
         }
 
-        return null;
+        // Portal SPA actions carry @route() patterns (_spa_routes) and the @portal_spa()
+        // mark (_is_portal_spa); a staff action is never a portal route target.
+        const routes = class_object._spa_routes || [];
+
+        if (routes.length === 0 || !class_object._is_portal_spa) {
+            return null;
+        }
+
+        const selected = Rsx._select_best_route_pattern(routes, params_obj);
+
+        if (!selected) {
+            throw new Error(
+                `No suitable portal route found for SPA action ${class_name} with provided parameters. ` +
+                `Available routes: ${routes.join(', ')}`
+            );
+        }
+
+        return selected;
     }
 
     /**

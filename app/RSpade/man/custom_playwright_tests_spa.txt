@@ -151,13 +151,15 @@ MAIN-SITE VS PORTAL BACKDOOR
     Both backdoors are FRAMEWORK CORE and symmetric:
 
     - The main-site (staff) verifier is Dispatcher::__handle_dev_auth(),
-      called at the top of dispatch. It must run there, not in an
+      called in dispatch after CSRF and before any gate. It must run there,
+      not in an
       application hook: the declarative #[Auth] gates are evaluated by the
       dispatcher, and a gate asking "is this caller logged in" has to see
       the identity the harness is asserting.
 
-    - The portal verifier is Portal_Dispatcher::__handle_dev_auth(), its
-      twin. Neither can be dropped or broken by an application.
+    - The portal verifier is Dispatcher::__handle_portal_dev_auth(), its
+      twin, called at the same step for a portal-realm request. Neither can
+      be dropped or broken by an application.
 
     Testing a portal SPA differs from the main-site example in three ways:
     - send X-Dev-Auth-Portal-User-Id, not X-Dev-Auth-User-Id;
@@ -440,11 +442,9 @@ FILES
 
     system/app/RSpade/Core/Dispatch/Dispatcher.php
         __handle_dev_auth() - the main-site (staff) dev-auth verifier, called
-        at the top of dispatch so the #[Auth] gates see the asserted identity.
-
-    system/app/RSpade/Core/Portal/Portal_Dispatcher.php
-        __handle_dev_auth() - the portal dev-auth verifier. Framework core;
-        normalizes the /_portal prefix before checking the token.
+        in dispatch before the #[Auth] gates so they see the asserted identity.
+        __handle_portal_dev_auth() - the portal dev-auth verifier, run at the
+        same step for a portal-realm request. Framework core.
 
     system/app/RSpade/Core/Js/Rsx.js
         _rsx_core_boot() init phases, the _debug_ready trigger, and

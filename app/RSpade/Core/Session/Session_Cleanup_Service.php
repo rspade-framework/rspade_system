@@ -15,9 +15,7 @@ use App\RSpade\Core\Task\Task_Instance;
  * retention window. Separate tasks because they answer separate questions (inactivity vs age)
  * and either may be disabled without touching the other.
  *
- * For sessions this is the OPERATIONAL retention mechanism; Session::cleanup_expired()
- * is a blunt manual helper (single age cutoff, no type distinction) kept for
- * administrative/test use - see its docblock.
+ * For sessions this is the ONE retention mechanism.
  *
  * A session expires by INACTIVITY. A BROWSER session (TYPE_WEB) is judged on whether
  * it carries an IDENTITY - either one, since one row serves both experiences - and

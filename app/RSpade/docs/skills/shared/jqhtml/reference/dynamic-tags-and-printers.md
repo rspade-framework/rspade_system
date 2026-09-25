@@ -48,7 +48,7 @@ shipped case being "this column's declared text type says which component edits 
 
 ```
 <Form_Field $label="Description">
-    <{Project_Model.editor_for('description')} $name="description" />
+    <{Project_Model.editor_component_for('description')} $name="description" />
 </Form_Field>
 ```
 

@@ -23,7 +23,8 @@ use App\RSpade\Core\Rsx;
  * neither a directory-listing leak (name exposed) nor a stray content leak alone is
  * sufficient - and the trust chain does NOT depend on file permissions (a `chmod 777`
  * cannot open it): the file is not web-served, and its name/content are unguessable.
- * 0600/0700 are applied best-effort as one more layer, never THE layer.
+ * The grant file is written 0600 (the directory 0700) as one more layer, never THE layer -
+ * and a chmod the filesystem refuses fails loud rather than leaving the file readable.
  *
  * THE FILE IS A JSON GRANT DOCUMENT: {"secret": "<hex>", "app_url": "<resolved URL>"}.
  * The secret is what the X-Ide-Token header carries and what hash_equals compares; the
@@ -216,8 +217,18 @@ class Ide_Bridge_Token
             JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
         );
 
-        file_put_contents_safe($path, $document . "\n");
-        @chmod($path, 0600);
+        if (file_put_contents_safe($path, $document . "\n") === false) {
+            throw new \RuntimeException("Could not write the IDE bridge grant file {$path}.");
+        }
+
+        // Owner-only. Not the layer the grant rests on (see the class docblock), but a
+        // grant that cannot be restricted is a fault to see, never a silent 0666.
+        if (!@chmod($path, 0600)) {
+            throw new \RuntimeException(
+                "Could not restrict the IDE bridge grant file {$path} to mode 0600. "
+                . 'The storage filesystem refused chmod; fix its ownership or mount options.'
+            );
+        }
     }
 
     /**

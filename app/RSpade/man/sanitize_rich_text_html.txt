@@ -1,0 +1,112 @@
+SANITIZE_RICH_TEXT_HTML(1)          RSpade Manual          SANITIZE_RICH_TEXT_HTML(1)
+
+NAME
+    sanitize_rich_text_html - filter untrusted rich-text HTML down to the
+    rich-text allow-list
+
+SYNOPSIS
+    PHP:  sanitize_rich_text_html(string $html): string
+    JS:   sanitize_rich_text_html(html_string)
+
+DESCRIPTION
+    Untrusted HTML in (WYSIWYG editor output), HTML holding only the
+    rich-text allow-list out. Everything outside the list is removed.
+
+    It returns a STRING, and a string assigned to a declared text column is
+    PLAIN TEXT (rsx:man text_types). So this is not how markup reaches a
+    Rich_Text column: the column's own type sanitizes on write, and markup
+    server code holds is assigned as Type::from_untrusted_encoded($html).
+    Reach for this function directly only where no declared column is
+    involved.
+
+    The PHP twin runs HTMLPurifier and the JS twin DOMPurify, and both hold
+    the IDENTICAL allow-list below, so a value filtered in the browser is
+    exactly what the server stores.
+
+    For PLAIN text that must be shown as text, the tool is escape_html()
+    (both languages), never this.
+
+WHAT GETS STRIPPED
+    - <script> tags and contents
+    - Event handlers (onclick, onerror, onload, etc.)
+    - Every URL scheme except http, https and mailto (relative URLs stay):
+      javascript:, data:, ftp: and the rest are removed
+    - <iframe>, <object>, <embed>, <style> and every other unlisted tag
+    - Every attribute not listed below for its element - class, style, id,
+      and a target or rel from the input included
+
+ALLOWED TAGS
+    p, br, strong, b, em, i, u, s, strike, a, ul, ol, li, blockquote,
+    h1, h2, h3, h4, h5, h6, pre, code, img, table, thead, tbody, tr, th, td,
+    div, span
+
+ALLOWED ATTRIBUTES
+    a       href, title
+    img     src, alt, title, width, height
+    li      data-list - only 'checked', 'unchecked', 'ordered' or 'bullet'
+            (see CHECKLISTS)
+
+    No other element carries any attribute.
+
+LINKS
+    A link to an ABSOLUTE URL (http://, https:// or //host) is given
+    target="_blank" rel="noreferrer noopener" by both sanitizers. A
+    relative or mailto: link gets neither.
+
+CHECKLISTS
+    Quill 2 records a list item's kind as li[data-list], and for a checklist
+    that attribute IS the state:
+
+        <ul><li data-list="checked">Signed letter</li>
+            <li data-list="unchecked">Prior year return</li></ul>
+
+    It is the one editor attribute that must survive a round trip: Quill
+    rebuilds its checkbox UI (span.ql-ui) from it on load, so that UI needs
+    no allowance and is stripped. Both sanitizers keep the attribute on an
+    li with one of the four values Quill defines, and drop it anywhere else.
+    It is load-bearing markup, not editor noise - a rich-text column holding
+    a checklist holds its ticks here and nowhere else. The reference app's
+    Rich_Text_Display draws the boxes in a read view (static: changing a
+    tick is an edit).
+
+EXAMPLES
+    Input:  <p>Hello <script>alert(1)</script></p>
+    Output: <p>Hello </p>
+
+    Input:  <a href="javascript:alert(1)">click</a>
+    Output: <a>click</a>
+
+    Input:  <a href="https://example.com" class="x" target="_top">site</a>
+    Output: <a href="https://example.com" target="_blank"
+            rel="noreferrer noopener">site</a>
+
+    Input:  <p class="ql-align-center" style="color:red">text</p>
+    Output: <p>text</p>
+
+USAGE PATTERN
+    A declared Rich_Text column sanitizes on every write by itself - an
+    endpoint assigns the submitted value and never calls a sanitizer:
+
+        $project->description = $params['description'];
+
+    Server code holding markup it built or imported names the encoding, and
+    the type's sanitizer runs:
+
+        $project->description = Rich_Text::from_untrusted_encoded($html);
+
+    NEVER assign this function's result to a declared column: the string is
+    read as plain text, escaped, and stored as visible tags.
+
+        $project->description = sanitize_rich_text_html($html);   // WRONG
+
+    Undeclared HTML (a column with no $text_types entry, a third-party
+    payload shown once) is sanitized directly before it is emitted:
+
+        <%!= sanitize_rich_text_html(this.data.external_html) %>
+
+SEE ALSO
+    js_functions - escape_html(), which escapes plain text for markup
+    helpers - escape_html(), the PHP twin
+    text_types - the declared column whose type runs this on every write
+
+RSpade Framework                  September 2026     SANITIZE_RICH_TEXT_HTML(1)

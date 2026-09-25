@@ -8,8 +8,8 @@
  * This handler bootstraps Laravel to access Manifest functions directly,
  * eliminating duplicate logic and ensuring single source of truth.
  *
- * Authentication: Same localhost bypass logic as standalone handler
- * See handler.php for authentication documentation.
+ * Authentication: the X-Ide-Token grant, verified by auth.php before this file loads.
+ * See auth.php for the model. manifest_build is POST-only.
  */
 
 // Error reporting for development
@@ -55,12 +55,16 @@ if (!defined('IDE_AUTH_PASSED')) {
     error_response('Authentication check did not run - this should never happen', 500);
 }
 
-$auth_data = json_decode(IDE_AUTH_DATA, true);
-
 // Parse request URI to get service
 $request_uri = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH);
 $service_path = str_replace('/_ide/service', '', $request_uri);
 $service_path = trim($service_path, '/');
+
+// manifest_build rewrites the build tree: POST only, so a page in the developer's browser
+// cannot trigger it with a navigation.
+if ($service_path === 'manifest_build' && ($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
+    error_response('The manifest_build service accepts POST only', 405);
+}
 
 // Get request body
 $request_body = file_get_contents('php://input');

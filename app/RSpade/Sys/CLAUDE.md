@@ -61,8 +61,8 @@ store and served same-origin from `/_vendor/`).
 
 Every dispatchable surface in the PANEL declares `#[Auth('is_sysadmin')]` (JS actions:
 `@auth('is_sysadmin')`). `is_sysadmin` is a framework check on `Permission_Abstract`,
-staff realm only; its body is `is_logged_in()` today and narrowing it is a pending
-owner decision that lands there, not at any call site here.
+staff realm only; its body is `Session::is_developer()`, and a change of audience
+lands there, not at any call site here.
 
 `app/apidocs/` is the exception, and deliberately: the console is not a panel
 screen. It has no route of its own - the APPLICATION mounts it - so its gate is

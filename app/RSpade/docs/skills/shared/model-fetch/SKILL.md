@@ -1,6 +1,6 @@
 ---
 name: model-fetch
-description: "Loading model records from JavaScript through the ORM endpoint - writing a gated fetch() with #[Ajax_Endpoint_Model_Fetch] + #[Auth], lazy relationships, fetch_cached, and the policy on when a custom Ajax endpoint is allowed instead. Use when implementing or changing fetch()/portal_fetch(), loading a record or relationship from JS, deciding what to do when a model has no fetch() or is missing from the bundle, hitting the relationship cap error (rsx.model_fetch.max_relationship_records), or responding to a MODEL-FETCH-TRASHED-01 finding."
+description: "Loading model records from JavaScript through the ORM endpoint - writing a gated fetch() with #[Ajax_Endpoint_Model_Fetch] + #[Auth], lazy relationships, fetch_cached, and the policy on when a custom Ajax endpoint is allowed instead. Use when implementing or changing fetch()/portal_fetch(), loading a record or relationship from JS, deciding what to do when a model has no fetch() or is missing from the bundle, hitting the relationship cap error (rsx.model_fetch.max_relationship_records), or responding to a MODEL-FETCH-TRASHED-01 or MODEL-FETCH-SYSTEM-01 finding."
 ---
 
 # Model Fetch
@@ -39,6 +39,8 @@ class Project_Model extends Rsx_Site_Model_Abstract
 ## Non-deleted records only
 
 `fetch()`/`fetch_or_null()` serve LIVE records: a soft-deleted row reads as not found. **A `fetch()`/`portal_fetch()` body must never widen the default scope** - a `withTrashed()` in there is flagged by **`MODEL-FETCH-TRASHED-01`**.
+
+**No fetch surface on a system table.** A model whose `$table` starts with `_` (queues, sessions, keys, logs) may not carry `#[Ajax_Endpoint_Model_Fetch]` anywhere - **`MODEL-FETCH-SYSTEM-01`**, a manifest-build FATAL. `Email_Queue_Model` and `Sms_Queue_Model` are PHP-only; a screen over them asks its own `#[Ajax_Endpoint]`. `File_Attachment_Model` is the marked exception (`@MODEL-FETCH-SYSTEM-01-EXCEPTION`: per-record gate, curated payload).
 
 A screen that must show a deleted record uses a dedicated `#[Ajax_Endpoint]` gated for exactly that situation. The template's worked example is `Frontend_Clients_Controller::fetch_deleted`, which shares one payload builder with the model's `fetch()` so both return the identical shape.
 
@@ -126,7 +128,7 @@ Rsx_Js_Model.orm_cache_reset('Contact_Model', 5);      // one record
 
 ## Data-fetching policy - the ORM endpoint is the way
 
-- **The model lacks `fetch()`**: add one, with `#[Ajax_Endpoint_Model_Fetch]` and its `#[Auth]`. For a FRAMEWORK model (in `system/`), override it in `rsx/models/` by EXTENDING its base - `class X_Model extends X_Model_Abstract` declaring only `fetch()` (the base marks `fetch()`/`portal_fetch()` `#[Replaceable]`, so no `parent::` call, and `$table`/`$enums` are inherited). Copying the framework file is refused at manifest build; see `rsx:man class_override`. **Do NOT create separate controller endpoints to fetch single records - this duplicates ORM functionality and is an anti-pattern.**
+- **The model lacks `fetch()`**: add one, with `#[Ajax_Endpoint_Model_Fetch]` and its `#[Auth]`. For a FRAMEWORK model (in `system/`), override it in `rsx/models/` by EXTENDING its base - `class X_Model extends X_Model_Abstract` declaring only `fetch()` (the base marks `fetch()`/`portal_fetch()` `#[Replaceable]`, so no `parent::` call, and `$table`/`$enums` are inherited). Copying the framework file is refused at manifest build; see `rsx:man class_override`. The redeclared `fetch()` carries `#[Ajax_Endpoint_Model_Fetch]` and its `#[Auth]` itself: the NEAREST declaration decides, so one without the attribute is not fetchable and fails the build (UNMARKED FETCH OVERRIDE) - relationships likewise. **Do NOT create separate controller endpoints to fetch single records - this duplicates ORM functionality and is an anti-pattern.**
 - **The model is not available in the JS bundle**: **STOP and ask the developer.** Bundles should include the models they need. Do not create workaround endpoints without approval.
 - **Custom Ajax endpoints require developer approval**, and are only for:
   - aggregations, batch operations, or complex result sets;

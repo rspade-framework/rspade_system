@@ -36,9 +36,15 @@ use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
  *
  * HANDLER EXECUTION ORDER:
  * - Priority 10: CLI exceptions (formatted output for terminal)
- * - Priority 20: AJAX exceptions (JSON error responses)
- * - Priority 30: Playwright test exceptions (plain text output)
- * - Priority 1000: RSX dispatch bootstrapper (404 → RSX routing)
+ * - Priority 20: AJAX channel (the JSON envelope)
+ * - Priority 25: API channel (the API's JSON error)
+ * - Priority 30: Playwright test exceptions (plain text output, local harness only)
+ * - Priority 1100: PAGE channel and everything else (Error_Screens)
+ *
+ * WHERE IT IS CALLED FROM: Rsx_Front_Controller renders a failure inside dispatch through
+ * this handler exactly once; Laravel's kernel renders a failure outside dispatch (provider
+ * boot, a global middleware) through it too. It FORMATS - no handler in the chain
+ * dispatches a request.
  *
  * EXTENSIBILITY:
  * Users can add/remove/reorder handlers by modifying config/rsx.php:

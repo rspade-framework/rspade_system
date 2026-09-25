@@ -40,21 +40,21 @@ use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _portal_two_factor_credentials
  *
- * @property int $id
- * @property int $portal_user_id
- * @property int $type_id
- * @property string $label
- * @property string $secret
- * @property string $credential_key
- * @property int $counter
  * @property string $confirmed_at
- * @property string $last_used_at
+ * @property int $counter
+ * @property string $created_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property string $credential_key
+ * @property int $id
+ * @property string $label
+ * @property string $last_used_at
+ * @property int $portal_user_id
+ * @property string $secret
+ * @property int $type_id
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
- * @property string $created_at
- * @property string $updated_at
  *
  * @property-read string $type_id__label
  * @property-read string $type_id__constant

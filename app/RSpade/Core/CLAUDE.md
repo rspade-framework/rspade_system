@@ -8,7 +8,7 @@ The framework provides application-wide middleware hooks via `Main_Abstract`:
 
 1. **Create `/rsx/main.php`** extending `Main_Abstract` with three methods:
    - `init()` - Called once during bootstrap
-   - `pre_dispatch(Request $request, array $params)` - Called before any route dispatch
+   - `pre_dispatch(Request $request, array $params)` - Called before any route dispatch and every external API call (after the gates; non-null on the API = 403 `account_refused`)
    - `unhandled_route(Request $request, array $params)` - Called when no route matches
 
 2. **Pre-dispatch flow**:
@@ -43,7 +43,14 @@ if (typeof Rsx_Manifest !== 'undefined') {
 
 ## Dispatcher System
 
-Maps HTTP requests to RSX controllers based on manifest data.
+`App\Http\Kernel` hands every request to `Dispatch/Rsx_Front_Controller::handle()` -
+Laravel's router is never consulted. It classifies the request once
+(`Rsx_Request_Channel`: ASSET / API / AJAX / PAGE + staff/portal realm), runs that
+channel's pipeline (`AssetHandler`, `Api_Dispatcher`, or `Dispatcher` - ONE page and Ajax
+pipeline for both realms, parameterized by a realm descriptor) and renders any failure
+through that channel's error policy, once. Nothing that renders an error dispatches. The
+Ajax channel is one core, `Ajax::execute()`, shared by the direct transport, the batch
+transport and `Ajax::internal()`. `rsx:man dispatch`.
 
 ## Autoloader System
 

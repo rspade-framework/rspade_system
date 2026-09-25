@@ -68,40 +68,40 @@ use App\RSpade\Core\Models\Email_Attachment_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _email_queue
  *
- * @property int $id
- * @property int $site_id
- * @property string $to_address
- * @property string $to_name
- * @property string $subject
- * @property string $email_class
- * @property array $template_data
- * @property int $category_id
- * @property string $rendered_html
- * @property int $status_id
- * @property string $last_error
  * @property int $attempt_count
- * @property string $next_attempt_at
- * @property string $dev_original_to
- * @property string $sent_at
- * @property int $related_type
- * @property int $related_id
+ * @property array $bcc
+ * @property int $category_id
+ * @property array $cc
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
- * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $dedupe_key
+ * @property string $dev_original_to
+ * @property string $email_class
+ * @property array $headers
+ * @property int $id
+ * @property string $last_attempt_at
+ * @property string $last_error
+ * @property string $message_id_header
+ * @property string $next_attempt_at
+ * @property int $related_id
+ * @property int $related_type
+ * @property string $rendered_html
+ * @property string $rendered_text
  * @property string $reply_to
  * @property string $reply_to_name
- * @property array $cc
- * @property array $bcc
- * @property array $headers
- * @property string $rendered_text
- * @property string $message_id_header
+ * @property string $sent_at
+ * @property int $site_id
+ * @property int $status_id
+ * @property string $subject
+ * @property array $template_data
+ * @property string $to_address
+ * @property string $to_name
  * @property string $transport
  * @property string $transport_response
- * @property string $last_attempt_at
- * @property string $dedupe_key
+ * @property string $updated_at
+ * @property int $updated_by_id
+ * @property int $updated_by_type
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant
@@ -204,29 +204,6 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
             3 => ['constant' => 'CATEGORY_MARKETING', 'label' => 'Marketing', 'badge' => 'bg-secondary'],
         ],
     ];
-
-    /**
-     * Ajax model fetch - load one email record (subject, rendered_html, status,
-     * category, to/dev_original_to, error, timestamps, polymorphic related_*) for a
-     * developer-facing Email Transaction Log detail view. toArray() includes the
-     * enum BEM props (status_id__label/__badge, category_id__label/__badge); no
-     * aliasing - field names pass straight through DB -> PHP -> JSON -> JS.
-     *
-     * Auth: any logged-in staff user for now; the app should narrow the gate to a
-     * developer-level check once its Permission class defines one.
-     */
-    #[Replaceable]
-    #[Ajax_Endpoint_Model_Fetch]
-    #[Auth('is_logged_in')]
-    public static function fetch($id)
-    {
-        $email = static::find($id);
-        if (!$email) {
-            return false;
-        }
-
-        return $email->toArray();
-    }
 
     /**
      * Create a queued email record from a frozen descriptor.
@@ -493,8 +470,8 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
      * the SMTP server - a duplicate is the acceptable outcome here, and a message
      * silently stuck in SENDING forever is not.
      *
-     * SCOPE: the ordinary site scope applies, exactly as it does to claim_next(). A row
-     * this process could never claim is not a row it should be repairing.
+     * SCOPE: whatever the caller runs under, exactly as claim_next() does. The drain runs
+     * both outside the site scope, so a row it reclaims is always a row it can then claim.
      *
      * @return int How many stranded rows were reclaimed.
      */

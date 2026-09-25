@@ -245,6 +245,42 @@ if (RSPADE_MAINT_MODE) {
 
 /*
 |--------------------------------------------------------------------------
+| Migration Gate
+|--------------------------------------------------------------------------
+|
+| While `migrate` runs against a datadir snapshot it raises storage/state/.migrating
+| (App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file(); its CONTENT is
+| JSON carrying started_at). Every web request answers 503 until the run clears it,
+| so no request reads or writes a database that may be rolled back underneath it. The
+| same pre-boot shape as the maintenance gate: one stat, autoload-free, and the IDE
+| bridge above is exempt. A flag left behind by an interrupted run is cleared by
+| `php artisan migrate:restore` (or by the next migrate).
+|
+*/
+
+$__rsx_migrating_flag = $__rsx_state . '/.migrating';
+
+if (file_exists($__rsx_migrating_flag)) {
+    $__rsx_migrating_info = json_decode((string) @file_get_contents($__rsx_migrating_flag), true);
+    $__rsx_migrating_started = is_array($__rsx_migrating_info) ? (string) ($__rsx_migrating_info['started_at'] ?? '') : '';
+
+    rsx_preboot_page_render(
+        503,
+        'Database migration in progress',
+        [
+            'A database migration is running. The application is unavailable until it completes.'
+                . ($__rsx_migrating_started !== '' ? " Started at {$__rsx_migrating_started}." : ''),
+            'If this persists, the migration may have been interrupted: see the terminal that ran php artisan migrate.',
+        ],
+        ['Retry-After' => '30']
+    );
+
+    exit;
+}
+
+
+/*
+|--------------------------------------------------------------------------
 | Register The Auto Loader
 |--------------------------------------------------------------------------
 |
@@ -281,6 +317,13 @@ require __DIR__.'/../vendor/autoload.php';
 $app = require_once __DIR__.'/../bootstrap/app.php';
 
 $kernel = $app->make(Kernel::class);
+
+// HTTP method override is OFF: a request's method is the verb on the wire. Symfony
+// otherwise lets a POST call itself PUT/DELETE through a _method field or an
+// X-HTTP-Method-Override header, and RSpade routes only GET and POST - an override
+// buys nothing and turned a cross-site POST into a "PUT" that skipped the CSRF check.
+// An empty allow-list disables the header and the field alike.
+Request::setAllowedHttpMethodOverride([]);
 
 $response = $kernel->handle(
     $request = Request::capture()

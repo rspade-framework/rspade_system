@@ -23,13 +23,17 @@ DESCRIPTION
 
 BASIC USAGE
     Signature:
-        Rsx::Route($action, $params = null)
-        Rsx.Route(action, params = null)
+        Rsx::Route($action, $params = null, ?array $hash = null)
+        Rsx.Route(action, params = null, hash = null)
 
         Where:
         - $action: Controller class, SPA action, or "Class::method"
           Defaults to 'index' method if no :: present
         - $params: Integer sets 'id', array/object provides named params
+        - $hash: fragment state, key => value (see URL FRAGMENT STATE)
+
+    Rsx_Portal::Route() / Rsx_Portal.Route() take the same three arguments
+    (rsx:man portal).
 
     A SPA TARGET IS THE ACTION CLASS, NEVER THE BOOTSTRAP CONTROLLER. A SPA
     route is registered in the manifest under the JS action class that declares
@@ -43,10 +47,14 @@ BASIC USAGE
     must extend Spa_Action". True of every SPA module, the framework's /_sys
     panel included, whose entry target is '_Sys_Dashboard_Action'.
 
-    Client-side, Rsx.Route() reads the action class out of the bundle - so a
-    target whose code is not in this bundle normally cannot resolve. The
-    exception is a target listed in config('rsx.always_published_routes'),
-    whose patterns the compiler emits into EVERY bundle (rsx:man bundle_api,
+    Client-side, Rsx.Route() reads the target's patterns out of the bundle. A
+    target whose routes are not in this bundle is addressed by the DEFAULT
+    ROUTE, /_/<Name>/<action> with every param as a query string, and the
+    server redirects it (staff realm, GET): a #[Route] method to its real URL,
+    and an SPA action (/_/<Action>/index) to its @route URL - which is how one
+    module links to another module's page (rsx:man dispatch, DEFAULT ROUTE).
+    A target listed in config('rsx.always_published_routes') has its patterns
+    emitted into EVERY bundle and needs no redirect (rsx:man bundle_api,
     rsx:man sys_panel).
 
     PHP Syntax:
@@ -71,9 +79,51 @@ BASIC USAGE
         // Use in navigation
         window.location.href = Rsx.Route('Demo_Index_Controller');
 
+URL FRAGMENT STATE
+    The third argument is the URL fragment: the #key=value state that
+    Rsx.url_hash_get() reads (rsx:man url_hash) - a tab, a grid's page or
+    filter, a deep-linked dialog. It is encoded by the SAME serializer the
+    reader parses with, so every value reads back unchanged, spaces, & = # +
+    and non-ASCII included:
+
+        Rsx::Route('Clients_View_Action', 5, ['tab' => 'portal'])   // PHP
+        Rsx.Route('Clients_View_Action', 5, {tab: 'portal'})        // JS
+        // Both: /clients/view/5#tab=portal
+
+    Never append a fragment to a Route() result by hand
+    (Rsx.Route(...) + '#tab=' + x): string concatenation, $.param() (which
+    writes a space as '+', read back as a literal '+') and a hand-rolled
+    encodeURIComponent() all drift from the reader.
+
+    Encoding
+        #k=v&k2=v2 - each key and value as JavaScript's encodeURIComponent()
+        encodes it; the PHP twin produces the identical bytes. Keys keep
+        their order. A null, undefined or '' value DROPS its key (the rule
+        Rsx.url_hash_set() applies), and a hash left empty adds no '#'.
+
+    Values are strings or integers; anything else THROWS
+        An array, object, boolean or float value, an integer key (a list, in
+        PHP), a non-object hash (JS) and invalid UTF-8 (PHP) are refused
+        loudly - the reader only ever returns strings, and a value it cannot
+        read back is a bug, never something to drop.
+
+    The anchor
+        The reserved `at` key (rsx:man anchors) stays in $params, and rides
+        the same fragment, LAST, after the hash keys:
+
+            Rsx::Route('Docs_Chapter_Action', ['at' => 'setup'], ['tab' => 'api'])
+            // /docs/chapter#tab=api&at=setup
+
+        Passing `at` inside $hash THROWS, so the anchor has one spelling.
+
+    Placeholder routes ('Class::#index', returning '#') ignore the hash.
+    Order of the finished URL: path, ?query, #fragment.
+
 ROUTE PATTERNS
     Route Definition:
-        Routes are defined using #[Route] attributes on controller methods:
+        Routes are defined using #[Route] attributes on controller methods.
+        methods: accepts GET and/or POST only (omitted means ['GET']); any
+        other verb or an empty list fails the manifest build (ROUTE-VERB-01):
 
         #[Route('/users/:division/:id')]
         public static function show_user(Request $request, array $params = [])
@@ -103,8 +153,12 @@ ROUTE PATTERNS
 
     Parameter Syntax:
         - :param - Required parameter in URL path
+        - :param? - Optional parameter; '/list/:page?' matches /list and
+          /list/3, and URL generation drops it together with its slash when
+          no value (or null) is given
         - Routes without parameters use controller/action mapping
         - URL generation validates required parameters are provided
+        - A token is replaced whole and by name: ':id' never touches ':id_two'
 
     URL Parameter Handling:
         - Required parameters (in pattern) must be provided or exception thrown
@@ -266,7 +320,7 @@ DEBUGGING ROUTES
         php artisan rsx:debug /demo --eval="Rsx.Route('Demo_Index_Controller')"
 
     Route Information:
-        php artisan rsx:manifest:show          # View route cache in manifest
+        php artisan rsx:manifest:show          # View the routes in the manifest
 
 COMMON PATTERNS
     Controller Navigation:
@@ -406,4 +460,4 @@ SEE ALSO
     controller - Controller patterns and route attributes
     bundle_api - Bundle system and JavaScript integration
     manifest_api - Route discovery and caching system
-    config_rsx - config('rsx.middleware'), the app's HTTP middleware seam
+    config_rsx - config('rsx.middleware.global'), the app's HTTP middleware seam

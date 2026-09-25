@@ -146,9 +146,6 @@ and delete their keys in teardown.
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | sess-gc-01..03 | find_by_token: null for unknown, finds active, ignores inactive | committed sessions | correct row/null | implemented |
-| sess-gc-04..05 | cleanup_expired deletes old, keeps recent | aged rows | correct deletion | implemented |
-| sess-gc-06 | cleanup_expired returns deleted count | aged rows | int count | implemented |
-| sess-gc-07 | cleanup_expired respects custom days arg | days arg | honored | implemented |
 | sess-gc-08 | cleanup_sessions applies the identity-aware windows (identified web 3mo vs identity-less 30d) | aged rows of each kind | each expires on its own window | implemented |
 | sess-gc-09 | cleanup_sessions expires TYPE_PLAYWRIGHT on its own window, leaving a same-age web row | 2-day-old harness + web rows | harness gone, web kept - proves the sweep reads type, not age | implemented |
 | sess-gc-09b | cleanup_sessions expires TYPE_CLI on its own window, leaving a same-age web row | 2-day-old CLI + web rows | CLI gone, web kept - the backstop for a killed process | implemented |
@@ -162,7 +159,6 @@ and delete their keys in teardown.
 | sess-gc-13 | a PORTAL identity is not read as anonymous | 40-day-idle rows with/without portal_user_id | portal-only kept, identity-less collected | implemented |
 | sess-gc-14 | a portal identity expires on the identified-web window | 200-day vs 40-day portal rows | stale gone, fresh kept | implemented |
 | sess-gc-15 | the playwright backstop ignores which identity a row carries | 2-day portal harness + portal web | harness gone, web kept | implemented |
-| sess-gc-16 | cleanup_expired collects every session past the cutoff | 400-day staff + portal rows | both deleted (one table, one blunt cutoff) | implemented |
 | sess-gc-17 | purge_playwright_sessions collects harness rows whatever they carry | staff + portal harness + portal web | both harness rows gone, web kept | implemented |
 
 ## Session_Cap_Test (php, $requires_db_reset + no-tx) - concurrent session cap

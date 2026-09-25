@@ -103,26 +103,12 @@ class Manifest_Fixture_Build_Test extends Rsx_Test_Abstract
     private static function __remove_tree(): void
     {
         if (static::$tree !== '' && is_dir(base_path(static::$tree))) {
-            static::__rmdir_recursive(base_path(static::$tree));
+            rmdir_recursive(base_path(static::$tree));
         }
 
         if (static::$build_root !== '' && is_dir(dirname(static::$build_root))) {
-            static::__rmdir_recursive(dirname(static::$build_root));
+            rmdir_recursive(dirname(static::$build_root));
         }
-    }
-
-    private static function __rmdir_recursive(string $directory): void
-    {
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-
-        foreach ($iterator as $entry) {
-            $entry->isDir() ? @rmdir($entry->getPathname()) : @unlink($entry->getPathname());
-        }
-
-        @rmdir($directory);
     }
 
     /**

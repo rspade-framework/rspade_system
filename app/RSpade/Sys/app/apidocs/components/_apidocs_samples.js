@@ -390,7 +390,7 @@ function api_multipart_code_samples(ep, filled, file_param) {
 /**
  * api_tester_input(p, prefix) - HTML for one typed tester input, keyed by data-param="name".
  * bool -> select(true/false); int/float -> number input; string -> text input. Prefilled
- * from the param example when present. Attribute values are escaped via html().
+ * from the param example when present. Attribute values are escaped via escape_html().
  *
  * `prefix` is the BEM prefix of the component asking, so each tester owns its own scoped
  * class names while there is still ONE implementation of "an input for a declared param".
@@ -399,7 +399,7 @@ function api_multipart_code_samples(ep, filled, file_param) {
 function api_tester_input(p, prefix) {
     const cls = (prefix || '_Apidocs_Tester') + '__input';
     const ex = (p.example !== null && p.example !== undefined) ? String(p.example) : '';
-    const name_attr = ' data-param="' + html(p.name) + '"';
+    const name_attr = ' data-param="' + escape_html(p.name) + '"';
 
     if (p.type === 'bool') {
         const t_sel = ex === 'true' ? ' selected' : '';
@@ -414,7 +414,7 @@ function api_tester_input(p, prefix) {
     const type = (p.type === 'int' || p.type === 'float') ? 'number' : 'text';
     const step = (p.type === 'float') ? ' step="any"' : '';
     return '<input type="' + type + '"' + step + ' class="' + cls + '"' + name_attr
-        + ' value="' + html(ex) + '" placeholder="' + html(ex || p.type) + '">';
+        + ' value="' + escape_html(ex) + '" placeholder="' + escape_html(ex || p.type) + '">';
 }
 
 // Build a params dict for GET query in Python style from an array of param specs.

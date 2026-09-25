@@ -106,16 +106,19 @@ abstract class Permission_Abstract
     /**
      * The control-panel gate: may this user open the framework's /_sys panel?
      *
-     * Today this is is_logged_in() - every signed-in staff identity may open the panel.
-     * Narrowing it to a role or ACL is a pending owner decision; when it lands it lands
-     * HERE, and every #[Auth('is_sysadmin')] surface follows without a call-site change.
-     * Marked #[Replaceable] for the same reason as is_logged_in().
+     * A DEVELOPER only: the signed-in login identity carries login_users.is_developer
+     * (Session::is_developer()), which is set by hand in the database and nowhere else.
+     * The panel shows the whole installation, across tenants, so no role an application
+     * can grant - and no self-registered account - reaches it by default. Every
+     * #[Auth('is_sysadmin')] surface follows this body with no call-site change; an
+     * application that wants a different audience class-overrides the permission class
+     * and redeclares it (#[Replaceable], so no parent:: call is owed).
      */
     #[Auth_Check]
     #[Replaceable]
     public static function is_sysadmin(): bool
     {
-        return Session::is_logged_in();
+        return Session::is_developer();
     }
 
     /**

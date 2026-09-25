@@ -4,7 +4,7 @@ The title rows live in `playwright/spa_action_title.js` (one browser session ove
 template app's `/contacts` and `/contacts/view/:id`); the guard rows live in
 `playwright/navigation_guard.js` (one session over the framework's own `/_sys` panel, so
 it depends on no application code); the fragment rows live in `playwright/fragment_popstate.js`
-(same `/_sys` session shape). The decorator half - `@title` surviving the transform
+(same `/_sys` session shape); the ResizeObserver rows live in `playwright/resize_observer_notice.js` (same shape). The decorator half - `@title` surviving the transform
 as `_spa_title` - is JT-03f in the `js_transform` concern.
 
 | ID | Purpose (what it proves) | Type | Input | Expected (approx) | Status | Last updated |
@@ -26,6 +26,9 @@ as `_spa_title` - is JT-03f in the `js_transform` concern.
 | SPA-HASH-02 | A fragment-only move is not a navigation: the navigation guard is not consulted and stays registered | playwright | same move with a `false` guard set | zero consults; `has_navigation_guard()` still true | implemented | 2026-09-24 |
 | SPA-HASH-03 | A Back across a PATH change still re-dispatches a fresh action and fires no `spa_hash_change` | playwright | `/_sys` -> `/_sys/tasks`, `history.back()` | a new action on `/_sys`; no event | implemented | 2026-09-24 |
 | SPA-HASH-04 | An in-page `#at=` anchor link reaches its target on the MOUNTED action - the browser's native fragment scroll looks for `id="at=..."` and cannot | playwright | a `data-anchor` target appended to the `/_sys` action, `location.hash = 'at=...'` | target focused; same action instance; one `spa_hash_change` | implemented | 2026-09-24 |
+| SPA-RO-01 | The browser's ResizeObserver delivery-overrun notice (both spellings, ErrorEvent with no error object) fires no `unhandled_exception` and leaves SPA navigation enabled | playwright | `/_sys`, `dispatchEvent(new ErrorEvent('error', {message}))` | no event; `Spa._spa_enabled` true | implemented | 2026-09-25 |
+| SPA-RO-02 | After the notice, `Spa.dispatch()` still navigates client-side | playwright | `/_sys` -> `/_sys/tasks` | landed on the target; a window marker survives (no page load) | implemented | 2026-09-25 |
+| SPA-RO-03 | The match is exact: a different `ResizeObserver loop ...` message, and the notice text carried by a real Error, are still unhandled exceptions | playwright | two control ErrorEvents | two `unhandled_exception` events; SPA disabled | implemented | 2026-09-25 |
 
 ## Notes
 

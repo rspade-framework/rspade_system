@@ -162,7 +162,8 @@ ROUTABILITY
     target's path must resolve to a REGISTERED GET route in the active context.
 
         - staff context:  Dispatcher::resolve_url_to_route($path, 'GET')
-        - portal context: Portal_Dispatcher::resolve_url_to_route($path, 'GET')
+        - portal context: Dispatcher::resolve_url_to_route($path, 'GET',
+                              Auth_Gates::REALM_PORTAL)
 
     If neither resolves a route, the value degrades to [] / the default (silent
     degradation, never an error). The gate confirms only that a route PATTERN is

@@ -88,6 +88,27 @@ class Mode_Derived_Config_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * `prod` is an accepted spelling of production (Rsx::get_mode() normalizes it), so the
+     * derivation must read it the same way - a sealed production box written as
+     * RSX_MODE=prod must not run Laravel with debug output on.
+     */
+    public static function test_the_prod_alias_derives_production_and_debug_off()
+    {
+        $config = static::__app_config_for_mode('prod');
+
+        static::__assert_equals('production', $config['env'], 'the prod alias IS the production environment');
+        static::__assert_true($config['debug'] === false, 'the prod alias forces debug off');
+    }
+
+    public static function test_the_dev_alias_derives_local_and_debug_on()
+    {
+        $config = static::__app_config_for_mode('dev');
+
+        static::__assert_equals('local', $config['env'], 'the dev alias is a local environment');
+        static::__assert_true($config['debug'], 'the dev alias runs with debug on');
+    }
+
+    /**
      * The reason the derivation exists: there is no second switch. An APP_ENV or
      * APP_DEBUG line in the environment must not move either value.
      */

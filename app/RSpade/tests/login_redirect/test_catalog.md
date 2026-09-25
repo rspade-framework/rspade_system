@@ -98,4 +98,4 @@ while the suite runs.
   `/search`) that the routability gate now correctly rejects; those fixtures were
   re-pointed at a registered route (`/frontend/settings/profile_edit`) with the
   test intent unchanged. New coverage: LR-52..LR-67. Fixture routes were confirmed
-  registered via `Dispatcher::resolve_url_to_route` / `Portal_Dispatcher::resolve_url_to_route`.
+  registered via `Dispatcher::resolve_url_to_route` (staff and portal realm).

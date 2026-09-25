@@ -27,6 +27,7 @@
 | AG-ROOT-02 | `is_sysadmin` is staff-only - the control panel is not a portal surface | php | Persisted manifest | in `checks.staff`, absent from `checks.portal` | implemented | 2026-09-07 |
 | AG-ROOT-03 | It evaluates staff-side; naming it from portal is the unknown-name failure | php | `evaluate()` in both realms | false, then RuntimeException | implemented | 2026-09-07 |
 | AG-ROOT-04 | The generated staff JS mirror exports it, so `can_access()` answers for a panel link | php | Generated mirror stub | contains `Permission.is_sysadmin` | implemented | 2026-09-07 |
+| AG-ROOT-05 | A developer passes; a signed-in identity that is not a developer is refused | php | user 1 (developer) then a fresh ordinary login identity | true / false | implemented | 2026-09-25 |
 | AG-EVAL-01 | Only an exact `true` grants | php | Bodies returning true/false/1/'true'/nothing | only the first grants | implemented | 2026-08-07 |
 | AG-EVAL-02 | AND semantics; an empty gate list passes | php | `[]`, `[grant]`, `[grant,deny]`, `[deny,grant]` | true, true, false, false | implemented | 2026-08-07 |
 | AG-EVAL-03 | A check body runs LIVE on every ask - no cache between asks | php | Four staff consultations then one portal | counter 1,2,3,4 then 5 | implemented | 2026-08-31 |
@@ -36,7 +37,7 @@
 | AG-CA-01 | `can_access` on a route target | php | Gated open vs gated closed surfaces | true / false | implemented | 2026-08-07 |
 | AG-CA-02 | A bare controller name implies `::index` | php | `'Eval_Open_Controller'` | resolves to `::index` | implemented | 2026-08-07 |
 | AG-CA-03 | `can_access` on a SPA action target | php | Action class names | true / false | implemented | 2026-08-07 |
-| AG-CA-04 | An ungated surface is reachable pre-validation | php | Surface with `auth == []` | true | implemented | 2026-08-07 |
+| AG-CA-04 | An ungated surface is refused by can_access() | php | Surface with `auth == []` | RuntimeException "empty gate list" | implemented | 2026-09-25 |
 | AG-CA-05 | A realm-agnostic surface evaluates in the caller's realm | php | `'any'` surface, one gate name with opposite bodies per realm | true staff / false portal | implemented | 2026-08-07 |
 | AG-CA-06 | An unknown target throws | php | Nonexistent target | RuntimeException "Unknown auth target" | implemented | 2026-08-07 |
 | AG-CA-07 | A cross-realm target throws | php | Portal target from the staff realm | RuntimeException "belongs to the portal realm" | implemented | 2026-08-07 |
@@ -57,7 +58,24 @@
 | AG-SEAM-15 | A relationship is gated on its own list, before the relation runs | php | `Auth_Gates_Seam_Fixture_Model::children` - fetch open, relationship closed | generic not-found | implemented | 2026-09-08 |
 | AG-SEAM-16 | Every `#[Api_Endpoint]` row carries a gate list | php | Persisted manifest api rows | every row has `auth` | implemented | 2026-08-07 |
 | AG-SEAM-17 | API dispatch denies with a 403 error shape | http | Gated API endpoint, valid bearer key | 403 `{"error":{"code":"forbidden",...}}` + a 403 log row | verified by live probe; automatable once a permanently gated API endpoint exists (W5/W6) | 2026-08-07 |
-| AG-SEAM-18 | An empty gate list passes at a seam (transition contract) | php | `gates_pass_at_seam([], realm)` | true in both realms | implemented | 2026-08-07 |
+| AG-SEAM-18 | An empty gate list is refused at a seam | php | `gates_pass_at_seam([], realm)` | RuntimeException "empty gate list" in both realms (`Auth_Fail_Closed_Test`) | implemented | 2026-09-25 |
+| AG-FAIL-01 | `require_surface()` refuses an unindexed target | php | Test index without the target | RuntimeException "has no entry" naming the target | implemented | 2026-09-25 |
+| AG-FAIL-02 | `surface_gates()` refuses an indexed target with no gate | php | Target with `auth == []` | RuntimeException "empty gate list" | implemented | 2026-09-25 |
+| AG-FAIL-03 | The realm check refuses an unindexed target (both realms) | php | `surface_realm_permits()` on an unknown target | RuntimeException, never true | implemented | 2026-09-25 |
+| AG-FAIL-04 | Link visibility refuses a gateless target | php | `can_access()` / `accessible_route()` | throws / null | implemented | 2026-09-25 |
+| AG-FAIL-05 | Route, portal route and API row matches refuse an unindexed surface | php | Real fixture rows, test index without their surfaces | RuntimeException at match time | implemented | 2026-09-25 |
+| AG-FAIL-06 | The default `/_/Controller/action` POST refuses an unindexed surface loudly | php | Fixture controller, empty test index | RuntimeException, not a 404 | implemented | 2026-09-25 |
+| AG-FAIL-07 | Ajax refuses an unindexed endpoint and a gateless one | php | `Ajax::internal()` on the fixture endpoint | "not an Ajax endpoint" / "empty gate list" | implemented | 2026-09-25 |
+| AG-FAIL-08 | The ORM refuses an unindexed fetch and a gateless relationship | php | Fixture model | RuntimeException before model code | implemented | 2026-09-25 |
+| AG-FAIL-09 | `fetch_relationship()` validates `id` like `fetch()` | php | Array / non-numeric ids | ERROR_VALIDATION | implemented | 2026-09-25 |
+| AG-COVER-01 | Rows naming no surface are NO SURFACE findings | php | Synthetic routes / portal_routes / SPA target / api_endpoints / attribute_index | exactly the unindexed targets flagged | implemented | 2026-09-25 |
+| AG-COVER-02 | NO SURFACE fails the build with remediation | php | One finding through `validate()` | message names the row pattern and "PUBLIC STATIC method" | implemented | 2026-09-25 |
+| AG-COVER-03 | Every live manifest row names a surface | php | Persisted manifest | no finding | implemented | 2026-09-25 |
+| AG-COVER-04 | A surface attribute on an instance method is NOT STATIC | php | Synthetic `#[Route]` / `#[Ajax_Endpoint]` instance methods | two findings; a fetchable relationship is not one | implemented | 2026-09-25 |
+| AG-COVER-05 | The fetch lineage stops at the nearest declaration | php | Child redeclaring fetch()/a relationship unmarked | null; an un-redeclared member still resolves to the base | implemented | 2026-09-25 |
+| AG-COVER-06 | An unmarked redeclaration of a fetch surface is a finding and indexes nothing | php | Same lineage through `build_index()` | UNMARKED FETCH OVERRIDE for both members, no surface | implemented | 2026-09-25 |
+| AG-COVER-07 | A marked redeclaration is the child's own surface | php | Child re-marks both members | no finding, gated surfaces | implemented | 2026-09-25 |
+| AG-COVER-08 | An `@spa` target must carry `#[SPA]`; an `@portal_spa` target `#[Portal_Route]` | php | Synthetic action + controller | build throws without the attribute, records the row with it | implemented | 2026-09-25 |
 | AG-EXPORT-01 | `export_grants()` ships granted names only, value 1 | php | Fixture registry with granting and denying bodies | granted keys only; no `=> false` entry for a denied check | implemented | 2026-08-07 |
 | AG-EXPORT-02 | The grants map is realm-scoped | php | One name with opposite bodies per realm | present for staff, absent for portal | implemented | 2026-08-07 |
 | AG-EXPORT-03 | Building the map re-evaluates live on every build | php | Seam evaluation, then two export builds | check body executed 1, 2, 3 times | implemented | 2026-08-31 |

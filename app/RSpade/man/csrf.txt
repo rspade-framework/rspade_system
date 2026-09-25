@@ -63,18 +63,18 @@ TRANSPORT (handled for you)
         csrf_token. There is one session per browser (one `rsx` cookie, one
         _sessions row) shared by the staff app and the portal, so there is exactly
         one token and nothing to fork on - a staff form and a portal form carry
-        the same value, and both dispatchers verify against the same row. It emits
+        the same value, and both realms verify against the same row. It emits
         NOTHING when the browser has no session yet, which is correct: a
         session-less POST needs no token. Use @csrf; never hand-roll a hidden
         _csrf_token input.
 
 ENFORCEMENT POINT
-    A single POST-gated check in the staff Dispatcher and an IDENTICAL one in the
-    Portal_Dispatcher (App\RSpade\Core\Session\Rsx_Csrf::enforce($request)),
-    placed AFTER the external-API branch. This one seam covers
-    /_ajax/:controller/:action, /_ajax/_batch, /_upload, and native #[Route(POST)]
-    controllers. Both calls are the same call because both channels serve the same
-    browser session and the same token - Rsx_Csrf takes no realm argument. A
+    A single POST-gated check in the Dispatcher
+    (App\RSpade\Core\Session\Rsx_Csrf::enforce($request)), run for both realms
+    (the external API is a channel of its own and never reaches it). This one
+    seam covers /_ajax/<Controller>/<action>, /_ajax/_batch, /_upload, and native
+    #[Route(POST)] controllers. Both realms share one call because both serve the
+    same browser session and the same token - Rsx_Csrf takes no realm argument. A
     failure returns a clean auth-style error with no stack trace: the AJAX
     envelope for /_ajax and /_upload, and for a native form POST the 419 error
     page - the application's own /error/419 when it declares one, the
@@ -90,6 +90,11 @@ ENFORCEMENT POINT
 
     has_session() is read-only - the check never creates a session for a
     token-less anonymous caller.
+
+    THE REAL METHOD. "POST" means the verb on the wire (getRealMethod()), and HTTP
+    method override is switched off at capture (public/index.php): neither a
+    _method field nor an X-HTTP-Method-Override header changes what a request is.
+    A cross-site POST that calls itself PUT is refused exactly like any other.
 
 PROTECTION (threat model)
     Forged mutation (classic CSRF): an attacker page tries to POST a state

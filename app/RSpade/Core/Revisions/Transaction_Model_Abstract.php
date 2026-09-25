@@ -45,20 +45,20 @@ use App\RSpade\Core\Revisions\Revision_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _transactions
  *
- * @property int $id
- * @property int $site_id
  * @property int $actor_id
  * @property int $actor_type
- * @property int $source_id
- * @property string $endpoint
- * @property string $ip
  * @property int $api_request_log_id
- * @property int $revision_count
- * @property string $description
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property string $description
+ * @property string $endpoint
+ * @property int $id
+ * @property string $ip
+ * @property int $revision_count
+ * @property int $site_id
+ * @property int $source_id
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
  *

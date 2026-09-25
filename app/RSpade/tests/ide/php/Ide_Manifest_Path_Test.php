@@ -142,6 +142,7 @@ class Ide_Manifest_Path_Test extends Rsx_Test_Abstract
             "IDE_BASE_PATH . '/' . ltrim(\$file, '/')", // a path the editor sent
             "IDE_BASE_PATH . '/artisan'",              // the project-root artisan shim
             "IDE_BASE_PATH . '/' . normalize_ide_path", // ide_absolute_path() itself
+            "IDE_BASE_PATH . '/');",                    // ide_path_within_project(): the separator-aware prefix
         ];
 
         preg_match_all("/IDE_BASE_PATH \. '\/[^\n]*/", $source, $matches);

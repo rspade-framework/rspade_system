@@ -18,7 +18,7 @@ use App\RSpade\Core\Portal\Rsx_Portal;
  * Reads the auth index built by Auth_ManifestSupport and executes named checks for
  * a realm. Application code does not call this class directly - it spells checks as
  * Permission::can_x() and Permission::can_access('Target') (Portal_Permission for
- * the portal realm); the dispatch seams call gates_pass().
+ * the portal realm); the dispatch seams call surface_gates() and gates_pass_at_seam().
  *
  * SEMANTICS
  * - LIVE: a check body runs on EVERY ask. There is no cache between asks, in this
@@ -127,6 +127,9 @@ class Auth_Gates
      * The DISPATCH-SEAM form of gates_pass(): identical semantics, except that a
      * check name unknown in the active realm DENIES (and logs) instead of throwing.
      *
+     * An EMPTY list is never an open gate here: a seam only ever evaluates the gates of
+     * a surface it is dispatching, and a gateless surface is refused (require_surface()).
+     *
      * Rationale: at a seam an unsatisfiable gate must refuse the request, not 500.
      * The gate says "only users passing X may enter"; if X cannot be evaluated in
      * this realm, nobody passes. The warning keeps the misconfiguration loud in the
@@ -145,6 +148,14 @@ class Auth_Gates
      */
     public static function gates_pass_at_seam(array $check_names, string $realm, string $surface): bool
     {
+        if (empty($check_names)) {
+            shouldnt_happen(
+                "Auth gate on {$surface} was evaluated with an empty gate list. Every dispatchable "
+                . 'surface declares at least one gate; the request is refused. '
+                . 'See: php artisan rsx:man auth_gates'
+            );
+        }
+
         foreach ($check_names as $check_name) {
             try {
                 $granted = static::evaluate($check_name, $realm);
@@ -178,8 +189,7 @@ class Auth_Gates
      * or a null - identity. 'any' surfaces (relationships, the framework services
      * that deliberately serve both realms) always permit.
      *
-     * A surface the index does not know permits: only indexed surfaces can declare a
-     * realm, and the gate layer above still applies.
+     * A surface the index does not know is never permitted: see require_surface().
      *
      * @param string $target 'Simple_Class::method' as spelled in the surface index
      * @param string $realm The request's realm (usually active_realm())
@@ -187,9 +197,9 @@ class Auth_Gates
      */
     public static function surface_realm_permits(string $target, string $realm): bool
     {
-        $declared = static::get_surfaces()[$target]['realm'] ?? null;
+        $declared = static::require_surface($target)['realm'];
 
-        if ($declared === null || $declared === self::REALM_ANY || $declared === $realm) {
+        if ($declared === self::REALM_ANY || $declared === $realm) {
             return true;
         }
 
@@ -202,16 +212,53 @@ class Auth_Gates
     }
 
     /**
-     * The gate list a dispatchable surface declares, or [] when the surface carries
-     * none (or is not indexed). The seams that resolve gates from the surface index
-     * rather than from a route row (Ajax, ORM) go through here.
+     * The gate list a dispatchable surface declares - never empty. The dispatch seams
+     * resolve a matched route row, an Ajax endpoint or a model member through here.
      *
      * @param string $target 'Simple_Class::method' as spelled in the surface index
      * @return array<int, string>
      */
     public static function surface_gates(string $target): array
     {
-        return static::get_surfaces()[$target]['auth'] ?? [];
+        return static::require_surface($target)['auth'];
+    }
+
+    /**
+     * The index entry of a surface a request is ABOUT TO DISPATCH, refusing loudly when
+     * the index has no entry for it or the entry declares no gate.
+     *
+     * CLOSED BY DEFAULT IS A RUNTIME RULE TOO. The manifest build refuses to deploy a
+     * surface without a gate, and every row it records points at an indexed surface - so
+     * reaching a dispatchable member that the index does not know, or knows with an empty
+     * gate list, means the build and the request disagree about what is deployed. That is
+     * a framework defect, and the one wrong answer to it is "allow": a seam that treated
+     * absence as "no gate to check" would run the body of whatever the build missed.
+     * shouldnt_happen() is a denial the logs cannot overlook.
+     *
+     * @param string $target 'Simple_Class::method' or a JS action class name
+     * @return array{kinds: array, realm: string, auth: array, file: string, member: string}
+     */
+    public static function require_surface(string $target): array
+    {
+        $surface = static::get_surfaces()[$target] ?? null;
+
+        if ($surface === null) {
+            shouldnt_happen(
+                "Auth surface '{$target}' is being dispatched, but the auth index has no entry for it. "
+                . 'The manifest build and this request disagree about what is deployed; the request '
+                . 'is refused. See: php artisan rsx:man auth_gates'
+            );
+        }
+
+        if (empty($surface['auth'])) {
+            shouldnt_happen(
+                "Auth surface '{$target}' is being dispatched with an empty gate list. The manifest "
+                . 'build refuses a gateless surface, so the build and this request disagree about '
+                . 'what is deployed; the request is refused. See: php artisan rsx:man auth_gates'
+            );
+        }
+
+        return $surface;
     }
 
     // =========================================================================
@@ -468,7 +515,9 @@ class Auth_Gates
             );
         }
 
-        $surface = $surfaces[$resolved];
+        // A resolved surface with no gate is the same build/request disagreement the
+        // dispatch seams refuse: an empty list must never read as "everyone may reach it".
+        $surface = static::require_surface($resolved);
 
         if ($surface['realm'] !== $realm && $surface['realm'] !== self::REALM_ANY) {
             throw new \RuntimeException(

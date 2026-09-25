@@ -57,7 +57,20 @@ SECURITY MODEL
         used to lack. Gates come from the fetch() (or relationship) method
         plus any class-level #[Auth] on the model. A surface with no gate
         fails the manifest build, so an anonymously-reachable fetch() is not
-        something a developer can forget into existence.
+        something a developer can forget into existence - and a member the
+        auth index does not know, or knows with no gate, is refused at the
+        seam as well (rsx:man auth_gates, ENFORCEMENT).
+
+    The Nearest Declaration Decides:
+        fetch(), portal_fetch() and fetchable relationships are resolved by
+        climbing the model's lineage to the NEAREST class that declares the
+        method name (Model_Fetch_Lineage), so a fetch() on a core model's
+        abstract base is the concrete's fetch surface. The nearest
+        declaration answers alone: a subclass that redeclares one of these
+        WITHOUT #[Ajax_Endpoint_Model_Fetch] is not fetchable, because its
+        body is the one that runs - and the manifest build refuses that shape
+        (UNMARKED FETCH OVERRIDE). An override of a fetch surface repeats the
+        attribute and its #[Auth].
 
         A gate denial returns the SAME generic "Record not found" as a
         missing row: a prober cannot distinguish "exists but denied" from
@@ -88,6 +101,19 @@ SECURITY MODEL
         body must never widen it - withTrashed() in one of those bodies is
         flagged by MODEL-FETCH-TRASHED-01 (rsx:check). Client code is
         entitled to assume every ORM-fetched record is non-deleted.
+
+    No Fetch On A System Table:
+        A model stored in an underscore-prefixed table (a framework system
+        table: queues, sessions, keys, logs) may not declare
+        #[Ajax_Endpoint_Model_Fetch] on any member - MODEL-FETCH-SYSTEM-01,
+        a manifest-build FATAL. A gate answers "may this user use the
+        surface", never "is this row anybody's to read", so no gate makes
+        such a surface safe. A screen that needs the data asks an explicit
+        #[Ajax_Endpoint]. The one framework exception is
+        File_Attachment_Model's fetch()/portal_fetch(): the attachment row
+        is the file subsystem's public face, the body runs a per-record
+        gate and serves a curated payload, and the members carry
+        @MODEL-FETCH-SYSTEM-01-EXCEPTION with that rationale.
 
         A screen that must show a deleted record asks a dedicated
         #[Ajax_Endpoint] whose gate is chosen for that specific situation.
@@ -776,7 +802,12 @@ LAZY RELATIONSHIPS
           any other, and one without a gate fails the manifest build. A
           class-level #[Auth] on the model covers the whole model's surfaces
         - Only relationships with BOTH attributes are included in JS stubs
-        - Related model must also have fetch() with #[Ajax_Endpoint_Model_Fetch]
+        - Related model must also have fetch() with #[Ajax_Endpoint_Model_Fetch],
+          resolved through its lineage (a core model's shell qualifies)
+        - The id is validated exactly as fetch() validates one: a scalar
+          numeric id, cast to int, or ERROR_VALIDATION before any model code
+        - A singular relation is resolved through the relation's own query,
+          so the related model's soft-delete and site scopes apply
         - Singular relationships return null if not found or unauthorized
         - Plural relationships return empty array if none found/authorized
 

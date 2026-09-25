@@ -198,25 +198,25 @@ class Bundle_Compile_Command extends Command
 
                 $this->line('  [OK] Compiled successfully');
                 if (app()->environment('production')) {
-                    $this->line('    JS:  ' . $this->format_size($js_size) . " -> app.{$bundle_hash}.js");
-                    $this->line('    CSS: ' . $this->format_size($css_size) . " -> app.{$bundle_hash}.css");
+                    $this->line('    JS:  ' . bytes_to_human($js_size) . " -> app.{$bundle_hash}.js");
+                    $this->line('    CSS: ' . bytes_to_human($css_size) . " -> app.{$bundle_hash}.css");
                 } else {
                     // In dev mode, show the actual split files (vendor and app)
                     if (isset($compiled['vendor_js_bundle_path'])) {
                         $vendor_js_size = filesize("{$bundle_dir}/{$compiled['vendor_js_bundle_path']}");
-                        $this->line('    Vendor JS:  ' . $this->format_size($vendor_js_size) . ' -> ' . basename($compiled['vendor_js_bundle_path']));
+                        $this->line('    Vendor JS:  ' . bytes_to_human($vendor_js_size) . ' -> ' . basename($compiled['vendor_js_bundle_path']));
                     }
                     if (isset($compiled['vendor_css_bundle_path'])) {
                         $vendor_css_size = filesize("{$bundle_dir}/{$compiled['vendor_css_bundle_path']}");
-                        $this->line('    Vendor CSS: ' . $this->format_size($vendor_css_size) . ' -> ' . basename($compiled['vendor_css_bundle_path']));
+                        $this->line('    Vendor CSS: ' . bytes_to_human($vendor_css_size) . ' -> ' . basename($compiled['vendor_css_bundle_path']));
                     }
                     if (isset($compiled['app_js_bundle_path'])) {
                         $app_js_size = filesize("{$bundle_dir}/{$compiled['app_js_bundle_path']}");
-                        $this->line('    App JS:     ' . $this->format_size($app_js_size) . ' -> ' . basename($compiled['app_js_bundle_path']));
+                        $this->line('    App JS:     ' . bytes_to_human($app_js_size) . ' -> ' . basename($compiled['app_js_bundle_path']));
                     }
                     if (isset($compiled['app_css_bundle_path'])) {
                         $app_css_size = filesize("{$bundle_dir}/{$compiled['app_css_bundle_path']}");
-                        $this->line('    App CSS:    ' . $this->format_size($app_css_size) . ' -> ' . basename($compiled['app_css_bundle_path']));
+                        $this->line('    App CSS:    ' . bytes_to_human($app_css_size) . ' -> ' . basename($compiled['app_css_bundle_path']));
                     }
                 }
 
@@ -275,21 +275,6 @@ class Bundle_Compile_Command extends Command
 
             return 1;
         }
-    }
-
-    /**
-     * Format file size for display
-     */
-    protected function format_size(int $bytes): string
-    {
-        if ($bytes < 1024) {
-            return "{$bytes} B";
-        }
-        if ($bytes < 1048576) {
-            return round($bytes / 1024, 1) . ' KB';
-        }
-
-        return round($bytes / 1048576, 2) . ' MB';
     }
 
     /**

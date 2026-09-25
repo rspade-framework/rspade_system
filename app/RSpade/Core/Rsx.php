@@ -141,14 +141,10 @@ class Rsx
             return self::$_cached_mode;
         }
 
-        $mode = env('RSX_MODE', self::MODE_DEVELOPMENT);
-
-        // Normalize aliases
-        if ($mode === 'dev') {
-            $mode = self::MODE_DEVELOPMENT;
-        } elseif ($mode === 'prod') {
-            $mode = self::MODE_PRODUCTION;
-        }
+        // ONE normalizer for the mode, shared with the pre-boot gates and config/app.php:
+        // absent is development, and the `dev`/`prod` aliases resolve there and only there.
+        require_once base_path('bootstrap/rsx_mode.php');
+        $mode = rsx_preboot_mode();
 
         // Validate
         if (!in_array($mode, [self::MODE_DEVELOPMENT, self::MODE_DEBUG, self::MODE_PRODUCTION], true)) {
@@ -550,6 +546,10 @@ class Rsx
      * ]);
      * // Returns: /contacts/C001?tab=history
      *
+     * // Hash state (the fragment Rsx.url_hash_get() reads back)
+     * $url = Rsx::Route('Clients_View_Action', 5, ['tab' => 'portal']);
+     * // Returns: /clients/5#tab=portal
+     *
      * // Placeholder route for scaffolding (doesn't need to exist)
      * $url = Rsx::Route('Future_Feature_Controller::#index');
      * // Returns: #
@@ -557,10 +557,12 @@ class Rsx
      *
      * @param string $action Controller class, SPA action, or "Class::method". Defaults to 'index' method if not specified.
      * @param int|array|\stdClass|null $params Route parameters. Integer sets 'id', array/object provides named params.
+     * @param array|null $hash Fragment state, key => string|int, encoded exactly as Rsx.url_hash_set() encodes it.
+     *                         A null or '' value drops its key. See rsx:man url_hash.
      * @return string The generated URL
      * @throws RuntimeException If class doesn't exist, isn't a controller/action, method doesn't exist, or lacks Route attribute
      */
-    public static function Route($action, $params = null)
+    public static function Route($action, $params = null, ?array $hash = null)
     {
         // Parse action into class_name and action_name
         // Format: "Controller_Name" or "Controller_Name::method_name" or "Spa_Action_Name"
@@ -596,7 +598,7 @@ class Rsx
         // half: generating one URL would have loaded 7.6 MB of build metadata.
         if (Manifest::php_class_metadata($class_name) === null) {
             // Not found as PHP class - might be a SPA action, try that instead
-            return static::_try_spa_action_route($class_name, $params_array);
+            return static::_try_spa_action_route($class_name, $params_array, $hash);
         }
 
         if (!Manifest::php_is_subclass_of($class_name, 'Rsx_Controller_Abstract')) {
@@ -622,7 +624,7 @@ class Rsx
             if (!empty($params_array)) {
                 $ajax_url .= '?' . http_build_query($params_array);
             }
-            return $ajax_url;
+            return $ajax_url . static::__hash_fragment($hash, null);
         }
 
         // Look up routes in manifest using routes_by_target
@@ -630,7 +632,7 @@ class Rsx
 
         if (!isset($manifest['data']['routes_by_target'][$target])) {
             // Not a controller method with Route - check if it's a SPA action class
-            return static::_try_spa_action_route($class_name, $params_array);
+            return static::_try_spa_action_route($class_name, $params_array, $hash);
         }
 
         $routes = $manifest['data']['routes_by_target'][$target];
@@ -646,7 +648,7 @@ class Rsx
         }
 
         // Generate URL from selected pattern
-        return static::_generate_url_from_pattern($selected_route['pattern'], $params_array, $class_name, $action_name);
+        return static::_generate_url_from_pattern($selected_route['pattern'], $params_array, $class_name, $action_name, $hash);
     }
 
     /**
@@ -655,10 +657,11 @@ class Rsx
      *
      * @param string $class_name The class name (might be a JS SPA action)
      * @param array $params_array Parameters for URL generation
+     * @param array|null $hash Fragment state (see Route())
      * @return string The generated URL
      * @throws Rsx_Caller_Exception If not a valid SPA action or route not found
      */
-    protected static function _try_spa_action_route(string $class_name, array $params_array): string
+    protected static function _try_spa_action_route(string $class_name, array $params_array, ?array $hash = null): string
     {
         // Check if this is a JavaScript class that extends Spa_Action
         try {
@@ -692,7 +695,32 @@ class Rsx
         }
 
         // Generate URL from selected pattern
-        return static::_generate_url_from_pattern($selected_route['pattern'], $params_array, $class_name, '(SPA action)');
+        return static::_generate_url_from_pattern($selected_route['pattern'], $params_array, $class_name, '(SPA action)', $hash);
+    }
+
+    /**
+     * One route token: an optional leading slash, ':' and a whole name, and an optional '?'.
+     * The name is greedy, so ':id' is never read as a prefix of ':id_two'.
+     */
+    private const ROUTE_TOKEN_REGEX = '#(/?):([a-zA-Z_][a-zA-Z0-9_]*)(\?)?#';
+
+    /**
+     * The tokens of a route pattern, in order: name => true when optional (':name?').
+     *
+     * @param string $pattern
+     * @return array<string, bool>
+     */
+    protected static function __route_tokens(string $pattern): array
+    {
+        $tokens = [];
+
+        if (preg_match_all(self::ROUTE_TOKEN_REGEX, $pattern, $matches, PREG_SET_ORDER)) {
+            foreach ($matches as $m) {
+                $tokens[$m[2]] = ($m[3] ?? '') === '?';
+            }
+        }
+
+        return $tokens;
     }
 
     /**
@@ -703,27 +731,29 @@ class Rsx
      * 2. Among satisfiable routes, prioritize those with MORE parameters (more specific)
      * 3. If tie, any route works (deterministic by using first match)
      *
+     * The ONE selector for both realms: Rsx_Portal::Route() calls it with the portal's
+     * routes. Framework-private (the leading underscore), public only so the portal can.
+     *
      * @param array $routes Array of route data from manifest
      * @param array $params_array Provided parameters
      * @return array|null Selected route data or null if none match
      */
-    protected static function _select_best_route(array $routes, array $params_array): ?array
+    public static function _select_best_route(array $routes, array $params_array): ?array
     {
         $satisfiable = [];
 
         foreach ($routes as $route) {
             $pattern = $route['pattern'];
 
-            // Extract required parameters from pattern
-            $required_params = [];
-            if (preg_match_all('/:([a-zA-Z_][a-zA-Z0-9_]*)/', $pattern, $matches)) {
-                $required_params = $matches[1];
-            }
+            $tokens = static::__route_tokens($pattern);
 
-            // Check if all required parameters are provided
+            // Satisfiable when every REQUIRED token is provided
             $can_satisfy = true;
-            foreach ($required_params as $required) {
-                if (!array_key_exists($required, $params_array)) {
+            $filled = 0;
+            foreach ($tokens as $name => $optional) {
+                if (array_key_exists($name, $params_array)) {
+                    $filled++;
+                } elseif (!$optional) {
                     $can_satisfy = false;
                     break;
                 }
@@ -732,7 +762,7 @@ class Rsx
             if ($can_satisfy) {
                 $satisfiable[] = [
                     'route' => $route,
-                    'param_count' => count($required_params),
+                    'param_count' => $filled,
                 ];
             }
         }
@@ -753,26 +783,28 @@ class Rsx
     /**
      * Generate URL from route pattern by replacing parameters
      *
+     * The ONE generator for both realms - Rsx_Portal::Route() calls it and applies the
+     * portal base to the result - so token replacement, the missing-parameter error, the
+     * query string, the `at` anchor and the hash state behave identically on a staff and a
+     * portal URL. Framework-private (the leading underscore), public only so the portal can.
+     *
      * @param string $pattern The route pattern (e.g., '/users/:id/view')
      * @param array $params Parameters to fill into the route
      * @param string $class_name Controller class name (for error messages)
      * @param string $action_name Action name (for error messages)
+     * @param array|null $hash Fragment state (see Route())
      * @return string The generated URL
      * @throws RuntimeException If required parameters are missing
      */
-    protected static function _generate_url_from_pattern($pattern, $params, $class_name, $action_name)
+    public static function _generate_url_from_pattern($pattern, $params, $class_name, $action_name, ?array $hash = null)
     {
-        // Extract required parameters from the pattern
-        $required_params = [];
-        if (preg_match_all('/:([a-zA-Z_][a-zA-Z0-9_]*)/', $pattern, $matches)) {
-            $required_params = $matches[1];
-        }
+        $tokens = static::__route_tokens($pattern);
 
         // Check for required parameters
         $missing = [];
-        foreach ($required_params as $required) {
-            if (!array_key_exists($required, $params)) {
-                $missing[] = $required;
+        foreach ($tokens as $name => $optional) {
+            if (!$optional && !array_key_exists($name, $params)) {
+                $missing[] = $name;
             }
         }
 
@@ -783,17 +815,25 @@ class Rsx
             );
         }
 
-        // Build the URL by replacing parameters
-        $url = $pattern;
+        // Build the URL: each whole token is replaced once, by name (':id' never touches
+        // ':id_two'). An optional token with no value is dropped together with its slash,
+        // exactly the URL the router matches for it.
         $used_params = [];
+        $url = preg_replace_callback(
+            self::ROUTE_TOKEN_REGEX,
+            function ($m) use ($params, &$used_params) {
+                $name = $m[2];
+                $used_params[$name] = true;
+                $value = $params[$name] ?? null;
 
-        foreach ($required_params as $param_name) {
-            $value = $params[$param_name];
-            // URL encode the value
-            $encoded_value = urlencode($value);
-            $url = str_replace(':' . $param_name, $encoded_value, $url);
-            $used_params[$param_name] = true;
-        }
+                if ($value === null || $value === '') {
+                    return ($m[3] ?? '') === '?' ? '' : $m[1] . urlencode((string) $value);
+                }
+
+                return $m[1] . urlencode((string) $value);
+            },
+            $pattern
+        );
 
         // Collect any extra parameters for query string
         $query_params = [];
@@ -804,7 +844,8 @@ class Rsx
             }
 
             // The reserved anchor key rides the hash, not the query string, so
-            // Rsx::Route('Action', ['at' => 'install']) deep-links to a section.
+            // Rsx::Route('Action', ['at' => 'install']) deep-links to a section, and
+            // Rsx_Portal::Route() gets the same through this routine.
             // See: php artisan rsx:man anchors
             if ($key === self::HASH_ANCHOR_KEY) {
                 $anchor = $value;
@@ -819,12 +860,105 @@ class Rsx
             $url .= '?' . http_build_query($query_params);
         }
 
-        // Anchor last - a fragment always terminates the URL
-        if ($anchor !== null && $anchor !== '') {
-            $url .= '#' . self::HASH_ANCHOR_KEY . '=' . rawurlencode($anchor);
+        // The fragment last - it always terminates the URL
+        return $url . static::__hash_fragment($hash, $anchor);
+    }
+
+    /**
+     * The URL fragment for Route()'s hash state plus the `at` anchor, byte-identical to what
+     * Rsx._serialize_hash() writes in JS, so Rsx.url_hash_get() reads every value back
+     * unchanged: `#k=v&k2=v2`, each key and value encoded as encodeURIComponent() encodes it,
+     * the hash keys in order and the anchor last. '' when nothing is left.
+     *
+     * A null or '' value drops its key (url_hash_set()'s rule). Everything else that is not a
+     * string or an int THROWS: the fragment reader only ever returns strings, and a value it
+     * could not read back is a caller bug, never something to drop.
+     *
+     * @param array|null $hash key => string|int
+     * @param mixed $anchor The `at` value from the route params (rsx:man anchors), or null
+     * @return string
+     */
+    private static function __hash_fragment(?array $hash, $anchor): string
+    {
+        $state = [];
+
+        foreach ($hash ?? [] as $key => $value) {
+            // PHP turns a numeric-string key into an int, and a JS object iterates integer
+            // keys first - so an int key could never produce the same fragment in both
+            // languages. It is also what a list (['a', 'b']) looks like.
+            if (is_int($key) || $key === '') {
+                throw new Rsx_Caller_Exception(
+                    'Route() hash keys must be non-empty, non-integer strings; got ' . var_export($key, true) . '.'
+                );
+            }
+
+            if ($key === self::HASH_ANCHOR_KEY) {
+                throw new Rsx_Caller_Exception(
+                    "Route() hash may not carry the reserved anchor key '" . self::HASH_ANCHOR_KEY . "'; "
+                    . "pass it in the route params instead (rsx:man anchors)."
+                );
+            }
+
+            if ($value === null || $value === '') {
+                continue;
+            }
+
+            $state[$key] = static::__hash_value($key, $value);
         }
 
-        return $url;
+        if ($anchor !== null && $anchor !== '') {
+            $state[self::HASH_ANCHOR_KEY] = static::__hash_value(self::HASH_ANCHOR_KEY, $anchor);
+        }
+
+        if (empty($state)) {
+            return '';
+        }
+
+        $pairs = [];
+        foreach ($state as $key => $value) {
+            $pairs[] = static::__encode_uri_component($key) . '=' . static::__encode_uri_component($value);
+        }
+
+        return '#' . implode('&', $pairs);
+    }
+
+    /**
+     * One hash value as the string the fragment carries: a string, or an int in decimal.
+     *
+     * @param string $key For the error message
+     * @param mixed $value
+     * @return string
+     */
+    private static function __hash_value(string $key, $value): string
+    {
+        if (is_int($value)) {
+            return (string) $value;
+        }
+
+        if (!is_string($value)) {
+            throw new Rsx_Caller_Exception(
+                "Route() hash value for '{$key}' must be a string or an int; got " . get_debug_type($value) . '.'
+            );
+        }
+
+        return $value;
+    }
+
+    /**
+     * JavaScript's encodeURIComponent(): rawurlencode() plus the five characters JS leaves
+     * alone (! * ' ( )), so a fragment built here is byte-identical to one built in JS.
+     * Invalid UTF-8 throws, as decodeURIComponent() would refuse to read it back.
+     *
+     * @param string $value
+     * @return string
+     */
+    private static function __encode_uri_component(string $value): string
+    {
+        if (!mb_check_encoding($value, 'UTF-8')) {
+            throw new Rsx_Caller_Exception('Route() hash keys and values must be valid UTF-8.');
+        }
+
+        return strtr(rawurlencode($value), ['%21' => '!', '%2A' => '*', '%27' => "'", '%28' => '(', '%29' => ')']);
     }
 
     /**

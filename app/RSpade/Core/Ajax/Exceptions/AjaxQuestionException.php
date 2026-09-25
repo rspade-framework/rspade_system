@@ -9,8 +9,8 @@ namespace App\RSpade\Core\Ajax\Exceptions;
  *
  * This is not a failure. response_form_question() returns a pending question; the
  * browser's form engine answers it through the application's registered question
- * handler, and an IN-PROCESS caller - Ajax::internal(), and therefore a PHP test,
- * rsx:ajax and one leg of a batch - receives it as this exception.
+ * handler, and an IN-PROCESS caller - Ajax::internal(), and therefore a PHP test and
+ * rsx:ajax - receives it as this exception.
  *
  * Answering it means calling the endpoint again with the answer attached:
  * $params['_answers'][$e->get_key()] = <answer>. The endpoint re-runs from scratch,

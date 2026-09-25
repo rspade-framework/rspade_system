@@ -61,6 +61,10 @@ Shipped in the Document Pipeline epic, Batch 5.
   at the project root: WARN on a development box (nothing keeps it in step with the `.env`
   the heal rewrites), INFO on a sealed build, OK when there is none.
 
+- `Core/Health/Security_Health_Checks.php::laravel_route_table` - the "Laravel Route
+  Table" row, every mode: FAIL naming each route the booted Laravel router holds (the
+  framework provider clears the table after boot), OK when it is empty.
+
 - `Core/Health/Submodule_Visibility_Health_Checks.php` - is a framework update VISIBLE in
   git output? WARN when `submodule.system.ignore` is not `dirty` in the tracked
   `.gitmodules`, WARN on a repo-wide `diff.ignoreSubmodules` in `.git/config`, INFO in the

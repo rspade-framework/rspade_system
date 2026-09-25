@@ -93,40 +93,8 @@ class Pdftotext_Text_Extractor extends Rsx_Text_Extractor_Abstract
             // Empty output = a PDF with no text layer (all-image). Valid EXTRACTED result.
             return $process->getOutput();
         } finally {
-            static::__rmdir_recursive($work_dir);
+            rmdir_recursive($work_dir);
         }
-    }
-
-    /**
-     * Recursively remove a directory tree (best-effort cleanup of the temp work dir).
-     *
-     * @param string $dir
-     * @return void
-     */
-    protected static function __rmdir_recursive(string $dir): void
-    {
-        if (!is_dir($dir)) {
-            return;
-        }
-
-        $items = scandir($dir);
-        if ($items === false) {
-            return;
-        }
-
-        foreach ($items as $item) {
-            if ($item === '.' || $item === '..') {
-                continue;
-            }
-            $path = $dir . '/' . $item;
-            if (is_dir($path)) {
-                static::__rmdir_recursive($path);
-            } else {
-                @unlink($path);
-            }
-        }
-
-        @rmdir($dir);
     }
 
     /**

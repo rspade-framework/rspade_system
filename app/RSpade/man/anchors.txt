@@ -110,7 +110,22 @@ AUTHORING A DEEP LINK
             Rsx.Route('Docs_Chapter_Action', {at: 'a b', q: 'x'})
 
     Every other extra key still becomes a query parameter, unchanged. An
-    empty or null anchor value appends nothing.
+    empty or null anchor value appends nothing. The anchor is a string or
+    an integer; anything else throws.
+
+    With Route()'s third argument (hash state, rsx:man routing) the anchor
+    shares the one fragment and comes LAST, after the hash keys. The hash
+    argument may not carry `at` itself - that throws - so the anchor is
+    always spelled in the params:
+
+            Rsx::Route('Docs_Chapter_Action', ['at' => 'setup'], ['tab' => 'api'])
+            // /docs/chapter#tab=api&at=setup
+
+    Rsx_Portal::Route() and Rsx_Portal.Route() honor `at` identically: a
+    portal URL is built by the same routine and then carries the portal base.
+
+            Rsx_Portal::Route('Portal_Docs_Action', ['at' => 'a b', 'q' => 'x'])
+            // /_portal/docs?q=x#at=a%20b
 
 CLEARING A STICKY HEADER
     Do NOT compute a vertical offset in JavaScript. Set scroll-margin-top on
@@ -298,6 +313,7 @@ FILE LOCATIONS
     /system/app/RSpade/Core/Js/browser.js     the two scrolling helpers
     /system/app/RSpade/Core/Js/Rsx.js         HASH_ANCHOR_KEY, hash parsing
     /system/app/RSpade/Core/Rsx.php           HASH_ANCHOR_KEY, PHP Route()
+    /system/app/RSpade/Core/Portal/Rsx_Portal.php  portal Route(), same generator
 
 SEE ALSO
     rsx:man spa

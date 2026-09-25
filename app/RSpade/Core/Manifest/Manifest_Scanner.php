@@ -554,7 +554,16 @@ class Manifest_Scanner
         // Normalize file_path for comparison (without resolving symlinks)
         $normalized_file_path = rsxrealpath($file_path);
 
-        foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC | \ReflectionMethod::IS_STATIC) as $method) {
+        // PUBLIC AND STATIC. getMethods() ORs its filter bits, so IS_PUBLIC | IS_STATIC would
+        // also return every public instance method and every private or protected static -
+        // and each would be recorded here as a public static. The map is read as "what this
+        // class exposes statically" (route rows, Ajax endpoints, model fetch, task and event
+        // declarations), so it holds exactly that; instance methods have their own map below.
+        foreach ($reflection->getMethods(\ReflectionMethod::IS_PUBLIC) as $method) {
+            if (!$method->isStatic()) {
+                continue;
+            }
+
             // Include methods from:
             // 1. This file (the class itself)
             // 2. Traits used by this class (checked via file path)

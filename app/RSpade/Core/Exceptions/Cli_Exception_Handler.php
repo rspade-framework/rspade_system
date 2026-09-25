@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Exceptions;
 
 use Illuminate\Http\Request;
 use Throwable;
+use App\RSpade\Core\Dispatch\Rsx_Front_Controller;
 use App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract;
 
 /**
@@ -46,8 +47,10 @@ class Cli_Exception_Handler extends Rsx_Exception_Handler_Abstract
      */
     public function handle(Throwable $e, Request $request)
     {
-        // Only handle in CLI mode
-        if (!app()->runningInConsole()) {
+        // Only handle in CLI mode - and never a failure inside an in-process dispatch (a
+        // test driving Rsx_Front_Controller::handle()): that one is rendered by the
+        // request channel's own policy, exactly as it would be on the wire.
+        if (!app()->runningInConsole() || Rsx_Front_Controller::is_handling()) {
             return null;
         }
 

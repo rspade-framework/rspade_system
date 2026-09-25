@@ -33,7 +33,7 @@ class PhpFallbackLegacy_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Check PHP file for fallback/legacy code in comments and function calls (from line 1474)
+     * Check PHP file for fallback/legacy code in comments and function calls
      * Enforces fail-loud principle - no fallback implementations allowed
      */
     public function check(string $file_path, string $contents, array $metadata = []): void
@@ -45,11 +45,6 @@ class PhpFallbackLegacy_CodeQualityRule extends CodeQualityRule_Abstract
 
         // Skip CodeQuality directory
         if (str_contains($file_path, '/CodeQuality/')) {
-            return;
-        }
-
-        // Skip RsxCheckCommand.php - it documents what the checks do
-        if (str_contains($file_path, 'RsxCheckCommand.php')) {
             return;
         }
 

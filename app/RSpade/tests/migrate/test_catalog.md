@@ -34,6 +34,18 @@ shaped like `user_profiles` before normalization.
 | NSA-05 | idempotence - a normalized table gets ZERO ALTER statements on the next pass | php | second pass | 0 captured ALTERs | implemented | 2026-08-24 |
 | NSA-06 | the refusal path emits no DDL at all (clauses queued, throw precedes the flush) | php | populated created_by + created_by_id | throw; 0 ALTERs; schema byte-identical | implemented | 2026-08-24 |
 
+## Normalize_Schema_Timestamp_Index_Test (php)
+
+`migrate:normalize_schema` gives every table an index LEADING with `created_at` and one
+leading with `updated_at`, deciding coverage by the leading column and never by the index
+name. Real passes against throwaway probe tables.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| NTI-01 | an index already leading with the column satisfies the pass whatever its name | php | `idx_probe_created (created_at)`, `idx_probe_updated_then_id (updated_at, id)` | no second copy; those two stay the only leading indexes | implemented | 2026-09-25 |
+| NTI-02 | a composite that only CONTAINS the column does not count | php | `(site_id, created_at)` only | `created_at` and `updated_at` added; the composite untouched | implemented | 2026-09-25 |
+| NTI-03 | after a pass, every table leads an index with each timestamp | php | the whole test database | no table lacks either | implemented | 2026-09-25 |
+
 ## Deferred integration coverage (destructive - infra harness follow-up)
 
 Proving the pre/post/mid-loop normalize failures route to the REAL recovery

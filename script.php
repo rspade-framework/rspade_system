@@ -20,6 +20,11 @@
  * progress bar. The script's own arguments are the script's business - the framework
  * reads no command name out of them.
  *
+ * REVISIONS. The run is ONE unit of work, whose transaction row names the script file
+ * as its endpoint. A script that writes many records declares its own boundaries with
+ * Revision::begin_unit_of_work() / Revision::unit_of_work(), or its whole life is filed
+ * as one change.
+ *
  * OPTIONS. Set $RSX_SCRIPT_OPTIONS before the require. One key is defined:
  *
  *     $RSX_SCRIPT_OPTIONS = ['force' => true];   // run during maintenance mode
@@ -66,5 +71,10 @@ $app = require_once __DIR__ . '/bootstrap/app.php';
 // bootstrap(), never handle(): the providers, the manifest, the autoloaders, the morph
 // map and Main::init() all run, and no command is dispatched.
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+// One script run is one unit of work for revision history, named after the script file. A
+// script performing many units (an import) declares each one itself with
+// Revision::begin_unit_of_work() or Revision::unit_of_work() - rsx:man scripting.
+\App\RSpade\Core\Revisions\Revision::_reset_request_state('cli', basename((string) ($_SERVER['argv'][0] ?? 'script')));
 
 return $app;

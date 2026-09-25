@@ -23,7 +23,7 @@ use App\RSpade\Tests\Dispatch\Php\Dispatch_Page_Fixture_Controller;
 /**
  * Dispatcher auth-rejection surface - the two adjacent bugs on the full-page path.
  *
- * B4.4: __call_pre_dispatch used to wrap the non-controller static pre_dispatch
+ * B4.4: the non-controller pre_dispatch (now run inside __call_action) used to wrap the non-controller static pre_dispatch
  * invocation in a blanket try/catch that logged and returned null. Returning null
  * means "hook passed, proceed to the action", so a pre_dispatch that THROWS to deny
  * access was downgraded to a log line and the request proceeded AS IF AUTHORIZED.
@@ -66,20 +66,23 @@ class Dispatcher_Auth_Rejection_Test extends Rsx_Test_Abstract
 
     private static function __invoke_pre_dispatch(string $class_name)
     {
-        $params = ['_handler' => $class_name];
-        $method = new ReflectionMethod(Dispatcher::class, '__call_pre_dispatch');
+        // The non-controller pre_dispatch runs inside __call_action, immediately before
+        // the action.
+        $method = new ReflectionMethod(Dispatcher::class, '__call_action');
         $method->setAccessible(true);
-        $args = [$class_name, 'index', &$params, request()];
 
-        return $method->invokeArgs(null, $args);
+        return $method->invokeArgs(null, [$class_name, 'index', ['_handler' => $class_name], request()]);
     }
 
     private static function __invoke_handle_special_response(Error_Response $response)
     {
+        $realm = new ReflectionMethod(Dispatcher::class, '__realm');
+        $realm->setAccessible(true);
+
         $method = new ReflectionMethod(Dispatcher::class, '__handle_special_response');
         $method->setAccessible(true);
 
-        return $method->invokeArgs(null, [$response]);
+        return $method->invokeArgs(null, [$realm->invoke(null, \App\RSpade\Core\Auth\Auth_Gates::REALM_STAFF), $response]);
     }
 
     private static function __bind_page_request(string $uri = Dispatch_Page_Fixture_Controller::PAGE): void
@@ -102,6 +105,11 @@ class Dispatcher_Auth_Rejection_Test extends Rsx_Test_Abstract
             public static function pre_dispatch(Request $request, array $params = [])
             {
                 throw new \RuntimeException('DENIED_BY_HOOK');
+            }
+
+            public static function index(Request $request, array $params = [])
+            {
+                return 'ACTION_RAN';
             }
         };
 
@@ -129,11 +137,17 @@ class Dispatcher_Auth_Rejection_Test extends Rsx_Test_Abstract
             {
                 return null;
             }
+
+            public static function index(Request $request, array $params = [])
+            {
+                return 'ACTION_RAN';
+            }
         };
 
-        static::__assert_null(
+        static::__assert_equals(
+            'ACTION_RAN',
             static::__invoke_pre_dispatch(get_class($handler)),
-            'A null-returning pre_dispatch must let dispatch proceed'
+            'A null-returning pre_dispatch must let dispatch proceed to the action'
         );
     }
 

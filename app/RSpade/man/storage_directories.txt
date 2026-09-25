@@ -103,8 +103,9 @@ BUILD TREE (<project>/build)
         manifest_files.php   file metadata not read at request time
         build_key            content-derived manifest hash (the cache key)
         bundles/             compiled CSS/JS bundles, vendor/app split
-        laravel/             Laravel's own caches: routes, events, services,
-                             packages, config. Reached through the five cache
+        laravel/             Laravel's own caches: events, services,
+                             packages, config (there is no route cache).
+                             Reached through the four cache
                              getters on App\RSpade\Core\Laravel\Rsx_Application,
                              so every Laravel consumer follows automatically.
         views/               compiled Blade. Development compiles JIT into it;
@@ -171,7 +172,7 @@ TMP TREE (<project>/tmp)
                              thumbnail pipeline. rsx:man document_search.
         framework/           whatever Laravel itself composes from
                              storage_path(), created lazily. Views and the
-                             route/event/package caches are NOT here - those
+                             event/package caches are NOT here - those
                              are build output and are pinned into build/.
 
         derived/             THE PER-SOURCE-FILE DERIVED CACHES. One directory

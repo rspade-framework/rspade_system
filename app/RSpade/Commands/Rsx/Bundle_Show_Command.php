@@ -213,7 +213,7 @@ class Bundle_Show_Command extends Command
                 $this->info('File Count Summary:');
                 $this->line("  JavaScript files: {$js_count}");
                 $this->line("  CSS/SCSS files: {$css_count}");
-                $this->line("  Total size (before compilation): " . $this->format_size($total_size));
+                $this->line("  Total size (before compilation): " . bytes_to_human($total_size));
             }
 
             // Show processors
@@ -263,7 +263,7 @@ class Bundle_Show_Command extends Command
                 }
                 $js_size = filesize($compiled['js_bundle_path']);
                 $js_filename = basename($compiled['js_bundle_path']);
-                $this->line("  JS:  " . $this->format_size($js_size) . " ({$js_filename})");
+                $this->line("  JS:  " . bytes_to_human($js_size) . " ({$js_filename})");
             } else {
                 $this->line("  JS:  No JavaScript content");
             }
@@ -275,7 +275,7 @@ class Bundle_Show_Command extends Command
                 }
                 $css_size = filesize($compiled['css_bundle_path']);
                 $css_filename = basename($compiled['css_bundle_path']);
-                $this->line("  CSS: " . $this->format_size($css_size) . " ({$css_filename})");
+                $this->line("  CSS: " . bytes_to_human($css_size) . " ({$css_filename})");
             } else {
                 $this->line("  CSS: No CSS content");
             }
@@ -350,19 +350,6 @@ class Bundle_Show_Command extends Command
         return '/^' . $pattern . '$/';
     }
     
-    /**
-     * Format file size for display
-     */
-    protected function format_size(int $bytes): string
-    {
-        if ($bytes < 1024) {
-            return "{$bytes} B";
-        } elseif ($bytes < 1048576) {
-            return round($bytes / 1024, 1) . " KB";
-        } else {
-            return round($bytes / 1048576, 2) . " MB";
-        }
-    }
 
     /**
      * Show JavaScript API stubs included in the bundle

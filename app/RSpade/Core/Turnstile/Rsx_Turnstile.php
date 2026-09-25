@@ -102,7 +102,8 @@ class Rsx_Turnstile
      *
      * Set by validate() BEFORE any verdict is reached (a FAILING validation still counts as
      * "the validator ran"), read by the post-dispatch completeness guard, and reset per
-     * Ajax::internal() sub-call so a batch cannot launder one validation across calls.
+     * Ajax endpoint call (Ajax::execute) so a batch cannot launder one validation across
+     * calls.
      */
     private static bool $_checked = false;
 
@@ -305,8 +306,8 @@ class Rsx_Turnstile
     }
 
     /**
-     * Clear the request latch. Called at the start of each Ajax::internal() invocation so a
-     * batch sub-call cannot inherit a sibling's validation.
+     * Clear the request latch. Called at the start of each Ajax endpoint call
+     * (Ajax::execute) so a batched call cannot inherit a sibling's validation.
      */
     public static function _reset_request_state(): void
     {
@@ -314,7 +315,7 @@ class Rsx_Turnstile
     }
 
     /**
-     * Set the request latch directly. The narrow seam Ajax::internal() uses to RESTORE the
+     * Set the request latch directly. The narrow seam Ajax::execute() uses to RESTORE the
      * calling scope's latch after a sub-call reset it - the sub-call gets a fresh latch, but
      * the outer request's own validation is not erased by a nested call it happened to make.
      */
@@ -428,22 +429,21 @@ class Rsx_Turnstile
      * Stop the request as a verification failure, rendering the response DIRECTLY for the
      * channel it arrived on (the shape and the rationale are Rsx_Csrf::__reject's):
      *
-     *   - inside Ajax::internal() (a batch sub-call, or a programmatic call): the coded
-     *     form-error exception, which Ajax_Batch_Controller's per-call catch already maps
-     *     to that one call's slot in the batch response;
-     *   - /_ajax* and /_upload: the AJAX error contract (200 + _success:false + a
-     *     'validation' error_code), identical in shape to an endpoint validation failure,
-     *     thrown as HttpResponseException so no exception backtrace can leak;
+     *   - inside an Ajax endpoint call (Ajax::execute - direct, batched or in-process):
+     *     the coded form-error exception, which every caller of the core maps to that
+     *     call's 'validation' envelope (or rethrows, for Ajax::internal());
+     *   - /_upload: the AJAX error contract (200 + _success:false + a 'validation'
+     *     error_code), identical in shape to an endpoint validation failure, thrown as
+     *     HttpResponseException so no exception backtrace can leak;
      *   - a native full-page POST (staff or portal): flash the message and redirect back to
-     *     the same URL as a GET - the same shape __handle_special_response() gives a
-     *     validation error on a POST.
+     *     the same URL as a GET - the same shape a validation error on a POST gets.
      *
      * @return never
      */
     private static function __reject(Request $request, string $message): never
     {
         if (Ajax::_is_internal_call()) {
-            throw new AjaxFormErrorException($message);
+            throw new AjaxFormErrorException($message, ['_message' => $message]);
         }
 
         $path = '/' . ltrim($request->getPathInfo(), '/');

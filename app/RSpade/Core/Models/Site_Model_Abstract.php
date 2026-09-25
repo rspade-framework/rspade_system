@@ -23,20 +23,20 @@ use App\RSpade\Core\Models\User_Model;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: sites
  *
- * @property int $id
- * @property string $slug
- * @property string $name
- * @property string $timezone
- * @property int $is_enabled
- * @property string $deleted_at
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
- * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $deleted_at
  * @property int $deleted_by_id
  * @property int $deleted_by_type
+ * @property int $id
+ * @property int $is_enabled
+ * @property string $name
+ * @property string $slug
+ * @property string $timezone
+ * @property string $updated_at
+ * @property int $updated_by_id
+ * @property int $updated_by_type
  *
  * @mixin \Eloquent
  */

@@ -66,24 +66,24 @@ use App\RSpade\Core\Portal\Rsx_Portal;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: portal_users
  *
- * @property int $id
- * @property int $site_id
  * @property int $contact_id
- * @property string $email
- * @property string $password
- * @property int $is_verified
- * @property int $status_id
- * @property array $metadata
- * @property string $last_login
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
- * @property int $updated_by_id
- * @property int $updated_by_type
  * @property string $deleted_at
  * @property int $deleted_by_id
  * @property int $deleted_by_type
+ * @property string $email
+ * @property int $id
+ * @property int $is_verified
+ * @property string $last_login
+ * @property array $metadata
+ * @property string $password
+ * @property int $site_id
+ * @property int $status_id
+ * @property string $updated_at
+ * @property int $updated_by_id
+ * @property int $updated_by_type
  *
  * @property-read string $status_id__label
  * @property-read string $status_id__constant

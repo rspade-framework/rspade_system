@@ -67,6 +67,37 @@ class Api_Get_Pure_Fixture
     }
 
     /**
+     * A pure GET handler named after a reserved word. The lexer does not make "list" a
+     * T_STRING, which once hid every list handler from the rule.
+     */
+    public static function list(array $params = [])
+    {
+        return ['records' => [static::__record($params)]];
+    }
+
+    /**
+     * A writing GET handler named after a reserved word. The rule must refuse this one.
+     */
+    public static function print(array $params = [])
+    {
+        $record = static::__record($params);
+        $record->save();
+
+        return $record;
+    }
+
+    /**
+     * A GET handler writing through a relation pivot, spelled in odd case. Refused.
+     */
+    public static function pivot_get(array $params = [])
+    {
+        $record = static::__record($params);
+        $record->Tags()->ATTACH($params['tag_id'] ?? 0);
+
+        return $record;
+    }
+
+    /**
      * Stand-in for whatever a real handler would load.
      */
     private static function __record(array $params)

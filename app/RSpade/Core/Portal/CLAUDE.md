@@ -1,14 +1,16 @@
 # Core/Portal — the framework side of the client portal
 
 The portal is a **second authenticated experience** running parallel to the staff
-app, with its own dispatcher and routing. This directory is the framework half;
+app, with its own route table, session facade and auth realm. It is dispatched by the ONE
+page pipeline, `Dispatch/Dispatcher`, in the portal realm. This directory is the framework half;
 the application half lives in `rsx/portal/` (which has its own CLAUDE.md).
 
-- `Rsx_Portal.php` — the facade. `is_portal_request()` is the seam that decides
-  which experience a request is; `Route()`, `internal_url()`.
+- `Rsx_Portal.php` — the facade. `is_portal_request()` answers which experience a
+  request is - it reads the realm `Dispatch/Rsx_Request_Channel` classified once per
+  request (`set_portal_request()` declares it in CLI/tests); `Route()`, `internal_url()`,
+  `strip_prefix()`.
 - `Portal_Session.php` — a static FACADE over the portal-property subset of the
   session row. **Not a model** — no `::where()`, no instances.
-- `Portal_Dispatcher.php` — portal request dispatch.
 - `Portal_Route_ManifestSupport.php` / `Portal_Spa_ManifestSupport.php` —
   `#[Portal_Route]` and `@portal_spa` indexing. Portal routes live in a
   **separate manifest table** from staff `#[Route]`s.

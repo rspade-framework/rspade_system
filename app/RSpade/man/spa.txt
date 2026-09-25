@@ -296,6 +296,9 @@ JAVASCRIPT ACTIONS
         @spa(controller::method)
             References bootstrap controller
             Example: 'Frontend_Spa_Controller::index'
+            The named method must be a public static method carrying #[SPA]
+            (its gates are what the server evaluates for every URL the
+            action serves); naming any other method fails the build.
 
         @auth(check, ...)
             MANDATORY on every @route action - the build FAILS without it.
@@ -533,13 +536,15 @@ URL GENERATION
     "/contacts" will produce errors.
 
     Signature:
-        Rsx::Route($action, $params = null)
-        Rsx.Route(action, params = null)
+        Rsx::Route($action, $params = null, ?array $hash = null)
+        Rsx.Route(action, params = null, hash = null)
 
         Where:
         - $action: Controller class, SPA action, or "Class::method"
           Defaults to 'index' method if no :: present
         - $params: Integer sets 'id', array/object provides named params
+        - $hash: fragment state read by Rsx.url_hash_get() (a tab, a
+          grid filter) - rsx:man routing, URL FRAGMENT STATE
 
     PHP Syntax:
         // Works for both controller routes and SPA actions
@@ -561,6 +566,21 @@ URL GENERATION
 
         Rsx::Route('Contacts_Index_Action', ['filter' => 'active', 'sort' => 'name'])
         // Result: /contacts?filter=active&sort=name
+
+    Hash State:
+        The third argument lands a link on fragment state; never append
+        '#...' to a Route() result by hand:
+
+        Rsx.Route('Clients_View_Action', 5, {tab: 'portal'})
+        // Result: /clients/view/5#tab=portal
+
+    An Action in Another Bundle:
+        Rsx.Route() resolves from the patterns in the current bundle. For an
+        SPA action whose module is a different bundle it emits the default
+        route /_/<Action>/index (params as the query string); the server
+        answers that GET with a 302 to the action's @route URL, so a
+        cross-module link lands on the right page with one redirect (staff
+        realm; rsx:man dispatch, DEFAULT ROUTE).
 
 NAVIGATION
     Automatic Browser Integration:
@@ -899,6 +919,16 @@ DISABLING SPA NAVIGATION
     a broken page can still be navigated away from. Nothing re-enables it
     automatically - a page that disables the SPA for a recoverable reason should
     call Spa.enable() itself once the reason is gone.
+
+    Two browser notices are NOT exceptions and change nothing: an aborted or
+    skipped View Transition (an unhandled rejection whose page rendered fine),
+    and the ResizeObserver delivery overrun - an ErrorEvent with no error object
+    whose message is exactly "ResizeObserver loop completed with undelivered
+    notifications." or "ResizeObserver loop limit exceeded". Nothing threw; the
+    browser delivers the rest on the next frame. The overrun is written to the
+    RESIZE_OBSERVER console_debug channel, so an observer that loops for real
+    stays visible while developing. Any other message, or the same text on a
+    real Error, is handled as an exception.
 
 SESSION VALIDATION
     After each SPA navigation (except initial load and back/forward), the client

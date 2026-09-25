@@ -9,7 +9,6 @@ namespace App\RSpade\Core\Providers;
 
 use Blade;
 use Illuminate\Support\Facades\Request;
-use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Log;
 use RuntimeException;
@@ -48,14 +47,12 @@ use App\RSpade\Core\Manifest\Manifest;
  *    - Registers RSX autoloader for class loading
  *    - Loads classless PHP utility files from rsx/
  *    - Executes Main_Abstract::init() for application setup
- *    - Registers Route::rsx() macro
+ *    - Empties Laravel's route table once every provider has booted
  *    - Handles IDE integration domain auto-discovery
  *
  * RSX ROUTING:
- * - RSX routes are handled through the 404 exception handler
- * - When Laravel doesn't find a matching route, it throws a NotFoundHttpException
- * - The exception handler (app/Exceptions/Handler.php) catches this and tries RSX dispatch
- * - This gives Laravel routes priority over RSX routes
+ * - App\Http\Kernel hands every request to Rsx_Front_Controller::handle(); Laravel's
+ *   router is never consulted, so no Laravel route is reachable (rsx:man dispatch)
  */
 #[Instantiatable]
 class Rsx_Framework_Provider extends ServiceProvider
@@ -320,12 +317,14 @@ class Rsx_Framework_Provider extends ServiceProvider
         // Register RSpade framework view namespace
         $this->app['view']->addNamespace('rspade', base_path('app/RSpade'));
 
-        // Register RSX route macro on Route facade
-        if (!Route::hasMacro('rsx')) {
-            Route::macro('rsx', function ($target, $params = []) {
-                return \App\RSpade\Core\RsxReflection::route($target, $params);
-            });
-        }
+        // Laravel's route table stays EMPTY. RSX dispatch never consults Laravel's router
+        // (App\Http\Kernel hands every request to Rsx_Front_Controller), so a route a
+        // vendor package registers while booting (Ignition's /_ignition/* housekeeping
+        // endpoints) is unreachable - and it is removed once every provider has booted, so
+        // `route:list` and the rsx:health "Laravel Route Table" row describe the truth.
+        $this->app->booted(function () {
+            $this->app['router']->setRoutes(new \Illuminate\Routing\RouteCollection());
+        });
 
         // Register Request helper macros
         if (!Request::hasMacro('is_post')) {

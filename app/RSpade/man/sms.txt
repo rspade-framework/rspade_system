@@ -133,6 +133,11 @@ QUEUE PROCESSING
     is needed; the attempt is not counted), then claims PENDING rows one at a time
     with a conditional UPDATE and drives each to a terminal status.
 
+    The drain and the retention cleanup serve EVERY site: both run outside the site
+    scope, because the queue is one table for the whole install and a worker's
+    declared site says nothing about which messages are due. Each row keeps the
+    site_id it was queued under.
+
     Retention: Sms_Queue_Service::cleanup, #[Schedule('daily at 3am')], deletes
     whole rows in a terminal status older than rsx.sms.retention_days (30).
 
@@ -168,9 +173,9 @@ CONFIGURATION
         dev_site            catchall_number, number_whitelist (above)
 
 SMS LOG (read model)
-    Sms_Queue_Model::fetch($id) is an #[Ajax_Endpoint_Model_Fetch], login-gated,
-    loading one record for a developer-facing SMS log - full fields, no aliasing,
-    plus status_id__label/__badge and category_id__label/__badge.
+    Sms_Queue_Model is PHP-ONLY: no browser fetch surface. _sms_queue is a system
+    table, and MODEL-FETCH-SYSTEM-01 refuses #[Ajax_Endpoint_Model_Fetch] on any model
+    stored in one. A screen showing the queue asks its own gated #[Ajax_Endpoint].
 
 SEE ALSO
     rsx:man email      the parallel email system, in full

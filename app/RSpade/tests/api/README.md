@@ -30,7 +30,7 @@ redaction, and its scan-time declaration rules all matter for correctness and se
 - `app/RSpade/Core/Api/Api_Request_Log_Model.php` - `_api_request_log` observability row
 - `app/RSpade/Core/Api/Api_Cleanup_Service.php` - daily retention prune (`#[Task]`)
 - `app/RSpade/Core/Session/Session.php` - `_set_api_identity` / `_reset_api_identity` seam + accessor tiers
-- `app/RSpade/Core/Exceptions/Api_Exception_Handler.php` - JSON 500 for uncaught API errors
+- `app/RSpade/Core/Exceptions/Api_Exception_Handler.php` - JSON error for a failure outside the endpoint: a coded one keeps its status (`Api_Dispatcher::coded_error_response()`), anything else is a 500
 
 ## Man page(s)
 
@@ -105,6 +105,11 @@ redaction, and its scan-time declaration rules all matter for correctness and se
 - Serialization: model redaction (`neverExport`), enum `__label`, `__MODEL`, container
   recursion, and `build_response()` status mapping. (php - no DB)
 - Response helpers: status codes + error/bare shapes. (php - no DB)
+- Coded failures inside an endpoint: `abort(404)` is 404 `not_found`, another abort status
+  keeps its status as `http_<status>` with its message, a thrown `AjaxUnauthorizedException`
+  is 403 `forbidden`, and each log row records that status - never a 500. Fixture
+  `php/Api_Abort_Fixture_Api_Controller.php` (`/api/v1/test-probe/*`, present only while
+  the suite runs). (php)
 - Live HTTP dispatch: 401/200/404/405/422/400 shapes, absence of Set-Cookie, bearer
   identity over a cookie, unchanged session count, log side effects. (http - live server)
 

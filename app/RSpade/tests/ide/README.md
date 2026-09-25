@@ -16,8 +16,8 @@ surface (replaced by a narrow `refactor` allowlist).
   (`Core/Debug/Dev_Auth_Token`, tested in the `dispatch` concern). Hence the split -
   `ensure_grant_store()` is gated on development ONLY, `ensure()` additionally on
   `rsx.ide_integration.enabled`.
-- `app/RSpade/Ide/Services/auth.php` - pre-boot grant verification (loopback
-  bypass + `X-Ide-Token` constant-time compare + prod/kill-switch hard gates).
+- `app/RSpade/Ide/Services/auth.php` - pre-boot grant verification (`X-Ide-Token`
+  constant-time compare, always required + the development-only hard gate).
 - `app/RSpade/Ide/Services/handler.php` - service router + `handle_refactor_service`
   exact-match allowlist (`rsx:refactor:rename_php_class`,
   `rename_php_class_function`, `sort_php_class_functions`).
@@ -35,9 +35,11 @@ surface (replaced by a narrow `refactor` allowlist).
 
 - **php** (implemented): `Ide_Bridge_Token` create/guards/retired-artifact
   cleanup/idempotency/`current_token`.
-- **http** (manual / deferred): `auth.php` reject-without-token (401), accept
-  matching `X-Ide-Token`, loopback bypass, prod hard-off; `handle_refactor_service`
-  allowlist reject of a non-allowed command. These run in a pre-boot standalone
+- **http** (`http/ide_bridge_hardening.sh`): a tokenless loopback request is 401,
+  a matching `X-Ide-Token` is accepted, the mutating services refuse GET (405),
+  git/diff refuses option-shaped and climbing paths.
+- **http** (manual / deferred): `handle_refactor_service` allowlist reject of a
+  non-allowed command. These run in a pre-boot standalone
   context (`auth.php`/`handler.php` are included by `public/index.php` ahead of
   the autoloader and define their own `storage_path()`), so they are not cleanly
   reachable from an in-process `rsx:test` and are covered by manual verification.

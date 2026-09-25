@@ -1,15 +1,15 @@
 ---
 name: portal-core
-description: "The framework's client-portal machinery - [Portal_Route] and @portal_spa routing, the portal's own second factors / passkeys (Rsx_Portal_Two_Factor) and federated sign-in (Rsx_Portal_Sso, rsx.sso.portal_enabled), Portal_Session::put_value(), Portal_Main_Abstract::init() and the mandatory Portal_Session::set_site_id() declaration, the Portal_Session facade over the shared session row, the portal auth realm, Portal_Permission_Abstract, portal_fetch()/portal_can_read() and PORTAL-MODEL-FETCH-01, the internal-endpoint channel and Ajax.upload(), the impersonation handoff, and Portal_Notification_Model. Use when adding a portal page or endpoint, when Portal_Session::get_site_id() throws, when a portal Ajax call resolves in the staff realm, when exposing a model to portal JavaScript, or when enforcing read-only during impersonation."
+description: "The framework's client-portal machinery - [Portal_Route] and @portal_spa routing, the portal's own second factors / passkeys (Rsx_Portal_Two_Factor) and federated sign-in (Rsx_Portal_Sso, rsx.sso.portal_enabled), Portal_Session::put_value(), Portal_Main_Abstract::init() and the mandatory Portal_Session::set_site_id() declaration, the Portal_Session facade over the shared session row, the portal auth realm, Portal_Permission_Abstract, portal_fetch()/portal_can_read() and PORTAL-MODEL-FETCH-01, the internal-endpoint channel and Ajax.upload(), the impersonation handoff, and Portal_Notification_Model. Use when adding a portal page or endpoint, when Portal_Session::get_site_id() throws, when a portal Ajax call resolves in the staff realm, when exposing a model to portal JavaScript, or when marking a read endpoint #[Portal_Impersonation_Readable] for read-only impersonation, or hitting \"This is a read-only session; changes are disabled.\""
 ---
 
 # The portal framework
 
 Template-side counterpart: app skill `portal-app` (ships in `rsx/resource/skills/`).
 
-A second authenticated experience for external users (clients, vendors), running **parallel** to the staff app with its own dispatcher, routing table and permission facade. The always-on fragment carries the mandates; this skill is the framework machinery you build against.
+A second authenticated experience for external users (clients, vendors), running **parallel** to the staff app with its own realm of the one dispatcher, routing table and permission facade. The always-on fragment carries the mandates; this skill is the framework machinery you build against.
 
-**Framework** (`App\RSpade\Core\Portal\`, `App\RSpade\Core\Models\`): `Portal_Session`, `Portal_Dispatcher`, `Rsx_Portal` (PHP+JS), `Portal_Main_Abstract`, `Portal_Permission_Abstract`, `Portal_Authorizable`, `Portal_User_Model`, `Portal_Notification_Model`, `#[Portal_Route]` / `@portal_spa` manifest support.
+**Framework** (`App\RSpade\Core\Portal\`, `App\RSpade\Core\Models\`): `Portal_Session`, `Rsx_Portal` (PHP+JS), `Portal_Main_Abstract`, `Portal_Permission_Abstract`, `Portal_Authorizable`, `Portal_User_Model`, `Portal_Notification_Model`, `#[Portal_Route]` / `@portal_spa` manifest support.
 **Application** (`/rsx/portal/` + `rsx/portal_main.php`, `rsx/portal_permission.php`): the middleware, the SPA bootstrap, the layouts, auth controllers, screens, and every app-specific model - all of it yours, and described by the app skill `portal-app`.
 
 ---
@@ -61,10 +61,12 @@ One `rsx/portal_main.php` extending `Portal_Main_Abstract`:
 | hook | when |
 |---|---|
 | `init()` | once per process, at the top of the first portal request - **the FIRST application code in the portal stack** |
-| `pre_dispatch($req, $params)` | before every route, **AFTER the `#[Auth]` gates have already run**; return null to continue, a Response to halt |
-| `unhandled_route($req, $params)` | no portal route matched; return null for the default 404 |
+| `pre_dispatch($req, $params)` | before every matched route, **AFTER the `#[Auth]` gates have already run**, and for an unmatched URL; return null to continue, a Response to halt |
+| `unhandled_route($req, $params)` | no portal route matched (after `pre_dispatch`); return null for the 404 page |
 
-Order: `Portal_Main::init` -> dev auth -> CSRF -> route match -> **`#[Auth]` gates** -> `Portal_Main::pre_dispatch` -> controller `pre_dispatch` -> handler.
+Order: `Portal_Main::init` -> CSRF -> dev auth -> route match -> **`#[Auth]` gates** -> `Portal_Main::pre_dispatch` -> controller `pre_dispatch` -> handler.
+
+The portal is the one `Dispatcher` in the PORTAL realm (`rsx:man dispatch`, THE REALM DESCRIPTOR), so everything else is the staff behaviour: `$params` carries `_method` / `_route` / `_handler` for a matched route and the query string for an unmatched one; a returned string is an HTML body; `response_unauthorized()` and friends get the full-page split; and an `abort()` or a thrown coded exception (`AjaxUnauthorizedException` from `require_permission()`, `AjaxNotFoundException`, ...) is answered with the portal's own login redirect / 403 / 404 / 400 page (`rsx:man dispatch`, CODED FAILURES).
 
 **`pre_dispatch` performs NO authorization.** It is for tenant setup, redirects, and the login-redirect capture.
 
@@ -143,7 +145,7 @@ Flash_Alert::success('Welcome to the Client Portal!');   // this session; stampe
 
 ### Gates
 
-Declarative, exactly like staff: every portal surface carries `#[Auth(...)]` / `@auth(...)` naming **portal-realm** checks, evaluated by `Portal_Dispatcher` before any application code, and the manifest build FAILS on a surface with none. Public controllers (login, register, password reset, logout) carry `#[Auth('public')]`.
+Declarative, exactly like staff: every portal surface carries `#[Auth(...)]` / `@auth(...)` naming **portal-realm** checks, evaluated by the `Dispatcher` (portal realm) before any application code, and the manifest build FAILS on a surface with none. Public controllers (login, register, password reset, logout) carry `#[Auth('public')]`.
 
 **The gate vocabulary is just the two inherited built-ins** - `public` and `is_logged_in` (resolving against `Portal_Session`). **Every per-client rule is parameterized and therefore record-layer, not a gate.** There is **no `route_is_exempt()` and no `@portal-auth-exempt`** - both are dead syntax.
 
@@ -201,13 +203,15 @@ Core models' implementations use `Portal_Session`; app models' use `Portal_Permi
 
 ## Part E - The internal-endpoint channel
 
-The three framework transports carry BOTH a `#[Route]` and a `#[Portal_Route]`, served by the same handlers:
+The three framework transports are served in BOTH realms by the same handlers:
 
 ```
-/_ajax/:controller/:action    Ajax_Endpoint_Controller::dispatch
-/_ajax/_batch                 Ajax_Batch_Controller::batch
-/_upload                      File_Attachment_Controller::upload
+/_ajax/<Controller>/<action>  AJAX channel -> Ajax::handle_browser_request
+/_ajax/_batch                 AJAX channel -> Ajax::handle_batch_request
+/_upload                      File_Attachment_Controller::upload (#[Route] + #[Portal_Route])
 ```
+
+The AJAX channel (a POST under `/_ajax/`) has no route row: the `Dispatcher` hands it to the one Ajax core in the request's realm.
 
 A portal page calls them under the portal's own base - `/_portal/_ajax/...` in prefix mode, `/_ajax/...` on a portal domain. The client derives it:
 
@@ -246,25 +250,22 @@ Portal_Session::is_impersonating(): bool
 Portal_Session::get_impersonator_user_id(): ?int
 ```
 
-### READ-ONLY IS THE APP'S JOB
+### READ-ONLY IS ENFORCED BY THE FRAMEWORK - DENY BY DEFAULT
 
-**The framework only exposes `is_impersonating()`.** Two duties:
+Every Ajax call is a POST, reads included, so the verb cannot tell a write from a read. **While `Portal_Session::is_impersonating()`, a portal-realm Ajax endpoint runs only when it declares `#[Portal_Impersonation_Readable]`**; every other one is refused by `Ajax::execute` (`ERROR_UNAUTHORIZED`, "This is a read-only session; changes are disabled."), after the gates and before any endpoint code. A forgotten mark fails SAFE - the read is refused, never a write left open.
 
-**1. Block writes, per endpoint.** **A blanket `pre_dispatch` POST block does NOT work** - all Ajax endpoints are POST, reads included (datagrids, profile, model fetch), so a blanket block breaks the portal's ability to even load a page.
+**1. Mark every portal READ endpoint.**
 
 ```php
 #[Ajax_Endpoint]
-#[Auth('is_logged_in')]
-public static function reply(Request $request, array $params = [])
-{
-    if (Portal_Permission::is_read_only()) {
-        return response_unauthorized('This is a read-only session; changes are disabled.');
-    }
-    // ... normal write
-}
+#[Portal_Impersonation_Readable]
+public static function list(Request $request, array $params = []) { ... }
+
+#[Ajax_Endpoint]                  // a write: no mark - refused during View as Client
+public static function reply(Request $request, array $params = []) { ... }
 ```
 
-The shipped app adds `Portal_Permission::is_read_only()` (returning `Portal_Session::is_impersonating()`) and guards every portal write it ships - app skill `portal-app`. **A real app must guard ALL of its writes - an unguarded endpoint stays writable.**
+The framework marks its own portal-reachable reads (`Orm_Controller::fetch`, `Spa_Session_Controller::get_state`, the Realtime tokens, `File_Preview_Controller`, …). The seam covers Ajax endpoints only: a `#[Portal_Route]` page handling a POST guards itself on `Portal_Session::is_impersonating()`. The shipped app's marks: app skill `portal-app`.
 
 **2. Show a read-only experience.** A persistent banner and disabled submit controls when `Rsx_Portal.is_impersonating()`, with an "Exit read-only view" link to the stop route. **The server check is the boundary; the JS is affordance only.**
 
@@ -331,6 +332,6 @@ Portal_Session::cli_set_portal_user_id($portal_user->id);   // 0 = signed out
 - **An upload from a portal page 419s or hits the staff path.** It used `fetch('/_upload')`. Use `Ajax.upload(form_data)`.
 - **A model returns "not found" to portal JS.** Either it has no `portal_fetch()` (add `Portal_Authorizable` + `portal_can_read()`), or `portal_can_read()` returned false - which is what it should do, fail-closed, for a record outside the user's memberships.
 - **Staff logged out when a portal session ended (or vice versa).** Something deleted or deactivated the row instead of clearing the experience's properties. Use the facade; never write session rows by hand.
-- **Writes still succeed while impersonating.** Read-only is the app's job - guard each mutating endpoint on `Portal_Permission::is_read_only()`.
+- **A screen fails to load during "View as Client"** with "This is a read-only session; changes are disabled." - an endpoint it calls is a read that lacks `#[Portal_Impersonation_Readable]`.
 
 Details: `php artisan rsx:man portal`. Related: `rspade:auth-gates`, `rspade:session-auth`, `rspade:model-fetch`, and the app skill `portal-app` (the shipped screens, layouts, membership model and read-only enforcement).

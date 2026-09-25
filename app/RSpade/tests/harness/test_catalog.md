@@ -32,3 +32,4 @@ Inner class: `Nested_Run_Fixture_Test_Abstract` - declared abstract so the runne
 | harness-p-01 | dedicated $requires_db_reset reset-between-classes assertion | php | currently exercised indirectly; a self-contained pair would be clearer | planned |
 | harness-p-02 | __skip records skipped (not failed) status | php | needs runner-result introspection | planned |
 | harness-p-03 | application vs framework suite partition (--framework) | php/cli | runner-level; assert discovery split | planned |
+| harness-c-01 | Two overlapping rsx:debug runs serialize on the rsx_debug system lock: both render with a 200, and one reports on stderr that it waited | cli | `rsx:debug /` and `rsx:debug /login` started together | Both 200; one "Waiting for another rsx:debug to finish" line | implemented |

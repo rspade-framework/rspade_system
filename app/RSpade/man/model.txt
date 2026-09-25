@@ -58,8 +58,9 @@ text or user input rendered unescaped, silently.
 A declared column is read as a VALUE OBJECT: filtered by the type's sanitizer
 on every write, printed on a page by plain interpolation (the type's own
 component renders it), edited by whatever widget the type names
-(<{Project_Model.editor_for('description')} $name="description" />), reduced
-by to_text() for a CSV cell or an index, and asked is_empty() - never === ''.
+(<{Project_Model.editor_component_for('description')} $name="description" />),
+reduced by to_plain_text() for a CSV cell or an index, and asked is_empty() -
+never === ''.
 Used as a string anywhere it THROWS, in PHP and in JavaScript. An undeclared
 TEXT column is an ordinary string; declaration is opt-in.
 
@@ -71,8 +72,9 @@ and validates with is_empty() on the read-back. The shipped Rich_Text type
 EXISTING plain-text column is two acts: a raw-SQL migration that re-encodes the
 rows into the type's storage form, then the declaration.
 
-Designing a new type: one required method, filter_set() (the sanitizer), plus
-whatever dedicated readers the encoding needs, and a JavaScript class of the
+Designing a new type: two required methods, sanitize_encoded() (the sanitizer)
+and encode_plain_text() (plain text -> the encoding), plus whatever dedicated
+readers the encoding needs, and a JavaScript class of the
 same name naming the PRINTER and EDITOR components. The contract, two worked
 types and the security design are rsx:man text_types; the how-to is skill
 rspade:text-types.

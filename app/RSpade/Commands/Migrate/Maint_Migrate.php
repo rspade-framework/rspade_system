@@ -69,7 +69,6 @@ class Maint_Migrate extends Command
      */
     public const NO_SNAPSHOT_FLAG = '--_no-snapshot';
 
-    protected $flag_file = '/var/www/html/.migrating';
     protected $mysql_data_dir = '/var/lib/mysql';
     protected $backup_dir = '/var/lib/mysql_backup';
 
@@ -877,7 +876,7 @@ class Maint_Migrate extends Command
     protected function create_snapshot(): bool
     {
         // Check if already in migration mode (shouldn't happen with new unified command)
-        if (file_exists($this->flag_file)) {
+        if (file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
             // Clean up stale migration mode
             $this->warn('[WARNING]  Found stale migration mode flag. Cleaning up...');
             $this->cleanup_migration_mode();
@@ -928,7 +927,7 @@ class Maint_Migrate extends Command
             $this->wait_for_mysql_ready();
 
             // Create migration flag file
-            file_put_contents_safe($this->flag_file, json_encode([
+            file_put_contents_safe(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file(), json_encode([
                 'started_at' => now()->toIso8601String(),
                 'started_by' => get_current_user(),
                 'backup_dir' => $this->backup_dir,
@@ -1018,8 +1017,8 @@ class Maint_Migrate extends Command
         }
 
         // Remove migration flag
-        if (file_exists($this->flag_file)) {
-            unlink($this->flag_file);
+        if (file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
+            unlink(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file());
         }
 
         $this->info('[OK] Snapshot committed - backup removed.');
@@ -1034,8 +1033,8 @@ class Maint_Migrate extends Command
             $this->run_privileged_command(['rm', '-rf', $this->backup_dir]);
         }
 
-        if (file_exists($this->flag_file)) {
-            unlink($this->flag_file);
+        if (file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
+            unlink(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file());
         }
     }
 

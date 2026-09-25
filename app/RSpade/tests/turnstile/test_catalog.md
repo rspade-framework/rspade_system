@@ -41,7 +41,7 @@ Type: php / cli / asset / http / playwright. Last updated: 2026-08-12.
 | turnstile-27 | an internal call carrying the field hits the guard | php | outer latch SET, `Ajax::internal()` on a non-validating probe with the field | RuntimeException (the sub-call's own fresh latch; no laundering) | implemented |
 | turnstile-28 | an internal call restores the caller's latch | php | outer latch SET, `Ajax::internal()` without the field | no throw AND `_was_checked()` still true | implemented |
 | turnstile-29 | an internal call does not grant a latch to its caller | php | outer latch CLEAR, `Ajax::internal()` | `_was_checked()` still false | implemented |
-| turnstile-30 | each of the five seams fires the event | php | dispatch through Dispatcher / Portal_Dispatcher / Api_Dispatcher / both Ajax entry points | one firing per handler invocation | deferred (each seam needs a full dispatch with routing, session and realm set up; the http tier proves the Dispatcher seam end to end and the internal() seam is covered by turnstile-27) |
+| turnstile-30 | each of the three seams fires the event | php | dispatch through Dispatcher (both realms) / Api_Dispatcher / `Ajax::execute()` | one firing per handler invocation | deferred (each seam needs a full dispatch with routing, session and realm set up; the http tier proves the Dispatcher seam end to end and the internal() seam is covered by turnstile-27) |
 
 ## turnstile_live_verify.sh (http) - the enabled path over a real dispatch
 

@@ -111,7 +111,7 @@ Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (10), `window
 `attempt()` verifies a live identity, the password, and site membership - and **nothing else**. `login_users.status_id` / `is_activated` / `is_verified` mean whatever your app decides. Enforce your statuses in **two** places:
 
 1. Your login function (above) - so a bad-state login never starts.
-2. `Main::pre_dispatch()` - return non-null to halt, which ejects a session whose account went bad AFTER sign-in. **`init()` is a bootstrap hook and cannot eject anybody.**
+2. `Main::pre_dispatch()` - return non-null to halt, which ejects a session whose account went bad AFTER sign-in. It runs for external API calls too (a non-null return there is a 403 `account_refused`; branch on `Session::is_api_request()` before `Session::logout()`, which a headless API identity cannot call). **`init()` is a bootstrap hook and cannot eject anybody.**
 
 **`users.is_enabled` is NOT yours - delete every check you wrote on it.** It is the framework's per-site membership switch, enforced twice:
 

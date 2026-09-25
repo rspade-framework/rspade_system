@@ -370,8 +370,10 @@ async function start() {
     watch_build_key();
 
     // Start HTTP server
-    server.listen(FPC_PORT, () => {
-        console.log(`[fpc] FPC proxy listening on port ${FPC_PORT}`);
+    // Loopback only: nginx on this box is the one client. Bound to every interface, the
+    // proxy would answer anyone who can reach the port directly, around nginx.
+    server.listen(FPC_PORT, '127.0.0.1', () => {
+        console.log(`[fpc] FPC proxy listening on 127.0.0.1:${FPC_PORT}`);
         console.log(`[fpc] Backend: ${BACKEND_HOST}:${BACKEND_PORT}`);
         console.log(`[fpc] Build key: ${build_key}`);
     });

@@ -12,7 +12,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
  * - Are never exported to JavaScript ORM
  * - Include system data like logs, audit trails, IP addresses, etc.
  * 
- * Examples: ip_addresses, activity_logs, system_settings
+ * Examples: _api_keys, _api_request_log, _zip_download_requests
  */
 abstract class Rsx_System_Model_Abstract extends Rsx_Model_Abstract
 {

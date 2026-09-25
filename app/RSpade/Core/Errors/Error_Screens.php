@@ -13,11 +13,11 @@ use Symfony\Component\HttpFoundation\Response;
 use Throwable;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Csp\Rsx_Csp;
+use App\RSpade\Core\Debug\Rsx_Diagnostics;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Errors\Error_Context;
 use App\RSpade\Core\Errors\Error_Pages;
 use App\RSpade\Core\Login\Login_Redirect;
-use App\RSpade\Core\Portal\Portal_Dispatcher;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
@@ -48,12 +48,13 @@ use App\RSpade\Core\Session\Session;
  * genuine 403: re-authenticating changes nothing. The split is realm-aware, so a
  * portal request consults the PORTAL session and lands on the PORTAL login route.
  *
- * PRODUCTION REDACTION. A context carries exception detail (class, message, file,
- * line, trace) only when Rsx::is_production() is false - the same predicate
- * Ajax_Exception_Handler uses for the JSON channel, so both channels redact
- * together. The detail must never leave the server in production: an error page
- * is fully inspectable with curl. An application page is handed the same context,
- * so it cannot disclose more than the framework page would.
+ * REDACTION BY CALLER. A context carries exception detail (class, message, file,
+ * line, trace) only when Rsx_Diagnostics::caller_sees_detail() admits the caller -
+ * a developer, outside production - the same predicate every JSON channel asks, so
+ * all channels redact together. Everyone else gets error_id, the reference under
+ * which the detail was logged: an error page is fully inspectable with curl, and a
+ * development-mode site may be public. An application page is handed the same
+ * context, so it cannot disclose more than the framework page would.
  *
  * DEPENDENCY-LIGHT BY DESIGN. The framework page is a standalone Blade with inline
  * styles - no bundle, no manifest view lookup, no SPA runtime, no session chrome -
@@ -100,7 +101,7 @@ class Error_Screens
      *
      * The realm decides which session is consulted and which login route the
      * unidentified caller lands on. A caller that KNOWS its realm says so
-     * (Portal_Dispatcher does); everyone else omits it and the active realm is
+     * (the page dispatcher does); everyone else omits it and the active realm is
      * detected from the request context.
      *
      * @param Request $request The request being denied
@@ -150,13 +151,19 @@ class Error_Screens
      *
      * @param Request $request The failed request
      * @param Throwable|null $e The exception, when one is available
-     * @return Response A 500 page (detail included only outside production)
+     * @return Response A 500 page (detail for a developer caller, an error id otherwise)
      */
     public static function fatal(Request $request, ?Throwable $e = null): Response
     {
+        $detail = static::__exception_detail($e);
+
+        $error_id = ($e !== null && $detail === null)
+            ? Rsx_Diagnostics::report_redacted($e, 'web')
+            : null;
+
         return static::render(
             $request,
-            static::__context(500, $request, null, '', static::__exception_detail($e))
+            static::__context(500, $request, null, '', $detail, false, $error_id)
         );
     }
 
@@ -242,9 +249,7 @@ class Error_Screens
             // application page that throws is logged and replaced by the
             // framework's own page, which depends on nothing.
             try {
-                $response = $error->realm === Auth_Gates::REALM_PORTAL
-                    ? Portal_Dispatcher::render_error_route($route, $request, $error)
-                    : Dispatcher::render_error_route($route, $request, $error);
+                $response = Dispatcher::render_error_route($route, $request, $error);
             } catch (Throwable $e) {
                 Log::error(sprintf(
                     'Error page %s failed while rendering a %d; the framework page was rendered instead: %s',
@@ -263,6 +268,7 @@ class Error_Screens
                 'heading' => $error->title,
                 'message' => $error->message,
                 'detail' => $error->detail,
+                'error_id' => $error->error_id,
                 'home_url' => $error->home_url,
             ], $error->status);
         }
@@ -290,6 +296,7 @@ class Error_Screens
      * @param string $message Overrides the status default when non-empty
      * @param array|null $detail Exception detail (500 only, non-production only)
      * @param bool $preview True for a development /error/<code> browse
+     * @param string|null $error_id The log reference of a redacted exception
      * @return Error_Context
      */
     protected static function __context(
@@ -298,7 +305,8 @@ class Error_Screens
         ?string $realm = null,
         string $message = '',
         ?array $detail = null,
-        bool $preview = false
+        bool $preview = false,
+        ?string $error_id = null
     ): Error_Context {
         $realm = $realm ?? (Rsx_Portal::is_portal_request() ? Auth_Gates::REALM_PORTAL : Auth_Gates::REALM_STAFF);
 
@@ -313,7 +321,8 @@ class Error_Screens
             $realm,
             static::__home_url($realm),
             $preview,
-            $detail
+            $detail,
+            $error_id
         );
     }
 
@@ -379,15 +388,16 @@ class Error_Screens
     /**
      * Exception detail for the page, or null when it must not be rendered.
      *
-     * Production (strict or debug-mode sealed builds) renders NOTHING about the
-     * exception - not the message, not the file, not one trace frame.
+     * Only a caller Rsx_Diagnostics::caller_sees_detail() admits is shown anything
+     * about the exception; everybody else (and everybody in production) sees not the
+     * message, not the file, not one trace frame.
      *
      * @param Throwable|null $e
      * @return array|null
      */
     protected static function __exception_detail(?Throwable $e): ?array
     {
-        if ($e === null || Rsx::is_production()) {
+        if ($e === null || !Rsx_Diagnostics::caller_sees_detail()) {
             return null;
         }
 

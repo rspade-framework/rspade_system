@@ -81,7 +81,7 @@ public static function submit(Request $request, array $params = [])
 
 **Never conditional. Never wrapped in `if (config(...))`** - the field is always submitted (sentinel or token), which is exactly what lets the call be unconditional; a config test at the call site re-introduces the branch the sentinel was designed to remove.
 
-A failure **STOPS the request** - it does not accumulate into your field errors - and is shaped for the channel automatically: `AjaxFormErrorException` inside `Ajax::internal()`, the json validation contract on `/_ajax`, flash+redirect on a native POST. **The message rides `_message`, never a `__turnstile` field key** (there is no field to attach it to, and the user cannot "correct" a challenge like a typo).
+A failure **STOPS the request** - it does not accumulate into your field errors - and is shaped for the channel automatically: inside ANY Ajax endpoint call (direct, batched or `Ajax::internal()`) it is an `AjaxFormErrorException`, answered as the `validation` envelope; `/_upload` answers its own JSON contract; a native POST flashes and redirects. **The message rides `_message`, never a `__turnstile` field key** (there is no field to attach it to, and the user cannot "correct" a challenge like a typo).
 
 ---
 

@@ -67,8 +67,8 @@ curl / `rsx:debug` testing channel). A loopback-VALUED APP_URL is NOT exempt.
   - `patch_environment()` / `enforce_https_from_env()` - impure boot seams
     (read/write env); proven by manual E2E testing, not unit-tested.
 
-Call sites: guard at `Dispatcher::dispatch()` (after `__validate_route_attributes()`,
-before the Portal_Dispatcher delegation); resolver substitution at
+Call sites: guard in the preamble of `Rsx_Front_Controller::handle()` (after
+`Manifest::init()`, before any channel pipeline); resolver substitution at
 `bootstrap/app.php` (afterLoadingEnvironment); resolver https enforcement at
 `Rsx_Framework_Provider::boot()`.
 

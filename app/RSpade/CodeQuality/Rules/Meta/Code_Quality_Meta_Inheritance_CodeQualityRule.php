@@ -16,6 +16,11 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
  *
  * Should be:
  *   Manifest::php_is_subclass_of($class_name, 'Component')
+ *
+ * The same blind spot without a regex: comparing the manifest's IMMEDIATE parent against a
+ * literal ($metadata['extends'] === 'Component') matches direct children only. That is
+ * flagged too, unless a *_is_subclass_of() call follows within a few lines (a fast path in
+ * front of the real lineage check).
  */
 class Code_Quality_Meta_Inheritance_CodeQualityRule extends CodeQualityRule_Abstract
 {
@@ -47,6 +52,32 @@ class Code_Quality_Meta_Inheritance_CodeQualityRule extends CodeQualityRule_Abst
 
     public function is_called_during_manifest_scan(): bool
     {
+        return false;
+    }
+
+    /**
+     * `['extends'] ===|!==|==|!= '<Name>'`, in either operand order.
+     */
+    private const EXTENDS_COMPARISON_PATTERN =
+        '/\[\s*[\'"]extends[\'"]\s*\]\s*[!=]==?\s*[\'"][A-Za-z_]|[\'"][A-Za-z_][A-Za-z0-9_]*[\'"]\s*[!=]==?\s*\$[A-Za-z_][A-Za-z0-9_]*\[\s*[\'"]extends[\'"]\s*\]/';
+
+    /** How far below a direct-parent comparison a lineage call still counts as its partner. */
+    private const LINEAGE_CALL_WINDOW = 6;
+
+    /**
+     * Is a direct-parent comparison followed, within a few lines, by a *_is_subclass_of()
+     * call - i.e. is it a fast path in front of the real lineage check?
+     */
+    private function lineage_call_follows(array $lines, int $line_index): bool
+    {
+        $last = min(count($lines) - 1, $line_index + self::LINEAGE_CALL_WINDOW);
+
+        for ($i = $line_index; $i <= $last; $i++) {
+            if (preg_match('/_is_subclass_of\s*\(/', $lines[$i])) {
+                return true;
+            }
+        }
+
         return false;
     }
 
@@ -96,6 +127,29 @@ class Code_Quality_Meta_Inheritance_CodeQualityRule extends CodeQualityRule_Abst
                         'high'
                     );
                 }
+            }
+
+            // A comparison of the IMMEDIATE parent against a literal class name:
+            //   $metadata['extends'] === 'Some_Base'     'Some_Base' !== $metadata['extends']
+            // It answers "is this a DIRECT child", so one intermediate base takes every
+            // class beneath it out of the rule. The one sanctioned shape is a fast path that
+            // a *_is_subclass_of() call follows within the next few lines.
+            if (preg_match(self::EXTENDS_COMPARISON_PATTERN, $line)
+                && !$this->lineage_call_follows($lines, $line_num)) {
+                $this->add_violation(
+                    $file_path,
+                    $line_number,
+                    "Code quality rule compares \$metadata['extends'] against a class name. " .
+                    'That matches DIRECT children only: a class reaching the base through an ' .
+                    'intermediate abstract is silently out of the rule.',
+                    trim($line),
+                    "If checking PHP classes: Use Manifest::php_is_subclass_of(\$metadata['class'], 'BaseClass')\n" .
+                    "If checking JavaScript classes: Use Manifest::js_is_subclass_of(\$metadata['class'], 'BaseClass')\n" .
+                    "When a MEMBER must be resolved through the lineage too (an inherited method or\n" .
+                    "property), use lineage_declaring_method() / lineage_declaring_property() from\n" .
+                    'CodeQualityRule_Abstract.',
+                    'high'
+                );
             }
 
             // Also check for str_contains/strpos patterns checking for 'extends'

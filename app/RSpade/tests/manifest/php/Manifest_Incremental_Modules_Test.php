@@ -130,23 +130,9 @@ class Manifest_Incremental_Modules_Test extends Rsx_Test_Abstract
     {
         foreach ([base_path(static::$tree), dirname(static::$incremental_build_root)] as $directory) {
             if ($directory !== '' && is_dir($directory)) {
-                static::__rmdir_recursive($directory);
+                rmdir_recursive($directory);
             }
         }
-    }
-
-    private static function __rmdir_recursive(string $directory): void
-    {
-        $iterator = new \RecursiveIteratorIterator(
-            new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS),
-            \RecursiveIteratorIterator::CHILD_FIRST
-        );
-
-        foreach ($iterator as $entry) {
-            $entry->isDir() ? @rmdir($entry->getPathname()) : @unlink($entry->getPathname());
-        }
-
-        @rmdir($directory);
     }
 
     /**

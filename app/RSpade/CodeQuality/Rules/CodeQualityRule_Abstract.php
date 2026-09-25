@@ -6,6 +6,8 @@ use App\RSpade\CodeQuality\CodeQuality_Violation;
 use App\RSpade\CodeQuality\Support\Source_Cache;
 use App\RSpade\CodeQuality\Support\ViolationCollector;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Naming\Rsx_Paths;
+use App\RSpade\Core\PHP\Php_Parser;
 
 #[Instantiatable]
 abstract class CodeQualityRule_Abstract
@@ -301,7 +303,9 @@ abstract class CodeQualityRule_Abstract
     }
 
     /**
-     * Does this class, or any ANCESTOR of it, DECLARE a property of this name?
+     * Does any ANCESTOR of this class DECLARE a property of this name? (The class's own
+     * declaration is in the file the rule was handed; lineage_declaring_property() is the
+     * walk that counts the starting class too.)
      *
      * A rule that reads a declaration out of the file in front of it is asking the right
      * question only while every class is one file. A model is not: a core model carries
@@ -312,7 +316,8 @@ abstract class CodeQualityRule_Abstract
      * Manifest records only, no file reads: `php_class_metadata()` gives each link's
      * `extends` and the file that declares it, and the file record carries the properties
      * that class DECLARES (reflection, filtered to the declaring class). The walk stops at a
-     * class the index does not know and on a cycle.
+     * class the index does not know and on a cycle. The cold half of the index is loaded
+     * when a link's file lives there.
      *
      * @param string $class_name    Simple class name to start from.
      * @param string $property_name Property name, without the `$`.
@@ -324,12 +329,38 @@ abstract class CodeQualityRule_Abstract
         string $property_name,
         ?string $stop_at = null
     ): bool {
+        if ($class_name === $stop_at) {
+            return false;
+        }
+
+        $record = Manifest::php_class_metadata($class_name);
+
+        if ($record === null || empty($record['extends'])) {
+            return false;
+        }
+
+        return $this->lineage_declaring_property($record['extends'], $property_name, $stop_at) !== null;
+    }
+
+    /**
+     * The nearest class in a lineage that DECLARES a property of this name - the class itself
+     * first, then each ancestor - as ['class', 'file'] (`file` absolute), or null when no
+     * class up to $stop_at declares it. The manifest records THAT a class declares a property,
+     * not its value; a rule that needs the value reads it from `file` through $this->source().
+     *
+     * @return array{class:string,file:string}|null
+     */
+    final protected function lineage_declaring_property(
+        string $class_name,
+        string $property_name,
+        ?string $stop_at = null
+    ): ?array {
         $seen = [];
         $current = $class_name;
 
         while ($current !== null && $current !== '' && !isset($seen[$current])) {
             if ($current === $stop_at) {
-                return false;
+                return null;
             }
 
             $seen[$current] = true;
@@ -337,23 +368,142 @@ abstract class CodeQualityRule_Abstract
             $record = Manifest::php_class_metadata($current);
 
             if ($record === null) {
-                return false;
+                return null;
             }
 
-            $file = $record['file'] ?? null;
-            $file_record = $file === null ? null : (Manifest::$data['data']['files'][$file] ?? null);
+            $file_record = $this->__class_file_record($record);
 
-            if ($file_record !== null && $current !== $class_name) {
-                foreach ($file_record['properties'] ?? [] as $property) {
-                    if (($property['name'] ?? '') === $property_name) {
-                        return true;
-                    }
+            foreach ($file_record['properties'] ?? [] as $property) {
+                if (($property['name'] ?? '') === $property_name) {
+                    return ['class' => $current, 'file' => rsx_project_file_path($record['file'])];
                 }
             }
 
             $current = $record['extends'] ?? null;
         }
 
+        return null;
+    }
+
+    /**
+     * The nearest class in a lineage that DECLARES a public method of this name - the class
+     * itself first, then each ancestor - as ['class', 'file', 'line', 'method'], or null when
+     * no class up to $stop_at declares it. `method` is the manifest's record of the method
+     * (attributes, parameters, line).
+     *
+     * `file` is the absolute path of the file holding the method's BODY: the declaring
+     * class's own file, or the trait's file when the class takes the method from a trait.
+     * So a rule reading "the effective can_subscribe()" reads it from the right place however
+     * the class came by it - declared here, inherited from an intermediate base, or mixed in.
+     *
+     * Manifest records only (the public static and public instance methods each class
+     * declares); the caller reads the body through $this->source(). Same walk and same stops
+     * as lineage_declares_property(), except that the starting class counts.
+     *
+     * @param string $class_name   Simple class name to start from.
+     * @param string|null $stop_at Simple class name to stop BEFORE (an abstract framework base
+     *                             whose declaration is not an implementation).
+     * @return array{class:string,file:string,line:int,method:array}|null
+     */
+    final protected function lineage_declaring_method(
+        string $class_name,
+        string $method_name,
+        ?string $stop_at = null
+    ): ?array {
+        $seen = [];
+        $current = $class_name;
+
+        while ($current !== null && $current !== '' && !isset($seen[$current])) {
+            if ($current === $stop_at) {
+                return null;
+            }
+
+            $seen[$current] = true;
+
+            $record = Manifest::php_class_metadata($current);
+
+            if ($record === null) {
+                return null;
+            }
+
+            $file_record = $this->__class_file_record($record);
+
+            if ($file_record !== null) {
+                $method = $file_record['public_static_methods'][$method_name]
+                    ?? $file_record['public_instance_methods'][$method_name]
+                    ?? null;
+
+                if ($method !== null) {
+                    return [
+                        'class' => $current,
+                        'file' => $method['file'] ?? rsx_project_file_path($record['file']),
+                        'line' => (int) ($method['line'] ?? 1),
+                        'method' => $method,
+                    ];
+                }
+            }
+
+            $current = $record['extends'] ?? null;
+        }
+
+        return null;
+    }
+
+    /**
+     * One method's body, from its opening '{' through its closing '}', out of source text the
+     * rule already holds (the sanitized $contents it was handed, or a file it read through
+     * $this->source()). Null when the method has no body in that text.
+     *
+     * Php_Parser::method_body() is the ONE locator; the tokens come from the pass's
+     * Source_Cache, because a rule never tokenizes itself.
+     */
+    final protected function method_body(string $source_text, string $method_name): ?string
+    {
+        return Php_Parser::method_body($this->source()->token_array($source_text), $method_name);
+    }
+
+    /**
+     * Is a file under /app/RSpade/ inside one of the framework subdirectories the manifest
+     * scans (config('rsx.manifest.scan_directories'))?
+     */
+    final protected function is_in_allowed_rspade_directory(string $file_path): bool
+    {
+        $allowed_subdirs = [];
+        foreach (config('rsx.manifest.scan_directories', []) as $scan_dir) {
+            if (Rsx_Paths::is_framework($scan_dir)) {
+                $subdir = Rsx_Paths::framework_subpath($scan_dir);
+                if ($subdir) {
+                    $allowed_subdirs[] = $subdir;
+                }
+            }
+        }
+
+        foreach ($allowed_subdirs as $subdir) {
+            if (str_contains($file_path, '/app/RSpade/' . $subdir . '/') ||
+                str_contains($file_path, '/app/RSpade/' . $subdir)) {
+                return true;
+            }
+        }
+
         return false;
+    }
+
+    /**
+     * The manifest file record holding a php_classes entry, loading the cold half of the
+     * index when the class's file lives there. Null when the index has no such file.
+     */
+    private function __class_file_record(array $class_record): ?array
+    {
+        $file = $class_record['file'] ?? null;
+
+        if ($file === null) {
+            return null;
+        }
+
+        if (!isset(Manifest::$data['data']['files'][$file])) {
+            Manifest::_load_cold_files();
+        }
+
+        return Manifest::$data['data']['files'][$file] ?? null;
     }
 }

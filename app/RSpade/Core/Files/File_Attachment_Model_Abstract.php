@@ -14,6 +14,7 @@ use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Files\Svg_Upload_Sanitizer;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
 use App\RSpade\Core\Portal\Portal_Authorizable;
 use App\RSpade\Core\Portal\Portal_Session;
@@ -62,42 +63,42 @@ use App\RSpade\Core\Time\Rsx_Time;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _file_attachments
  *
- * @property int $id
- * @property string $key
- * @property int $file_storage_id
- * @property string $handler_class
- * @property array $handler_ref
- * @property string $file_name
- * @property string $file_extension
- * @property string $mime_type
- * @property int $file_size
- * @property int $file_type_id
- * @property int $width
- * @property int $height
- * @property int $duration
- * @property int $is_animated
- * @property int $frame_count
- * @property int $preview_unavailable
- * @property int $fileable_type
- * @property int $fileable_id
- * @property string $fileable_category
- * @property string $fileable_type_meta
- * @property int $fileable_order
- * @property string $fileable_meta
- * @property int $site_id
- * @property string $created_by_ip_address
- * @property string $created_at
- * @property string $updated_at
- * @property int $created_by_id
- * @property int $created_by_type
- * @property int $updated_by_id
- * @property int $updated_by_type
  * @property string $blob_accessed_at
+ * @property string $created_at
+ * @property int $created_by_id
+ * @property string $created_by_ip_address
+ * @property int $created_by_type
  * @property string $deleted_at
- * @property string $destroyed_at
  * @property int $deleted_by_id
  * @property int $deleted_by_type
+ * @property string $destroyed_at
+ * @property int $duration
+ * @property string $file_extension
+ * @property string $file_name
+ * @property int $file_size
+ * @property int $file_storage_id
+ * @property int $file_type_id
  * @property string $file_type_label
+ * @property string $fileable_category
+ * @property int $fileable_id
+ * @property string $fileable_meta
+ * @property int $fileable_order
+ * @property int $fileable_type
+ * @property string $fileable_type_meta
+ * @property int $frame_count
+ * @property string $handler_class
+ * @property array $handler_ref
+ * @property int $height
+ * @property int $id
+ * @property int $is_animated
+ * @property string $key
+ * @property string $mime_type
+ * @property int $preview_unavailable
+ * @property int $site_id
+ * @property string $updated_at
+ * @property int $updated_by_id
+ * @property int $updated_by_type
+ * @property int $width
  *
  * @property-read string $file_type_id__label
  * @property-read string $file_type_id__constant
@@ -124,7 +125,8 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
 
     /**
      * Retention lifecycle. An attachment is SOFT-DELETED (deleted_at, recoverable) and only
-     * becomes a permanent tombstone (destroyed_at) after the retention window elapses. Blob
+     * becomes a permanent tombstone (destroyed_at) after the retention window elapses
+     * (never, when rsx.files.deleted_retention_days is 0 - keep forever). Blob
      * release is the disposal task's EXCLUSIVE job (File_Disposal_Service) - there is no
      * inline "deleting the last attachment unlinks the blob" hook any more, because a
      * soft-deleted-but-not-destroyed attachment STILL pins its blob (retention-aware
@@ -539,6 +541,20 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     }
 
     /**
+     * Is this an SVG (by stored media type or extension)?
+     *
+     * An SVG is an image to the viewer and a document to the security model: it was
+     * sanitized on the way in (Svg_Upload_Sanitizer), it is never handed to ImageMagick,
+     * and its thumbnail is the extension icon.
+     *
+     * @return bool
+     */
+    public function is_svg(): bool
+    {
+        return Svg_Upload_Sanitizer::is_svg($this->mime_type, $this->file_extension);
+    }
+
+    /**
      * Check if this is a video file
      *
      * @return bool
@@ -747,8 +763,9 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * Returns the relative path to the most appropriate icon file based on the
      * file extension. Icons are stored in system/app/RSpade/Core/Files/resource/icons/
      *
-     * Brand-specific icons (PDF, Photoshop, Illustrator) are PNG files with brand colors.
-     * Generic category icons (image, video, audio, etc.) are SVG files.
+     * Every mapped icon is a PNG: brand-specific icons (PDF, Photoshop, Illustrator) are
+     * 48px originals, and generic category icons are 512px rasters of the SVG artwork beside
+     * them (ImageMagick reads raster coders only).
      *
      * @return string Relative path to icon file from project root
      */
@@ -858,6 +875,10 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * NEVER resolve_storage() here: it materializes external bytes and stamps blob_accessed_at,
      * which is a byte-access side effect on what is only a metadata read.
      *
+     * @MODEL-FETCH-SYSTEM-01-EXCEPTION - the attachment row is the file subsystem's public
+     * face (the thumbnail component fetches it), and this body runs the app's
+     * file.thumbnail.authorize gate per record and serves a curated payload, not the row.
+     *
      * @param int $id
      * @return array|false
      */
@@ -895,6 +916,9 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * without the embedded file_storage a portal thumbnail could never know its render state.
      * The trait is still adopted for its contract (and PORTAL-MODEL-FETCH-01 still requires the
      * portal_can_read() below, which this body calls).
+     *
+     * @MODEL-FETCH-SYSTEM-01-EXCEPTION - the portal twin of fetch(): record-level
+     * portal_can_read() per row, curated payload.
      *
      * @param int $id
      * @return array|false
@@ -1368,9 +1392,6 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
             throw new Exception('site_id is required in params');
         }
 
-        // Create or find storage
-        $storage = File_Storage_Model::find_or_create($file->getRealPath());
-
         // Determine filename
         $filename = $params['filename_override'] ?? $file->getClientOriginalName();
         $extension = pathinfo($filename, PATHINFO_EXTENSION);
@@ -1383,6 +1404,25 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
 
         // Detect MIME type (raw byte sniff - persisted verbatim + used for serving).
         $mime_type = $file->getMimeType();
+
+        // An SVG is a document that can carry script: what is stored is its SANITIZED copy,
+        // never the received bytes. One that cannot be parsed is refused here, before any row
+        // or blob exists (Unparseable_Svg_Exception). See Svg_Upload_Sanitizer.
+        $source_path = $file->getRealPath();
+        $sanitized_path = null;
+        if (Svg_Upload_Sanitizer::is_svg($mime_type, $extension)) {
+            $sanitized_path = Svg_Upload_Sanitizer::sanitize_to_temp_file($source_path, $extension, $filename);
+            $source_path = $sanitized_path;
+        }
+
+        // Create or find storage
+        try {
+            $storage = File_Storage_Model::find_or_create($source_path);
+        } finally {
+            if ($sanitized_path !== null && file_exists($sanitized_path)) {
+                unlink($sanitized_path);
+            }
+        }
 
         // Coarse file_type_id buckets on the PIPELINE mime (extension-first for documents), so a
         // zip-sniffed OOXML doc buckets as DOCUMENT, not ARCHIVE.
@@ -2389,6 +2429,13 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         // Skip processing for documents (including PDFs)
         // PDFs would require PDF-specific processing
         if ($this->is_document()) {
+            return;
+        }
+
+        // An SVG never reaches ImageMagick: its SVG coder follows references inside the
+        // document (an <image href="text:/etc/passwd"> rasterises a local file), and the
+        // shipped ImageMagick policy refuses the coder outright. It keeps no dimensions.
+        if ($this->is_svg()) {
             return;
         }
 

@@ -41,7 +41,10 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
         return [
             'data' => [
                 'files' => [
-                    'fake/foo_api_controller.php' => [
+                    // The file key points at REAL source: a GET declaration's handler body
+                    // is read and checked (API-GET-PURE-01), and a body that cannot be
+                    // located is refused. The fixture's pure list() stands in.
+                    self::FIXTURE_FILE => [
                         'fqcn' => 'Rsx\App\Api\V1\Foo_Api_Controller',
                         'class' => 'Foo_Api_Controller',
                         'extends_fqcn' => $extends,
@@ -128,6 +131,17 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
     // -------------------------------------------------------------------------
     // Pattern + verb rejections
     // -------------------------------------------------------------------------
+
+    public static function test_optional_or_wildcard_first_segment_throws()
+    {
+        // /api/v1/:x? would match /api/v1, which is not the API channel.
+        foreach (['/api/v1/:x?', '/api/v1/*', '/api/v1/items*'] as $pattern) {
+            static::__assert_scan_throws(
+                static::__manifest(['Api_Endpoint' => [[0 => $pattern, 1 => ['GET']]]]),
+                'may not be an optional :token? or a wildcard'
+            );
+        }
+    }
 
     public static function test_bad_prefix_throws()
     {
@@ -349,6 +363,46 @@ class Api_Scan_Validation_Test extends Rsx_Test_Abstract
         Api_Endpoint_ManifestSupport::process($manifest, array_keys($manifest['data']['files']), []);
 
         static::__assert_array_has_key('/api/v1/fixture', $manifest['data']['routes']);
+    }
+
+    public static function test_a_handler_named_after_a_reserved_word_is_checked()
+    {
+        static::__assert_scan_throws(
+            static::__fixture_manifest('print'),
+            "calls '->save('"
+        );
+    }
+
+    public static function test_a_relation_write_in_any_case_is_caught()
+    {
+        static::__assert_scan_throws(
+            static::__fixture_manifest('pivot_get'),
+            "calls '->attach('"
+        );
+    }
+
+    public static function test_a_get_handler_whose_body_cannot_be_found_is_refused()
+    {
+        static::__assert_scan_throws(
+            static::__fixture_manifest('no_such_method'),
+            'could not be located'
+        );
+    }
+
+    public static function test_get_and_post_on_one_endpoint_is_refused()
+    {
+        static::__assert_scan_throws(
+            static::__fixture_manifest('pure_get', ['GET', 'POST']),
+            'GET or POST, never both'
+        );
+    }
+
+    public static function test_a_repeated_get_is_one_get_and_is_checked()
+    {
+        static::__assert_scan_throws(
+            static::__fixture_manifest('mutating_get', ['GET', 'get']),
+            'API-GET-PURE-01'
+        );
     }
 
     public static function test_post_handler_that_writes_is_untouched_by_the_rule()

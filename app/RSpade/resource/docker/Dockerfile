@@ -164,6 +164,9 @@ COPY supervisor/conf.d/fpc-proxy.conf  /etc/supervisor/conf.d/fpc-proxy.conf
 COPY supervisor/conf.d/realtime.conf   /etc/supervisor/conf.d/realtime.conf
 COPY supervisor/conf.d/rsx-lockd.conf  /etc/supervisor/conf.d/rsx-lockd.conf
 COPY supervisor/conf.d/tasks.conf      /etc/supervisor/conf.d/tasks.conf
+# ImageMagick reads raster coders only: its SVG/MVG/MSL/TEXT/LABEL coders turn an uploaded
+# file into a local-file read. rsx:health "ImageMagick Coder Policy" FAILs without this.
+COPY imagemagick/policy.xml        /etc/ImageMagick-6/policy.xml
 
 # Normalise permissions on everything copied above. The source tree these files
 # come from is world-writable (a legacy of the chmod-777 arrangement this image
@@ -177,7 +180,8 @@ RUN chmod 644 /etc/nginx/nginx.conf \
               /etc/php/${PHP_VERSION}/fpm/pool.d/ajax.conf \
               /etc/redis/redis.conf \
               /etc/supervisor/supervisord.conf \
-              /etc/supervisor/conf.d/*.conf
+              /etc/supervisor/conf.d/*.conf \
+              /etc/ImageMagick-6/policy.xml
 
 COPY entrypoint.sh     /usr/local/bin/rspade-entrypoint
 COPY realtime-run.sh   /usr/local/bin/rspade-realtime-run

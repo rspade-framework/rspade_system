@@ -6,7 +6,10 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Ajax\Ajax;
 use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Tester_Key;
+use App\RSpade\Core\Auth\Auth_Throttled_Exception;
+use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
+use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -17,10 +20,12 @@ use App\RSpade\Core\Session\Session;
  * screen - adopting and dropping the API key whose permissions the listing is drawn for,
  * and minting a short-lived one for a signed-in user who has not made a key yet.
  *
- * PUBLIC, because the console's gate is whatever the application put on ITS route and the
- * framework cannot know what that is. Safe: adopting a key affects only the caller's own
- * session and grants nothing. Possessing the key is the credential, the key is validated
- * here before it is accepted, and Api_Dispatcher gates every request it is later used for.
+ * PUBLIC at class level, because the console's gate is whatever the application put on ITS
+ * route and the framework cannot know what that is. Adopting a key additionally requires a
+ * signed-in caller and is throttled (see adopt_tester_key). Adopting affects only the
+ * caller's own session and grants nothing: possessing the key is the credential, the key is
+ * validated here before it is accepted, and Api_Dispatcher gates every request it is later
+ * used for.
  */
 #[Auth('public')]
 class _Apidocs_Controller extends Rsx_Controller_Abstract
@@ -37,10 +42,16 @@ class _Apidocs_Controller extends Rsx_Controller_Abstract
      * (Rsx_Api_Docs::rsxapp_data), so a key adopted afterwards changes nothing until
      * the page is built again.
      *
-     * A revoked, expired or unknown key is rejected here rather than stored and left to fail
-     * later at the first request.
+     * A key the API itself would refuse - revoked, expired, unknown, or held by a user who
+     * is inactive or has no API access - is rejected here rather than stored and left to fail
+     * later at the first request, with one message for all of them.
+     *
+     * SIGNED-IN CALLERS ONLY, AND THROTTLED. Answering "is this a working key" is a
+     * key-validity oracle: a rejected key is a login failure for the caller's address
+     * (Login_Throttle), and a locked-out address is refused before any lookup.
      */
     #[Ajax_Endpoint]
+    #[Auth('is_logged_in')]
     public static function adopt_tester_key(Request $request, array $params = [])
     {
         $key = trim((string) ($params['key'] ?? ''));
@@ -51,9 +62,22 @@ class _Apidocs_Controller extends Rsx_Controller_Abstract
             return ['adopted' => false, 'prefix' => null];
         }
 
+        try {
+            Login_Throttle::require_not_throttled();
+        } catch (Auth_Throttled_Exception $e) {
+            return response_error(Ajax::ERROR_VALIDATION, ['key' => $e->getMessage()]);
+        }
+
         $model = Api_Key_Model::find_by_key($key);
 
-        if (!$model) {
+        // The same holder checks Rsx_Api_Bearer applies to every API request.
+        $holder = $model
+            ? User_Model::without_site_scope(fn () => User_Model::find((int) $model->user_id))
+            : null;
+
+        if (!$model || !$holder || !$holder->is_active() || !$holder->is_api_access_enabled) {
+            Login_Throttle::record_failure();
+
             return response_error(Ajax::ERROR_VALIDATION, [
                 'key' => 'That API key is not valid, or it has been revoked or has expired.',
             ]);

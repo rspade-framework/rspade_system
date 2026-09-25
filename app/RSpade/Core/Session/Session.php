@@ -118,30 +118,30 @@ use App\RSpade\Core\Time\Rsx_Time;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: _sessions
  *
- * @property int $id
  * @property int $active
- * @property int $site_id
- * @property int $type_id
- * @property int $login_user_id
- * @property int $portal_user_id
- * @property int $portal_site_id
- * @property int $impersonator_login_user_id
- * @property int $impersonator_user_id
- * @property string $impersonation_started_at
- * @property string $session_token
- * @property string $csrf_token
- * @property string $handoff_token
- * @property string $handoff_expires_at
- * @property string $ip_address
- * @property string $user_agent
- * @property string $last_active
- * @property int $version
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
+ * @property string $csrf_token
+ * @property string $handoff_expires_at
+ * @property string $handoff_token
+ * @property int $id
+ * @property string $impersonation_started_at
+ * @property int $impersonator_login_user_id
+ * @property int $impersonator_user_id
+ * @property string $ip_address
+ * @property string $last_active
+ * @property int $login_user_id
+ * @property int $portal_site_id
+ * @property int $portal_user_id
+ * @property string $session_token
+ * @property int $site_id
+ * @property int $type_id
+ * @property string $updated_at
  * @property int $updated_by_id
  * @property int $updated_by_type
+ * @property string $user_agent
+ * @property int $version
  *
  * @property-read string $type_id__label
  * @property-read string $type_id__constant
@@ -340,8 +340,9 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
-     * Clear the API identity tier and the flags it set. Test support ONLY - a live
-     * request establishes the identity once and never tears it down.
+     * Clear the API identity tier and the flags it set. Called when an API dispatch ends
+     * (Api_Dispatcher::end_request(), after the response is rendered), by a new in-process
+     * dispatch, by Api_Tester_Key around its one question, and by the test seam.
      */
     public static function _reset_api_identity(): void
     {
@@ -1563,23 +1564,6 @@ class Session extends Rsx_System_Model_Abstract
         return static::where('session_token', $token)
             ->where('active', true)
             ->first();
-    }
-
-    /**
-     * Clean up expired sessions (garbage collection) - MANUAL helper.
-     *
-     * A blunt single-cutoff delete (no type distinction, no chunking) for
-     * administrative and test use. The OPERATIONAL retention mechanism is
-     * Session_Cleanup_Service (one hourly per-type sweep, chunked deletes) - do not
-     * add a second scheduled caller here.
-     *
-     * @param int $days_until_expiry
-     * @return int Number of sessions deleted
-     */
-    public static function cleanup_expired(int $days_until_expiry = 365): int
-    {
-        return static::where('last_active', '<', now()->subDays($days_until_expiry))
-            ->delete();
     }
 
     /**

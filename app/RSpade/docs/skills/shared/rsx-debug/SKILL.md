@@ -135,6 +135,10 @@ selector (above) is driving code you did not intend to reach.
 | `--full` | everything except `--no-body`/`--follow-redirects` |
 | `--examples` | the command's own example set |
 
+## One run at a time
+
+Each run holds the `rsx_debug` system lock (an flock on this box) for as long as it runs, because two overlapping runs share the harness's browser and dev-auth state and fail each other. A second run prints `[rsx:debug] Waiting for another rsx:debug to finish...` on stderr and then waits for as long as the first takes. Waiting is the expected behaviour, not a hang: running several at once in the background makes them finish one after another.
+
 ## When the browser stack is missing
 
 `rsx:debug` preflights node, the Playwright package and the Chromium build before it launches anything, and **refuses rather than installing**:

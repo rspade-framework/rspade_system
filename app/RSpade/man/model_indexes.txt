@@ -163,6 +163,21 @@ COVERING INDEX OPTIMIZATION
 
         Current Implementation: Does not reorder. Preserves query patterns.
 
+    The Primary Key:
+        InnoDB clusters every table on its primary key and appends the primary key
+        to every secondary index, so the primary key is taken out of a requirement
+        before anything is recommended:
+        - a requirement LEADING with it - (id, site_id) - is a primary-key lookup
+          and needs no index;
+        - a requirement ENDING with it - (site_id, id) - is exactly what an index
+          on (site_id) already is, and is reduced to that.
+
+    Existing Indexes:
+        A requirement is already met when ANY existing index - the primary key
+        included, whatever its name - begins with the required columns in order:
+        (thread_id) needs nothing on a table that has (thread_id, created_at).
+        Only a requirement no existing index serves is listed to create.
+
 INDEX QUOTA MANAGEMENT
     MySQL Limits:
         MySQL InnoDB has a hard limit of 64 indexes per table.

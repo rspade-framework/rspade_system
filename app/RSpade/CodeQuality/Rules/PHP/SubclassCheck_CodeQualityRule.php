@@ -99,9 +99,10 @@ class SubclassCheck_CodeQualityRule extends CodeQualityRule_Abstract
                         'is_subclass_of() is not allowed. Use Manifest for inheritance checks.',
                         trim($original_line),
                         "Use Manifest methods for inheritance checks:\n\n" .
-                        "1. To check if a class extends another:\n" .
-                        "   - Use: \$metadata = Manifest::php_get_metadata_by_class(\$class);\n" .
-                        "   - Check: \$metadata['extends'] === 'BaseClass'\n\n" .
+                        "1. To check if a class extends another (directly or through intermediate bases):\n" .
+                        "   - Use: Manifest::php_is_subclass_of(\$class, 'BaseClass')\n" .
+                        "   - Never compare the immediate parent (\$metadata['extends']) against a name:\n" .
+                        "     that misses every class beneath an intermediate base\n\n" .
                         "2. To find all classes extending a base:\n" .
                         "   - Use: Manifest::php_get_extending('BaseClass')\n\n" .
                         "3. For sanity checks (if this truly shouldn't happen):\n" .

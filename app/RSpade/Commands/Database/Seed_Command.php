@@ -14,7 +14,6 @@ class Seed_Command extends LaravelSeedCommand
 {
     protected $description = 'Seed the database with records (requires migration mode in development)';
 
-    protected $flag_file = '/var/www/html/.migrating';
 
     /**
      * Get the console command options
@@ -36,7 +35,7 @@ class Seed_Command extends LaravelSeedCommand
 
         // Check for migration mode if we require it
         if ($require_migration_mode) {
-            if (!file_exists($this->flag_file)) {
+            if (!file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
                 $this->error('[ERROR] Migration mode not active!');
                 $this->error('');
                 $this->line('In development mode, seeders must be run within a migration session.');

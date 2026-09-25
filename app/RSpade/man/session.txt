@@ -441,13 +441,6 @@ API REFERENCE
         Session::find_by_token(string $token): Session|null
             Find active session by token (for API/external access).
 
-        Session::cleanup_expired(int $days = 365): int
-            MANUAL helper: delete sessions older than specified days (single
-            cutoff, no type distinction, no chunking). Returns count deleted.
-            The operational retention mechanism is the Session_Cleanup_Service
-            hourly task (GARBAGE COLLECTION below); use this only for
-            administrative one-offs and tests.
-
         Session::purge_playwright_sessions(string $created_since): int
             Delete the TYPE_PLAYWRIGHT sessions a harness RUN created, in both
             sessions. Called by rsx:debug as it exits - see HARNESS SESSIONS
@@ -670,6 +663,12 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
                $login_user = Session::get_login_user();
 
                if ($login_user->status_id === Login_User_Model::STATUS_SUSPENDED) {
+                   // A bearer-key request has no browser session to end: any
+                   // non-null return refuses it (403 account_refused).
+                   if (Session::is_api_request()) {
+                       return false;
+                   }
+
                    Session::logout();
 
                    return redirect(Rsx::Route('Login_Controller::index',
@@ -678,6 +677,13 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
 
                return null;      // continue dispatch
            }
+
+       EVERY SURFACE MEANS EVERY SURFACE: the hook runs for a routed page, an SPA
+       bootstrap, and an external API call (/api/vN, after the bearer identity
+       and the gates - rsx:man external_api). An API client cannot follow a
+       redirect, so there any non-null return is answered as 403 account_refused;
+       and the session writers are unavailable to a headless API identity, which
+       is why the example branches on Session::is_api_request() before logout().
 
        Return an interstitial instead of a logout when the state is meant to be
        RESOLVED rather than punished (unverified email, terms not accepted,

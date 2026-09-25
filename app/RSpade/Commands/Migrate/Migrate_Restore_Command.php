@@ -38,7 +38,7 @@ class Migrate_Restore_Command extends Maint_Migrate
         // No flag = no migration in progress. The flag is created by create_snapshot()
         // and removed by every completed migrate (commit and rollback paths alike), so
         // its absence means there is no snapshot state to restore to.
-        if (!file_exists($this->flag_file)) {
+        if (!file_exists(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file())) {
             $this->info('No migration is in progress - nothing to restore.');
             return 0;
         }
@@ -61,7 +61,7 @@ class Migrate_Restore_Command extends Maint_Migrate
             return 1;
         }
 
-        $flag = json_decode((string) file_get_contents($this->flag_file), true) ?: [];
+        $flag = json_decode((string) file_get_contents(\App\RSpade\Core\Paths\Rsx_Project_Paths::migrating_flag_file()), true) ?: [];
         $this->info(' Interrupted migration found'
             . (isset($flag['started_at']) ? ' (started ' . $flag['started_at'] . ')' : '')
             . ' - restoring pre-migration snapshot...');

@@ -68,3 +68,5 @@ the same cross-site POST, one path apart, with opposite outcomes.
 | csrf-exempt-02 | the exempt Apple leg does NO WORK - it re-emits a whitelist of three parameters and 303s to the GET leg, resolving no provider and reading no session | php | `tests/sso/php/Sso_Controller_Test.php` | implemented |
 | csrf-exempt-03 | `/_csp-report` accepts the browser's unattended report POST (no page, no form, no token to attach) | http | `tests/csp/http/csp_header_and_collector.sh` step 4 | implemented |
 | csrf-exempt-04 | `/_mail/unsubscribe` accepts an RFC 8058 one-click POST carrying its own HMAC, server-to-server with no browser | http | not yet pinned - `tests/mail/` | planned |
+| csrf-override-01 | a cross-site POST with `_method=PUT` is refused like a plain one (override is off; CSRF asks `getRealMethod()`) | http | POST /login, foreign Origin, `_method=PUT` | 419 | implemented (`http/method_override_refused.sh`) |
+| csrf-override-02 | a cross-site POST with `X-HTTP-Method-Override: PUT` is refused like a plain one | http | POST /login, foreign Origin, the header | 419 | implemented (`http/method_override_refused.sh`) |

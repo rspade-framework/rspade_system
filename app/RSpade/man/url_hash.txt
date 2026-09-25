@@ -9,6 +9,9 @@ SYNOPSIS
     Rsx.url_hash_set_single(key, val)  // write one key (null/'' removes)
     Rsx.url_hash_set({k1: v1, k2: null})  // bulk write/remove
 
+    Rsx.Route(action, params, {k: v})  // a LINK landing on hash state
+    Rsx::Route($action, $params, ['k' => $v])
+
 DESCRIPTION
     The url_hash_* API persists UI-only view state (filter selections, active
     tabs, dropdown values, sort/page state) to the URL hash so a browser
@@ -24,8 +27,9 @@ DESCRIPTION
     dropped on the next write - so any component writing hash state silently
     destroyed the anchor. See `php artisan rsx:man anchors`.
 
-    RESERVED KEYS. Application code must not use `at` (the anchor target) or
-    the `dg_*` family (DataGrid state) for its own values.
+    RESERVED KEYS. Application code must not use `at` (the anchor target) for
+    its own values, nor a key a hash-writing component on the same page owns
+    (DataGrid_Abstract, Tab_Bar, Rsx_Tabs).
 
     Currently used internally by Tab_Bar, DataGrid_Abstract, and Rsx_Tabs.
     Application
@@ -48,6 +52,20 @@ API REFERENCE
     Rsx.url_hash_set(new_state)
         Merges `new_state` into the current hash. Keys with null/undefined/''
         values are removed. Other keys in the hash are preserved.
+
+LINKING TO HASH STATE
+    A link that lands on a tab, a filtered grid or any other hash state is
+    built with Route()'s third argument, never by appending '#...' by hand:
+
+        Rsx.Route('Clients_View_Action', id, {tab: 'portal'})
+        Rsx::Route('Clients_View_Action', $id, ['tab' => 'portal'])
+        // /clients/view/5#tab=portal
+
+    It serializes with the same encoder url_hash_set() uses (the PHP twin
+    produces identical bytes), so url_hash_get() on the destination reads
+    every value back unchanged. Values are strings or integers; null/'' drop
+    the key; anything else throws. Encoding, the `at` anchor and the errors:
+    rsx:man routing, URL FRAGMENT STATE.
 
 CONVENTION
     Only persist deviations from defaults, so the URL stays clean. When the
@@ -114,6 +132,7 @@ FILE LOCATION
     /system/app/RSpade/Core/Js/Rsx.js
 
 SEE ALSO
+    rsx:man routing
     rsx:man anchors
     rsx:man storage
     rsx:man spa

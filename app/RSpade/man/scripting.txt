@@ -69,6 +69,34 @@ IDENTITY
        the process to a clean slate. A script that never demands a session id touches
        the _sessions table zero times, however much identity it declares.
 
+REVISION HISTORY: THE SCRIPT OWNS ITS UNITS OF WORK
+       Revision history (rsx:man revisions) groups every recorded write under the
+       current UNIT OF WORK - one _transactions row per action. The framework
+       closes a unit at each web request, Ajax call, API request, task and test;
+       for a script the unit is the RUN: the include opens one, source `cli`, its
+       endpoint the script's file name, and nothing closes it until the process
+       exits.
+
+       That is right for a script that performs one action. A script that performs
+       MANY - an import of thousands of records - must declare each one, or its whole
+       life is recorded as a single change to every record it touched (a history
+       screen shows the import as one event, and the row's revision_count says
+       nothing):
+
+           foreach ($rows as $row) {
+               Revision::unit_of_work("Imported invoice {$row['number']}", function () use ($row) {
+                   import_invoice($row);
+               });
+           }
+
+       Revision::unit_of_work($description, $callable) runs the callable as its own
+       unit and hands the script its unit back afterwards;
+       Revision::begin_unit_of_work($description) simply closes the current unit and
+       begins the next. Both keep the source and endpoint, cost nothing when the unit
+       writes nothing, and are safe around a DB::transaction() - begin the unit
+       OUTSIDE it, so a rollback takes only that unit's row with it. Full contract:
+       rsx:man revisions, THE UNIT OF WORK.
+
 MAINTENANCE MODE
        While the maintenance flag is up, an external script is REFUSED:
 
@@ -170,6 +198,7 @@ SEE ALSO
        rsx:man artisan_commands - hand-written framework commands and the pre-boot interceptions
        rsx:man maintenance_mode - the flag, the window, and what it blocks
        rsx:man session - the session lifecycle and the CLI identity statics
+       rsx:man revisions - revision history, and declaring a script's units of work
        rsx:man storage_directories - build/, tmp/ and storage/, and which helper reaches each
        skill rspade:bounded-result-sets - result_set() and why a bare LIMIT is the bug
        system/script.php - the entry point itself

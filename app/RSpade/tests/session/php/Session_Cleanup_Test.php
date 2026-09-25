@@ -15,7 +15,7 @@ use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * Tests for Session::cleanup_expired(), Session::find_by_token(),
+ * Tests for Session::find_by_token(),
  * Session::purge_playwright_sessions(), and the Session_Cleanup_Service hourly task
  * (identity-aware + per-type inactivity windows + chunked deletes).
  *
@@ -25,7 +25,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * portal cases below exist because a rule that only looked at login_user_id would read
  * a portal-only browser session as anonymous and collect it far too soon.
  *
- * cleanup_expired() performs a DELETE and must COMMIT to be observable, so
+ * The sweeps perform DELETEs that must COMMIT to be observable, so
  * per-test transaction rollback is disabled and a DB reset runs first.
  */
 class Session_Cleanup_Test extends Rsx_Test_Abstract
@@ -137,119 +137,6 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
 
         $result = Session::find_by_token($token);
         static::__assert_null($result);
-    }
-
-    // -------------------------------------------------------------------------
-    // cleanup_expired()
-    // -------------------------------------------------------------------------
-
-    public static function test_cleanup_expired_deletes_old_sessions()
-    {
-        $old_token = bin2hex(random_bytes(16));
-        $old_csrf  = bin2hex(random_bytes(16));
-
-        // Insert a session that is 400 days old (beyond the 365-day cutoff)
-        DB::table('_sessions')->insert([
-            'session_token' => $old_token,
-            'csrf_token'    => $old_csrf,
-            'active'        => 1,
-            'site_id'       => 0,
-            'version'       => 1,
-            'ip_address'    => '10.0.0.1',
-            'user_agent'    => 'old-browser',
-            'last_active'   => now()->subDays(400),
-            'created_at'    => now()->subDays(400),
-            'updated_at'    => now()->subDays(400),
-        ]);
-
-        $count_before = DB::table('_sessions')
-            ->where('session_token', $old_token)
-            ->count();
-        static::__assert_equals(1, $count_before);
-
-        $deleted = Session::cleanup_expired(365);
-        static::__assert_greater_than(0, $deleted);
-
-        $count_after = DB::table('_sessions')
-            ->where('session_token', $old_token)
-            ->count();
-        static::__assert_equals(0, $count_after);
-    }
-
-    public static function test_cleanup_expired_keeps_recent_sessions()
-    {
-        $fresh_token = bin2hex(random_bytes(16));
-        $fresh_csrf  = bin2hex(random_bytes(16));
-
-        DB::table('_sessions')->insert([
-            'session_token' => $fresh_token,
-            'csrf_token'    => $fresh_csrf,
-            'active'        => 1,
-            'site_id'       => 0,
-            'version'       => 1,
-            'ip_address'    => '10.0.0.2',
-            'user_agent'    => 'new-browser',
-            'last_active'   => now()->subDays(10),
-            'created_at'    => now()->subDays(10),
-            'updated_at'    => now()->subDays(10),
-        ]);
-
-        Session::cleanup_expired(365);
-
-        $count = DB::table('_sessions')
-            ->where('session_token', $fresh_token)
-            ->count();
-        static::__assert_equals(1, $count);
-    }
-
-    public static function test_cleanup_expired_returns_count_of_deleted_rows()
-    {
-        // Insert two old sessions
-        for ($i = 0; $i < 2; $i++) {
-            DB::table('_sessions')->insert([
-                'session_token' => bin2hex(random_bytes(16)),
-                'csrf_token'    => bin2hex(random_bytes(16)),
-                'active'        => 1,
-                'site_id'       => 0,
-                'version'       => 1,
-                'ip_address'    => '10.0.0.3',
-                'user_agent'    => 'old-browser',
-                'last_active'   => now()->subDays(400),
-                'created_at'    => now()->subDays(400),
-                'updated_at'    => now()->subDays(400),
-            ]);
-        }
-
-        $deleted = Session::cleanup_expired(365);
-        static::__assert_greater_than(1, $deleted);
-    }
-
-    public static function test_cleanup_expired_respects_custom_days_argument()
-    {
-        $token = bin2hex(random_bytes(16));
-        $csrf  = bin2hex(random_bytes(16));
-
-        // Session is 5 days old - within 365 days but outside 3 days
-        DB::table('_sessions')->insert([
-            'session_token' => $token,
-            'csrf_token'    => $csrf,
-            'active'        => 1,
-            'site_id'       => 0,
-            'version'       => 1,
-            'ip_address'    => '10.0.0.4',
-            'user_agent'    => 'mid-browser',
-            'last_active'   => now()->subDays(5),
-            'created_at'    => now()->subDays(5),
-            'updated_at'    => now()->subDays(5),
-        ]);
-
-        // With a 3-day cutoff it should be deleted
-        Session::cleanup_expired(3);
-
-        $count = DB::table('_sessions')
-            ->where('session_token', $token)
-            ->count();
-        static::__assert_equals(0, $count);
     }
 
     // -------------------------------------------------------------------------
@@ -553,17 +440,6 @@ class Session_Cleanup_Test extends Rsx_Test_Abstract
 
         static::__assert_false(in_array($portal_harness, $remaining, true), 'a harness row past 1 day is deleted whatever it carries');
         static::__assert_true(in_array($same_age_portal_web, $remaining, true), 'a real browser session of the same age untouched');
-    }
-
-    public static function test_cleanup_expired_collects_every_session_past_the_cutoff()
-    {
-        $staff = static::__insert_session(['age_days' => 400, 'login_user_id' => 12345]);
-        $portal = static::__insert_portal_session(['age_days' => 400]);
-
-        Session::cleanup_expired(365);
-
-        static::__assert_equals(0, DB::table('_sessions')->where('session_token', $staff)->count(), 'the manual helper collected the staff-identity row');
-        static::__assert_equals(0, DB::table('_sessions')->where('session_token', $portal)->count(), 'and the portal-identity row - one table, one blunt cutoff');
     }
 
     public static function test_purge_playwright_sessions_collects_harness_rows_whatever_they_carry()

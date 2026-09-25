@@ -21,7 +21,7 @@ The component's own class name is always stamped on the root - which is what mak
 | Form | Meaning |
 |---|---|
 | `<%= value %>` | Escaped output (the default; use this) |
-| `<%!= html %>` | Unescaped/raw HTML - only for values you trust or have run through `safe_html()` |
+| `<%!= html %>` | Unescaped/raw HTML - only for values you trust or have run through `sanitize_rich_text_html()` |
 | `<%br= text %>` | Escaped, with newlines converted to `<br>` |
 | `<% javascript %>` | A JavaScript block - no output |
 | `<%-- comment --%>` | A jqhtml comment, removed at compile |

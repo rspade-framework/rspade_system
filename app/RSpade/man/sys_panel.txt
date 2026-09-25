@@ -84,15 +84,17 @@ THE GATE
     (JS actions: `@auth('is_sysadmin')`). `is_sysadmin` is a framework
     `#[Auth_Check]` on `Permission_Abstract`, staff realm only.
 
-    Its body today is `Session::is_logged_in()` - every signed-in staff
-    identity may open the panel. That is deliberately the loosest useful
-    default and it is expected to narrow.
+    Its body is `Session::is_developer()` - only a signed-in identity whose
+    login_users.is_developer is set (by hand, in the database) may open the
+    panel. The panel describes the whole installation across tenants, so no
+    role an application grants and no self-registered account reaches it. A
+    signed-in identity that is not a developer gets a 403.
 
-    Narrowing it is the APPLICATION's move, and there is exactly one
+    Changing the audience is the APPLICATION's move, and there is exactly one
     documented mechanism: the check is marked `#[Replaceable]`, so an
     application that CLASS-OVERRIDES the permission class (a same-named class
     in `rsx/`, copy-and-replace - `rsx:man class_override`) redeclares
-    `is_sysadmin()` with a tighter body and every `#[Auth('is_sysadmin')]`
+    `is_sysadmin()` with its own body and every `#[Auth('is_sysadmin')]`
     surface follows with no call-site change. There is no config key, no
     registry and no hook for it: if the override is not the shape you want,
     that is a framework change request, not a local workaround.

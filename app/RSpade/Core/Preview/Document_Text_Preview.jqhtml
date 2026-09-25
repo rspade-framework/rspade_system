@@ -56,8 +56,8 @@ into (its size and its surface), not the text.
                  with rsx:search:reindex --status. --%>
             <div class="Document_Text_Preview__notice">(Document Text Unavailable)</div>
         <% } else { %>
-            <%-- Escaped interpolation, NOT htmlbr(): the frame is white-space:pre-wrap, so the
-                 newlines in the extracted text already render as line breaks. htmlbr() would add a
+            <%-- Escaped interpolation, NOT <%br= %>: the frame is white-space:pre-wrap, so the
+                 newlines in the extracted text already render as line breaks. <%br= %> would add a
                  <br> BESIDE each surviving newline (nl2br keeps it) and double-space the whole
                  document. pre-wrap also preserves the column alignment an extraction carries in
                  runs of spaces, which nl2br cannot express. --%>

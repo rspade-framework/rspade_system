@@ -41,29 +41,29 @@ use App\RSpade\Core\Rsx;
  * _AUTO_GENERATED_ Database type hints - do not edit manually
  * Table: users
  *
- * @property int $id
- * @property int $login_user_id
- * @property int $site_id
- * @property string $first_name
- * @property string $last_name
- * @property string $phone
- * @property int $role_id
- * @property int $is_enabled
- * @property string $email
- * @property string $deleted_at
  * @property string $created_at
- * @property string $updated_at
  * @property int $created_by_id
  * @property int $created_by_type
- * @property int $updated_by_id
- * @property int $updated_by_type
+ * @property string $deleted_at
  * @property int $deleted_by_id
  * @property int $deleted_by_type
- * @property string $invite_code
+ * @property string $email
+ * @property string $first_name
+ * @property int $id
  * @property string $invite_accepted_at
+ * @property string $invite_code
  * @property string $invite_expires_at
- * @property int $is_api_access_enabled
  * @property int $is_2fa_required
+ * @property int $is_api_access_enabled
+ * @property int $is_enabled
+ * @property string $last_name
+ * @property int $login_user_id
+ * @property string $phone
+ * @property int $role_id
+ * @property int $site_id
+ * @property string $updated_at
+ * @property int $updated_by_id
+ * @property int $updated_by_type
  *
  * @property-read string $role_id__label
  * @property-read string $role_id__constant

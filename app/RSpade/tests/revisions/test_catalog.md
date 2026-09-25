@@ -95,6 +95,22 @@ tables. Fixtures: `Revision_Fixture_Model` (opt-in, soft-deleting, `$revision_ex
 | RR-25 | a real recorded revision stores compressed | php | end-to-end write | LENGTH(changes) < raw JSON (RC-12) | implemented | 2026-08-28 |
 | RR-26 | diff() round-trips from storage | php | re-read row | the recorded pair comes back | implemented | 2026-08-28 |
 
+## Revision_Unit_Of_Work_Test (php)
+
+The public unit-of-work seam, `Revision::begin_unit_of_work()` / `unit_of_work()`, and the
+`system/script.php` run boundary.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RU-01 | a script loop files each iteration under its own transaction | php | derived-cli state, run boundary `import_records.php`, 3 iterations x 2 writes | 3 rows; each its description, the script endpoint, SOURCE_CLI, revision_count 2 | implemented | 2026-09-25 |
+| RU-02 | the closure form restores the caller's transaction | php | caller write, `unit_of_work()` write, caller write | inner row distinct; caller's row back with count 2, inner count 1 | implemented | 2026-09-25 |
+| RU-03 | the closure form restores on a throw | php | callable throws | exception propagates; caller's transaction current | implemented | 2026-09-25 |
+| RU-04 | units nest | php | outer unit containing an inner unit | three distinct rows; inner hands outer back; outer hands caller back | implemented | 2026-09-25 |
+| RU-05 | source and endpoint carry over, description does not | php | `begin_unit_of_work()` with and without an endpoint | SOURCE_TEST kept; endpoint kept / replaced; description null | implemented | 2026-09-25 |
+| RU-06 | a unit that writes nothing leaves no row | php | 5 empty begins + an empty closure | `_transactions` count unchanged | implemented | 2026-09-25 |
+| RU-07 | the framework boundary is unchanged | php | `_reset_request_state('ajax', ...)`; unknown source | fresh row, declared source + endpoint, description cleared; unknown source throws | implemented | 2026-09-25 |
+| RU-08 | `system/script.php` declares one unit per run | php | source of script.php | the `cli` reset follows `bootstrap()` | implemented | 2026-09-25 |
+
 ## Revision_Cleanup_Test (php)
 
 `Revision_Cleanup_Service::cleanup_revisions`, driven directly with a Task_Instance.
@@ -120,3 +136,4 @@ Cataloged here because the rule is part of this concern's contract.
 | RP-05 | an unrecorded parent is flagged | php | belongsTo a non-recording model | 1 violation naming the parent | implemented | 2026-08-28 |
 | RP-06 | an unresolvable parent is not judged | php | variable class name | 0 violations | implemented | 2026-08-28 |
 | RP-07 | @REVISION-01-EXCEPTION suppresses the finding | php | marker in the docblock | 0 violations | implemented | 2026-08-28 |
+| RU-09 | Task::internal() runs as its own unit and hands the caller's transaction back, so a caller's later write joins the caller's unit | php | write, Task::internal(echo), write | same transaction id before and after; caller row counts 2 | implemented |

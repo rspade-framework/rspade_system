@@ -25,6 +25,9 @@ use App\RSpade\Core\Manifest\Full_ManifestSupport_Abstract;
  *
  * A malformed declaration is a manifest-build FATAL rather than a page that
  * silently never renders. See php artisan rsx:man error_pages.
+ *
+ * ROUTE-VERB-01 lives here too (and is called by the portal twin): a route declares GET
+ * and/or POST and nothing else - see assert_route_verbs().
  */
 class Route_ManifestSupport extends Full_ManifestSupport_Abstract
 {
@@ -142,6 +145,7 @@ class Route_ManifestSupport extends Full_ManifestSupport_Abstract
                 "{$fqcn}::{$method_name} in {$file}"
             );
 
+            static::assert_route_verbs($pattern, (array) $methods, $fqcn, $method_name, $file);
             static::assert_error_route_shape($pattern, (array) $methods, $gates, $fqcn, $method_name, $file);
 
             // The surface key auth.surfaces is keyed by, and the target
@@ -189,6 +193,38 @@ class Route_ManifestSupport extends Full_ManifestSupport_Abstract
             }
 
             $manifest_data['data']['routes'][$pattern] = $route_data;
+        }
+    }
+
+    /**
+     * ROUTE-VERB-01: a #[Route] / #[Portal_Route] declares GET and/or POST, and nothing
+     * else. RSX pages and forms speak GET and POST only - PUT, PATCH and DELETE would need
+     * method override, which is switched off, and HEAD is served by every GET route. A
+     * declaration naming any other verb is a manifest-build FATAL rather than a route
+     * nothing can reach.
+     *
+     * Called by this module and by Portal_Route_ManifestSupport.
+     *
+     * @param string $pattern
+     * @param array $methods The declared HTTP methods
+     * @param string|null $fqcn
+     * @param string $method_name
+     * @param string $file
+     * @return void
+     */
+    public static function assert_route_verbs(string $pattern, array $methods, ?string $fqcn, string $method_name, string $file): void
+    {
+        $declared = array_map(fn ($verb) => strtoupper((string) $verb), $methods);
+        $refused = array_values(array_diff($declared, ['GET', 'POST']));
+
+        if ($declared === [] || $refused !== []) {
+            throw new \RuntimeException(
+                "Invalid route verbs: {$fqcn}::{$method_name} in {$file}\n" .
+                "  ROUTE-VERB-01: '{$pattern}' declares " . ($declared === [] ? 'no method' : implode(', ', $declared))
+                . "; a route accepts GET and POST only.\n" .
+                "  Declare methods: ['GET'], ['POST'] or ['GET', 'POST'] (omitted means ['GET']).\n" .
+                '  See: php artisan rsx:man routing'
+            );
         }
     }
 

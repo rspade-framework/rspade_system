@@ -87,16 +87,20 @@ class Auth_Gates_Realm_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A target the index does not know permits: only an indexed surface can declare
-     * a realm, and the gate layer above still applies.
+     * A target the index does not know is never permitted: the realm check refuses it
+     * loudly (Auth_Gates::require_surface), in either realm.
      */
-    public static function test_unindexed_target_permits()
+    public static function test_unindexed_target_is_refused()
     {
         static::__install_surface(Auth_Gates::REALM_PORTAL, ['grants']);
 
-        static::__assert_true(
-            Auth_Gates::surface_realm_permits('No_Such_Controller::nope', Auth_Gates::REALM_STAFF)
-        );
+        foreach ([Auth_Gates::REALM_STAFF, Auth_Gates::REALM_PORTAL] as $realm) {
+            static::__assert_throws(
+                \RuntimeException::class,
+                fn () => Auth_Gates::surface_realm_permits('No_Such_Controller::nope', $realm),
+                'has no entry'
+            );
+        }
 
         Auth_Gates::_reset_for_testing();
     }
@@ -139,18 +143,20 @@ class Auth_Gates_Realm_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A cross-realm surface is refused even with NO gates at all: the realm check
-     * runs before the gate list is consulted.
+     * A gateless surface is refused loudly before its realm is even compared: the realm
+     * check reads the same index entry the gates do, and an entry with no gate is a
+     * build/request disagreement (Auth_Gates::require_surface).
      */
-    public static function test_ajax_seam_denies_cross_realm_gateless_surface()
+    public static function test_ajax_seam_refuses_gateless_surface_in_either_realm()
     {
         static::__install_surface(Auth_Gates::REALM_PORTAL, []);
 
         static::__assert_throws(
-            AjaxUnauthorizedException::class,
+            \RuntimeException::class,
             function () {
                 Ajax::internal('Auth_Gates_Seam_Fixture_Controller', 'endpoint');
-            }
+            },
+            'empty gate list'
         );
 
         Auth_Gates::_reset_for_testing();

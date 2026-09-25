@@ -9,14 +9,13 @@ namespace App\RSpade\Tests\ModelFetch\Php;
 
 use Illuminate\Http\Request;
 use App\RSpade\Core\Ajax\Ajax;
-use App\RSpade\Core\Ajax\Ajax_Batch_Controller;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * The batch transport preserves each sub-call's own error code.
  *
  * The transport batcher (/_ajax/_batch, active outside development mode) runs N sub-calls
- * through Ajax::internal() and re-encodes whatever each one throws. AjaxNotFoundException
+ * through the one Ajax core and encodes whatever each one throws (Ajax::error_envelope). AjaxNotFoundException
  * is a SUBCLASS of AjaxFormErrorException, so without its own catch arm a not-found
  * sub-call reached the client stamped 'validation' - and client code that branches on
  * Ajax.ERROR_NOT_FOUND (the ORM fetch path does, to tell a missing record from a broken
@@ -69,12 +68,10 @@ class Ajax_Batch_Error_Code_Test extends Rsx_Test_Abstract
      * inside the batch loop. A TypeError is a \Throwable but NOT an \Exception, so before
      * the generic arm was widened it escaped the loop and aborted the whole batch with a
      * fatal (backtrace and all) - an anonymous, unauthenticated oracle, since /_ajax/_batch
-     * is #[Auth('public')]. The arm now catches \Throwable, so the fault stays a per-call
-     * failure, and in strict production the reason is a single generic string (mirroring the
-     * direct-path Ajax_Exception_Handler, which shares the Rsx::is_production() gate). This
-     * process runs in development mode, so the real message is kept for troubleshooting; the
-     * production redaction of that same branch is exercised by the live-probe row in the
-     * catalog and by the direct handler's own coverage.
+     * is reachable anonymously. Every \Throwable is caught per call, so the fault stays a
+     * per-call 'fatal' envelope - the same envelope the direct transport answers - with the
+     * detail only for a caller Rsx_Diagnostics admits (Diagnostic_Detail_Test covers the
+     * redaction).
      */
     public static function test_a_raw_throwable_is_contained_and_not_fatal()
     {
@@ -96,7 +93,7 @@ class Ajax_Batch_Error_Code_Test extends Rsx_Test_Abstract
         // The TypeError sub-call did not abort the batch: its sibling still answered.
         static::__assert_true(isset($data['C_0']), 'the throwing sub-call produced its own response');
         static::__assert_false($data['C_0']['_success'], 'the throwing sub-call failed');
-        static::__assert_equals('exception', $data['C_0']['error_type']);
+        static::__assert_equals(Ajax::ERROR_FATAL, $data['C_0']['error_code']);
         static::__assert_true(isset($data['C_1']), 'the sibling sub-call still ran after the throw');
         static::__assert_equals(Ajax::ERROR_NOT_FOUND, $data['C_1']['error_code']);
     }
@@ -104,23 +101,12 @@ class Ajax_Batch_Error_Code_Test extends Rsx_Test_Abstract
     /**
      * Run one batch request in-process and return the decoded response map.
      *
-     * The controller flips the process-wide Ajax response mode on; a test process is not
-     * a request, so it is put back the way it was found.
-     *
      * @return array
      */
     private static function __run_batch(array $batch_calls): array
     {
-        $previous_response_mode = Ajax::is_ajax_response_mode();
+        $request = Request::create('/_ajax/_batch', 'POST', ['batch_calls' => $batch_calls]);
 
-        try {
-            $request = Request::create('/_ajax/_batch', 'POST', ['batch_calls' => $batch_calls]);
-
-            $response = Ajax_Batch_Controller::batch($request, []);
-
-            return $response->getData(true);
-        } finally {
-            Ajax::set_ajax_response_mode($previous_response_mode);
-        }
+        return Ajax::handle_batch_request($request)->getData(true);
     }
 }

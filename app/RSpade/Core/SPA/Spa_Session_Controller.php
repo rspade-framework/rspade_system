@@ -35,6 +35,7 @@ class Spa_Session_Controller extends Rsx_Controller_Abstract
      * during a full page load, allowing client to detect staleness.
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function get_state(Request $request, array $params = [])
     {
         // Build key - detects codebase updates

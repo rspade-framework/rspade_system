@@ -121,12 +121,14 @@ class Api_Scopes
             );
         }
 
-        // The version may be wildcarded (a key that follows the API across versions) but a
-        // LITERAL version must look like one, or the scope is a typo nobody would notice.
+        // The version may be wildcarded with '?' (a key that follows the API across versions)
+        // but a LITERAL version must look like one, or the scope is a typo nobody would
+        // notice. '#' is refused: it matches an all-digits segment, and a version is 'vN',
+        // so it would match no path ever.
         $version = $segments[1];
-        if ($version !== '?' && $version !== '#' && !preg_match('/^v[0-9]+$/', $version)) {
+        if ($version !== '?' && !preg_match('/^v[0-9]+$/', $version)) {
             throw new Api_Scope_Validation_Exception(
-                "the version segment must be vN, ? or # : '{$scope}'"
+                "the version segment must be vN or ? : '{$scope}'"
             );
         }
     }

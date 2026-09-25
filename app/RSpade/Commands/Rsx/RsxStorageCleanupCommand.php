@@ -210,7 +210,7 @@ class RsxStorageCleanupCommand extends FrameworkDeveloperCommand
             $this->info('');
             $this->info("  Deleted Attachments:  {$deleted_attachments}");
             $this->info("  Deleted Storage:      {$deleted_storage}");
-            $this->info("  Freed Disk Space:     " . $this->format_bytes($deleted_bytes));
+            $this->info("  Freed Disk Space:     " . bytes_to_human($deleted_bytes));
             $this->info('');
 
             return 0;
@@ -218,19 +218,5 @@ class RsxStorageCleanupCommand extends FrameworkDeveloperCommand
         } finally {
             RsxLocks::release_lock($lock);
         }
-    }
-
-    /**
-     * Format bytes to human-readable size
-     */
-    protected function format_bytes($bytes)
-    {
-        $units = ['B', 'KB', 'MB', 'GB', 'TB'];
-
-        for ($i = 0; $bytes > 1024 && $i < count($units) - 1; $i++) {
-            $bytes /= 1024;
-        }
-
-        return round($bytes, 2) . ' ' . $units[$i];
     }
 }

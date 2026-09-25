@@ -30,11 +30,15 @@ their payload computation is proven here in php, and the browser half is verifie
 | `Core/Portal/Portal_Route_ManifestSupport.php` | `'auth'` on `#[Portal_Route]` rows. |
 | `Core/Portal/Portal_Spa_ManifestSupport.php` | `'surface'` + `'target'` on portal SPA rows. |
 | `Core/Api/Api_Endpoint_ManifestSupport.php` | `'auth'` on `#[Api_Endpoint]` rows. |
-| `Core/Dispatch/Dispatcher.php` | Route/SPA seam. Also owns the dev-auth identity (moved here from the app's `Main::pre_dispatch` so gates can see it). |
-| `Core/Portal/Portal_Dispatcher.php` | `#[Portal_Route]` seam; portal login redirect on denial. |
-| `Core/Ajax/Ajax.php` | Both Ajax entry points (`handle_browser_request`, `internal`). |
+| `Core/Dispatch/Dispatcher.php` | Route/SPA seam, both realms (`#[Route]`, `#[Portal_Route]`); portal login redirect on denial. Also owns the dev-auth identity (per realm) so gates can see it. |
+| `Core/Ajax/Ajax.php` | The one Ajax core (`execute()`) behind every entry point (`handle_browser_request`, `handle_batch_request`, `internal`). |
 | `Core/Database/Orm_Controller.php` | Model fetch + relationship seam; anti-enumeration denial shape. |
 | `Core/Api/Api_Dispatcher.php` | `#[Api_Endpoint]` seam; the API's 403. |
+| `Core/Database/Model_Fetch_Lineage.php` | Nearest-declaration resolution of `fetch()` / `portal_fetch()` / fetchable relationships (read by the ORM seam and the index). |
+
+Every seam above resolves its gates through `Auth_Gates::surface_gates()`, which refuses an
+unindexed or gateless surface (`Auth_Fail_Closed_Test`); the build-time half - every row names
+a surface, NOT STATIC, UNMARKED FETCH OVERRIDE, `@spa` targets - is `Auth_Build_Coverage_Test`.
 | `Core/Auth/Auth_Gates.php` (export) | `export_grants()` / `export_route_grants()`: the whole `window.rsxapp.auth` / `auth_routes` payload. The rsxapp assembler only picks the realm and reads the config flag. |
 | `Core/Bundle/Rsx_Bundle_Abstract.php` | Ships those maps into `window.rsxapp` from the identity fork. |
 | `Core/Auth/Auth_BundleIntegration.php` | Generates the JS Permission / Portal_Permission check mirrors (Phase 6). |

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policymap [
+<!ELEMENT policymap (policy)*>
+<!ATTLIST policymap xmlns CDATA #FIXED "">
+<!ELEMENT policy EMPTY>
+<!ATTLIST policy xmlns CDATA #FIXED "">
+<!ATTLIST policy domain NMTOKEN #REQUIRED>
+<!ATTLIST policy name NMTOKEN #IMPLIED>
+<!ATTLIST policy pattern CDATA #IMPLIED>
+<!ATTLIST policy rights NMTOKEN #IMPLIED>
+<!ATTLIST policy stealth NMTOKEN #IMPLIED>
+<!ATTLIST policy value CDATA #IMPLIED>
+]>
+<!--
+  RSpade ImageMagick policy - installed over /etc/ImageMagick-6/policy.xml by the image.
+
+  RASTER CODERS ONLY. The framework hands ImageMagick uploaded bytes (upload metadata,
+  thumbnails) and the first page of a PDF (document thumbnails, through Ghostscript).
+  Nothing else. Every other coder is refused, and in particular the vector and scripting
+  coders an uploaded file can reach: SVG/MSVG (an <image href="text:/etc/passwd"> in an
+  SVG rasterises a local file into the thumbnail), MVG and MSL (ImageMagick's own drawing
+  and scripting languages), TEXT and LABEL (read a file or a string as an image), URL /
+  HTTP / HTTPS / FTP (fetch from the network), EPHEMERAL and MPC.
+
+  The framework never asks ImageMagick for SVG: an uploaded SVG is sanitized and served
+  as itself, and its thumbnail is the extension icon, which is a pre-rasterised PNG.
+  rsx:health FAILs ("ImageMagick Coder Policy") when any of those coders is readable.
+
+  An operator who needs another raster format adds it to the allow-list below; a vector
+  or scripting coder does not belong here.
+-->
+<policymap>
+  <policy domain="Undefined" rights="none"/>
+
+  <policy domain="resource" name="memory" value="1024MiB"/>
+  <policy domain="resource" name="map" value="2048MiB"/>
+  <policy domain="resource" name="area" value="256MP"/>
+  <policy domain="resource" name="disk" value="2GiB"/>
+  <policy domain="resource" name="width" value="32KP"/>
+  <policy domain="resource" name="height" value="32KP"/>
+
+  <!-- Indirect reads (@file) and stdin/stdout are never how the framework reads. -->
+  <policy domain="path" rights="none" pattern="@*"/>
+  <policy domain="path" rights="none" pattern="-"/>
+
+  <!-- No network fetches. Ghostscript (the PDF delegate) stays allowed. -->
+  <policy domain="delegate" rights="none" pattern="URL"/>
+  <policy domain="delegate" rights="none" pattern="HTTPS"/>
+  <policy domain="delegate" rights="none" pattern="HTTP"/>
+
+  <!-- Deny every coder, then allow the raster formats (plus PDF, read through
+       Ghostscript for a document's first page, and the PNM family Ghostscript hands
+       its output back in). Rules are applied in order; the last match wins. -->
+  <policy domain="coder" rights="none" pattern="*"/>
+  <policy domain="coder" rights="read|write" pattern="{GIF,JPEG,JPG,PJPEG,PNG,PNG8,PNG24,PNG32,PNG48,PNG64,PNG00,APNG,WEBP,BMP,BMP2,BMP3,ICO,CUR,TIFF,TIF,TIFF64,PTIF,HEIC,HEIF,AVIF,PSD,PSB,PNM,PPM,PGM,PBM,PAM,PDF}"/>
+</policymap>

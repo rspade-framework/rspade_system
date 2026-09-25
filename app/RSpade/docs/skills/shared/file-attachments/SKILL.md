@@ -312,7 +312,7 @@ public static function keep_legal_holds($attachment) {
 public static function log_destruction($attachment) { /* a throw defers, never half-destroys */ }
 ```
 
-Retention windows and lookbacks are `config('rsx.files.*')`; the full contract is `rsx:man file_disposal`.
+Retention windows and lookbacks are `config('rsx.files.*')`; the full contract is `rsx:man file_disposal`. **`deleted_retention_days` = 0 means KEEP FOREVER** (set it in `rsx/resource/config/rsx.php` when deleted files must be kept for audit): the scheduled destroy never runs, every deleted attachment stays restorable with its blob pinned, and `force_destroy()` still erases at once. A negative value throws.
 
 ---
 
@@ -372,6 +372,8 @@ Do not compare `created_by` to a user id — authorship is a polymorphic PAIR an
 
 `POST /_upload` · `GET /_download/:key` · `GET /_inline/:key` · `GET /_download_zip/:key` · `GET /_thumbnail/preset/:key/:preset` · `GET /_thumbnail/dynamic/:key/:type/:width/:height?` · `GET /_icon_by_extension/:extension` · `GET /_preview/pdf/:key`
 
+Every one that serves bytes answers with `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` and `X-Content-Type-Options: nosniff` (`File_Attachment_Controller::harden_file_response()`), so a stored HTML or SVG opened in a tab is inert. **An SVG is sanitized on upload, refused (422 `unparseable_svg`) when it cannot be parsed, and never rasterised** — its thumbnail is the extension icon (`rsx:man file_upload`, SVG).
+
 All of those except `/_icon_by_extension` also accept `Authorization: Bearer rsx_...`, so an integration reaches bytes with no browser session (a bad Bearer is a 401 — it never degrades to anonymous). The external API adds `POST /api/v1/files` · `GET /api/v1/files/:key` · `GET /api/v1/files/:key/text`.
 
 ---
@@ -383,6 +385,8 @@ All of those except `/_icon_by_extension` also accept `Authorization: Bearer rsx
 - **"Not authorized to assign this attachment"** — the attachment is already claimed, or its `site_id` does not match the request's site (common when a portal page uploads and a staff-context endpoint tries to claim).
 - **The upload works from the staff app but 419/404s from the portal** — a hand-rolled `fetch('/_upload')`. Use `Ajax.upload()`.
 - **The size label disagrees with enforcement** — a hardcoded number. Use `max_file_size_human()`.
+- **An SVG thumbnail is a generic icon / `width` is null** — by design: SVG never reaches ImageMagick.
+- **422 `unparseable_svg`** — the SVG is not well-formed XML; nothing was stored.
 - **A deleted file is still on disk** — correct: it is in the retention window. Only `File_Disposal_Service` (or `force_destroy()`) releases blobs.
 
 Details: `php artisan rsx:man file_upload` · `file_disposal` · `thumbnails` · `droppable`. Related: `rspade:document-preview`, `rspade:event-hooks`, `rspade:auth-gates`, `rspade:external-api` (uploading and attaching over the REST API).

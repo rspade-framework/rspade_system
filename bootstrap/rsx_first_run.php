@@ -27,6 +27,11 @@
  *      value by hand.
  *   3. Web requests only. The CLI has no browser to ask.
  *
+ * ONLY A BROWSER ON THIS MACHINE MAY SUBMIT IT. The offered address is the request's own
+ * Host, so a remote visitor could otherwise choose APP_URL for the box - and with it the
+ * host every emailed link points at. A non-loopback caller sees the address with
+ * instructions to set it in .env by hand, and a POST from one is refused.
+ *
  * WHEN IT DOES NOT ASK AT ALL. If the host the browser arrived on IS this machine's
  * own hostname, there is nothing to decide: the answer the screen would offer is the
  * only answer there is. That case is written straight to .env and the request
@@ -114,6 +119,56 @@ function rsx_first_run_auto_app_url(string $detected_url, string $os_hostname): 
 
     // The literal token, never the resolved name - see the header docblock.
     return $scheme . '://$HOSTNAME' . $port;
+}
+
+/**
+ * Is this request from THIS machine - the peer AND every address the forwarding chain
+ * declares loopback? The same test as is_loopback_ip() in helpers.php, replicated here
+ * because this file runs before the autoloader: a pre-boot copy of the predicate, kept to
+ * that one function's rules (a forwarded request that names no client is not loopback).
+ *
+ * @param array $server the request environment ($_SERVER)
+ */
+function rsx_first_run_is_loopback(array $server): bool
+{
+    $is_loopback_address = static function (?string $address): bool {
+        $address = trim((string) $address);
+        // A forwarded entry may carry a port ("127.0.0.1:51000") or IPv6 brackets.
+        if (str_starts_with($address, '[')) {
+            $address = substr($address, 1, (strpos($address, ']') ?: strlen($address)) - 1);
+        } elseif (substr_count($address, ':') === 1) {
+            $address = strstr($address, ':', true);
+        }
+
+        return in_array($address, ['127.0.0.1', '::1', 'localhost'], true);
+    };
+
+    if (!$is_loopback_address($server['REMOTE_ADDR'] ?? null)) {
+        return false;
+    }
+
+    $declared = [];
+    if (($server['HTTP_X_FORWARDED_FOR'] ?? '') !== '') {
+        $declared = array_merge($declared, explode(',', (string) $server['HTTP_X_FORWARDED_FOR']));
+    }
+    if (($server['HTTP_X_REAL_IP'] ?? '') !== '') {
+        $declared[] = (string) $server['HTTP_X_REAL_IP'];
+    }
+
+    if (empty($declared)) {
+        // Forwarded by something that would not say by whom.
+        return !isset($server['HTTP_X_FORWARDED_HOST'])
+            && !isset($server['HTTP_X_FORWARDED_PROTO'])
+            && !isset($server['HTTP_FORWARDED']);
+    }
+
+    foreach ($declared as $address) {
+        if (!$is_loopback_address($address)) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 /**
@@ -209,8 +264,8 @@ function rsx_first_run_write_env_value(string $path, string $key, string $value)
 
     // Development only. An unset RSX_MODE defaults to development, matching
     // the framework's own default.
-    $mode = strtolower(rsx_paths_env_value('RSX_MODE'));
-    if ($mode !== 'development' && $mode !== 'dev') {
+    require_once __DIR__ . '/rsx_mode.php';
+    if (rsx_preboot_mode() !== 'development') {
         return;
     }
 
@@ -255,7 +310,21 @@ function rsx_first_run_write_env_value(string $path, string $key, string $value)
     // ------------------------------------------------------------------
     $cookie_name = 'rsx_first_run';
 
+    // THIS MACHINE ONLY. The address offered comes from the request's Host header, so a
+    // remote visitor could write any APP_URL - and every emailed link (password resets
+    // included) would then point at a host of their choosing. A caller that is not
+    // loopback is shown the address to set by hand instead of a button.
+    $is_loopback = rsx_first_run_is_loopback($_SERVER);
+
     if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && isset($_POST['rsx_set_app_url'])) {
+        if (!$is_loopback) {
+            http_response_code(403);
+            header('Content-Type: text/plain; charset=UTF-8');
+            echo "APP_URL can be set from this screen only by a browser on this machine.\n"
+                . "Set it in .env by hand: APP_URL={$detected_url}\n";
+            exit;
+        }
+
         $submitted = (string) ($_POST['rsx_token'] ?? '');
         $expected = (string) ($_COOKIE[$cookie_name] ?? '');
 
@@ -348,10 +417,14 @@ function rsx_first_run_write_env_value(string $path, string $key, string $value)
     <div class="label">You are viewing it at</div>
     <div class="url">' . $e($detected_url) . '</div>
 
-    <form method="post" action="/">
+    ' . ($is_loopback
+        ? '<form method="post" action="/">
       <input type="hidden" name="rsx_token" value="' . $e($token) . '">
       <button type="submit" name="rsx_set_app_url" value="1">Use this address</button>
-    </form>
+    </form>'
+        : '<p class="note">This screen sets the address only for a browser on this machine.
+      To use this address, set <code>APP_URL=' . $e($detected_url) . '</code> in the
+      <code>.env</code> file by hand.</p>') . '
 
     <p class="note">
       This sets <code>APP_URL</code> in your <code>.env</code> file. Every link the

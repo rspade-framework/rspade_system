@@ -449,7 +449,7 @@ ENTRY 5: PORTAL EXPERIENCE BOUNDARY (the staff facade answering portal questions
         The rule would have to decide REACHABILITY - can a portal request get here -
         which means whole-call-graph analysis across dispatch, shared transports,
         event handlers and service classes. The framework's three transports
-        (/_ajax/:controller/:action, /_ajax/_batch, /_upload) are served on BOTH
+        (/_ajax/<Controller>/<action>, /_ajax/_batch, /_upload) are served on BOTH
         channels by the same handlers, so "this file lives under rsx/app/frontend"
         proves nothing about a gate handler it registers. A file's location, its
         namespace, and its route attributes are all poor proxies for the answer.

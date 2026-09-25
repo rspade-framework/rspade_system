@@ -38,6 +38,11 @@ SYNOPSIS
     // PHP: the id an activity row stores so it can answer "what did that change".
     $activity->transaction_id = Revision::transaction_id();
 
+    // PHP: a script or long task declares its own units - one per record imported.
+    foreach ($rows as $row) {
+        Revision::unit_of_work("Imported invoice {$row['number']}", fn () => import($row));
+    }
+
 DESCRIPTION
     Revision history records every write to an opted-in model as a document of
     the shape
@@ -279,24 +284,66 @@ THE UNIT OF WORK
 
         Reset point                         source    endpoint
         ---------------------------------   -------   ---------------------------
-        Dispatcher::dispatch()              web       'GET /clients'
-        Api_Dispatcher::dispatch()          api       'POST /api/v1/clients'
-        Ajax::internal() / an Ajax call     ajax      'Clients_Controller::save'
+        Rsx_Front_Controller (web request)  web       'GET /clients'
+        Api_Dispatcher                      api       'POST /api/v1/clients'
+        Ajax::execute() / an Ajax call      ajax      'Clients_Controller::save'
         Task_Worker_Command, Task::internal task      'Service::method'
         Rsx_Test_Abstract                   test      'Test_Class::test_method'
+        system/script.php (one script run)  cli       'import_contacts.php'
 
     So a PLAIN AJAX CALL is source `ajax` with endpoint `Controller::action` -
     the unit of work is the endpoint, not the transport URL the dispatcher saw.
     A BATCH of Ajax calls is ONE TRANSACTION PER CALL, not one for the batch:
     each call snapshots the facade, resets it, runs, and restores the calling
     scope's state afterwards. A TASK WORKER processing many tasks starts a
-    fresh transaction per task. An API request records `api_request_log_id`
+    fresh transaction per task; a task run in-process with Task::internal() is
+    its own unit and hands the caller's unit back when it returns or throws, as
+    an Ajax call does. An API request records `api_request_log_id`
     back onto its transaction after the log row is written.
 
-    A write that happens before any reset point runs - boot code, a one-off
-    artisan command calling straight into a model - is recorded under a DERIVED
-    source: `cli` in a CLI process, `web` otherwise. Both are true statements
-    about where the write came from, which is all the column claims.
+    Every one of those boundaries is ONE unit for the whole of what it runs. A
+    SCRIPT (rsx:man scripting) or a TASK that imports thousands of records is
+    therefore one transaction claiming one action changed all of them, unless
+    it declares its own units - which is what the public seam is for:
+
+        Revision::begin_unit_of_work(?string $description = null,
+                                     ?string $endpoint = null): void
+            Close the current unit and begin the next. Call it at the top of
+            each logical unit (per record, per invoice, per batch).
+
+        Revision::unit_of_work(string $description, callable $callable,
+                               ?string $endpoint = null): mixed
+            Run the callable as its own unit, then restore the caller's unit
+            exactly as it was (in a finally, so a throw restores too), and
+            return what the callable returns. Nests.
+
+    What a declared unit carries: the SOURCE of the unit it replaces - never a
+    parameter, so the same call is right in a script (`cli`), a task (`task`)
+    or a test (`test`); the ENDPOINT of the unit it replaces unless one is
+    given; and its own description (a description is never carried to the
+    next unit). The caller's transaction is closed, not rewritten: its row and
+    revisions stay exactly as recorded.
+
+    What it composes with:
+      - It is free when nothing is recorded: the mint is lazy, so a unit that
+        writes nothing leaves no row.
+      - It is not a database transaction and is safe inside one. But the
+        _transactions row is written on the same connection as the writes, so
+        a DB transaction that rolls back takes the unit's row with it - begin
+        the unit OUTSIDE the DB transaction it describes:
+            Revision::unit_of_work($label, fn () => DB::transaction($import));
+      - Revision::without() is independent of it: suppression is not part of
+        a unit and is not reset by one.
+      - The framework boundaries above are unaffected, and an app never calls
+        the internal _reset_request_state() / _snapshot_request_state() /
+        _restore_request_state() itself; these two methods are the supported
+        spelling of the same mechanism.
+
+    A write that happens before any boundary runs - boot code, an artisan
+    command that is not a task calling straight into a model - is recorded
+    under a DERIVED source: `cli` in a CLI process, `web` otherwise. Both are
+    true statements about where the write came from, which is all the column
+    claims. Such a command is one unit for its whole run, like a script.
 
 API REFERENCE
 
@@ -320,6 +367,14 @@ API REFERENCE
         Attach a human description to this unit of work ("Imported 40 contacts
         from CSV"). Works before OR after the first revision. Purely
         descriptive - nothing keys on it.
+
+    begin_unit_of_work(?string $description = null, ?string $endpoint = null): void
+        Close the current unit and begin the next; source kept, endpoint kept
+        unless given. See THE UNIT OF WORK.
+
+    unit_of_work(string $description, callable $callable, ?string $endpoint = null): mixed
+        Run the callable as its own unit and restore the caller's afterwards.
+        See THE UNIT OF WORK.
 
     without(callable $callable): mixed
         Run the callable with recording SUPPRESSED, and return what it returns.
@@ -462,7 +517,7 @@ WHAT THIS FEATURE DELIBERATELY DOES NOT DO
 
 EXAMPLES
 
-    Recording an import under one description:
+    Recording a small import as one action:
 
         Revision::describe('Nightly contact import');
 
@@ -474,6 +529,21 @@ EXAMPLES
         }
 
         // ONE transaction, N revisions, revision_count = N.
+
+    Recording a long import as one action PER RECORD (a script or a task):
+
+        foreach ($rows as $row) {
+            Revision::unit_of_work("Imported contact {$row['email']}", function () use ($row, $client) {
+                $contact = new Contact_Model();
+                $contact->client_id = $client->id;
+                $contact->email = $row['email'];
+                $contact->save();
+            });
+        }
+
+        // N transactions, each with its own description, each revision_count = 1.
+        // The same with Revision::begin_unit_of_work("...") at the top of the loop
+        // body, when nothing needs the previous unit back.
 
     Suppressing a recomputation that is not a user action:
 
@@ -533,7 +603,13 @@ TROUBLESHOOTING
         Correct. They are written on the same connection as the writes they
         describe, so a database transaction that rolls back takes them along.
 
+    One transaction holds a whole script's or task's writes
+        Correct for an undeclared run: the boundary is the run. Declare the
+        units with Revision::begin_unit_of_work() / unit_of_work() (THE UNIT OF
+        WORK). Existing rows are not regrouped.
+
 SEE ALSO
+    rsx:man scripting
     rsx:man model
     rsx:man realtime
     rsx:man migrations

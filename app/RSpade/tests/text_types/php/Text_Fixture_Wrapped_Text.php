@@ -17,13 +17,13 @@ use App\RSpade\Core\Database\TextTypes\Rsx_Text_Abstract;
 class Text_Fixture_Wrapped_Text extends Rsx_Text_Abstract
 {
     /** Required of every type; a passthrough here because the fixture has no encoding to enforce. */
-    public static function filter_set(string $raw): string
+    public static function sanitize_encoded(string $raw): string
     {
         return $raw;
     }
 
     /** A wrapping encoding escapes plain text into its wrapper. */
-    public static function escape_string(string $plain): string
+    public static function encode_plain_text(string $plain): string
     {
         return '<p>' . htmlspecialchars($plain) . '</p>';
     }
@@ -31,10 +31,10 @@ class Text_Fixture_Wrapped_Text extends Rsx_Text_Abstract
     /** A wrapping encoding answers emptiness by content, as the base requires. */
     public function is_empty(): bool
     {
-        return trim($this->to_text()) === '';
+        return trim($this->to_plain_text()) === '';
     }
 
-    public function to_text(): string
+    public function to_plain_text(): string
     {
         return trim(strip_tags(str_replace('<br>', '', $this->raw)));
     }

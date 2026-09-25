@@ -344,9 +344,11 @@ writes one line, reads ONE line with `fgets`, closes, with no read timeout.
     -> {"id":N,"ok":true}
 ```
 
-`lib/protocol.js` is PURE (require it from a test without binding anything) and deliberately
-mirrors `rsx-lockd/lib/protocol.js`: same encode/decode contract, same newline splitter, same
-`MAX_FRAME_BYTES` (1 MB) cap on a peer that never sends a newline. `decode_frame()` never
+The frame codec is `rsx-lockd/lib/protocol.js` itself (`encode_frame`, `decode_frame`,
+`Frame_Reader`, `MAX_FRAME_BYTES` - the 1 MB cap on a peer that never sends a newline),
+required by `lib/queue_server.js`. It is PURE, so a test requires it without binding anything.
+The dependency points testd -> lockd and never back: rsx-lockd stays liftable into its own
+repository with zero dependencies. `decode_frame()` never
 throws and rejects non-object frames, because this process is the only thing that can write
 `results.jsonl` and one uncaught throw would cost the whole run's outcome. An unknown method,
 a malformed frame or an oversized frame is refused without taking the server down.

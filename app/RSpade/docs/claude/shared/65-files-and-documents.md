@@ -14,7 +14,7 @@ Two models, one dedup boundary: `File_Storage_Model` = the physical content-addr
 
 **A thumbnail is rendered with `<Attachment_Thumbnail $attachment_id=... />` and nothing else** — images included, staff and portal alike. **An app never builds a thumbnail URL** and never ships one in a payload: a producer ships `file_attachment_id` and the component fetches the record itself. The component owns the URL because the picture is a live view — the server may replace it at any time, and only the component is subscribed to hear about it. Never invoke it with a null id; render the initials/placeholder branch instead.
 
-**`delete()` ENTERS a recoverable retention window; it does not destroy anything.** The blob is preserved and the attachment is recoverable (`get_deleted_attachments()` / `undelete()`). `force_destroy()` is the only immediate erasure, and `File_Disposal_Service` is the SOLE blob-release authority.
+**`delete()` ENTERS a recoverable retention window (`rsx.files.deleted_retention_days`, 0 = forever); it does not destroy anything.** The blob is preserved and the attachment is recoverable (`get_deleted_attachments()` / `undelete()`). `force_destroy()` is the only immediate erasure, and `File_Disposal_Service` is the SOLE blob-release authority.
 
 ## DOCUMENT RENDERING, SEARCH & PREVIEW
 

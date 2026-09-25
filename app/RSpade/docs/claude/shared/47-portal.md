@@ -2,7 +2,7 @@
 
 ## CLIENT PORTAL
 
-A second authenticated experience for external users (clients, vendors), running **parallel** to the staff app with its own dispatcher, routing table and permission facade — framework in `App\RSpade\Core\Portal\` (`Portal_Session`, `Rsx_Portal`, `Portal_Main_Abstract`, `Portal_User_Model`), application in `/rsx/portal/`. Routing is `#[Portal_Route('/path')]` (server-rendered) and `@portal_spa(...)` (SPA screens), resolved in the PORTAL auth realm; URLs come from `Rsx_Portal::Route(...)` / `Rsx_Portal.Route(...)`.
+A second authenticated experience for external users (clients, vendors), running **parallel** to the staff app with its own realm of the one dispatcher, routing table and permission facade — framework in `App\RSpade\Core\Portal\` (`Portal_Session`, `Rsx_Portal`, `Portal_Main_Abstract`, `Portal_User_Model`), application in `/rsx/portal/`. Routing is `#[Portal_Route('/path')]` (server-rendered) and `@portal_spa(...)` (SPA screens), resolved in the PORTAL auth realm; URLs come from `Rsx_Portal::Route(...)` / `Rsx_Portal.Route(...)`.
 
 **ONE session per browser** — one cookie, one `_sessions` row, one CSRF token, shared with the staff app; both identities being set at once is NORMAL. **`Portal_Session` is a facade over the portal properties only — never mix the two facades' properties.**
 
@@ -12,7 +12,7 @@ A second authenticated experience for external users (clients, vendors), running
 
 **Authorization mirrors staff auth**: `#[Auth]` on every surface, closed by default, `Portal_Main::pre_dispatch` performing NO authorization, and per-client rules living in the record layer (`portal_fetch()` + fail-closed `portal_can_read()`, `PORTAL-MODEL-FETCH-01`). **Multipart uploads MUST go through `Ajax.upload(form_data)`** — a raw `fetch('/_upload')` hits the staff path with no CSRF token.
 
-**"View as Client" impersonation is READ-ONLY, and enforcing that is the APP'S JOB** — the framework only exposes `is_impersonating()`, and since every Ajax endpoint is a POST (reads too), a blanket POST block breaks the portal: guard each MUTATING endpoint. Test with `rsx:debug /path --portal --portal-user=<id|email>`.
+**"View as Client" impersonation is READ-ONLY, enforced by the framework DENY BY DEFAULT** — every Ajax call is a POST (reads too), so while `Portal_Session::is_impersonating()` a portal Ajax endpoint runs only if it declares `#[Portal_Impersonation_Readable]`: **mark every portal READ endpoint**, leave writes unmarked (a forgotten mark refuses the read, never opens a write). Test with `rsx:debug /path --portal --portal-user=<id|email>`.
 
 **Sign-in beyond the password is framework-owned here too** — `Rsx_Portal_Two_Factor` (second factors, passkeys, passwordless sign-in) and `Rsx_Portal_Sso` (off until `rsx.sso.portal_enabled`), each with its own table so no staff credential or link ever signs anybody in on the portal; the portal-side session-value store is `Portal_Session::put_value()`/`get_value()`/`forget_value()`, never `Session::`.
 

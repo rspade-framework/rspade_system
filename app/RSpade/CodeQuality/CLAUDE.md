@@ -40,6 +40,11 @@ A rule receives a path, the contents and the manifest metadata, and says what is
    - Defines the interface: `get_id()`, `get_name()`, `check()`, `kind()`, `depends_on()`,
      `fingerprint_extra()`
    - Provides `add_violation()` and `source()`; rules self-register by extending it
+   - Shared helpers a rule calls instead of writing its own: `lineage_declaring_method()` /
+     `lineage_declaring_property()` / `lineage_declares_property()` (a member resolved through
+     the manifest lineage - an intermediate base counts), `method_body()` (one method's body
+     from text in hand, via `Php_Parser::method_body()` over Source_Cache tokens) and
+     `is_in_allowed_rspade_directory()`
 
 4. **CodeQualityChecker** (`CodeQualityChecker.php`)
    - `rsx:check`'s entry point: the PHP/JS/JSON syntax lints, the sanitized document a rule is

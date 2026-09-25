@@ -71,12 +71,6 @@ class Task_Command_ManifestSupport extends ManifestSupport_Abstract
         $declarations = $manifest_data['data']['attribute_index']['Command'] ?? [];
         $files = $manifest_data['data']['files'];
 
-        // The attribute index records a member once per METHOD BUCKET it appears in, and the
-        // scanner's public_static_methods map is filtered PUBLIC-or-STATIC, so one public
-        // method can be listed twice. A command name is unique by contract, so the second
-        // sighting would fail its own uniqueness check.
-        $seen = [];
-
         foreach ($declarations as $declaration) {
             $file = $declaration['file'];
             $method_name = $declaration['member'] ?? null;
@@ -84,12 +78,6 @@ class Task_Command_ManifestSupport extends ManifestSupport_Abstract
             if ($method_name === null) {
                 continue;
             }
-
-            if (isset($seen[$file . '::' . $method_name])) {
-                continue;
-            }
-
-            $seen[$file . '::' . $method_name] = true;
 
             $metadata = $files[$file] ?? [];
             $method_data = $metadata['public_static_methods'][$method_name] ?? [];

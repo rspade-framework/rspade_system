@@ -65,7 +65,12 @@ THE THREE CREATION PATHS (plus a direct call)
                     while login_users is EMPTY. It collects an email and a password
                     and creates the account in the browser. Development mode, web
                     requests, empty credential table: all three, so it is unreachable
-                    in normal operation.
+                    in normal operation. Only a browser ON THIS MACHINE
+                    (is_loopback_ip(): the peer and every forwarded hop) is offered
+                    the form; anyone else gets a 403 naming the post_migrate path, so
+                    whoever browses a fresh box first cannot create its most
+                    privileged account. The pre-boot APP_URL screen before it applies
+                    the same rule to its submit (rsx_first_run_is_loopback()).
 
     post_migrate    Rsx_Initial_User::create_from_env_if_needed(), called by
                     Maint_Migrate at the END of every `php artisan migrate` - after

@@ -170,7 +170,7 @@ class Spreadsheet_Rendition
      * Strip everything executable while keeping everything that makes it look like a
      * spreadsheet.
      *
-     * safe_html() is the WRONG tool here and is deliberately not reused: its allow-list carries
+     * sanitize_rich_text_html() is the WRONG tool here and is deliberately not reused: its allow-list carries
      * no `style` attribute and no `data:` scheme, so it would remove every fill, border, font
      * and embedded picture - which is the entire fidelity this class exists to deliver.
      *

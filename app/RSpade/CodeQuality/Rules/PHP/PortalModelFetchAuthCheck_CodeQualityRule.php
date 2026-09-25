@@ -3,6 +3,7 @@
 namespace App\RSpade\CodeQuality\Rules\PHP;
 
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
+use App\RSpade\Core\Manifest\Manifest;
 
 /**
  * PortalModelFetchAuthCheckRule - Validates the RECORD-LEVEL contract of a model
@@ -21,6 +22,12 @@ use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
  *   - declare portal_can_read(), and
  *   - if it defines portal_fetch() itself rather than using the Portal_Authorizable
  *     trait, actually call portal_can_read() from that body.
+ *
+ * Scope is every Rsx_Model_Abstract subclass through any number of abstract bases, and
+ * both declarations resolve through the lineage: a portal_fetch() or portal_can_read()
+ * declared on a shared intermediate base counts for every model beneath it. The
+ * portal_can_read() requirement applies to CONCRETE models; the body check applies where
+ * portal_fetch() is written.
  *
  * The standard pattern is `use Portal_Authorizable;` (the trait supplies a
  * portal_fetch() that defers to portal_can_read()) plus portal_can_read() on the
@@ -62,8 +69,14 @@ class PortalModelFetchAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
 
     public function check(string $file_path, string $contents, array $metadata = []): void
     {
-        // Only check model files (must extend Rsx_Model_Abstract)
-        if (!isset($metadata['extends']) || $metadata['extends'] !== 'Rsx_Model_Abstract') {
+        $class_name = $metadata['class'] ?? null;
+        if (!$class_name) {
+            return;
+        }
+
+        // Every model, however many abstract bases stand between it and Rsx_Model_Abstract
+        // (a site-scoped model reaches it only through Rsx_Site_Model_Abstract).
+        if (!Manifest::php_is_subclass_of($class_name, 'Rsx_Model_Abstract')) {
             return;
         }
 
@@ -72,45 +85,28 @@ class PortalModelFetchAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        $class_name = $metadata['class'] ?? null;
-        if (!$class_name) {
+        // The effective portal_fetch(): declared (or mixed in) here, else inherited from the
+        // nearest base that declares it. Without one carrying the fetch attribute the model
+        // is not portal-fetchable and this rule does not apply.
+        $declared_fetch = $metadata['public_static_methods']['portal_fetch'] ?? null;
+        $parent = $metadata['extends'] ?? null;
+
+        $portal_fetch_info = $declared_fetch;
+        if ($portal_fetch_info === null && $parent !== null && $parent !== '') {
+            $inherited = $this->lineage_declaring_method($parent, 'portal_fetch', 'Rsx_Model_Abstract');
+            $portal_fetch_info = $inherited['method'] ?? null;
+        }
+
+        if ($portal_fetch_info === null || !$this->has_fetch_attribute($portal_fetch_info)) {
             return;
         }
 
-        $methods = $metadata['public_static_methods'] ?? [];
+        $line_number = $declared_fetch['line'] ?? 1;
 
-        // The model must expose a portal_fetch() with the fetch attribute to be
-        // portal-fetchable. If it doesn't, this rule does not apply.
-        if (!isset($methods['portal_fetch'])) {
-            return;
-        }
-
-        $portal_fetch_info = $methods['portal_fetch'];
-        $attributes = $portal_fetch_info['attributes'] ?? [];
-
-        $has_fetch_attribute = false;
-        foreach ($attributes as $attr_name => $attr_data) {
-            $short_name = basename(str_replace('\\', '/', $attr_name));
-            if ($short_name === 'Ajax_Endpoint_Model_Fetch') {
-                $has_fetch_attribute = true;
-                break;
-            }
-        }
-
-        if (!$has_fetch_attribute) {
-            return;
-        }
-
-        $line_number = $portal_fetch_info['line'] ?? 1;
-
-        // Whether portal_fetch is supplied by a trait (Portal_Authorizable) or
-        // defined in the model file itself. Trait methods carry a 'file' key.
-        $is_trait_provided = isset($portal_fetch_info['file'])
-            && rsxrealpath($portal_fetch_info['file']) !== rsxrealpath($file_path);
-
-        // Every portal-fetchable model must declare portal_can_read() - the per-row,
-        // fail-closed visibility rule the framework relies on.
-        if (!$this->model_defines_portal_can_read($contents)) {
+        // Every CONCRETE portal-fetchable model must have portal_can_read() - the per-row,
+        // fail-closed visibility rule the framework relies on - declared here or on a base.
+        // An abstract base is never fetched itself; its concrete children are checked.
+        if (empty($metadata['abstract']) && !$this->lineage_defines_portal_can_read($metadata)) {
             $this->add_violation(
                 $file_path,
                 $line_number,
@@ -122,16 +118,24 @@ class PortalModelFetchAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
             return;
         }
 
-        // If portal_fetch lives in the trait, the trait calls portal_can_read();
-        // nothing more to verify in this file.
+        // The body is judged where it is written: only a class that defines portal_fetch()
+        // in its own file has it checked here. A trait's portal_fetch() (Portal_Authorizable)
+        // calls portal_can_read() by construction, and an inherited one was checked at the
+        // base that wrote it.
+        if ($declared_fetch === null) {
+            return;
+        }
+
+        $is_trait_provided = isset($declared_fetch['file'])
+            && rsxrealpath($declared_fetch['file']) !== rsxrealpath($file_path);
+
         if ($is_trait_provided) {
             return;
         }
 
-        // The model defines portal_fetch() itself: its body must actually consult the
-        // record-level rule it declares. A declared-but-uncalled portal_can_read() is
-        // the same dead-security-metadata failure as an unreachable endpoint.
-        $method_body = $this->extract_method_body($contents, 'portal_fetch');
+        // A declared-but-uncalled portal_can_read() is the same dead-security-metadata
+        // failure as an unreachable endpoint.
+        $method_body = $this->method_body($contents, 'portal_fetch');
         if ($method_body === null) {
             return;
         }
@@ -150,35 +154,35 @@ class PortalModelFetchAuthCheck_CodeQualityRule extends CodeQualityRule_Abstract
         );
     }
 
-    private function model_defines_portal_can_read(string $contents): bool
+    private function has_fetch_attribute(array $method_info): bool
     {
-        return (bool) preg_match('/function\s+portal_can_read\s*\(/', $contents);
+        foreach (array_keys($method_info['attributes'] ?? []) as $attr_name) {
+            if (basename(str_replace('\\', '/', $attr_name)) === 'Ajax_Endpoint_Model_Fetch') {
+                return true;
+            }
+        }
+
+        return false;
     }
 
-    private function extract_method_body(string $contents, string $method_name): ?string
+    /**
+     * Does this model declare portal_can_read(), or inherit one from an intermediate base?
+     *
+     * The class's own declarations come from $metadata (the file in front of the rule); the
+     * ancestors' from the manifest. A shared base that declares the rule for several models
+     * satisfies each of them.
+     */
+    private function lineage_defines_portal_can_read(array $metadata): bool
     {
-        $pattern = '/public\s+static\s+function\s+' . preg_quote($method_name, '/') . '\s*\([^)]*\)[^{]*\{/s';
-
-        if (!preg_match($pattern, $contents, $matches, PREG_OFFSET_CAPTURE)) {
-            return null;
+        if (isset($metadata['public_instance_methods']['portal_can_read'])
+            || isset($metadata['public_static_methods']['portal_can_read'])) {
+            return true;
         }
 
-        $start_pos = $matches[0][1] + strlen($matches[0][0]) - 1;
-        $brace_count = 1;
-        $pos = $start_pos + 1;
-        $length = strlen($contents);
+        $parent = $metadata['extends'] ?? null;
 
-        while ($pos < $length && $brace_count > 0) {
-            $char = $contents[$pos];
-            if ($char === '{') {
-                $brace_count++;
-            } elseif ($char === '}') {
-                $brace_count--;
-            }
-            $pos++;
-        }
-
-        return substr($contents, $start_pos, $pos - $start_pos);
+        return $parent !== null && $parent !== ''
+            && $this->lineage_declaring_method($parent, 'portal_can_read', 'Rsx_Model_Abstract') !== null;
     }
 
     private function build_can_read_suggestion(): string

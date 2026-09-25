@@ -1,5 +1,9 @@
 <?php
 
+// The one mode normalizer (absent -> development, dev/prod aliases resolved), so this file
+// can never read RSX_MODE=prod as something other than production.
+require_once __DIR__ . '/../bootstrap/rsx_mode.php';
+
 use Illuminate\Support\Facades\Facade;
 
 /*
@@ -49,7 +53,7 @@ return [
     |
     */
 
-    'env' => env('RSX_MODE', 'development') === 'production' ? 'production' : 'local',
+    'env' => rsx_preboot_mode() === 'production' ? 'production' : 'local',
 
     /*
     |--------------------------------------------------------------------------
@@ -67,7 +71,7 @@ return [
     |
     */
 
-    'debug' => env('RSX_MODE', 'development') !== 'production',
+    'debug' => rsx_preboot_mode() !== 'production',
 
     /*
     |--------------------------------------------------------------------------
@@ -215,12 +219,10 @@ return [
         /*
          * Application Service Providers...
          */
-        App\RSpade\Core\Providers\Rsx_Restricted_Routing_Provider::class, // Must be before RouteServiceProvider
         App\Providers\AppServiceProvider::class,
         // App\Providers\AuthServiceProvider::class,
         // App\Providers\BroadcastServiceProvider::class,
         // App\Providers\EventServiceProvider::class,
-        App\Providers\RouteServiceProvider::class,
         App\RSpade\Core\Providers\Rsx_Framework_Provider::class,
         App\RSpade\Core\Providers\Rsx_Bundle_Provider::class,
         App\RSpade\Core\Providers\Rsx_Migration_Notice_Provider::class,

@@ -16,7 +16,7 @@ use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Orm_Controller;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Models\User_Model;
-use App\RSpade\Core\Portal\Portal_Dispatcher;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Response\Rsx_Response_Abstract;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\AuthGates\Php\Auth_Gates_Check_Fixture;
@@ -25,7 +25,7 @@ use App\RSpade\Tests\AuthGates\Php\Auth_Gates_Seam_Fixture_Model;
 
 /**
  * The five server dispatch seams that ENFORCE declarative #[Auth] gates:
- * Dispatcher (#[Route]/#[SPA]), Portal_Dispatcher (#[Portal_Route]), Ajax (both
+ * Dispatcher (#[Route]/#[SPA] in the staff realm, #[Portal_Route] in the portal), Ajax (both
  * entry points), Orm_Controller (model fetch + relationships) and Api_Dispatcher
  * (#[Api_Endpoint]).
  *
@@ -39,6 +39,9 @@ use App\RSpade\Tests\AuthGates\Php\Auth_Gates_Seam_Fixture_Model;
  *     Auth_Gates::_set_index_for_testing() can hand them any gate list - including a
  *     name that exists in no realm - without that name ever entering the real
  *     registry.
+ *
+ * The fail-closed half of every seam (an unindexed or gateless surface is refused) is
+ * Auth_Fail_Closed_Test.
  *
  * Behavior of record: php artisan rsx:man auth_gates (HOW THE CHECKS RUN).
  */
@@ -149,7 +152,7 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
     }
 
     // =========================================================================
-    // PORTAL ROUTE SEAM (Portal_Dispatcher)
+    // PORTAL ROUTE SEAM (Dispatcher, portal realm)
     // =========================================================================
 
     /**
@@ -157,7 +160,7 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
      */
     public static function test_portal_route_match_carries_gate_list()
     {
-        $match = Portal_Dispatcher::resolve_url_to_route('/_test/auth-gates/portal-gated');
+        $match = Dispatcher::resolve_url_to_route('/_test/auth-gates/portal-gated', 'GET', Auth_Gates::REALM_PORTAL);
 
         static::__assert_not_empty($match);
         static::__assert_equals(['is_logged_in'], $match['auth']);
@@ -171,12 +174,18 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
     {
         static::__reset_session();
 
-        $response = Portal_Dispatcher::dispatch(
-            '/_test/auth-gates/portal-gated',
-            'GET',
-            [],
-            Request::create('/_test/auth-gates/portal-gated', 'GET')
-        );
+        Rsx_Portal::set_portal_request(true);
+
+        try {
+            $response = Dispatcher::dispatch(
+                '/_test/auth-gates/portal-gated',
+                'GET',
+                [],
+                Request::create('/_test/auth-gates/portal-gated', 'GET')
+            );
+        } finally {
+            Rsx_Portal::set_portal_request(false);
+        }
 
         static::__assert_equals(302, $response->getStatusCode());
 
@@ -215,19 +224,6 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
                 Ajax::internal('Auth_Gates_Seam_Fixture_Controller', 'endpoint');
             }
         );
-
-        Auth_Gates::_reset_for_testing();
-    }
-
-    /**
-     * An endpoint declaring no gates is dispatched exactly as before.
-     */
-    public static function test_ajax_internal_passes_through_gateless_endpoint()
-    {
-        static::__install([]);
-
-        $result = Ajax::internal('Auth_Gates_Seam_Fixture_Controller', 'endpoint');
-        static::__assert_equals(Auth_Gates_Seam_Fixture_Controller::DISPATCHED, $result['marker']);
 
         Auth_Gates::_reset_for_testing();
     }
@@ -463,21 +459,6 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
     }
 
     // =========================================================================
-    // TRANSITION CONTRACT
-    // =========================================================================
-
-    /**
-     * An empty gate list passes at a seam. This is what keeps every un-annotated
-     * surface dispatching unchanged while the annotation passes land; closed-by-
-     * default is a manifest-BUILD rule, never a runtime one.
-     */
-    public static function test_empty_gate_list_passes_at_a_seam()
-    {
-        static::__assert_true(Auth_Gates::gates_pass_at_seam([], Auth_Gates::REALM_STAFF, 'probe'));
-        static::__assert_true(Auth_Gates::gates_pass_at_seam([], Auth_Gates::REALM_PORTAL, 'probe'));
-    }
-
-    // =========================================================================
     // HELPERS
     // =========================================================================
 
@@ -539,12 +520,7 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
         $url = '/_ajax/Auth_Gates_Seam_Fixture_Controller/endpoint';
         $request = Request::create($url, 'POST');
 
-        $response = Ajax::handle_browser_request($request, [
-            'controller' => 'Auth_Gates_Seam_Fixture_Controller',
-            'action' => 'endpoint',
-        ]);
-
-        Ajax::set_ajax_response_mode(false);
+        $response = Ajax::handle_browser_request($request, 'Auth_Gates_Seam_Fixture_Controller', 'endpoint');
 
         return json_decode($response->getContent(), true);
     }

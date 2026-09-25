@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Response;
 use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
+use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Model;
 use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Markdown_Rendition;
@@ -288,7 +289,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
     {
         // TAKEOVER: the handler produced a full response (stream, redirect, etc).
         if ($resolved instanceof \Symfony\Component\HttpFoundation\Response) {
-            return $resolved;
+            return File_Attachment_Controller::harden_file_response($resolved);
         }
 
         if (is_array($resolved)) {
@@ -400,11 +401,11 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      */
     protected static function __serve_pdf(string $path, string $file_name)
     {
-        return Response::file($path, [
+        return File_Attachment_Controller::harden_file_response(Response::file($path, [
             'Content-Type' => 'application/pdf',
             'Content-Disposition' => 'inline; filename="' . $file_name . '"',
             'Cache-Control' => 'public, max-age=31536000, immutable',
-        ]);
+        ]));
     }
 
     /**
@@ -507,6 +508,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * @return array
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function get_preview_info(Request $request, array $params = [])
     {
         $attachment_id = $params['attachment_id'] ?? null;
@@ -622,6 +624,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * @return array{status: string, text: string|null}
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function get_extracted_text(Request $request, array $params = [])
     {
         $attachment_id = $params['attachment_id'] ?? null;
@@ -722,6 +725,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * @return array{status: string, html: string|null, truncated?: bool}
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function get_markdown_html(Request $request, array $params = [])
     {
         $attachment_id = $params['attachment_id'] ?? null;

@@ -58,18 +58,22 @@ classes an application most often customizes are shaped that way.
 Session is not a model in this sense and is not split: it is a static facade,
 called as Session:: everywhere, and replacing it is not a supported concept.
 
-THE 28 SPLIT CORE MODELS
+THE 27 SPLIT CORE MODELS
 
-    Api_Key_Model              Api_Request_Log_Model      Country_Model
-    Email_Attachment_Model     Email_Queue_Model          Email_Recipient_Model
-    File_Attachment_Model      File_Storage_Model         Flash_Alert_Model
-    Ip_Address_Model           Login_User_Model           Portal_Notification_Model
-    Portal_User_Model          Region_Model               Revision_Model
-    Search_Index_Model         Site_Model                 Sms_Queue_Model
-    Sms_Recipient_Model        Sso_Identity_Model         Transaction_Model
-    Two_Factor_Credential_Model                           User_Invite_Model
-    User_Model                 User_Permission_Model      User_Profile_Model
-    User_Verification_Model    Zip_Download_Request_Model
+    Api_Key_Model                         Api_Request_Log_Model
+    Country_Model                         Email_Attachment_Model
+    Email_Queue_Model                     Email_Recipient_Model
+    File_Attachment_Model                 File_Storage_Model
+    Flash_Alert_Model                     Login_User_Model
+    Portal_Notification_Model             Portal_Sso_Identity_Model
+    Portal_Two_Factor_Credential_Model    Portal_User_Model
+    Region_Model                          Revision_Model
+    Search_Index_Model                    Site_Model
+    Sms_Queue_Model                       Sms_Recipient_Model
+    Sso_Identity_Model                    Transaction_Model
+    Two_Factor_Credential_Model           User_Model
+    User_Permission_Model                 User_Profile_Model
+    Zip_Download_Request_Model
 
 Each base sits beside its shell in the same directory - for example
 system/app/RSpade/Core/Models/User_Model_Abstract.php beside
@@ -124,7 +128,10 @@ is changing them.
 
     #[Ajax_Endpoint_Model_Fetch] and the #[Auth] gates on it are resolved by
     lineage too (Model_Fetch_Lineage): a fetch() declared on the base is the
-    concrete's fetch surface, and an override that redeclares fetch() replaces it.
+    concrete's fetch surface, and an override that redeclares fetch() replaces it -
+    so the redeclaration carries #[Ajax_Endpoint_Model_Fetch] and its #[Auth] itself.
+    Redeclaring fetch() or a fetchable relationship without the attribute fails the
+    manifest build (UNMARKED FETCH OVERRIDE, rsx:man auth_gates).
 
 WHICH MEMBERS AN OVERRIDE MAY REPLACE OUTRIGHT. PHP-PARENT-CHAIN-01 (a
 manifest-build FATAL) requires every override of an inherited method to call
@@ -341,7 +348,7 @@ Split core models, extended:
 
 Copied classes:
 
-    Permission_Abstract's concrete Permission class (narrowing is_sysadmin -
+    Permission_Abstract's concrete Permission class (changing is_sysadmin -
     rsx:man sys_panel), UI helper libraries, framework controllers and services.
 
 ## CREATING AN OVERRIDE

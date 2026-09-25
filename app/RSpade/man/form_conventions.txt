@@ -409,7 +409,7 @@ QUESTIONS (SERVER-DRIVEN CONFIRMATION)
         Rsx_Form.ask(question, {key}) runs the registered handler for such a
         caller, so the question looks identical wherever it came from; the
         caller then decides what to do with the answer. In PHP, an in-process
-        Ajax::call() raises AjaxQuestionException, carrying get_key() and
+        Ajax::internal() raises AjaxQuestionException, carrying get_key() and
         get_question() - which is what a PHP test and rsx:ajax see.
 
     THE WORKED EXAMPLE

@@ -345,6 +345,13 @@ CONFIGURATION OPTIONS
         'image/*'         => 'Imagick_Thumbnail_Renderer'
         'application/pdf' => 'Imagick_Thumbnail_Renderer'   (page 1; needs Ghostscript)
 
+    SVG NEVER REACHES A RENDERER. image/svg+xml matches 'image/*', but the pipeline
+    answers an SVG with the extension icon before this map is consulted: ImageMagick's
+    SVG coder follows references inside the document (a local-file read), and the
+    shipped ImageMagick policy refuses it (rsx:man file_upload, SVG). The
+    document.thumbnail_render chain still runs first, so an app with a safe rasteriser
+    of its own can take SVG over there.
+
     OFFICE DOCUMENT MIMES ARE DELIBERATELY ABSENT. Their pixels come from the PDF
     rendition the background worker produced, which this pipeline rasterizes with the
     application/pdf renderer like any other PDF. A renderer entry for .docx would mean

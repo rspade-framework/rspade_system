@@ -11,7 +11,8 @@
     carry the same look by hand, because the pre-boot tier has no autoloader and no
     Blade to share this file with.
 
-    Variables: $status, $heading, $message, $detail (array|null), $home_url
+    Variables: $status, $heading, $message, $detail (array|null),
+    $error_id (string|null), $home_url
 --}}
 <!DOCTYPE html>
 <html lang="en">
@@ -107,6 +108,13 @@
             color: var(--rsx-muted);
         }
 
+        .rsx-error__reference {
+            margin: -20px 0 32px;
+            color: var(--rsx-muted);
+            font-family: var(--rsx-mono);
+            font-size: 13px;
+        }
+
         .rsx-error__action {
             display: inline-block;
             padding: 8px 18px;
@@ -176,6 +184,9 @@
             <div class="rsx-error__status">ERROR {{ $status }}</div>
             <h1 class="rsx-error__heading">{{ $heading }}</h1>
             <p class="rsx-error__message">{{ $message }}</p>
+            @if (!empty($error_id))
+                <p class="rsx-error__reference">Reference: {{ $error_id }}</p>
+            @endif
             <a class="rsx-error__action" href="{{ $home_url }}">Return to Home</a>
         </div>
 

@@ -10,7 +10,6 @@
 
 namespace App\RSpade\CodeQuality\Rules\PHP;
 
-use Illuminate\Support\Facades\Route;
 use App\RSpade\CodeQuality\Rules\CodeQualityRule_Abstract;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Manifest\Manifest;
@@ -138,7 +137,7 @@ class HardcodedUrlInRedirect_CodeQualityRule extends CodeQualityRule_Abstract
                         $base_url = $url_parts['path'] ?? '/';
                         $query_string = $url_parts['query'] ?? '';
 
-                        // Try to resolve to RSX route first
+                        // Resolve to the RSX route the URL names
                         $route_info = null;
                         try {
                             $route_info = Dispatcher::resolve_url_to_route($base_url, 'GET');
@@ -146,38 +145,30 @@ class HardcodedUrlInRedirect_CodeQualityRule extends CodeQualityRule_Abstract
                             // URL doesn't resolve to an RSX route
                         }
 
-                        $suggested_code = '';
-
-                        if ($route_info) {
-                            // Found RSX route
-                            $controller_class = $route_info['class'] ?? '';
-                            $method_name = $route_info['method'] ?? '';
-                            $route_params = $route_info['params'] ?? [];
-
-                            // Parse query string params
-                            $query_params = [];
-                            if ($query_string) {
-                                parse_str($query_string, $query_params);
-                            }
-
-                            // Merge all params
-                            $all_params = array_merge($query_params, $route_params);
-
-                            // Extract just the class name without namespace
-                            $class_parts = explode('\\', $controller_class);
-                            $class_name = end($class_parts);
-
-                            $suggested_code = $this->_generate_rsx_suggestion($class_name, $method_name, $all_params);
-                        } else {
-                            // Check if it's a Laravel route
-                            $laravel_route = $this->_find_laravel_route($base_url);
-                            if ($laravel_route) {
-                                $suggested_code = $this->_generate_laravel_suggestion($laravel_route, $query_string);
-                            } else {
-                                // No route found, skip
-                                continue;
-                            }
+                        // RSX routes are the only routes: Laravel's router is not in the
+                        // request path. A URL no RSX route answers is not reported.
+                        if (!$route_info) {
+                            continue;
                         }
+
+                        $controller_class = $route_info['class'] ?? '';
+                        $method_name = $route_info['method'] ?? '';
+                        $route_params = $route_info['params'] ?? [];
+
+                        // Parse query string params
+                        $query_params = [];
+                        if ($query_string) {
+                            parse_str($query_string, $query_params);
+                        }
+
+                        // Merge all params
+                        $all_params = array_merge($query_params, $route_params);
+
+                        // Extract just the class name without namespace
+                        $class_parts = explode('\\', $controller_class);
+                        $class_name = end($class_parts);
+
+                        $suggested_code = $this->_generate_rsx_suggestion($class_name, $method_name, $all_params);
 
                         // Add violation
                         $this->add_violation(
@@ -240,33 +231,6 @@ class HardcodedUrlInRedirect_CodeQualityRule extends CodeQualityRule_Abstract
     }
 
     /**
-     * Find Laravel route by URL
-     *
-     * @param string $url
-     * @return string|null Route name if found
-     */
-    protected function _find_laravel_route(string $url): ?string
-    {
-        // Get all Laravel routes
-        $routes = Route::getRoutes();
-
-        foreach ($routes as $route) {
-            // Check if URL matches this route's URI
-            if ($route->uri() === ltrim($url, '/')) {
-                // Get the route name if it has one
-                $name = $route->getName();
-                if ($name) {
-                    return $name;
-                }
-                // No name, but route exists - return the URI for direct use
-                return $url;
-            }
-        }
-
-        return null;
-    }
-
-    /**
      * Generate RSX route suggestion
      *
      * @param string $class_name
@@ -282,54 +246,6 @@ class HardcodedUrlInRedirect_CodeQualityRule extends CodeQualityRule_Abstract
             $params_str = $this->_format_php_array($params);
             return "return redirect(Rsx::Route('{$class_name}::{$method_name}', {$params_str}));";
         }
-    }
-
-    /**
-     * Generate Laravel route suggestion
-     *
-     * @param string $route_name
-     * @param string $query_string
-     * @return string
-     */
-    protected function _generate_laravel_suggestion(string $route_name, string $query_string): string
-    {
-        // If route_name starts with /, it means no named route exists
-        if (str_starts_with($route_name, '/')) {
-            // Suggest adding a name to the route
-            $suggested_name = $this->_suggest_route_name($route_name);
-            return "return redirect(route('{$suggested_name}'));\n// First add ->name('{$suggested_name}') to the route definition in routes/web.php";
-        }
-
-        // Route has a name, use it
-        if ($query_string) {
-            $query_params = [];
-            parse_str($query_string, $query_params);
-            $params_str = $this->_format_php_array($query_params);
-            return "return redirect(route('{$route_name}', {$params_str}));";
-        } else {
-            return "return redirect(route('{$route_name}'));";
-        }
-    }
-
-    /**
-     * Suggest a route name based on the URL path
-     *
-     * @param string $url
-     * @return string
-     */
-    protected function _suggest_route_name(string $url): string
-    {
-        // Remove leading slash and convert to dot notation
-        $path = ltrim($url, '/');
-
-        // Convert path segments to route name
-        // /test-bundle-facade => test.bundle.facade
-        // /_idehelper => idehelper
-        $path = str_replace('_', '', $path); // Remove leading underscores
-        $path = str_replace('-', '.', $path); // Convert dashes to dots
-        $path = str_replace('/', '.', $path); // Convert slashes to dots
-
-        return $path ?: 'home';
     }
 
     /**

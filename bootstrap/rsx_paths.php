@@ -295,8 +295,8 @@ function rsx_paths_assert_trees_writable(): void
         }
     }
 
-    $mode = rsx_paths_env_value('RSX_MODE');
-    $is_development = ($mode === '' || $mode === 'development');
+    require_once __DIR__ . '/rsx_mode.php';
+    $is_development = rsx_preboot_mode() === 'development';
     // RSX_SCRIPT_MODE (system/script.php) says argv[1] is the script's own argument and
     // not a command name. Read as the raw constant: this runs pre-boot, with no
     // autoloader for App\RSpade\Core\Console\Rsx_Script.

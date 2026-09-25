@@ -258,7 +258,24 @@ RESPONSE HELPERS
     Permission facade throws instead of returns: Permission::require_role()
     / require_permission() throw AjaxUnauthorizedException (403) rather than
     returning a response - use them where a guard clause should abort. See
-    php artisan rsx:man acls.
+    rsx:man acls.
+
+    A THROWN CODED FAILURE IS ANSWERED LIKE THE RETURNED ONE, on every
+    channel. The family - AjaxUnauthorizedException, AjaxAuthRequiredException,
+    AjaxNotFoundException, AjaxFormErrorException - and abort() map to:
+
+        channel   answer
+        -------   ----------------------------------------------------------
+        page      Dispatcher::page_failure_response(): the unauthorized
+                  screen (login redirect when nobody is identified, else
+                  403), the 404 page, response_form_error() handling, an
+                  abort() status's page (rsx:man dispatch, CODED FAILURES)
+        Ajax      the envelope codes unauthorized, auth_required,
+                  not_found, validation (rsx:man ajax_error_handling)
+        API       403 forbidden, 401 unauthenticated, 404 not_found; an
+                  abort() keeps its status (rsx:man external_api)
+
+    None of them is a 500.
 
 EXCEPTION HANDLER CHAIN
     A thrown exception becomes a formatted response through a config-driven,
@@ -269,12 +286,37 @@ EXCEPTION HANDLER CHAIN
     calls handle($e, $request) on each until one returns a non-null
     response. If none responds, Laravel's default handling proceeds.
 
+    WHERE A FAILURE COMES FROM. Rsx_Front_Controller (rsx:man dispatch) is the
+    one entry point of every request. It classifies the request once - ASSET,
+    API, AJAX or PAGE - and catches any Throwable from that request's dispatch:
+
+    - an HttpResponseException's own response is sent verbatim;
+    - an ASSET failure (/_compiled/, /_vendor/) is one line of plain text,
+      never the chain;
+    - everything else is reported once and handed to this chain exactly once.
+
+    Laravel's kernel hands the chain a failure from OUTSIDE dispatch too (a
+    provider at boot, a global middleware). No handler dispatches a request:
+    rendering an error can never re-run the request that failed.
+
     Default handlers (config/rsx.php), by priority:
-        10    Cli_Exception_Handler            terminal-formatted output
-        20    Ajax_Exception_Handler           JSON error envelope
-        25    Api_Exception_Handler            external-API error shape
-        30    Playwright_Exception_Handler     plain-text test output
-        1000  Rsx_Dispatch_Bootstrapper_Handler  404 -> RSX routing
+        10    Cli_Exception_Handler            terminal-formatted output (CLI;
+                                               never for an in-process dispatch)
+        20    Ajax_Exception_Handler           the Ajax envelope - the AJAX channel;
+                                               Ajax::error_envelope(), the same
+                                               mapping a call's own failure gets
+        25    Api_Exception_Handler            the API's JSON error - the API
+                                               channel; a coded failure keeps its
+                                               status
+        30    Playwright_Exception_Handler     plain-text trace, local rsx:debug
+                                               harness only; declines HTTP statuses
+        1100  Web_Exception_Handler            the PAGE channel and everything
+                                               else: a coded failure through
+                                               Dispatcher::page_failure_response(),
+                                               otherwise an Error_Screens page
+
+    The AJAX and API handlers answer by the request's CLASSIFIED channel
+    (Rsx_Request_Channel::current()), never by a flag some code set on the way.
 
     Every handler extends
     App\RSpade\Core\Exceptions\Rsx_Exception_Handler_Abstract. The chain

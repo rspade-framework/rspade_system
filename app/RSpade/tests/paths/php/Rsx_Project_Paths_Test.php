@@ -250,7 +250,7 @@ class Rsx_Project_Paths_Test extends Rsx_Test_Abstract
     {
         $files_root = Rsx_Project_Paths::files_root();
         $scratch = Rsx_Project_Paths::tmp_path('paths-test-' . getmypid());
-        static::__rmdir_recursive($scratch);
+        rmdir_recursive($scratch);
 
         try {
             Rsx_Project_Paths::_override(['build' => $scratch . '/build', 'tmp' => $scratch . '/tmp']);
@@ -266,7 +266,7 @@ class Rsx_Project_Paths_Test extends Rsx_Test_Abstract
             static::__assert_true(is_dir($scratch . '/build/views'), 'and the compiled-view directory');
         } finally {
             static::__restore_run_isolation($files_root);
-            static::__rmdir_recursive($scratch);
+            rmdir_recursive($scratch);
         }
     }
 
@@ -279,7 +279,7 @@ class Rsx_Project_Paths_Test extends Rsx_Test_Abstract
     {
         $files_root = Rsx_Project_Paths::files_root();
         $scratch = Rsx_Project_Paths::tmp_path('paths-test-links-' . getmypid());
-        static::__rmdir_recursive($scratch);
+        rmdir_recursive($scratch);
 
         try {
             Rsx_Project_Paths::_override(['tmp' => $scratch . '/tmp']);
@@ -314,7 +314,7 @@ class Rsx_Project_Paths_Test extends Rsx_Test_Abstract
             );
         } finally {
             static::__restore_run_isolation($files_root);
-            static::__rmdir_recursive($scratch);
+            rmdir_recursive($scratch);
         }
     }
 
@@ -335,31 +335,5 @@ class Rsx_Project_Paths_Test extends Rsx_Test_Abstract
             Rsx_Project_Paths::renditions_dir(),
             'the rendition cache is in tmp/'
         );
-    }
-
-    /**
-     * Remove a directory tree, tolerating its absence.
-     */
-    private static function __rmdir_recursive(string $path): void
-    {
-        if (!is_dir($path)) {
-            return;
-        }
-
-        foreach (scandir($path) ?: [] as $entry) {
-            if ($entry === '.' || $entry === '..') {
-                continue;
-            }
-
-            $child = $path . '/' . $entry;
-
-            if (is_dir($child) && !is_link($child)) {
-                static::__rmdir_recursive($child);
-            } else {
-                @unlink($child);
-            }
-        }
-
-        @rmdir($path);
     }
 }

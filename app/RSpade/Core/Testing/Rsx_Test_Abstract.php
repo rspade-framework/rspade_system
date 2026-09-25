@@ -357,6 +357,12 @@ abstract class Rsx_Test_Abstract
                     // there would not survive this reset).
                     Portal_Session::_testing_reset();
 
+                    // Clear the request classification (channel and staff/portal realm). A
+                    // test that declared a portal request and threw before restoring it
+                    // would otherwise leave every later model write stamped with the
+                    // portal's site, in this class and in every class after it.
+                    \App\RSpade\Core\Portal\Rsx_Portal::_clear_cache();
+
                     // Clear the Turnstile per-request validation latch so a controller
                     // call in one test cannot satisfy the completeness guard for the next.
                     Rsx_Turnstile::_reset_request_state();

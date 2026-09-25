@@ -28,12 +28,13 @@
 | MF-24 | A denied fetch is indistinguishable from a missing one | php | denying gate vs missing id | identical empty map (owned by the `auth_gates` concern) | implemented | 2026-08-13 |
 | MF-25 | A batched sub-call keeps its own error code - `not_found` stays not_found, and the sibling `validation` is not swallowed by the new arm | php | one batch, a not-found sub-call plus a validation sub-call | `C_0.error_code == 'not_found'`, `C_1.error_code == 'validation'` | implemented | 2026-08-13 |
 | MF-26 | A completed batched call is forgotten, so a repeat is a fresh request | playwright | debug-mode page, two identical calls | two network requests | deferred - `Ajax._pending_calls` pruning is only observable when `window.rsxapp.ajax_batching` is on, which is off in development; exercising it needs a sealed debug/production build, and the dev-mode harness cannot produce one | 2026-08-13 |
-| MF-28 | A raw \Throwable in a batched sub-call (TypeError from a mistyped param) is contained to that sub-call, not a batch-aborting fatal, and its message is redacted in production | php | one batch: an array-valued `model` (TypeError) plus a not-found sibling | `C_0.error_type == 'exception'`, sibling `C_1` still answered; prod branch emits "A server error has occurred." | implemented (dev containment) + live-probe (prod redaction) | 2026-08-13 |
+| MF-28 | A raw \Throwable in a batched sub-call (TypeError from a mistyped param) is contained to that sub-call, not a batch-aborting fatal, and its message is redacted in production | php | one batch: an array-valued `model` (TypeError) plus a not-found sibling | `C_0.error_code == 'fatal'`, sibling `C_1` still answered; the detail only for a caller `Rsx_Diagnostics` admits | implemented (dev containment) + live-probe (prod redaction) | 2026-08-13 |
 | MF-29 | Anonymous /_ajax/_batch does not leak a class/FQCN/method name in production | http | unauth POST with a bad controller, prod mode | reason == generic string, no FQCN | deferred - shares the `Rsx::is_production()` gate with the direct-path handler; verified by live probe, a prod-mode http fixture would need a sealed build | 2026-08-13 |
 | MF-27 | Portal realm resolves `portal_fetch()` through the batch endpoint | playwright | portal page, own + other portal user | own record present, other absent | planned - covered manually via `rsx:debug --portal` | 2026-08-13 |
 | MF-30 | `toJSON()` returns the VALUE to serialize, not a JSON string | php | node harness over the real `Rsx_Js_Model.js` | `typeof instance.toJSON() === 'object'` | implemented | 2026-08-27 |
 | MF-31 | A model survives the jqhtml data-cache clone `JSON.parse(JSON.stringify(...))` as a readable object, nested model included | php | model with a nested model field | plain object, `id`/`title`/`client.name` readable | implemented | 2026-08-27 |
 | MF-32 | The clone reads through a wrapper - `{rec: instance}` keeps `rec.id` | php | wrapper object around a model | `rec` is an object, `rec.id == 42` | implemented | 2026-08-27 |
+| MF-33 | fetch_relationship over a MorphTo resolves the stored type-ref integer through the morph map, serves the subject through its own fetch(), and answers null for a soft-deleted subject | php | child fixture with `subject()` morphTo associated to a parent fixture | the parent record; raw `subject_type` numeric; null after the parent is soft-deleted | implemented (`Orm_Batch_Fetch_Test`) | 2026-09-25 |
 
 ## Fixtures
 
@@ -43,7 +44,7 @@ drops in `teardown()` (`Model_Fetch_Fixture_Tables`):
 | Fixture | Table | Role |
 |---|---|---|
 | `Model_Fetch_Parent_Fixture_Model` | `model_fetch_parent_fixtures` | the batch subject: a gated `fetch()`, a fetchable `#[Relationship]` `children()`, and SoftDeletes for the `withTrashed()` scope guard |
-| `Model_Fetch_Child_Fixture_Model` | `model_fetch_child_fixtures` | the related record the plural branch fetches per id, a `belongsTo` back, and a second class for the per-class preload key |
+| `Model_Fetch_Child_Fixture_Model` | `model_fetch_child_fixtures` | the related record the plural branch fetches per id, a `subject()` morphTo (type-ref `subject_type`), a `belongsTo` back, and a second class for the per-class preload key |
 | `Model_Fetch_Fixture_Model` | `model_fetch_marker_fixtures` | the one shape the endpoint refuses: an array return with no `__MODEL` |
 
 The BROWSER half cannot use them, and says so in its own header: the test trees enter the

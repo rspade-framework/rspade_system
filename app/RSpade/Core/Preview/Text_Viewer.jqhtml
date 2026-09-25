@@ -64,8 +64,8 @@ long line rather than clipping it, exactly as Document_Text_Preview does.
                  to show. The operator distinguishes them with rsx:search:reindex --status. --%>
             <div class="Text_Viewer__notice">(Text Unavailable)</div>
         <% } else { %>
-            <%-- Escaped interpolation, NOT htmlbr(): the frame is white-space:pre-wrap, so the
-                 newlines already render as line breaks and htmlbr() would add a <br> BESIDE each
+            <%-- Escaped interpolation, NOT <%br= %>: the frame is white-space:pre-wrap, so the
+                 newlines already render as line breaks and <%br= %> would add a <br> BESIDE each
                  surviving one and double-space the whole file. pre-wrap also preserves the runs
                  of spaces that carry column alignment, which nl2br cannot express. --%>
             <div class="Text_Viewer__text"><%= this.data.info.text %></div>

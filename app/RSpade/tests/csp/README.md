@@ -52,8 +52,7 @@ Invariants the tests exist to hold:
 |------|------|
 | `Core/Csp/Rsx_Csp.php` | Nonce, composer, response stamping |
 | `Core/Csp/Csp_Report_Controller.php` | `POST /_csp-report` collector |
-| `Core/Dispatch/Dispatcher.php` | Staff header seam (`__transform_response`) |
-| `Core/Portal/Portal_Dispatcher.php` | Portal header seam (`dispatch()` funnel) |
+| `Core/Dispatch/Dispatcher.php` | Header seam, both realms (`__transform_response`, with the request's realm) |
 | `Core/Bundle/Rsx_Bundle_Abstract.php` | Nonce on the inline script, `csp_nonce` export, `/_vendor/` asset emission |
 | `Core/Debug/Debugger.php` | Nonce on the shutdown console echo |
 | `Core/Session/Rsx_Csrf.php` | The collector's CSRF exemption |

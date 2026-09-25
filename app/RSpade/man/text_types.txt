@@ -16,7 +16,7 @@ SYNOPSIS
     $project->description = $params['description'];    filtered, typed, stored
     $project->description = "a < b\nline two";          PLAIN TEXT: escaped, then
                                                          filtered
-    $project->description = Rich_Text::from_untrusted($html);
+    $project->description = Rich_Text::from_untrusted_encoded($html);
                                                        encoded content, filtered
     <%= this.data.project.description %>       prints through its own component
 
@@ -53,23 +53,23 @@ THE CONTRACT
        typed value used as a string throws.
 
     2. TWO FUNCTIONS ARE REQUIRED OF A TYPE, BOTH ON THE SERVER.
-       filter_set(), the SANITIZER, applied to every value that did not come
-       from the database. escape_string(), the PLAIN-TEXT CONVERSION, applied
-       to every bare string before the sanitizer sees it - for an HTML type,
-       '<p>' . nl2br(htmlspecialchars($plain)) . '</p>'. The framework will
+       sanitize_encoded(), the SANITIZER, applied to every value that did not
+       come from the database. encode_plain_text(), the PLAIN-TEXT CONVERSION,
+       applied to every bare string before the sanitizer sees it - for an HTML
+       type, '<p>' . nl2br(htmlspecialchars($plain)) . '</p>'. The framework will
        not let a type omit either, even when one is a passthrough; a
        passthrough is written down with the reason it is safe. An optional
-       SANITIZER ON THE CLIENT, filter_set() on the JS class, runs at the
+       SANITIZER ON THE CLIENT, sanitize_encoded() on the JS class, runs at the
        editor as defense in depth; never the authority.
 
     3. EVERYTHING ELSE A TYPE OFFERS IS A CONVENTION, NOT A REQUIREMENT.
-       to_text() and to_html() are predictable names application code can
-       rely on WHEN a type chooses to offer them, and they throw by default
+       to_plain_text() and to_html() are predictable names application code
+       can rely on WHEN a type chooses to offer them, and they throw by default
        so that asking a type for a rendition it never defined fails loudly
        rather than guessing. Rule of thumb: rarely necessary. A page renders
        through the PRINTER component in the browser; to_html() is for the
-       specific case of producing markup on the server, and to_text() for a
-       plain rendition an export or index needs. Many types never define
+       specific case of producing markup on the server, and to_plain_text()
+       for a plain rendition an export or index needs. Many types never define
        either.
 
     4. ANYTHING YOU READ OUT OF THE CONTENT IS A DEDICATED FUNCTION ON THE
@@ -99,7 +99,7 @@ THE CONTRACT
        that is the point - a template interpolates it with no hydration
        call because the PRINTER is the one thing that can render it, and a
        consumer that needs a plain rendition asks the endpoint to add one
-       deliberately (to_text(), under its own key) rather than rewriting
+       deliberately (to_plain_text(), under its own key) rather than rewriting
        the column's value.
 
     8. AN EDITOR ACCEPTS ONLY ITS TYPE. An input component built to edit a
@@ -125,7 +125,7 @@ DECLARING A COLUMN
         $project->description = $x        converted and filtered by Rich_Text
                                           (ASSIGNING A VALUE), then stored
         $project->description->is_empty() the blessed emptiness test
-        $project->description->to_text()  readable text, IF the type offers it
+        $project->description->to_plain_text()  readable text, IF the type offers it
         $project->description->to_html()  a document rendition, IF it offers it
 
     A DECLARATION THE CAST CANNOT HONOUR FAILS THE BUILD (TEXT-TYPE-01):
@@ -154,13 +154,13 @@ WRITING A TYPE
             // no deserialization, nothing that runs a command. This is the
             // one application function standing directly in front of
             // untrusted input.
-            public static function filter_set(string $raw): string { ... }
+            public static function sanitize_encoded(string $raw): string { ... }
 
             // REQUIRED. Plain text -> this encoding. Every bare string
-            // assigned to the column passes through it, and filter_set()
+            // assigned to the column passes through it, and sanitize_encoded()
             // then runs on the result. Same pure-transform contract. A type
             // whose encoding IS plain text returns $plain, and says why.
-            public static function escape_string(string $plain): string { ... }
+            public static function encode_plain_text(string $plain): string { ... }
 
             // CONVENTION. Emptiness. Default: a whitespace check on the raw
             // form. Override when the encoding WRAPS its content, so that an
@@ -169,7 +169,7 @@ WRITING A TYPE
 
             // CONVENTION. Readable text for a CSV cell or an index. Default:
             // throws. Define it only if something needs a plain rendition.
-            public function to_text(): string { ... }
+            public function to_plain_text(): string { ... }
 
             // CONVENTION. Markup for a server-generated document. Default:
             // throws. Rarely needed - a page renders through the PRINTER.
@@ -187,11 +187,11 @@ WRITING A TYPE
             static EDITOR_ARGS = { rows: 8 };      // default editor args
 
             // Optional: the client-side sanitizer, at the editor.
-            static filter_set(raw) { ... }
+            static sanitize_encoded(raw) { ... }
         }
 
-    THERE IS NO to_text() IN JAVASCRIPT, on purpose. Where a type offers one
-    at all, it lives on the server, which can resolve references
+    THERE IS NO to_plain_text() IN JAVASCRIPT, on purpose. Where a type offers
+    one at all, it lives on the server, which can resolve references
     synchronously; the browser often cannot, and rather than be right in one
     language and approximate in the other it does not answer: toString()
     throws. A different rendition on a page is an argument to the PRINTER
@@ -207,73 +207,79 @@ TWO TYPES, WORKED
 
         The encoding is HTML from a WYSIWYG.
 
-        filter_set()   safe_html() - HTMLPurifier with the application's
-                       allow-list. What the column holds is already safe.
-                       A Quill 2 checklist keeps its ticks as
-                       li[data-list="checked"|"unchecked"] (rsx:man
-                       safe_html, CHECKLISTS); Rich_Text_Display draws them.
-        escape_string() '<p>' . nl2br(htmlspecialchars($plain)) . '</p>'.
-                       A bare string keeps its angle brackets, ampersands
-                       and line breaks as the text they were.
-        is_empty()     OVERRIDDEN: trim(strip_tags(...)) === ''. An emptied
-                       editor stores <p><br></p>, which the raw check would
-                       call full.
-        to_text()      DEFINED: markup removed, block boundaries kept as
-                       newlines. Needed because the reference app exports
-                       projects to CSV.
-        to_html()      DEFINED: returns the stored form as-is. Storage was
-                       filtered on write, so the stored form IS the safe
-                       rendition. Defined because an email may embed it.
-        JS             PRINTER = 'Rich_Text_Display' (injects the stored
-                       HTML through DOMPurify), EDITOR = 'Wysiwyg_Input',
-                       filter_set = safe_html() at the editor.
+        sanitize_encoded()   sanitize_rich_text_html() - HTMLPurifier with the
+                             application's allow-list. What the column holds
+                             is already safe. A Quill 2 checklist keeps its
+                             ticks as li[data-list="checked"|"unchecked"]
+                             (rsx:man sanitize_rich_text_html, CHECKLISTS);
+                             Rich_Text_Display draws them.
+        encode_plain_text()  '<p>' . nl2br(htmlspecialchars($plain)) . '</p>'.
+                             A bare string keeps its angle brackets, ampersands
+                             and line breaks as the text they were.
+        is_empty()           OVERRIDDEN: trim(strip_tags(...)) === ''. An
+                             emptied editor stores <p><br></p>, which the raw
+                             check would call full.
+        to_plain_text()      DEFINED: markup removed, block boundaries kept as
+                             newlines. Needed because the reference app exports
+                             projects to CSV.
+        to_html()            DEFINED: returns the stored form as-is. Storage was
+                             filtered on write, so the stored form IS the safe
+                             rendition. Defined because an email may embed it.
+        JS                   PRINTER = 'Rich_Text_Display' (injects the stored
+                             HTML through DOMPurify), EDITOR = 'Wysiwyg_Input',
+                             sanitize_encoded = sanitize_rich_text_html() at
+                             the editor.
 
     ENTITY_TAG_TEXT (theoretical - not shipped)
 
         The encoding is plain text with {{Model_Class:id}} markers. A comment
         might read: "Handed off to {{User_Model:33}} - see {{Client_Model:7}}."
 
-        filter_set()   Refuse a malformed tag so the column never holds one:
-                       strip any {{...}} whose class is not a model the
-                       manifest knows (Manifest::php_get_extending on
-                       Rsx_Model_Abstract) or whose id is not digits. Nothing
-                       else - the text between tags is opaque.
+        sanitize_encoded()   Refuse a malformed tag so the column never holds
+                             one: strip any {{...}} whose class is not a model
+                             the manifest knows (Manifest::php_get_extending on
+                             Rsx_Model_Abstract) or whose id is not digits.
+                             Nothing else - the text between tags is opaque.
 
-        escape_string() A passthrough: the encoding is plain text, and a
-                       bare string that happens to contain a well-formed
-                       {{Class:id}} is a tag, which is what the notation
-                       means. filter_set() still drops malformed ones.
+        encode_plain_text()  A passthrough: the encoding is plain text, and a
+                             bare string that happens to contain a well-formed
+                             {{Class:id}} is a tag, which is what the notation
+                             means. sanitize_encoded() still drops malformed
+                             ones.
 
-        is_empty()     Default is correct: the storage form is text.
+        is_empty()           Default is correct: the storage form is text.
 
-        tagged_entities()   THE DEDICATED FUNCTION, and the reason the type
-                       exists. A parse, no database:
+        tagged_entities()    THE DEDICATED FUNCTION, and the reason the type
+                             exists. A parse, no database:
 
-                           preg_match_all('/\{\{([A-Z][A-Za-z0-9_]*):(\d+)\}\}/',
-                                          $this->raw, $m, PREG_SET_ORDER);
-                           return array_map(fn ($t) => [$t[1], (int) $t[2]], $m);
+                                 preg_match_all('/\{\{([A-Z][A-Za-z0-9_]*):(\d+)\}\}/',
+                                                $this->raw, $m, PREG_SET_ORDER);
+                                 return array_map(fn ($t) => [$t[1], (int) $t[2]], $m);
 
-                       returns [['User_Model', 33], ['Client_Model', 7]].
+                             returns [['User_Model', 33], ['Client_Model', 7]].
 
-        to_text()      NOT DEFINED, and that is the point. A plain rendition
-                       means resolving every tag to get_printed_name() - one
-                       query per tag, per row. If this application never
-                       exports comments, that is work the server has no
-                       reason to know how to do. Define it the day an export
-                       needs it, and not before.
+        to_plain_text()      NOT DEFINED, and that is the point. A plain
+                             rendition means resolving every tag to
+                             get_printed_name() - one query per tag, per row.
+                             If this application never exports comments, that
+                             is work the server has no reason to know how to
+                             do. Define it the day an export needs it, and not
+                             before.
 
-        to_html()      NOT DEFINED. Comments are only ever shown on a page,
-                       where Entity_Tag_Display renders each tag as a live
-                       chip - fetching the record through Model.fetch(),
-                       linking to it, subscribing to its changes. That is
-                       interactive rendering, which is what a component is
-                       for and what a static string cannot be.
+        to_html()            NOT DEFINED. Comments are only ever shown on a
+                             page, where Entity_Tag_Display renders each tag
+                             as a live chip - fetching the record through
+                             Model.fetch(), linking to it, subscribing to its
+                             changes. That is interactive rendering, which is
+                             what a component is for and what a static string
+                             cannot be.
 
-        JS             PRINTER = 'Entity_Tag_Display', EDITOR =
-                       'Entity_Tag_Input' (a textarea with an @-style
-                       autocomplete that inserts {{Class:id}}). Nothing else.
+        JS                   PRINTER = 'Entity_Tag_Display', EDITOR =
+                             'Entity_Tag_Input' (a textarea with an @-style
+                             autocomplete that inserts {{Class:id}}). Nothing
+                             else.
 
-        The complete type is filter_set(), escape_string() and
+        The complete type is sanitize_encoded(), encode_plain_text() and
         tagged_entities(). Three methods, all about the encoding, none a
         rendition.
 
@@ -344,7 +350,7 @@ WORKING WITH THE VALUE BEFORE STORING IT
         value resolves to the type you named regardless of the claim.
       - an already-typed value of the same type, returned as is.
       - a bare string (a plain field that never wrapped): PLAIN TEXT,
-        converted by from_string().
+        converted by from_plain_text().
       - null, returned as null.
     A typed value of a DIFFERENT type throws. Types do not convert.
 
@@ -361,9 +367,10 @@ ASSIGNING A VALUE
                                       as is. A typed value of ANOTHER type
                                       throws - types do not convert.
       a request envelope              ENCODED content from an editor or an
-        (Ajax or /api/vN)             API caller: filter_set(), then stored.
-      a bare string                   PLAIN TEXT: escape_string(), then
-                                      filter_set(), then stored.
+        (Ajax or /api/vN)             API caller: sanitize_encoded(), then
+                                      stored.
+      a bare string                   PLAIN TEXT: encode_plain_text(), then
+                                      sanitize_encoded(), then stored.
       an int, float or bool           stringified, then PLAIN TEXT as above.
                                       42 stores as '<p>42</p>' on Rich_Text;
                                       false stringifies to '' and is_empty().
@@ -381,7 +388,7 @@ ASSIGNING A VALUE
     THE QUESTION THAT DECIDES IT is about what is in your hand:
 
       Did you BUILD this string, and does it contain tags? Then it is
-      markup, and the assignment owes Type::from_untrusted($html).
+      markup, and the assignment owes Type::from_untrusted_encoded($html).
 
       Did it ARRIVE as prose - a spreadsheet cell, a typed sentence, an API
       scalar? Assign it bare; the column escapes and wraps it. Do NOT
@@ -393,11 +400,11 @@ ASSIGNING A VALUE
 
         private static function task_created_body(User_Model $actor): Rich_Text
         {
-            return Rich_Text::from_untrusted('<p><strong>' . e($actor->get_printed_name()) . '</strong> created a task.</p>');
+            return Rich_Text::from_untrusted_encoded('<p><strong>' . e($actor->get_printed_name()) . '</strong> created a task.</p>');
         }
 
-    The from_untrusted() call then lives once, where the markup is built and
-    its author knows what it is, and every signature it passes through
+    The from_untrusted_encoded() call then lives once, where the markup is
+    built and its author knows what it is, and every signature it passes through
     carries the fact. A composer typed `string` loses it at the first hop,
     and some assignment far away has to remember it.
 
@@ -408,25 +415,26 @@ ASSIGNING A VALUE
     On a Rich_Text column "Contact <john@acme.com>\nre: <b>billing</b>"
     stores as escaped text with a line break: the address is not purified
     away as an unknown tag, the <b> is shown, not applied. On a Raw_Text
-    column escape_string() is a passthrough, so nothing changes.
+    column encode_plain_text() is a passthrough, so nothing changes.
 
     ENCODED CONTENT FROM YOUR OWN CODE IS SAID OUT LOUD. HTML built on the
     server, or converted from another system's markup, is assigned as
 
-        $record->description = Rich_Text::from_untrusted($html);
+        $record->description = Rich_Text::from_untrusted_encoded($html);
 
-    which runs filter_set() (and only filter_set()) exactly as a submitted
-    envelope does. Rich_Text::from_string($plain) is the same conversion
+    which runs sanitize_encoded() (and only sanitize_encoded()) exactly as a
+    submitted envelope does. Rich_Text::from_plain_text($plain) is the same conversion
     assignment performs, for code that wants the typed value without a
     column. Neither can skip the filter.
 
-    from_storage() IS THE FOURTH DOOR: TRUSTED AND UNFILTERED. The cast
+    from_storage() IS THE ONE CONSTRUCTOR OF THE FOUR THAT SKIPS THE
+    SANITIZER: TRUSTED AND UNFILTERED. The cast
     reads the column through it, and it is public because code holding
     content that came OUT of the column may need it. Whatever it is handed
     is stored and rendered byte for byte, so anything that did not come out
     of the column - a request, an import, an API caller - never goes
-    through it: that is a stored-XSS path. from_untrusted() is the door for
-    everything else.
+    through it: that is a stored-XSS path. from_untrusted_encoded() is the
+    door for everything else.
 
     So a generic importer needs no list of which columns are special:
 
@@ -435,7 +443,7 @@ ASSIGNING A VALUE
     and a column-aware one that holds HTML asks the model:
 
         $type = Project_Model::text_type_or_null($column);   // null: undeclared
-        $record->$column = $type ? $type::from_untrusted($html) : $html;
+        $record->$column = $type ? $type::from_untrusted_encoded($html) : $html;
 
     text_type_for() is the cast's own lookup and THROWS for an undeclared
     column; text_type_or_null() is the one that answers null.
@@ -458,7 +466,7 @@ THE EXTERNAL API
 
           {"description": "{\"__TEXT\":\"Rich_Text\",\"raw\":\"<p>Hi <b>there</b></p>\"}"}
 
-      Assigned, it is a request envelope: the column's filter_set() runs,
+      Assigned, it is a request envelope: the column's sanitize_encoded() runs,
       exactly as for a value posted by the browser's editor.
 
     A string param is an envelope when, and only when, ALL THREE hold:
@@ -497,7 +505,12 @@ PRINTING AND EDITING
 
     A form need not name the widget - the column's type says which one:
 
-        <{Project_Model.editor_for('description')} $name="description" />
+        <{Project_Model.editor_component_for('description')} $name="description" />
+
+    Every generated JS model carries the two lookups: text_type_or_null(col)
+    answers the column's type class or null, and editor_component_for(col)
+    answers the type's EDITOR component NAME, throwing for an undeclared
+    column.
 
     Both are the jqhtml features built for this and essentially nothing else.
     rsx:man jqhtml, ADVANCED: VALUE PRINTERS and ADVANCED: DYNAMIC COMPONENT
@@ -519,7 +532,7 @@ CHANGING A COLUMN'S TYPE
     1. A migration that RE-ENCODES the existing rows into the type's storage
        form, in RAW SQL: a migration never names an application class
        (MIGRATION-MODEL-01, rsx:man migrations), so it reproduces what
-       Type::from_string() produces rather than calling it. from_string() is
+       Type::from_plain_text() produces rather than calling it. from_plain_text() is
        the reference the SQL must match, and the path for a conversion made
        in code.
     2. The one-line change to $text_types.
@@ -543,7 +556,7 @@ GOTCHAS
 
     A TYPED VALUE THROWS WHEN USED AS A STRING - deliberately. The case that
     settles it is a write: `$copy->notes = $orig->notes . 'more'` would strip
-    the markup and store something plausible. Say what you mean: to_text(),
+    the markup and store something plausible. Say what you mean: to_plain_text(),
     to_html(), is_empty() - and only where the type defines them.
 
     A WRAPPING ENCODING MUST OVERRIDE is_empty(). The default is the raw
@@ -561,7 +574,7 @@ GOTCHAS
     report, a second application: each receives {__TEXT, raw, empty} exactly
     as the browser does. "Just give them the string" reintroduces inference
     at the consumer and defeats the conversion. A consumer that needs plain
-    text gets a deliberate extra key from the endpoint (to_text()), never a
+    text gets a deliberate extra key from the endpoint (to_plain_text()), never a
     rewritten column.
 
     NEVER TEACH AN EDITOR TO ACCEPT A STRING. When a typed input throws on a
@@ -590,17 +603,17 @@ HOW IT WORKS INSIDE
                              ONE serialization: every payload a model
                              produces carries it, the external API included.
 
-      browser -> PHP         hydrate_request_value() -> Rsx_Text_Request_Value
+      browser -> PHP         wrap_request_envelopes() -> Rsx_Text_Request_Value
                              TYPELESS. See below.
 
-      API caller -> PHP      Api_Param_Validator -> hydrate_request_string()
+      API caller -> PHP      Api_Param_Validator -> wrap_api_param_envelope()
                              -> Rsx_Text_Request_Value, same shape check
 
-      PHP -> database        Rsx_Text_Cast::set() -> Type::from_untrusted()
-                             (an envelope) or Type::from_string() (a bare
-                             string: escape_string() first)
+      PHP -> database        Rsx_Text_Cast::set() -> Type::from_untrusted_encoded()
+                             (an envelope) or Type::from_plain_text() (a bare
+                             string: encode_plain_text() first)
                              THE trust boundary. The column's type is applied
-                             and its filter_set() runs, exactly once.
+                             and its sanitize_encoded() runs, exactly once.
 
     WHY AN API ENVELOPE IS A STRING, IDENTIFIED BY THREE TESTS. API params
     are declared scalars; a compound value never satisfies one. Riding the
@@ -644,10 +657,10 @@ HOW IT WORKS INSIDE
 
     WHY is_empty() IS THE ONE RENDITION EVERY TYPE ANSWERS. Every endpoint's
     assign-then-validate depends on it, so it cannot be optional and cannot
-    depend on to_text(), which is. Its default is therefore the raw form,
+    depend on to_plain_text(), which is. Its default is therefore the raw form,
     and a wrapping encoding owes an override.
 
-    WHY to_text() AND to_html() ARE OPTIONAL. Nothing in the framework calls
+    WHY to_plain_text() AND to_html() ARE OPTIONAL. Nothing in the framework calls
     either. A page renders in the browser through the PRINTER component; a
     CSV export or an email is application code, calling the convention by
     name. Requiring them would make every notation type carry database
@@ -679,14 +692,14 @@ HOW IT WORKS INSIDE
     from_storage() is an allocation; reads never filter.
 
     WHY __toString THROWS ON A TYPED VALUE. Not for reads - a CSV cell would
-    be fine with to_text() - but for writes. Concatenation coerces, strips the
+    be fine with to_plain_text() - but for writes. Concatenation coerces, strips the
     encoding, and hands the cast a plain string it dutifully stores. Nothing
     fails and the markup is gone. A throw at the coercion is the only place
     that can be caught.
 
     WHY THE CLIENT CANNOT PRODUCE A TYPED VALUE. Every typed value in
     existence came from from_storage() (the database, trusted) or
-    from_untrusted() (filtered). from_string() routes through the latter.
+    from_untrusted_encoded() (filtered). from_plain_text() routes through the latter.
     Hydration yields a wrapper, never a type. So a typed value reaching the
     cast has already been filtered once, and the cast passing it through
     unfiltered is correct rather than a gap.
@@ -697,15 +710,15 @@ HOW IT WORKS INSIDE
     text read as HTML loses its line breaks and any <...> that looks like a
     tag, silently; HTML read as plain text shows its tags, visibly. Encoded
     content always has a way to say so (a typed value, an envelope,
-    from_untrusted()), so nothing is lost by the rule.
+    from_untrusted_encoded()), so nothing is lost by the rule.
 
-    WHY escape_string() IS REQUIRED AND from_string() IS FINAL. Every bare
+    WHY encode_plain_text() IS REQUIRED AND from_plain_text() IS FINAL. Every bare
     string goes through the conversion, so every type must state it. It
-    returns a string, not a value, so that from_string() - escape, then
-    from_untrusted() - is the only way plain text becomes a value, and no
+    returns a string, not a value, so that from_plain_text() - escape, then
+    from_untrusted_encoded() - is the only way plain text becomes a value, and no
     type can build one from plain text without its filter running.
 
-    WHY filter_set() IS REQUIRED. So that "no filter" is always a declaration
+    WHY sanitize_encoded() IS REQUIRED. So that "no filter" is always a declaration
     with its reason beside it, never something a type inherits by omission.
     Raw_Text's passthrough is written down with why it is safe: plain text is
     never rendered as markup, so there is no encoding to enforce.
@@ -713,7 +726,7 @@ HOW IT WORKS INSIDE
     WHAT IS NOT DEFENDED. Raw SQL, DB::table() and query-builder bulk writes
     bypass the cast, as they do every cast. Mass assignment is refused by
     Rsx_Model_Abstract (fill, forceFill, update) and would route through the
-    cast even if it were not. And a filter_set() that does something beyond
+    cast even if it were not. And a sanitize_encoded() that does something beyond
     transforming its string is outside what the framework can check - which
     is why the contract names it a pure transform.
 
@@ -721,7 +734,7 @@ SEE ALSO
     rsx:man jqhtml - ADVANCED: VALUE PRINTERS, ADVANCED: DYNAMIC COMPONENT TAGS
     rsx:man model - $enums and the model's other column declarations
     rsx:man form_input - the input value contract
-    rsx:man csv_exports - where to_text() lands in an export
+    rsx:man csv_exports - where to_plain_text() lands in an export
     rsx:man external_api - param types, the 422 validation envelope
     skill rspade:text-types - use cases, writing a custom type, the tagged-entities example
 

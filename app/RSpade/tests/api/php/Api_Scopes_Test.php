@@ -64,10 +64,12 @@ class Api_Scopes_Test extends Rsx_Test_Abstract
     public static function test_validate_accepts_a_wildcard_version()
     {
         static::__assert_valid('/api/?/clients');
+    }
 
-        // '#' never matches a 'vN' literal, so it grants nothing there - but it IS the
-        // grammar, and the owner ruled it accepted rather than special-cased.
-        static::__assert_valid('/api/#/clients');
+    public static function test_validate_refuses_digits_wildcard_as_the_version()
+    {
+        // A version is 'vN', never all digits, so '#' there could match no path.
+        static::__assert_invalid('/api/#/clients', 'the version segment must be vN or ?');
     }
 
     public static function test_validate_accepts_a_trailing_slash_and_a_query_string()
@@ -194,9 +196,6 @@ class Api_Scopes_Test extends Rsx_Test_Abstract
         static::__assert_true(Api_Scopes::matches('/api/?/clients', '/api/v1/clients'));
         static::__assert_true(Api_Scopes::matches('/api/?/clients', '/api/v7/clients'));
         static::__assert_false(Api_Scopes::matches('/api/?/clients', '/api/v1/clients/42'));
-
-        // '#' in the version position is legal grammar that matches no real version.
-        static::__assert_false(Api_Scopes::matches('/api/#/clients', '/api/v1/clients'));
     }
 
     public static function test_matches_ignores_trailing_slashes_on_both_sides()

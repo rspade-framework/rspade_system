@@ -16,14 +16,10 @@ use App\RSpade\Tests\Dispatch\Php\Dispatch_Abort_Fixture_Controller;
 /**
  * abort() INSIDE AN RSX-DISPATCHED ACTION.
  *
- * RSX routes are dispatched from inside Laravel's exception handling: Laravel throws
- * NotFoundHttpException for a URL its router does not know, and the bootstrapper catches
- * that and calls the Dispatcher. An action that then called abort(404) threw a SECOND
- * HttpException while the first was still being handled, which escaped as an uncaught
- * fatal - so every abort() in RSX code produced HTTP 500 instead of the status it asked
- * for (/_preview/pdf/<unknown> was 500 on the wire).
+ * An action that calls abort() must produce the status it asked for, never a 500
+ * (/_preview/pdf/<unknown> is the real-world case).
  *
- * The Dispatcher now answers a coded HTTP outcome at the seam that invoked the action.
+ * The Dispatcher answers a coded HTTP outcome at the seam that invoked the action.
  * Proved here: 404 and 403 land on the same Error_Screens the Web_Exception_Handler uses,
  * any other status gets its own page carrying its own status and message, the asset
  * channel gets a plain body rather than a page, and a non-HTTP exception still

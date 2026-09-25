@@ -16,16 +16,18 @@ use App\RSpade\Core\Api\Rsx_Api_Bearer;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Dispatch\RouteResolver;
+use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Session\Session;
 
 /**
  * Api_Dispatcher - request pipeline for external REST API endpoints (/api/vN/...).
  *
- * Self-contained (Portal_Dispatcher-style). The main Dispatcher branches here for any
- * URL matching /api/vN/ BEFORE its asset/FPC/HEAD-rewrite logic, so this dispatcher owns
- * the whole request:
+ * Self-contained. Rsx_Front_Controller hands the API channel here (any URL matching
+ * /api/vN/, classified before assets, Ajax and pages), so this dispatcher owns the whole
+ * request:
  *
+ *   0. the portal's dedicated domain has no API - every path there is 404 not_found;
  *   1. verb gate (GET/POST only; HEAD and everything else -> 405);
  *   2. Bearer authentication FIRST (uniform 401 across the namespace, no route probing) -
  *      establishes a headless, cookie-less Session identity via Session::_set_api_identity();
@@ -40,9 +42,11 @@ use App\RSpade\Core\Session\Session;
  *   8. controller invocation (no auth of its own - the controller trusts this dispatcher);
  *   9. bare-JSON response building (models serialize via toArray(); null -> 204).
  *
- * EVERY request is recorded in _api_request_log (success and every failure path). An
- * uncaught Throwable from the endpoint is logged as a 500 row then rethrown to
- * Api_Exception_Handler, which renders the JSON 500 (never an HTML error page).
+ * EVERY request is recorded in _api_request_log (success and every failure path). A
+ * CODED failure from the endpoint - abort(404), a thrown AjaxUnauthorizedException - is
+ * answered as its JSON error and logged with its status (coded_error_response()). Any other
+ * Throwable is logged as a 500 row then rethrown to Rsx_Front_Controller, whose API channel
+ * policy (Api_Exception_Handler) renders the JSON 500 - never an HTML error page.
  *
  * Responses are bare JSON with real HTTP status codes. Errors are {"error":{"code",
  * "message","fields"?}}. There is no {success,data} envelope.
@@ -73,12 +77,6 @@ class Api_Dispatcher
     private const LOG_REDACT_KEYS = '/pass(word|wd)?|secret|token|authorization|api[_-]?key|credential|private[_-]?key/i';
 
     /**
-     * True for the duration of an API dispatch. Api_Exception_Handler gates on this so
-     * an uncaught endpoint error renders as JSON rather than an HTML error page.
-     */
-    private static bool $_is_api_dispatch = false;
-
-    /**
      * The key that authenticated this request; see current_key().
      */
     private static ?Api_Key_Model $_current_key = null;
@@ -97,9 +95,6 @@ class Api_Dispatcher
     }
 
     /**
-     * Is an API dispatch currently in flight? (Exception-handler gate.)
-     */
-    /**
      * The Api_Key_Model that authenticated THIS request, or null outside an API dispatch.
      *
      * Exposed because the identity Session carries is a user, not a key - two keys belonging
@@ -116,11 +111,6 @@ class Api_Dispatcher
      * The id of the last _api_request_log row this process wrote. See last_request_log_id().
      */
     private static ?int $_last_request_log_id = null;
-
-    public static function is_api_dispatch(): bool
-    {
-        return self::$_is_api_dispatch;
-    }
 
     /**
      * Dispatch an API request. Always returns a Response; never returns null.
@@ -140,26 +130,29 @@ class Api_Dispatcher
      */
     public static function dispatch(string $url, string $method = 'GET', array $extra_params = [], ?Request $request = null): Response
     {
-        try {
-            return self::__dispatch($url, $method, $extra_params, $request);
-        } finally {
-            // AN API IDENTITY BELONGS TO ONE DISPATCH, and this is where that dispatch ends.
-            //
-            // _set_api_identity() throws if it is called twice, which is the correct invariant
-            // WITHIN a request and says nothing about the next one. A web process gets away
-            // with never tearing the identity down because it dies at the end of the request;
-            // anything that dispatches more than once in a process - a test harness, a CLI
-            // tool, a batch runner - does not, and would otherwise have to reach for a
-            // framework internal to perform a boundary the dispatcher already owns.
-            //
-            // dispatch() is that boundary. It already declares one two lines into __dispatch()
-            // for revision history (Revision::_reset_request_state); the identity tier is the
-            // same kind of request-scoped state and is scoped here for the same reason.
-            //
-            // finally, not a trailing statement: an endpoint that throws must not leak its
-            // identity into whatever runs next.
+        // A previous in-process dispatch may have left its identity standing: a direct
+        // caller (a test harness, a CLI tool) has no front controller to tear it down.
+        // _set_api_identity() throws on a second call, so a new dispatch starts clean.
+        if (Session::is_api_request()) {
             Session::_reset_api_identity();
         }
+        self::$_current_key = null;
+
+        return self::__dispatch($url, $method, $extra_params, $request);
+    }
+
+    /**
+     * End this request's API identity. Called by Rsx_Front_Controller AFTER the API
+     * channel's response exists - including a 500 rendered by the channel's error policy -
+     * so a failure is rendered under the identity that caused it, never under whatever the
+     * request's cookie would resolve to.
+     */
+    public static function end_request(): void
+    {
+        if (Session::is_api_request()) {
+            Session::_reset_api_identity();
+        }
+        self::$_current_key = null;
     }
 
     /**
@@ -168,7 +161,6 @@ class Api_Dispatcher
      */
     private static function __dispatch(string $url, string $method, array $extra_params, ?Request $request): Response
     {
-        self::$_is_api_dispatch = true;
         $start = hrtime(true);
         $request = $request ?? request();
 
@@ -189,6 +181,18 @@ class Api_Dispatcher
         $api_key_id = null;
         $user_id = null;
         $site_id = null;
+
+        // --- The portal's dedicated domain has no API ---
+        // The API is the staff application's. When the portal runs on a host of its own,
+        // /api/... on that host is not the API: every path under it answers the ordinary
+        // unknown-endpoint 404, before any credential is looked at, so the portal host
+        // says nothing about which endpoints or keys exist.
+        if (Rsx_Request_Channel::is_portal_host()) {
+            $response = self::_error('not_found', 'Unknown API endpoint', 404);
+            self::_log($request, $start, $method, $path, null, 404, $api_key_id, $user_id, $site_id, $response);
+
+            return $response;
+        }
 
         // --- Verb gate (HEAD deliberately included -> 405) ---
         if ($method !== 'GET' && $method !== 'POST') {
@@ -263,13 +267,17 @@ class Api_Dispatcher
         // 'required' is the matched ROUTE PATTERN, not the request path: it is the thing a
         // scope would have to reach, and its ':id' tokens say which segments are the caller's
         // to fill in. A concrete path would read as though only that one URL were grantable.
+        // An @api-hidden endpoint's pattern is never named: the catalogue does not publish
+        // it, and the refusal must not either.
         if (!Api_Scopes::decide($api_key->scopes, $path, (int) $api_key->id)) {
             $response = self::_error(
                 'insufficient_scope',
                 'This API key is not scoped for this endpoint',
                 403,
                 null,
-                ['required' => rtrim($route['pattern'], '/')]
+                Api_Catalog::is_hidden_pattern($route['pattern'])
+                    ? []
+                    : ['required' => rtrim($route['pattern'], '/')]
             );
             self::_log($request, $start, $method, $path, $handler, 403, $api_key_id, $user_id, $site_id, $response);
 
@@ -302,11 +310,10 @@ class Api_Dispatcher
         // scope check above, which answered "may this KEY reach this endpoint". Names
         // resolve in the STAFF realm: an API key belongs to a staff
         // user, so the bearer session IS a staff identity (#[Api_Endpoint] surfaces are
-        // indexed staff for the same reason). An endpoint declaring no gates is
-        // untouched; closed-by-default is a manifest-build rule, not a runtime one.
-        $gates = $route['auth'] ?? [];
-        if (!empty($gates)
-            && !Auth_Gates::gates_pass_at_seam($gates, Auth_Gates::REALM_STAFF, $handler)) {
+        // indexed staff for the same reason). The list was resolved through
+        // Auth_Gates::surface_gates() when the row matched, which refuses an unindexed or
+        // gateless surface: closed-by-default holds at run time as well as at build time.
+        if (!Auth_Gates::gates_pass_at_seam($route['auth'], Auth_Gates::REALM_STAFF, $handler)) {
             $response = self::_error('forbidden', 'Insufficient permissions', 403);
             self::_log($request, $start, $method, $path, $handler, 403, $api_key_id, $user_id, $site_id, $response);
 
@@ -316,6 +323,29 @@ class Api_Dispatcher
         // --- Invoke (controller pre_dispatch + action) + build response ---
         $controller = $route['class'];
         $action = $route['method'];
+
+        // --- Application account policy (Main::pre_dispatch) ---
+        // The application's per-request hook runs here exactly as it does for a page: after
+        // the identity is established and the gates have passed, before the controller. It
+        // is where an app enforces ITS OWN account states mid-session (suspended, unpaid,
+        // terms not accepted) for "every surface", and a bearer key is a surface - skipping
+        // it let a suspended account keep working through its keys. Any non-null return
+        // refuses the call: an API client cannot follow an interstitial, so whatever the
+        // hook returned is answered as a uniform 403 account_refused.
+        //
+        // params carries _handler and _method, as the page dispatcher's does, so a hook that
+        // scopes itself by handler namespace behaves identically here.
+        $main_refusal = self::_main_pre_dispatch($request, $params, $controller, $method);
+        if ($main_refusal !== null) {
+            $response = self::_error(
+                'account_refused',
+                'This account may not use the API at this time.',
+                403
+            );
+            self::_log($request, $start, $method, $path, $handler, 403, $api_key_id, $user_id, $site_id, $response);
+
+            return $response;
+        }
 
         try {
             $pre = method_exists($controller, 'pre_dispatch')
@@ -339,6 +369,16 @@ class Api_Dispatcher
 
             $response = self::build_response($result);
         } catch (Throwable $e) {
+            // A CODED outcome (abort(404), a thrown AjaxUnauthorizedException) is an answer:
+            // the JSON error for its status, logged with that status.
+            $coded = self::coded_error_response($e);
+
+            if ($coded !== null) {
+                self::_log($request, $start, $method, $path, $handler, $coded->getStatusCode(), $api_key_id, $user_id, $site_id, $coded);
+
+                return $coded;
+            }
+
             self::_log($request, $start, $method, $path, $handler, 500, $api_key_id, $user_id, $site_id, null);
 
             throw $e;
@@ -348,6 +388,38 @@ class Api_Dispatcher
         self::_log($request, $start, $method, $path, $handler, $status, $api_key_id, $user_id, $site_id, $response);
 
         return $response;
+    }
+
+    /**
+     * Run the application's Main_Abstract::pre_dispatch() hooks, returning the first non-null
+     * answer (a refusal) or null to continue.
+     *
+     * @param Request $request
+     * @param array $params The validated params
+     * @param string $controller The endpoint's controller class
+     * @param string $method The HTTP method
+     * @return mixed
+     */
+    private static function _main_pre_dispatch(Request $request, array $params, string $controller, string $method)
+    {
+        $main_params = array_merge($params, [
+            '_handler' => $controller,
+            '_method' => $method,
+        ]);
+
+        foreach (Manifest::php_class_records_extending('Main_Abstract') as $main_class) {
+            $main_class_name = $main_class['fqcn'] ?? null;
+            if (!$main_class_name) {
+                continue;
+            }
+
+            $result = $main_class_name::pre_dispatch($request, $main_params);
+            if ($result !== null) {
+                return $result;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -506,6 +578,58 @@ class Api_Dispatcher
     }
 
     /**
+     * The API answer for a CODED failure, or null for a fault (a 500).
+     *
+     *   HttpException 404 / 403 / 401   not_found / forbidden / unauthenticated, its status
+     *   HttpException, other status     http_<status>, its status
+     *   AjaxNotFoundException           not_found 404
+     *   AjaxUnauthorizedException       forbidden 403   (Permission::require_permission())
+     *   AjaxAuthRequiredException       unauthenticated 401
+     *
+     * The message is the raiser's, or the status text when it gave none. Used by the
+     * dispatcher for an endpoint's failure and by the API channel's error policy
+     * (Api_Exception_Handler) for one raised outside it.
+     *
+     * @param Throwable $e
+     * @return JsonResponse|null
+     */
+    public static function coded_error_response(Throwable $e): ?JsonResponse
+    {
+        if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+            $status = $e->getStatusCode();
+            $code = match ($status) {
+                401 => 'unauthenticated',
+                403 => 'forbidden',
+                404 => 'not_found',
+                default => 'http_' . $status,
+            };
+        } elseif ($e instanceof \App\RSpade\Core\Ajax\Exceptions\AjaxNotFoundException) {
+            [$code, $status] = ['not_found', 404];
+        } elseif ($e instanceof \App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException) {
+            [$code, $status] = ['forbidden', 403];
+        } elseif ($e instanceof \App\RSpade\Core\Ajax\Exceptions\AjaxAuthRequiredException) {
+            [$code, $status] = ['unauthenticated', 401];
+        } else {
+            return null;
+        }
+
+        $message = $e->getMessage();
+        if ($message === '') {
+            $message = Response::$statusTexts[$status] ?? 'Error';
+        }
+
+        $response = self::_error($code, $message, $status);
+
+        if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+            foreach ($e->getHeaders() as $name => $value) {
+                $response->headers->set($name, $value);
+            }
+        }
+
+        return $response;
+    }
+
+    /**
      * Build a {"error":{"code","message","fields"?}} JSON response with the given status.
      *
      * $extra merges additional keys INTO the error object - insufficient_scope carries
@@ -556,13 +680,15 @@ class Api_Dispatcher
         $log->api_key_id = $api_key_id;
         $log->user_id = $user_id;
         $log->site_id = $site_id;
-        $log->verb = $method;
+        $log->verb = self::_loggable_verb($method);
         $log->path = substr($path, 0, 2048);
         $log->handler = $handler;
         $log->status = $status;
         $log->duration_ms = $duration_ms;
         $log->ip = $request->ip();
-        $log->request_body = self::_capture_request_body($request);
+        // An unauthenticated request's body is not stored: the row still records that the
+        // call happened, but an anonymous caller cannot make the log hold its payload.
+        $log->request_body = $api_key_id === null ? null : self::_capture_request_body($request);
 
         $facts = self::_response_facts($response);
         $log->response_error_code = $facts['error_code'];
@@ -576,6 +702,21 @@ class Api_Dispatcher
         // A revision transaction minted during this request can now name the log row that
         // recorded it - the API's answer to "which call did this".
         \App\RSpade\Core\Revisions\Revision::_set_api_request_log_id((int) $log->id);
+    }
+
+    /**
+     * The verb as the request log stores it: a standard HTTP method verbatim, anything
+     * else as the fixed token UNKNOWN.
+     *
+     * The verb is caller-supplied text of any length, and the column is varchar(8): an
+     * arbitrary verb stored verbatim made the log insert itself the 500 - one that
+     * answered an anonymous caller with the SQL error.
+     */
+    private static function _loggable_verb(string $method): string
+    {
+        $standard = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'TRACE', 'CONNECT'];
+
+        return in_array($method, $standard, true) ? $method : 'UNKNOWN';
     }
 
     /**
@@ -614,10 +755,11 @@ class Api_Dispatcher
             $raw = (string) $request->getContent();
             $decoded = $raw === '' ? null : json_decode($raw, true);
 
-            // An unparseable body is still evidence - that request 400s, and the log is
-            // where you look to find out why - so it is stored as the text it was.
+            // An unparseable body cannot be redacted - there are no keys to find a password
+            // under - so it is never stored as the text it was. Its size is the evidence
+            // kept; the row's invalid_json error code says why the request failed.
             if (!is_array($decoded)) {
-                return $raw === '' ? null : self::_cap(self::_redact_value($raw), self::LOG_BODY_MAX_BYTES);
+                return $raw === '' ? null : '[unparseable JSON body, ' . strlen($raw) . ' bytes, not stored]';
             }
 
             $body = $decoded;

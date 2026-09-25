@@ -38,7 +38,7 @@ RSX returns **HTTP 200 for ALL Ajax responses** (success and errors). Success/fa
 | `Ajax::ERROR_UNAUTHORIZED` | User lacks permission |
 | `Ajax::ERROR_AUTH_REQUIRED` | User not logged in |
 | `Ajax::ERROR_FATAL` | Uncaught PHP exceptions |
-| `Ajax::ERROR_QUESTION` | Not a failure: a pending question (`response_form_question($key, $question)`); the form engine answers it, a non-form caller reads `metadata.key`/`metadata.question`, an in-process `Ajax::call()` raises `AjaxQuestionException`. `rsx:man form_conventions`, QUESTIONS |
+| `Ajax::ERROR_QUESTION` | Not a failure: a pending question (`response_form_question($key, $question)`); the form engine answers it, a non-form caller reads `metadata.key`/`metadata.question`, an in-process `Ajax::internal()` raises `AjaxQuestionException`. `rsx:man form_conventions`, QUESTIONS |
 
 Constants available in both PHP (`Ajax::ERROR_*`) and JavaScript (`Ajax.ERROR_*`).
 
@@ -212,18 +212,20 @@ Displays error in any container element.
 
 ---
 
-## Developer vs Production Mode
+## Who Sees Fatal-Error Detail
 
-**Developer Mode** (`IS_DEVELOPER=true`):
+Keyed on the CALLER, server-side (`Rsx_Diagnostics::caller_sees_detail()`): development or debug mode AND a signed-in developer (`login_users.is_developer`), a valid `rsx:debug` credential, or a loopback caller. A development site may be public, so an anonymous remote caller is redacted there too; strict production redacts for everybody.
+
+**Developer caller**:
 - Full exception message
 - File path and line number
 - SQL queries with parameters
 - Stack trace (up to 10 frames)
 
-**Production Mode**:
-- Generic message: "An unexpected error occurred"
-- No technical details exposed
-- Errors logged server-side
+**Everybody else**:
+- Generic message: "An unexpected error occurred. Please try again."
+- An `error_id` (`error.error_id` direct, `metadata.error_id` batched); the detail is logged as `[error_id=<id>] ...`
+- A target that is not an endpoint answers one message, "`<Controller>::<action>` is not an Ajax endpoint" — no class-name oracle
 
 ---
 

@@ -133,7 +133,7 @@ class Weather_Updated_Topic extends Realtime_Topic_Abstract {
 }
 ```
 
-`$requires_auth` (default `true`) declares intent rather than gating anything, and drives **`REALTIME-AUTH-01`** (`rsx:check`): `true` without a recognizable auth check inside `can_subscribe()` is flagged **high severity**; `$requires_auth = false` is flagged for **mandatory manual review** until suppressed with `// @REALTIME-AUTH-01-EXCEPTION - <rationale>`. A public topic can never ship silently.
+`$requires_auth` (default `true`) declares intent rather than gating anything, and drives **`REALTIME-AUTH-01`** (`rsx:check`): `true` without a recognizable auth check inside `can_subscribe()` is flagged **high severity**; `$requires_auth = false` is flagged for **mandatory manual review** until suppressed with `// @REALTIME-AUTH-01-EXCEPTION - <rationale>`. A public topic can never ship silently. The rule reaches every subclass through any intermediate base and checks the NEAREST declaration of each: a shared abstract topic carrying the real check covers the topics beneath it, a subclass overriding `can_subscribe()` is checked on its own body, and one inheriting `$requires_auth = false` is not reported as missing auth (the review verdict sits on the base that declared it).
 
 **Site scoping is not a permission check.** Frames only route to connections matching the publisher's `site_id`, and server-side filters only deliver matching messages - both NARROW reachability; neither answers "may this person subscribe".
 

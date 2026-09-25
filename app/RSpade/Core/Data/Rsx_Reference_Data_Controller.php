@@ -32,6 +32,7 @@ class Rsx_Reference_Data_Controller extends Rsx_Controller_Abstract
      * Returns array of {value: country_code, label: country_name} sorted alphabetically
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function countries(Request $request, array $params = [])
     {
         return Country_Model::enabled()
@@ -49,6 +50,7 @@ class Rsx_Reference_Data_Controller extends Rsx_Controller_Abstract
      * @param array $params - Expected: ['country' => 'US']
      */
     #[Ajax_Endpoint]
+    #[Portal_Impersonation_Readable]
     public static function states(Request $request, array $params = [])
     {
         $country = $params['country'] ?? 'US';

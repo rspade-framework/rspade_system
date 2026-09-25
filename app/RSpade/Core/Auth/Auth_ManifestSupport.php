@@ -34,6 +34,8 @@ use App\RSpade\Core\Manifest\Manifest;
  *          'auth'   => ['check_name', ...],   // class-level gates then method-level
  *          'file'   => relative source path,
  *          'member' => 'Simple_Class::method' or the JS action class name,
+ *          'impersonation_readable' => true,  // present only when the member carries
+ *                                             // #[Portal_Impersonation_Readable]
  *       ],
  *     ],
  *   ]
@@ -50,7 +52,7 @@ use App\RSpade\Core\Manifest\Manifest;
  * fetch entry points are realm-explicit: fetch() is staff, portal_fetch() is portal.
  *
  * AJAX REALM. Each realm now has its OWN internal-endpoint channel (/_ajax/... for
- * staff, <portal-prefix>/_ajax/... for the portal, served by Portal_Dispatcher), so
+ * staff, <portal-prefix>/_ajax/... for the portal, dispatched in the portal realm), so
  * an #[Ajax_Endpoint] surface is NOT realm-agnostic: it declares the realm it serves
  * and the Ajax seam DENIES a request from the other realm before evaluating any gate
  * name (Auth_Gates::surface_realm_permits). Resolution, in order:
@@ -76,9 +78,9 @@ use App\RSpade\Core\Manifest\Manifest;
  *     never run - the registry resolves the most derived declaration)
  *   - a non-string #[Auth] argument
  *
- * CLOSED BY DEFAULT (the validation pass, _validate()). After the index is built,
+ * CLOSED BY DEFAULT (the validation pass, validate()). After the index is built,
  * every surface is validated and ALL findings are raised as ONE RuntimeException -
- * the error list is the worklist. Four findings:
+ * the error list is the worklist. The findings:
  *
  *   - MISSING GATE: a surface with no #[Auth] / @auth at all, class-level or
  *     member-level. There is no attribute-free spelling of "open": a public
@@ -94,6 +96,15 @@ use App\RSpade\Core\Manifest\Manifest;
  *     method-level gates are additive, so the member's 'public' opens nothing -
  *     the declaration reads as open while the class keeps it shut.
  *   - MISSING GATE on a JS @route action (same finding, action-class spelling).
+ *   - NO SURFACE: a route / portal route / SPA / API row, or an #[Ajax_Endpoint] /
+ *     #[Ajax_Endpoint_Model_Fetch] member, that names a surface this index does not
+ *     hold (row_surface_violations()). The runtime seams refuse such a surface
+ *     (Auth_Gates::require_surface); this is the same rule, raised before deploy.
+ *   - NOT STATIC: a surface attribute (#[Route], #[SPA], #[Portal_Route],
+ *     #[Api_Endpoint], #[Ajax_Endpoint]) on a public instance method.
+ *   - UNMARKED FETCH OVERRIDE: a model redeclaring fetch(), portal_fetch() or a
+ *     relationship that its nearest declaring ancestor marks
+ *     #[Ajax_Endpoint_Model_Fetch], without marking the redeclaration.
  *
  * This pass runs pre-save, so a violation aborts the build and NOTHING is written.
  * That bricks artisan by design; the always-runnable escape hatch (rsx:man,
@@ -142,7 +153,98 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
             'surfaces' => $index['surfaces'],
         ];
 
-        static::validate($index['surfaces'], $index['checks'], $index['violations']);
+        $violations = array_merge(
+            $index['violations'],
+            static::row_surface_violations($manifest_data['data'], $index['surfaces'])
+        );
+
+        static::validate($index['surfaces'], $index['checks'], $violations);
+    }
+
+    /**
+     * Every dispatchable row the other support modules recorded must name a surface this
+     * index holds - the NO SURFACE finding.
+     *
+     * The runtime seams resolve a matched row's gates through the surface it names, and
+     * refuse a surface the index does not know (Auth_Gates::require_surface). This is the
+     * build-time half of the same rule: a row pointing at nothing is a surface that was
+     * recorded by one module and missed by this one, and it fails the build here rather
+     * than the first request that matches it.
+     *
+     * Rows checked: `routes` and `portal_routes` (their 'surface', plus the JS action
+     * 'target' of an SPA row), `api_endpoints`, and every #[Ajax_Endpoint] /
+     * #[Ajax_Endpoint_Model_Fetch] member in the attribute index.
+     *
+     * Public so the rule can be driven with synthetic manifest data.
+     *
+     * @param array $data     $manifest_data['data'] after every index module has run
+     * @param array $surfaces The surface index this build produced
+     * @return array<int, array> Violations in the validate() shape
+     */
+    public static function row_surface_violations(array $data, array $surfaces): array
+    {
+        $violations = [];
+
+        $add = static function (string $target, string $file, string $kind, string $realm, string $source) use (&$violations, $surfaces): void {
+            if (isset($surfaces[$target])) {
+                return;
+            }
+
+            $violations[] = [
+                'type' => 'NO SURFACE',
+                'target' => $target,
+                'file' => $file,
+                'kinds' => [$kind],
+                'realm' => $realm,
+                'is_js_action' => false,
+                'detail' => "{$source} names this member, but the auth index holds no surface for it,"
+                    . ' so no gate could be resolved when it dispatches',
+                'fix' => [
+                    'a dispatchable member is a PUBLIC STATIC method',
+                    'carrying its own surface attribute (#[Route],',
+                    '#[SPA], #[Portal_Route], #[Api_Endpoint],',
+                    '#[Ajax_Endpoint]); an @spa / @portal_spa',
+                    'decorator must name one that does',
+                ],
+            ];
+        };
+
+        foreach (['routes' => self::REALM_STAFF, 'portal_routes' => self::REALM_PORTAL] as $section => $realm) {
+            foreach (($data[$section] ?? []) as $pattern => $row) {
+                $type = $row['type'] ?? $section;
+                $file = $row['file'] ?? '(unknown file)';
+
+                $add((string) ($row['surface'] ?? ''), $file, $type, $realm, "The {$section} row for '{$pattern}'");
+
+                if (($type === 'spa' || $type === 'portal_spa') && isset($row['target'])) {
+                    $add((string) $row['target'], $file, $type, $realm, "The {$section} row for '{$pattern}' (its JS action)");
+                }
+            }
+        }
+
+        foreach (($data['api_endpoints'] ?? []) as $pattern => $row) {
+            $add(
+                ($row['class'] ?? '') . '::' . ($row['method'] ?? ''),
+                $row['file'] ?? '(unknown file)',
+                'api',
+                self::REALM_STAFF,
+                "The api_endpoints row for '{$pattern}'"
+            );
+        }
+
+        foreach (['Ajax_Endpoint' => 'ajax', 'Ajax_Endpoint_Model_Fetch' => 'model_fetch'] as $attribute => $kind) {
+            foreach (($data['attribute_index'][$attribute] ?? []) as $declaration) {
+                $add(
+                    ($declaration['class'] ?? '') . '::' . ($declaration['member'] ?? ''),
+                    $declaration['file'] ?? '(unknown file)',
+                    $kind,
+                    self::REALM_ANY,
+                    "An #[{$attribute}] declaration"
+                );
+            }
+        }
+
+        return $violations;
     }
 
     /**
@@ -196,7 +298,11 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
         }
 
         static::_collect_php_surfaces($files, $surfaces, $violations, $dirty);
-        static::_collect_inherited_model_fetch_surfaces($files, $surfaces);
+
+        $records_by_class = static::__records_by_class($files);
+        static::_collect_inherited_model_fetch_surfaces($records_by_class, $surfaces);
+        static::__collect_unmarked_fetch_overrides($records_by_class, $violations);
+
         static::_collect_js_action_surfaces($surfaces, $dirty);
 
         ksort($surfaces);
@@ -335,7 +441,11 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
                 $lines[] = ($offset === 0 ? '      what:  ' : '             ') . $chunk;
             }
 
-            if ($violation['type'] === 'MISSING GATE') {
+            if (isset($violation['fix'])) {
+                foreach ($violation['fix'] as $offset => $line) {
+                    $lines[] = ($offset === 0 ? '      fix:   ' : '             ') . $line;
+                }
+            } elseif ($violation['type'] === 'MISSING GATE') {
                 $suggested = static::_suggested_check($violation['realm'], $checks);
                 $lines[] = $violation['is_js_action']
                     ? "      add:   @auth('{$suggested}')"
@@ -530,16 +640,8 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
         foreach (array_keys($realm_classes) as $fqcn) {
             $file = $fqcn_to_file[$fqcn] ?? '(unknown file)';
             $metadata = $files[$file] ?? [];
-            $instance_methods = $metadata['public_instance_methods'] ?? [];
 
             foreach (($metadata['public_static_methods'] ?? []) as $method_name => $method_data) {
-                // The scanner's 'public_static_methods' map is filtered PUBLIC-or-STATIC,
-                // so it also lists public instance methods. The instance pass below owns
-                // those (a check must be static).
-                if (isset($instance_methods[$method_name])) {
-                    continue;
-                }
-
                 if (!static::_has_auth_check_marker($method_data)) {
                     $unmarked_declarations[$method_name][] = ['class' => $fqcn, 'file' => $file];
 
@@ -827,7 +929,6 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
             }
 
             $class_attributes = $metadata['attributes'] ?? null;
-            $instance_methods = $metadata['public_instance_methods'] ?? [];
 
             // Resolved once per class: every #[Ajax_Endpoint] it declares serves the
             // same realm (the declaration is class-level).
@@ -840,14 +941,6 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
             $class_restricts = !empty(array_diff($class_gates, ['public']));
 
             foreach (($metadata['public_static_methods'] ?? []) as $method_name => $method_data) {
-                // The scanner's 'public_static_methods' map is filtered PUBLIC-or-STATIC,
-                // so it also lists public instance methods. Only genuinely static members
-                // are dispatchable surfaces; the instance pass below owns the rest
-                // (fetchable relationships).
-                if (isset($instance_methods[$method_name])) {
-                    continue;
-                }
-
                 $target = $class . '::' . $method_name;
                 $location = "{$target} in {$file}";
                 $method_attributes = $method_data['attributes'] ?? null;
@@ -896,6 +989,13 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
                     );
                 }
 
+                // #[Portal_Impersonation_Readable]: this endpoint may run while a staff member
+                // is viewing the portal as a client. Every other portal-reachable Ajax endpoint
+                // is refused then (Ajax::execute) - "View as Client" is read-only by default.
+                if ($is_surface && static::_method_has_attribute($method_data, 'Portal_Impersonation_Readable')) {
+                    $surfaces[$target]['impersonation_readable'] = true;
+                }
+
                 if ($is_surface) {
                     static::_record_public_contradiction(
                         $violations,
@@ -910,6 +1010,31 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
             // Fetchable relationships are public INSTANCE methods. They are reached
             // through fetch() or portal_fetch(), so their realm is the request's.
             foreach (($metadata['public_instance_methods'] ?? []) as $method_name => $method_data) {
+                // Every OTHER surface attribute on an instance method is the NOT STATIC
+                // finding: surfaces are indexed off the public static map, so the member
+                // would carry a dispatch attribute and no gate.
+                foreach (array_keys($surface_attributes) as $attr_name) {
+                    if (!static::_method_has_attribute($method_data, $attr_name)) {
+                        continue;
+                    }
+
+                    $violations[] = [
+                        'type' => 'NOT STATIC',
+                        'target' => $class . '::' . $method_name,
+                        'file' => $file,
+                        'kinds' => [$surface_attributes[$attr_name][0]],
+                        'realm' => $surface_attributes[$attr_name][1] ?? $ajax_realm,
+                        'is_js_action' => false,
+                        'detail' => "carries #[{$attr_name}] on an instance method; a dispatchable"
+                            . ' surface is a public static method, and this one is never indexed',
+                        'fix' => [
+                            'declare it public static, with the',
+                            '(Request $request, array $params = [])',
+                            'signature every surface takes',
+                        ],
+                    ];
+                }
+
                 if (!static::_method_has_attribute($method_data, 'Ajax_Endpoint_Model_Fetch')) {
                     continue;
                 }
@@ -1059,29 +1184,10 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
      * A surface the per-file pass already recorded is left exactly as it is: a concrete that
      * declares fetch() itself has already said everything about it.
      *
-     * @param array $files $manifest_data['data']['files']
+     * @param array<string, array> $records_by_class See __records_by_class()
      */
-    private static function _collect_inherited_model_fetch_surfaces(array $files, array &$surfaces): void
+    private static function _collect_inherited_model_fetch_surfaces(array $records_by_class, array &$surfaces): void
     {
-        // class simple name => file record, each carrying its own path. The lineage climb
-        // reads this and nothing else: the index being assembled is the only correct answer
-        // at this moment in the build.
-        $records_by_class = [];
-
-        foreach ($files as $file => $metadata) {
-            if (($metadata['extension'] ?? '') !== 'php') {
-                continue;
-            }
-
-            $class = $metadata['class'] ?? null;
-
-            if ($class === null || $class === '') {
-                continue;
-            }
-
-            $records_by_class[$class] = $metadata + ['file' => $file];
-        }
-
         foreach ($records_by_class as $class => $metadata) {
             if (!empty($metadata['abstract'])) {
                 continue;
@@ -1157,6 +1263,122 @@ class Auth_ManifestSupport extends Full_ManifestSupport_Abstract
                 );
             }
         }
+    }
+
+    /**
+     * class simple name => file record, each carrying its own path. The lineage climbs read
+     * this and nothing else: the index being assembled is the only correct answer at this
+     * moment in the build.
+     *
+     * @param array $files $manifest_data['data']['files']
+     * @return array<string, array>
+     */
+    private static function __records_by_class(array $files): array
+    {
+        $records_by_class = [];
+
+        foreach ($files as $file => $metadata) {
+            if (($metadata['extension'] ?? '') !== 'php') {
+                continue;
+            }
+
+            $class = $metadata['class'] ?? null;
+
+            if ($class === null || $class === '') {
+                continue;
+            }
+
+            $records_by_class[$class] = $metadata + ['file' => $file];
+        }
+
+        return $records_by_class;
+    }
+
+    /**
+     * The UNMARKED FETCH OVERRIDE finding: a model that redeclares a member its nearest
+     * declaring ancestor marks #[Ajax_Endpoint_Model_Fetch] - fetch(), portal_fetch() or a
+     * relationship - without marking the redeclaration.
+     *
+     * The body that runs is the override's, so the lineage resolves the NEAREST declaration
+     * and the member is not a fetch surface (Model_Fetch_Lineage). Read as written, though,
+     * the model looks fetchable - the ancestor says so - and the ORM answers "not available"
+     * for a member the developer believes is exposed. An override of a fetch surface is a
+     * change to what JavaScript may read, so it states its attribute and gates itself, the
+     * way an override of an #[Auth_Check] must.
+     *
+     * @param array<string, array> $records_by_class
+     */
+    private static function __collect_unmarked_fetch_overrides(array $records_by_class, array &$violations): void
+    {
+        foreach ($records_by_class as $class => $metadata) {
+            if (!static::_class_is_model($records_by_class, $class)) {
+                continue;
+            }
+
+            foreach (['public_static_methods', 'public_instance_methods'] as $map_key) {
+                foreach (($metadata[$map_key] ?? []) as $method_name => $method_data) {
+                    if (isset($method_data['attributes']['Ajax_Endpoint_Model_Fetch'])) {
+                        continue;
+                    }
+
+                    $ancestor = static::__nearest_ancestor_declaration($records_by_class, $class, $method_name, $map_key);
+
+                    if ($ancestor === null || !isset($ancestor['method']['attributes']['Ajax_Endpoint_Model_Fetch'])) {
+                        continue;
+                    }
+
+                    $violations[] = [
+                        'type' => 'UNMARKED FETCH OVERRIDE',
+                        'target' => $class . '::' . $method_name,
+                        'file' => $metadata['file'],
+                        'kinds' => [$map_key === 'public_static_methods' ? 'model_fetch' : 'model_relationship'],
+                        'realm' => self::REALM_ANY,
+                        'is_js_action' => false,
+                        'detail' => "redeclares {$method_name}() without #[Ajax_Endpoint_Model_Fetch], which"
+                            . " {$ancestor['class']}::{$method_name}() carries - the override is the body"
+                            . ' that runs, so as written it is not fetchable',
+                        'fix' => [
+                            'repeat #[Ajax_Endpoint_Model_Fetch] and its',
+                            '#[Auth] on the override, or rename the method',
+                            'if it is not meant to replace the fetch surface',
+                        ],
+                    ];
+                }
+            }
+        }
+    }
+
+    /**
+     * The nearest STRICT ancestor of $class declaring $method_name in the given method map.
+     *
+     * @param array<string, array> $records_by_class
+     * @return array{class: string, method: array}|null
+     */
+    private static function __nearest_ancestor_declaration(
+        array $records_by_class,
+        string $class,
+        string $method_name,
+        string $map_key
+    ): ?array {
+        $seen = [$class => true];
+        $current = $records_by_class[$class]['extends'] ?? null;
+
+        while ($current !== null && $current !== '' && !isset($seen[$current])) {
+            $seen[$current] = true;
+            $record = $records_by_class[$current] ?? null;
+
+            if ($record === null) {
+                return null;
+            }
+
+            if (isset($record[$map_key][$method_name])) {
+                return ['class' => $current, 'method' => $record[$map_key][$method_name]];
+            }
+
+            $current = $record['extends'] ?? null;
+        }
+
+        return null;
     }
 
     /**

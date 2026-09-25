@@ -29,7 +29,10 @@
 const fs = require('fs');
 const net = require('net');
 
-const { encode_frame, decode_frame, Frame_Reader } = require('./protocol.js');
+// The frame protocol is rsx-lockd's: one newline-delimited JSON frame per line, the same
+// splitter and the same MAX_FRAME_BYTES cap. The dependency points testd -> lockd only,
+// because rsx-lockd must stay liftable into its own repository with no dependencies.
+const { encode_frame, decode_frame, Frame_Reader } = require('../../rsx-lockd/lib/protocol.js');
 
 
 /**
@@ -171,6 +174,9 @@ class Queue_Server {
      * results.jsonl, so a malformed frame from one worker must not cost the run.
      */
     __answer(line) {
+        // decode_frame() never throws, and that matters more here than in lockd: this
+        // process is the only thing that can write results.jsonl, so one uncaught throw on
+        // a broken worker's bytes would lose the whole run's outcome.
         const decoded = decode_frame(line);
         if (!decoded.ok) {
             return { id: null, error: decoded.error };

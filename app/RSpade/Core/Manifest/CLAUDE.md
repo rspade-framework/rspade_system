@@ -111,7 +111,12 @@ three times, and every file record repeated its own path as a value (3.3% of `fi
   `portal_routes`, grouped on the row's `target`. Never persisted. PHP arrays are
   copy-on-write, so the regroup shares the rows' storage.
 - A route row carries `surface` (its key in `auth.surfaces`) instead of its own gate list;
-  every dispatcher resolves it with `Auth_Gates::surface_gates($row['surface'])`.
+  every dispatcher resolves it with `Auth_Gates::surface_gates($row['surface'])`, which
+  REFUSES a surface that is missing or gateless. `Auth_ManifestSupport` fails the build on
+  any row naming an unindexed surface (NO SURFACE), so the two can only disagree through a bug.
+- A PHP file record's `public_static_methods` holds exactly the PUBLIC STATIC methods (the
+  class's own and its traits'); `public_instance_methods` holds the public instance methods
+  the file declares. The two maps never share a name.
 - A file record does not carry `file`. **The getters that return a record without its key -
   `get_file()`, `php_get_metadata_by_*`, `php_get_extending()`, `js_get_extending()` - put it
   back**, because for their callers it is the only way to learn the path.

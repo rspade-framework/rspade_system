@@ -151,7 +151,7 @@ class Model_ManifestSupport extends ManifestSupport_Abstract
                 'file' => $model_entry['file'] ?? '',
                 'table' => $table_name,
                 'columns' => $columns,
-                'class' => $class_name,  // Ajax_Endpoint_Controller expects this
+                'class' => $class_name,
                 'fingerprint' => $fingerprint,
             ];
 

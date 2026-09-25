@@ -100,6 +100,18 @@ $this->source()->php_tokens_of($code)                   // PhpToken::tokenize() 
 
 Pass the manifest hash whenever you have the metadata: it is what says the bytes moved.
 
+**Inheritance is a lineage question, never a direct-parent one.** Scope a rule with
+`Manifest::php_is_subclass_of($metadata['class'], 'Base')` / `js_is_subclass_of()`; comparing
+`$metadata['extends'] === 'Base'` silently drops every class beneath an intermediate abstract
+(`META-INHERIT-01` flags it, unless a `*_is_subclass_of()` call follows within a few lines as the
+real check). When a MEMBER must resolve the same way, the base class answers from manifest records:
+`lineage_declaring_method($class, $method, $stop_at)` (the nearest declaring class, the file
+holding the body - a trait's file for a mixed-in method - and the method record) and
+`lineage_declaring_property()`; read a body with `$this->method_body($text, $method)` (token-based
+via `Php_Parser::method_body()`, braces in strings and comments cannot miscount). Judge each class
+on what it DECLARES and let an inherited member's verdict stand at the ancestor that declared it,
+so one mistake is one violation.
+
 **Failure posture**: an unreadable file yields `''` / `[]` / `null` rather than throwing, and so
 does a file with a syntax error. The lint stage reports syntax; a rule must not turn an
 unparseable file into its own kind of failure.

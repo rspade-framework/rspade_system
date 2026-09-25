@@ -95,7 +95,7 @@ export class IdeBridgeClient {
      */
     public async manifest_build(): Promise<{ success: boolean }> {
         try {
-            return await this.request('/_ide/service/manifest_build', {}, 'GET');
+            return await this.request('/_ide/service/manifest_build', {}, 'POST');
         } catch (error: any) {
             console.warn('[IdeBridge] Manifest build failed:', error.message);
             return { success: false };

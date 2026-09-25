@@ -12,15 +12,17 @@ routable and carries no leading underscore, and every framework route is `/_`-pr
 | ERR-04 | An explicit realm wins over ambient detection | php | `unauthorized(..., REALM_PORTAL)` | 302 to the portal login route | implemented | 2026-08-07 |
 | ERR-05 | not_found renders the themed body and status | php | `not_found()` | 404, body contains "Page Not Found" | implemented | 2026-08-07 |
 | ERR-06 | The dispatcher renders its own 404 (no Laravel default) | php | `Dispatcher::dispatch()` on an unmatched URL | 404 themed body | implemented | 2026-08-07 |
-| ERR-07 | fatal carries detail outside production | php | `fatal()` in development mode | 500, message + class + origin present | implemented | 2026-08-07 |
+| ERR-07 | fatal carries detail to a developer caller outside production | php | `fatal()` in development mode, loopback caller | 500, message + class + origin present | implemented | 2026-09-25 |
+| ERR-07b | fatal redacts for a remote caller in development | php | `fatal()`, development, REMOTE_ADDR off-box | 500, no message/origin, `Reference: <16 hex>` | implemented | 2026-09-25 |
 | ERR-08 | fatal redacts fully in production | php | `fatal()` in production mode | 500, no message/class/origin | implemented | 2026-08-07 |
-| ERR-09 | Debug-mode builds redact with production | php | `fatal()` in debug mode | no exception detail | implemented | 2026-08-07 |
+| ERR-09 | Debug mode follows the caller | php | `fatal()` in debug mode, loopback then remote | detail for loopback, none for remote | implemented | 2026-09-25 |
 | ERR-10 | fatal works with no Throwable in hand | php | `fatal()` without an exception | 500 themed body | implemented | 2026-08-07 |
 | ERR-11 | abort(404) reaches the same screen | php | handler with NotFoundHttpException | 404 themed body | implemented | 2026-08-07 |
 | ERR-12 | abort(403) goes through the split | php | handler with HttpException(403), no session | 302 to login | implemented | 2026-08-07 |
 | ERR-13 | Any other status is a page too | php | handler with HttpException(429) | 429, body carries the reason | implemented | 2026-09-21 |
 | ERR-14 | Development + app.debug keeps the debug error page | php | handler with a plain exception, dev mode, debug on | null (declines) | implemented | 2026-08-07 |
 | ERR-15 | Production renders the redacted screen through the chain | php | handler with a plain exception, production mode | 500, redacted | implemented | 2026-08-07 |
+| ERR-15b | A remote caller never gets the debug page | php | handler, development + app.debug, remote caller | 500 themed screen, redacted | implemented | 2026-09-25 |
 | ERR-16 | The handler runs after the dispatch bootstrapper | php | priorities + config registration | 1100 > 1000, registered | implemented | 2026-08-07 |
 | ERR-17 | SPA gate denial renders at the denied URL, layout alive | playwright | dispatch to an action with an ungranted `@auth` | URL updated, Unauthorized component present, no action mounted | planned (proved by `rsx:debug --eval` probe during W4; no committed spec) | 2026-08-07 |
 | ERR-18 | Unknown SPA URL renders the not-found body in the layout | playwright | `Spa.dispatch()` to an unmatched current URL | Not_Found component present, layout alive | planned (same) | 2026-08-07 |
@@ -46,3 +48,10 @@ routable and carries no leading underscore, and every framework route is `/_`-pr
 | ERR-38 | ROUTE-ERROR-01 refuses a malformed pattern, a param, a non-GET method and a gated page | php | synthetic manifests through `Route_ManifestSupport::process()` | RuntimeException naming the rule | implemented | 2026-09-21 |
 | ERR-39 | ROUTE-ERROR-01 accepts a well-formed pair, class-level gate included | php | same | rows recorded | implemented | 2026-09-21 |
 | ERR-40 | The portal enforces the same rule | php | synthetic manifest through `Portal_Route_ManifestSupport::process()` | refused / recorded | implemented | 2026-09-21 |
+| ERR-41 | The caller predicate: loopback yes, remote no, strict production never | php | `Rsx_Diagnostics::caller_sees_detail()` across modes | true / false / false | implemented (`Diagnostic_Detail_Test`) | 2026-09-25 |
+| ERR-42 | A forwarded remote client behind the local hop is not a developer | php | `X-Forwarded-For: 203.0.113.9, 127.0.0.1` | false | implemented (`Diagnostic_Detail_Test`) | 2026-09-25 |
+| ERR-43 | Ajax envelope redacts for a remote caller, with an error id | php | `Ajax_Exception_Handler`, remote then loopback | generic + `error_id` / message + file | implemented (`Diagnostic_Detail_Test`) | 2026-09-25 |
+| ERR-44 | API internal_error redacts for a remote caller, with an error id | php | `Api_Exception_Handler` in an API dispatch | "Internal server error" + `error_id` | implemented (`Diagnostic_Detail_Test`) | 2026-09-25 |
+| ERR-45 | Not-an-endpoint is one message for a remote caller | php | `Ajax::internal()` on no class / non-controller / non-endpoint | `<C>::<a> is not an Ajax endpoint` each time | implemented (`Diagnostic_Detail_Test`) | 2026-09-25 |
+| ERR-46 | Ignition is read-only over HTTP | http | GET `/_ignition/health-check`, POST `/_ignition/execute-solution`; config literals | 404, 404; both flags literally `false` | implemented (`http/ignition_and_redaction.sh`) | 2026-09-25 |
+| ERR-47 | Anonymous remote callers get no trace on Ajax and batch; loopback keeps it | http | off-box `X-Forwarded-For` against `/_ajax/...` and `/_ajax/_batch`, then from the box | `error_id`, no origin / the specific reason | implemented (`http/ignition_and_redaction.sh`) | 2026-09-25 |

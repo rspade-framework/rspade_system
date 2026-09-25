@@ -92,6 +92,26 @@ class Ide_Bridge_Token_Test extends Rsx_Test_Abstract
     }
 
     /**
+     * The grant file is owner-only as written, and a refresh over a looser file (another
+     * process may have widened it) tightens it again.
+     */
+    public static function test_the_grant_file_is_written_owner_only()
+    {
+        $dir = self::__fresh_bridge();
+
+        Ide_Bridge_Token::ensure();
+        $token = (glob($dir . '/ide-grant-*.token') ?: [])[0] ?? null;
+        static::__assert_not_null($token, 'a grant was minted');
+        static::__assert_equals('600', decoct(fileperms($token) & 0777));
+
+        chmod($token, 0666);
+        clearstatcache();
+        Ide_Bridge_Token::ensure();
+        clearstatcache();
+        static::__assert_equals('600', decoct(fileperms($token) & 0777), 'a refresh restores 0600');
+    }
+
+    /**
      * The whole reason app_url is in the document: the IDE cannot resolve a literal
      * $HOSTNAME in APP_URL correctly, because it would substitute the workstation's
      * name rather than the server's. What is written here must therefore be the
