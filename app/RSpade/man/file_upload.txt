@@ -719,6 +719,12 @@ SVG
           ImageMagick policy refuses the SVG coder outright (rsx:health, "ImageMagick
           Coder Policy"). An app that rasterises SVG safely itself takes the
           thumbnail over through document.thumbnail_render.
+        - A PERMISSIVE POLICY STOPS IMAGE WORK. Every framework Imagick call site
+          (upload processing, the thumbnail renderer, the extension icons) runs
+          Imagick_Policy::assert_safe() first. It probes the forbidden coders once
+          per process and throws, naming the ones that read and the policy file
+          to install, rather than touch an image under a policy that would let an
+          uploaded document read local files.
 
     It is still an image to the viewer: <img src="/_inline/<key>"> shows it, and a
     browser never runs script in an <img>.

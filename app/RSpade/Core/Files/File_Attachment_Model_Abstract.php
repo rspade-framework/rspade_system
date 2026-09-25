@@ -14,6 +14,7 @@ use App\RSpade\Core\Files\File_Attachment_Controller;
 use App\RSpade\Core\Files\File_Attachment_Icons;
 use App\RSpade\Core\Files\File_Disposal_Service;
 use App\RSpade\Core\Files\File_Storage_Model;
+use App\RSpade\Core\Files\Imagick_Policy;
 use App\RSpade\Core\Files\Svg_Upload_Sanitizer;
 use App\RSpade\Core\Files\Unparseable_Upload_Exception;
 use App\RSpade\Core\Portal\Portal_Authorizable;
@@ -2488,6 +2489,8 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     private function __process_image_or_video($file_path)
     {
+        Imagick_Policy::assert_safe();
+
         $imagick = new Imagick($file_path);
 
         // Get dimensions from first frame

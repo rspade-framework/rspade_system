@@ -77,3 +77,4 @@
 | SVG-06 | Every mapped file-type icon is a PNG on disk (ImageMagick reads raster only) | php | several extensions | `.png`, file exists | implemented (`Svg_Upload_Test`) | 2026-09-25 |
 | SVG-07 | `/_upload` answers an unparseable SVG with 422 `unparseable_svg` | http | authenticated multipart upload | 422 JSON | planned | 2026-09-25 |
 | SVG-08 | `/_inline` of an SVG answers with the sandboxing CSP and nosniff | http | authenticated GET | both headers present | planned | 2026-09-25 |
+| ATT-IMAGICK-01 | Every framework Imagick call site runs Imagick_Policy::assert_safe() first: a permissive verdict throws naming the readable coders and the remedy, a correct one passes, and the thumbnail renderer refuses before reading | php | injected verdicts via Imagick_Policy::$verdict_for_tests | throw / pass / refuse-before-read | implemented |

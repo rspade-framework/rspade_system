@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Files;
 
 use Imagick;
+use App\RSpade\Core\Files\Imagick_Policy;
 use App\RSpade\Core\Files\Rsx_Thumbnail_Renderer_Abstract;
 
 /**
@@ -26,6 +27,8 @@ class Imagick_Thumbnail_Renderer extends Rsx_Thumbnail_Renderer_Abstract
         // Read the first frame/page. For multi-page/multi-frame sources the [0] suffix pins
         // rasterization to page 1 (PDFs) or frame 1 (animated images). For a plain single-frame
         // raster this yields the exact same pixels the historic inline path produced.
+        Imagick_Policy::assert_safe();
+
         $image = new Imagick();
         $image->readImage($source_path . '[0]');
 

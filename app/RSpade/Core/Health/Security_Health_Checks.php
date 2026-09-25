@@ -206,9 +206,8 @@ class Security_Health_Checks
      * upload is never rasterised and the extension icons are PNG), so the shipped policy
      * allows raster coders only: system/app/RSpade/resource/docker/imagemagick/policy.xml.
      *
-     * Each coder is PROBED with a harmless input, because Imagick::queryFormats() lists a
-     * coder whether or not the policy lets it read: a read the policy refuses throws "not
-     * allowed by the security policy", and any other outcome means the coder is live.
+     * The probe is Imagick_Policy's - the same one every framework Imagick call site runs
+     * before touching an image, and refuses to proceed on.
      *
      * @return array<string, mixed>
      */
@@ -223,52 +222,7 @@ class Security_Health_Checks
             ];
         }
 
-        $dir = \App\RSpade\Core\Paths\Rsx_Project_Paths::tmp_path('health_imagick_' . bin2hex(random_bytes(6)));
-        ensure_directory($dir);
-
-        $inputs = [
-            'SVG' => ['svg', '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'],
-            'MSVG' => ['msvg', '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'],
-            'MVG' => ['mvg', "viewbox 0 0 1 1\n"],
-            // MSL is probed with an ABSENT script: the coder's policy check runs before the
-            // file is opened, and a real MSL script is a program - one ImageMagick 6 build
-            // segfaults on the smallest well-formed script there is.
-            'MSL' => ['msl', false],
-            'TEXT' => ['text', "x\n"],
-            'LABEL' => ['label', null],
-        ];
-
-        $readable = [];
-
-        try {
-            foreach ($inputs as $coder => [$prefix, $body]) {
-                if ($body === null) {
-                    $spec = $prefix . ':x';
-                } elseif ($body === false) {
-                    $spec = $prefix . ':' . $dir . '/absent.' . $prefix;
-                } else {
-                    $path = $dir . '/probe.' . $prefix;
-                    file_put_contents($path, $body);
-                    $spec = $prefix . ':' . $path;
-                }
-
-                try {
-                    $image = new \Imagick();
-                    $image->readImage($spec);
-                    $image->clear();
-                    $readable[] = $coder;
-                } catch (\Throwable $e) {
-                    if (!str_contains($e->getMessage(), 'security policy')) {
-                        $readable[] = $coder;
-                    }
-                }
-            }
-        } finally {
-            foreach (glob($dir . '/*') ?: [] as $file) {
-                unlink($file);
-            }
-            rmdir($dir);
-        }
+        $readable = \App\RSpade\Core\Files\Imagick_Policy::readable_forbidden_coders();
 
         if (!empty($readable)) {
             return [

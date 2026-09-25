@@ -2,6 +2,8 @@
 
 namespace App\RSpade\Core\Files;
 
+use App\RSpade\Core\Files\Imagick_Policy;
+
 /**
  * File attachment icon resource management
  *
@@ -179,6 +181,8 @@ class File_Attachment_Icons
             shouldnt_happen("File type icon missing from the framework tree: {$full_path}");
         }
 
+        Imagick_Policy::assert_safe();
+
         $image = new \Imagick();
         $image->readImage($full_path);
 
@@ -269,6 +273,8 @@ class File_Attachment_Icons
                 shouldnt_happen("File type icon missing from the framework tree: {$full_path}");
             }
 
+            Imagick_Policy::assert_safe();
+
             $image = new \Imagick();
             $image->readImage($full_path);
 
@@ -309,6 +315,8 @@ class File_Attachment_Icons
         $icon_png = static::get_icon_as_png($extension, 64, 64);
 
         // Load the 64x64 icon
+        Imagick_Policy::assert_safe();
+
         $icon = new \Imagick();
         $icon->readImageBlob($icon_png);
 
