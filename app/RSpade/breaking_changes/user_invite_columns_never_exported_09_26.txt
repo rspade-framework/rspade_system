@@ -1,0 +1,26 @@
+USER INVITE COLUMNS ARE NEVER SENT TO THE BROWSER
+Date: 2026-09-26
+
+IF YOU DO NOTHING: if your User_Model override declares its own $neverExport,
+    it replaces the framework's list and invite_code - a bearer credential for
+    claiming a pending account - is still serialized into window.rsxapp.user,
+    model fetch and API payloads; and any client code of yours that read
+    user.invite_code, invite_accepted_at or invite_expires_at gets undefined.
+
+SUMMARY
+    User_Model_Abstract now lists invite_code, invite_accepted_at and
+    invite_expires_at in $neverExport, so toArray() - the one serializer behind
+    window.rsxapp.user, model fetch, relationship and list payloads and the
+    external API - omits them. The invitation lifecycle is server-side state.
+
+    Contract: php artisan rsx:man class_override, rsx:man model
+
+ACTION REQUIRED - CODE
+    grep -n "neverExport" rsx/models/user_model.php
+    If it matches, add the three columns to your list.
+    grep -rn "invite_code\|invite_accepted_at\|invite_expires_at" rsx/ --include=*.js --include=*.jqhtml
+    Anything that matches must get the value from an endpoint of yours that
+    returns only what that screen needs.
+
+VERIFICATION
+    On any signed-in page, window.rsxapp.user has no invite_* keys.

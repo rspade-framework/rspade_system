@@ -120,6 +120,18 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     const PERM_DATA_EXPORT = 9;
 
     /**
+     * Columns toArray() never sends to the browser (window.rsxapp.user, model fetch,
+     * relationship and list payloads, the external API).
+     *
+     * invite_code is a bearer credential: whoever holds a pending user's code can accept
+     * the invitation and claim the account. The two invite dates travel with it - the
+     * invitation lifecycle is server-side state that no client code reads.
+     *
+     * @var string[]
+     */
+    protected $neverExport = ['invite_code', 'invite_accepted_at', 'invite_expires_at'];
+
+    /**
      * Cached supplementary permissions for this user (avoids repeated DB queries)
      * @var array|null
      */

@@ -133,6 +133,14 @@ is changing them.
     Redeclaring fetch() or a fetchable relationship without the attribute fails the
     manifest build (UNMARKED FETCH OVERRIDE, rsx:man auth_gates).
 
+    $neverExport is a PHP property, so an override that declares its own REPLACES
+    the base's list rather than adding to it. Include the base's columns in yours:
+    User_Model_Abstract withholds invite_code (a bearer credential for claiming a
+    pending account), invite_accepted_at and invite_expires_at.
+
+        protected $neverExport = ['invite_code', 'invite_accepted_at',
+                                  'invite_expires_at', 'my_private_column'];
+
 WHICH MEMBERS AN OVERRIDE MAY REPLACE OUTRIGHT. PHP-PARENT-CHAIN-01 (a
 manifest-build FATAL) requires every override of an inherited method to call
 parent::<same-method>(). The exception is a member the base marks #[Replaceable],
