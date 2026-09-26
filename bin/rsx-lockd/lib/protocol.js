@@ -36,6 +36,14 @@ const OPS = [
     'dump',
     'force_clear',
     'ping',
+    // Worker pool accounting (lib/pool.js).
+    'pool.lock',
+    'pool.unlock',
+    'pool.join',
+    'pool.leave',
+    'pool.count',
+    'pool.member_alive',
+    'pool.stats',
 ];
 
 // Response statuses. `granted` is the success of an acquire; `ok` the success of

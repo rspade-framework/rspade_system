@@ -14,8 +14,8 @@ all background/scheduled work in the framework.
 
 - `app/RSpade/Core/Task/Task.php` - dispatch/internal/status, scheduled-task discovery,
   `spawn_worker()` and the process-level spawn switch `spawn_workers()`
-- `app/RSpade/Core/Task/Task_Worker_Registry.php` - the worker-slot registry: live slots and
-  spawn reservations
+- `app/RSpade/Core/Task/Task_Pool.php` - the worker pool's own rsx-lockd connection (pool
+  lock, membership, count, member liveness, stats), over `Core/Locks/Lockd_Connection.php`
 - `app/RSpade/Core/Task/Task_Instance.php` - per-run lifecycle, logs, temp dir
 - `app/RSpade/Core/Task/Task_Status.php` (status constants/validation), `Cron_Parser`
 - `app/RSpade/Core/Task/Rsx_Service_Abstract.php`, the `#[Task]`/`#[Schedule]` attributes
@@ -55,16 +55,22 @@ all background/scheduled work in the framework.
 - The alias driven for real: stdout the value, stderr the narration, `-q`, `--debug`, a
   throwing task's exit 1, and the `rsx:task:list` COMMAND column. (cli - spawns artisan
   with the two streams redirected apart)
-- Spawn admission: a worker slot is RESERVED in the Redis worker registry before a worker is
-  spawned (live + reserved counted against the cap), the child converts it, the spawner
-  releases it on a failed spawn, the cron tick reclaims one whose pid is gone from this host;
-  the two flush-proof counts read from /proc (this process's own running spawns, this host's
-  workers) refuse a spawn over an emptied registry, driven by FIFO-held fixture processes
-  whose command lines are a worker's; and `Task::spawn_workers(false)` - the suite's default,
-  reset at every class boundary - makes `Task::dispatch()` enqueue only. (php - Redis +
-  per-test transaction; `Task_Spawn_Admission_Test`)
-- Full lifecycle execution by the worker/cron processor (`rsx:task:process`),
-  stuck-task detection, CLI output of `rsx:task:list`/`run`. (cli/integration - deferred)
+- Pool admission (rsx-lockd accounts the pool): a worker joins under the pool lock only
+  below the cap and leaves before it returns; `Task::spawn_worker()` reads the pool count
+  (counting itself when it is a member) before starting anything, refuses under the pool
+  lock, and is capped first by this process's own running spawns (a FIFO-held fixture whose
+  command line is a worker's); and `Task::spawn_workers(false)` - the suite's default, reset
+  at every class boundary - makes `Task::dispatch()` enqueue only. Other members are simulated
+  on the RsxLocks connection. (php - live rsx-lockd + per-test transaction;
+  `Task_Spawn_Admission_Test`)
+- Dead-worker recovery: `rsx:task:process` settles a stuck RUNNING row whose
+  `worker_member_key` is no longer a pool member, leaves a live member's row alone, and
+  judges a row with no member key by its local pid. (php - committed rows;
+  `Task_Worker_Execution_Test`)
+- A pool member's detached child never carries its membership: every rsx-lockd socket is
+  closed in the child (`RsxLocks::inherited_lock_fds()`). (php - real processes;
+  `Task_Pool_Test`)
+- CLI output of `rsx:task:list`/`run`. (cli - deferred)
 
 ## Documents
 

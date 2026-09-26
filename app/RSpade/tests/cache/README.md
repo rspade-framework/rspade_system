@@ -11,7 +11,7 @@ transient counter store that deliberately does NOT live in it.
 it fails loud rather than handing the caller a bogus `false`.
 
 **The redis database map** (the `RsxCache` class header is the authority): DB 0 volatile
-cache, DB 1 locks and the task worker registry, DB 2 the reduced-volatility cache (FPC, and
+cache, DB 1 unused, DB 2 the reduced-volatility cache (FPC, and
 `_RVC_`-prefixed cache keys), DB 3 transient counters. Eviction is per redis INSTANCE
 (`allkeys-lru`), never per database - see backlog B-105.
 
@@ -29,7 +29,7 @@ internal `_RVC_` prefix that routes it to DB 2.
 **Every key is scoped on the build AND the database.** A cache key is
 `cache:<Rsx_Connection_Scope::token()>:<sha1 of build key + user key>`, and a counter key is
 `counter:<token>:<sha1>` - the same `(database, host)` token `RsxLocks` and
-`Task_Worker_Registry` use. So the developer's cache and a test run's cache are disjoint
+`Task_Pool` use. So the developer's cache and a test run's cache are disjoint
 keyspaces, and `clear()` MATCHes only the calling scope's prefix (the realtime `rsx_rt:*`
 keys and `AssetHandler`'s `rspade:public_asset:*` keys therefore survive a cache reset).
 The token is read from the LIVE connection and never memoized: the boolean it replaced

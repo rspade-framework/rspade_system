@@ -8,16 +8,18 @@
 namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
  * Task_Health_Checks - scheduler probes for rsx:health.
  *
- * Declared next to the task machinery they probe. Redis (worker-pool) connectivity is a
- * separate check on Task_Worker_Registry; these two read the recurring #[Schedule] tracker
- * rows: one asks whether the `rsx:task:process` cron is ticking at all, the other whether
- * a schedule that IS ticking keeps throwing.
+ * Declared next to the task machinery they probe. One reads the worker pool as rsx-lockd
+ * accounts it; the other two read the recurring #[Schedule] tracker rows: one asks whether
+ * the `rsx:task:process` cron is ticking at all, the other whether a schedule that IS
+ * ticking keeps throwing.
  *
  * There is NO scheduler heartbeat timestamp in the system - the only durable signal is
  * the recurring #[Schedule] tracker rows (`_tasks` rows with next_run_at NOT NULL), which
@@ -40,6 +42,62 @@ class Task_Health_Checks
 
     /** Characters of a failing schedule's explanation carried into the WARN detail. */
     private const REASON_EXCERPT_LENGTH = 60;
+
+    /**
+     * The task worker pool as rsx-lockd accounts it (Task_Pool::stats(), read without the
+     * pool lock): how many workers are members against the cap, and how many processes are
+     * parked waiting for the pool lock.
+     *
+     * More members than the cap is a WARN - admission happens under the pool lock, so it
+     * means the cap was lowered under running workers, or two configurations share a pool.
+     * An unreachable daemon or a refused pool.stats is a FAIL: nothing can be admitted. Under
+     * the maintenance flag the daemon is stopped on purpose, which is INFO (the Lock Server
+     * row's convention; the flag is read off disk, as a probe of the box right now).
+     *
+     * @return array
+     */
+    #[Health_Check('Task Worker Pool')]
+    public static function task_worker_pool(): array
+    {
+        if (Framework_Maintenance::is_active_on_disk()) {
+            return [
+                'status' => 'INFO',
+                'detail' => 'the maintenance flag is up - rsx-lockd is stopped on purpose, and no worker runs',
+            ];
+        }
+
+        // The probe's expected failure is the finding itself: Task_Pool throws for an
+        // unreachable daemon and for a refused pool.stats alike.
+        try {
+            $stats = Task_Pool::stats();
+        } catch (\RuntimeException $e) {
+            return [
+                'status' => 'FAIL',
+                'detail' => 'cannot read the task worker pool from rsx-lockd: ' . $e->getMessage(),
+                'remediation' => 'check the Lock Server row; a daemon that predates the pool.* ops must be'
+                    . ' restarted (supervisorctl restart rsx-lockd)',
+            ];
+        }
+
+        $cap = Task_Pool::max_workers();
+        $detail = $stats['members'] . ' of ' . $cap . ' worker(s) in the pool; '
+            . ($stats['holder'] ? 'pool lock held, ' : 'pool lock free, ')
+            . $stats['waiting'] . ' waiting for it';
+
+        if ($stats['members'] > $cap) {
+            return [
+                'status' => 'WARN',
+                'detail' => $detail . ' - more members than rsx.tasks.global_max_workers',
+                'remediation' => 'the cap was lowered under running workers (they drain as they finish),'
+                    . ' or two configurations share one database and host',
+            ];
+        }
+
+        return [
+            'status' => 'OK',
+            'detail' => $detail,
+        ];
+    }
 
     /**
      * Infer scheduler liveness from #[Schedule] tracker-row staleness.

@@ -35,8 +35,9 @@ DESCRIPTION
 
     Unlike Laravel queues (job classes, a queue driver, `queue:work` daemons, Horizon),
     RSX tasks are just annotated methods; dispatch/scheduling/worker-management are
-    built in. Redis is required (it backs the cache, the manifest, and the worker-slot
-    registry); MySQL backs the durable queue and all advisory locks.
+    built in. MySQL backs the durable queue; the rsx-lockd daemon backs every lock a task
+    takes and is the one count of the worker pool (see THE WORKER POOL). Redis plays no
+    part in running tasks.
 
     THE ONE KEY POINT: TASKS RUN CONCURRENTLY AND UNGUARDED
     -------------------------------------------------------
@@ -69,7 +70,7 @@ EXECUTION MODES
 
     2. Background (async)
        $id = Task::dispatch($service, $task, $params, $options);
-       Inserts a pending row AND, when the task is due now and the pool has a free slot,
+       Inserts a pending row AND, when the task is due now and the pool has room,
        spawns a detached worker so it runs within ~1 second (at the cap nothing is spawned:
        a busy worker reaches the row when it finishes its current task, and the cron tick
        covers the rest). A process that called Task::spawn_workers(false) - and every test,
@@ -100,11 +101,12 @@ TASK_INSTANCE API
         $task->set_result($value)                                      // JSON result, mid-run
     (There is no set_status() / progress() method.)
 
-    Keep-alive for long runs:
+    Progress stamp for long runs:
         $task->heartbeat()
-    Call periodically inside a long task. It records a DB heartbeat AND refreshes this
-    worker's slot in the pool registry, so a run longer than rsx.tasks.worker_heartbeat_ttl
-    (90s) is not mistaken for a dead worker and pruned.
+    Records last_heartbeat_at on the row, which the task screens display. Optional: it
+    plays no part in worker liveness. A worker is counted alive for exactly as long as its
+    rsx-lockd connection is open (THE WORKER POOL), so a task may run for hours without
+    calling anything.
 
     Temp workspace (auto-deleted on completion/failure):
         $dir = $task->get_temp_dir()    // tmp/tasks/task_<id>/
@@ -167,7 +169,7 @@ CONCURRENCY: SINGLE-IDENTITY GUARDS (#[Exclusive] / #[Debounce])
 
     Both guarantee AT MOST ONE RUNNING + AT MOST ONE PENDING per identity (a distributed
     translation of the JS debounce()). #[Exclusive] == #[Debounce(0)].
-    State is durable (_tasks rows) + cluster-safe (MySQL advisory Task_Lock). Tasks with
+    State is durable (_tasks rows) + cluster-safe (Task_Lock, a named RsxLocks lock). Tasks with
     neither marker may run concurrently with copies of themselves.
 
     IMPORTANT: these guard ONE identity against ITSELF. They do NOT stop a different task
@@ -246,58 +248,69 @@ LOCKS: PROTECTING CRITICAL SECTIONS
     - a subprocess is a different lock connection and would otherwise queue behind locks
     this task holds, forever. See rsx:man locks (LOCK GROUPS AND SUBPROCESSES).
 
-    See rsx:man locks for the full contract. For a plain cross-process mutex (no
-    reader/writer distinction) a task may also use Task_Lock (MySQL GET_LOCK), the same
-    primitive that guards the task queue itself.
+    See rsx:man locks for the full contract. Task_Lock, which holds the #[Exclusive] /
+    #[Debounce] identity locks, is a thin object over an RsxLocks named lock - there is no
+    second lock mechanism behind it.
 
 THE WORKER POOL
 
     One shared pool of generic workers drains the queue. Concurrency is capped by
-    rsx.tasks.global_max_workers via a Redis worker-slot registry (Task_Worker_Registry),
-    NOT by counting rows.
+    rsx.tasks.global_max_workers, and the ONE count of workers is kept by the rsx-lockd
+    daemon (Task_Pool; rsx:man locks, THE RSX LOCKD DAEMON) - NOT by counting rows, and not
+    by anything with a clock on it.
 
-    A SLOT IS ADMITTED BEFORE THE WORKER IS SPAWNED. Every spawn - Task::dispatch() and
-    the cron tick alike - first reserves a slot (one atomic Redis script counting live
-    workers PLUS outstanding reservations against the cap) and starts a process only when
-    that succeeded; the child converts the reservation into its live slot at start. So a
-    full pool starts nothing at all, and any number of concurrent dispatches, on any number
-    of hosts, never start more than the free slots between them. A worker run by hand has
-    no reservation and competes for a free slot, exiting at once if there is none.
+    MEMBERSHIP IS A CONNECTION. Each worker opens one pool connection to rsx-lockd and holds
+    it for its whole life. Joining the pool is a membership on that connection, so a worker
+    that exits, crashes or is SIGKILLed stops being counted the instant its socket closes -
+    on any host, with no heartbeat, no lease, no TTL and no reservation anywhere. A Redis
+    flush changes nothing about the pool.
 
-    A reservation has no TTL. It ends when the child converts it, when the spawner releases
-    it because the spawn produced no process, or when the cron tick finds the process it
-    names gone from this host (a reservation names its owner as host:pid - the spawner, then
-    the child) and releases it. A crashed worker's LIVE slot expires after
-    worker_heartbeat_ttl (90s) and frees capacity - there is no 30-minute wedge.
+    THE WORKER'S LOOP. Every pool step runs under the POOL LOCK, a FIFO mutex the daemon
+    holds per pool:
+
+        1. Take the pool lock. If global_max_workers OTHER workers are already members,
+           release it and exit 0 - the pool is full. Otherwise join.
+        2. Still under the lock, claim the next row by the priority order below and mark it
+           RUNNING with this worker's worker_pid and worker_member_key. Release the lock.
+        3. Run the task, holding no pool lock.
+        4. Take the pool lock, record the outcome on the row, and claim again (back to 2).
+           When nothing is claimable, or --max-time has passed, leave the pool, release the
+           lock and exit.
+
+    The worker ADMITS ITSELF in step 1 - that is where the cap is enforced. Every pool call
+    waits for the daemon's acknowledgement, so no worker sends a pool command and moves on
+    (or exits) before the accountant has applied it.
+
+    THE RULE: while holding the pool lock a process runs only pool ops and reads/writes of
+    _tasks rows (plus a non-blocking try or a release of an #[Exclusive]/#[Debounce] run
+    lock). No other blocking lock, no subprocess, no outbound call. Pool waits are invisible
+    to the daemon's deadlock detector, and THE RULE is what makes that safe. It governs
+    framework code only - a task itself never runs under the pool lock.
+
+    SPAWNING. Every spawn - Task::dispatch() and the cron tick alike - goes through
+    Task::spawn_worker(), which starts a detached `rsx:task:worker` only when all three hold:
+
+        - this process spawns workers at all (see SPAWNING OFF below);
+        - fewer than global_max_workers of the workers THIS process spawned are still
+          running (read from /proc, no daemon round trip). This is what caps a script that
+          dispatches on every write: once its own spawns fill the cap, each further dispatch
+          returns at once until one of them exits;
+        - the pool, counted by rsx-lockd under the pool lock (released again BEFORE the
+          process is started), is below the cap. A worker whose own task dispatches counts
+          itself as one of the members.
+
+    These checks only avoid starting a process that is doomed to exit; two spawners racing
+    can both see room, and the loser's worker finds the pool full in step 1 and exits.
+    A worker run by hand is admitted exactly the same way.
 
     Priority order (a single order, no per-queue routing): a worker claims run-now tasks
     first (dispatched, FIFO by enqueue time), then due scheduled tasks (by next_run_at).
-    The `queue` column is a label only; it no longer isolates workers.
+    The `queue` column is a label only; it does not isolate workers.
 
-    THE REGISTRY IS NOT THE ONLY COUNT. It lives in Redis, and a flush (a reset script,
-    FLUSHALL, eviction) empties the live set and the reservations while the workers keep
-    running. So before it spawns, Task::spawn_worker() also refuses when either of two
-    counts that live outside Redis reaches the cap:
-
-        - the workers THIS process spawned that are still running (read from /proc). This
-          is what caps a script that dispatches on every write: once its own spawns fill
-          the cap, each further dispatch returns at once - no Redis call, no scan - until
-          one of them exits;
-        - the workers of this pool running on THIS host (one pass over /proc, taken only
-          when a spawn is about to happen: under a millisecond on a quiet host, ~20 ms with
-          1,500 processes). A worker spawned under rsx:test carries --_test-run and is
-          counted only by test processes, and the reverse.
-
-    Both only ever refuse; the registry is still the one gate that admits, and the one that
-    coordinates a cluster. A worker is recognised by its command line (this project's
-    artisan path plus rsx:task:worker), so a worker started by hand from the project root
-    with a relative `php artisan` is not counted by these two - the registry still admits
-    it like any other.
-
-    Worker management runs on Redis (the slot registry). Redis is required framework-wide
-    (cache + manifest), so if it is unreachable the process fails loudly at bootstrap - and
-    a registry call that fails later THROWS: dispatch() and the cron tick never spawn
-    around an admission gate they could not consult.
+    rsx-lockd is a hard dependency, exactly as it is for locks: when the daemon cannot be
+    reached, a dispatch() that would spawn THROWS (after its row is written, so the work is
+    queued), and the cron tick throws. Neither ever spawns around an admission count it
+    could not read. See TROUBLESHOOTING.
 
 SPAWNING OFF: LONG-RUNNING SCRIPTS
 
@@ -316,16 +329,15 @@ SPAWNING OFF: LONG-RUNNING SCRIPTS
     unaffected. It is the same switch the test suite uses (see TESTING).
 
     Neither `supervisorctl stop tasks` nor rsx:maintenance:enable is the answer: the
-    supervisor program only runs the cron tick, and maintenance mode stops Redis, which the
-    script needs. See rsx:man scripting.
+    supervisor program only runs the cron tick, and maintenance mode stops rsx-lockd and
+    Redis, which the script needs. See rsx:man scripting.
 
 CONFIGURATION (config/rsx.php 'tasks')
 
     'tasks' => [
         'global_max_workers'   => env('RSX_TASK_MAX_WORKERS', 3),  // pool size (fixed per env)
-        'worker_heartbeat_ttl' => 90,     // seconds; slot pruned as dead after this
         'default_timeout'      => 1800,   // execution cap for a row carrying no timeout (0 = none)
-        'cleanup_stuck_after'  => 1800,   // running+dead-worker recovery threshold
+        'cleanup_stuck_after'  => 1800,   // dead-worker recovery grace (STUCK TASK RECOVERY)
         'task_retention_days'  => 30,     // how long completed/failed rows are kept
         'failing_schedule_warn_after' => 3,  // consecutive failed runs before rsx:health WARNs
     ],
@@ -339,15 +351,17 @@ EXECUTION TIMEOUT
     the row carries none. With both absent (or 0) the task runs unbounded.
 
     Enforcement lives in the cron tick's reaper (rsx:task:process -> detect_stuck_tasks): a
-    RUNNING row whose worker is STILL ALIVE past its cap is killed through Task_Killer -
+    RUNNING row whose worker is STILL ALIVE - a pool member, with its pid running on the host
+    the tick runs on - past its cap is killed through Task_Killer -
     SIGTERM, 5s grace, SIGKILL - exactly as rsx:tasks:kill does, then settled KILLED with a
     "timed out after Ns (cap Ms)" status_reason. A recurring cron TRACKER row is recycled to
     PENDING instead, so a timeout never silently stops a schedule. One [TASK TIMEOUT] line is
     logged per kill.
 
     Granularity is the cron tick interval (one minute), not the second: a task may overrun its
-    cap by up to a tick before the reaper sees it. The separate cleanup_stuck_after sweep still
-    handles the other case - a RUNNING row whose worker PID is GONE.
+    cap by up to a tick before the reaper sees it. The kill signals a pid, so it acts only on a
+    worker running on the host where the tick runs. The separate dead-worker sweep (STUCK TASK
+    RECOVERY) handles the other case - a RUNNING row whose worker is GONE.
 
 COMMANDS
 
@@ -363,17 +377,17 @@ COMMANDS
 
         * * * * * cd /var/www/html && php artisan rsx:task:process
 
-    Each tick it: (1) recovers stuck tasks; (2) revives any cron tracker found sitting in
-    a terminal state (see FAILURE BEHAVIOR); (3) reconciles #[Schedule] tracker rows from
-    the manifest; (4) releases spawn reservations whose process is gone from this host, then,
-    if there is pending work, spawns detached workers until the pool declines. It does NOT
-    itself become a worker. --once drains one task inline
-    (testing); --force-scheduled marks all schedules due now.
+    Each tick it: (1) recovers stuck tasks (STUCK TASK RECOVERY) and enforces timeouts;
+    (2) revives any cron tracker found sitting in a terminal state (see FAILURE BEHAVIOR);
+    (3) reconciles #[Schedule] tracker rows from the manifest; (4) if there is pending work,
+    spawns detached workers until Task::spawn_worker() declines. It does NOT itself become a
+    worker. --once claims one task under the pool lock and runs it inline without joining
+    the pool (testing); --force-scheduled marks all schedules due now.
 
     You rarely run rsx:task:worker by hand - the processor and Task::dispatch() spawn
-    them. A worker admits to the pool (converting the slot its spawner reserved for it, or,
-    run by hand, taking a free one), drains by the priority order until empty (or
-    --max-time), then deregisters and exits.
+    them. A worker admits itself to the pool under the pool lock (exiting at once when it
+    is full), drains by the priority order until empty (or --max-time, checked between
+    tasks), then leaves the pool and exits - see THE WORKER POOL.
 
 MAINTENANCE MODE
 
@@ -405,7 +419,9 @@ TASK DATABASE SCHEMA (_tasks)
     scheduled_for (run no earlier than), next_run_at (recurring tracker; NULL on one-shots),
     cron_expression (stored schedule for tracker rows; NULL otherwise),
     started_at, completed_at, last_heartbeat_at,
-    timeout, worker_pid, lock_key, created_at, updated_at
+    timeout, worker_pid, worker_member_key (the worker's rsx-lockd pool member id while the
+      row is RUNNING; NULL otherwise, and NULL on a row run inline by --once),
+    lock_key, created_at, updated_at
 
     On a TRACKER row, completed_at means LAST SUCCESSFUL RUN (the row is never terminal, so
     nothing else records it). On a one-shot it means what it always did: when the row settled.
@@ -461,23 +477,40 @@ KILLING RUNNING TASKS
     Each kill sends SIGTERM, waits 5 seconds, then SIGKILL to the row's worker_pid. --explanation
     is REQUIRED and recorded on status_reason. An ON-DEMAND task becomes terminal KILLED; a
     recurring CRON TRACKER row is RECYCLED to pending instead (a terminal status would silently
-    stop its schedule). The MySQL run-lock auto-releases when the worker's connection dies; the
-    Redis worker slot self-heals within worker_heartbeat_ttl.
+    stop its schedule). Nothing else needs releasing: an #[Exclusive]/#[Debounce] run lock and
+    the worker's pool membership both belong to the worker's rsx-lockd connections, which the
+    daemon drops the moment the process dies. The kill signals a pid, so it reaches a worker
+    running on the host where the command runs.
 
     A recurring schedule keeps exactly ONE tracker row (next_run_at + cron_expression). When
     due, a worker advances next_run_at (so the cadence holds even if the run is slow or
     crashes), runs the task, then recycles the row back to pending.
 
-    Atomic dequeue: the global MySQL advisory lock 'task_queue' plus SELECT ... FOR UPDATE
-    guard task selection; per-identity run-locks (lock_key) enforce #[Exclusive]/#[Debounce].
+    Atomic dequeue: the task pool lock plus SELECT ... FOR UPDATE guard task selection;
+    per-identity run-locks (lock_key) enforce #[Exclusive]/#[Debounce].
 
 STUCK TASK RECOVERY
 
-    A running task whose worker PID is gone and whose start predates cleanup_stuck_after is
-    recovered by the processor: an on-demand row is marked failed; a cron tracker row is
+    A RUNNING row whose worker is gone and whose start predates cleanup_stuck_after is
+    recovered by the cron tick: an on-demand row is marked failed; a cron tracker row is
     recycled to pending (its next_run_at is already advanced), so the schedule survives -
     the same rule FAILURE BEHAVIOR states, applied to a row that will never settle itself.
-    (Worker accounting is the Redis registry's job, not this sweep.)
+
+    "Gone" is rsx-lockd's answer. Under the pool lock the tick asks whether the row's
+    worker_member_key is still a member of the pool (member_alive), which is false the
+    moment the worker's connection closed, on whatever host it ran. The verdicts and the
+    settle writes happen under that one lock, so they are one consistent view of the pool
+    and the rows.
+
+    The cleanup_stuck_after grace still applies to every verdict. A restart of rsx-lockd
+    ends every membership while the workers keep running their current tasks, so without
+    the grace a daemon restart would reap live work; with it, only a row that has also
+    outlived the grace is settled. (Such a worker notices the lost connection when it next
+    takes the pool lock, records its own row's outcome, logs the loss and exits.)
+
+    A row with NO worker_member_key - run inline by rsx:task:process --once, which is not a
+    pool member - is judged by the local pid probe instead, a verdict that is only
+    meaningful on the host that ran it.
 
 EXAMPLES
 
@@ -517,8 +550,9 @@ TESTING
 
     Under the test suite (rsx:test, Rsx_Test_Abstract::suite_is_running()) spawning is OFF
     by default - Task::spawning_workers() is false: Task::dispatch() writes its row and
-    returns, and an rsx:task:process tick a test runs spawns nothing either. A detached worker would be a whole PHP boot racing the
-    test that queued it. A test that asserts on queued work drives it itself:
+    returns, and an rsx:task:process tick a test runs spawns nothing either. A detached
+    worker would be a whole PHP boot racing the test that queued it. A test that asserts on
+    queued work drives it itself:
 
         Task::internal('My_Service', 'my_task', $params);    // run the task in-process
         Artisan::call('rsx:task:worker');                     // drain the queue in-process
@@ -527,15 +561,22 @@ TESTING
 
         Task::spawn_workers(true);
 
-    The runner calls Task::spawn_workers(false) at every class boundary, and the harness waits at that
-    boundary for every detached process the class started (rsx:man testing, CLASS
-    BOUNDARIES AND DETACHED PROCESSES).
+    The runner calls Task::spawn_workers(false) at every class boundary, and the harness
+    waits at that boundary for every detached process the class started (rsx:man testing,
+    CLASS BOUNDARIES AND DETACHED PROCESSES).
+
+    An in-process worker is a real pool member: it needs rsx-lockd, joins under the pool
+    lock and leaves before Artisan::call() returns (a throw closes its pool connection, so
+    the test process is never left a member). The pool is named by the connection scope,
+    so the test database's pool is never the developer database's pool.
 
 TROUBLESHOOTING
 
     Dispatched task stays 'pending'
-        - Is the pool at global_max_workers? (rsx:health "Redis Connectivity" shows live
-          workers, spawn reservations and the worker processes running on this host)
+        - Is the pool at global_max_workers? rsx:health "Task Worker Pool" shows the
+          members against the cap, whether the pool lock is held and how many wait for it;
+          `node system/bin/rsx-lockd/lockd.js dump` names every member's host and pid.
+          A full pool is normal: a busy worker reaches the row when it finishes.
         - Did this process call Task::spawn_workers(false)? Then the cron tick drains it.
         - Inside a test? dispatch() spawns nothing under the suite (see TESTING).
         - Did you pass a future 'scheduled_for'? Then it waits until due.
@@ -549,21 +590,30 @@ TROUBLESHOOTING
         - Confirm the tracker row exists (next_run_at, cron_expression) after one tick.
         - A changed #[Schedule] is picked up within one tick; force with --force-scheduled.
 
+    "Cannot reach rsx-lockd ..." from Task::dispatch() or rsx:task:process
+        - The daemon is down or unreachable (rsx:health "Lock Server"; rsx:man locks). A
+          dispatch() that would spawn throws AFTER writing its row, so the work is queued
+          and runs once the daemon is back. The cron tick throws before recovering or
+          spawning anything.
+        - Running workers keep running their current task. Their memberships ended with
+          their connections, so when each next takes the pool lock it records its row's
+          outcome, logs "[WORKER] Lost the task pool connection ..." and exits 1; the next
+          tick spawns fresh workers. The cleanup_stuck_after grace keeps the reaper off
+          tasks that are still running (STUCK TASK RECOVERY).
+
+    Task Worker Pool WARN: more members than global_max_workers
+        - Admission happens under the pool lock, so this means the cap was lowered under
+          running workers (they drain as they finish), or two configurations share one
+          database and host.
+
     Scheduled task runs but never succeeds
         - php artisan rsx:tasks:list - the Schedules table shows consecutive failures and
           the last error; the schedule keeps retrying regardless (see FAILURE BEHAVIOR).
         - php artisan rsx:health WARNs once the streak reaches failing_schedule_warn_after.
 
-HISTORICAL NOTE
-    Earlier the cron path spawned workers with Symfony Process and killed them on command
-    exit (the Process destructor SIGKILLs), so the queue never drained under cron; and all
-    artisan commands took a global WRITE lock, serializing workers to an effective pool of
-    one. Fixed by spawning detached (bash '... &') and by leaving artisan commands
-    unguarded (each command, and each #[Task], now owns its concurrency via explicit locks).
-    The web side's counterpart global lock is gone too - see rsx:man locks.
-
 SEE ALSO
     rsx:man task_commands - #[Command]: giving a task its own artisan command, and the
         stdout-is-the-value / stderr-is-the-narration output contract every console run has
     rsx:man locks - cluster/system locks, wait-forever timeouts, semaphores (see LOCKS above)
+    rsx:man health - the Task Worker Pool, scheduler and failing-schedule rows
     rsx:man logrotate - Log_Maintenance_Service::rotate, the framework's own nightly storage/logs sweep

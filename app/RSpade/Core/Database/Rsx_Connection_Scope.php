@@ -14,14 +14,15 @@ use Illuminate\Support\Facades\DB;
  * database on the shared tmpfs mysqld and shares one Redis with its siblings), but the same
  * is true of a dev database and a test database side by side.
  *
- * A lock protects data, and the task worker registry counts workers that operate on data;
+ * A lock protects data, and the task worker pool counts workers that operate on data;
  * that data lives in a specific database on a specific host, so the (database, host) pair is
  * the natural boundary. Same pair -> same namespace (a real web cluster, every node on one
  * database and host, coordinates exactly as before); a different pair -> a disjoint
  * namespace.
  *
- * Consumers: RsxLocks (cluster + flock lock names) and Task_Worker_Registry (the worker
- * ZSET). Both MUST derive the token here so the spelling can never drift between them.
+ * Consumers: RsxLocks (cluster + flock lock names), Task_Pool (the rsx-lockd worker pool
+ * name), RsxCache and Rsx_Counter (their key prefixes). All MUST derive the token here so the
+ * spelling can never drift between them.
  *
  * The database NAME is read LIVE from the default connection, so it tracks a runtime switch
  * - RSpade only ever changes databases through Laravel's own config-plus-reconnect path,

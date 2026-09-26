@@ -384,7 +384,8 @@ function print_dump(dump, own_conn_id) {
     console.log('rsx-lockd state');
     console.log('  connections: ' + dump.connections.length
         + '   locks: ' + dump.locks.length
-        + '   semaphores: ' + dump.semaphores.length);
+        + '   semaphores: ' + dump.semaphores.length
+        + '   pools: ' + dump.pools.length);
     console.log('  granted: ' + dump.counters.granted
         + '   released: ' + dump.counters.released
         + '   timed_out: ' + dump.counters.timed_out
@@ -406,7 +407,8 @@ function print_dump(dump, own_conn_id) {
         console.log(conn.conn_id + '  ' + who + '  via ' + (conn.remote || '?')
             + '  up ' + seconds(conn.connected_ms) + group + self);
 
-        if (conn.holds.length === 0 && conn.semaphores.length === 0 && conn.waiting.length === 0) {
+        if (conn.holds.length === 0 && conn.semaphores.length === 0 && conn.waiting.length === 0
+            && conn.pools.length === 0) {
             console.log('    (holds nothing, waits for nothing)');
         }
         for (const hold of conn.holds) {
@@ -422,6 +424,13 @@ function print_dump(dump, own_conn_id) {
             const bound = wait.timeout === null ? 'no timeout' : 'timeout ' + wait.timeout + 's';
             console.log('    WAITING  ' + kind + ' ' + wait.name
                 + '   for ' + seconds(wait.waiting_ms) + '   (' + bound + ')');
+        }
+        for (const entry of conn.pools) {
+            if (entry.holds_lock) console.log('    HELD     POOL  ' + entry.pool);
+            if (entry.waiting) console.log('    WAITING  POOL  ' + entry.pool + '   (no timeout)');
+            if (entry.member_id !== null) {
+                console.log('    MEMBER   POOL  ' + entry.pool + '   as ' + entry.member_id);
+            }
         }
         console.log('');
     }
@@ -443,6 +452,20 @@ function print_dump(dump, own_conn_id) {
         for (const semaphore of dump.semaphores) {
             console.log('  ' + semaphore.name + '  ' + semaphore.holders.length
                 + '/' + semaphore.max_slots + ' slots, ' + semaphore.queue.length + ' waiting');
+        }
+        console.log('');
+    }
+
+    if (dump.pools.length > 0) {
+        console.log('pools');
+        for (const pool of dump.pools) {
+            const queue = pool.queue.map((q) => q.conn_id).join(' -> ') || 'empty';
+            const members = pool.members.map((m) => m.conn_id).join(', ') || 'none';
+            console.log('  ' + pool.pool);
+            console.log('    lock:    ' + (pool.holder === null ? 'free' : pool.holder
+                + ' for ' + seconds(pool.held_ms)));
+            console.log('    queue:   ' + queue);
+            console.log('    members: ' + pool.members.length + ' (' + members + ')');
         }
     }
 }

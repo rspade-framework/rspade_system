@@ -6,7 +6,6 @@ use Exception;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task_Status;
-use App\RSpade\Core\Task\Task_Worker_Registry;
 
 /**
  * Task_Instance
@@ -222,6 +221,7 @@ class Task_Instance
 
             if ($is_tracker) {
                 $update['worker_pid'] = null;
+                $update['worker_member_key'] = null;
                 $update['consecutive_failures'] = 0;
                 // A recycled failure writes status_reason so the listing can say what went
                 // wrong; a later success must clear it, or the row reads as failing forever
@@ -274,6 +274,7 @@ class Task_Instance
 
             if ($is_tracker) {
                 $update['worker_pid'] = null;
+                $update['worker_member_key'] = null;
                 $update['status_reason'] = 'failed (recycled): ' . self::__summarize_error($error);
             } else {
                 $update['completed_at'] = now();
@@ -420,15 +421,13 @@ class Task_Instance
     /**
      * Send heartbeat to indicate task is still running.
      *
-     * Long-running tasks should call this periodically. Besides recording the DB
-     * heartbeat, it refreshes this worker's Redis slot so a task running longer than
-     * rsx.tasks.worker_heartbeat_ttl is not pruned from the worker registry as dead.
-     * The registry call is a no-op outside an admitted worker (e.g. immediate runs).
+     * Long-running tasks may call this periodically; it records last_heartbeat_at on the
+     * row, which the task screens display. It has no part in worker liveness: the pool
+     * rsx-lockd accounts knows a worker is alive for exactly as long as its connection is
+     * open.
      */
     public function heartbeat(): void
     {
-        Task_Worker_Registry::heartbeat();
-
         if (!$this->is_immediate && $this->id !== null) {
             DB::table('_tasks')
                 ->where('id', $this->id)

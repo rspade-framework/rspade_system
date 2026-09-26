@@ -15,8 +15,7 @@ use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Status;
 use App\RSpade\Core\Task\Task_Killer;
-use App\RSpade\Core\Task\Task_Lock;
-use App\RSpade\Core\Task\Task_Worker_Registry;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Cron_Parser;
 
 /**
@@ -26,20 +25,21 @@ use App\RSpade\Core\Task\Cron_Parser;
  *   * * * * * cd /var/www/html && php artisan rsx:task:process
  *
  * Each tick it:
- * 1. Recovers unsettleable RUNNING rows: those whose worker PID is dead, and those whose
- *    live worker has outrun the task's timeout (killed via Task_Killer). This is
- *    task-level recovery only - worker concurrency is gated by the Redis worker-slot
- *    registry (Task_Worker_Registry), NOT by counting RUNNING rows.
+ * 1. Recovers unsettleable RUNNING rows: those whose worker has left the pool (rsx-lockd's
+ *    answer, asked under the pool lock), and those whose live local worker has outrun the
+ *    task's timeout (killed via Task_Killer). This is task-level recovery only - worker
+ *    concurrency is the pool rsx-lockd accounts (Task_Pool), NOT a count of RUNNING rows.
  * 2. Revives any cron tracker found sitting in a terminal state - the backstop for the
  *    invariant that a recurring schedule is never permanently terminal.
  * 3. Reconciles #[Schedule] tracker rows against the manifest (create new, regenerate
  *    on a changed cron expression, delete removed) so schedule edits take effect within
  *    one tick.
- * 4. Releases spawn reservations whose process is gone, then, if there is pending work,
- *    spawns detached workers until the pool is full. It does NOT become a worker itself.
+ * 4. If there is pending work, spawns detached workers until the pool is full. It does NOT
+ *    become a worker itself.
  *
- * Every spawn reserves its slot in the registry before the process is started
- * (Task::spawn_worker()), so a full pool starts nothing.
+ * Every spawn reads the pool's count before a process is started (Task::spawn_worker()), so
+ * a full pool starts nothing; a worker that starts anyway admits itself under the pool lock
+ * and exits when it finds no room.
  */
 class Task_Process_Command extends Command
 {
@@ -55,8 +55,8 @@ class Task_Process_Command extends Command
      * lines that matter. There is deliberately no "starting"/"complete" pair.
      *
      * Everything below still speaks up, because everything below is CONDITIONAL: a
-     * stuck task, a timeout, a stranded schedule and a reclaimed spawn reservation
-     * all warn (an unreachable worker registry throws); a schedule actually registered,
+     * stuck task, a timeout and a stranded schedule all warn (an unreachable rsx-lockd
+     * throws); a schedule actually registered,
      * changed or removed says so; a spawn says so when it started a worker. --once is a testing flag and narrates
      * itself. Keep it that way - problems and real events, never a heartbeat.
      */
@@ -85,16 +85,30 @@ class Task_Process_Command extends Command
     /**
      * Recover RUNNING rows that will never settle on their own. Two arms:
      *
-     * 1. DEAD WORKER - started longer ago than cleanup_stuck_after and the worker process is
-     *    gone. On-demand rows are failed; cron tracker rows are recycled to pending (their
+     * 1. DEAD WORKER - started longer ago than cleanup_stuck_after and the worker is gone.
+     *    On-demand rows are failed; cron tracker rows are recycled to pending (their
      *    next_run_at was already advanced before the run, so they simply fire again on
      *    schedule) - failing them would silently kill the cron.
      *
-     * 2. TIMED OUT - the worker is alive but has exceeded its execution cap
-     *    (the row's own timeout, else rsx.tasks.default_timeout). Task_Killer settles it the
-     *    same way rsx:tasks:kill does: SIGTERM -> 5s -> SIGKILL, then KILLED (on-demand) or
-     *    recycled to PENDING (cron tracker). This is the ONLY enforcement of tasks.timeout, so
-     *    the cap's granularity is one cron tick.
+     *    "Gone" is rsx-lockd's answer: the row's worker_member_key is no longer a member of the
+     *    pool (member_alive()), which is true the moment the worker's connection closed, on
+     *    whatever host it ran. The verdicts and the settle writes are taken UNDER THE POOL
+     *    LOCK (THE RULE: pool ops and `_tasks` rows only), so the view of the pool and of the
+     *    rows is one consistent snapshot. The cleanup_stuck_after grace still applies, so a
+     *    daemon restart - which ends every membership while the workers keep running - never
+     *    reaps a task that is still running unless it has also outlived the grace.
+     *
+     *    A row with NO worker_member_key was claimed by a worker from before the pool existed
+     *    (or run inline by --once, which is not a pool member): for those the verdict is the
+     *    local pid probe, posix_kill(worker_pid, 0), exactly as before - a verdict that is only
+     *    meaningful on the host that ran the worker. Retire it once no such rows can remain.
+     *
+     * 2. TIMED OUT - the worker is alive AND its pid is alive on this host, and it has exceeded
+     *    its execution cap (the row's own timeout, else rsx.tasks.default_timeout). Task_Killer
+     *    settles it the same way rsx:tasks:kill does: SIGTERM -> 5s -> SIGKILL, then KILLED
+     *    (on-demand) or recycled to PENDING (cron tracker). This is the ONLY enforcement of
+     *    tasks.timeout, so the cap's granularity is one cron tick. It runs AFTER the pool lock
+     *    is released: a kill waits on another process.
      *
      * A row with neither a row timeout nor a configured default is never timeout-killed.
      */
@@ -103,41 +117,75 @@ class Task_Process_Command extends Command
         $cleanup_after = (int) config('rsx.tasks.cleanup_stuck_after', 1800);
         $default_timeout = (int) config('rsx.tasks.default_timeout', 0);
 
-        $running_tasks = DB::table('_tasks')
-            ->where('status', Task_Status::RUNNING)
-            ->get();
+        $live = [];
 
-        foreach ($running_tasks as $task) {
-            $worker_alive = $task->worker_pid && posix_kill($task->worker_pid, 0);
+        Task_Pool::lock();
+        try {
+            $running_tasks = DB::table('_tasks')
+                ->where('status', Task_Status::RUNNING)
+                ->get();
 
-            if ($worker_alive) {
-                $this->enforce_task_timeout($task, $default_timeout);
-                continue;
-            }
+            foreach ($running_tasks as $task) {
+                $member_id = $task->worker_member_key;
 
-            if ($task->started_at === null || strtotime($task->started_at) > time() - $cleanup_after) {
-                // Worker is gone but the row has not aged past the stuck threshold yet.
-                continue;
-            }
+                if ($member_id !== null) {
+                    $worker_alive = Task_Pool::member_alive($member_id);
+                    $worker = "pool member {$member_id}, PID {$task->worker_pid}";
+                } else {
+                    $worker_alive = $task->worker_pid && posix_kill($task->worker_pid, 0);
+                    $worker = "PID {$task->worker_pid}";
+                }
 
-            if ($task->next_run_at !== null) {
-                // Cron tracker row: recycle it, do not fail it.
-                $this->warn("[STUCK TASK] Recycling stuck cron tracker {$task->id} (worker PID {$task->worker_pid} gone)");
-                DB::table('_tasks')->where('id', $task->id)->update([
-                    'status' => Task_Status::PENDING,
-                    'worker_pid' => null,
+                if ($worker_alive) {
+                    $live[] = $task;
+                    continue;
+                }
+
+                if ($task->started_at === null || strtotime($task->started_at) > time() - $cleanup_after) {
+                    // Worker is gone but the row has not aged past the stuck threshold yet.
+                    continue;
+                }
+
+                // Settle only the row as it was read: RUNNING under the same worker.
+                $row = DB::table('_tasks')
+                    ->where('id', $task->id)
+                    ->where('status', Task_Status::RUNNING)
+                    ->where('worker_pid', $task->worker_pid)
+                    ->where('worker_member_key', $member_id);
+
+                if ($task->next_run_at !== null) {
+                    // Cron tracker row: recycle it, do not fail it.
+                    $this->warn("[STUCK TASK] Recycling stuck cron tracker {$task->id} ({$worker} gone)");
+                    $row->update([
+                        'status' => Task_Status::PENDING,
+                        'worker_pid' => null,
+                        'worker_member_key' => null,
+                        'updated_at' => now(),
+                    ]);
+                    continue;
+                }
+
+                $this->warn("[STUCK TASK] Failing stuck task {$task->id} ({$worker} not responding)");
+                $row->update([
+                    'status' => Task_Status::FAILED,
+                    'error' => 'Task stuck - worker process not responding',
+                    'completed_at' => now(),
                     'updated_at' => now(),
                 ]);
-                continue;
             }
+        } finally {
+            // A lost connection already released the lock at the daemon (and holds_lock()
+            // says so); unlocking then would only bury the real failure under a refusal.
+            if (Task_Pool::holds_lock()) {
+                Task_Pool::unlock();
+            }
+        }
 
-            $this->warn("[STUCK TASK] Failing stuck task {$task->id} (worker PID {$task->worker_pid} not responding)");
-            DB::table('_tasks')->where('id', $task->id)->update([
-                'status' => Task_Status::FAILED,
-                'error' => 'Task stuck - worker process not responding',
-                'completed_at' => now(),
-                'updated_at' => now(),
-            ]);
+        foreach ($live as $task) {
+            // Timeout enforcement signals a pid, so it acts only on a worker running HERE.
+            if ($task->worker_pid && posix_kill($task->worker_pid, 0)) {
+                $this->enforce_task_timeout($task, $default_timeout);
+            }
         }
     }
 
@@ -187,7 +235,7 @@ class Task_Process_Command extends Command
      * framework pull, rows edited by hand in SQL, and whatever crash window has not been
      * imagined yet. Enforced, not merely intended.
      *
-     * The failure record is preserved: only status and worker_pid are touched, so error,
+     * The failure record is preserved: only status and the worker columns are touched, so error,
      * status_reason, last_error_at and consecutive_failures still say what went wrong. The
      * row's next_run_at was advanced before its run, so reviving it simply fires the next
      * cadence - it never re-runs immediately.
@@ -203,6 +251,7 @@ class Task_Process_Command extends Command
             DB::table('_tasks')->where('id', $tracker->id)->update([
                 'status' => Task_Status::PENDING,
                 'worker_pid' => null,
+                'worker_member_key' => null,
                 'updated_at' => now(),
             ]);
 
@@ -293,25 +342,19 @@ class Task_Process_Command extends Command
     /**
      * Spawn detached workers to cover pending work, up to the pool cap.
      *
-     * First the reaper half of spawn admission: reservations whose owner process is gone
-     * from this host are released (Task_Worker_Registry::reclaim_orphaned_reservations()).
-     * Then workers are spawned one at a time until the pool declines - each spawn reserves
-     * its slot atomically before anything is started, so this tick, concurrent dispatches and
-     * other hosts' ticks together never start more than the cap. A Redis failure throws:
-     * the registry is the admission gate, and Redis is a hard dependency.
+     * Workers are spawned one at a time until spawn_worker() declines - each reads the pool's
+     * count first, and this process's own still-running spawns cap the loop, so a tick never
+     * starts more than the cap. A worker started while others were still joining finds the
+     * pool full under the pool lock and exits. An unreachable rsx-lockd throws: the pool is
+     * the admission count, and the daemon is a hard dependency.
      */
     private function spawn_deficit_workers(): void
     {
-        $reclaimed = Task_Worker_Registry::reclaim_orphaned_reservations();
-        if ($reclaimed > 0) {
-            $this->warn("[WORKER SPAWN] Released {$reclaimed} spawn reservation(s) whose worker process is gone");
-        }
-
         if (!$this->has_pending_work()) {
             return;
         }
 
-        $max = (int) config('rsx.tasks.global_max_workers', 1);
+        $max = Task_Pool::max_workers();
 
         $spawned = 0;
         while ($spawned < $max && Task::spawn_worker()) {
@@ -353,10 +396,10 @@ class Task_Process_Command extends Command
      */
     private function process_one_task(): void
     {
-        // Waits forever. A tick that skipped its work because a 5-second clock expired
-        // was declining assigned work, silently - see Task_Lock's header.
-        $lock = new Task_Lock('task_queue');
-        $lock->acquire();
+        // The claim is taken under the pool lock, exactly as a worker's is (THE RULE: pool ops
+        // and `_tasks` rows only). This inline run is NOT a pool member, so its row carries no
+        // worker_member_key and the stuck-task reaper judges it by its local pid.
+        Task_Pool::lock();
 
         try {
             $task_row = DB::table('_tasks')
@@ -369,44 +412,43 @@ class Task_Process_Command extends Command
                 ->lockForUpdate()
                 ->first();
 
-            if (!$task_row) {
-                $this->info('[ONCE MODE] No pending tasks');
-                $lock->release();
-                return;
-            }
-
-            DB::table('_tasks')->where('id', $task_row->id)->update([
-                'status' => Task_Status::RUNNING,
-                'started_at' => now(),
-                'worker_pid' => getmypid(),
-                'updated_at' => now(),
-            ]);
-
-            $lock->release();
-
-            $this->info("[ONCE MODE] Executing task {$task_row->id}: {$task_row->class}::{$task_row->method}");
-
-            $task_instance = Task_Instance::find($task_row->id);
-
-            try {
-                $class = $task_row->class;
-                $method = $task_row->method;
-                $params = json_decode($task_row->params, true) ?? [];
-
-                $result = $class::$method($task_instance, $params);
-                $task_instance->mark_completed($result);
-
-                $this->info("[ONCE MODE] Task {$task_row->id} completed successfully");
-            } catch (\Throwable $e) {
-                // Throwable, not Exception: a TypeError in a task must record its error and
-                // settle the row like any exception (same widening as the worker's catch).
-                $task_instance->mark_failed($e->getMessage());
-                $this->error("[ONCE MODE] Task {$task_row->id} failed: " . $e->getMessage());
+            if ($task_row) {
+                DB::table('_tasks')->where('id', $task_row->id)->update([
+                    'status' => Task_Status::RUNNING,
+                    'started_at' => now(),
+                    'worker_pid' => getmypid(),
+                    'updated_at' => now(),
+                ]);
             }
         } finally {
-            if ($lock->is_locked()) {
-                $lock->release();
+            if (Task_Pool::holds_lock()) {
+                Task_Pool::unlock();
             }
+        }
+
+        if (!$task_row) {
+            $this->info('[ONCE MODE] No pending tasks');
+            return;
+        }
+
+        $this->info("[ONCE MODE] Executing task {$task_row->id}: {$task_row->class}::{$task_row->method}");
+
+        $task_instance = Task_Instance::find($task_row->id);
+
+        try {
+            $class = $task_row->class;
+            $method = $task_row->method;
+            $params = json_decode($task_row->params, true) ?? [];
+
+            $result = $class::$method($task_instance, $params);
+            $task_instance->mark_completed($result);
+
+            $this->info("[ONCE MODE] Task {$task_row->id} completed successfully");
+        } catch (\Throwable $e) {
+            // Throwable, not Exception: a TypeError in a task must record its error and
+            // settle the row like any exception (same widening as the worker's catch).
+            $task_instance->mark_failed($e->getMessage());
+            $this->error("[ONCE MODE] Task {$task_row->id} failed: " . $e->getMessage());
         }
     }
 }

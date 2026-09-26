@@ -423,6 +423,47 @@ THE RSX LOCKD DAEMON
     worker serves thousands of requests, and a socket that outlived a request
     would carry that request's locks into the next one on the same worker.
 
+    A task worker holds a SECOND, independent connection for its whole life: its
+    task pool connection (Task_Pool). It names no lock group, is never sent
+    release_all, and is never touched by RsxLocks; its only job is the worker
+    pool described below. So one PHP process may have two daemon connections,
+    and dump shows them as two connections with the same host:pid.
+
+    A DAEMON SOCKET NEVER REACHES A CHILD. PHP sets no close-on-exec flag on a
+    socket, and a grant belongs to the connection - a child holding an inherited
+    socket would keep its parent's locks, pool lock and pool membership alive
+    after the parent died. Every seam that starts a long-lived child -
+    Rsx_Artisan::dispatch_detached(), the SSR daemon, the node parser daemons -
+    therefore closes, in the child, every flock descriptor AND every open daemon
+    socket (RsxLocks::inherited_lock_fds(), which recognises the sockets by
+    inode). A synchronous child inherits its parent's locks through the lock
+    GROUP on its own connection (LOCK GROUPS AND SUBPROCESSES), never through the
+    parent's socket; a detached child inherits nothing at all. A new code path
+    that starts a long-lived child must use one of those seams, or
+    RsxLocks::command_without_inherited_locks() /
+    shell_prefix_without_inherited_locks() directly.
+
+    THE TASK WORKER POOL is a separate state machine in the daemon (pool.* ops,
+    lib/pool.js), not built on locks or semaphores: a named FIFO mutex, the POOL
+    LOCK, plus a set of member connections. A task worker takes the pool lock,
+    counts the other members, joins if there is room, claims a _tasks row and
+    releases the lock; its membership is its connection, so a worker that exits,
+    crashes or is SIGKILLed stops being counted at once, and a pool lock its
+    connection held passes to the next waiter. Every pool op is answered with
+    exactly one acknowledgement frame, and the PHP client waits for it on every
+    call. The pool name is the application's connection scope token, so two
+    applications sharing one daemon never share a pool. Full treatment:
+    rsx:man tasks (THE WORKER POOL).
+
+    THE RULE for the pool lock: while holding it, a process runs only pool ops
+    and reads/writes of _tasks rows. It takes no other blocking lock (a
+    non-blocking try is fine), waits on no subprocess and makes no outbound
+    call. Pool waits are deliberately invisible to the deadlock detector, and
+    THE RULE is what makes that safe - a pool-lock holder never waits on
+    anything, so it can never be part of a cycle. A process never asks for the
+    pool lock while holding it (it would queue behind itself). Code that needs
+    to do more under the pool lock breaks THE RULE and must be redesigned.
+
     CONFIGURATION lives on both sides and is hand-synced, because the daemon is
     a Node process that cannot read Laravel's config:
 
@@ -467,6 +508,10 @@ THE RSX LOCKD CLI
     already released; if dump still shows it, the connection really is open - a
     hung process holding a socket.
 
+    dump also lists every worker pool (its lock holder, queue and members with
+    their member ids), and each connection's pool state prints as
+    `HELD POOL <pool>`, `WAITING POOL <pool>` or `MEMBER POOL <pool> as <id>`.
+
         node lockd.js exec --name=<lock> [--mode=read|write] [--timeout=<secs>]
                            [--quiet] -- <command...>
 
@@ -507,7 +552,9 @@ TROUBLESHOOTING
     "Cannot reach rsx-lockd at 127.0.0.1:6210 after 3 attempts"
         The daemon is not running, or PHP and the daemon disagree about the
         port. Check `supervisorctl status rsx-lockd`, then rsx:health, then that
-        lockd.conf and config('rsx.locks') name the same port.
+        lockd.conf and config('rsx.locks') name the same port. The task
+        system needs the daemon too: Task::dispatch() and the rsx:task:process
+        tick throw the same error (rsx:man tasks, TROUBLESHOOTING).
 
     "rsx-lockd rejected the hello handshake"
         APP_KEY differs between the daemon's environment and PHP's, or the
@@ -535,8 +582,8 @@ TROUBLESHOOTING
         use only.
 
 NOTES
-    - Nothing in RsxLocks touches Redis any more. Redis remains the cache,
-      realtime and task-slot store; locks left it entirely.
+    - Nothing in RsxLocks touches Redis, and neither does the task worker
+      pool. Redis is the cache, realtime and counter store only.
     - A lock name is arbitrary, but it is a cluster-wide namespace: prefix
       application locks with something that identifies them.
     - Do not build a "renew" or "extend" helper on top of this API. There is
@@ -546,8 +593,9 @@ NOTES
 SEE ALSO
     rsx:man maintenance_mode  The no-op grant and why the daemon stops
     rsx:man tasks             Task concurrency (#[Exclusive]/#[Debounce], Task_Lock)
-    rsx:man libreoffice       Document rendering (uses the semaphore)
-    rsx:man health            The Lock Server check
+                              and the worker pool the daemon accounts
+    rsx:man libreoffice       Document rendering (one #[Exclusive] worker)
+    rsx:man health            The Lock Server and Task Worker Pool checks
     rsx:man config_rsx        The rsx.locks config block
     system/bin/rsx-lockd/README.md   The daemon's own protocol and CLI reference
 

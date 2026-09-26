@@ -1406,7 +1406,7 @@ return [
     | - Tasks start as "pending" in database
     | - Worker process marks as "running" and updates heartbeat
     | - Completes as "completed" or "failed"
-    | - Stuck tasks detected via timeout + heartbeat + PID checking
+    | - Stuck tasks detected via timeout + pool membership (rsx-lockd) + PID checking
     |
     | Queues:
     | - default: General purpose task queue
@@ -1421,13 +1421,10 @@ return [
     */
     'tasks' => [
         // Maximum concurrent workers in the single worker pool (fixed per environment).
-        // The Redis worker-slot registry (Task_Worker_Registry) enforces this: a spawned
-        // worker self-admits iff live workers < this cap, else it exits cleanly.
+        // rsx-lockd accounts the pool (Task_Pool): a worker joins under the pool lock iff
+        // fewer than this many other workers are members, else it exits cleanly. A worker's
+        // membership is its daemon connection, so a dead worker stops counting at once.
         'global_max_workers' => env('RSX_TASK_MAX_WORKERS', 3),
-
-        // Seconds a worker slot survives without a heartbeat before it is pruned as dead
-        // (covers SIGKILLed workers). Long tasks call $task->heartbeat() to stay alive.
-        'worker_heartbeat_ttl' => 90,
 
         // Execution cap for a task that does not carry its own timeout (seconds).
         // Enforced by the rsx:task:process reaper: each cron tick, a RUNNING task whose

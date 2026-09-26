@@ -11,21 +11,20 @@ use RuntimeException;
 use App\RSpade\Core\Locks\RsxLocks;
 
 /**
- * Task_Lock - the task queue's named locks, held across control flow.
+ * Task_Lock - one named RsxLocks lock held across control flow: the #[Exclusive] /
+ * #[Debounce] enqueue and identity run locks (Task_Concurrency). The queue claim itself is
+ * guarded by the task pool lock (Task_Pool), never by a Task_Lock.
  *
- * WHAT THIS USED TO BE. Until 2026-08-22 this class was a SECOND, PARALLEL lock system:
- * MySQL advisory locks via GET_LOCK()/RELEASE_LOCK(), running alongside RsxLocks for no
- * reason other than age. It is now a thin adapter over RsxLocks, so the framework has one
- * lock implementation again. The class survives the migration because a lock here is
- * ACQUIRED IN ONE FUNCTION AND RELEASED IN ANOTHER - Task_Concurrency::try_acquire_run_lock()
- * hands a held lock to the worker, which releases it when the run finishes - and an object
- * carries that hold across the boundary more honestly than a bare token string.
+ * It is a thin adapter over RsxLocks - there is one lock implementation. It exists as an
+ * object because a lock here is ACQUIRED IN ONE FUNCTION AND RELEASED IN ANOTHER -
+ * Task_Concurrency::try_acquire_run_lock() hands a held lock to the worker, which releases it
+ * when the run finishes - and an object carries that hold across the boundary more honestly
+ * than a bare token string.
  *
- * WAITING IS FOREVER, AND THAT IS THE POINT. Every one of these locks previously waited a
- * hardcoded 5 seconds and then gave up, which meant a busy box could DECLINE TO DO WORK IT
- * HAD BEEN ASSIGNED - an enqueue silently dropped, a tick silently skipped - with no log and
- * no error. That is the no-timeout mandate's exact failure shape, and it is why $timeout now
- * defaults to null (wait forever).
+ * WAITING IS FOREVER, AND THAT IS THE POINT. A lock that waits a fixed number of seconds and
+ * then gives up lets a busy box DECLINE TO DO WORK IT HAS BEEN ASSIGNED - an enqueue silently
+ * dropped - with no log and no error. That is the no-timeout mandate's exact failure shape,
+ * and it is why $timeout defaults to null (wait forever).
  *
  * THE ONE LEGITIMATE NON-BLOCKING CASE is $timeout = 0, used only by the identity RUN lock:
  * "is another worker already running this identity?" There, not-acquiring is the ANSWER, not

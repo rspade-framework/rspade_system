@@ -134,11 +134,14 @@ class Rsx_Artisan
     ): ?int {
         $command_line = self::__command_line($command, $args, $propagate_locks_and_i_will_wait);
 
-        // Close our flock descriptors FIRST. A detached child is long-lived by definition
-        // (a task worker runs as long as there is work), and a POSIX flock lives on the open
-        // file description - so a lock fd inherited here would be held for that worker's
-        // entire life, wedging every build on the box. Same defect class as the js-parser
-        // daemons; see RsxLocks::inherited_lock_fds().
+        // Close our lock descriptors FIRST - flock files and rsx-lockd sockets alike. A
+        // detached child is long-lived by definition (a task worker runs as long as there is
+        // work). A POSIX flock lives on the open file description, so an inherited flock fd
+        // would be held for that worker's entire life, wedging every build on the box; and a
+        // daemon grant lives on the CONNECTION, so an inherited rsx-lockd socket would keep
+        // our cluster locks - and, in a task worker, its pool lock and pool membership -
+        // alive after we die. Same defect class as the js-parser daemons; see
+        // RsxLocks::inherited_lock_fds().
         $close_locks = \App\RSpade\Core\Locks\RsxLocks::shell_prefix_without_inherited_locks();
 
         // The redirect detaches the child's I/O and the trailing '&' backgrounds it; `echo $!`

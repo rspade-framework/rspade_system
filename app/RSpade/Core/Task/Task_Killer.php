@@ -15,8 +15,9 @@ use App\RSpade\Core\Task\Task_Status;
  * Row settle: an ON-DEMAND row (next_run_at IS NULL) goes terminal KILLED with the explanation on
  * status_reason. A CRON TRACKER row (next_run_at set) is RECYCLED to PENDING instead - a terminal
  * status on a tracker silently stops the recurring schedule - with the explanation still recorded.
- * MySQL GET_LOCK run-locks auto-release when the worker's connection dies; the optional
- * RELEASE_LOCK is a best-effort no-op. The Redis worker slot self-heals within worker_heartbeat_ttl.
+ * Nothing else needs releasing: the identity run lock (Task_Lock, over RsxLocks) and the
+ * worker's task-pool membership both belong to the worker's rsx-lockd connections, which the
+ * daemon drops the moment the process dies.
  */
 class Task_Killer
 {
@@ -27,7 +28,7 @@ class Task_Killer
     private const SIGKILL = 9;
 
     /**
-     * @param object $row A RUNNING _tasks row (id, worker_pid, next_run_at, lock_key).
+     * @param object $row A RUNNING _tasks row (id, worker_pid, next_run_at).
      * @return string 'killed' | 'killed_no_process' | 'recycled'
      */
     public static function kill(object $row, string $explanation): string
@@ -52,20 +53,11 @@ class Task_Killer
             }
         }
 
-        // Best-effort: release the identity run-lock. No-ops if the worker's DB connection (which
-        // held it) has already closed - which is the normal case once the worker is dead.
-        if (!empty($row->lock_key)) {
-            try {
-                DB::select('SELECT RELEASE_LOCK(?)', [$row->lock_key]);
-            } catch (\Throwable $e) {
-                // ignore - the lock is gone with the dead connection
-            }
-        }
-
         if ($row->next_run_at !== null) {
             DB::table('_tasks')->where('id', $row->id)->update([
                 'status'        => Task_Status::PENDING,
                 'worker_pid'    => null,
+                'worker_member_key' => null,
                 'status_reason' => 'killed (recycled): ' . $explanation,
                 'updated_at'    => now(),
             ]);
@@ -76,6 +68,7 @@ class Task_Killer
             'status'        => Task_Status::KILLED,
             'status_reason' => $explanation,
             'worker_pid'    => null,
+            'worker_member_key' => null,
             'completed_at'  => now(),
             'updated_at'    => now(),
         ]);

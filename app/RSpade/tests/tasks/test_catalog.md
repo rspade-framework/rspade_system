@@ -1,7 +1,7 @@
 # Test catalog: tasks
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (reason) | `planned`.
-Type: php / cli. Last updated: 2026-08-31.
+Type: php / cli. Last updated: 2026-09-26.
 
 ## Task_Definition_Test (php, default isolation) - metadata, no commits
 
@@ -60,29 +60,54 @@ Type: php / cli. Last updated: 2026-08-31.
 |----|---------|------|--------|--------|
 | task-d-01 | full pending->running->completed lifecycle persisted in DB | php | now unblocked (ISSUE-1 fixed); worker-driven lifecycle test not yet authored | planned |
 | task-d-02 | scheduled processor `rsx:task:process` runs due tasks | cli | needs cron processor invocation + time control | deferred |
-| task-d-03 | stuck-task detection (DEAD worker arm, cleanup_stuck_after) | php | needs time manipulation + a committed running row; the TIMEOUT arm is now covered by Task_Timeout_Reaper_Test | deferred |
+| task-d-03 | stuck-task detection (DEAD worker arm, cleanup_stuck_after) | php | covered by Task_Worker_Execution_Test task-exec-05..08 (rows planted 2000s old); the TIMEOUT arm by Task_Timeout_Reaper_Test | implemented |
 | task-d-04 | `rsx:task:list` / `rsx:task:run` CLI output | cli | command-output test; lower priority | planned |
 | task-d-05 | queue concurrency enforcement | php | needs worker concurrency simulation | deferred |
 | task-d-06 | temp directory auto-cleanup timing | php | time-dependent | deferred |
 | task-d-07 | `set_status()` key-value tracking, `set_temp_expiration()` | php | methods documented but absent (see issues) | deferred |
 
-## Task_Spawn_Admission_Test (php, per-test transaction + Redis) - admitted before spawned
+## Task_Spawn_Admission_Test (php, per-test transaction, live rsx-lockd) - who enters the pool, who is never started
+
+Other members are real members on a second daemon connection (the RsxLocks one, raw pool.* frames).
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| task-spawn-01 | reservations count against the cap; an unreserved worker is refused behind them | cap 2, three reserve_spawn() | two tokens, then null; admit() false | implemented |
-| task-spawn-02 | live slots and reservations share one count | cap 2, one live + reserve twice | one token, then null | implemented |
-| task-spawn-03 | admit($token) converts the reservation into a live slot even when the pool reads full | cap 1, reserved | admit() false, admit($token) true, 0 reserved, 1 live | implemented |
-| task-spawn-04 | a reservation no longer outstanding is no free pass | cap 1 full, admit('no-such') | false | implemented |
-| task-spawn-05 | the spawner's release frees the slot at once | reserve, release | full, then free | implemented |
-| task-spawn-06 | the owner is the spawner, then the child's pid; a hand-off after conversion resurrects nothing | reserve, hand_off, admit, hand_off | host:pid each step; 0 reserved | implemented |
-| task-spawn-07 | the reaper releases only this host's reservations whose pid is gone | dead / alive / other-host owners | 1 reclaimed; alive + other-host remain | implemented |
-| task-spawn-08 | under the suite dispatch() enqueues only | Task::dispatch() | pending row; detached registry unchanged; 0 reserved; spawn_worker() false | implemented |
-| task-spawn-09 | opted in, spawn_worker() starts a real worker under a reservation naming the child, and no reservation outlives it | spawn_workers(true) | true; child registered; owner = child (or converted); 0 reserved after contain() + reclaim | implemented |
-| task-spawn-10 | a flushed registry with this process's own worker still running spawns nothing | empty registry; fixture worker (no --_test-run) recorded as this process's spawn; cap 1 | is_worker_process() true; host floor 0; spawn_worker() false; 0 reserved; detached registry unchanged; exited fixture is not a worker | implemented |
-| task-spawn-11 | the host floor refuses at the cap and gives the reservation back | empty registry; no own spawns; fixture worker with --_test-run; cap 1 | host_worker_count() 1; spawn_worker() false; 0 reserved; detached registry unchanged; 0 after the fixture exits | implemented |
-| task-spawn-12 | Task::spawn_workers(false) enqueues without spawning | spawn_workers(true) then (false); dispatch() | spawning_workers() follows; pending row; nothing started; 0 reserved | implemented |
-| task-spawn-13 | the class boundary turns spawning back off | spawn_workers(true); Rsx_Test_Abstract::__restore_class_boundary() | spawning_workers() false | implemented |
+| task-spawn-01 | a worker that finds the pool full exits without joining | cap 1, one other member; in-process rsx:task:worker | exit 0, "Worker pool is full"; no membership; lock free; members 1 | implemented |
+| task-spawn-02 | a worker below the cap joins, claims nothing, and leaves before returning | cap 2, one other member; empty queue | "Joined the pool (pm_...)"; member_id() null after; members back to 1; lock free | implemented |
+| task-spawn-03 | spawn_worker() reads the pool count before starting anything | cap 1: other member present, then gone; spawn_workers(true) | false + nothing registered, lock released; then true, child registered; members 0 after contain() | implemented |
+| task-spawn-04 | a member process counts itself | this process joined; cap 1 | spawn_worker() false; nothing started | implemented |
+| task-spawn-05 | spawn_worker() under the pool lock refuses instead of parking behind itself | Task_Pool::lock() held | RuntimeException "holds the task pool lock" | implemented |
+| task-spawn-06 | this process's own live spawns fill the cap before the pool is asked | fixture worker recorded as our spawn; cap 1; empty pool | is_worker_process() true; spawn_worker() false; nothing started; exited fixture / this process are not workers | implemented |
+| task-spawn-07 | under the suite dispatch() enqueues only | Task::dispatch() | pending row; detached registry unchanged; spawn_worker() false | implemented |
+| task-spawn-08 | Task::spawn_workers(false) enqueues without spawning | spawn_workers(true) then (false); dispatch() | spawning_workers() follows; pending row; nothing started | implemented |
+| task-spawn-09 | the class boundary turns spawning back off | spawn_workers(true); Rsx_Test_Abstract::__restore_class_boundary() | spawning_workers() false | implemented |
+
+## Task_Worker_Execution_Test (php, $requires_db_reset + no-tx) - the worker loop and dead-worker recovery
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-exec-01 | tier-1 run-now rows are claimed before due tier-2 cron rows | one of each; in-process worker | run order B, A | implemented |
+| task-exec-02 | a cron tracker recycles after it runs | due tracker | PENDING, worker_pid null, next_run_at advanced, result recorded | implemented |
+| task-exec-03 | an on-demand row completes | pending row | COMPLETED with result | implemented |
+| task-exec-04 | the claim records pid and pool member id; the worker leaves the pool | pending row | worker_pid = this pid; worker_member_key 'pm_...'; that member not alive after | implemented |
+| task-exec-05 | a row whose pool member is gone is failed even though its pid is alive | RUNNING 2000s, dead member key, live pid | FAILED | implemented |
+| task-exec-06 | a row whose worker is still a member is left alone, however old | this process joined; row with its member key and a dead pid | still RUNNING | implemented |
+| task-exec-07 | a row with no member key is judged by its local pid | RUNNING 2000s, NULL member key, dead pid | FAILED | implemented |
+| task-exec-08 | a stuck cron tracker is recycled, not failed, and both worker columns cleared | real #[Schedule] identity, dead member key | PENDING; worker_pid and worker_member_key null | implemented |
+| task-exec-09 | dispatch() returns a pollable id | Test_Echo_Service | int id, pending row | implemented |
+
+## Task_Pool_Test (php, no transactions, live rsx-lockd) - the worker pool client
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-pool-01 | every call is applied by the daemon before it returns | lock/join/member_alive/leave/unlock, pool.stats read over the RsxLocks connection after each | holder/members move with each call; stats() agrees | implemented |
+| task-pool-02 | join/count/member_alive/leave/unlock are refused without the lock; second join and second leave refused | calls without the lock, then doubled calls under it | RuntimeException carrying "refused pool.<op>"; bookkeeping unchanged | implemented |
+| task-pool-03 | count() excludes the caller | count before join, after join, after leave | equal each time; stats() counts the caller | implemented |
+| task-pool-04 | a SIGKILLed member child is no longer counted or alive | child PHP joins + unlocks, then SIGKILL | member_alive false, count back to base | implemented |
+| task-pool-05 | a member child that dies holding the lock hands it to the parked waiter | child holds the lock, SIGKILLs itself once pool.stats shows a waiter | parent's lock() granted; child exit 137; its member not alive | implemented |
+| task-pool-06 | the pool connection is independent of RsxLocks | named write lock + pool lock at once; dump; close each connection | two conn_ids; pool conn names no group, RsxLocks conn names current_group_id(); each close leaves the other's grant held | implemented |
+| task-pool-07 | the open pool socket is one of this process's lock descriptors | pool connection opened, then closed | exactly one more fd from RsxLocks::inherited_lock_fds(), its link socket:[inode] of Lockd_Connection::open_socket_inodes(); named in the detached-spawn prefix; gone after disconnect | implemented |
+| task-pool-08 | a member's detached child does not carry its membership | child joins, dispatch_detached('tinker') blocked on a FIFO, child SIGKILLed | grandchild holds none of the child's daemon sockets; membership gone; grandchild still running; released grandchild exits | implemented |
 
 ## Task_Killer_Test (php) - force-kill running tasks (rsx:tasks:kill / kill-all)
 

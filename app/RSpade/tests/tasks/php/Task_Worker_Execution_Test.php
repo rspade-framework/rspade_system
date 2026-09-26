@@ -9,8 +9,8 @@ namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
@@ -30,9 +30,13 @@ use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
  * fixture and drive the WORKER; the stuck-CRON test uses a REAL scheduled task so
  * reconcile leaves it in place.
  *
+ * The worker joins this environment's rsx-lockd task pool on this process's Task_Pool
+ * connection and leaves it before returning. The stuck-row tests plant the pool member id
+ * a worker would have written: one that is not a member (a dead worker) or this process's
+ * own live membership, plus one row with no member id (claimed before rows carried one), judged by its pid.
+ *
  * Commits real rows to _tasks, so this class provisions a clean baseline once
- * and opts out of per-test transactions. Each test clears its own residue and
- * the Redis worker-slot registry before running.
+ * and opts out of per-test transactions. Each test clears its own residue before running.
  */
 class Task_Worker_Execution_Test extends Rsx_Test_Abstract
 {
@@ -45,17 +49,11 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     // Helpers
     // -------------------------------------------------------------------------
 
-    /**
-     * Clear the Redis worker-slot registry so a fresh worker admits into the pool.
-     */
-    private static function __clear_registry(): void
-    {
-        $redis = new \Redis();
-        $redis->connect(env('REDIS_HOST', '127.0.0.1'), (int) env('REDIS_PORT', 6379));
-        $redis->select(1);
-        $redis->del('rsx:tasks:workers:' . Rsx_Connection_Scope::token());
-        $redis->close();
-    }
+    /** A member id the daemon never minted (its ids are 'pm_' + hex), so it is never alive. */
+    const DEAD_MEMBER = 'pm_never_a_member';
+
+    /** A pid no Linux host hands out (pid_max tops out at 4194304). */
+    const DEAD_PID = 2147480000;
 
     /**
      * Remove any residual fixture rows and reset the fixture's execution log.
@@ -64,6 +62,27 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     {
         DB::table('_tasks')->where('class', self::FIX)->delete();
         Task_Exec_Fixture_Service::$run_order = [];
+    }
+
+    /**
+     * Plant an on-demand fixture row RUNNING since 2000 s ago (past the default
+     * cleanup_stuck_after of 1800 s) under the given worker.
+     */
+    private static function __plant_running_row(?string $member_id, int $pid): int
+    {
+        return DB::table('_tasks')->insertGetId([
+            'class' => self::FIX,
+            'method' => 'marker_a',
+            'queue' => 'default',
+            'status' => Task_Status::RUNNING,
+            'params' => json_encode([]),
+            'next_run_at' => null,
+            'started_at' => date('Y-m-d H:i:s', time() - 2000),
+            'worker_pid' => $pid,
+            'worker_member_key' => $member_id,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
     }
 
     // -------------------------------------------------------------------------
@@ -76,7 +95,6 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
      */
     public static function test_priority_run_now_claimed_before_due_cron()
     {
-        static::__clear_registry();
         static::__reset_fixture();
 
         $now = date('Y-m-d H:i:s');
@@ -120,7 +138,6 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
      */
     public static function test_cron_tracker_recycles_after_run()
     {
-        static::__clear_registry();
         static::__reset_fixture();
 
         $now = date('Y-m-d H:i:s');
@@ -153,7 +170,6 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
      */
     public static function test_on_demand_task_completes()
     {
-        static::__clear_registry();
         static::__reset_fixture();
 
         $now = date('Y-m-d H:i:s');
@@ -179,25 +195,53 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A stuck on-demand row (RUNNING, old started_at, dead worker_pid) is failed
-     * by the processor's stuck-task recovery.
+     * A worker's claim records both its pid and its pool member id on the row, and the row
+     * keeps them once it completes.
      */
-    public static function test_stuck_on_demand_row_marked_failed()
+    public static function test_claim_records_the_pool_member()
     {
         static::__reset_fixture();
+
+        $now = date('Y-m-d H:i:s');
 
         $id = DB::table('_tasks')->insertGetId([
             'class' => self::FIX,
             'method' => 'marker_a',
             'queue' => 'default',
-            'status' => Task_Status::RUNNING,
+            'status' => Task_Status::PENDING,
             'params' => json_encode([]),
             'next_run_at' => null,
-            'started_at' => date('Y-m-d H:i:s', time() - 2000),
-            'worker_pid' => 2147480000,
-            'created_at' => date('Y-m-d H:i:s'),
-            'updated_at' => date('Y-m-d H:i:s'),
+            'scheduled_for' => $now,
+            'created_at' => $now,
+            'updated_at' => $now,
         ]);
+
+        Artisan::call('rsx:task:worker', ['--max-time' => 30]);
+
+        $row = DB::table('_tasks')->where('id', $id)->first();
+
+        static::__assert_equals(Task_Status::COMPLETED, $row->status);
+        static::__assert_equals(getmypid(), (int) $row->worker_pid, 'the in-process worker is this pid');
+        static::__assert_true(
+            is_string($row->worker_member_key) && str_starts_with($row->worker_member_key, 'pm_'),
+            'the claim recorded the daemon-minted member id: ' . var_export($row->worker_member_key, true)
+        );
+
+        Task_Pool::lock();
+        $alive = Task_Pool::member_alive($row->worker_member_key);
+        Task_Pool::unlock();
+        static::__assert_false($alive, 'the worker left the pool when it finished');
+    }
+
+    /**
+     * A stuck on-demand row whose pool member is gone is failed by the processor's stuck-task
+     * recovery - even though its pid is alive (this process): the pool, not the pid, decides.
+     */
+    public static function test_stuck_on_demand_row_marked_failed()
+    {
+        static::__reset_fixture();
+
+        $id = static::__plant_running_row(self::DEAD_MEMBER, getmypid());
 
         Artisan::call('rsx:task:process');
 
@@ -207,9 +251,54 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A stuck CRON tracker (RUNNING, old started_at, dead worker_pid) is recycled
-     * to pending, not failed. Uses a REAL manifest #[Schedule] task so the
-     * processor's reconcile step leaves the tracker in place.
+     * A RUNNING row whose worker is still a pool member is left alone, however old it is.
+     */
+    public static function test_row_of_a_live_member_is_not_reaped()
+    {
+        static::__reset_fixture();
+
+        Task_Pool::lock();
+        $member_id = Task_Pool::join();
+        Task_Pool::unlock();
+
+        try {
+            // A dead pid on purpose: the membership is the verdict, not the pid.
+            $id = static::__plant_running_row($member_id, self::DEAD_PID);
+
+            Artisan::call('rsx:task:process');
+
+            $row = DB::table('_tasks')->where('id', $id)->first();
+            static::__assert_equals(Task_Status::RUNNING, $row->status, 'a live member\'s row keeps running');
+            static::__assert_equals($member_id, $row->worker_member_key);
+        } finally {
+            Task_Pool::lock();
+            Task_Pool::leave();
+            Task_Pool::unlock();
+            DB::table('_tasks')->where('class', self::FIX)->delete();
+        }
+    }
+
+    /**
+     * A RUNNING row with no pool member id - claimed before rows carried one - is judged by the
+     * local pid: a dead pid fails it.
+     */
+    public static function test_row_without_a_member_is_judged_by_pid()
+    {
+        static::__reset_fixture();
+
+        $id = static::__plant_running_row(null, self::DEAD_PID);
+
+        Artisan::call('rsx:task:process');
+
+        $row = DB::table('_tasks')->where('id', $id)->first();
+
+        static::__assert_equals(Task_Status::FAILED, $row->status);
+    }
+
+    /**
+     * A stuck CRON tracker (RUNNING, old started_at, pool member gone) is recycled to
+     * pending, not failed, and both worker columns are cleared. Uses a REAL manifest
+     * #[Schedule] task so the processor's reconcile step leaves the tracker in place.
      */
     public static function test_stuck_cron_tracker_recycled_not_failed()
     {
@@ -235,7 +324,8 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
             'next_run_at' => date('Y-m-d H:i:s', time() + 3600),
             'cron_expression' => $def['cron_expression'],
             'started_at' => date('Y-m-d H:i:s', time() - 2000),
-            'worker_pid' => 2147480000,
+            'worker_pid' => self::DEAD_PID,
+            'worker_member_key' => self::DEAD_MEMBER,
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
         ]);
@@ -247,6 +337,7 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
         static::__assert_not_null($row, 'real-schedule cron tracker should survive reconcile');
         static::__assert_equals(Task_Status::PENDING, $row->status);
         static::__assert_null($row->worker_pid);
+        static::__assert_null($row->worker_member_key);
     }
 
     /**

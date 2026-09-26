@@ -19,7 +19,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *
  * Every key RsxCache writes is 'cache:<Rsx_Connection_Scope::token()>:<sha1>', and every key
  * Rsx_Counter writes is 'counter:<token>:<sha1>' - the same (database, host) token RsxLocks
- * and Task_Worker_Registry namespace their state under. Two environments sharing one redis
+ * and Task_Pool namespace their state under. Two environments sharing one redis
  * (the developer's database and the test database being the everyday pair) therefore share
  * no cache entry, and clear() empties only the calling scope's keys.
  *

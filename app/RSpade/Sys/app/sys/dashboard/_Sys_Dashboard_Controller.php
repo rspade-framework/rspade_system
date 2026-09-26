@@ -17,8 +17,8 @@ use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Prod\Rsx_Prod_Seal;
 use App\RSpade\Core\Rsx;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
-use App\RSpade\Core\Task\Task_Worker_Registry;
 use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 
 /**
@@ -39,6 +39,9 @@ class _Sys_Dashboard_Controller extends _Sys_Endpoint_Controller_Abstract
     /**
      * The headline numbers.
      *
+     * live_workers is the task worker pool's member count as rsx-lockd accounts it
+     * (Task_Pool::stats(), read without the pool lock).
+     *
      * failed_tasks_24h counts one-shot rows that went terminal FAILED within the last
      * day, dated by completed_at (Task_Instance::mark_failed() and the stuck-task reaper
      * both stamp it). A failing cron TRACKER is not among them: it is recycled to
@@ -54,7 +57,7 @@ class _Sys_Dashboard_Controller extends _Sys_Endpoint_Controller_Abstract
             'mode_label' => Rsx::get_mode_label(),
             'is_sealed' => Rsx_Prod_Seal::is_sealed(),
             'build_key' => Manifest::get_build_key(),
-            'live_workers' => Task_Worker_Registry::live_count(),
+            'live_workers' => Task_Pool::stats()['members'],
             'failed_tasks_24h' => DB::table('_tasks')
                 ->where('status', Task_Status::FAILED)
                 ->where('completed_at', '>=', now()->subDay())

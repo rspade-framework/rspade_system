@@ -2,8 +2,9 @@
 
 ## Overview
 
-Redis backs the **cache**, **realtime** pub/sub + subscriber registry, the **task
-worker-slot registry**, the **full page cache**, and **transient counters**.
+Redis backs the **cache**, **realtime** pub/sub + subscriber registry, the **full page
+cache**, and **transient counters**. It does not back locks or the task worker pool - both
+are rsx-lockd connections (see below).
 
 ### The database map
 
@@ -13,12 +14,12 @@ that opens a connection points its comment there.
 | DB | Holds | Flushed by `RsxCache::clear()` |
 |----|-------|-------------------------------|
 | 0 | Volatile cache (`RsxCache`, including its persistent namespace), the realtime emitter hashes `rsx_rt:em:*` and `AssetHandler`'s `rspade:public_asset:*` entries | YES for `cache:<scope token>:*` - on every database transaction rollback. Nothing else on DB 0 is touched |
-| 1 | Locks and the task worker registry (`Task_Worker_Registry`) | never |
+| 1 | Unused - nothing selects it | never |
 | 2 | Reduced-volatility cache: the full page cache (`Rsx_FPC`, `system/bin/fpc-proxy.js`) and `_RVC_`-prefixed cache keys | never |
 | 3 | Transient counters (`Rsx_Counter`) | never |
 
 **Eviction is per INSTANCE, not per database.** The shipped conf sets `allkeys-lru` over the
-whole server, so a lock, a counter and a cache entry are equally evictable. See backlog B-105.
+whole server, so a counter and a cache entry are equally evictable. See backlog B-105.
 
 **Redis does NOT back locking.** `RsxLocks` left Redis entirely: web-cluster locks are held
 by a live socket to the `rsx-lockd` daemon (`system/bin/rsx-lockd/`), and system locks are
@@ -27,7 +28,9 @@ its holder is a connection rather than a key with an expiry. See `php artisan rs
 and `Core/Locks/RsxLocks.php`. Nothing in this file applies to locks.
 
 One consequence worth stating plainly: **a Redis flush does not release any lock**, and
-restarting Redis has no effect on lock state.
+restarting Redis has no effect on lock state. The same holds for the **task worker pool**:
+rsx-lockd counts it (`Task_Pool`, a worker's membership is its daemon connection), so a flush
+never makes the pool look empty.
 
 ## RsxCache - Caching System
 
@@ -37,7 +40,7 @@ High-performance caching with automatic invalidation when code changes.
 ### Key Features
 - **Automatic prefixing**: Uses manifest build key to invalidate on code changes
 - **Database scoping**: every key is `cache:<Rsx_Connection_Scope::token()>:<sha1>` - the
-  same `(database, host)` token `RsxLocks` and `Task_Worker_Registry` use - so two
+  same `(database, host)` token `RsxLocks` and `Task_Pool` use - so two
   environments sharing one Redis (the developer database and the test database) share no
   cache entry, and `clear()` MATCHes only the calling scope. `Rsx_Counter` keys carry the
   same scope (`counter:<token>:<sha1>`)
@@ -187,9 +190,6 @@ RsxCache::WEEK = 604800;
 
 - **Realtime** - publish/subscribe frames plus the subscriber registry the relay maintains
   (`Core/Realtime/`). See `php artisan rsx:man realtime`.
-- **Task worker slots** - `Task_Worker_Registry` claims a slot per spawned worker to cap the
-  shared pool at `rsx.tasks.global_max_workers`. Slots ARE heartbeat-refreshed with a TTL, and
-  that is correct: a slot is an accounting record, not a mutual-exclusion guarantee.
 - **Full Page Cache** - the Node FPC proxy stores rendered pages in Redis and reads `FPC_*` /
   `REDIS_*` straight from `.env`.
 
@@ -253,7 +253,5 @@ Ensure Redis is running and accessible via environment variables:
 
 ## Redis Database Assignment
 
-- **Database 0**: RsxCache (128MB, LRU eviction)
-- **Databases 1-15**: Laravel's own Redis connections and custom use
-
-Database 1 was formerly the lock database. It is no longer used for locks.
+See "The database map" at the top of this file. Databases 4-15 are free for application
+use; nothing in the framework selects them.

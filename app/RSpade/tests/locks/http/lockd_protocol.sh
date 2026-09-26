@@ -9,7 +9,7 @@ TEST_NAME="rsx-lockd protocol + PHP/node HMAC parity"
 # Three layers, weakest to strongest:
 #   1. protocol.js in isolation - frame encode/decode, the newline splitter, hello
 #      sign/verify, the verbatim timeout message.
-#   2. BYTE PARITY - PHP's hash_hmac over host:pid:ts (exactly what Lockd_Client::__hello
+#   2. BYTE PARITY - PHP's hash_hmac over host:pid:ts (exactly what Lockd_Connection::__hello
 #      computes, with the framework's own env('APP_KEY')) equals protocol.sign_hello(), and
 #      the daemon's verifier accepts the PHP-produced signature.
 #   3. LIVE INTEROP - the real PHP client completes a handshake with a real daemon and takes
@@ -41,7 +41,7 @@ SIG_TS=1786000000
 
 cat > "$LOCKD_TMP/php_sig.php" <<'PHP'
 <?php
-// The signature Lockd_Client::__hello() builds: HMAC-SHA256 over host:pid:ts, keyed by the
+// The signature Lockd_Connection::__hello() builds: HMAC-SHA256 over host:pid:ts, keyed by the
 // RAW APP_KEY string the framework resolves (never a base64-decoded form of it).
 require '/var/www/html/system/vendor/autoload.php';
 $app = require '/var/www/html/system/bootstrap/app.php';

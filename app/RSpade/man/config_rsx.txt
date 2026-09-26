@@ -597,11 +597,11 @@ FILE SUBSYSTEM
 TASK SYSTEM
     'tasks' => [
         'global_max_workers' => env('RSX_TASK_MAX_WORKERS', 3),
-        'worker_heartbeat_ttl' => 90,
         'default_timeout' => 1800,             # 30 min
         'cleanup_stuck_after' => 1800,         # 30 min
         'temp_directory_default_ttl' => 3600,  # 1 hour
         'task_retention_days' => 30,
+        'failing_schedule_warn_after' => 3,
         'queues' => [
             'default'   => ['max_workers' => 1],
             'scheduled' => ['max_workers' => 1],

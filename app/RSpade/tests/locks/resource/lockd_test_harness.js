@@ -21,6 +21,7 @@ const lockd = require(path.join(LOCKD_DIR, 'lockd.js'));
 const protocol = require(path.join(LOCKD_DIR, 'lib', 'protocol.js'));
 const client_lib = require(path.join(LOCKD_DIR, 'lib', 'client.js'));
 const locktable = require(path.join(LOCKD_DIR, 'lib', 'locktable.js'));
+const pool_lib = require(path.join(LOCKD_DIR, 'lib', 'pool.js'));
 
 // The daemon reads the same file the same way, so client and server share one key.
 lockd.load_env_file(path.join(PROJECT_ROOT, '.env'));
@@ -74,6 +75,63 @@ async function connect(options) {
 }
 
 /**
+ * A RAW authenticated socket to the scratch daemon: every inbound frame is recorded in
+ * arrival order, whether or not anything asked for it. The ordinary client matches replies
+ * by id and silently drops anything else, so it cannot prove "exactly one frame per
+ * request" - this can.
+ */
+async function connect_raw() {
+    if (!PORT) {
+        throw new Error('LOCKD_PORT is not set - the scratch daemon was not started');
+    }
+
+    const socket = await client_lib.connect_once({ host: '127.0.0.1', port: PORT });
+    const reader = new protocol.Frame_Reader();
+    const frames = [];
+    socket.on('data', (chunk) => {
+        for (const line of reader.push(chunk).lines) {
+            const decoded = protocol.decode_frame(line);
+            frames.push(decoded.ok ? decoded.value : { undecodable: line });
+        }
+    });
+    socket.on('error', () => {});
+
+    const raw = {
+        socket: socket,
+        frames: frames,
+
+        send: function (frame) {
+            socket.write(protocol.encode_frame(frame));
+        },
+
+        /** Resolve true once at least `count` frames have arrived, false if ms passes first. */
+        wait_frames: async function (count, ms) {
+            const deadline = Date.now() + ms;
+            while (Date.now() < deadline) {
+                if (frames.length >= count) return true;
+                await sleep(10);
+            }
+            return frames.length >= count;
+        },
+
+        close: function () {
+            socket.destroy();
+        },
+    };
+
+    raw.send(protocol.build_hello(
+        require('os').hostname(), process.pid, Math.floor(Date.now() / 1000), process.env.APP_KEY || '', null
+    ));
+    raw.send({ op: 'ping', id: 'hello-sync' });
+    if (!await raw.wait_frames(2, 3000) || frames[0].status !== 'ok') {
+        throw new Error('raw hello failed: ' + JSON.stringify(frames));
+    }
+    frames.length = 0;
+
+    return raw;
+}
+
+/**
  * Resolve to the frame if the request answered within ms, or null if it is still parked.
  *
  * "Waiting is silence" is a protocol guarantee, so proving a request is STILL WAITING means
@@ -97,8 +155,13 @@ async function answer_within(promise, ms) {
  * kill -9 has to have something of its own to kill.
  */
 function spawn_holder(args) {
+    return spawn_helper('lockd_holder.js', args);
+}
+
+/** Start one of the resource/ helper scripts in its own process and follow its output. */
+function spawn_helper(script, args) {
     const child_process = require('child_process');
-    const holder_path = path.join(__dirname, 'lockd_holder.js');
+    const holder_path = path.join(__dirname, script);
 
     const proc = child_process.spawn(process.execPath, [holder_path].concat(args), {
         env: process.env,
@@ -193,11 +256,14 @@ module.exports = {
     protocol,
     client_lib,
     locktable,
+    pool_lib,
     check,
     note,
     sleep,
     connect,
+    connect_raw,
     spawn_holder,
+    spawn_helper,
     answer_within,
     now_ms,
     summary,

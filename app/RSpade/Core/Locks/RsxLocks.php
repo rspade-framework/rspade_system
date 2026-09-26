@@ -8,6 +8,7 @@ use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\Lockd_Client;
+use App\RSpade\Core\Locks\Lockd_Connection;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 
 // Ensure helpers are loaded since we run early in bootstrap
@@ -1015,8 +1016,8 @@ class RsxLocks
      */
     private static function __lock_scope_prefix(): string
     {
-        // ONE definition of the (database, host) token, shared with Task_Worker_Registry so
-        // the spelling can never drift. The trailing '__' is this backend's own delimiter.
+        // ONE definition of the (database, host) token, shared with Task_Pool so the
+        // spelling can never drift. The trailing '__' is this backend's own delimiter.
         return Rsx_Connection_Scope::token() . '__';
     }
 
@@ -1078,6 +1079,16 @@ class RsxLocks
      * construction (/proc/self/fd); an empty result elsewhere simply means no wrapping, which
      * is the pre-existing behavior.
      *
+     * THE rsx-lockd SOCKETS ARE LOCK DESCRIPTORS TOO, and are returned here for the same
+     * reason. A cluster lock, the task pool lock and a task pool membership all belong to a
+     * CONNECTION, so a child that inherits the socket keeps the connection open after we
+     * die: our locks are never released, and a task worker's pool membership outlives the
+     * worker as a ghost member for as long as the child lives. They are recognised by inode
+     * (Lockd_Connection::open_socket_inodes() against the `socket:[<inode>]` links), so only
+     * this process's daemon sockets are closed and every other socket is left alone. The
+     * child needs none of them: a synchronous child inherits its parent's locks through the
+     * lock GROUP on its own connection (Rsx_Artisan), never through the parent's socket.
+     *
      * @return int[] fd numbers, ascending
      */
     public static function inherited_lock_fds(): array
@@ -1088,6 +1099,10 @@ class RsxLocks
         }
 
         $lock_dir = rtrim(Rsx_Project_Paths::flock_dir(), '/') . '/';
+        $lockd_sockets = [];
+        foreach (Lockd_Connection::open_socket_inodes() as $inode) {
+            $lockd_sockets['socket:[' . $inode . ']'] = true;
+        }
         $fds = [];
 
         foreach ((array) @scandir($fd_dir) as $entry) {
@@ -1095,7 +1110,7 @@ class RsxLocks
                 continue;
             }
             $target = @readlink($fd_dir . '/' . $entry);
-            if ($target !== false && str_starts_with($target, $lock_dir)) {
+            if ($target !== false && (str_starts_with($target, $lock_dir) || isset($lockd_sockets[$target]))) {
                 $fds[] = (int) $entry;
             }
         }

@@ -102,11 +102,11 @@ TASK DISPATCH: A WRITE MAY START A WORKER
        whose hooks queue work, a mail send, an upload, an application service) does so
        exactly as it would in a web request: the row is queued, and when the worker
        pool has room a detached rsx:task:worker is started on the spot. Each of those
-       is a whole PHP process. The pool cap still holds - including after a Redis flush,
-       because a spawn is also refused while this process's own spawned workers, or the
-       workers running on this host, fill rsx.tasks.global_max_workers - but a script
-       writing tens of thousands of rows keeps that pool busy for its whole run, and
-       every one of those processes competes with the script for the CPU.
+       is a whole PHP process. The pool cap still holds - rsx-lockd counts the pool, and
+       a spawn is refused once this process's own still-running spawns, or the pool's
+       members, reach rsx.tasks.global_max_workers - but a script writing tens of
+       thousands of rows keeps that pool busy for its whole run, and every one of those
+       processes competes with the script for the CPU.
 
        A script that writes many rows turns spawning off, once, after the include:
 
@@ -121,7 +121,7 @@ TASK DISPATCH: A WRITE MAY START A WORKER
 
        Not the answer: `supervisorctl stop tasks` (that program only runs the cron
        tick; the script itself is the spawner) and rsx:maintenance:enable (it stops
-       Redis, which the script needs). Full contract: rsx:man tasks, SPAWNING OFF.
+       rsx-lockd and Redis, which the script needs). Full contract: rsx:man tasks, SPAWNING OFF.
 
 MAINTENANCE MODE
        While the maintenance flag is up, an external script is REFUSED:

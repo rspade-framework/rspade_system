@@ -43,7 +43,7 @@ $id = Task::dispatch('Report_Service', 'generate', ['month' => 12]);
 runs put the VALUE on stdout and the `$task->info()` NARRATION on stderr. Skill
 `rspade:task-commands`; `rsx:man task_commands`.
 
-`dispatch()` inserts a pending row **and**, when the task is due now and the pool has a free slot, spawns a detached worker so it starts within ~1 second. **`Task::spawn_workers(false)` makes it enqueue ONLY for the rest of the process** - the cron tick then drains the queue. A long-running script that writes many rows calls it first: every save, mail send or upload may dispatch, and each dispatch with room in the pool starts a whole PHP process (`rsx:man scripting`). **Under the test suite that switch is OFF by default** - a test drives queued work itself (`Task::internal()`, or `Artisan::call('rsx:task:worker')` in-process), and a test whose subject is the spawn opts in with `Task::spawn_workers(true)` (reset at every class boundary). The pool cap holds even when Redis has been flushed under running workers: a spawn is also refused while the process's own spawned workers, or the workers running on the host, fill `global_max_workers`. It **returns a pollable id** - for an `#[Exclusive]`/`#[Debounce]` identity that coalesces onto an already-pending run, the id of that pending row. Options: `queue` (a label), `timeout`, and `scheduled_for` - **a future `scheduled_for` is the only thing that defers the run.** `Task::internal($service, $task, $params)` runs it in-process and returns the task's value.
+`dispatch()` inserts a pending row **and**, when the task is due now and the pool has room, spawns a detached worker so it starts within ~1 second. **`Task::spawn_workers(false)` makes it enqueue ONLY for the rest of the process** - the cron tick then drains the queue. A long-running script that writes many rows calls it first: every save, mail send or upload may dispatch, and each dispatch with room in the pool starts a whole PHP process (`rsx:man scripting`). **Under the test suite that switch is OFF by default** - a test drives queued work itself (`Task::internal()`, or `Artisan::call('rsx:task:worker')` in-process), and a test whose subject is the spawn opts in with `Task::spawn_workers(true)` (reset at every class boundary). A spawn is refused once the process's own still-running spawns, or the pool's members, reach `global_max_workers` (see The worker pool). It **returns a pollable id** - for an `#[Exclusive]`/`#[Debounce]` identity that coalesces onto an already-pending run, the id of that pending row. Options: `queue` (a label), `timeout`, and `scheduled_for` - **a future `scheduled_for` is the only thing that defers the run.** `Task::internal($service, $task, $params)` runs it in-process and returns the task's value.
 
 ### `Task::status($id)` returns an ARRAY
 
@@ -90,7 +90,7 @@ $task->get_id(); $task->get_status(); $task->get_params(); $task->get_queue();
 
 **There is no `warning()`, no `progress()`, no `set_status()`, and no `is_cancelled()`.** The temp-dir accessor is `get_temp_dir()`, not `get_temp_directory()`.
 
-`heartbeat()` records a DB heartbeat AND refreshes this worker's pool slot, so a run longer than `rsx.tasks.worker_heartbeat_ttl` (90s) is not mistaken for a dead worker and pruned. Call it inside long loops.
+`heartbeat()` stamps `last_heartbeat_at` on the row for the task screens. It is optional and has **no part in worker liveness** - a worker counts as alive exactly as long as its rsx-lockd connection is open, so an hours-long task needs no keep-alive call.
 
 ---
 
@@ -128,7 +128,7 @@ Two mutually-exclusive markers guard ONE identity (`class::method`); declaring b
 | `#[Exclusive]` | at most one instance runs at a time (`== #[Debounce(0)]`) |
 | `#[Debounce(30)]` | same, and the coalesced follow-up waits 30s after the previous run **COMPLETED** |
 
-Both mean **at most one running + at most one pending** per identity. State is durable (`_tasks` rows) and cluster-safe (MySQL advisory `Task_Lock`); the cron poller is the durable backstop. A task with neither marker may run concurrently with copies of itself.
+Both mean **at most one running + at most one pending** per identity. State is durable (`_tasks` rows) and cluster-safe (`Task_Lock`, a named `RsxLocks` lock); the cron poller is the durable backstop. A task with neither marker may run concurrently with copies of itself.
 
 **They guard one identity against ITSELF.** They do not stop a *different* task, or a web request, from writing the same table. For that, take a lock:
 
@@ -154,7 +154,9 @@ finally { RsxLocks::release_lock($token); }
 
 ## The worker pool
 
-One shared pool of generic workers drains the queue, capped by `rsx.tasks.global_max_workers` (default 3) via a Redis worker-slot registry. **A slot is reserved BEFORE a worker is spawned** (live workers plus outstanding reservations, counted atomically against the cap), so a full pool starts no process at all and concurrent dispatches never over-spawn; the child converts its reservation into its slot. A reservation has no TTL - the child converts it, the spawner releases it when the spawn failed, or the cron tick releases it when the process it names is gone. A crashed worker's live slot expires after 90s.
+One shared pool of generic workers drains the queue, capped by `rsx.tasks.global_max_workers` (default 3). **The rsx-lockd daemon is the one count of workers** (`Task_Pool`): each worker holds one lifelong daemon connection, and its pool membership IS that connection - a worker that exits, crashes or is `kill -9`'d stops counting the instant its socket closes. No heartbeat, lease, TTL or reservation; a Redis flush changes nothing.
+
+The worker admits ITSELF under the **pool lock** (a FIFO mutex in the daemon): count the other members, exit if the pool is full, else join, claim a row and mark it RUNNING (`worker_pid` + `worker_member_key`), release the lock, run the task, then re-take the lock to record the outcome and claim the next - leaving the pool when nothing is left or `--max-time` passed. `Task::spawn_worker()` (dispatch and the cron tick) starts a process only when spawning is on, this process's own running spawns are below the cap, and the pool count is below it - a pre-check, since the worker's own admission is what enforces the cap. The cron tick settles a RUNNING row whose `worker_member_key` is no longer a member once it has outlived `cleanup_stuck_after` (the grace that keeps a daemon restart from reaping live work). Full contract: `rsx:man tasks` (THE WORKER POOL, STUCK TASK RECOVERY).
 
 Priority is a single order - run-now tasks first (FIFO by enqueue time), then due scheduled tasks. **`queue` is a LABEL, not worker isolation**; it no longer routes work to separate workers.
 
@@ -194,7 +196,8 @@ public static function reindex(Task_Instance $task, array $params = [])
 
 ## Troubleshooting
 
-- **Dispatched, nothing ran.** The pool was at its cap (nothing was spawned; a busy worker reaches the row next), `scheduled_for` is in the future, or you are inside a test (dispatch enqueues only). Check `rsx:tasks:list`; the cron tick picks it up regardless.
+- **Dispatched, nothing ran.** The pool was at its cap (nothing was spawned; a busy worker reaches the row next - `rsx:health` "Task Worker Pool" shows members against the cap), `scheduled_for` is in the future, this process called `Task::spawn_workers(false)`, or you are inside a test (dispatch enqueues only). Check `rsx:tasks:list`; the cron tick picks it up regardless.
+- **`Cannot reach rsx-lockd ...` from `dispatch()` or `rsx:task:process`.** The daemon is down (`rsx:health` "Lock Server"). The dispatched row IS written before the throw, so the work is queued. Running workers finish their current task, record its outcome, log `[WORKER] Lost the task pool connection ...` and exit; the next tick spawns fresh ones.
 - **A `#[Schedule]` stopped firing.** It is not terminal - look for consecutive failures on the row (`rsx:tasks:list`) and the `rsx:health` WARN.
 - **A worker warning names my task.** It ended holding a lock; add the `finally`.
 - **A subprocess hangs forever with no error.** An artisan command spawned outside `Rsx_Artisan` while the task held a lock. See `rspade:locks-and-subprocesses`.

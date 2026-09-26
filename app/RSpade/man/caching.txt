@@ -193,9 +193,9 @@ the manifest build key plus the caller's key. So two things are true at once:
   without anything being cleared.
 - A DIFFERENT DATABASE is a different keyspace. Rsx_Connection_Scope::token()
   is md5(<live default connection's database name>@<host>) - the same
-  (database, host) token RsxLocks and Task_Worker_Registry namespace their
-  state under. A process pointed at another database can neither read nor
-  overwrite this one's cache.
+  (database, host) token RsxLocks and the task worker pool (Task_Pool)
+  namespace their state under. A process pointed at another database can
+  neither read nor overwrite this one's cache.
 
 The token is read LIVE on every key build and is never memoized: a process
 that swaps the default connection mid-run (rsx:test does exactly that) must
@@ -258,7 +258,8 @@ that opens a connection points its comment there.
           rspade:public_asset:* entries. clear() empties the CURRENT database
           scope's cache keys (cache:<token>:*) and nothing else, so the keys
           this class did not write survive a cache reset.
-    DB 1  LOCKS and the task worker registry.
+    DB 1  UNUSED - nothing selects it. Locks are rsx-lockd connections and
+          flock files, and the task worker pool is counted by rsx-lockd.
     DB 2  REDUCED VOLATILITY CACHE ("RVC"). The full page cache writes here
           directly; RsxCache routes any key beginning with _RVC_ here.
           NEVER emptied by clear(). Emptied ONLY by
@@ -267,7 +268,7 @@ that opens a connection points its comment there.
     DB 3  TRANSIENT COUNTERS (Rsx_Counter) - login throttling and friends.
 
 EVICTION IS PER INSTANCE, NOT PER DATABASE. The shipped redis.conf sets
-allkeys-lru over the whole server, so a lock, a counter and a cache entry are
+allkeys-lru over the whole server, so a counter and a cache entry are
 equally evictable. Backlog B-105 tracks whether an RSpade install should
 mandate two redis instances instead.
 

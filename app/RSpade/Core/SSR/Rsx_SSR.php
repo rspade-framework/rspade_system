@@ -184,8 +184,10 @@ class Rsx_SSR
             @unlink($socket_path);
         }
 
-        // Launch as daemon — detached from PHP process tree
-        $cmd = sprintf(
+        // Launch as daemon — detached from PHP process tree. The daemon outlives this
+        // process, so it must not inherit our flock descriptors or lockd sockets: a held lock
+        // (or a task-pool membership) would otherwise stay held for the daemon's lifetime.
+        $cmd = RsxLocks::shell_prefix_without_inherited_locks() . sprintf(
             'cd %s && nohup node %s --socket=%s > /dev/null 2>&1 & echo $!',
             escapeshellarg(base_path()),
             escapeshellarg($server_script),

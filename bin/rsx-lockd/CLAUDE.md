@@ -13,7 +13,8 @@ exit codes). This file is the map of the implementation.
 |---|---|---|
 | `lockd.js` | CLI dispatch, `.env` load, pidfile, daemonize, `dump` rendering, `exec` | Only inside `main()`, only under `require.main === module` |
 | `lib/protocol.js` | Frame encode/decode, the newline splitter, HMAC hello, mode/timeout normalization, THE timeout message | **None. Pure.** |
-| `lib/locktable.js` | The entire lock state machine: holders, queues, grants, timeouts, semaphores, deadlock detection | **None.** Delivery and timers are injected. |
+| `lib/locktable.js` | The entire lock state machine: holders, queues, grants, timeouts, semaphores, deadlock detection. Owns the `Pool_Table` instance (`table.pool`) so connection cleanup cannot forget it | **None.** Delivery and timers are injected. |
+| `lib/pool.js` | Worker pool accounting (`pool.*` ops): per-pool FIFO mutex + member set, random member ids, per-connection cleanup. Bespoke - shares no code with locks/semaphores | **None.** Delivery and the member-id source are injected. |
 | `lib/server.js` | `net.Server` over unix and/or tcp, per-connection state, hello gate, frame dispatch | Binds sockets |
 | `lib/config.js` | Config search order, JSON parse, total validation | Reads the file it is told to read |
 | `lockd-run.sh` | Supervisor entry: wait for `lockd.js`, then `exec node` | Invoke as `bash lockd-run.sh` - never rely on the exec bit |
@@ -51,13 +52,29 @@ table.drop_connection('a');                                   // -> out has b gr
 request parked and the answer will arrive through `deliver`. Everything else returns a
 frame synchronously.
 
+The pool machine is reached the same way, through the table that owns it:
+
+```js
+const table = new Lock_Table({ deliver, now: () => 0, set_timeout: () => null,
+    clear_timeout: () => {}, pool_random_id: () => 'pm_test' + (++n) });
+table.pool.lock('a', {id: 1, pool: 'P'});   // -> granted frame
+table.pool.lock('b', {id: 2, pool: 'P'});   // -> null (parked)
+table.drop_connection('a');                 // -> deliver(b, granted)
+```
+
+`pool.lock` returns a frame or `null` (parked); every other pool op returns a frame.
+
 `lockd.js` also exports `parse_argv` (pure) and `load_env_file`.
 
 ## Invariants a change must not break
 
 1. **The connection is the lock.** `drop_connection()` must release every hold, remove
    every wait, and re-run grants. If you add a new kind of held thing, it must be released
-   there and in `release_all()`. This is the whole correctness model.
+   there and in `release_all()`. This is the whole correctness model. Worker pool state is
+   such a thing: both call `this.pool.drop_connection(conn_id)`, which removes the
+   connection's memberships in every pool, releases every pool lock it holds (granting
+   the next FIFO waiter) and removes its queued pool waits - answering them with an error
+   frame under `release_all`, and with nothing on a real drop (the socket is gone).
 2. **No clock on a lock.** No TTL, no lease, no renewal, no heartbeat, no sweeper. The
    only `set_timeout` on a lock path is the one armed in `_enqueue` for a caller-supplied
    timeout, and `timeout: null` must arm nothing.
@@ -85,6 +102,13 @@ frame synchronously.
 10. **Group inheritance never releases someone else's grant.** Each connection gets its
     own holder entry, so `drop_connection()` frees only what that connection acquired.
     A child dying must leave the parent holding what the parent took.
+11. **Every pool op answers exactly one frame echoing the request id.** `pool.lock` answers
+    when granted; every other pool op answers at once; a refusal is an `error` frame. A
+    pool client waits for the answer on every call, so a missing frame is a hung worker.
+12. **Pool waits never enter `conn.waits`.** The deadlock detector walks `conn.waits`;
+    pool waits live only in `lib/pool.js`. See "Worker pools" for why that is correct and
+    what keeps it correct. Membership is never keyed by conn id outside the connection's
+    lifetime: a member id is random (`pm_` + 32 hex), because conn ids restart at `c1`.
 
 ## Lock groups (subprocess inheritance)
 
@@ -112,6 +136,34 @@ The id is not part of the signed hello payload: the client signs its own claim e
 so covering it would add ceremony and no security. The HMAC key is the trust boundary -
 anything that can say hello is already trusted to name a group. The charset bound in
 `normalize_group_id()` exists so a group id is safe to print, not as a security control.
+
+## Worker pools (`lib/pool.js`)
+
+A pool is a named FIFO mutex (the pool lock) plus a set of member connections. The task
+system uses one per application (the pool name is the app's connection scope token) as its
+worker accountant: a worker takes the pool lock, counts the other members, joins if there
+is room, claims a task row, and releases the lock; a crashed worker stops being a member
+the moment its connection closes. Owner requirements it exists to meet: membership and
+the pool lock are released on disconnect whether or not the worker sent leave/unlock, and
+every pool command is acknowledged so a worker never sends one and quits unanswered.
+
+**It is bespoke on purpose.** No modes, no timeout, no group inheritance, no deadlock
+detection. Do not "unify" it with the lock or semaphore code - each of those features is
+wrong here (a timeout would let a slow claim fail; group inheritance would let a worker's
+subprocess count as the worker).
+
+**THE RULE - the reason pool waits are invisible to the deadlock detector.** While holding
+a pool lock, a process runs only pool ops and reads/writes of the rows the pool
+coordinates (the `_tasks` rows). It takes **no other blocking lock** (a non-blocking try
+is allowed), **waits on no subprocess**, and **makes no outbound call**. A pool-lock
+holder therefore never waits on anything but the database, so no wait-for cycle can pass
+through a pool lock, and there is nothing for the detector to find. Putting pool waits in
+`conn.waits` would make the detector walk edges that cannot close a cycle - and it could
+not see a real one anyway: the PHP worker holds its pool lock on a second, dedicated
+connection, and the detector has no notion of two connections belonging to one process.
+THE RULE is the only thing that makes pool waits safe. A change
+that needs to do more under the pool lock breaks THE RULE and must be redesigned, not
+accommodated by teaching the detector about pools.
 
 ## Design notes worth knowing before editing
 

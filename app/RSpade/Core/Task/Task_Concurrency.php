@@ -23,7 +23,8 @@ use App\RSpade\Core\Task\Task_Status;
  * Both mean the SAME invariant, a distributed translation of the JS debounce()
  * (Core/Js/async.js): per identity (class::method), AT MOST ONE RUNNING + AT MOST
  * ONE PENDING ("queued") execution. State is durable (`_tasks` rows) + cluster-safe
- * (MySQL advisory Task_Lock), so correctness never depends on an in-memory trigger:
+ * (Task_Lock, a named rsx-lockd lock through RsxLocks), so correctness never depends on an
+ * in-memory trigger:
  *   - running  -> the identity run-lock is held by a worker
  *   - queued   -> exactly one PENDING execution row for the identity
  *   - last_end -> the last run's completed_at
@@ -69,7 +70,7 @@ class Task_Concurrency
     }
 
     /**
-     * MySQL advisory lock name for "this identity is running" (bounded to 64 chars).
+     * Lock name for "this identity is running" (a Task_Lock / RsxLocks named lock).
      */
     public static function run_lock_name(string $class, string $method): string
     {
@@ -77,7 +78,7 @@ class Task_Concurrency
     }
 
     /**
-     * MySQL advisory lock name guarding the coalescing check-and-enqueue section.
+     * Lock name guarding the coalescing check-and-enqueue section.
      */
     public static function enqueue_lock_name(string $class, string $method): string
     {
@@ -90,7 +91,7 @@ class Task_Concurrency
      * not take the enqueue lock (a concurrent enqueuer is handling it).
      *
      * scheduled_for honors the debounce delay measured from the last completion:
-     * max(now, last_completed_at + delay). Wrapped in a cluster-safe advisory lock
+     * max(now, last_completed_at + delay). Wrapped in a cluster-safe named lock
      * so two enqueuers can never both insert.
      *
      * @return int|null

@@ -198,6 +198,7 @@ FRAMEWORK INVENTORY
         Task Schedule Failures      all
         Task Scheduler Liveness     all           WARN in development, FAIL on
                                                   a sealed build
+        Task Worker Pool            all
         Turnstile                   all
         Web Exposure                all           security, and the
                                                   development surface is the
@@ -371,7 +372,9 @@ FRAMEWORK INVENTORY
                                  the command an operator already runs. FAIL on
                                  drift, naming rsx:build --force.
         Realtime Relay           WebSocket relay reachable when enabled
-        Redis Connectivity       Redis reachable (cache, realtime, task slots)
+        Redis Connectivity       Redis reachable (cache, realtime, full page cache,
+                                 counters). The task worker pool does not use
+                                 Redis - see Task Worker Pool.
         Schema Contract          what the framework READS BY NAME on
                                  application-owned (non-underscore) tables is still
                                  there. One row per contracted table (`schema: users`,
@@ -426,6 +429,17 @@ FRAMEWORK INVENTORY
                                  of those failures is silent. The signal cannot
                                  say WHICH of a dead cron and a wedged pool is
                                  wrong, and says so.
+        Task Worker Pool         the pool as rsx-lockd accounts it (rsx:man tasks,
+                                 THE WORKER POOL): members against
+                                 rsx.tasks.global_max_workers, whether the pool
+                                 lock is held, and how many processes wait for
+                                 it. WARN when there are more members than the
+                                 cap (the cap was lowered under running workers,
+                                 or two configurations share one database and
+                                 host); FAIL when the daemon cannot be reached or
+                                 refuses pool.stats - nothing can be admitted;
+                                 INFO while the maintenance flag is up, when the
+                                 daemon is stopped on purpose.
         Turnstile                INFO when disabled; FAIL when enabled with a
                                  missing key (half-configured install)
         Web Exposure             sensitive files are NOT web-served (see below)
@@ -569,7 +583,8 @@ SEE ALSO
     rsx:man app_mode          RSX modes surfaced by the Application Mode check
     rsx:man prod              the read-only posture the INFO tree rows report on
     rsx:man storage_directories  the three trees the writability rows check
-    rsx:man tasks             the scheduler whose liveness is checked
+    rsx:man tasks             the scheduler whose liveness is checked, and the
+                              worker pool the Task Worker Pool row reads
     rsx:man locks             the lock daemon behind the Lock Server check
 
 HEALTH(1)                         RSpade Manual                         HEALTH(1)

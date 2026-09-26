@@ -166,12 +166,14 @@ that the daemon restarted underneath it.
 
 ### release_all
 
-Drops every hold and cancels every wait for this connection without closing it. Parked
+Drops every hold and cancels every wait for this connection without closing it - worker
+pool state included (pool locks, memberships, parked `pool.lock` requests). Parked
 requests are answered `error` ("Wait cancelled by release_all") rather than abandoned.
 
 ```json
 --> {"op":"release_all","id":"r4"}
-<-- {"id":"r4","status":"ok","released":3,"cancelled":0}
+<-- {"id":"r4","status":"ok","released":3,"cancelled":0,
+     "pool":{"locks_released":0,"members_removed":0,"waits_cancelled":0}}
 ```
 
 ### upgrade
@@ -230,6 +232,114 @@ point. Evicted holders are told nothing; their next `release` reports `held: fal
 <-- {"id":"r9","status":"ok","name":"STUCK","holders_cleared":1,"slots_cleared":0}
 ```
 
+### Worker pools (pool.*)
+
+A **pool** is a named set of member connections plus one FIFO mutex, the **pool lock**,
+that serializes every read and write of that set. It lets a fleet of worker processes ask
+"how many of us are there?" and "is that worker still alive?" of the one party that
+actually knows: membership belongs to the connection, so a member that exits, crashes, is
+`kill -9`'d or falls off the network stops being a member the moment its socket closes.
+There is no heartbeat, lease or reaper.
+
+The pool ops are a separate state machine (`lib/pool.js`), not built on locks or
+semaphores: the pool lock has no modes, no `timeout`, no group inheritance, and its waits
+are **not** part of the deadlock detector's wait-for graph. That is safe only because of
+one rule a pool client must keep:
+
+> **While holding a pool lock, a process runs only pool ops and reads/writes of the rows
+> the pool coordinates. It takes no other blocking lock (a non-blocking try is fine),
+> waits on no subprocess, and makes no outbound call.**
+
+A pool-lock holder therefore never waits on anything, so it can never be part of a cycle.
+
+Every pool op carries a `pool` name: 1-128 characters of `[A-Za-z0-9_.:-]`. Pools with
+different names are fully independent - different lock, different member set. Every op is
+answered with **exactly one frame** echoing the request `id`; `pool.lock` is answered when
+it is granted, everything else at once. A refusal is an `error` frame, and is an answer
+too. Every op except `pool.stats` requires the caller to hold that pool's lock.
+
+#### pool.lock
+
+```json
+--> {"op":"pool.lock","pool":"tasks:9f2c...","id":"p1"}
+<-- {"id":"p1","status":"granted","pool":"tasks:9f2c..."}
+```
+
+FIFO: granted to the head waiter only. **Waiting is silence** - a parked request gets no
+frame until it is granted, or until `release_all` on the same connection cancels it
+(`error`, "Wait cancelled by release_all"). There is no timeout. A second `pool.lock` by a
+connection that already holds or is already waiting for that pool is `error`.
+
+#### pool.unlock
+
+```json
+--> {"op":"pool.unlock","pool":"tasks:9f2c...","id":"p2"}
+<-- {"id":"p2","status":"ok","pool":"tasks:9f2c..."}
+```
+
+Hands the lock to the next waiter. `error` when the caller is not the holder.
+
+#### pool.join
+
+```json
+--> {"op":"pool.join","pool":"tasks:9f2c...","id":"p3"}
+<-- {"id":"p3","status":"ok","pool":"tasks:9f2c...","member_id":"pm_5b0e4c...(32 hex)"}
+```
+
+Makes this connection a member. `member_id` is minted from 128 random bits - never derived
+from a connection id, since those restart at `c1` whenever the daemon restarts and a
+recycled id would make a dead member look alive. Store it wherever other processes need to
+ask about this member. `error` when the caller does not hold the lock or is already a
+member of this pool.
+
+#### pool.leave
+
+```json
+--> {"op":"pool.leave","pool":"tasks:9f2c...","id":"p4"}
+<-- {"id":"p4","status":"ok","pool":"tasks:9f2c...","member_id":"pm_5b0e4c..."}
+```
+
+`error` when the caller does not hold the lock or is not a member. Leaving is the polite
+path; closing the connection does the same thing.
+
+#### pool.count
+
+```json
+--> {"op":"pool.count","pool":"tasks:9f2c...","id":"p5"}
+<-- {"id":"p5","status":"ok","pool":"tasks:9f2c...","members":3}
+```
+
+The number of members, **excluding the caller** when the caller is one - so "is there room
+for me?" is `members < max` whether or not the caller has joined yet. Requires the lock.
+
+#### pool.member_alive
+
+```json
+--> {"op":"pool.member_alive","pool":"tasks:9f2c...","member_id":"pm_5b0e4c...","id":"p6"}
+<-- {"id":"p6","status":"ok","pool":"tasks:9f2c...","member_id":"pm_5b0e4c...","alive":false}
+```
+
+Whether that member id is still a member of this pool. `false` means it left or its
+connection is gone. Requires the lock.
+
+#### pool.stats
+
+Read-only and **unlocked** - for health checks and dashboards. With a `pool` name it
+answers for that pool (a name never used is simply empty); without one it lists every live
+pool. `holder` says whether the lock is currently held.
+
+```json
+--> {"op":"pool.stats","pool":"tasks:9f2c...","id":"p7"}
+<-- {"id":"p7","status":"ok","pool":"tasks:9f2c...","members":3,"holder":false,"waiting":0}
+
+--> {"op":"pool.stats","id":"p8"}
+<-- {"id":"p8","status":"ok","pools":[{"pool":"tasks:9f2c...","members":3,"holder":false,"waiting":0}]}
+```
+
+`dump` includes every pool (holder, queue, members with their ids) and, per connection,
+which pool locks it holds, waits for and is a member of; `stats` reports the number of live
+pools as `pools`.
+
 ### ping
 
 Open before `hello` - it discloses nothing, so a health check can confirm the daemon is
@@ -245,7 +355,10 @@ answering without holding the key.
 **The connection is the lock.** On socket close or error - clean exit, crash, `kill -9`,
 or a partitioned peer detected by TCP keepalive - every lock and semaphore slot that
 connection held is released and every queue it sat in forgets it, then whatever that
-unblocks is granted. Accepted TCP sockets get `setKeepAlive(true, 30000)` so a peer that
+unblocks is granted. Worker pools follow the same rule: the connection leaves every pool it
+joined, every pool lock it held passes to that pool's next waiter, and its queued
+`pool.lock` requests are dropped - whether or not it ever sent `pool.leave` or
+`pool.unlock`. Accepted TCP sockets get `setKeepAlive(true, 30000)` so a peer that
 vanished without a FIN is eventually reaped rather than parked forever, and
 `setNoDelay(true)` because these are tiny request/response frames.
 
@@ -329,11 +442,12 @@ response frame.
 
 ```
 rsx-lockd state
-  connections: 3   locks: 2   semaphores: 0
+  connections: 3   locks: 2   semaphores: 0   pools: 1
   granted: 19   released: 17   timed_out: 1   deadlocked: 2   dropped_connections: 16
 
 c17  web-01:2346918  via 127.0.0.1:48398  up 1.4s
     HELD     WRITE SITE_1   for 1.4s
+    MEMBER   POOL  tasks:9f2c...   as pm_5b0e4c...
 
 c18  web-01:2346926  via 127.0.0.1:48406  up 0.7s
     WAITING  WRITE SITE_1   for 0.7s   (no timeout)
@@ -342,7 +456,16 @@ locks
   SITE_1
     holders: c17/write
     queue:   c18/write
+
+pools
+  tasks:9f2c...
+    lock:    free
+    queue:   empty
+    members: 1 (c17)
 ```
+
+A connection's pool state prints as `HELD     POOL  <pool>`, `WAITING  POOL  <pool>` and
+`MEMBER   POOL  <pool>   as <member_id>`.
 
 ### exec
 

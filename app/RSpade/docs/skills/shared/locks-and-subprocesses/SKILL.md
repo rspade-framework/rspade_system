@@ -1,6 +1,6 @@
 ---
 name: locks-and-subprocesses
-description: "RsxLocks and Rsx_Artisan - cluster vs system locks, named and per-site read/write locks, counting semaphores, wait-forever semantics, FIFO grants and deadlock refusal, lock groups, releasing locks at a task boundary, and the mandate that every artisan subprocess is spawned through Rsx_Artisan. Use when serializing a critical section, guarding a shared resource or tenant, capping concurrency, spawning an artisan command from PHP, asking why locks carry no lease or TTL, or debugging a hang or a \"lock daemon restarted\" warning."
+description: "RsxLocks and Rsx_Artisan - cluster vs system locks, named and per-site read/write locks, counting semaphores, wait-forever semantics, FIFO grants and deadlock refusal, lock groups, releasing locks at a task boundary, lock descriptors never inherited by a long-lived child, the task worker's separate pool connection, and the mandate that every artisan subprocess is spawned through Rsx_Artisan. Use when serializing a critical section, guarding a shared resource or tenant, capping concurrency, spawning an artisan command from PHP, asking why locks carry no lease or TTL, or debugging a hang or a \"lock daemon restarted\" warning."
 ---
 
 # Locks and Subprocesses
@@ -101,6 +101,10 @@ You never construct a group id: `Rsx_Artisan` attaches `--_lock-group=<id>` (the
 **`dispatch_detached()` does NOT propagate by default**, and its opt-in is spelled `$propagate_locks_and_i_will_wait` for a reason: two processes running concurrently under one lock destroys the exclusion both believe they have, silently. Pass it only when the caller genuinely joins the spawned process before continuing its own critical section.
 
 `ARTISAN-SPAWN-01` (`rsx:check`) enforces this. In-process `Artisan::call()` runs on the same connection, is already reentrant, and is not flagged. A framework test whose SUBJECT is the artisan entrypoint keeps its raw spawn under a rationale'd `@ARTISAN-SPAWN-01-EXCEPTION`.
+
+**No lock descriptor reaches a long-lived child.** PHP sets no close-on-exec on a socket or an flock fd, and a grant lives on the connection (a flock on the open file description) - so a child holding an inherited descriptor keeps its parent's locks alive after the parent dies. `dispatch_detached()`, the SSR daemon and the node parser daemons close every flock fd AND every open rsx-lockd socket in the child (`RsxLocks::inherited_lock_fds()`, sockets matched by inode via `Lockd_Connection::open_socket_inodes()`). A synchronous child gets its parent's locks through the lock GROUP on its own connection, never the parent's socket. A new path that starts a long-lived child uses one of those seams or `RsxLocks::command_without_inherited_locks()` / `shell_prefix_without_inherited_locks()`.
+
+**A task worker holds a second daemon connection** - its task pool connection (`Task_Pool`, lifelong, no lock group, never touched by `RsxLocks`), whose membership IS the worker's liveness. While a process holds the pool lock it runs only pool ops and `_tasks` row reads/writes: no other blocking lock (a non-blocking try is fine), no subprocess, no outbound call - pool waits are invisible to the deadlock detector. See `rspade:background-tasks` and `rsx:man locks` (THE RSX LOCKD DAEMON).
 
 ---
 

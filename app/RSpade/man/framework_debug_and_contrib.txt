@@ -1379,31 +1379,43 @@ SUBSYSTEM PRIMERS
     ONE TICK OF rsx:task:process does four things in order, and is silent
     when there is nothing to do:
 
-        1  REAP. Load every running row. If the worker pid is alive, enforce
-           the row's timeout (or the configured default; zero on both means
-           unbounded) and kill it if it is over. If the pid is dead and the
-           row has been running longer than the stuck threshold, recycle a
-           tracker back to pending and fail a one-shot. This is the only
-           place a task timeout is enforced, so its granularity is the cron
-           interval.
+        1  REAP. Under the pool lock, load every running row and ask the
+           daemon whether its worker's member id is still a pool member (a
+           row with no member id falls back to the local pid probe). A gone
+           worker whose row has run longer than the stuck threshold has its
+           tracker recycled to pending or its one-shot failed - the threshold
+           is what stops a daemon restart, which ends every membership, from
+           reaping live work. After the lock is released, a live worker whose
+           pid runs on this host is held to the row's timeout (or the
+           configured default; zero on both means unbounded) and killed if it
+           is over. This is the only place a task timeout is enforced, so its
+           granularity is the cron interval.
         2  REVIVE STRANDED SCHEDULES. Any tracker sitting in failed or
            killed goes back to pending, loudly, touching only the status -
            the failure record survives.
         3  RECONCILE SCHEDULES against the manifest: insert a missing
            tracker; delete and reinsert one whose expression changed, so the
            next run time is recomputed; delete one whose method is gone.
-        4  ADMIT AND SPAWN. If there is pending work, compute the deficit
-           between the configured worker cap and the live worker count, and
-           spawn that many detached workers.
+        4  SPAWN. If there is pending work, spawn detached workers one at a
+           time until the spawn call declines (its own spawns or the pool's
+           members have reached the cap).
 
     THE TICK NEVER BECOMES A WORKER. A worker is a separate process
-    (rsx:task:worker) that admits itself against a Redis-backed registry -
-    a single atomic script that prunes dead heartbeats and refuses when the
-    cap is reached - loops until its time budget, heartbeats each iteration,
-    and deregisters in a finally.
+    (rsx:task:worker) that holds ONE lifelong connection to the lock daemon
+    for the pool. The daemon is the pool's accountant: a named FIFO mutex
+    (the pool lock) plus a member set, where a membership belongs to the
+    connection, so a worker that dies - however it dies - stops being counted
+    at once. There is no heartbeat, lease, TTL or reservation. Under the pool
+    lock the worker counts the OTHER members, exits if the cap is reached,
+    otherwise joins; every pool op is acknowledged before the caller moves
+    on. It loops until its time budget, and leaves the pool before exiting.
 
-    DEQUEUE IS A SECOND GATE. One global named lock is held across the row
-    selection and the status flip, and RELEASED BEFORE THE TASK RUNS.
+    DEQUEUE IS UNDER THE SAME LOCK. The pool lock is held across the row
+    selection and the status flip, and RELEASED BEFORE THE TASK RUNS; the
+    outcome is recorded and the next row claimed under it again. While it is
+    held only pool ops and task-row reads and writes run - no other blocking
+    lock, no subprocess, no outbound call - because pool waits are invisible
+    to the deadlock detector.
     Priority is one-shots first, in creation order, then due trackers by next
     run time. The queue column is a LABEL - the worker does not filter on it.
 
@@ -1433,7 +1445,7 @@ SUBSYSTEM PRIMERS
     one-shot becomes failed. THE ROW NEVER PASSES THROUGH A TERMINAL STATE ON
     ITS WAY BACK TO PENDING. A kill sends a term signal, polls, then a kill
     signal, and recycles or terminates the same way. The next run time is
-    advanced BEFORE the run, under the dequeue lock, so cadence holds across
+    advanced BEFORE the run, under the pool lock, so cadence holds across
     a slow or crashed run.
 
     THERE IS NO RETRY MECHANISM. A failed one-shot stays failed. A schedule
@@ -1512,9 +1524,12 @@ SUBSYSTEM PRIMERS
     script); everything is invoked through an explicit bash, never the
     implicit /bin/sh. The synchronous forms attach the framework-internal
     --_lock-group flag so the child INHERITS the parent's cluster locks;
-    the detached form does not, and additionally closes inherited flock file
-    descriptors, because a POSIX flock lives on the open file description and
-    would otherwise be held for the child's whole life.
+    the detached form does not, and closes the parent's lock descriptors in
+    the child - flock files, because a POSIX flock lives on the open file
+    description, and lock-daemon sockets, because a grant (and a task
+    worker's pool membership) lives on the connection - or they would be held
+    for the child's whole life. The other long-lived spawns (the SSR daemon,
+    the node parser daemons) close them the same way.
 
     WHY IT IS A MANDATE: a cluster lock belongs to a CONNECTION, and a
     subprocess opens its own. A parent holding a lock while blocking in
@@ -1544,10 +1559,11 @@ SUBSYSTEM PRIMERS
       realtime, revisions.
       Colocated: Core/Task/CLAUDE.md, bin/rsx-lockd/CLAUDE.md.
       Source: Core/Task/ (Task.php, Task_Instance, Task_Status,
-      Task_Concurrency, Task_Worker_Registry, Task_Killer, Task_Lock,
+      Task_Concurrency, Task_Pool, Task_Killer, Task_Lock,
       Cleanup_Service, Task_Command_ManifestSupport, Task_Alias_Command),
       Commands/Rsx/Task_Process_Command.php, Task_Worker_Command.php,
-      Task_Run_Command.php, Core/Locks/ (RsxLocks.php, Lockd_Client.php),
+      Task_Run_Command.php, Core/Locks/ (RsxLocks.php, Lockd_Client.php,
+      Lockd_Connection.php),
       Core/Console/Rsx_Artisan.php, system/bin/rsx-lockd/,
       config/rsx.php (tasks, locks).
       Skills: rspade:background-tasks, rspade:task-commands,

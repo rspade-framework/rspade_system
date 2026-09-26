@@ -7,281 +7,206 @@
 
 namespace App\RSpade\Tests\Tasks\Php;
 
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Database\Rsx_Connection_Scope;
+use RuntimeException;
+use App\RSpade\Core\Locks\Lockd_Client;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
-use App\RSpade\Core\Task\Task_Worker_Registry;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Core\Testing\Rsx_Test_Detached_Processes;
 
 /**
- * Task_Spawn_Admission_Test - a worker is admitted BEFORE it is spawned.
+ * Task_Spawn_Admission_Test - who gets into the task worker pool, and who is never started.
  *
- * Task::spawn_worker() reserves a slot in the Redis worker registry first and starts a
- * process only when the reservation succeeded; the child converts the reservation into its
- * live slot. So a full pool starts nothing at all (no PHP boot that exists only to decline),
- * concurrent spawners can never start more than the cap between them, and a reservation is
- * released deterministically - by the child converting it, by the spawner when the spawn
- * failed, or by the reaper when the process it names is gone. No reservation carries a TTL.
+ * rsx-lockd accounts the pool (Task_Pool). A worker ADMITS ITSELF: under the pool lock it
+ * counts the other members, exits when they fill rsx.tasks.global_max_workers, and joins
+ * otherwise. Task::spawn_worker() reads the same count before starting a process, so a full
+ * pool starts nothing, and a worker whose own task dispatches counts itself. Ahead of both,
+ * the workers this process spawned that are still running cap a bulk script without a
+ * daemon round trip - exercised against a fixture process whose command line is a worker's
+ * (a php process that blocks on a FIFO until the test releases it, so it lives exactly as
+ * long as the test needs and ends deterministically).
  *
- * The registry is not the only count, because it lives in Redis and a flush empties it under
- * running workers: the spawner also refuses while the workers its own process spawned are
- * still running, and while the workers running on this host fill the cap (both read from
- * /proc). Those two are exercised against fixture processes whose command lines are a
- * worker's - a php process that blocks on a FIFO until the test releases it, so it lives
- * exactly as long as the test needs and ends deterministically.
+ * OTHER MEMBERS are simulated on a second daemon connection - RsxLocks' own (Lockd_Client) -
+ * joining this environment's pool with raw pool.* frames. It is a real member on a real
+ * connection, distinct from the Task_Pool connection the code under test uses, so the count
+ * a worker or a spawner reads includes it exactly as it would include another worker.
  *
  * And Task::spawn_workers(false) makes dispatch() enqueue ONLY - the test-suite default, which
  * a class overrides with Task::spawn_workers(true) and the harness resets at the class
  * boundary.
  *
- * Pure Redis for the registry half; the dispatch half writes _tasks rows inside the per-test
- * transaction. Other live workers and reservations are simulated by writing the registry keys
- * directly, exactly as Task_Worker_Registry_Test does.
+ * The dispatch tests write _tasks rows inside the per-test transaction; the in-process
+ * worker runs in it too, against an empty queue.
  */
 class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 {
-    private const ZSET_BASE = 'rsx:tasks:workers';
-
-    /** A pid no Linux host hands out (pid_max tops out at 4194304). */
-    private const DEAD_PID = 2147480000;
-
     // =========================================================================
-    // Reservation admission
+    // The worker admits itself
     // =========================================================================
 
     /**
-     * Reservations count against the cap exactly like live workers: a pool of two admits two
-     * reservations and refuses the third, and an unreserved worker is refused behind them.
+     * A worker that finds the pool full exits without joining: the member count is unchanged
+     * and the pool lock is free.
      */
-    public static function test_reservations_count_against_the_cap()
+    public static function test_a_worker_exits_when_the_pool_is_full()
     {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 2, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
+        config(['rsx.tasks.global_max_workers' => 1]);
 
-        static::__assert_not_null(Task_Worker_Registry::reserve_spawn(), 'the first reservation fits');
-        static::__assert_not_null(Task_Worker_Registry::reserve_spawn(), 'the second reservation fits');
-        static::__assert_null(Task_Worker_Registry::reserve_spawn(), 'the third does not - the pool is full');
-        static::__assert_equals(2, Task_Worker_Registry::reserved_count());
+        self::_phantom_join();
+        try {
+            $exit_code = Artisan::call('rsx:task:worker', ['--max-time' => 30]);
+            $output = Artisan::output();
 
-        static::__assert_equals(false, Task_Worker_Registry::admit(), 'an unreserved worker is refused behind the reservations');
+            static::__assert_equals(0, $exit_code, 'a full pool is an ordinary exit');
+            static::__assert_contains('Worker pool is full', $output);
+            static::__assert_null(Task_Pool::member_id(), 'the worker never joined');
+            static::__assert_false(Task_Pool::holds_lock(), 'and released the pool lock');
 
-        self::_reset();
+            $stats = Task_Pool::stats();
+            static::__assert_equals(1, $stats['members'], 'only the other member is in the pool');
+            static::__assert_false($stats['holder'], 'nobody holds the pool lock');
+        } finally {
+            self::_phantom_leave();
+        }
+
+        static::__assert_equals(0, Task_Pool::stats()['members'], 'the other member left');
     }
 
     /**
-     * Live workers and reservations share one count: one live worker plus one reservation
-     * fills a pool of two.
+     * Below the cap a worker joins, finds nothing to claim, and LEAVES before it returns - the
+     * pool is exactly as it was.
      */
-    public static function test_live_workers_and_reservations_share_the_cap()
+    public static function test_a_worker_below_the_cap_joins_and_leaves()
     {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 2, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
+        config(['rsx.tasks.global_max_workers' => 2]);
 
-        self::_redis()->zAdd(self::_zset_key(), time(), 'fake:live');
+        self::_phantom_join();
+        try {
+            $exit_code = Artisan::call('rsx:task:worker', ['--max-time' => 30]);
+            $output = Artisan::output();
 
-        static::__assert_not_null(Task_Worker_Registry::reserve_spawn());
-        static::__assert_null(Task_Worker_Registry::reserve_spawn(), 'live + reserved = cap');
+            static::__assert_equals(0, $exit_code);
+            static::__assert_true(
+                preg_match('/Joined the pool \((pm_[^)]+)\)/', $output, $match) === 1,
+                'the worker joined and named its member id: ' . $output
+            );
+            static::__assert_contains('No more pending tasks', $output);
+            static::__assert_null(Task_Pool::member_id(), 'the worker left');
+            static::__assert_false(Task_Pool::holds_lock(), 'and released the pool lock');
 
-        self::_reset();
-    }
-
-    /**
-     * A worker spawned under a reservation CONVERTS it: admitted even though the pool reads
-     * full (its slot was counted when it was reserved), the reservation gone, the live count
-     * one higher.
-     */
-    public static function test_admit_converts_its_reservation_into_a_live_slot()
-    {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 1, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
-
-        $token = Task_Worker_Registry::reserve_spawn();
-        static::__assert_not_null($token);
-        static::__assert_equals(false, Task_Worker_Registry::admit(), 'the pool reads full to an unreserved worker');
-
-        static::__assert_equals(true, Task_Worker_Registry::admit($token), 'the reserved worker is admitted');
-        static::__assert_equals(0, Task_Worker_Registry::reserved_count(), 'the reservation became the slot');
-        static::__assert_equals(1, Task_Worker_Registry::live_count());
-
-        self::_reset();
-    }
-
-    /**
-     * A reservation that is no longer outstanding (reclaimed before its worker started) is
-     * not a free pass: that worker competes for a slot like any other.
-     */
-    public static function test_a_reclaimed_reservation_admits_the_ordinary_way()
-    {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 1, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
-
-        self::_redis()->zAdd(self::_zset_key(), time(), 'fake:live');
-
-        static::__assert_equals(false, Task_Worker_Registry::admit('no-such-reservation'), 'full pool, no outstanding reservation');
-
-        self::_reset();
+            $stats = Task_Pool::stats();
+            static::__assert_equals(1, $stats['members'], 'the pool is back to the other member alone');
+            static::__assert_false($stats['holder']);
+        } finally {
+            self::_phantom_leave();
+        }
     }
 
     // =========================================================================
-    // Deterministic release
+    // spawn_worker() reads the pool before it starts anything
     // =========================================================================
 
     /**
-     * The spawner's release gives the slot back at once.
+     * At the cap spawn_worker() starts nothing; once the pool has room it starts a real
+     * detached worker.
      */
-    public static function test_release_returns_the_slot()
+    public static function test_spawn_worker_is_gated_on_the_pool_count()
     {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 1, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
-
-        $token = Task_Worker_Registry::reserve_spawn();
-        static::__assert_null(Task_Worker_Registry::reserve_spawn(), 'full while reserved');
-
-        Task_Worker_Registry::release_reservation($token);
-        static::__assert_equals(0, Task_Worker_Registry::reserved_count());
-        static::__assert_not_null(Task_Worker_Registry::reserve_spawn(), 'free again');
-
-        self::_reset();
-    }
-
-    /**
-     * A reservation starts owned by the spawner and is handed to the child's pid; a hand-off
-     * after the child already converted it recreates nothing.
-     */
-    public static function test_hand_off_names_the_child_and_never_resurrects()
-    {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 2, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
-
-        $host = gethostname();
-
-        $token = Task_Worker_Registry::reserve_spawn();
-        static::__assert_equals($host . ':' . getmypid(), self::_owner_of($token), 'owned by the spawner while it spawns');
-
-        Task_Worker_Registry::hand_off_reservation($token, 4242);
-        static::__assert_equals($host . ':4242', self::_owner_of($token), 'owned by the child once spawned');
-
-        static::__assert_equals(true, Task_Worker_Registry::admit($token));
-        Task_Worker_Registry::hand_off_reservation($token, 4242);
-        static::__assert_equals(0, Task_Worker_Registry::reserved_count(), 'a late hand-off does not bring a converted reservation back');
-
-        self::_reset();
-    }
-
-    /**
-     * The reaper releases a reservation whose owner is gone from THIS host, and leaves alone
-     * one whose owner still runs and one owned on another host (a pid means nothing there).
-     */
-    public static function test_reclaim_releases_only_this_hosts_dead_owners()
-    {
-        self::_reset();
-        $redis = self::_redis();
-        $key = self::_reservations_key();
-
-        $redis->hSet($key, 'dead', gethostname() . ':' . self::DEAD_PID);
-        $redis->hSet($key, 'alive', gethostname() . ':' . getmypid());
-        $redis->hSet($key, 'elsewhere', 'another-host.invalid:' . self::DEAD_PID);
-
-        static::__assert_equals(1, Task_Worker_Registry::reclaim_orphaned_reservations());
-
-        $left = $redis->hGetAll($key);
-        ksort($left);
-        static::__assert_equals(['alive', 'elsewhere'], array_keys($left));
-
-        self::_reset();
-    }
-
-    // =========================================================================
-    // Task::dispatch() under the test suite
-    // =========================================================================
-
-    /**
-     * Under the suite, dispatch() enqueues and starts nothing: the row is pending, no process
-     * was registered with the detached-process harness, and no reservation was taken.
-     */
-    public static function test_dispatch_under_the_suite_enqueues_only()
-    {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 3, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
-
-        $registry_before = self::_detached_registry();
-
-        $id = Task::dispatch('Test_Echo_Service', 'echo_params', ['probe' => 'enqueue-only']);
-
-        $row = DB::table('_tasks')->where('id', $id)->first();
-        static::__assert_not_null($row, 'the row was enqueued');
-        static::__assert_equals(Task_Status::PENDING, $row->status);
-
-        static::__assert_equals($registry_before, self::_detached_registry(), 'no detached process was started');
-        static::__assert_equals(0, Task_Worker_Registry::reserved_count(), 'no slot was reserved');
-        static::__assert_equals(false, Task::spawn_worker(), 'spawn_worker() itself declines under the suite');
-
-        self::_reset();
-    }
-
-    /**
-     * Opted in, spawn_worker() starts a real detached worker under a reservation handed to
-     * the child's pid - and once that child has exited, its reservation is gone, whichever way
-     * it went: converted by the child, or released by the reaper because its pid is gone. A
-     * reservation never outlives its process.
-     */
-    public static function test_an_opted_in_spawn_starts_a_worker_under_a_reservation()
-    {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 3, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
+        config(['rsx.tasks.global_max_workers' => 1]);
+        self::_set_spawned_pids([]);
 
         $registry_before = self::_detached_registry();
 
         Task::spawn_workers(true);
         try {
-            static::__assert_equals(true, Task::spawn_worker(), 'the opted-in spawn started a worker');
+            self::_phantom_join();
+            try {
+                static::__assert_equals(false, Task::spawn_worker(), 'the pool is full');
+                static::__assert_equals($registry_before, self::_detached_registry(), 'no process was started');
+                static::__assert_false(Task_Pool::holds_lock(), 'the count was read and the lock released');
+            } finally {
+                self::_phantom_leave();
+            }
+
+            static::__assert_equals(true, Task::spawn_worker(), 'with room, a worker is started');
         } finally {
             Task::spawn_workers(false);
         }
 
         $registered = trim(substr(self::_detached_registry(), strlen($registry_before)));
         static::__assert_true($registered !== '', 'the child was registered with the detached-process harness');
-        $child_pid = (int) explode(' ', $registered)[0];
 
-        $owners = self::_redis()->hGetAll(self::_reservations_key());
-        static::__assert_true(
-            $owners === [] || array_values($owners) === [gethostname() . ':' . $child_pid],
-            'the reservation names the child (or the child already converted it)'
-        );
-
-        // Wait for the child (and anything it spawned) to exit - the harness's own wait, with
-        // no deadline: rsx:task:worker ends as soon as it finds no pending task.
+        // Wait for the child to exit - the harness's own wait, with no deadline:
+        // rsx:task:worker ends as soon as it finds no pending task.
         Rsx_Test_Detached_Processes::contain();
 
-        Task_Worker_Registry::reclaim_orphaned_reservations();
-        static::__assert_equals(0, Task_Worker_Registry::reserved_count(), 'no reservation outlives its process');
+        static::__assert_equals(0, Task_Pool::stats()['members'], 'the worker left the pool when it exited');
+        self::_set_spawned_pids([]);
+    }
 
-        self::_reset();
+    /**
+     * A worker whose task dispatches is one of the workers: a member process counts itself,
+     * so a pool of one that it fills starts nothing.
+     */
+    public static function test_a_member_counts_itself()
+    {
+        config(['rsx.tasks.global_max_workers' => 1]);
+        self::_set_spawned_pids([]);
+
+        $registry_before = self::_detached_registry();
+
+        Task_Pool::lock();
+        Task_Pool::join();
+        Task_Pool::unlock();
+
+        Task::spawn_workers(true);
+        try {
+            static::__assert_equals(false, Task::spawn_worker(), 'this member fills the pool of one');
+            static::__assert_equals($registry_before, self::_detached_registry(), 'no process was started');
+        } finally {
+            Task::spawn_workers(false);
+            Task_Pool::lock();
+            Task_Pool::leave();
+            Task_Pool::unlock();
+        }
+    }
+
+    /**
+     * Asking for the pool lock while holding it would park this process behind itself
+     * forever; spawn_worker() refuses loudly instead.
+     */
+    public static function test_spawn_worker_refuses_under_the_pool_lock()
+    {
+        Task::spawn_workers(true);
+        Task_Pool::lock();
+        try {
+            static::__assert_throws(RuntimeException::class, fn () => Task::spawn_worker(), 'holds the task pool lock');
+        } finally {
+            Task_Pool::unlock();
+            Task::spawn_workers(false);
+        }
     }
 
     // =========================================================================
-    // Flush-proof counts: the spawner's own workers, and the host's
+    // The process-local count
     // =========================================================================
 
     /**
-     * A flushed registry with this process's own worker still running produces no spawn: the
-     * registry reads an empty pool, the host floor does not see the fixture (it carries no
-     * --_test-run, so it is outside this test's pool), and the process-local count alone
-     * refuses - before any reservation is taken or any process started.
+     * This process's own still-running spawns fill the cap: spawn_worker() refuses before it
+     * reads the pool (which is empty) or starts anything.
      */
-    public static function test_a_flushed_registry_with_our_own_worker_alive_spawns_nothing()
+    public static function test_our_own_live_workers_fill_the_cap()
     {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 1, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
+        config(['rsx.tasks.global_max_workers' => 1]);
 
-        $fixture = self::_start_fixture_worker(false);
+        $fixture = self::_start_fixture_worker();
         try {
-            static::__assert_true(Task_Worker_Registry::is_worker_process($fixture['pid']), 'the fixture reads as a worker');
-            static::__assert_equals(0, Task_Worker_Registry::host_worker_count(), 'the host floor does not count it');
-            static::__assert_equals(0, Task_Worker_Registry::live_count(), 'the registry is empty');
+            static::__assert_true(Task::is_worker_process($fixture['pid']), 'the fixture reads as a worker');
+            static::__assert_equals(0, Task_Pool::stats()['members'], 'the pool is empty');
 
             self::_set_spawned_pids([$fixture['pid']]);
             $registry_before = self::_detached_registry();
@@ -293,57 +218,39 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
                 Task::spawn_workers(false);
             }
 
-            static::__assert_equals(0, Task_Worker_Registry::reserved_count(), 'no slot was reserved');
             static::__assert_equals($registry_before, self::_detached_registry(), 'no process was started');
         } finally {
             self::_release_fixture($fixture);
             self::_set_spawned_pids([]);
         }
 
-        static::__assert_equals(false, Task_Worker_Registry::is_worker_process($fixture['pid']), 'an exited worker is not a worker');
-
-        self::_reset();
+        static::__assert_equals(false, Task::is_worker_process($fixture['pid']), 'an exited worker is not a worker');
+        static::__assert_equals(false, Task::is_worker_process(getmypid()), 'this test process is not a worker');
     }
+
+    // =========================================================================
+    // Task::dispatch() under the test suite, and the off switch
+    // =========================================================================
 
     /**
-     * The host floor: with the registry empty and this process having spawned nothing, a
-     * worker of this pool already running on the host fills a cap of one - the reservation the
-     * registry granted is given back and nothing is started.
+     * Under the suite, dispatch() enqueues and starts nothing: the row is pending and no
+     * process was registered with the detached-process harness.
      */
-    public static function test_the_host_floor_refuses_at_the_cap()
+    public static function test_dispatch_under_the_suite_enqueues_only()
     {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 1, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
-        self::_set_spawned_pids([]);
+        config(['rsx.tasks.global_max_workers' => 3]);
 
-        $fixture = self::_start_fixture_worker(true);
-        try {
-            static::__assert_equals(1, Task_Worker_Registry::host_worker_count(), 'the host floor counts this pool\'s worker');
-            static::__assert_equals(0, Task_Worker_Registry::live_count(), 'the registry is empty');
+        $registry_before = self::_detached_registry();
 
-            $registry_before = self::_detached_registry();
+        $id = Task::dispatch('Test_Echo_Service', 'echo_params', ['probe' => 'enqueue-only']);
 
-            Task::spawn_workers(true);
-            try {
-                static::__assert_equals(false, Task::spawn_worker(), 'the host is at the cap');
-            } finally {
-                Task::spawn_workers(false);
-            }
+        $row = DB::table('_tasks')->where('id', $id)->first();
+        static::__assert_not_null($row, 'the row was enqueued');
+        static::__assert_equals(Task_Status::PENDING, $row->status);
 
-            static::__assert_equals(0, Task_Worker_Registry::reserved_count(), 'the reservation was given back');
-            static::__assert_equals($registry_before, self::_detached_registry(), 'no process was started');
-        } finally {
-            self::_release_fixture($fixture);
-        }
-
-        static::__assert_equals(0, Task_Worker_Registry::host_worker_count(), 'the floor drops when the worker exits');
-
-        self::_reset();
+        static::__assert_equals($registry_before, self::_detached_registry(), 'no detached process was started');
+        static::__assert_equals(false, Task::spawn_worker(), 'spawn_worker() itself declines under the suite');
     }
-
-    // =========================================================================
-    // The off switch
-    // =========================================================================
 
     /**
      * Task::spawn_workers(false) makes dispatch() enqueue only for the rest of the process,
@@ -351,8 +258,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      */
     public static function test_the_off_switch_enqueues_without_spawning()
     {
-        self::_reset();
-        config(['rsx.tasks.global_max_workers' => 3, 'rsx.tasks.worker_heartbeat_ttl' => 90]);
+        config(['rsx.tasks.global_max_workers' => 3]);
 
         Task::spawn_workers(true);
         static::__assert_equals(true, Task::spawning_workers());
@@ -367,9 +273,6 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
         static::__assert_not_null($row, 'the row was enqueued');
         static::__assert_equals(Task_Status::PENDING, $row->status);
         static::__assert_equals($registry_before, self::_detached_registry(), 'no detached process was started');
-        static::__assert_equals(0, Task_Worker_Registry::reserved_count(), 'no slot was reserved');
-
-        self::_reset();
     }
 
     /**
@@ -392,33 +295,38 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 
     public static function teardown()
     {
-        self::_reset();
+        Task_Pool::disconnect();
+        self::_set_spawned_pids([]);
     }
 
-    private static function _redis(): \Redis
+    /**
+     * Join this environment's pool on the RsxLocks connection - a member that is not this
+     * process's Task_Pool connection. Returns its member id.
+     */
+    private static function _phantom_join(): string
     {
-        $r = new \Redis();
-        $r->connect(env('REDIS_HOST', '127.0.0.1'), (int) env('REDIS_PORT', 6379), 2.0);
-        $r->select(1);
+        self::_phantom('pool.lock', 'granted');
+        $member_id = self::_phantom('pool.join')['member_id'];
+        self::_phantom('pool.unlock');
 
-        return $r;
+        return $member_id;
     }
 
-    private static function _zset_key(): string
+    /** The phantom member leaves (under the pool lock, as the protocol requires). */
+    private static function _phantom_leave(): void
     {
-        return self::ZSET_BASE . ':' . Rsx_Connection_Scope::token();
+        self::_phantom('pool.lock', 'granted');
+        self::_phantom('pool.leave');
+        self::_phantom('pool.unlock');
     }
 
-    private static function _reservations_key(): string
+    /** One acknowledged pool op on the RsxLocks connection. */
+    private static function _phantom(string $op, string $expected_status = 'ok'): array
     {
-        return self::_zset_key() . ':reserved';
-    }
+        $response = Lockd_Client::request(['op' => $op, 'pool' => Task_Pool::pool_name()]);
+        static::__assert_equals($expected_status, $response['status'] ?? null, "{$op} on the phantom connection: " . json_encode($response));
 
-    private static function _owner_of(string $token): ?string
-    {
-        $owner = self::_redis()->hGet(self::_reservations_key(), $token);
-
-        return $owner === false ? null : $owner;
+        return $response;
     }
 
     /** The detached-process harness registry, as text ('' when absent). */
@@ -431,8 +339,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 
     /**
      * Start a process whose command line is a task worker's - this project's artisan path and
-     * rsx:task:worker, plus --_test-run when $in_this_pool - and return once it is running
-     * under that command line.
+     * rsx:task:worker - and return once it is running under that command line.
      *
      * It is a php process that opens the READY fifo for writing (which returns only when this
      * test opens it for reading - so the handshake below completes only after the fixture has
@@ -441,7 +348,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
      *
      * @return array{pid: int, ready: string, release: string}
      */
-    private static function _start_fixture_worker(bool $in_this_pool): array
+    private static function _start_fixture_worker(): array
     {
         $ready = Rsx_Project_Paths::scratch_file('task_spawn_ready', 'fifo');
         $release = Rsx_Project_Paths::scratch_file('task_spawn_release', 'fifo');
@@ -449,9 +356,6 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 
         $code = '$r = fopen($argv[1], "w"); fwrite($r, "ready\n"); fclose($r); $h = fopen($argv[2], "r"); fgets($h);';
         $argv = [PHP_BINARY, '-r', $code, '--', $ready, $release, base_path('artisan'), 'rsx:task:worker'];
-        if ($in_this_pool) {
-            $argv[] = Rsx_Test_Abstract::TEST_RUN_FLAG;
-        }
 
         $command_line = implode(' ', array_map('escapeshellarg', $argv));
         $pid = (int) trim(exec_safe($command_line . ' > /dev/null 2>&1 & echo $!'));
@@ -493,12 +397,5 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
     private static function _set_spawned_pids(array $pids): void
     {
         (new \ReflectionProperty(Task::class, 'spawned_worker_pids'))->setValue(null, $pids);
-    }
-
-    /** Drop this process's slot and clear the live ZSET and the reservation HASH. */
-    private static function _reset(): void
-    {
-        Task_Worker_Registry::deregister();
-        self::_redis()->del(self::_zset_key(), self::_reservations_key());
     }
 }

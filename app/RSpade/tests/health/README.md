@@ -50,8 +50,9 @@ Shipped in the Document Pipeline epic, Batch 5.
 - `Core/Database/Schema_Contract_Health_Checks.php` - the "Schema Contract" row over
   it, in every mode: one row per contracted table plus `schema: foreign keys`,
   `schema: rows` and `schema: semantics`. FAIL is structural, WARN is semantic.
-- `Core/Task/Task_Health_Checks.php` - #[Schedule] tracker-staleness scheduler-liveness.
-- `Core/Task/Task_Worker_Registry.php::redis_connectivity` - Redis reachability.
+- `Core/Task/Task_Health_Checks.php` - the task worker pool (`task_worker_pool`, rsx-lockd
+  `pool.stats` against the cap) and #[Schedule] tracker-staleness scheduler-liveness.
+- `Core/Cache/RsxCache.php::redis_connectivity` - Redis reachability (its own connection + PING).
 - `Core/Realtime/Realtime.php::realtime_relay` - relay TCP probe (or INFO when disabled).
 - `Core/Files/Libreoffice.php::soffice_available` - soffice presence / config-disabled posture.
 - `Core/Search/Search_Health_Checks.php::poppler_utils` - pdftotext + pdfinfo presence.

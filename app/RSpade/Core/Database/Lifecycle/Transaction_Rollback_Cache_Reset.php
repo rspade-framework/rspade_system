@@ -27,8 +27,8 @@ use App\RSpade\Core\Database\TypeRefs\Type_Ref_Registry;
  * way. Losing a cache generation costs a recompute; keeping a stale one costs correctness.
  *
  * What makes that affordable is that non-cache state does not live in the cache database:
- * locks and the task worker registry are database 1, the reduced-volatility cache is
- * database 2, and transient counters are database 3. The full map, and the _RVC_ convention,
+ * the reduced-volatility cache is database 2 and transient counters are database 3, and
+ * locks and the task worker pool are not in Redis at all (rsx-lockd). The full map, and the _RVC_ convention,
  * are documented in the RsxCache class header.
  *
  * Registered from Rsx_Framework_Provider::boot(). Kept separate from Model_Lifecycle_Emissions

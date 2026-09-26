@@ -20,7 +20,7 @@ require_once __DIR__ . '/../../helpers.php';
  * DATABASE: the current manifest build key is folded into the hashed key body, so a code
  * change invalidates the cache without anything being cleared, and the redis key itself is
  * prefixed 'cache:<Rsx_Connection_Scope::token()>:' - the (database, host) token RsxLocks
- * and Task_Worker_Registry already namespace their state under - so a process pointed at
+ * and the task worker pool already namespace their state under - so a process pointed at
  * another database can neither read nor overwrite this one's entries. See _scope_prefix().
  *
  * THE REDIS DATABASE MAP (one instance, four databases). This class is the authority; every
@@ -31,7 +31,8 @@ require_once __DIR__ . '/../../helpers.php';
  *         under 'cache:<token>:' and nothing else. It runs on every database transaction
  *         rollback (see below). Keys this class did not write - the realtime rsx_rt:* keys
  *         and AssetHandler's rspade:public_asset:* keys - therefore survive a cache reset.
- *   DB 1  LOCKS and the task worker registry (RsxLocks, Task_Worker_Registry).
+ *   DB 1  UNUSED - nothing selects it. Locks are rsx-lockd connections and flock files, and
+ *         the task worker pool is accounted by rsx-lockd (Task_Pool); neither is in Redis.
  *   DB 2  REDUCED VOLATILITY CACHE ("RVC"). Reserved. The full page cache writes here
  *         directly (Rsx_FPC and system/bin/fpc-proxy.js), and this class routes any key
  *         beginning with _RVC_ here. NEVER flushed by clear().
@@ -657,8 +658,8 @@ class RsxCache
      * the test database's _type_refs map into the DEVELOPER's 'type_refs_map' key, and the
      * dev site then 500'd with "Type ref ID 1 not found in registry" for the hour that key
      * lived. Rsx_Connection_Scope::token() reads the LIVE connection, so it cannot be
-     * fooled that way, and it is the same token RsxLocks and Task_Worker_Registry already
-     * namespace their state under.
+     * fooled that way, and it is the same token RsxLocks and Task_Pool already namespace
+     * their state under.
      *
      * NOT MEMOIZED, deliberately: the token must track a setDefaultConnection() swap
      * mid-process (rsx:test does exactly that), and a memo would answer with the scope the
@@ -668,6 +669,57 @@ class RsxCache
     private static function _scope_prefix(): string
     {
         return 'cache:' . Rsx_Connection_Scope::token() . ':';
+    }
+
+    /**
+     * rsx:health probe: is Redis reachable? Redis backs the cache, realtime, the full page
+     * cache and the transient counters - a hard framework dependency. A public static
+     * `#[Health_Check('label')]` (bare marker attribute - never a defined class).
+     *
+     * It dials its OWN connection and PINGs it rather than going through _init(): the probe
+     * must report an unreachable server as a FAIL row, where _init() fails the process.
+     *
+     * @return array
+     */
+    #[Health_Check('Redis Connectivity')]
+    public static function redis_connectivity(): array
+    {
+        $host = env('REDIS_HOST', '127.0.0.1');
+        $port = (int) env('REDIS_PORT', 6379);
+        $socket = env('REDIS_SOCKET', null);
+        $endpoint = ($socket && file_exists($socket)) ? $socket : $host . ':' . $port;
+
+        $redis = new Redis();
+
+        // The probe's expected failure is the finding itself: phpredis reports a refused or
+        // unreachable server by throwing RedisException or by returning false.
+        try {
+            $connected = ($socket && file_exists($socket))
+                ? $redis->connect($socket)
+                : $redis->connect($host, $port, 2.0);
+            $answered = $connected && $redis->ping();
+        } catch (\RedisException $e) {
+            return [
+                'status' => 'FAIL',
+                'detail' => 'cannot reach Redis at ' . $endpoint . ': ' . $e->getMessage(),
+                'remediation' => 'check REDIS_* in .env and that redis-server is running',
+            ];
+        }
+
+        if (!$answered) {
+            return [
+                'status' => 'FAIL',
+                'detail' => 'cannot reach Redis at ' . $endpoint,
+                'remediation' => 'check REDIS_* in .env and that redis-server is running',
+            ];
+        }
+
+        $redis->close();
+
+        return [
+            'status' => 'OK',
+            'detail' => 'connected to ' . $endpoint,
+        ];
     }
 
     /**

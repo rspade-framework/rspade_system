@@ -45,6 +45,8 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
   `#[Health_Check('Lock Server')]` probe
 - `system/bin/rsx-lockd/lib/protocol.js` - frames, the newline splitter, hello HMAC, THE
   timeout message
+- `system/bin/rsx-lockd/lib/pool.js` - worker pool accounting (`pool.*` ops): the pool lock,
+  membership, per-connection cleanup
 - `system/bin/rsx-lockd/lib/locktable.js` - holders, queues, grants, semaphores, deadlock
 - `system/bin/rsx-lockd/lib/server.js`, `lib/client.js`, `lib/config.js`
 - `system/bin/rsx-lockd/lockd.js` - CLI (`run`/`start`/`stop`/`dump`/`exec`)
@@ -66,6 +68,11 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
   the wait-forever regression. Plus the wire protocol through the daemon's export seam and
   PHP/node HMAC parity, and lock-group inheritance with all four of its boundaries
   (foreign group, read-vs-write, dying member, malformed id).
+  Worker pools (`lockd_pool_*.sh`): the pure state machine through the export seam
+  (`lockd_pool_unit.sh`, no daemon), every op acknowledged exactly once plus FIFO, count,
+  member_alive, name isolation and not-holder errors over the wire (`lockd_pool_protocol.sh`),
+  and membership/lock release on `kill -9`, disconnect and `release_all`
+  (`lockd_pool_death.sh`, using the `resource/lockd_pool_member.js` helper process).
 - **cli** (shell) - `lockd exec`: exit-code contract (child code, 124 timeout), `--quiet`,
   release-on-child-exit, and two concurrent execs serializing.
 
@@ -73,9 +80,10 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
 
 **Never disturb the supervised daemon.** Every shell test that needs a live daemon starts its
 OWN via `_lib/lockd_test_lib.sh`: a temp config, a scratch port picked at or above a per-test
-preferred number (6291-6297), and an EXIT trap that kills it and removes the scratch directory.
+preferred number (6291-6301), and an EXIT trap that kills it and removes the scratch directory.
 No test binds the configured port, and nothing calls `supervisorctl`. The node-side helpers
-live in `resource/` (`lockd_test_harness.js`, `lockd_holder.js`) because that basename is
+live in `resource/` (`lockd_test_harness.js`, `lockd_holder.js`,
+`lockd_pool_member.js`) because that basename is
 excluded from manifest scanning - a `module.exports` file anywhere the JS indexer looks is a
 build error.
 

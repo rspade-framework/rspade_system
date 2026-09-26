@@ -14,8 +14,8 @@ use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
-use App\RSpade\Core\Task\Task_Worker_Registry;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
@@ -130,8 +130,8 @@ class Task
      *
      * Inserts a pending _tasks row and, when the task is due now and the worker pool has
      * room, immediately spawns a detached worker so it runs within ~a second (spawn_worker():
-     * admission is reserved in the Redis worker registry BEFORE anything is started, so a
-     * full pool starts nothing). The ONLY thing that defers a run is a future
+     * the pool rsx-lockd counts is read BEFORE anything is started, so a full pool starts
+     * nothing). The ONLY thing that defers a run is a future
      * 'scheduled_for': such a one-shot waits and is picked up by the cron tick (or a later
      * spawn) once it comes due. A process that turned spawning off - and every test, unless
      * it opted in - enqueues only; see spawn_workers().
@@ -279,7 +279,8 @@ class Task
 
     /**
      * Pids of the workers THIS process spawned, pruned to the ones still running at every
-     * spawn_worker() call. Never holds more than rsx.tasks.global_max_workers entries.
+     * spawn_worker() call (is_worker_process()). Never holds more than
+     * rsx.tasks.global_max_workers entries.
      *
      * @var int[]
      */
@@ -328,35 +329,25 @@ class Task
      * Spawn a detached background worker (fire-and-forget) - if, and only if, the pool has
      * room for it.
      *
-     * THE POOL IS FULL WHEN ANY OF THREE COUNTS REACHES rsx.tasks.global_max_workers. Each is
-     * a lower bound on the number of running workers:
+     * Two refusals come before the spawn, cheapest first:
      *
-     *   1. The workers THIS process spawned that are still running (/proc, no shared state).
-     *      A flush cannot erase it, and it is what caps a script that dispatches on every
-     *      write: once its own spawns fill the cap, every further dispatch returns here, with
-     *      no Redis call and no /proc scan, until one of them exits.
-     *   2. The Redis registry - the cluster-wide gate, and the only one that ADMITS. A slot is
-     *      reserved atomically (Task_Worker_Registry::reserve_spawn(), live workers plus
-     *      outstanding reservations against the cap) before anything is started; the token
-     *      rides to the child, whose admit() converts it into its live slot. A spawn that
-     *      reports no pid releases its reservation here; a child that dies before admitting
-     *      is reclaimed by the rsx:task:process reaper.
-     *   3. The workers running on THIS host (Task_Worker_Registry::host_worker_count(), one
-     *      pass over /proc) - the floor for every OTHER process on the host (web requests,
-     *      other scripts, the cron tick) when the registry has been emptied under running
-     *      workers. Taken only once 2 has reserved, i.e. only when a spawn is about to happen:
-     *      the scan costs well under a millisecond on a quiet host and ~20 ms with 1,500
-     *      processes, which the process start it guards dwarfs. A refusal here gives the
-     *      reservation back.
+     *   1. The workers THIS process spawned that are still running (is_worker_process(),
+     *      /proc, no shared state). This is what caps a script that dispatches on every
+     *      write: once its own spawns fill the cap, every further dispatch returns here,
+     *      with no daemon round trip, until one of them exits.
+     *   2. The pool itself, counted by rsx-lockd (Task_Pool): under the pool lock, the
+     *      members OTHER than this process (count()) plus this process when it is a member
+     *      itself - a worker whose task dispatches is one of the workers. At the cap,
+     *      nothing is started.
      *
-     * 1 and 3 exist because 2 lives in Redis: a flush (a reset script, FLUSHALL, eviction)
-     * empties the live set and the reservations while the workers keep running, and with the
-     * registry alone every later dispatch then read an empty pool - a downstream field report
-     * (2026-09-26) measured 1,532 concurrent workers from one bulk import. 1 and 3 only ever
-     * REFUSE; they never admit what the registry refuses.
+     * The count is read and the lock released BEFORE the spawn: starting a process waits on
+     * a shell handshake, and nothing but pool ops and _tasks rows may run under the pool
+     * lock (Task_Pool, THE RULE). So concurrent spawners can each see room and each start a
+     * worker; the worker ADMITS ITSELF under the lock (Task_Worker_Command) and one that
+     * finds the pool full exits at once. The cap is enforced there, never here.
      *
-     * A Redis failure THROWS: the registry is the admission gate, and Redis is a hard
-     * framework dependency. Workers are generic - one pool, no queue routing.
+     * A lost or unreachable daemon THROWS: the pool is the admission count, and rsx-lockd is
+     * a hard framework dependency. Workers are generic - one pool, no queue routing.
      *
      * @return bool True when a worker was spawned; false when the pool is full or this
      *              process does not spawn workers (spawn_workers()).
@@ -367,23 +358,35 @@ class Task
             return false;
         }
 
-        $cap = Task_Worker_Registry::max_workers();
+        $cap = Task_Pool::max_workers();
 
         self::$spawned_worker_pids = array_values(array_filter(
             self::$spawned_worker_pids,
-            [Task_Worker_Registry::class, 'is_worker_process']
+            [self::class, 'is_worker_process']
         ));
         if (count(self::$spawned_worker_pids) >= $cap) {
             return false;
         }
 
-        $token = Task_Worker_Registry::reserve_spawn();
-        if ($token === null) {
-            return false;
+        // Taking the lock while holding it would park this process behind itself forever.
+        // Only a worker's claim/settle section holds it, and nothing there dispatches.
+        if (Task_Pool::holds_lock()) {
+            shouldnt_happen('Task::spawn_worker() called while this process holds the task pool lock');
         }
 
-        if (Task_Worker_Registry::host_worker_count() >= $cap) {
-            Task_Worker_Registry::release_reservation($token);
+        // THE RULE: under the pool lock, pool ops only.
+        Task_Pool::lock();
+        try {
+            $members = Task_Pool::count() + (Task_Pool::member_id() !== null ? 1 : 0);
+        } finally {
+            // A lost connection already released the lock at the daemon (and holds_lock()
+            // says so); unlocking then would only bury the real failure under a refusal.
+            if (Task_Pool::holds_lock()) {
+                Task_Pool::unlock();
+            }
+        }
+
+        if ($members >= $cap) {
             return false;
         }
 
@@ -391,26 +394,46 @@ class Task
         // lock group. A worker that ran concurrently while holding a lock this process
         // also holds would break the exclusion both of them think they have - which is
         // why propagation is opt-in and this caller does not opt in.
-        $pid = null;
-        try {
-            $pid = Rsx_Artisan::dispatch_detached(
-                'rsx:task:worker',
-                [Task_Worker_Registry::RESERVATION_FLAG . '=' . $token]
-            );
-        } finally {
-            if ($pid === null) {
-                Task_Worker_Registry::release_reservation($token);
-            }
-        }
+        $pid = Rsx_Artisan::dispatch_detached('rsx:task:worker');
 
         if ($pid === null) {
             return false;
         }
 
         self::$spawned_worker_pids[] = $pid;
-        Task_Worker_Registry::hand_off_reservation($token, $pid);
 
         return true;
+    }
+
+    /**
+     * Is this pid a running task worker of THIS project? Read from /proc/<pid>/cmdline, so it
+     * needs no shared state at all.
+     *
+     * A worker is a process whose command line names both this project's artisan path and
+     * the rsx:task:worker command - the command line Rsx_Artisan::dispatch_detached() builds.
+     * The match is on the command-line TEXT, not on exact argv tokens, so a worker is
+     * recognised from the moment it is forked: until its exec the child is a copy of the
+     * spawning bash, whose single `-c` argument carries that same text. And the command line,
+     * rather than bare pid existence, is what makes the answer safe to act on: a pid the
+     * kernel reused for an unrelated process is not a worker, and an exited worker nobody has
+     * reaped yet (a zombie) has an empty command line. A process can exit between the check
+     * and the read, and that race IS the answer "not running", so a failed read means gone.
+     *
+     * @param int $pid
+     * @return bool
+     */
+    public static function is_worker_process(int $pid): bool
+    {
+        if ($pid <= 0) {
+            return false;
+        }
+
+        $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
+        if ($cmdline === false || $cmdline === '') {
+            return false;
+        }
+
+        return str_contains($cmdline, 'rsx:task:worker') && str_contains($cmdline, base_path('artisan'));
     }
 
     /**

@@ -24,6 +24,7 @@
  */
 
 const protocol = require('./protocol');
+const { Pool_Table } = require('./pool');
 
 const MODE_READ = protocol.MODE_READ;
 const MODE_WRITE = protocol.MODE_WRITE;
@@ -54,6 +55,16 @@ class Lock_Table {
 
         this.token_seq = 0;
         this.waiter_seq = 0;
+
+        // Worker pool accounting (lib/pool.js). A separate, bespoke state machine - owned
+        // here only so that drop_connection() and release_all() cannot forget it
+        // (invariant 1). Its waits never enter conn.waits, so the deadlock detector never
+        // walks them; see CLAUDE.md, "Worker pools".
+        this.pool = options.pool || new Pool_Table({
+            deliver: (conn_id, frame) => this.deliver(conn_id, frame),
+            now: () => this.now(),
+            random_id: options.pool_random_id,
+        });
 
         // Lifetime counters, reported by stats/dump. Cheap and invaluable when a box is
         // behaving oddly at 3am.
@@ -125,7 +136,7 @@ class Lock_Table {
     drop_connection(conn_id) {
         const conn = this.connections.get(conn_id);
         if (!conn) {
-            return { released: 0, cancelled: 0 };
+            return { released: 0, cancelled: 0, pool: this.pool.drop_connection(conn_id) };
         }
 
         const touched_locks = new Set();
@@ -177,7 +188,11 @@ class Lock_Table {
         this._gc_locks(touched_locks);
         this._gc_semaphores(touched_semaphores);
 
-        return { released: released, cancelled: cancelled };
+        // Pool membership, the pool lock and queued pool waits die with the connection too.
+        // The socket is gone, so removed pool waits are answered with nothing.
+        const pool = this.pool.drop_connection(conn_id);
+
+        return { released: released, cancelled: cancelled, pool: pool };
     }
 
     // ---- Locks ----------------------------------------------------------------------
@@ -390,7 +405,24 @@ class Lock_Table {
         this._gc_locks(touched_locks);
         this._gc_semaphores(touched_semaphores);
 
-        return { id: req.id, status: protocol.STATUS_OK, released: released, cancelled: cancelled };
+        // Pool state too (invariant 1). The connection is alive, so each parked pool.lock is
+        // answered with an error frame exactly as the parked lock waits above are.
+        const pool = this.pool.drop_connection(conn_id, {
+            cancel_frame: (entry, pool_name) => ({
+                id: entry.req.id,
+                status: protocol.STATUS_ERROR,
+                pool: pool_name,
+                message: 'Wait cancelled by release_all',
+            }),
+        });
+
+        return {
+            id: req.id,
+            status: protocol.STATUS_OK,
+            released: released,
+            cancelled: cancelled,
+            pool: pool,
+        };
     }
 
     /**
@@ -639,6 +671,7 @@ class Lock_Table {
             queue_length: queue_length,
             counters: Object.assign({}, this.counters),
             connections: this.connections.size,
+            pools: this.pool.pools.size,
         };
 
         if (semaphore) {
@@ -707,6 +740,7 @@ class Lock_Table {
                 holds: holds,
                 semaphores: semaphores,
                 waiting: waiting,
+                pools: this.pool.connection_view(conn_id),
             });
         }
 
@@ -752,7 +786,9 @@ class Lock_Table {
             connections: connections,
             locks: locks,
             semaphores: semaphores,
+            pools: this.pool.dump(),
             counters: Object.assign({}, this.counters),
+            pool_counters: Object.assign({}, this.pool.counters),
         };
     }
 

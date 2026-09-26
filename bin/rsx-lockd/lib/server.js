@@ -232,6 +232,12 @@ class Lockd_Server {
             this.log('[lockd] ' + conn.id + ' closed: released ' + result.released
                 + ' hold(s), cancelled ' + result.cancelled + ' wait(s)');
         }
+        const pool = result.pool;
+        if (pool.locks_released > 0 || pool.members_removed > 0 || pool.waits_cancelled > 0) {
+            this.log('[lockd] ' + conn.id + ' closed: released ' + pool.locks_released
+                + ' pool lock(s), removed ' + pool.members_removed + ' pool membership(s), cancelled '
+                + pool.waits_cancelled + ' pool wait(s)');
+        }
     }
 
     _destroy(conn) {
@@ -301,6 +307,13 @@ class Lockd_Server {
             case 'stats':        return this.table.stats(frame);
             case 'dump':         return this.table.dump(frame);
             case 'force_clear':  return this.table.force_clear(frame);
+            case 'pool.lock':         return this.table.pool.lock(conn.id, frame);
+            case 'pool.unlock':       return this.table.pool.unlock(conn.id, frame);
+            case 'pool.join':         return this.table.pool.join(conn.id, frame);
+            case 'pool.leave':        return this.table.pool.leave(conn.id, frame);
+            case 'pool.count':        return this.table.pool.count(conn.id, frame);
+            case 'pool.member_alive': return this.table.pool.member_alive(conn.id, frame);
+            case 'pool.stats':        return this.table.pool.stats(frame);
             default:
                 return {
                     id: frame.id,

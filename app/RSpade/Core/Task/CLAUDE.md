@@ -10,8 +10,9 @@ says what is in this DIRECTORY.
 
 - `Task.php` — the public facade: `dispatch()`, `status()`, coalescing enqueue, prompt
   detached-worker spawn (`spawn_worker()`: refuse while this process's own spawned workers
-  fill the cap, reserve a slot, refuse while this host's workers fill the cap, then spawn),
-  and the process-level switch `spawn_workers(bool)` (OFF by default under the test suite).
+  fill the cap (`is_worker_process()`, `/proc`), then read the pool count under the pool lock,
+  unlock, and spawn only below the cap), and the process-level switch `spawn_workers(bool)`
+  (OFF by default under the test suite).
 - `Task_Instance.php` — the `$task` handle passed to every task method (`info`/`error`/`debug`,
   `update_progress`, `set_result`, `heartbeat`).
 - `Task_Command_ManifestSupport.php` — bakes the `#[Command]` table (`data['task_commands']`)
@@ -23,16 +24,19 @@ says what is in this DIRECTORY.
   Contract: `rsx:man task_commands`.
 - `Task_Concurrency.php` — `#[Exclusive]` / `#[Debounce]` resolution (at most one running +
   one pending per `class::method` identity).
-- `Task_Lock.php` — MySQL advisory `GET_LOCK` mutex; the cluster-safe primitive under the
-  queue itself. NOT the app-facing lock: that is `RsxLocks` (`Core/Locks/`, `rsx:man locks`).
+- `Task_Lock.php` — an object holding one named `RsxLocks` lock across control flow: the
+  `#[Exclusive]`/`#[Debounce]` enqueue and identity run locks (`Task_Concurrency`). The
+  claim itself is guarded by the task pool lock, never by a `Task_Lock`.
 - `Cron_Parser.php` — normalizes both 5-field cron and the plain-English `#[Schedule]` phrases.
-- `Task_Worker_Registry.php` — the Redis worker-slot registry enforcing
-  `rsx.tasks.global_max_workers` across the pool: a ZSET of live slots (heartbeat-scored) and
-  a HASH of spawn reservations (`token => host:pid`, no TTL) that `admit($token)` converts.
-  Also the two flush-proof counts read from `/proc` (`is_worker_process()`,
-  `host_worker_count()`), recognising a worker by its command-line text.
+- `Task_Pool.php` — the client of rsx-lockd's worker-pool accountant (`pool.*` ops,
+  `system/bin/rsx-lockd/README.md` "Worker pools"): ONE lifelong connection per process, no
+  lock group, every call acknowledged. The pool lock, membership (`join`/`leave`),
+  `count()` (excludes the caller), `member_alive()`, `stats()`, `max_workers()`, and the
+  `holds_lock()`/`member_id()` bookkeeping call sites assert with. The worker loop itself is
+  `Commands/Rsx/Task_Worker_Command.php`; the reaper is `Task_Process_Command.php`.
 - `Task_Killer.php`, `Task_Status.php`, `Task_Health_Checks.php`, `Cleanup_Service.php` —
-  kill paths, status vocabulary, `rsx:health` probes, retention pruning.
+  kill paths, status vocabulary, `rsx:health` probes (Task Worker Pool, scheduler liveness,
+  schedule failures), retention pruning.
 
 ## Invariants to keep when editing here
 
@@ -41,15 +45,27 @@ says what is in this DIRECTORY.
   `pending`, and `rsx:task:process` loudly revives any tracker found terminal.
 - **Tasks run concurrently and unguarded.** Nothing here may reintroduce a global application
   lock; a task serializes its own critical section with `RsxLocks`.
-- **Admission precedes the spawn, and a reservation is released deterministically** - by
-  the child converting it, by the spawner on a spawn that produced no pid, or by
-  `reclaim_orphaned_reservations()` (every `rsx:task:process` tick) when its owner pid is gone
-  from this host. Never give a reservation a TTL, and never spawn a worker without one - a
-  pre-spawn check that is not the admission itself lets concurrent dispatches all pass it.
-- **The registry is never the only count.** It lives in Redis, and a flush empties it under
-  running workers. The process-local and host counts in `spawn_worker()` only REFUSE, never
-  admit, and neither may be replaced by a time window or a spawn-rate budget: they are counts
-  of processes that exist, so they are right at any speed.
+- **rsx-lockd is the ONE count of workers.** A worker's membership is its pool connection:
+  it ends when the process does, however it ends, so there is no heartbeat, lease, TTL or
+  reservation anywhere, and nothing here may add one. The worker ADMITS ITSELF under the
+  pool lock (count of others < cap, then join); `spawn_worker()`'s count is only a pre-check
+  that avoids starting a process doomed to exit, and its process-local count only ever
+  REFUSES - it is a count of processes that exist, never a time window or a spawn-rate budget.
+- **THE RULE: under the pool lock, only pool ops and `_tasks` row reads/writes** (plus a
+  non-blocking try or a release of the identity run lock). No other blocking lock, no
+  subprocess, no outbound call - pool waits are invisible to the daemon's deadlock detector.
+  A process never calls `Task_Pool::lock()` while holding it (it would queue behind itself);
+  `spawn_worker()` asserts that, `claim_next_task()` asserts it HOLDS the lock.
+- **A pool socket must never reach a child.** PHP sockets are inherited, and a child holding
+  the worker's socket keeps its membership alive after it dies. Every spawn seam closes the
+  daemon sockets `Lockd_Connection::open_socket_inodes()` names
+  (`RsxLocks::inherited_lock_fds()`); a new spawn path of a long-lived child must use one.
+- **Dead-worker recovery asks the daemon.** `rsx:task:process` settles a RUNNING row whose
+  `worker_member_key` is no longer a member (after `cleanup_stuck_after`, so a daemon restart
+  never reaps live work). A row with a NULL `worker_member_key` - claimed before the pool
+  existed, or run inline by `rsx:task:process --once`, which is not a member - falls back to
+  the local `posix_kill(worker_pid, 0)` probe. Timeout kills stay pid-based and local.
+  Wherever a row's `worker_pid` is cleared, `worker_member_key` is cleared with it.
 - **The reaper's stuck-task cap is framework infrastructure, not licence to add timeouts.**
   See the no-timeout mandate.
 - Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]` classes.
