@@ -59,6 +59,8 @@ Assertions are strict (`===`); use `__assert_equals_approx()` for floats and mon
 
 `setup()`/`teardown()` run OUTSIDE the per-test transaction, so fixtures created there persist for the whole class and are `teardown()`'s job to remove.
 
+**Queued work does not run by itself under the suite.** `Task::dispatch()` (and everything that dispatches - mail, uploads, realtime emitters) enqueues and spawns no worker while a test runs. A test that asserts on the OUTCOME of queued work drives it itself - `Task::internal()`, the service method, or `Artisan::call('rsx:task:worker')` in-process; a test whose subject is the spawn opts in with `Task::spawn_workers_under_test(true)` (reset at the class boundary). `rsx:man tasks`, TESTING.
+
 **A transaction rolls back rows, not statics.** The runner clears the CLI session, `Portal_Session` and the Turnstile latch after every test - so a `Portal_Session::set_site_id()` in `setup()` does NOT survive into the tests. Declare the portal site inside each test method. A class that passes in the suite and fails standalone (or the reverse) is borrowed state, essentially always this.
 
 ## Running and narrowing

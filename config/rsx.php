@@ -326,11 +326,12 @@ return [
     | COMPILE rather than silently vanishing.
     |
     | The spelling is the one Rsx::Route() takes: a bare SPA action class name, or
-    | 'Controller::method' for a PHP route. The shipped entry is the system control
-    | panel's dashboard - the ONE sanctioned way to link to /_sys from an
-    | application page (see rsx:man sys_panel). Auth grants for these targets are
-    | exported alongside them, so Permission.can_access() answers in every bundle
-    | too.
+    | 'Controller::method' for a PHP route. The shipped entries are the system control
+    | panel's two sanctioned targets for an application page (see rsx:man sys_panel):
+    | its dashboard, the ONE way to link to /_sys, and the route that ends an
+    | impersonation the panel started, which an application's impersonation banner
+    | links to. Auth grants for these targets are exported alongside them, so
+    | Permission.can_access() answers in every bundle too.
     |
     | An application appends its own entries from /rsx/resource/config/rsx.php;
     | the two-tier merge is append-only, so the framework's entry always remains.
@@ -338,6 +339,7 @@ return [
     */
     'always_published_routes' => [
         '_Sys_Dashboard_Action',
+        '_Sys_Impersonation_Controller::stop',
     ],
 
     /*
@@ -595,22 +597,12 @@ return [
     | RSX Development Settings
     |--------------------------------------------------------------------------
     |
-    | Diagnostic flags for debugging. Override in user config for preferences.
+    | Developer conveniences. console_debug is configured under 'console_debug'
+    | below; a developer can override it for one browser from the /_sys Debug
+    | Flags screen (rsx:man console_debug).
     |
     */
     'development' => [
-        // Show detailed error messages
-        // APP_DEBUG is not read anywhere: the fallback derives from RSX_MODE, the
-        // single mode switch (see config/app.php). Config files cannot call config(),
-        // so the derivation is spelled out rather than read from app.debug.
-        'debug' => env('RSX_DEBUG', env('RSX_MODE', 'development') !== 'production'),
-
-        // Log all dispatches for debugging
-        'log_dispatches' => env('RSX_LOG_DISPATCHES', false),
-
-        // Show route matching details in error pages
-        'show_route_details' => env('RSX_SHOW_ROUTE_DETAILS', env('RSX_MODE', 'development') !== 'production'),
-
         // Whether the login form arrives with RSPADE_DEFAULT_EMAIL /
         // RSPADE_DEFAULT_PASSWORD already filled in. On or off, nothing else.
         //

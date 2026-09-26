@@ -1,0 +1,54 @@
+DEVELOPER IMPERSONATION FROM /_sys, AND THE BANNER THAT ENDS IT
+Date: 2026-09-26
+
+IF YOU DO NOTHING: nothing in your code breaks. A developer who uses "Sign in
+    as this user" on the /_sys Users screen lands in your staff app as that
+    user with no sign on the page that they are impersonating, and no way back
+    except typing /_sys/stop-impersonating.
+
+SUMMARY
+    The framework's /_sys panel (developers only, login_users.is_developer) can
+    now sign the developer in as another identity for support work, through
+    Session::begin_impersonation(). The panel owns entry and exit. The banner
+    that says "you are signed in as X" lives in the application's staff layout,
+    because only the application knows its own chrome - so it arrives in the
+    template app's /rsx/, which your fork does not receive.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    window.rsxapp.impersonation
+        Present only while impersonating: impersonator_login_user_id,
+        impersonator_email, started_at. window.rsxapp.user is already the
+        impersonated identity.
+
+    GET /_sys/stop-impersonating
+        Ends the impersonation (only when the impersonator is a developer),
+        restores the developer's site and returns to the user's panel page.
+        Link to it with Rsx.Route('_Sys_Impersonation_Controller::stop') - a
+        string carrier, the one sanctioned reference into the panel.
+
+WHAT IS MISSING IN YOUR APPLICATION
+    A banner in your staff layout while rsxapp.impersonation is set.
+
+THE REFERENCE IMPLEMENTATION
+    system/app/RSpade/resource/reference_app/theme/components/ui/impersonation_banner/Impersonation_Banner.jqhtml
+    system/app/RSpade/resource/reference_app/theme/components/ui/impersonation_banner/impersonation_banner.scss
+    system/app/RSpade/resource/reference_app/app/frontend/Frontend_Spa_Layout.jqhtml
+        (the one-line <Impersonation_Banner /> at the top of the content column)
+
+PORTING IT
+    1. Copy the two component files into rsx/theme/components/ui/impersonation_banner/.
+    2. Mount <Impersonation_Banner /> at the top of your staff SPA layout's
+       content area (and any server-rendered staff layout you keep).
+    3. Restyle it to your theme; keep the Stop link's Rsx.Route() target.
+
+    If your Main::init() calls Session::set_site_id() on every request, read
+    rsx:man sys_panel (IMPERSONATION): your site declaration wins over the
+    site the developer chose, and impersonating a user with no active
+    membership on the site you declare ends the whole session.
+
+VERIFICATION
+    As a developer, open /_sys/users/<id> for a non-developer, use "Sign in as
+    this user": your staff app shows the banner naming both identities, and
+    its Stop link returns you to /_sys/users/<id> as yourself.

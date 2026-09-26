@@ -1,23 +1,53 @@
 <%--
 _Sys_Section - a titled panel section: header strip plus padded body.
 
-$title - the header title [optional; the header is omitted without one]
+$title - the header title, plain text [optional]
 $icon="bi-gear" - a Bootstrap Icons class for the header [optional]
+$count - a count pill beside the title (a number; 0 renders honestly) [optional]
+$flush - drop the body padding for edge-to-edge content, e.g. a table [optional]
 
-Body content is written loose. Built on Bootstrap's .card so the panel's
-Bootstrap build is what paints it - the theme's variable overrides do the
-theming, not a per-component colour rule.
+<Slot:actions> - a trailing header cluster of buttons or links [optional]
+body - loose default content, OR <Slot:body> when <Slot:actions> is used
+
+The header renders only when it has something to show. Built on Bootstrap's
+.card so the panel's Bootstrap build is what paints it - the theme's variable
+overrides do the theming, not a per-component colour rule.
+
+SLOT RULE (jqhtml): with <Slot:actions> the body MUST move into <Slot:body>
+(the parser forbids loose content beside a named slot).
+
+    <_Sys_Section $title="Health" $icon="bi-heart-pulse">...</_Sys_Section>
+
+    <_Sys_Section $title="Workers" $count=_rows.length $flush=true>
+        <Slot:actions><button class="btn btn-sm btn-secondary">Refresh</button></Slot:actions>
+        <Slot:body><table class="table mb-0">...</table></Slot:body>
+    </_Sys_Section>
 --%>
 <Define:_Sys_Section class="card">
-    <% if (this.args.title || this.args.icon) { %>
+    <% const _slots = this.args._slots || {}; %>
+    <% const _has_count = this.args.count !== undefined && this.args.count !== null && this.args.count !== ''; %>
+    <% const _has_header = !!(this.args.title || this.args.icon || _has_count || _slots.actions); %>
+    <% this.$.toggleClass('_Sys_Section--flush', !!this.args.flush); %>
+    <% if (_has_header) { %>
         <div class="_Sys_Section__header card-header">
             <% if (this.args.icon) { %>
                 <i class="<%= 'bi ' + this.args.icon %>"></i>
             <% } %>
             <span class="_Sys_Section__title"><%= this.args.title %></span>
+            <% if (_has_count) { %>
+                <span class="_Sys_Section__count"><%= this.args.count %></span>
+            <% } %>
+            <% if (_slots.actions) { %>
+                <div class="_Sys_Section__actions"><%= content('actions') %></div>
+            <% } %>
         </div>
     <% } %>
-    <div class="_Sys_Section__body card-body">
-        <%= content() %>
+    <% const _body_class = '_Sys_Section__body card-body' + (this.args.flush ? ' p-0' : ''); %>
+    <div class="<%= _body_class %>">
+        <% if (_slots.body) { %>
+            <%= content('body') %>
+        <% } else { %>
+            <%= content() %>
+        <% } %>
     </div>
 </Define:_Sys_Section>

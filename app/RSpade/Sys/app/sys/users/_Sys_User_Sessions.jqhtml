@@ -1,0 +1,90 @@
+<%--
+_Sys_User_Sessions - an identity's Sessions tab: its live (active) sessions, most
+recently active first, from Session::get_sessions_for_user().
+
+$login_user_id - the identity (required)
+$email         - its email, for the confirm text (required)
+
+Self-loading (_Sys_Users_Controller.sessions); Refresh reloads this region only. Each
+row's End button signs that browser out (_Sys_Users_Controller.terminate_session) after
+a confirm, and reloads the region; the row the page is read from carries a
+terminate_refusal the button explains instead. Ending every session is the page
+header's action (_Sys_User_View_Action), which reloads this region.
+"This browser" marks the session the page is being read with - it appears only on
+your own identity. An impersonated session names the identity doing the
+impersonating, linked to its own detail screen.
+--%>
+<Define:_Sys_User_Sessions>
+<% if (this.data.loading) { %>
+    <_Sys_Section $title="Sessions" $icon="bi-laptop">
+        <Spinner class="_Sys_User_Sessions__loading" />
+    </_Sys_Section>
+<% } else if (this.data.error_data) { %>
+    <_Sys_Section $title="Sessions" $icon="bi-laptop">
+        <_Sys_Error $error_data=this.data.error_data />
+    </_Sys_Section>
+<% } else { %>
+    <% const _rows = this.data.sessions; %>
+    <_Sys_Section $title="Sessions" $icon="bi-laptop" $count=_rows.length $flush=true>
+        <Slot:actions>
+            <button type="button" class="btn btn-sm btn-secondary" data-action="refresh">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </Slot:actions>
+        <Slot:body>
+            <% if (!_rows.length) { %>
+                <_Sys_Empty_State $icon="bi-laptop" $title="No live sessions" $body="This identity is not signed in anywhere." />
+            <% } else { %>
+                <div class="table-responsive">
+                    <table class="table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Device</th>
+                                <th>IP</th>
+                                <th>Site</th>
+                                <th>Type</th>
+                                <th>Signed in</th>
+                                <th>Last active</th>
+                                <th>Impersonation</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% for (const row of _rows) { %>
+                                <tr>
+                                    <td>
+                                        <span title="<%= row.user_agent || '' %>"><%= row.device_summary %></span>
+                                        <% if (row.is_current) { %>
+                                            <span class="_Sys_User_Sessions__note">this browser</span>
+                                        <% } %>
+                                    </td>
+                                    <td class="_Sys_User_Sessions__mono"><%= row.ip_address %></td>
+                                    <td>
+                                        <% if (row.site_id !== null) { %>
+                                            <span class="_Sys_User_Sessions__mono">#<%= row.site_id %></span> <%= row.site_name || '' %>
+                                        <% } %>
+                                    </td>
+                                    <td><%= row.type_label %></td>
+                                    <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+                                    <td><%= row.last_active ? Rsx_Time.relative(row.last_active) : '' %></td>
+                                    <td>
+                                        <% if (row.impersonator_login_user_id) { %>
+                                            by <a href="<%= Rsx.Route('_Sys_User_View_Action', row.impersonator_login_user_id) %>"><%= row.impersonator_email || ('#' + row.impersonator_login_user_id) %></a>
+                                            <% if (row.impersonation_started_at) { %>
+                                                <span class="_Sys_User_Sessions__dim">since <%= Rsx_Time.format_datetime(row.impersonation_started_at) %></span>
+                                            <% } %>
+                                        <% } %>
+                                    </td>
+                                    <td class="_Sys_User_Sessions__actions">
+                                        <button type="button" class="btn btn-sm btn-danger" data-action="terminate" data-session-id="<%= row.id %>">End</button>
+                                    </td>
+                                </tr>
+                            <% } %>
+                        </tbody>
+                    </table>
+                </div>
+            <% } %>
+        </Slot:body>
+    </_Sys_Section>
+<% } %>
+</Define:_Sys_User_Sessions>

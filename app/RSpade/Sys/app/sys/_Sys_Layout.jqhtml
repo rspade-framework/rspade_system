@@ -1,23 +1,38 @@
 <%--
 _Sys_Layout - the control panel's persistent chrome.
 
-Fixed sidebar on the left, a top bar carrying the page title and the sign-out
-link, and the <main $sid="content"> element every panel action renders into.
+A sidebar column on the left, a top bar carrying the page title, the current
+action's page_actions() and the sign-out link, and the <main $sid="content">
+element every panel action renders into.
+
+The sidebar column runs the full height of the page and its contents stay in view
+while the page scrolls. On a narrow screen the sidebar collapses off-canvas behind
+the top bar's menu button (_Sys_Layout.scss owns the breakpoint).
 --%>
 <Define:_Sys_Layout>
 
-    <nav class="_Sys_Layout__sidebar">
-        <div class="_Sys_Layout__brand">
-            <i class="bi bi-hdd-rack"></i>
-            <span>RSpade System</span>
-        </div>
+    <div class="_Sys_Layout__backdrop" data-nav="close"></div>
 
-        <_Sys_Sidebar_Nav $sid="sidebar_nav" $sections=this.state.nav_sections />
+    <nav class="_Sys_Layout__sidebar" id="_sys_sidebar">
+        <div class="_Sys_Layout__sidebar-inner">
+            <div class="_Sys_Layout__brand">
+                <i class="bi bi-hdd-rack"></i>
+                <span>RSpade System</span>
+            </div>
+
+            <_Sys_Sidebar_Nav $sid="sidebar_nav" $sections=this.state.nav_sections />
+        </div>
     </nav>
 
     <div class="_Sys_Layout__content">
         <header class="_Sys_Layout__topbar">
+            <button type="button" class="_Sys_Layout__nav-toggle" data-nav="toggle" aria-label="Menu" aria-controls="_sys_sidebar" aria-expanded="false">
+                <i class="bi bi-list"></i>
+            </button>
+
             <h1 class="_Sys_Layout__page-title" $sid="page_title">&nbsp;</h1>
+
+            <div class="_Sys_Layout__page-actions" $sid="page_actions"></div>
 
             <a class="_Sys_Layout__logout" href="<%= Rsx.Route('_Sys_Controller::logout') %>">
                 <i class="bi bi-box-arrow-right"></i>

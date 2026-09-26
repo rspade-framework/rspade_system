@@ -153,7 +153,11 @@ class Manifest_Show_Command extends FrameworkDeveloperCommand
             if (!Rsx_Identifier::is_visible_to_developer($file_data['class'] ?? $file_data['view_id'] ?? '')) { continue; }
 
             if (!empty($file_data['class'])) {
-                $extends = !empty($file_data['extends']) ? ' extends ' . $file_data['extends'] : '';
+                // A visible class may extend a hidden one (a framework test fixture extending a panel
+                // base): the parent's name is withheld exactly as the class itself would be.
+                $extends = !empty($file_data['extends']) && Rsx_Identifier::is_visible_to_developer($file_data['extends'])
+                    ? ' extends ' . $file_data['extends']
+                    : '';
                 $info = $file_data['class'] . $extends;
                 
                 if ($file_data['extension'] === 'php') {

@@ -43,7 +43,7 @@ $id = Task::dispatch('Report_Service', 'generate', ['month' => 12]);
 runs put the VALUE on stdout and the `$task->info()` NARRATION on stderr. Skill
 `rspade:task-commands`; `rsx:man task_commands`.
 
-`dispatch()` inserts a pending row **and**, when the task is due now, spawns a detached worker so it starts within ~1 second. It **returns a pollable id** - for an `#[Exclusive]`/`#[Debounce]` identity that coalesces onto an already-pending run, the id of that pending row. Options: `queue` (a label), `timeout`, and `scheduled_for` - **a future `scheduled_for` is the only thing that defers the run.** `Task::internal($service, $task, $params)` runs it in-process and returns the task's value.
+`dispatch()` inserts a pending row **and**, when the task is due now and the pool has a free slot, spawns a detached worker so it starts within ~1 second. **Under the test suite it enqueues ONLY** - a test drives queued work itself (`Task::internal()`, or `Artisan::call('rsx:task:worker')` in-process), and a test whose subject is the spawn opts in with `Task::spawn_workers_under_test(true)` (reset at every class boundary). It **returns a pollable id** - for an `#[Exclusive]`/`#[Debounce]` identity that coalesces onto an already-pending run, the id of that pending row. Options: `queue` (a label), `timeout`, and `scheduled_for` - **a future `scheduled_for` is the only thing that defers the run.** `Task::internal($service, $task, $params)` runs it in-process and returns the task's value.
 
 ### `Task::status($id)` returns an ARRAY
 
@@ -154,7 +154,7 @@ finally { RsxLocks::release_lock($token); }
 
 ## The worker pool
 
-One shared pool of generic workers drains the queue, capped by `rsx.tasks.global_max_workers` (default 3) via a Redis worker-slot registry: each spawned worker atomically claims a slot and exits immediately if the pool is full. A crashed worker's slot expires after 90s.
+One shared pool of generic workers drains the queue, capped by `rsx.tasks.global_max_workers` (default 3) via a Redis worker-slot registry. **A slot is reserved BEFORE a worker is spawned** (live workers plus outstanding reservations, counted atomically against the cap), so a full pool starts no process at all and concurrent dispatches never over-spawn; the child converts its reservation into its slot. A reservation has no TTL - the child converts it, the spawner releases it when the spawn failed, or the cron tick releases it when the process it names is gone. A crashed worker's live slot expires after 90s.
 
 Priority is a single order - run-now tasks first (FIFO by enqueue time), then due scheduled tasks. **`queue` is a LABEL, not worker isolation**; it no longer routes work to separate workers.
 
@@ -194,7 +194,7 @@ public static function reindex(Task_Instance $task, array $params = [])
 
 ## Troubleshooting
 
-- **Dispatched, nothing ran.** The pool was at its cap (the spawned worker self-declines) or `scheduled_for` is in the future. Check `rsx:tasks:list`; the cron tick picks it up regardless.
+- **Dispatched, nothing ran.** The pool was at its cap (nothing was spawned; a busy worker reaches the row next), `scheduled_for` is in the future, or you are inside a test (dispatch enqueues only). Check `rsx:tasks:list`; the cron tick picks it up regardless.
 - **A `#[Schedule]` stopped firing.** It is not terminal - look for consecutive failures on the row (`rsx:tasks:list`) and the `rsx:health` WARN.
 - **A worker warning names my task.** It ended holding a lock; add the `finally`.
 - **A subprocess hangs forever with no error.** An artisan command spawned outside `Rsx_Artisan` while the task held a lock. See `rspade:locks-and-subprocesses`.

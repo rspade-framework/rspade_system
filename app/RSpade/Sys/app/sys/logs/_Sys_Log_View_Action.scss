@@ -1,0 +1,66 @@
+._Sys_Log_View_Action {
+    display: block;
+
+    &__loading {
+        display: block;
+        width: 48px;
+        height: 48px;
+        margin: 48px auto;
+    }
+
+    &__chip {
+        padding: 1px 6px;
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+        color: var(--rsx-dim);
+        font-size: 11px;
+    }
+
+    &__toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+    }
+
+    &__filter {
+        flex: 1 1 240px;
+        max-width: 420px;
+    }
+
+    &__hint,
+    &__status {
+        color: var(--rsx-dim);
+        font-size: 12px;
+    }
+
+    &__notice {
+        padding: 6px 12px;
+        border: 1px solid var(--rsx-warn);
+        border-radius: 6px;
+        color: var(--rsx-warn);
+        font-size: 12.5px;
+    }
+
+    &__pane {
+        @include rsx-text-mono;
+
+        height: calc(100vh - 300px);
+        min-height: 320px;
+        overflow: auto;
+        background: var(--rsx-bg);
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        color: var(--rsx-text);
+        font-size: 12.5px;
+        line-height: 1.5;
+    }
+
+    &__edge,
+    &__empty {
+        padding: 8px 12px;
+        color: var(--rsx-dim);
+        font-style: italic;
+        text-align: center;
+    }
+}

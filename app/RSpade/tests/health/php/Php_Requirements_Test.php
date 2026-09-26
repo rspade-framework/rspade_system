@@ -481,4 +481,23 @@ class Php_Requirements_Test extends Rsx_Test_Abstract
             rmdir($tmp);
         }
     }
+
+    /**
+     * HEALTH-PHPREQ-CLI-SAPI - Outside the CLI SAPI (the report run inside a web request,
+     * by the /_sys dashboard) the CLI tier is one INFO row naming rsx:health, never a
+     * FAIL per extension the web tier does not carry; under 'cli' it is the real check.
+     */
+    public static function test_the_cli_tier_row_is_info_outside_the_cli_sapi()
+    {
+        $web = Environment_Health_Checks::cli_tier_rows('fpm-fcgi');
+
+        static::__assert_equals(1, count($web), 'one row outside the CLI SAPI');
+        static::__assert_equals('PHP CLI Extensions', $web[0]['label']);
+        static::__assert_equals('INFO', $web[0]['status'], 'the CLI tier is unobservable from php-fpm, not failing');
+        static::__assert_true(str_contains($web[0]['detail'], 'rsx:health'), 'the row names where the tier IS checked');
+
+        foreach (Environment_Health_Checks::cli_tier_rows('cli') as $row) {
+            static::__assert_true($row['status'] !== 'INFO', 'under cli the tier is checked: ' . json_encode($row));
+        }
+    }
 }

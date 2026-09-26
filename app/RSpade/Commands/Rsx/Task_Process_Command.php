@@ -35,11 +35,11 @@ use App\RSpade\Core\Task\Cron_Parser;
  * 3. Reconciles #[Schedule] tracker rows against the manifest (create new, regenerate
  *    on a changed cron expression, delete removed) so schedule edits take effect within
  *    one tick.
- * 4. If there is pending work, spawns up to (global_max_workers - live_workers) detached
- *    workers. It does NOT become a worker itself.
+ * 4. Releases spawn reservations whose process is gone, then, if there is pending work,
+ *    spawns detached workers until the pool is full. It does NOT become a worker itself.
  *
- * Workers self-admit against the registry, so an over-spawn is harmless (excess workers
- * exit cleanly).
+ * Every spawn reserves its slot in the registry before the process is started
+ * (Task::spawn_worker()), so a full pool starts nothing.
  */
 class Task_Process_Command extends Command
 {
@@ -55,9 +55,9 @@ class Task_Process_Command extends Command
      * lines that matter. There is deliberately no "starting"/"complete" pair.
      *
      * Everything below still speaks up, because everything below is CONDITIONAL: a
-     * stuck task, a timeout, a stranded schedule and an unreadable worker registry
-     * all warn; a schedule actually registered, changed or removed says so; a spawn
-     * says so when there was work to spawn for. --once is a testing flag and narrates
+     * stuck task, a timeout, a stranded schedule and a reclaimed spawn reservation
+     * all warn (an unreachable worker registry throws); a schedule actually registered,
+     * changed or removed says so; a spawn says so when it started a worker. --once is a testing flag and narrates
      * itself. Keep it that way - problems and real events, never a heartbeat.
      */
     public function handle()
@@ -293,34 +293,33 @@ class Task_Process_Command extends Command
     /**
      * Spawn detached workers to cover pending work, up to the pool cap.
      *
-     * deficit = global_max_workers - live_workers (from the Redis registry). Each spawned
-     * worker self-admits against the registry, so over-spawning is safe. Redis is required;
-     * if the registry cannot be read this tick, we skip spawning and retry next tick.
+     * First the reaper half of spawn admission: reservations whose owner process is gone
+     * from this host are released (Task_Worker_Registry::reclaim_orphaned_reservations()).
+     * Then workers are spawned one at a time until the pool declines - each spawn reserves
+     * its slot atomically before anything is started, so this tick, concurrent dispatches and
+     * other hosts' ticks together never start more than the cap. A Redis failure throws:
+     * the registry is the admission gate, and Redis is a hard dependency.
      */
     private function spawn_deficit_workers(): void
     {
+        $reclaimed = Task_Worker_Registry::reclaim_orphaned_reservations();
+        if ($reclaimed > 0) {
+            $this->warn("[WORKER SPAWN] Released {$reclaimed} spawn reservation(s) whose worker process is gone");
+        }
+
         if (!$this->has_pending_work()) {
             return;
         }
 
         $max = (int) config('rsx.tasks.global_max_workers', 1);
 
-        try {
-            $deficit = $max - Task_Worker_Registry::live_count();
-        } catch (\Throwable $e) {
-            // Redis is a hard dependency; if the registry is unreadable mid-tick, skip
-            // spawning (a spawned worker would fail at bootstrap too). The next tick retries.
-            $this->warn('[WORKER SPAWN] Could not read worker registry (' . $e->getMessage() . '); skipping this tick');
-            return;
+        $spawned = 0;
+        while ($spawned < $max && Task::spawn_worker()) {
+            $spawned++;
         }
 
-        if ($deficit <= 0) {
-            return;
-        }
-
-        $this->info("[WORKER SPAWN] Pending work present; spawning {$deficit} worker(s)");
-        for ($i = 0; $i < $deficit; $i++) {
-            Task::spawn_worker();
+        if ($spawned > 0) {
+            $this->info("[WORKER SPAWN] Pending work present; spawned {$spawned} worker(s)");
         }
     }
 

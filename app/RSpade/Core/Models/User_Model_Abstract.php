@@ -526,17 +526,52 @@ abstract class User_Model_Abstract extends Rsx_Site_Actor_Model_Abstract
     // =========================================================================
 
     /**
-     * Check if user is active in this site
+     * Is this an ACTIVE membership - one the identity may sign in to and use?
+     *
+     * THE FRAMEWORK'S ONE DEFINITION of a usable membership, and a two-switch answer: the
+     * membership itself is enabled and not deleted (users.is_enabled), AND the site it belongs
+     * to is enabled and not deleted (sites.is_enabled, Site_Model::is_active()). Either switch
+     * off means the membership is unusable. scopeActive() is the same definition as a query;
+     * RsxAuth::has_enabled_membership(), Session::enforce_enabled_membership() and
+     * Rsx_Api_Bearer all ask one of the two, so an application never restates either switch.
+     *
+     * Reads the site through the site() relationship, so the site row is loaded once per
+     * instance and a trashed site (hidden by its SoftDeletes scope) answers false.
      *
      * @return bool
      */
     public function is_active()
     {
-        return $this->is_enabled && !$this->trashed();
+        if (!$this->is_enabled || $this->trashed()) {
+            return false;
+        }
+
+        $site = $this->site;
+
+        return $site !== null && $site->is_active();
     }
 
     /**
-     * Scope to only get enabled site users
+     * Scope to ACTIVE memberships - is_active() as a query.
+     *
+     * users.is_enabled is true AND the membership's site is enabled and not deleted. This is
+     * the query every "which memberships may this identity use" question runs, sign-in
+     * included (RsxAuth::has_enabled_membership()), and the filter a site picker lists and
+     * accepts from.
+     *
+     * @param \Illuminate\Database\Eloquent\Builder $query
+     * @return \Illuminate\Database\Eloquent\Builder
+     */
+    public function scopeActive($query)
+    {
+        return $query->where('is_enabled', true)
+            ->whereIn('site_id', Site_Model::query()->where('is_enabled', true)->select('id'));
+    }
+
+    /**
+     * Scope to memberships whose own switch (users.is_enabled) is on, whatever their site's
+     * state. A membership is USABLE only when its site is enabled too - that question is
+     * scopeActive().
      *
      * @param \Illuminate\Database\Eloquent\Builder $query
      * @return \Illuminate\Database\Eloquent\Builder

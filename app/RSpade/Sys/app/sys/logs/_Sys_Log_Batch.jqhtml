@@ -1,0 +1,44 @@
+<%--
+_Sys_Log_Batch - one read's entries, as the viewer (_Sys_Log_View_Action) appends or
+prepends them: a window, an earlier page, or a Follow poll's new lines.
+
+$entries - the entries _Sys_Log_Reader answered (required)
+$format  - laravel | csp | plain (required)
+
+    laravel - a level pill, the time and env, the message; the lines under the
+              header (a stack trace) fold under it. An entry with no header in the
+              window is drawn as "continued".
+    csp     - each violation report pretty-printed; a line that is not JSON as-is.
+    plain   - one line per entry.
+
+Every piece of log content is written through the escaping interpolation - text,
+never markup.
+--%>
+<Define:_Sys_Log_Batch>
+<% for (const _e of this.args.entries) { %>
+    <% if (this.args.format === 'laravel') { %>
+        <div class="_Sys_Log_Batch__entry">
+            <div class="_Sys_Log_Batch__head">
+                <% if (_e.continued) { %>
+                    <span class="_Sys_Log_Batch__level _Sys_Log_Batch__level--muted">continued</span>
+                <% } else { %>
+                    <span class="_Sys_Log_Batch__level _Sys_Log_Batch__level--<%= _Sys_Log_Batch.tone_for(_e.level) %>"><%= _e.level %></span>
+                    <span class="_Sys_Log_Batch__time"><%= _e.time %></span>
+                    <span class="_Sys_Log_Batch__env"><%= _e.env %></span>
+                <% } %>
+                <span class="_Sys_Log_Batch__text"><%= _e.text %></span>
+            </div>
+            <% if (_e.body.length) { %>
+                <details class="_Sys_Log_Batch__body">
+                    <summary><%= _e.body.length %> more line<%= _e.body.length === 1 ? '' : 's' %></summary>
+                    <pre class="_Sys_Log_Batch__pre"><%= _e.body.join('\n') %></pre>
+                </details>
+            <% } %>
+        </div>
+    <% } else if (this.args.format === 'csp') { %>
+        <pre class="_Sys_Log_Batch__entry _Sys_Log_Batch__pre _Sys_Log_Batch__json"><%= _e.pretty !== null ? _e.pretty : _e.text %></pre>
+    <% } else { %>
+        <div class="_Sys_Log_Batch__entry _Sys_Log_Batch__line"><%= _e.text %></div>
+    <% } %>
+<% } %>
+</Define:_Sys_Log_Batch>

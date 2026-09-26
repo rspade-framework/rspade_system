@@ -31,7 +31,9 @@ throws) is listed in `config('rsx.always_published_routes')`; `BundleCompiler` r
 patterns from the manifest at compile time into EVERY bundle's route table, and
 `Auth_Gates::export_published_route_grants()` ships its grants on every page as
 `window.rsxapp.auth_routes_published` (always present, explicit `0`s, unlike the opt-in
-`auth_routes`). So `Rsx.Route()` and `Permission.can_access()` both answer for it anywhere. A
+`auth_routes`). So `Rsx.Route()` and `Permission.can_access()` both answer for it anywhere. The
+same list publishes `_Sys_Impersonation_Controller::stop` (`GET /_sys/stop-impersonating`) for
+an application's impersonation banner. A
 configured target with no manifest routes FAILS THE COMPILE. **The published map is attached
 AFTER `__filter_underscore_keys()`** in `Rsx_Bundle_Abstract` — that filter strips
 `_`-prefixed PAYLOAD FIELDS, and these keys are route targets whose reserved prefix is the
@@ -40,7 +42,9 @@ point.
 **Modified ONLY here**, on a box with `IS_FRAMEWORK_DEVELOPER=true`; downstream all of
 `system/` is reset by `rsx:framework:pull`, and a panel change is a framework change request.
 The panel's own gate is `is_sysadmin` on `Permission_Abstract` (`#[Replaceable]`, body =
-`Session::is_developer()`); its switch is `rsx.sys_panel.enabled`.
+`Session::is_developer()`) on every surface save that stop route (`is_logged_in`: while
+impersonating the effective identity is never a developer, so its body checks the
+impersonator); its switch is `rsx.sys_panel.enabled`.
 
 Deep docs live beside the code: `Sys/CLAUDE.md`, `Sys/app/sys/CLAUDE.md`,
 `Sys/app/apidocs/CLAUDE.md`. Contract tier: `rsx:man sys_panel`; skill `rspade:sys-panel`.

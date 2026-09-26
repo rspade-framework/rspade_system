@@ -1,0 +1,65 @@
+._Sys_Stat_Tile {
+    --tile-tone: var(--rsx-border);
+
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 14px 16px;
+    background: var(--rsx-surface);
+    border: 1px solid var(--rsx-border);
+    border-left: 3px solid var(--tile-tone);
+    border-radius: 6px;
+    min-width: 0;
+
+    &--ok { --tile-tone: var(--rsx-success); }
+    &--warn { --tile-tone: var(--rsx-warn); }
+    &--fail { --tile-tone: var(--rsx-danger); }
+    &--info { --tile-tone: var(--rsx-accent); }
+    &--muted { --tile-tone: var(--rsx-border); }
+
+    &__label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--rsx-muted);
+        opacity: 0.85;
+    }
+
+    &__value {
+        font-size: 22px;
+        font-weight: 600;
+        line-height: 1.2;
+        overflow-wrap: anywhere;
+    }
+
+    &--ok &__value { color: var(--rsx-success); }
+    &--warn &__value { color: var(--rsx-warn); }
+    &--fail &__value { color: var(--rsx-danger); }
+    &--info &__value { color: var(--rsx-accent); }
+
+    &__sub {
+        font-size: 12px;
+        color: var(--rsx-muted);
+        opacity: 0.75;
+        overflow-wrap: anywhere;
+    }
+
+    // The whole tile is the hit area: the anchor is stretched over it.
+    &__link {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        border-radius: inherit;
+    }
+
+    &--link:hover {
+        border-color: var(--rsx-accent);
+        border-left-color: var(--tile-tone);
+        background: var(--rsx-raised);
+    }
+}

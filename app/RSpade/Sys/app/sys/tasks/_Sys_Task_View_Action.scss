@@ -1,0 +1,18 @@
+._Sys_Task_View_Action {
+    display: block;
+
+    &__loading {
+        display: block;
+        width: 48px;
+        height: 48px;
+        margin: 48px auto;
+    }
+
+    &__cron {
+        padding: 1px 6px;
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+        color: var(--rsx-dim);
+        font-size: 11px;
+    }
+}

@@ -55,15 +55,23 @@ class _Sys_Sidebar_Nav extends Component {
     }
 
     /**
-     * The panel's dashboard lives at the tree root ('/_sys'), so a prefix match
-     * would mark it active on every page. An exact match is what a one-level
-     * navigation actually needs.
+     * A link is active on its own URL and on every URL beneath it, so a screen's
+     * detail pages (/_sys/tasks/12) keep the screen's entry lit. The dashboard is
+     * the exception: it lives at the tree root ('/_sys'), so a prefix match would
+     * mark it active on every page - a one-segment link matches exactly.
      */
     is_url_active(url, current_path = null) {
         if (current_path === null) {
             current_path = window.location.pathname;
         }
 
-        return current_path.replace(/\/+$/, '') === String(url || '').replace(/\/+$/, '');
+        const path = current_path.replace(/\/+$/, '');
+        const link = String(url || '').replace(/\/+$/, '');
+
+        if (path === link) {
+            return true;
+        }
+
+        return link.split('/').length > 2 && path.startsWith(link + '/');
     }
 }

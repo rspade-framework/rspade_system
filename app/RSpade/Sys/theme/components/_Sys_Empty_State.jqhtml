@@ -1,0 +1,27 @@
+<%--
+_Sys_Empty_State - an empty region: icon, headline, reason, optional action.
+
+$icon="bi-inbox" - a large muted Bootstrap Icons class [optional]
+$title - the headline, plain text (required)
+$body - the reason line, plain text [optional]
+
+<Slot:cta> - a call-to-action button or link [optional]
+
+A zero-row list or table renders this, never bare text or a silent blank.
+
+    <_Sys_Empty_State $icon="bi-list-check" $title="No failed tasks" $body="Nothing has failed in the last 24 hours." />
+--%>
+<Define:_Sys_Empty_State tag="div">
+    <% if (!this.args.title) throw new Error('_Sys_Empty_State requires $title'); %>
+    <% const _slots = this.args._slots || {}; %>
+    <% if (this.args.icon) { %>
+        <i class="<%= '_Sys_Empty_State__icon bi ' + this.args.icon %>"></i>
+    <% } %>
+    <div class="_Sys_Empty_State__title"><%= this.args.title %></div>
+    <% if (this.args.body) { %>
+        <div class="_Sys_Empty_State__body"><%= this.args.body %></div>
+    <% } %>
+    <% if (_slots.cta) { %>
+        <div class="_Sys_Empty_State__cta"><%= content('cta') %></div>
+    <% } %>
+</Define:_Sys_Empty_State>

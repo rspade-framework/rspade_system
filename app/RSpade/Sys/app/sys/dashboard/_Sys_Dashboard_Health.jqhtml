@@ -1,0 +1,79 @@
+<%--
+_Sys_Dashboard_Health - the rsx:health report for this box, as a panel section.
+
+Self-loading (_Sys_Dashboard_Controller.health -> Health_Check_Runner::report()).
+Rows are grouped FAIL, WARN, INFO, OK with a count per group; each row shows its
+label, status, detail and - when the check names one - its remediation, which is
+open by default on a failing or warning row and folded on the rest. The passing
+group is folded as a whole. Checks whose declared modes exclude this box's mode are
+listed by label at the foot.
+
+The header's "Re-run checks" reloads this region only (see the .js).
+--%>
+<Define:_Sys_Dashboard_Health>
+<%
+    const _busy = this.data.loading || this.state.rerunning;
+    const _report = this.data.report;
+%>
+<_Sys_Section $title="Health" $icon="bi-heart-pulse" $count=(_busy || !_report ? null : _report.rows.length)>
+    <Slot:actions>
+        <% const _rerun_label = _busy ? 'Running checks...' : 'Re-run checks'; %>
+        <button type="button" class="btn btn-sm btn-secondary" data-action="rerun" <% if (_busy) { %>disabled="disabled"<% } %>>
+            <i class="bi bi-arrow-repeat"></i> <%= _rerun_label %>
+        </button>
+    </Slot:actions>
+    <Slot:body>
+        <% if (_busy) { %>
+            <div class="_Sys_Dashboard_Health__loading">
+                <Spinner class="_Sys_Dashboard_Health__spinner" />
+                <div class="_Sys_Dashboard_Health__loading_text">Running every health check - the active probes can take several seconds.</div>
+            </div>
+        <% } else if (this.data.error_data) { %>
+            <_Sys_Error $error_data=this.data.error_data />
+        <% } else { %>
+            <% const _groups = _Sys_Dashboard_Health.group_rows(_report.rows); %>
+            <div class="_Sys_Dashboard_Health__summary">
+                <% for (const _g of _groups) { %>
+                    <span class="_Sys_Dashboard_Health__tally">
+                        <_Sys_Status_Badge $status=_g.tone $label=_g.status />
+                        <span class="_Sys_Dashboard_Health__tally_count"><%= _g.rows.length %></span>
+                    </span>
+                <% } %>
+                <span class="_Sys_Dashboard_Health__mode">mode: <%= _report.mode %></span>
+            </div>
+            <% for (const _g of _groups) { %>
+                <% if (_g.rows.length === 0) continue; %>
+                <details class="_Sys_Dashboard_Health__group" <% if (_g.status !== 'OK') { %>open="open"<% } %>>
+                    <summary class="_Sys_Dashboard_Health__group_title">
+                        <i class="bi bi-chevron-right _Sys_Dashboard_Health__chevron"></i>
+                        <%= _g.title %>
+                        <span class="_Sys_Dashboard_Health__group_count"><%= _g.rows.length %></span>
+                    </summary>
+                    <div class="_Sys_Dashboard_Health__rows">
+                        <% for (const _row of _g.rows) { %>
+                            <div class="_Sys_Dashboard_Health__row">
+                                <div class="_Sys_Dashboard_Health__row_head">
+                                    <_Sys_Status_Badge $status=_g.tone $label=_row.status />
+                                    <span class="_Sys_Dashboard_Health__label"><%= _row.label %></span>
+                                    <span class="_Sys_Dashboard_Health__detail"><%= _row.detail %></span>
+                                </div>
+                                <% if (_row.remediation) { %>
+                                    <details class="_Sys_Dashboard_Health__remediation" <% if (_g.status === 'FAIL' || _g.status === 'WARN') { %>open="open"<% } %>>
+                                        <summary><i class="bi bi-chevron-right _Sys_Dashboard_Health__chevron"></i> Remediation</summary>
+                                        <div class="_Sys_Dashboard_Health__remediation_text"><%= _row.remediation %></div>
+                                    </details>
+                                <% } %>
+                            </div>
+                        <% } %>
+                    </div>
+                </details>
+            <% } %>
+            <% if (_report.skipped.length) { %>
+                <div class="_Sys_Dashboard_Health__skipped">
+                    Not applicable in <%= _report.mode %> mode, so not run: <%= _report.skipped.join(', ') %>
+                </div>
+            <% } %>
+        <% } %>
+    </Slot:body>
+</_Sys_Section>
+</Define:_Sys_Dashboard_Health>

@@ -1,0 +1,32 @@
+<%--
+_Sys_Code_Pane - a monospace pane for text DATA: a log excerpt, a JSON document,
+a stack trace, a raw body.
+
+$json - any value; rendered as indented JSON [optional]
+$text - a string, shown exactly as received [optional]
+$pretty - with $text: re-indent it when it parses as JSON, leave it alone when
+          it does not (a response body, a stored payload) [optional]
+$label - a caption strip above the pane, plain text [optional]
+$max_height=420 - the pane scrolls past this many px; 0 = grow to fit [optional]
+
+Pass $json OR $text. Neither, null or '' renders a muted "(empty)" line, so an
+absent value is visibly absent. The text is written as TEXT, never markup.
+
+    <_Sys_Code_Pane $label="Params" $json=_task.params />
+    <_Sys_Code_Pane $text=_body $pretty=true $max_height=0 />
+--%>
+<Define:_Sys_Code_Pane>
+    <%
+        const _text = _Sys_Code_Pane.text_of(this.args);
+        const _max = this.args.max_height === undefined ? 420 : int(this.args.max_height);
+        const _style = _max > 0 ? 'max-height: ' + _max + 'px' : '';
+    %>
+    <% if (this.args.label) { %>
+        <div class="_Sys_Code_Pane__label"><%= this.args.label %></div>
+    <% } %>
+    <% if (_text === '') { %>
+        <div class="_Sys_Code_Pane__empty">(empty)</div>
+    <% } else { %>
+        <pre class="_Sys_Code_Pane__pre" style="<%= _style %>"><%= _text %></pre>
+    <% } %>
+</Define:_Sys_Code_Pane>

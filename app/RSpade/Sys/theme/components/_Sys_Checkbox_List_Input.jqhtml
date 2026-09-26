@@ -1,0 +1,33 @@
+<%--
+_Sys_Checkbox_List_Input - a set of checkboxes for a panel form; its value is the LIST
+of checked values.
+
+$name - the form field name (required inside an <Rsx_Form>)
+$options - [{value, label, hint?}] or ['a', 'b'] (a bare string is its own label); hint
+           is a muted note after the label, plain text (required)
+$disabled - render disabled; val() still reads and writes it [optional]
+
+val() answers the checked values in option order, as strings ([] when none);
+val(['A', 'B']) checks exactly those, and a value matching no option is ignored.
+"All" and "None" check and clear every box.
+
+    <_Sys_Checkbox_List_Input $name="channels"
+        $options=([{value: 'AUTH', label: 'AUTH', hint: 'php 5'}, 'DISPATCH']) />
+--%>
+<Define:_Sys_Checkbox_List_Input>
+    <div class="_Sys_Checkbox_List_Input__tools">
+        <button type="button" class="btn btn-link btn-sm p-0" data-action="all" <% if (this.args.disabled) { %>disabled<% } %>>All</button>
+        <button type="button" class="btn btn-link btn-sm p-0" data-action="none" <% if (this.args.disabled) { %>disabled<% } %>>None</button>
+    </div>
+    <div class="_Sys_Checkbox_List_Input__grid">
+        <% for (const _opt of _Sys_Checkbox_List_Input.normalize_options(this.args.options)) { %>
+            <label class="_Sys_Checkbox_List_Input__option form-check">
+                <input class="form-check-input _Sys_Checkbox_List_Input__box" type="checkbox" value="<%= _opt.value %>" <% if (this.args.disabled) { %>disabled<% } %> />
+                <span class="form-check-label"><%= _opt.label %></span>
+                <% if (_opt.hint) { %>
+                    <span class="_Sys_Checkbox_List_Input__hint"><%= _opt.hint %></span>
+                <% } %>
+            </label>
+        <% } %>
+    </div>
+</Define:_Sys_Checkbox_List_Input>

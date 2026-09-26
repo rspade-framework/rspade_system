@@ -211,9 +211,16 @@ effect test as the thin end-to-end proof.
 ## Detached processes are contained at the class boundary
 
 `Rsx_Artisan::dispatch_detached()` returns before its child has done anything, so a detached
-process a test starts (the task worker `Task::dispatch()` spawns) could otherwise outlive its
-class and act during a later one - rebuild the manifest, claim a queue row. The harness owns
-every such process (`Core/Testing/Rsx_Test_Detached_Processes.php`):
+process a test starts could otherwise outlive its class and act during a later one - rebuild
+the manifest, claim a queue row.
+
+**`Task::dispatch()` spawns NO worker under the suite** (nor does an `rsx:task:process` tick a
+test runs): it enqueues and returns. A test that asserts on queued work drives it itself -
+`Task::internal()`, the service method, or `Artisan::call('rsx:task:worker')` in-process. A
+test whose subject is the spawn calls `Task::spawn_workers_under_test(true)`; the runner resets
+it at every class boundary.
+
+The harness owns every detached process that remains (`Core/Testing/Rsx_Test_Detached_Processes.php`):
 
 - under the suite, `dispatch_detached()` REGISTERS the child - its pid and kernel start time,
   in the per-run file `Rsx_Project_Paths::test_detached_registry_file()` - before it returns,
@@ -225,7 +232,7 @@ every such process (`Core/Testing/Rsx_Test_Detached_Processes.php`):
 
 **The wait has no deadline**, by mandate. `rsx:task:worker` exits as soon as no pending task
 remains, so a boundary costs exactly the work the class queued (a few seconds per
-task-dispatching class under docker contention). A detached command that never ends by design
+class that spawns one under docker contention). A detached command that never ends by design
 would hold the boundary open: that is a visible hang, and the fix is to give that command an
 end or to terminate it here deliberately - never to cap the wait. Identity is pid + start
 time, so a reused pid is never waited for; a zombie counts as exited.

@@ -1,0 +1,46 @@
+<%--
+_Sys_Sms_Summary - the SMS tab's headline, install-wide: one tile per queue status,
+then how this install delivers an SMS - the delivery mode (rsx.sms.delivery; no SMS
+provider exists, so it is suppressed or disabled) and the row that has waited longest.
+
+Self-loading (_Sys_Sms_Controller.summary); Refresh reloads it. The tiles are
+_Sys_Queue_Status_Tiles (tab "sms", grid key "sms"): a plain click narrows the SMS grid
+in place (_Sys_Email_Action), a modified click opens the filtered grid.
+--%>
+<Define:_Sys_Sms_Summary>
+<% if (this.data.loading) { %>
+    <Spinner class="_Sys_Sms_Summary__loading" />
+<% } else if (this.data.error_data) { %>
+    <_Sys_Section $title="SMS queue" $icon="bi-phone">
+        <_Sys_Error $error_data=this.data.error_data />
+    </_Sys_Section>
+<% } else { %>
+    <%
+        const _s = this.data.summary;
+        const _oldest = _s.oldest_pending;
+    %>
+    <_Sys_Queue_Status_Tiles $counts=_s.counts $tab="sms" $grid_key="sms" />
+
+    <_Sys_Section $title="Delivery" $icon="bi-send">
+        <Slot:actions>
+            <button type="button" class="btn btn-sm btn-secondary" data-action="refresh">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </Slot:actions>
+        <Slot:body>
+            <_Sys_Detail_List>
+                <_Sys_Detail_Item $label="Delivery mode" $value=_s.delivery_mode $mono=true />
+                <% if (_oldest) { %>
+                    <_Sys_Detail_Item $label="Oldest pending">
+                        <a href="<%= Rsx.Route('_Sys_Sms_View_Action', _oldest.id) %>">#<%= _oldest.id %></a>
+                        to <%= _oldest.to_number %>, queued <%= Rsx_Time.relative(_oldest.created_at) %>
+                    </_Sys_Detail_Item>
+                <% } else { %>
+                    <_Sys_Detail_Item $label="Oldest pending" $value="Nothing is waiting" />
+                <% } %>
+                <_Sys_Detail_Item $label="Total rows" $value=_s.total />
+            </_Sys_Detail_List>
+        </Slot:body>
+    </_Sys_Section>
+<% } %>
+</Define:_Sys_Sms_Summary>

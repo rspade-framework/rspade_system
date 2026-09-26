@@ -1,9 +1,11 @@
+<%--
+_Sys_Logs_Action - the Logs screen: the files of the log directory
+(Rsx_Project_Paths::logs_dir()), each opening in the viewer (_Sys_Log_View_Action).
+--%>
 <Define:_Sys_Logs_Action>
 <_Sys_Page_Scaffold>
     <Slot:main>
-        <_Sys_Section $title="Logs" $icon="bi-journal-text">
-            <p class="mb-0">The logs screen: the files under storage/logs will be browsed and tailed here.</p>
-        </_Sys_Section>
+        <_Sys_Logs_DataGrid />
     </Slot:main>
 </_Sys_Page_Scaffold>
 </Define:_Sys_Logs_Action>

@@ -1,0 +1,85 @@
+<%--
+_Sys_Debug_Flags_Form - this browser's console_debug override: the form that stores it
+(_Sys_Debug_Flags_Controller.save) and Reset, which removes it (reset).
+
+$state - _Sys_Debug_Flags_Controller.state() (required)
+$channels - _Sys_Debug_Flags_Controller.channels() (required)
+
+The override lives in the developer's session and applies to this browser only, while
+the signed-in identity is a developer; it never touches .env. With no override the
+form shows the configuration's own values, so saving it unchanged reproduces what is
+in force. The channel list is used by the whitelist, blacklist and specific filters and
+hidden for "all". Fires "changed" after a save or a reset.
+--%>
+<Define:_Sys_Debug_Flags_Form>
+<%
+    const _state = this.args.state;
+    const _override = _state.override;
+    const _channel_options = this.args.channels.map((c) => ({
+        value: c.value,
+        label: c.label,
+        hint: c.found ? [c.php ? 'php ' + c.php : null, c.js ? 'js ' + c.js : null].filter(Boolean).join(' · ') : 'not found in source',
+    }));
+%>
+<_Sys_Section $title="console_debug for this browser" $icon="bi-bug">
+    <Slot:actions>
+        <% if (_override) { %>
+            <_Sys_Status_Badge $status="info" $label="Override active" />
+        <% } else { %>
+            <_Sys_Status_Badge $status="muted" $label="Using configuration" />
+        <% } %>
+    </Slot:actions>
+    <Slot:body>
+        <p class="_Sys_Debug_Flags_Form__intro">
+            Stored in your session and applied to this browser only - every page and Ajax call it makes -
+            while your identity is a developer. Nothing is written to <code>.env</code>; no other browser or
+            CLI process sees it, and it ends with the session. It replaces the switches below and leaves the
+            output destinations (<code>outputs.*</code>) to the configuration.
+        </p>
+        <% if (!_state.applies) { %>
+            <div class="alert alert-warning py-2">
+                console_debug is off in <strong><%= _state.mode %></strong> mode, so an override has no effect here.
+            </div>
+        <% } %>
+        <% if (_state.env_filter !== null) { %>
+            <div class="alert alert-info py-2">
+                The environment sets <code>CONSOLE_DEBUG_FILTER=<%= _state.env_filter %></code><% if (_state.env_filter === '') { %> (empty: no channel, so PHP output is silenced)<% } %>. An override replaces it for this browser.
+            </div>
+        <% } %>
+        <Rsx_Form $sid="form" $controller="_Sys_Debug_Flags_Controller" $method="save" $data=_state.form>
+            <Form_Errors />
+            <div class="_Sys_Debug_Flags_Form__grid">
+                <_Sys_Form_Field $label="Output">
+                    <_Sys_Checkbox_Input $name="enabled" $label="console_debug enabled" $switch=true />
+                </_Sys_Form_Field>
+                <_Sys_Form_Field $label="Filter">
+                    <_Sys_Select_Input $name="filter_mode" $options=([
+                        {value: 'all', label: 'All channels'},
+                        {value: 'whitelist', label: 'Only the channels below (whitelist)'},
+                        {value: 'blacklist', label: 'All but the channels below (blacklist)'},
+                        {value: 'specific', label: 'Specific channels'},
+                    ]) />
+                </_Sys_Form_Field>
+            </div>
+            <div $sid="channels_field">
+                <_Sys_Form_Field $label="Channels" $help="Every channel a console_debug() call names in system/app and rsx/, with its call count per language.">
+                    <_Sys_Checkbox_List_Input $name="channels" $options=_channel_options />
+                </_Sys_Form_Field>
+            </div>
+            <_Sys_Form_Field $label="Prefixes">
+                <div class="_Sys_Debug_Flags_Form__switches">
+                    <_Sys_Checkbox_Input $name="include_benchmark" $label="Benchmark (seconds since request start)" $switch=true />
+                    <_Sys_Checkbox_Input $name="include_location" $label="Location (file and line; JS)" $switch=true />
+                    <_Sys_Checkbox_Input $name="include_backtrace" $label="Backtrace (JS)" $switch=true />
+                </div>
+            </_Sys_Form_Field>
+            <div class="_Sys_Debug_Flags_Form__actions">
+                <button type="submit" class="btn btn-sm btn-primary"><i class="bi bi-check2"></i> Save for this browser</button>
+                <% if (_override) { %>
+                    <button type="button" class="btn btn-sm btn-secondary" data-action="reset"><i class="bi bi-arrow-counterclockwise"></i> Reset to configuration</button>
+                <% } %>
+            </div>
+        </Rsx_Form>
+    </Slot:body>
+</_Sys_Section>
+</Define:_Sys_Debug_Flags_Form>

@@ -115,12 +115,14 @@ class Rsx_Artisan
      * @param array<int, string> $args Whole argv tokens
      * @param bool $propagate_locks_and_i_will_wait Only true when this caller genuinely
      *        blocks on the spawned process before continuing its own critical section.
+     * @return int|null The child's pid, or null when the shell reported none (nothing was
+     *        started). Under the test suite a missing pid throws instead.
      */
     public static function dispatch_detached(
         string $command,
         array $args = [],
         bool $propagate_locks_and_i_will_wait = false
-    ): void {
+    ): ?int {
         $command_line = self::__command_line($command, $args, $propagate_locks_and_i_will_wait);
 
         // Close our flock descriptors FIRST. A detached child is long-lived by definition
@@ -151,6 +153,8 @@ class Rsx_Artisan
 
             Rsx_Test_Detached_Processes::register((int) $pid);
         }
+
+        return ctype_digit($pid) ? (int) $pid : null;
     }
 
     /**

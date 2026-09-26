@@ -133,7 +133,7 @@ class Task_Command_Cli_Test extends Rsx_Test_Abstract
         [, $loud_stdout] = static::__run(['rsx_test:echo', '--a=1']);
 
         static::__assert_equals(0, $exit_code);
-        static::__assert_equals('', trim($stderr), '-q silences the narration');
+        static::__assert_equals('', trim($stderr), '-q silences the narration; stderr was: ' . $stderr);
         static::__assert_equals($loud_stdout, $stdout, '-q never silences the value');
     }
 

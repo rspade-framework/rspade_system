@@ -44,16 +44,18 @@ class RsxAuth
      * enforces them in its own login function and in Main::pre_dispatch() (owner ruling 2026-08-12,
      * and pre_dispatch is the hook that can HALT a request - init() is bootstrap).
      *
-     * users.is_enabled is NOT application vocabulary. It is the framework's own switch for "may
-     * this identity use this installation", written by the framework's user-management surfaces and
-     * read by the framework everywhere an identity is established, so the framework enforces it
-     * BOTH here and at request time (Session::enforce_enabled_membership()). An identity with no
-     * enabled site membership is refused exactly the way a wrong password is refused - false, with
+     * users.is_enabled and sites.is_enabled are NOT application vocabulary. They are the
+     * framework's own switches for "may this identity use this site", written by the framework's
+     * management surfaces and read by the framework everywhere an identity is established, so the
+     * framework enforces them BOTH here and at request time (Session::enforce_enabled_membership()).
+     * A membership is usable only when both are on (User_Model::is_active()). An identity with no
+     * usable membership is refused exactly the way a wrong password is refused - false, with
      * STATUS_FAILED_DISABLED written to the audit trail - so a caller cannot tell the two apart and
      * an application never writes the check itself.
      *
      * What the framework checks is therefore exactly three things: the address resolves to a live
-     * login identity, the password matches, and at least one enabled site membership exists.
+     * login identity, the password matches, and at least one active membership (enabled, on an
+     * enabled site) exists.
      *
      * A SOFT-DELETED identity is therefore refused for free: Login_User_Model uses SoftDeletes, so
      * the global scope excludes trashed rows from the lookup below and a deleted account is
@@ -154,9 +156,12 @@ class RsxAuth
     }
 
     /**
-     * Does this identity hold at least one ENABLED site membership?
+     * Does this identity hold at least one ACTIVE site membership?
      *
-     * The framework's single answer to "may this identity use this installation at all". Read
+     * The framework's single answer to "may this identity use this installation at all". Active
+     * is User_Model's one definition (the ->active() scope): the membership is enabled and its
+     * site is enabled and not deleted - so an identity whose only memberships sit on disabled
+     * sites is refused, and one with a membership on any enabled site still signs in. Read
      * across every site (without_site_scope): the question is about the identity, not about the
      * tenant the current process happens to be serving, and a login has not chosen a site yet.
      * Trashed memberships are excluded for free by User_Model's own soft-delete scope.
@@ -173,7 +178,7 @@ class RsxAuth
 
         return User_Model::without_site_scope(
             fn () => User_Model::where('login_user_id', $login_user_id)
-                ->where('is_enabled', true)
+                ->active()
                 ->exists()
         );
     }
@@ -189,9 +194,9 @@ class RsxAuth
      * Records nothing. A caller that logs a user in directly - a second-factor completion, an
      * invitation acceptance - records its own SUCCESS through Login_History::record_success().
      *
-     * RETURNS FALSE, TOUCHING NOTHING, when the identity holds no enabled site membership. Every
-     * path into a session runs through here, so this is where the framework's is_enabled switch
-     * catches the sign-ins that never saw attempt() - a second factor, a federated sign-in, the
+     * RETURNS FALSE, TOUCHING NOTHING, when the identity holds no active site membership. Every
+     * path into a session runs through here, so this is where the framework's is_enabled switches
+     * catch the sign-ins that never saw attempt() - a second factor, a federated sign-in, the
      * development harness. A false return means no session was established and nothing was
      * recorded: the caller records the outcome in whatever vocabulary its own flow uses (the
      * framework's callers record STATUS_FAILED_DISABLED and then fail exactly as they fail on a
@@ -199,7 +204,7 @@ class RsxAuth
      *
      * @param Login_User_Model $login_user
      * @param bool $touch_last_login Whether to bump the login user's last_login timestamp
-     * @return bool True when the identity is now signed in; false when it holds no enabled membership
+     * @return bool True when the identity is now signed in; false when it holds no active membership
      */
     public static function login(Login_User_Model $login_user, bool $touch_last_login = true)
     {

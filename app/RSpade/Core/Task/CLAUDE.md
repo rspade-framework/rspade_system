@@ -9,7 +9,8 @@ says what is in this DIRECTORY.
 ## What is here
 
 - `Task.php` — the public facade: `dispatch()`, `status()`, coalescing enqueue, prompt
-  detached-worker spawn.
+  detached-worker spawn (`spawn_worker()`: reserve a slot, then spawn; nothing under the test
+  suite unless `spawn_workers_under_test(true)`).
 - `Task_Instance.php` — the `$task` handle passed to every task method (`info`/`error`/`debug`,
   `update_progress`, `set_result`, `heartbeat`).
 - `Task_Command_ManifestSupport.php` — bakes the `#[Command]` table (`data['task_commands']`)
@@ -25,7 +26,8 @@ says what is in this DIRECTORY.
   queue itself. NOT the app-facing lock: that is `RsxLocks` (`Core/Locks/`, `rsx:man locks`).
 - `Cron_Parser.php` — normalizes both 5-field cron and the plain-English `#[Schedule]` phrases.
 - `Task_Worker_Registry.php` — the Redis worker-slot registry enforcing
-  `rsx.tasks.global_max_workers` across the pool.
+  `rsx.tasks.global_max_workers` across the pool: a ZSET of live slots (heartbeat-scored) and
+  a HASH of spawn reservations (`token => host:pid`, no TTL) that `admit($token)` converts.
 - `Task_Killer.php`, `Task_Status.php`, `Task_Health_Checks.php`, `Cleanup_Service.php` —
   kill paths, status vocabulary, `rsx:health` probes, retention pruning.
 
@@ -36,6 +38,11 @@ says what is in this DIRECTORY.
   `pending`, and `rsx:task:process` loudly revives any tracker found terminal.
 - **Tasks run concurrently and unguarded.** Nothing here may reintroduce a global application
   lock; a task serializes its own critical section with `RsxLocks`.
+- **Admission precedes the spawn, and a reservation is released deterministically** - by
+  the child converting it, by the spawner on a spawn that produced no pid, or by
+  `reclaim_orphaned_reservations()` (every `rsx:task:process` tick) when its owner pid is gone
+  from this host. Never give a reservation a TTL, and never spawn a worker without one - a
+  pre-spawn check that is not the admission itself lets concurrent dispatches all pass it.
 - **The reaper's stuck-task cap is framework infrastructure, not licence to add timeouts.**
   See the no-timeout mandate.
 - Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]` classes.

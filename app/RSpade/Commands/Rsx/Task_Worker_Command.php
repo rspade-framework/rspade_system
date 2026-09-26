@@ -23,9 +23,9 @@ use App\RSpade\Core\Task\Cron_Parser;
  * The executor. Spawned detached by rsx:task:process (or by Task::dispatch, which fires a
  * worker on enqueue). There is ONE worker pool - workers are generic, not bound to a queue.
  *
- * On startup it self-admits against the Redis worker-slot registry (Task_Worker_Registry):
- * if the pool is at global_max_workers it exits(0) immediately; otherwise it claims a slot
- * and loops. Each iteration it refreshes its slot and claims the next task by a single
+ * On startup it admits against the Redis worker-slot registry (Task_Worker_Registry): a
+ * spawned worker converts the slot its spawner reserved for it; a worker with no reservation
+ * exits(0) immediately if the pool is at global_max_workers. Then it loops. Each iteration it refreshes its slot and claims the next task by a single
  * priority order (run-now tasks FIFO, then due cron tasks by next_run_at) under the MySQL
  * dequeue lock, runs it, and repeats until no task remains, then deregisters and exits.
  *
@@ -66,9 +66,12 @@ class Task_Worker_Command extends Command
         $this->start_time = time();
 
         // Claim a slot in the shared worker pool, or exit if it is already full. Admission
-        // is atomic (Task_Worker_Registry), so simultaneously-spawned workers admit exactly
-        // global_max_workers and the rest exit here.
-        if (!Task_Worker_Registry::admit()) {
+        // is atomic (Task_Worker_Registry). A worker spawned by Task::spawn_worker() carries
+        // the reservation its spawner took, and admit() converts it into this worker's slot;
+        // a hand-run worker (or one whose reservation the reaper reclaimed) competes for a
+        // free slot instead.
+        $reservation = \App\RSpade\Core\Console\Rsx_Internal_Flags::get(Task_Worker_Registry::RESERVATION_FLAG);
+        if (!Task_Worker_Registry::admit($reservation)) {
             $this->info('[WORKER] Worker pool is full, exiting');
             return 0;
         }

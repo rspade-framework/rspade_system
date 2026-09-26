@@ -56,8 +56,9 @@ class Rsx_Api_Bearer
      * Authenticate the Bearer key and establish the headless Session identity.
      *
      * Resolves the key's user WITHOUT site scope (no site identity exists yet), and refuses
-     * unless that user is BOTH active and permitted to use the API (users.is_api_access_enabled
-     * - the same column Session::has_api_access() reads). The refusal happens BEFORE
+     * unless that user is BOTH active (User_Model::is_active(): the membership and its site both
+     * enabled) and permitted to use the API (users.is_api_access_enabled - the same column
+     * Session::has_api_access() reads). The refusal happens BEFORE
      * _set_api_identity(), so a refused user never gets an identity established, and it reuses
      * the one uniform message every other key failure returns. On success, sets the API identity
      * and throttles the last_used_at touch.

@@ -1,0 +1,35 @@
+._Sys_Debug_Flags_Form {
+    display: block;
+    margin-bottom: var(--rsx-block-gap);
+
+    &__intro {
+        color: var(--rsx-dim);
+        font-size: 13px;
+    }
+
+    &__grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+        gap: 0 24px;
+
+        @media (max-width: 767px) {
+            grid-template-columns: minmax(0, 1fr);
+        }
+    }
+
+    &__switches {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 24px;
+    }
+
+    &__actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 8px;
+    }
+
+    .form-group {
+        margin-bottom: 14px;
+    }
+}

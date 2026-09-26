@@ -13,6 +13,8 @@ This concern covers the runner's own decisions and formats, NOT the tests it run
 - **the output format** a run produces, which must be identical whether the classes ran
   in one process or across eight containers;
 - **the singleton flock** that stops two runs sharing one test database;
+- **teardown**: a run's containers die with the run - on a signal to rsx:test or to the
+  orchestrator, and on a SIGKILL of either;
 - **which classes a selection runs**, including the classes it declines to run and the
   modes in which it declines to run at all.
 
@@ -32,7 +34,7 @@ the docker image build itself (asserted by running the suite, not by a unit test
 | `bin/rsx-testd/lib/docker.js` | the docker CLI wrappers |
 | `bin/rsx-testd/lib/dockerfile.js` | the Dockerfile GENERATOR: the ordered COPY block, the optional snapshot COPY, and the symlink recreation |
 | `app/RSpade/resource/docker/Dockerfile.test` | the TEMPLATE the generator fills: three layers ending in a migrated database baked into the datadir template |
-| `app/RSpade/resource/docker/rsx-test-worker-run.sh` | the worker CMD: waits for the container's whole service roster before any test runs |
+| `app/RSpade/resource/docker/rsx-test-worker-run.sh` | the worker CMD: holds the orchestrator liveness connection and ends the container when it closes; waits for the container's whole service roster before any test runs |
 
 ## Man pages
 
@@ -78,9 +80,21 @@ environment file - so nothing on this box is written.
 **The singleton is asserted against itself.** `Runner_Singleton_Test` proves a subprocess
 cannot take `storage/state/flock/rsx_test_runner.lock` while the run executing the test holds it.
 
-Not asserted here, by design: the image build, the zombie sweep, pruning and signal
-teardown. Those are docker lifecycle, they need a daemon and a multi-minute build, and
-they are verified by running the suite - which is what every parallel run does.
+**Teardown is asserted in two halves.** `cli/test_runner_orchestrator_teardown.sh` runs
+the REAL orchestrator against a FAKE `docker` first on PATH (one file per "container", a
+`sleep infinity` per container process), so the whole lifecycle takes a second and needs no
+daemon: SIGTERM, SIGHUP and the parent's stdin closing each kill and remove exactly this
+run's containers - a container labelled for another run survives - and exit 1.
+`Worker_Container_Liveness_Test` is the half no handler can do: the real test image, the
+checkout's wrapper bind-mounted over the image's, a real `Queue_Server` in a node process
+that is SIGKILLed, and the container has to end on its own. It needs a daemon and an
+already-built `rspade-test:latest`, so it is `$explicit_group_only` and skips inside a
+dispatched container (no daemon there): run it on the development box with
+`php artisan rsx:test --framework Worker_Container_Liveness_Test --sequential`.
+
+Not asserted here, by design: the image build, the zombie sweep and pruning. Those are
+docker lifecycle, they need a daemon and a multi-minute build, and they are verified by
+running the suite - which is what every parallel run does.
 
 ## Fixtures
 

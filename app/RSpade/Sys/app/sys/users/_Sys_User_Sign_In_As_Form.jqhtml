@@ -1,0 +1,37 @@
+<%--
+_Sys_User_Sign_In_As_Form - the "Sign in as this user" dialog's body, posted to
+_Sys_Users_Controller.sign_in_as. Open it through _Sys_User_Sign_In_As_Form.open(user,
+memberships), which hosts it in _Sys_Modal.form().
+
+$login_user_id - the identity to sign in as (required)
+$email - its email, for the text (required)
+$status_label - its status label, shown because status is not refused on (required)
+$sites - [{value: site_id, label}] - its ACTIVE memberships' sites (required, one or more).
+         One site is posted as a hidden field and named; more than one is a select,
+         and the server refuses a blank or foreign choice as a field error.
+--%>
+<Define:_Sys_User_Sign_In_As_Form>
+    <Rsx_Form $controller="_Sys_Users_Controller" $method="sign_in_as">
+        <Form_Errors />
+        <input type="hidden" name="id" value="<%= this.args.login_user_id %>" />
+        <p class="_Sys_User_Sign_In_As_Form__lead">
+            You browse the application as <strong><%= this.args.email %></strong>, with full read and
+            write: everything you do is done as them. Their status is <strong><%= this.args.status_label %></strong>,
+            which the framework does not act on.
+        </p>
+        <% if (this.args.sites.length === 1) { %>
+            <input type="hidden" name="site_id" value="<%= this.args.sites[0].value %>" />
+            <p class="_Sys_User_Sign_In_As_Form__site">Site: <strong><%= this.args.sites[0].label %></strong></p>
+        <% } else { %>
+            <_Sys_Form_Field $label="Site" $required=true $help="One of this user's active memberships.">
+                <_Sys_Select_Input $name="site_id" $placeholder="Choose a site" $options=this.args.sites />
+            </_Sys_Form_Field>
+        <% } %>
+        <p class="_Sys_User_Sign_In_As_Form__note">
+            The session moves to that site, unless the application declares its own site on every
+            request - then it lands on the application's site, and is signed out entirely if this
+            user has no active membership there. Return with "Stop impersonating" in the
+            application's banner.
+        </p>
+    </Rsx_Form>
+</Define:_Sys_User_Sign_In_As_Form>

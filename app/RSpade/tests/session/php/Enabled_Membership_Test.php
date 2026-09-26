@@ -34,6 +34,11 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * for the CURRENT site has since been disabled or deleted. Disabling an account is meant to
  * take effect on the accounts that are already signed in, not on the next sign-in.
  *
+ * THE SITE SWITCH - sites.is_enabled is the second half of the same definition
+ * (User_Model::is_active() / ->active()): a membership on a disabled or deleted site is not
+ * usable, at sign-in or at request time, while the identity's memberships on other sites are
+ * unaffected. The Default site (id 0) can never be switched off.
+ *
  * ISOLATION, as in Rsx_Auth_Attempt_Test: the rows are rolled back with the per-test
  * transaction, while the failure counters are redis keys outside both the transaction and
  * the process - so every test uses a fresh email and deletes the keys it created.
@@ -388,5 +393,145 @@ class Enabled_Membership_Test extends Rsx_Test_Abstract
 
         static::__assert_true(Session::enforce_enabled_membership(), 'anonymous is permitted');
         static::__assert_false(Session::has_session(), 'and asking created no session');
+    }
+
+    // -------------------------------------------------------------------------
+    // The site switch (sites.is_enabled)
+    // -------------------------------------------------------------------------
+
+    /**
+     * Switch a fixture site off. Site_Model is not site-scoped, so no tenant is declared.
+     */
+    private static function __disable_site(Site_Model $site): void
+    {
+        $site->is_enabled = 0;
+        $site->save();
+    }
+
+    /**
+     * An enabled membership on a DISABLED site is not usable: attempt() refuses it exactly as
+     * it refuses a disabled membership - false, nothing signed in, FAILED_DISABLED recorded -
+     * and login(), the door for every other sign-in, refuses it without touching the session.
+     */
+    public static function test_attempt_refuses_an_identity_whose_only_site_is_disabled()
+    {
+        static::__start_anonymous();
+        $email = static::__fresh_email('site_disabled');
+        $login_user = static::__make_login_user($email);
+        $site = static::__make_site();
+        static::__give_membership($login_user, (int) $site->id, true);
+        static::__disable_site($site);
+
+        $rows_before = DB::table('_login_history')->count();
+
+        static::__assert_false(
+            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
+            'a membership on a disabled site cannot authenticate'
+        );
+        static::__assert_null(Session::get_login_user_id(), 'no identity is established');
+        static::__assert_equals($rows_before, DB::table('_login_history')->count(), 'no success row');
+        static::__assert_equals(1, Login_History::get_failed_attempts_count($email), 'the failure is counted');
+        static::__assert_false(RsxAuth::login($login_user), 'login() refuses it too');
+        static::__assert_null(Session::get_login_user_id(), 'and establishes nothing');
+
+        $log = static::__log_tail();
+        if ($log === '') {
+            static::__skip('application log is not readable in this environment');
+            return;
+        }
+
+        static::__assert_contains(Login_History::STATUS_FAILED_DISABLED, $log, 'classified FAILED_DISABLED');
+    }
+
+    /**
+     * A disabled site locks out only its own memberships: an identity that is also a member of
+     * an enabled site still signs in.
+     */
+    public static function test_attempt_succeeds_when_another_site_is_enabled()
+    {
+        static::__start_anonymous();
+        $email = static::__fresh_email('site_one_of_two');
+        $login_user = static::__make_login_user($email);
+        $disabled_site = static::__make_site();
+        $enabled_site = static::__make_site();
+
+        static::__give_membership($login_user, (int) $disabled_site->id, true);
+        static::__give_membership($login_user, (int) $enabled_site->id, true);
+        static::__disable_site($disabled_site);
+
+        static::__assert_true(
+            RsxAuth::attempt(['email' => $email, 'password' => self::PASSWORD]),
+            'the membership on the enabled site authenticates'
+        );
+        static::__assert_equals((int) $login_user->id, (int) Session::get_login_user_id());
+    }
+
+    /**
+     * The ONE definition a site picker lists and accepts from: ->active() and is_active() drop
+     * a membership whose site is disabled or deleted, and keep the membership on the enabled
+     * site. A picker that filters with them can never offer a site the framework refuses.
+     */
+    public static function test_active_scope_and_is_active_exclude_a_disabled_or_deleted_site()
+    {
+        static::__start_anonymous();
+        $login_user = static::__make_login_user(static::__fresh_email('site_scope'));
+        $kept_site = static::__make_site();
+        $disabled_site = static::__make_site();
+        $deleted_site = static::__make_site();
+
+        $kept = static::__give_membership($login_user, (int) $kept_site->id, true);
+        $on_disabled = static::__give_membership($login_user, (int) $disabled_site->id, true);
+        $on_deleted = static::__give_membership($login_user, (int) $deleted_site->id, true);
+
+        static::__disable_site($disabled_site);
+        $deleted_site->delete();
+
+        $active_site_ids = User_Model::without_site_scope(
+            fn () => User_Model::where('login_user_id', $login_user->id)->active()->pluck('site_id')->all()
+        );
+
+        static::__assert_equals([(int) $kept_site->id], array_map('intval', $active_site_ids), 'only the enabled site is listed');
+
+        $reload = fn (User_Model $row) => User_Model::without_site_scope(fn () => User_Model::find($row->id));
+
+        static::__assert_true($reload($kept)->is_active(), 'membership on an enabled site is active');
+        static::__assert_false($reload($on_disabled)->is_active(), 'membership on a disabled site is not');
+        static::__assert_false($reload($on_deleted)->is_active(), 'membership on a deleted site is not');
+    }
+
+    /**
+     * Request time: disabling the SITE a live session serves ends that session on its next
+     * request, the same mechanism as a disabled membership.
+     */
+    public static function test_enforce_ends_a_session_whose_site_is_disabled()
+    {
+        static::__start_anonymous();
+        $login_user = static::__make_login_user(static::__fresh_email('enforce_site'));
+        $site = static::__make_site();
+        $membership = static::__give_membership($login_user, (int) $site->id, true);
+
+        Session::impersonate((int) $site->id, (int) $login_user->id, (int) $membership->id);
+        static::__assert_true(Session::enforce_enabled_membership(), 'an enabled site passes');
+
+        static::__disable_site($site);
+        Session::impersonate((int) $site->id, (int) $login_user->id, (int) $membership->id);
+
+        static::__assert_false(Session::enforce_enabled_membership(), 'a disabled site does not');
+        static::__assert_null(Session::get_login_user_id(), 'and the session was logged out');
+    }
+
+    /**
+     * The Default site (id 0) is the FK target for sessionless writes, so it can never be
+     * switched off - the save is refused loudly, and the row keeps is_enabled = 1.
+     */
+    public static function test_the_default_site_refuses_to_be_disabled()
+    {
+        $site = Site_Model::find(0);
+        static::__assert_not_null($site, 'the Default site exists');
+
+        $site->is_enabled = 0;
+        static::__assert_throws(\RuntimeException::class, fn () => $site->save(), 'cannot be disabled');
+
+        static::__assert_equals(1, (int) DB::table('sites')->where('id', 0)->value('is_enabled'), 'the row is unchanged');
     }
 }

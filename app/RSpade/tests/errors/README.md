@@ -26,8 +26,10 @@ the framework's standalone Blade when nothing is declared or the application's
 page fails.
 
 The SPA twin (`Core/SPA/Error_Screens.js`) renders the same three outcomes into
-the live layout's content area using the app-owned theme components in
-`rsx/theme/components/feedback/errors/`.
+the live layout's content area, using the components the running bundle registered
+with `Error_Screens.set_components()` (the template's set lives in
+`rsx/theme/components/feedback/errors/`, the panel's in `Sys/app/sys/`). The registry's
+browser rows run on the panel and are catalogued in `sys_panel` (RP-ERR-*).
 
 ## Applicability
 

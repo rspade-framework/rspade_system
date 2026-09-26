@@ -6,6 +6,7 @@ use Exception;
 use JsonSerializable;
 use Log;
 use stdClass;
+use App\RSpade\Core\Debug\Console_Debug_Override;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Rsx;
 
@@ -46,6 +47,12 @@ class Debugger
      * Cached console debug configuration
      */
     protected static ?array $console_config = null;
+
+    /**
+     * This request's per-browser developer override (Console_Debug_Override), resolved
+     * by apply_session_override(); null when none applies.
+     */
+    protected static ?array $session_override = null;
 
     /**
      * Flag to track if trace mode is enabled
@@ -444,7 +451,7 @@ class Debugger
      * @param string $channel Raw channel name
      * @return string Normalized channel name
      */
-    protected static function __normalize_channel(string $channel): string
+    public static function normalize_channel(string $channel): string
     {
         // Strip brackets if present
         $channel = str_replace(['[', ']'], '', $channel);
@@ -515,10 +522,69 @@ class Debugger
                 $config['outputs']['ajax'] = filter_var(getenv('CONSOLE_DEBUG_AJAX'), FILTER_VALIDATE_BOOLEAN);
             }
 
+            // A developer's per-browser override (the /_sys Debug Flags screen) wins over
+            // config and env, for this browser only - see apply_session_override().
+            $config = Console_Debug_Override::overlay($config, static::$session_override);
+
             static::$console_config = $config;
         }
 
         return static::$console_config;
+    }
+
+    /**
+     * The console_debug configuration in force for this process or request: config,
+     * then the environment overrides, then this browser's developer override, then the
+     * rsx:debug harness headers.
+     *
+     * @return array
+     */
+    public static function effective_console_config(): array
+    {
+        return static::__get_console_config();
+    }
+
+    /**
+     * Resolve this request's per-browser developer override and lay it over the
+     * configuration (Console_Debug_Override - the /_sys Debug Flags screen).
+     *
+     * Called by the front controller before a page or Ajax dispatch: the first point at
+     * which the browser's session is known. Output emitted earlier in the request (the
+     * framework boot) followed the configuration alone. Never called for an asset or an
+     * external API request, and a CLI process never reaches it, so neither is affected.
+     * Uses Session READERS only: an anonymous request creates no session here.
+     *
+     * The rsx:debug harness headers are applied again afterwards, so an explicit
+     * per-invocation --console-debug-* flag still beats a stored override; ?__trace=1
+     * owns the whole configuration and is left alone.
+     */
+    public static function apply_session_override(): void
+    {
+        if (static::$trace_mode) {
+            return;
+        }
+
+        $override = Console_Debug_Override::active();
+
+        if ($override === static::$session_override) {
+            return;
+        }
+
+        static::$session_override = $override;
+        static::$console_config = null;
+
+        static::configure_from_headers();
+    }
+
+    /**
+     * This request's resolved per-browser override, or null. The rsxapp.console_debug
+     * block reads it so JS output follows exactly what PHP output follows.
+     *
+     * @return array|null
+     */
+    public static function session_override(): ?array
+    {
+        return static::$session_override;
     }
 
     /**
@@ -720,7 +786,10 @@ class Debugger
     protected static function __should_output_channel(string $channel, array $config): bool
     {
         // Check environment override (use getenv for runtime putenv support)
-        $env_filter = getenv('CONSOLE_DEBUG_FILTER');
+        // A developer's per-browser override beats it (it is the more specific statement).
+        // A PRESENT-but-empty CONSOLE_DEBUG_FILTER names no channel, so it passes none - an
+        // environment that carries the key empty gets no console_debug output at all.
+        $env_filter = static::$session_override === null ? getenv('CONSOLE_DEBUG_FILTER') : false;
         if ($env_filter !== false) {
             // Split comma-separated values and normalize
             $channels = array_map('trim', explode(',', $env_filter));
@@ -800,7 +869,7 @@ class Debugger
 
         if ($build_debug_mode) {
             // Force enable CLI output and filter to BUILD channel only
-            $channel = static::__normalize_channel($channel);
+            $channel = static::normalize_channel($channel);
             if ($channel !== 'BUILD') {
                 return;
             }
@@ -819,7 +888,7 @@ class Debugger
             }
 
             // Normalize channel name
-            $channel = static::__normalize_channel($channel);
+            $channel = static::normalize_channel($channel);
 
             // Check if this channel should be output
             if (!static::__should_output_channel($channel, $config)) {

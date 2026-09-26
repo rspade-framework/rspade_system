@@ -264,6 +264,10 @@ abstract class Rsx_Test_Abstract
         // redirect a root inside its own body; between classes the run's set is what
         // holds, file-subsystem isolation included.
         Rsx_Project_Paths::_restore_overrides(self::$__boot_path_overrides);
+
+        // Task::spawn_workers_under_test() is a per-CLASS opt-in; the next class starts from
+        // enqueue-only again.
+        \App\RSpade\Core\Task\Task::spawn_workers_under_test(false);
     }
 
     /**

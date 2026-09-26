@@ -1,0 +1,28 @@
+._Sys_Form_Field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 14px;
+
+    &:last-child {
+        margin-bottom: 0;
+    }
+
+    &__label {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--rsx-muted);
+    }
+
+    &__required {
+        color: var(--rsx-danger);
+        margin-left: 2px;
+    }
+
+    &__help {
+        font-size: 12px;
+        color: var(--rsx-muted);
+        opacity: 0.7;
+    }
+}

@@ -7,6 +7,7 @@
 
 namespace App\RSpade\Tests\Session\Php;
 
+use App\RSpade\Core\Bundle\Rsx_Bundle_Abstract;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Permission\Permission_Abstract;
@@ -296,34 +297,34 @@ class Session_Impersonation_Test extends Rsx_Test_Abstract
     // window.rsxapp.impersonation payload shape (as built by Rsx_Bundle_Abstract)
     // =====================================================================
 
-    public static function test_rsxapp_impersonation_shape_when_impersonating()
+    public static function test_rsxapp_impersonation_payload_when_impersonating()
     {
         static::__start_clean();
-        Session::set_login_user_id(1001);
-        Session::begin_impersonation(2002);
+        $impersonator = static::__make_login_user();
+        $target = static::__make_login_user();
 
-        // Mirror the exact conditional Rsx_Bundle_Abstract uses to populate
-        // window.rsxapp.impersonation for staff requests.
-        $block = Session::is_impersonating() ? [
-            'impersonator_login_user_id' => Session::get_impersonator_login_user_id(),
-            'started_at' => Session::get_impersonation_started_at(),
-        ] : null;
+        Session::set_login_user_id($impersonator->id);
+        Session::begin_impersonation($target->id);
 
-        static::__assert_not_null($block, 'impersonation block present while impersonating');
-        static::__assert_equals(1001, $block['impersonator_login_user_id'], 'block carries the impersonator id');
-        static::__assert_not_null($block['started_at'], 'block carries started_at');
+        $block = Rsx_Bundle_Abstract::impersonation_payload();
+
+        static::__assert_equals(
+            [
+                'impersonator_login_user_id' => $impersonator->id,
+                'impersonator_email' => $impersonator->email,
+                'started_at' => Session::get_impersonation_started_at(),
+            ],
+            $block,
+            'the payload names the impersonator by login id and email, with the start time'
+        );
+        static::__assert_not_null($block['started_at'], 'the payload carries started_at');
     }
 
-    public static function test_rsxapp_impersonation_null_when_not_impersonating()
+    public static function test_rsxapp_impersonation_payload_null_when_not_impersonating()
     {
         static::__start_clean();
         Session::set_login_user_id(1001);
 
-        $block = Session::is_impersonating() ? [
-            'impersonator_login_user_id' => Session::get_impersonator_login_user_id(),
-            'started_at' => Session::get_impersonation_started_at(),
-        ] : null;
-
-        static::__assert_null($block, 'impersonation block is null for a normal session');
+        static::__assert_null(Rsx_Bundle_Abstract::impersonation_payload(), 'the payload is null for a normal session');
     }
 }

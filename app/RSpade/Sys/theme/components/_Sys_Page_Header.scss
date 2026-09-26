@@ -1,0 +1,51 @@
+._Sys_Page_Header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+
+    &__text {
+        min-width: 0;
+    }
+
+    &__heading {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    &__icon {
+        font-size: 20px;
+        color: var(--rsx-accent);
+    }
+
+    &__title {
+        margin: 0;
+        font-size: 20px;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+    }
+
+    &__meta {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    &__subtitle {
+        margin-top: 4px;
+        color: var(--rsx-muted);
+        opacity: 0.8;
+        font-size: 13px;
+        overflow-wrap: anywhere;
+    }
+
+    &__actions {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+}

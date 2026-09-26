@@ -223,6 +223,9 @@ arrive, so what is under test is their ANSWERS. Run in-process via `Artisan::cal
 | MAIL-237 | `resend` does nothing to a row the queue already has | cli | a PENDING row | exit 0, "already", row untouched | implemented | 2026-08-31 |
 | MAIL-238 | resending a BLOCKED row requires `--force` - an opt-out is a consent record, not a delivery failure | cli | a Blocked row, with and without `--force` | exit 1 + "unsubscribed" + "--force", row untouched; then exit 0 and PENDING | implemented | 2026-08-31 |
 | MAIL-239 | `resend` refuses an id that does not exist | cli | a missing id | exit 1, the id named | implemented | 2026-08-31 |
+| MAIL-273 | `queue` reads EVERY site: run as site 0, the summary counts and the recipient listing includes a second site's row, naming its site | cli | a FAILED row on a new site, `rsx:mail:queue --json` / `--recipient` as site 0 | failed +1; listed with `site_id` | implemented | 2026-09-26 |
+| MAIL-274 | `show` finds another site's row | cli | a row on a new site, `rsx:mail:show <id> --json` as site 0 | exit 0, the row | implemented | 2026-09-26 |
+| MAIL-275 | `resend` resets another site's row (the rules are `Rsx_Mail::resend()`, shared with the /_sys Email screen) | cli | a FAILED row on a new site, `rsx:mail:resend <id>` as site 0 | exit 0; PENDING, 0 attempts | implemented | 2026-09-26 |
 
 ## The system-table prefix (`php/Outbound_Queue_Tables_Test.php`)
 

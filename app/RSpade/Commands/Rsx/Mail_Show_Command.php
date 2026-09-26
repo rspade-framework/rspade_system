@@ -7,7 +7,6 @@
 
 namespace App\RSpade\Commands\Rsx;
 
-use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Models\Email_Queue_Model;
 use Illuminate\Console\Command;
 
@@ -34,7 +33,9 @@ class Mail_Show_Command extends Command
         $id = (int) $this->argument('id');
         $json = (bool) $this->option('json');
 
-        $record = Email_Queue_Model::find($id);
+        // Every site's row: an operator names a row by id, and the CLI's own site (0) says
+        // nothing about which tenant queued it.
+        $record = Email_Queue_Model::without_site_scope(fn () => Email_Queue_Model::find($id));
 
         if ($record === null) {
             $this->error("[ERROR] There is no email queue row #{$id}.");
@@ -42,7 +43,7 @@ class Mail_Show_Command extends Command
             return 1;
         }
 
-        $attachments = $this->__attachments($record);
+        $attachments = $record->attachment_summary();
 
         $payload = [
             'id' => (int) $record->id,
@@ -90,30 +91,6 @@ class Mail_Show_Command extends Command
         $this->__render($payload);
 
         return 0;
-    }
-
-    /**
-     * Each attachment row, with the size of the blob it points at.
-     */
-    private function __attachments(Email_Queue_Model $record): array
-    {
-        $attachments = [];
-
-        foreach ($record->attachments as $attachment) {
-            $storage = $attachment->file_storage_id === null
-                ? null
-                : File_Storage_Model::find($attachment->file_storage_id);
-
-            $attachments[] = [
-                'file_name' => $attachment->file_name,
-                'mime_type' => $attachment->mime_type,
-                'disposition' => $attachment->disposition_id__label,
-                'cid' => $attachment->cid,
-                'size' => $storage === null ? null : (int) $storage->size,
-            ];
-        }
-
-        return $attachments;
     }
 
     /**

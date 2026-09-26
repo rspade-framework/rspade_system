@@ -1,0 +1,78 @@
+<%--
+_Sys_User_Memberships - an identity's site memberships on its Overview tab: one row per
+live users row, across every site.
+
+$memberships - the detail payload's memberships (required)
+
+"Active" is User_Model's definition - the membership enabled AND its site enabled and
+not deleted - so a membership on a disabled site reads Inactive with its own switch
+still Enabled. A site name links to the Sites screen unless the site has none (site 0,
+a soft-deleted site).
+
+Each row carries Disable (Enable when off) as data-action="membership-disable|enable"
+with data-membership-id; _Sys_User_View_Action handles the click, because the
+memberships are its data and a change reloads it. The row the acting session is on is
+marked "your session's site"; its disable_refusal explains why Disable is refused.
+--%>
+<Define:_Sys_User_Memberships>
+    <% const _rows = this.args.memberships; %>
+    <_Sys_Section $title="Memberships" $icon="bi-buildings" $count=_rows.length $flush=true>
+        <% if (!_rows.length) { %>
+            <_Sys_Empty_State $icon="bi-buildings" $title="No memberships" $body="This identity belongs to no site, so it cannot sign in." />
+        <% } else { %>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Site</th>
+                            <th>Name</th>
+                            <th>Role</th>
+                            <th>Membership</th>
+                            <th>Active</th>
+                            <th>2FA required</th>
+                            <th>API access</th>
+                            <th>Invitation</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% for (const row of _rows) { %>
+                            <tr>
+                                <td>
+                                    <span class="_Sys_User_Memberships__mono">#<%= row.site_id %></span>
+                                    <% if (row.has_site_screen) { %>
+                                        <a href="<%= Rsx.Route('_Sys_Site_View_Action', row.site_id) %>"><%= row.site_name %></a>
+                                    <% } else { %>
+                                        <%= row.site_name || '(deleted site)' %>
+                                    <% } %>
+                                    <% if (row.site_is_deleted) { %>
+                                        <span class="_Sys_User_Memberships__note">deleted</span>
+                                    <% } else if (!row.site_is_enabled) { %>
+                                        <span class="_Sys_User_Memberships__note">site disabled</span>
+                                    <% } %>
+                                    <% if (row.is_current) { %>
+                                        <span class="_Sys_User_Memberships__note">your session's site</span>
+                                    <% } %>
+                                </td>
+                                <td><%= [row.first_name, row.last_name].filter(Boolean).join(' ') %></td>
+                                <td><%= row.role_label || '' %></td>
+                                <td><_Sys_Status_Badge $status=(row.is_enabled ? 'ok' : 'muted') $label=(row.is_enabled ? 'Enabled' : 'Disabled') /></td>
+                                <td><_Sys_Status_Badge $status=(row.is_active ? 'ok' : 'warn') $label=(row.is_active ? 'Active' : 'Inactive') /></td>
+                                <td><%= row.is_2fa_required ? 'Yes' : 'No' %></td>
+                                <td><%= row.is_api_access_enabled ? 'Yes' : 'No' %></td>
+                                <td><%= row.invite ? row.invite.charAt(0).toUpperCase() + row.invite.slice(1) : '' %></td>
+                                <td class="_Sys_User_Memberships__actions">
+                                    <% if (row.is_enabled) { %>
+                                        <button type="button" class="btn btn-sm btn-danger" data-action="membership-disable" data-membership-id="<%= row.id %>">Disable</button>
+                                    <% } else { %>
+                                        <button type="button" class="btn btn-sm btn-success" data-action="membership-enable" data-membership-id="<%= row.id %>">Enable</button>
+                                    <% } %>
+                                </td>
+                            </tr>
+                        <% } %>
+                    </tbody>
+                </table>
+            </div>
+        <% } %>
+    </_Sys_Section>
+</Define:_Sys_User_Memberships>

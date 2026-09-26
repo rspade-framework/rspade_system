@@ -1,0 +1,69 @@
+._Sys_Tasks_Schedules {
+    // One line per cell; a narrow screen scrolls the table sideways instead.
+    td,
+    th {
+        white-space: nowrap;
+        vertical-align: middle;
+    }
+
+    display: block;
+
+    &__loading {
+        display: block;
+        width: 40px;
+        height: 40px;
+        margin: 20px auto;
+    }
+
+    &__mono,
+    &__cron {
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+    }
+
+    &__class {
+        font-family: var(--rsx-mono);
+        font-size: 11.5px;
+        color: var(--rsx-dim);
+    }
+
+    &__cron,
+    &__dim {
+        color: var(--rsx-dim);
+    }
+
+    &__tag {
+        margin-left: 6px;
+        padding: 1px 6px;
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+        color: var(--rsx-dim);
+        font-size: 11px;
+    }
+
+    // A failing schedule: the row carries the danger tone on its leading edge.
+    &__row--fail > td:first-child {
+        box-shadow: inset 3px 0 0 var(--rsx-danger);
+    }
+
+    td#{&}__failures {
+        color: var(--rsx-danger);
+        font-weight: 600;
+    }
+
+    // The one cell that wraps: an error excerpt is up to 120 characters (often a path
+    // with no break point), and a full line of it would push Run now off the right edge.
+    &__error {
+        display: block;
+        width: 240px;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        font-size: 12px;
+        color: var(--rsx-muted);
+    }
+
+    &__error-at {
+        margin-right: 6px;
+        color: var(--rsx-dim);
+    }
+}

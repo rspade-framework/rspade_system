@@ -24,8 +24,8 @@ use App\RSpade\Core\Bundle\Rsx_Module_Bundle_Abstract;
  * restyle its theme, redefine its Bootstrap build, or replace its Modal outright - all of
  * which are its own business, and any of which would break a console that had borrowed them.
  * So the console draws on the framework's OWN application tree instead: _Sys_Theme_Bundle's
- * Bootstrap build and --rsx-* tokens, the components beside them, and its own dialog
- * (_Apidocs_Confirm_Dialog). Nothing here reaches into rsx/, and CONV-BUNDLE-04 enforces
+ * Bootstrap build and --rsx-* tokens, and the components beside them - its dialog
+ * (_Sys_Modal) included. Nothing here reaches into rsx/, and CONV-BUNDLE-04 enforces
  * that for every framework-owned bundle.
  *
  * The remaining benefit is mutual: the console cannot disturb - or be disturbed by - the

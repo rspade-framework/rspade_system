@@ -1,0 +1,70 @@
+<%--
+_Sys_Tasks_Running - the Tasks screen's Running tab: every task a worker is
+executing right now, with a Kill action per row.
+
+Self-loading (_Sys_Tasks_Controller.running); Refresh reloads this region only, and
+a kill reloads it too. Heartbeat age is how long ago the worker last reported in.
+--%>
+<Define:_Sys_Tasks_Running>
+<% if (this.data.loading) { %>
+    <_Sys_Section $title="Running" $icon="bi-play-circle">
+        <Spinner class="_Sys_Tasks_Running__loading" />
+    </_Sys_Section>
+<% } else if (this.data.error_data) { %>
+    <_Sys_Section $title="Running" $icon="bi-play-circle">
+        <_Sys_Error $error_data=this.data.error_data />
+    </_Sys_Section>
+<% } else { %>
+    <% const _rows = this.data.rows; %>
+    <_Sys_Section $title="Running" $icon="bi-play-circle" $count=_rows.length $flush=true>
+        <Slot:actions>
+            <button type="button" class="btn btn-sm btn-secondary" data-action="refresh">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </Slot:actions>
+        <Slot:body>
+            <% if (!_rows.length) { %>
+                <_Sys_Empty_State $icon="bi-moon" $title="Nothing is running" $body="No worker is executing a task right now." />
+            <% } else { %>
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Task</th>
+                                <th>PID</th>
+                                <th>Started</th>
+                                <th>Heartbeat</th>
+                                <th>Queue</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% for (const row of _rows) { %>
+                                <tr>
+                                    <td><a href="<%= Rsx.Route('_Sys_Task_View_Action', row.id) %>"><%= row.id %></a></td>
+                                    <td>
+                                        <span class="_Sys_Tasks_Running__task"><%= row.class_short %>::<%= row.method %></span>
+                                        <% if (row.is_cron) { %>
+                                            <span class="_Sys_Tasks_Running__cron">schedule</span>
+                                        <% } %>
+                                    </td>
+                                    <td class="_Sys_Tasks_Running__mono"><%= row.worker_pid %></td>
+                                    <td><%= row.started_at ? Rsx_Time.format_datetime(row.started_at) : '' %></td>
+                                    <td><%= row.last_heartbeat_at ? Rsx_Time.relative(row.last_heartbeat_at) : 'never' %></td>
+                                    <td><%= row.queue %></td>
+                                    <td class="text-end">
+                                        <button type="button" class="btn btn-sm btn-danger" data-action="kill" data-task-id="<%= row.id %>">
+                                            <i class="bi bi-x-octagon"></i> Kill
+                                        </button>
+                                    </td>
+                                </tr>
+                            <% } %>
+                        </tbody>
+                    </table>
+                </div>
+            <% } %>
+        </Slot:body>
+    </_Sys_Section>
+<% } %>
+</Define:_Sys_Tasks_Running>

@@ -21,8 +21,23 @@
 # waits with no deadline and no error.
 #
 # So this waits for the WHOLE supervisor roster to be RUNNING and for rsx-lockd
-# to answer a ping, and only then execs the worker in its own place - same PID,
-# so the container's exit status is the test worker's exit status.
+# to answer a ping, and only then runs the worker - whose exit status becomes the
+# container's exit status.
+#
+# THE CONTAINER DIES WITH ITS ORCHESTRATOR. The first thing this does is open a
+# connection to the orchestrator's queue socket and hold it, sending nothing.
+# The kernel closes that connection when the orchestrator process ends, however
+# it ends - SIGKILL included, which no handler could see. The moment it closes,
+# this kills every process in the container and exits, and the container
+# (started --rm) is gone. A worker whose orchestrator is gone has nobody to take
+# its next class from and nobody to report its current one to, so a class in
+# flight is abandoned rather than finished. Before this existed, killing a run
+# left its whole fleet - mysqld, php-fpm, nginx, rsx-lockd, detached task
+# workers - running until the NEXT run's zombie sweep found it.
+#
+# That is PEER DISAPPEARANCE, detected as an event (end-of-file on a socket),
+# and never slowness: there is no heartbeat and no "silent for N seconds"
+# deadline anywhere in it.
 #
 # NO TIMEOUT ANYWHERE. Coming up takes as long as it takes, and a bound here
 # would convert a slow-but-working container into a failed test run. What this
@@ -183,14 +198,72 @@ wait_for_lockd() {
     return 0
 }
 
-wait_for_supervisor
-wait_for_lockd
+# -----------------------------------------------------------------------------
+# Hold a connection to the orchestrator until it closes. Returns when the
+# orchestrator is gone: the connection reached end-of-file, or could not be made
+# at all (the socket is served before any container is started, so a refused
+# connect means its server has already exited).
+#
+# default_socket_timeout=-1: a PHP socket read otherwise gives up after 60
+# seconds, and a read that gave up is not a peer that went away. The loop tests
+# feof() rather than the read's return for the same reason.
+# -----------------------------------------------------------------------------
+hold_orchestrator_connection() {
+    php -n -d default_socket_timeout=-1 -r '
+        $socket = @stream_socket_client("unix://" . $argv[1], $errno, $errstr);
+        if (!$socket) {
+            fwrite(STDERR, "[test-worker " . $argv[2] . "] cannot connect to the orchestrator at " . $argv[1] . ": " . $errstr . "\n");
+            exit(1);
+        }
+        stream_set_blocking($socket, true);
+        fwrite(STDERR, "[test-worker " . $argv[2] . "] holding the orchestrator connection\n");
+        while (!feof($socket)) {
+            fread($socket, 8192);
+        }
+        exit(0);
+    ' -- "$WORKER_SOCKET" "$WORKER_ID"
+}
 
-cd "$PROJECT_ROOT" || fail "cannot enter $PROJECT_ROOT"
+run_worker() {
+    wait_for_supervisor
+    wait_for_lockd
 
-SUITE_FLAG=()
-[ "$WORKER_SUITE" = "framework" ] && SUITE_FLAG=(--framework)
+    cd "$PROJECT_ROOT" || fail "cannot enter $PROJECT_ROOT"
 
-exec php artisan rsx:test "${SUITE_FLAG[@]}" \
-    --_worker-id="$WORKER_ID" \
-    --_worker-socket="$WORKER_SOCKET"
+    local suite_flag=()
+    [ "$WORKER_SUITE" = "framework" ] && suite_flag=(--framework)
+
+    exec php artisan rsx:test "${suite_flag[@]}" \
+        --_worker-id="$WORKER_ID" \
+        --_worker-socket="$WORKER_SOCKET"
+}
+
+hold_orchestrator_connection &
+WATCH_PID=$!
+
+run_worker &
+WORKER_PID=$!
+
+# Whichever ends first decides. Both are children of this shell, so `wait -n -p`
+# names the one that did (bash 5.1+; the image ships 5.2).
+FINISHED_PID=''
+wait -n -p FINISHED_PID "$WATCH_PID" "$WORKER_PID"
+FINISHED_STATUS=$?
+
+if [ "$FINISHED_PID" = "$WORKER_PID" ]; then
+    # The ordinary end: the queue drained (or the worker failed on its own). The
+    # connection is released and the worker's status is the container's.
+    kill "$WATCH_PID" 2>/dev/null
+    wait "$WATCH_PID" 2>/dev/null
+    exit "$FINISHED_STATUS"
+fi
+
+say "the orchestrator is gone (its connection closed) - nothing is left to report to; ending this container."
+
+# Every process in the container except PID 1 (the entrypoint) and this shell:
+# the worker and whatever it spawned, and every supervised service. The
+# entrypoint then finds supervisor already gone and exits, which ends the
+# container. SIGKILL, because nothing here has anything left worth flushing -
+# the datadir is a tmpfs that is discarded with the container.
+kill -KILL -1 2>/dev/null
+exit 1

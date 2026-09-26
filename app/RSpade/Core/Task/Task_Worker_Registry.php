@@ -21,6 +21,23 @@ use App\RSpade\Core\Database\Rsx_Connection_Scope;
  * "count _tasks rows in status=running" gate, which mis-counted between tasks and
  * wedged on SIGKILLed workers until the 30-minute stuck sweep.
  *
+ * SPAWNING IS ADMITTED TOO, BEFORE THE PROCESS EXISTS. A spawner (Task::spawn_worker())
+ * first RESERVES a slot - reserve_spawn(), one Lua script counting live slots PLUS
+ * outstanding reservations against the cap - and spawns only when that succeeded, handing the
+ * reservation token to the child (--_task-reservation=<token>). The child's admit() CONVERTS
+ * the reservation into its live slot, so a reserved spawn is never declined. N simultaneous
+ * dispatches therefore start at most (cap - occupied) processes and the rest start nothing -
+ * no PHP boot that exists only to discover the pool is full.
+ *
+ * A reservation carries NO TTL. It is released deterministically by exactly one of:
+ *   - the child converting it in admit() (the ordinary end);
+ *   - the spawner, when the spawn itself failed (release_reservation());
+ *   - reclaim_orphaned_reservations(), run by every rsx:task:process tick, when the process
+ *     it names is gone: a reservation names its owner as host:pid - the spawner while it
+ *     spawns, the child once hand_off_reservation() has recorded the child's pid - and a
+ *     reservation whose owner no longer runs on this host can never be converted.
+ * A child whose reservation was reclaimed before it started simply admits the ordinary way.
+ *
  * Redis owns ONLY this ephemeral worker-slot state. The durable queue (_tasks), the
  * atomic dequeue lock, and per-identity run-locks stay in MySQL. Losing just this registry
  * key is safe: it self-heals (stale slots expire, admission recomputes from scratch). Redis
@@ -42,6 +59,16 @@ class Task_Worker_Registry
 
     private static ?\Redis $redis = null;
 
+    /** Suffix of the HASH of outstanding spawn reservations (token => owner host:pid), beside
+     *  the live ZSET under the same scope. */
+    private const RESERVATIONS_SUFFIX = ':reserved';
+
+    /**
+     * The internal flag a spawner hands its child the reservation token on. `--_` convention:
+     * the only caller is Task::spawn_worker(), so it is lifted pre-boot and never an option.
+     */
+    public const RESERVATION_FLAG = '--_task-reservation';
+
     /** This process's worker id, set by admit(). Null until/unless this process is an admitted worker. */
     private static ?string $worker_id = null;
 
@@ -49,16 +76,23 @@ class Task_Worker_Registry
     private static bool $shutdown_registered = false;
 
     /**
-     * Atomically claim a worker slot. Prunes stale slots, then admits iff the live
-     * count is under rsx.tasks.global_max_workers - all in one Lua script, so N
-     * simultaneous starters admit EXACTLY the cap and the rest decline. On success the
-     * slot id is stored on this process and a shutdown handler is registered to release
-     * it.
+     * Atomically claim a worker slot. Prunes stale slots, then admits - all in one Lua script,
+     * so N simultaneous starters admit EXACTLY the cap and the rest decline:
      *
+     *   - with a $reservation this process was spawned under (reserve_spawn()) that is still
+     *     outstanding, the reservation BECOMES the slot: no cap check, because the slot was
+     *     counted when it was reserved;
+     *   - otherwise (a hand-run worker, or a reservation already reclaimed) iff live slots
+     *     plus outstanding reservations are under rsx.tasks.global_max_workers.
+     *
+     * On success the slot id is stored on this process and a shutdown handler is registered
+     * to release it.
+     *
+     * @param string|null $reservation The token this worker was spawned with, if any
      * @return bool True if admitted (proceed to work), false if the pool is full (exit).
      * @throws RuntimeException If Redis is unreachable (a hard error - Redis is required).
      */
-    public static function admit(): bool
+    public static function admit(?string $reservation = null): bool
     {
         $redis = self::_redis();
 
@@ -68,7 +102,13 @@ class Task_Worker_Registry
 
         $lua = <<<'LUA'
             redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[2])
-            if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[3]) then return 0 end
+            local converted = 0
+            if ARGV[6] ~= '' then
+                converted = redis.call('HDEL', KEYS[2], ARGV[6])
+            end
+            if converted == 0 and redis.call('ZCARD', KEYS[1]) + redis.call('HLEN', KEYS[2]) >= tonumber(ARGV[3]) then
+                return 0
+            end
             redis.call('ZADD', KEYS[1], ARGV[1], ARGV[4])
             redis.call('EXPIRE', KEYS[1], ARGV[5])
             return 1
@@ -76,8 +116,17 @@ LUA;
 
         $admitted = (int) $redis->eval(
             $lua,
-            [self::_zset_key(), $now, $now - $ttl, self::_max_workers(), $worker_id, $ttl * 4],
-            1
+            [
+                self::_zset_key(),
+                self::_reservations_key(),
+                $now,
+                $now - $ttl,
+                self::_max_workers(),
+                $worker_id,
+                $ttl * 4,
+                (string) $reservation,
+            ],
+            2
         );
 
         if ($admitted !== 1) {
@@ -92,6 +141,132 @@ LUA;
         }
 
         return true;
+    }
+
+    /**
+     * Reserve a slot for a worker about to be spawned. Atomic with every other admission: one
+     * Lua script prunes stale slots and reserves iff live slots plus outstanding reservations
+     * are under the cap. The reservation is owned by THIS process until
+     * hand_off_reservation() names the child.
+     *
+     * @return string|null The reservation token to hand the child, or null when the pool is
+     *                     full (spawn nothing).
+     * @throws RuntimeException If Redis is unreachable (a hard error - Redis is required).
+     */
+    public static function reserve_spawn(): ?string
+    {
+        $token = random_hash(16);
+
+        $lua = <<<'LUA'
+            redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+            if redis.call('ZCARD', KEYS[1]) + redis.call('HLEN', KEYS[2]) >= tonumber(ARGV[2]) then
+                return 0
+            end
+            redis.call('HSET', KEYS[2], ARGV[3], ARGV[4])
+            return 1
+LUA;
+
+        $reserved = (int) self::_redis()->eval(
+            $lua,
+            [
+                self::_zset_key(),
+                self::_reservations_key(),
+                time() - self::_ttl(),
+                self::_max_workers(),
+                $token,
+                self::_owner(getmypid()),
+            ],
+            2
+        );
+
+        return $reserved === 1 ? $token : null;
+    }
+
+    /**
+     * Record the spawned child as the reservation's owner, so the reaper judges the
+     * reservation by the CHILD's liveness from here on. A no-op when the child has already
+     * converted it (a fast child can admit before its spawner gets here).
+     *
+     * @param string $token
+     * @param int $child_pid
+     * @return void
+     */
+    public static function hand_off_reservation(string $token, int $child_pid): void
+    {
+        $lua = <<<'LUA'
+            if redis.call('HEXISTS', KEYS[1], ARGV[1]) == 1 then
+                redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+            end
+            return 1
+LUA;
+
+        self::_redis()->eval($lua, [self::_reservations_key(), $token, self::_owner($child_pid)], 1);
+    }
+
+    /**
+     * Give a reservation back - the spawner's answer to a spawn that produced no process.
+     *
+     * @param string $token
+     * @return void
+     */
+    public static function release_reservation(string $token): void
+    {
+        self::_redis()->hDel(self::_reservations_key(), $token);
+    }
+
+    /**
+     * Release every reservation whose owner process is gone from THIS host - a spawner that
+     * died between reserving and spawning, or a child that died before it converted. The
+     * reaper half of the reservation lifecycle; rsx:task:process runs it every tick.
+     *
+     * Only this host's reservations are judged: a pid means nothing on another machine. Each
+     * release is compare-and-delete, so a reservation handed off to a new owner between the
+     * read and the release is left alone.
+     *
+     * @return int How many reservations were reclaimed.
+     * @throws RuntimeException If Redis is unreachable (a hard error - Redis is required).
+     */
+    public static function reclaim_orphaned_reservations(): int
+    {
+        $redis = self::_redis();
+        $host = (string) gethostname();
+
+        $lua = <<<'LUA'
+            if redis.call('HGET', KEYS[1], ARGV[1]) == ARGV[2] then
+                return redis.call('HDEL', KEYS[1], ARGV[1])
+            end
+            return 0
+LUA;
+
+        $reclaimed = 0;
+        foreach ($redis->hGetAll(self::_reservations_key()) as $token => $owner) {
+            $separator = strrpos((string) $owner, ':');
+            if ($separator === false) {
+                shouldnt_happen("Task worker reservation {$token} has an owner that is not host:pid: {$owner}");
+            }
+
+            $owner_host = substr($owner, 0, $separator);
+            $owner_pid = (int) substr($owner, $separator + 1);
+
+            if ($owner_host !== $host || self::_pid_is_running($owner_pid)) {
+                continue;
+            }
+
+            $reclaimed += (int) $redis->eval($lua, [self::_reservations_key(), $token, $owner], 1);
+        }
+
+        return $reclaimed;
+    }
+
+    /**
+     * Outstanding spawn reservations (spawned or spawning workers that have not admitted yet).
+     *
+     * @return int
+     * @throws RuntimeException If Redis is unreachable (a hard error - Redis is required).
+     */
+    public static function reserved_count(): int
+    {
+        return (int) self::_redis()->hLen(self::_reservations_key());
     }
 
     /**
@@ -133,8 +308,8 @@ LUA;
     }
 
     /**
-     * Live worker count after pruning stale slots. Used by the processor to compute the
-     * spawn deficit and by Task::spawn_worker() for a cheap pre-check.
+     * Live worker count after pruning stale slots (outstanding spawn reservations are NOT
+     * included - see reserved_count()).
      *
      * @return int
      * @throws RuntimeException If Redis is unreachable (a hard error - Redis is required).
@@ -201,7 +376,10 @@ LUA;
             ];
         }
 
-        return ['status' => 'OK', 'detail' => 'connected; ' . $live . ' live worker(s)'];
+        return [
+            'status' => 'OK',
+            'detail' => 'connected; ' . $live . ' live worker(s), ' . self::reserved_count() . ' spawn reservation(s)',
+        ];
     }
 
     // =========================================================================
@@ -224,6 +402,40 @@ LUA;
     private static function _zset_key(): string
     {
         return self::ZSET_KEY_BASE . ':' . Rsx_Connection_Scope::token();
+    }
+
+    /**
+     * The spawn-reservation HASH, under the same (database, host) scope as the live ZSET.
+     *
+     * @return string
+     */
+    private static function _reservations_key(): string
+    {
+        return self::_zset_key() . self::RESERVATIONS_SUFFIX;
+    }
+
+    /**
+     * A reservation's owner value: this host plus a pid on it.
+     *
+     * @param int $pid
+     * @return string
+     */
+    private static function _owner(int $pid): string
+    {
+        return gethostname() . ':' . $pid;
+    }
+
+    /**
+     * Does a process with this pid exist on this host? /proc is the whole answer on the
+     * Linux hosts the framework runs on, and it needs no permission over the process (a
+     * posix_kill(0) probe of another user's worker would answer EPERM).
+     *
+     * @param int $pid
+     * @return bool
+     */
+    private static function _pid_is_running(int $pid): bool
+    {
+        return $pid > 0 && file_exists('/proc/' . $pid);
     }
 
     private static function _max_workers(): int

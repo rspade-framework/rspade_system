@@ -91,10 +91,20 @@ abstract class Site_Model_Abstract extends Rsx_Model_Abstract
      * page, or an application's own root console), it MUST exclude
      * id = 0 from the tenant list - the Default site is an infrastructure FK target,
      * not a tenant workspace.
+     *
+     * For the same reason the Default site can never be DISABLED: sites.is_enabled is
+     * framework-enforced (a disabled site signs nobody in and ends its live sessions - see
+     * User_Model::is_active()), and the infrastructure scope must not be switchable off.
      */
     protected static function booted()
     {
         parent::booted();
+
+        static::saving(function ($model) {
+            if ($model->id === 0 && !$model->is_enabled) {
+                shouldnt_happen('The Default site (id 0) cannot be disabled');
+            }
+        });
 
         static::deleting(function ($model) {
             if ($model->id === 0) {
@@ -121,18 +131,10 @@ abstract class Site_Model_Abstract extends Rsx_Model_Abstract
     }
 
     /**
-     * Get all files belonging to this site
+     * Is the site active - enabled (sites.is_enabled) and not deleted?
      *
-     * @return \Illuminate\Database\Eloquent\Relations\HasMany
-     */
-    #[Relationship]
-    public function files()
-    {
-        return $this->hasMany(File_Model::class, 'site_id');
-    }
-
-    /**
-     * Check if the site is active
+     * The site half of User_Model::is_active(): a membership on an inactive site is unusable,
+     * so the framework refuses its sign-in and ends its live sessions.
      *
      * @return bool
      */

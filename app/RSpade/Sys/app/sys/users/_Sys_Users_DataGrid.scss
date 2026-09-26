@@ -1,0 +1,12 @@
+._Sys_Users_DataGrid {
+    // One line per row; a narrow screen scrolls the table sideways instead.
+    td,
+    th {
+        white-space: nowrap;
+    }
+
+    &__mono {
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+    }
+}

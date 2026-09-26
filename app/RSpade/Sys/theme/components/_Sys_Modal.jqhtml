@@ -1,0 +1,41 @@
+<%--
+_Sys_Modal - the panel's dialog. Never invoked from a template: open one through
+the static API in _Sys_Modal.js (alert, confirm, show, form), which mounts this
+component on <body> and resolves with the answer.
+
+Bootstrap's own modal (the panel theme's build) supplies the backdrop, the focus
+trap, Escape and the scroll lock; this component supplies the markup, the button
+semantics and Enter-to-accept.
+--%>
+<Define:_Sys_Modal tag="div" class="modal fade" tabindex="-1" role="dialog" aria-modal="true">
+    <% const _buttons = this.args.buttons || []; %>
+    <% const _style = 'max-width: ' + int(this.args.max_width || 500) + 'px'; %>
+    <div class="modal-dialog modal-dialog-centered" style="<%= _style %>">
+        <div class="modal-content">
+            <% if (this.args.title) { %>
+                <div class="modal-header">
+                    <h5 class="_Sys_Modal__title modal-title"><%= this.args.title %></h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+            <% } %>
+            <div class="_Sys_Modal__body modal-body" $sid="body">
+                <% if (is_string(this.args.body)) { %>
+                    <div class="_Sys_Modal__text"><%br= this.args.body %></div>
+                <% } %>
+            </div>
+            <% if (_buttons.length) { %>
+                <div class="modal-footer" $sid="footer">
+                    <% for (let _i = 0; _i < _buttons.length; _i++) { %>
+                        <% const _b = _buttons[_i]; %>
+                        <% const _class = 'btn btn-sm ' + (_b.class || 'btn-secondary'); %>
+                        <% if (_b.default) { %>
+                            <button type="button" class="<%= _class %>" data-index="<%= _i %>" data-sys-modal-default="1"><%= _b.label %></button>
+                        <% } else { %>
+                            <button type="button" class="<%= _class %>" data-index="<%= _i %>"><%= _b.label %></button>
+                        <% } %>
+                    <% } %>
+                </div>
+            <% } %>
+        </div>
+    </div>
+</Define:_Sys_Modal>

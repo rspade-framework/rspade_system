@@ -11,16 +11,83 @@
  * No navigation, no server round trip: the layout, nav and session chrome stay
  * alive around the error body, so the user is still inside the application.
  *
- * THE BODIES ARE APP-OWNED THEME CODE. This class only resolves the target
- * container and mounts the matching component from
- * rsx/theme/components/feedback/errors/ - the same components the three-state
- * pattern uses through Universal_Error_Page_Component. Customizing an error
- * screen in the SPA means editing those components; no override machinery is
- * involved on this side (contrast the PHP twin, which is a class-override).
+ * THE BODIES ARE THE BUNDLE'S OWN COMPONENTS. This class only resolves the target
+ * container and mounts whichever component the running bundle REGISTERED for the
+ * outcome - once, from a static on_app_modules_define():
  *
- * See: php artisan rsx:man auth_gates (ERROR SCREENS)
+ *     class My_Error_Screens {
+ *         static on_app_modules_define() {
+ *             Error_Screens.set_components({
+ *                 unauthorized: 'Unauthorized_Error_Page_Component',
+ *                 not_found: 'Not_Found_Error_Page_Component',
+ *                 fatal: 'Generic_Error_Page_Component',
+ *             });
+ *         }
+ *     }
+ *
+ * A registry rather than fixed names because more than one application runs on
+ * the SPA - the template app's theme ships one set, the framework's own /_sys
+ * panel ships another, and neither bundle can see the other's components. There
+ * is no default: a bundle that never registered fails LOUD the first time it
+ * needs an error screen, naming this call.
+ *
+ * Each component receives the outcome's arguments below; it may ignore any of them.
+ *
+ * See: rsx:man error_pages (SPA ERROR SCREENS)
  */
 class Error_Screens {
+    /**
+     * {unauthorized, not_found, fatal} -> component name, or null until a bundle
+     * registers its set.
+     * @private
+     */
+    static _components = null;
+
+    /**
+     * Register the running bundle's three error-screen components
+     *
+     * Called once per bundle, from a static on_app_modules_define(). All three keys
+     * are required; a later call replaces the whole set.
+     *
+     * @param {object} components
+     * @param {string} components.unauthorized Component for a denied @auth gate
+     * @param {string} components.not_found Component for a URL nothing claims
+     * @param {string} components.fatal Component for a boot/render failure
+     */
+    static set_components(components) {
+        const keys = ['unauthorized', 'not_found', 'fatal'];
+
+        for (const key of keys) {
+            if (!components || !is_string(components[key]) || components[key] === '') {
+                throw new Error(
+                    `[Error_Screens] set_components() requires a component name for '${key}' ` +
+                    '(keys: unauthorized, not_found, fatal).'
+                );
+            }
+        }
+
+        for (const key of Object.keys(components)) {
+            if (!keys.includes(key)) {
+                throw new Error(`[Error_Screens] set_components() got unknown key '${key}' (keys: unauthorized, not_found, fatal).`);
+            }
+        }
+
+        Error_Screens._components = {
+            unauthorized: components.unauthorized,
+            not_found: components.not_found,
+            fatal: components.fatal,
+        };
+    }
+
+    /**
+     * The registered set, or null when this bundle registered none.
+     *
+     * @returns {object|null}
+     */
+    static get_components() {
+        return Error_Screens._components;
+    }
+
     /**
      * Render the unauthorized body for a denied surface
      *
@@ -30,7 +97,7 @@ class Error_Screens {
      * @returns {object} The mounted component instance
      */
     static unauthorized(options = {}) {
-        return Error_Screens._render('Unauthorized_Error_Page_Component', {
+        return Error_Screens._render('unauthorized', {
             message: options.message || 'You do not have permission to view this page',
             section: options.section || '',
         });
@@ -46,7 +113,7 @@ class Error_Screens {
      * @returns {object} The mounted component instance
      */
     static not_found(options = {}) {
-        return Error_Screens._render('Not_Found_Error_Page_Component', {
+        return Error_Screens._render('not_found', {
             record_type: options.record_type || 'Page',
             back_label: options.back_label || 'Return to home',
             back_url: options.back_url || '/',
@@ -70,30 +137,39 @@ class Error_Screens {
             ? error
             : (error && error.message ? error.message : 'An unexpected error occurred.');
 
-        return Error_Screens._render('Generic_Error_Page_Component', {
+        return Error_Screens._render('fatal', {
             error_data: message,
         });
     }
 
     /**
-     * Mount an error component in the active content area
+     * Mount the registered error component for an outcome in the active content area
      *
      * Tears down the mounted action first: a denied or failed action must not be
      * left running behind the error body. The container itself is preserved (it is
      * the layout's $sid="content" element, found by id on the next navigation) -
      * the body is mounted on a child of it, exactly like ordinary page content.
      *
-     * @param {string} component_name Theme component to mount
+     * @param {string} outcome 'unauthorized', 'not_found' or 'fatal'
      * @param {object} args Component arguments
      * @returns {object} The mounted component instance
      */
-    static _render(component_name, args) {
+    static _render(outcome, args) {
+        if (!Error_Screens._components) {
+            throw new Error(
+                `[Error_Screens] No error screen components are registered, so the '${outcome}' ` +
+                'screen cannot render. Register this bundle\'s set once, from a static ' +
+                'on_app_modules_define(): Error_Screens.set_components({unauthorized, not_found, fatal}).'
+            );
+        }
+
+        const component_name = Error_Screens._components[outcome];
+
         if (!jqhtml.get_registered_templates().includes(component_name)) {
             throw new Error(
-                `[Error_Screens] Missing theme component '${component_name}'. ` +
-                'The SPA error screens render the app-owned components in ' +
-                'rsx/theme/components/feedback/errors/ - restore it or change ' +
-                'Error_Screens to name the component your theme provides.'
+                `[Error_Screens] The registered '${outcome}' component '${component_name}' is not ` +
+                'in this bundle. Restore it, or register the component this bundle provides ' +
+                'with Error_Screens.set_components().'
             );
         }
 

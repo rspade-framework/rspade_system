@@ -1,0 +1,25 @@
+<%--
+_Sys_Textarea_Input - a multi-line text input for a panel form.
+
+$name - the form field name (required inside an <Rsx_Form>)
+$max_length - REQUIRED, as on _Sys_Text_Input (-1 for unlimited)
+$rows=4 - visible rows [optional]
+$placeholder - placeholder text [optional]
+$mono - use the monospace face (JSON, config, channel lists) [optional]
+$disabled - render disabled; val() still reads and writes it [optional]
+
+Enter inside it is a newline, never a dialog's accept.
+
+    <_Sys_Form_Field $label="Reason">
+        <_Sys_Textarea_Input $name="reason" $max_length=-1 $rows=3 />
+    </_Sys_Form_Field>
+--%>
+<Define:_Sys_Textarea_Input>
+    <% const _class = 'form-control form-control-sm' + (this.args.mono ? ' _Sys_Textarea_Input__mono' : ''); %>
+    <textarea $sid="input"
+              class="<%= _class %>"
+              rows="<%= this.args.rows || 4 %>"
+              placeholder="<%= this.args.placeholder || '' %>"
+              <% if (this.args.max_length > 0) { %>maxlength="<%= this.args.max_length %>"<% } %>
+              <% if (this.args.disabled) { %>disabled<% } %>></textarea>
+</Define:_Sys_Textarea_Input>

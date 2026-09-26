@@ -1,0 +1,15 @@
+._Sys_Text_Input {
+    display: block;
+
+    // Form_Utils marks the INPUT COMPONENT (this element, found by its data-name) with
+    // .is-invalid, not the control inside it, so Bootstrap's own .form-control.is-invalid rule
+    // never matches. This carries the invalid state down to the control.
+    &.is-invalid .form-control {
+        border-color: var(--bs-form-invalid-border-color);
+
+        &:focus {
+            border-color: var(--bs-form-invalid-border-color);
+            box-shadow: 0 0 0 0.25rem rgba(var(--bs-danger-rgb), 0.25);
+        }
+    }
+}

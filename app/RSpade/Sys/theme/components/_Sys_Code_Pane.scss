@@ -1,0 +1,37 @@
+._Sys_Code_Pane {
+    display: block;
+    min-width: 0;
+    background: var(--rsx-bg);
+    border: 1px solid var(--rsx-border);
+    border-radius: 6px;
+    color: var(--rsx-text);
+
+    &__label {
+        padding: 6px 12px;
+        border-bottom: 1px solid var(--rsx-border);
+        background: var(--rsx-raised);
+        border-radius: 6px 6px 0 0;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--rsx-muted);
+    }
+
+    &__pre {
+        @include rsx-preview-text-pane;
+        height: auto;
+        padding: 12px 14px;
+        font-size: 12.5px;
+        // The theme colours <pre> as code (accent); a data pane is plain text.
+        color: var(--rsx-text);
+    }
+
+    &__empty {
+        padding: 12px 14px;
+        font-size: 12.5px;
+        font-style: italic;
+        color: var(--rsx-muted);
+        opacity: 0.6;
+    }
+}

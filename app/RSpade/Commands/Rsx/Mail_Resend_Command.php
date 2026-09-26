@@ -8,7 +8,7 @@
 namespace App\RSpade\Commands\Rsx;
 
 use App\RSpade\Core\Models\Email_Queue_Model;
-use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Mail\Rsx_Mail;
 use Illuminate\Console\Command;
 
 /**
@@ -28,6 +28,9 @@ use Illuminate\Console\Command;
  * A PENDING or SENDING row is refused because there is nothing to do: the queue already
  * has it, and resetting a row a drain is mid-way through would send it twice.
  *
+ * Those rules are Rsx_Mail::resend(), which the /_sys Email screen calls too; this
+ * command only narrates the outcome. It acts on any site's row (the CLI runs as site 0).
+ *
  * See: php artisan rsx:man email
  */
 class Mail_Resend_Command extends Command
@@ -42,45 +45,43 @@ class Mail_Resend_Command extends Command
     {
         $id = (int) $this->argument('id');
 
-        $record = Email_Queue_Model::find($id);
+        // Every site's row: an operator names a row by id, and the CLI's own site (0) says
+        // nothing about which tenant queued it.
+        return Email_Queue_Model::without_site_scope(function () use ($id) {
+            $record = Email_Queue_Model::find($id);
 
-        if ($record === null) {
-            $this->error("[ERROR] There is no email queue row #{$id}.");
+            if ($record === null) {
+                $this->error("[ERROR] There is no email queue row #{$id}.");
 
-            return 1;
-        }
+                return 1;
+            }
 
-        $status_id = (int) $record->status_id;
+            $outcome = Rsx_Mail::resend($record, (bool) $this->option('force'));
 
-        if ($status_id === Email_Queue_Model::STATUS_PENDING
-            || $status_id === Email_Queue_Model::STATUS_SENDING
-        ) {
-            $this->line(
-                "#{$id} is already {$record->status_id__label} - the queue has it. Nothing to do."
-            );
+            if ($outcome === Rsx_Mail::RESEND_ALREADY_QUEUED) {
+                $this->line(
+                    "#{$id} is already {$record->status_id__label} - the queue has it. Nothing to do."
+                );
+
+                return 0;
+            }
+
+            if ($outcome === Rsx_Mail::RESEND_BLOCKED) {
+                $this->error(
+                    "[WARNING] #{$id} is Blocked: {$record->to_address} has unsubscribed from "
+                    . $record->category_id__label . ' email.'
+                );
+                $this->line('That is a consent record, not a delivery failure.');
+                $this->line("Re-send it anyway with: php artisan rsx:mail:resend {$id} --force");
+
+                return 1;
+            }
+
+            $this->line("#{$id} to {$record->to_address} is now {$record->status_id__label} (attempts reset to 0).");
+            $this->line('The queue drain has been dispatched; check it with:');
+            $this->line("  php artisan rsx:mail:show {$id}");
 
             return 0;
-        }
-
-        if ($status_id === Email_Queue_Model::STATUS_BLOCKED && !$this->option('force')) {
-            $this->error(
-                "[WARNING] #{$id} is Blocked: {$record->to_address} has unsubscribed from "
-                . $record->category_id__label . ' email.'
-            );
-            $this->line('That is a consent record, not a delivery failure.');
-            $this->line("Re-send it anyway with: php artisan rsx:mail:resend {$id} --force");
-
-            return 1;
-        }
-
-        $record->reset_for_resend();
-
-        Task::dispatch('Mail_Queue_Service', 'send_pending_queue');
-
-        $this->line("#{$id} to {$record->to_address} is now {$record->status_id__label} (attempts reset to 0).");
-        $this->line('The queue drain has been dispatched; check it with:');
-        $this->line("  php artisan rsx:mail:show {$id}");
-
-        return 0;
+        });
     }
 }

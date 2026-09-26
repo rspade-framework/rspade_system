@@ -1,0 +1,23 @@
+<%--
+_Sys_Checkbox_Input - one checkbox (or switch) for a panel form.
+
+$name - the form field name (required inside an <Rsx_Form>)
+$label - the text beside the box, plain text [optional]
+$switch - draw it as a toggle switch [optional]
+$checked_value="1" - the value when checked [optional]
+$unchecked_value="0" - the value when unchecked [optional]
+$disabled - render disabled; val() still reads and writes it [optional]
+
+val(true), val(1) and val('1') all check it.
+
+    <_Sys_Checkbox_Input $name="include_backtrace" $label="Include backtrace" $switch=true />
+--%>
+<Define:_Sys_Checkbox_Input>
+    <% const _class = 'form-check mb-0' + (this.args.switch ? ' form-switch' : ''); %>
+    <div class="<%= _class %>">
+        <input $sid="input" class="form-check-input" type="checkbox" <% if (this.args.disabled) { %>disabled<% } %> />
+        <% if (this.args.label) { %>
+            <label $sid="label" class="form-check-label"><%= this.args.label %></label>
+        <% } %>
+    </div>
+</Define:_Sys_Checkbox_Input>

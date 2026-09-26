@@ -732,6 +732,9 @@ OPERATIONS
         REPORTED, not stack-traced: the message stays PENDING for the next sweep. An unknown
         --email value prints the list of known email classes.
 
+    The three operator commands below read and act on EVERY site's rows: the queue is
+    one table for the whole install, and the CLI's own site (0) owns no mail.
+
     rsx:mail:queue - what is in the queue right now
         php artisan rsx:mail:queue [--status=] [--recipient=] [--limit=25] [--json]
 
@@ -741,7 +744,8 @@ OPERATIONS
         With --status (pending|sending|sent|failed|blocked|suppressed) and/or --recipient
         (a substring, matched against BOTH to_address and dev_original_to, so a message
         redirected to a dev catchall is still found by who it was really for): the matching
-        rows newest first, up to --limit. An unknown --status is refused with the list.
+        rows newest first, up to --limit, each naming its site. An unknown --status is
+        refused with the list.
 
     rsx:mail:show - everything one row knows about itself
         php artisan rsx:mail:show <id> [--json]
@@ -764,7 +768,9 @@ OPERATIONS
         is refused as nothing to do (exit 0). A BLOCKED row REQUIRES --force and exits 1
         without it: Blocked means the recipient asked not to receive this category, that is
         a consent record, and a command that quietly overrode it would make the unsubscribe
-        link a lie. Exit 1 when there is no such row.
+        link a lie. Exit 1 when there is no such row. The rules are Rsx_Mail::resend($row,
+        $force), which answers RESEND_QUEUED, RESEND_ALREADY_QUEUED or RESEND_BLOCKED and
+        is what the /_sys Email screen's Resend calls too (rsx:man sys_panel).
 
     rsx:health - three Mail rows
         Mail delivery        which of the four modes this install is in. INFO, never FAIL,

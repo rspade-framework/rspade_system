@@ -317,18 +317,23 @@ class Docker_Dispatch_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * min(8, cores, floor(RAM_MB / 1000)), floored at 1 and capped by the class count. The
-     * inputs are this box's real /proc, so what is asserted is the SHAPE: inside the
-     * declared bounds, and never more containers than there are classes to put in them -
-     * which is what makes a one-class run one container rather than eight.
+     * ceil(cores / 3), floored at 1 and capped by the class count. The input is this box's
+     * real /proc/cpuinfo, counted here the same way, so what is asserted is the formula
+     * itself - and never more containers than there are classes to put in them, which is
+     * what makes a one-class run one container.
      */
-    public static function test_the_worker_count_stays_inside_its_declared_bounds()
+    public static function test_the_worker_count_is_a_third_of_the_cores()
     {
         $command = self::__make_command();
 
-        $many = (int) self::__call_protected($command, 'worker_count', [1000]);
-        static::__assert_greater_than(0, $many, 'at least one worker, always');
-        static::__assert_less_than(9, $many, 'never more than WORKER_MAX (8)');
+        $cores = max(1, (int) preg_match_all('/^processor\s*:/mi', (string) file_get_contents('/proc/cpuinfo')));
+        $expected = max(1, (int) ceil($cores / 3));
+
+        static::__assert_equals(
+            $expected,
+            (int) self::__call_protected($command, 'worker_count', [1000]),
+            'ceil(' . $cores . ' cores / 3) containers for a large selection'
+        );
 
         static::__assert_equals(
             1,
@@ -337,8 +342,8 @@ class Docker_Dispatch_Test extends Rsx_Test_Abstract
         );
 
         static::__assert_equals(
-            min(3, $many),
-            (int) self::__call_protected($command, 'worker_count', [3]),
+            min(2, $expected),
+            (int) self::__call_protected($command, 'worker_count', [2]),
             'the class count caps the formula'
         );
 

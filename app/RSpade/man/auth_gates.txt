@@ -627,11 +627,11 @@ ERROR SCREENS
     declaration, not a class override. See rsx:man error_pages.
 
     INSIDE A LIVE SPA SESSION the denial never leaves the page: the Spa gate
-    calls the JS Error_Screens, which mounts an application-owned theme
-    component from rsx/theme/components/feedback/errors/ into the active
-    layout's content area - no navigation, no round trip, the nav and session
-    chrome still alive around the error body. Those components are edited
-    directly; there is no override machinery on that side.
+    calls the JS Error_Screens, which mounts the component the bundle
+    registered with Error_Screens.set_components() (the template's is in
+    rsx/theme/components/feedback/errors/) into the active layout's content
+    area - no navigation, no round trip, the nav and session chrome still
+    alive around the error body. See rsx:man error_pages, SPA ERROR SCREENS.
 
     Coded Ajax errors keep their existing contract: handled errors stay in
     the component's catch; unhandled ERROR_UNAUTHORIZED / ERROR_NOT_FOUND

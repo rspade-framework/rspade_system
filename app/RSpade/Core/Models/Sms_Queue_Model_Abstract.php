@@ -377,6 +377,38 @@ abstract class Sms_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     }
 
     /**
+     * How many rows sit in each status, every status present (a zero is a count).
+     * The Email_Queue_Model twin.
+     *
+     * SCOPE: whatever the caller runs under, as pending_count() does. The operator
+     * reader (the /_sys Email & SMS screen) calls it outside the site scope.
+     *
+     * @return array<int, int> status_id => rows
+     */
+    public static function status_counts(): array
+    {
+        $counts = [];
+
+        foreach (array_keys(static::$enums['status_id']) as $status_id) {
+            $counts[$status_id] = static::where('status_id', $status_id)->count();
+        }
+
+        return $counts;
+    }
+
+    /**
+     * The PENDING row that has waited longest, or null when nothing is waiting.
+     * Scope as status_counts().
+     */
+    public static function oldest_pending(): ?self
+    {
+        return static::where('status_id', self::STATUS_PENDING)
+            ->orderBy('created_at', 'asc')
+            ->orderBy('id', 'asc')
+            ->first();
+    }
+
+    /**
      * Terminal failure that no retry can fix (a code bug).
      */
     public function mark_failed(string $error): void

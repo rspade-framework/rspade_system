@@ -1,0 +1,16 @@
+<%--
+_Sys_DataGrid_Filter - one filter select in a _Sys_DataGrid_Abstract toolbar.
+Rendered by the grid from its $filters declaration; never used on its own.
+
+$filter - {key, label, options} - options is [{value, label}] or an Ajax endpoint
+          answering that list (called with no arguments)
+$value - the selected value ('' / absent = the "all" option)
+
+The grid listens for "change" on select[data-filter-key].
+--%>
+<Define:_Sys_DataGrid_Filter tag="select" class="form-select form-select-sm">
+    <option value=""><%= this.args.filter.label %></option>
+    <% for (const _option of this.data.options) { %>
+        <option value="<%= _option.value %>"><%= _option.label %></option>
+    <% } %>
+</Define:_Sys_DataGrid_Filter>

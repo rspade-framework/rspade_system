@@ -1,0 +1,45 @@
+<%--
+_Sys_Tabs - a tab bar plus one panel per tab, the active tab kept in the URL hash.
+
+$tabs - [{key, label, icon?, count?}] (required). Each key names the <Slot:key>
+        holding that tab's panel, so a key is an identifier (letters, digits,
+        underscores; never "default").
+$hash="tab" - the URL-hash key that remembers the active tab, so a reload or a
+              shared link opens the same tab [optional; no persistence without it]
+
+this.activate(key) switches tabs; this.get_active_key() reads it. Every switch
+fires "tab_change" ({key}).
+
+Every panel renders up front and the inactive ones are hidden, so a panel's
+components load once and keep their state while the user switches tabs.
+
+    <_Sys_Tabs $sid="tabs" $hash="tab" $tabs=([
+        {key: 'running', label: 'Running', count: _running.length},
+        {key: 'history', label: 'History'},
+    ])>
+        <Slot:running><_Sys_Running_Tasks /></Slot:running>
+        <Slot:history><_Sys_Task_History /></Slot:history>
+    </_Sys_Tabs>
+--%>
+<Define:_Sys_Tabs>
+    <% const _tabs = this.args.tabs || []; %>
+    <% if (!_tabs.length) throw new Error('_Sys_Tabs requires a non-empty $tabs'); %>
+    <div class="_Sys_Tabs__bar" role="tablist">
+        <% for (const tab of _tabs) { %>
+            <button type="button" class="_Sys_Tabs__tab" role="tab" data-tab-key="<%= tab.key %>" aria-selected="false">
+                <% if (tab.icon) { %>
+                    <i class="<%= 'bi ' + tab.icon %>"></i>
+                <% } %>
+                <span><%= tab.label %></span>
+                <% if (tab.count !== undefined && tab.count !== null && tab.count !== '') { %>
+                    <span class="_Sys_Tabs__count"><%= tab.count %></span>
+                <% } %>
+            </button>
+        <% } %>
+    </div>
+    <% for (const tab of _tabs) { %>
+        <div class="_Sys_Tabs__panel" role="tabpanel" data-tab-key="<%= tab.key %>" hidden>
+            <%= content(tab.key) %>
+        </div>
+    <% } %>
+</Define:_Sys_Tabs>

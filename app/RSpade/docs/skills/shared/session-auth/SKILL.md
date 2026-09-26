@@ -113,12 +113,12 @@ Config `rsx.sessions.login_throttle`: `enabled` (true), `attempts` (10), `window
 1. Your login function (above) - so a bad-state login never starts.
 2. `Main::pre_dispatch()` - return non-null to halt, which ejects a session whose account went bad AFTER sign-in. It runs for external API calls too (a non-null return there is a 403 `account_refused`; branch on `Session::is_api_request()` before `Session::logout()`, which a headless API identity cannot call). **`init()` is a bootstrap hook and cannot eject anybody.**
 
-**`users.is_enabled` is NOT yours - delete every check you wrote on it.** It is the framework's per-site membership switch, enforced twice:
+**`users.is_enabled` and `sites.is_enabled` are NOT yours - delete every check you wrote on them.** They are the framework's switches - one membership, one whole site - and a membership is usable (**active**) only when both are on: `User_Model::is_active()` for a row, the `->active()` scope for a query. The Default site (id 0) can never be disabled (the save throws). Enforced twice:
 
-- **At login.** No enabled membership on any site -> `attempt()` returns false, indistinguishable from a wrong password, with `Login_History::STATUS_FAILED_DISABLED` in the audit trail. `RsxAuth::has_enabled_membership($login_user)` is the public predicate. Every other door runs through `RsxAuth::login()`, which **returns false without touching the session** for the same reason - so the second factor, a federated sign-in and the `rsx:debug` dev-auth harness are all refused too.
-- **At every request.** `Session::enforce_enabled_membership()` runs ahead of the `#[Auth]` gates in the staff dispatcher and in the Ajax browser entry point: a missing or disabled `users` row for (login user, site) **logs the session out** and answers `response_auth_required()` - a login redirect for a page, the `auth_required` envelope for an Ajax call. The **effective** identity is checked, so disabling an account also ends an impersonation of it.
+- **At login.** No active membership on any site -> `attempt()` returns false, indistinguishable from a wrong password, with `Login_History::STATUS_FAILED_DISABLED` in the audit trail. `RsxAuth::has_enabled_membership($login_user)` is the public predicate. Every other door runs through `RsxAuth::login()`, which **returns false without touching the session** for the same reason - so the second factor, a federated sign-in and the `rsx:debug` dev-auth harness are all refused too.
+- **At every request.** `Session::enforce_enabled_membership()` runs ahead of the `#[Auth]` gates in the staff dispatcher and in the Ajax browser entry point: a missing or inactive `users` row for (login user, site) - its own switch off, or its SITE disabled or deleted - **logs the session out** and answers `response_auth_required()` - a login redirect for a page, the `auth_required` envelope for an Ajax call. The **effective** identity is checked, so disabling an account also ends an impersonation of it.
 
-A listing of "which sites may I use" therefore needs no `is_enabled` filter of its own, and `Site_Unauthorized`-style screens are reached only where the app itself declares the requested site.
+A listing of "which sites may I use" therefore restates neither column: it filters with `->active()`, the same definition the framework enforces, so it never offers a site the framework would refuse, and `Site_Unauthorized`-style screens are reached only where the app itself declares the requested site.
 
 ---
 
@@ -146,6 +146,10 @@ Session::terminate_all_other_sessions(): int
 Session::terminate_session_for_user($login_user_id, $session_id): bool
 Session::terminate_all_sessions_for_user($login_user_id, $except_session_id = null): int
 
+// ANY IDENTITY, ANY SITE - the DEVELOPER primitive (the /_sys panel); null = every
+// session but the caller's own current one. Authorized by Session::is_developer() alone.
+Session::developer_terminate_sessions($login_user_id, $session_id = null): int
+
 // FRAMEWORK-INTERNAL, NO AUTHORIZATION - for a caller with no acting user
 Session::_deactivate_sessions_for_user($login_user_id): int
 ```
@@ -154,6 +158,8 @@ Session::_deactivate_sessions_for_user($login_user_id): int
 
 1. **The target IS the actor** - managing your own device list needs no role.
 2. **The actor's role may administer the target's** - `Permission::can_admin_role()` against the target's per-site `users.role_id`. That list is strictly "roles below mine", so **a PEER is refused and a SUPERIOR is refused, by construction**. Two Site Admins cannot sign each other out. A target with no `users` row on the acting site is refused too.
+
+`developer_terminate_sessions()` consults no role: a caller that is not a developer is refused by the same throw, and it never ends the caller's own current session (0).
 
 **REFUSAL THROWS `AjaxUnauthorizedException` (403); ABSENCE returns false/0** ("no such active row"). **Never conflate them** - that conflation is what hid a broken admin-terminate button for months: the endpoint read "false" as "nothing to do" and reported success while every call was actually being refused. Your endpoint still declares its own `#[Auth]` gate; the target rule is the framework's.
 
@@ -210,7 +216,9 @@ Session::get_impersonation_started_at(): ?string;
 
 `logout()`/`reset()` **HARD-CLEAR** impersonation - they do not restore to the impersonator; that is `stop_impersonation()`'s job. Neither begin nor stop touches `last_login`.
 
-Client side, `window.rsxapp.impersonation` is `{impersonator_login_user_id, started_at}` or `null` - **ids only**; the app resolves display names for its banner.
+Client side, `window.rsxapp.impersonation` is `{impersonator_login_user_id, impersonator_email, started_at}` or `null` - the impersonator named by login identity; a richer display name is the app's to resolve.
+
+The framework's own entry point is the `/_sys` panel's "Sign in as this user" (developers only): it stores the developer's site under the session value `sys.impersonation.return_site`, moves the session to the chosen membership's site, begins, and `GET /_sys/stop-impersonating` (`Rsx.Route('_Sys_Impersonation_Controller::stop')`, published into every bundle) restores both. **A `Main::init()` that declares the staff site on every request overrides the chosen site on the next request** - and an impersonated identity with no active membership on the declared site signs the WHOLE session out. `rsx:man sys_panel`, IMPERSONATION.
 
 ```javascript
 if (window.rsxapp.impersonation) { /* render the "viewing as" banner + a Stop control */ }

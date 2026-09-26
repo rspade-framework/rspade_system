@@ -1,0 +1,25 @@
+<%--
+_Sys_Not_Found - the panel's not-found body: a URL nothing claims, or a record
+that does not exist.
+
+$record_type="Page" - what is missing [optional]
+$back_label - the escape link's label [optional; default "Back to dashboard"]
+$back_url - the escape link's target [optional; default the panel dashboard]
+
+The panel registers it as the SPA's not_found screen (_Sys_Error_Screens); a
+detail page renders it directly for a missing record.
+--%>
+<Define:_Sys_Not_Found tag="div">
+    <%
+        const _type = this.args.record_type || 'Page';
+        // Error_Screens passes the application's generic escape (back to '/'); inside the
+        // panel the useful escape is the panel's own dashboard.
+        const _generic = !this.args.back_url || this.args.back_url === '/';
+        const _url = _generic ? Rsx.Route('_Sys_Dashboard_Action') : this.args.back_url;
+        const _label = _generic ? 'Back to dashboard' : (this.args.back_label || 'Back');
+    %>
+    <_Sys_Empty_State $icon="bi-question-octagon" $title=(_type + ' not found')
+        $body=('The ' + _type.toLowerCase() + ' you asked for does not exist.')>
+        <Slot:cta><a class="btn btn-sm btn-primary" href="<%= _url %>"><%= _label %></a></Slot:cta>
+    </_Sys_Empty_State>
+</Define:_Sys_Not_Found>

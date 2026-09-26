@@ -61,12 +61,15 @@ lookup) and `User_Agent` (device/browser parsing used by session listings).
   `$record` opt-out, and malformed input recording nothing. The `$touch_last_login` flag is
   web-only - the CLI branch of `Session::set_login_user_id()` returns before the stamp - so
   it is verified live over HTTP rather than in php. (php + http)
-- Site membership (`users.is_enabled`), the framework's own switch, in both places it is
+- Site membership (`users.is_enabled` + `sites.is_enabled`), the framework's own switches, in both places it is
   enforced: at sign-in (`has_enabled_membership()`, `attempt()` failing exactly like a wrong
   password with `STATUS_FAILED_DISABLED` recorded, and `login()` returning false without
   touching the session - which is what closes the second-factor, federated and dev-auth
   doors) and at request time (`Session::enforce_enabled_membership()` logging out a session
-  whose membership was disabled or deleted). The end-to-end transport answers - a login
+  whose membership was disabled or deleted). The site switch (`sites.is_enabled`) is the
+  second half of the same definition (`User_Model::is_active()` / `->active()`): a membership
+  on a disabled or deleted site is refused at sign-in and ends at request time, other sites
+  are unaffected, and the Default site (id 0) refuses to be disabled. The end-to-end transport answers - a login
   redirect for a page, the `auth_required` envelope for an Ajax call - are deferred: the http
   harness runs against the development database and must not disable a live account there.
   (php)

@@ -1,19 +1,35 @@
+// The panel's chrome. The sidebar is a real column of the layout's flex row, so its
+// background runs the full height of the page however long the page is; the inner
+// block is sticky, so the nav stays in view while the page scrolls.
+//
+// NARROW SCREENS (below 768px - Bootstrap's md): the column leaves the flow and
+// becomes an off-canvas drawer, opened by the top bar's menu button and closed by
+// the backdrop, Escape or a navigation (_Sys_Layout.js). The panel theme ships no
+// responsive mixins, so the breakpoint is this one media query.
 ._Sys_Layout {
-    display: block;
+    display: flex;
+    align-items: stretch;
     min-height: 100vh;
     background: var(--rsx-bg);
     color: var(--rsx-text);
 
     &__sidebar {
-        position: fixed;
-        top: 0;
-        left: 0;
-        bottom: 0;
+        flex: 0 0 var(--rsx-sidebar-width);
         width: var(--rsx-sidebar-width);
-        overflow-y: auto;
         background: var(--rsx-surface);
         border-right: 1px solid var(--rsx-border);
+    }
+
+    &__sidebar-inner {
+        position: sticky;
+        top: 0;
+        max-height: 100vh;
+        overflow-y: auto;
         padding-bottom: 20px;
+    }
+
+    &__backdrop {
+        display: none;
     }
 
     &__brand {
@@ -33,7 +49,8 @@
     }
 
     &__content {
-        margin-left: var(--rsx-sidebar-width);
+        flex: 1 1 auto;
+        min-width: 0;
         min-height: 100vh;
     }
 
@@ -48,10 +65,44 @@
         border-bottom: 1px solid var(--rsx-border);
     }
 
+    &__nav-toggle {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        width: 36px;
+        height: 36px;
+        padding: 0;
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        background: transparent;
+        color: var(--rsx-text);
+        font-size: 20px;
+
+        &:hover {
+            color: var(--rsx-accent);
+            border-color: var(--rsx-accent);
+        }
+    }
+
     &__page-title {
         margin: 0;
         font-size: 16px;
         font-weight: 600;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    &__page-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-left: auto;
+
+        &:empty {
+            display: none;
+        }
     }
 
     &__logout {
@@ -61,6 +112,7 @@
         color: var(--rsx-muted);
         text-decoration: none;
         font-size: 13px;
+        white-space: nowrap;
 
         &:hover {
             color: var(--rsx-accent);
@@ -69,5 +121,54 @@
 
     &__page {
         display: block;
+    }
+
+    @media (max-width: 767.98px) {
+        // Narrower page gutters for everything the page composes.
+        --rsx-page-pad: 16px;
+        --rsx-block-gap: 16px;
+
+        &__sidebar {
+            position: fixed;
+            top: 0;
+            bottom: 0;
+            left: 0;
+            z-index: 1045;
+            transform: translateX(-100%);
+            visibility: hidden;
+        }
+
+        &__sidebar-inner {
+            position: static;
+            max-height: none;
+            height: 100%;
+        }
+
+        &--nav-open &__sidebar {
+            transform: none;
+            visibility: visible;
+        }
+
+        &--nav-open &__backdrop {
+            display: block;
+            position: fixed;
+            inset: 0;
+            z-index: 1040;
+            background: rgba(0, 0, 0, 0.55);
+        }
+
+        &__nav-toggle {
+            display: inline-flex;
+            flex: 0 0 auto;
+        }
+
+        &__topbar {
+            gap: 12px;
+            padding: 0 12px;
+        }
+
+        &__logout span {
+            display: none;
+        }
     }
 }

@@ -55,6 +55,9 @@ its own - it reads `--rsx-bg`, `--rsx-surface`, `--rsx-raised`, `--rsx-border`,
 pair `--rsx-get` / `--rsx-post` that the method pills use. A colour this module
 needs and the theme lacks is ADDED TO `theme/theme.scss`, never kept here.
 
+The console's one dialog (the temporary-key confirm) is the theme's `_Sys_Modal.confirm()`,
+and its response pane pretty-prints through `_Sys_Code_Pane.pretty()`.
+
 Bootstrap's reboot supplies what the console used to normalise for itself (body
 margin, border-box, form-control type inheritance, link colour), so there is no
 page-reset stylesheet in this module.

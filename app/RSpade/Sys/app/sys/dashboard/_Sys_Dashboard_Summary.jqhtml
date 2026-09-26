@@ -1,0 +1,38 @@
+<%--
+_Sys_Dashboard_Summary - the Dashboard's headline numbers, install-wide.
+
+Self-loading (_Sys_Dashboard_Controller.summary). Each tile that has a screen links
+to it: workers to the Tasks screen's Running tab, failed tasks to its history
+filtered to failed in the last 24 hours, pending mail to the Email queue filtered
+to pending ({tab: 'email', mail_f_status: 'pending'}), the delivery mode to Email, sites to Sites,
+sign-in identities to Users.
+--%>
+<Define:_Sys_Dashboard_Summary>
+<% if (this.data.loading) { %>
+    <Spinner class="_Sys_Dashboard_Summary__loading" />
+<% } else if (this.data.error_data) { %>
+    <_Sys_Section $title="Overview" $icon="bi-speedometer2">
+        <_Sys_Error $error_data=this.data.error_data />
+    </_Sys_Section>
+<% } else { %>
+    <%
+        const _s = this.data.summary;
+        const _running_url = Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'running'});
+        const _failed_url = Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'history', tasks_f_status: 'failed', tasks_f_since: '24h'});
+        const _email_url = Rsx.Route('_Sys_Email_Action');
+        const _pending_mail_url = Rsx.Route('_Sys_Email_Action', {}, {tab: 'email', mail_f_status: 'pending'});
+        const _short_key = _s.build_key.substring(0, 12);
+        const _mode_sub = _s.is_sealed ? 'Sealed build' : 'Not sealed - built from live source';
+    %>
+    <_Sys_Stat_Grid>
+        <_Sys_Stat_Tile $label="Mode" $icon="bi-sliders" $value=_s.mode_label $sub=_mode_sub $tone=(_s.is_sealed ? 'ok' : 'info') />
+        <_Sys_Stat_Tile $label="Build key" $icon="bi-fingerprint" $value=_short_key $sub=_s.build_key />
+        <_Sys_Stat_Tile $label="Task workers" $icon="bi-cpu" $value=_s.live_workers $sub="live right now" $href=_running_url />
+        <_Sys_Stat_Tile $label="Failed tasks" $icon="bi-exclamation-octagon" $value=_s.failed_tasks_24h $sub="in the last 24 hours" $tone=(_s.failed_tasks_24h ? 'fail' : 'ok') $href=_failed_url />
+        <_Sys_Stat_Tile $label="Pending mail" $icon="bi-envelope" $value=_s.pending_mail $sub="queued, all sites" $tone=(_s.pending_mail ? 'warn' : 'ok') $href=_pending_mail_url />
+        <_Sys_Stat_Tile $label="Mail delivery" $icon="bi-send" $value=_s.mail_delivery $sub="rsx.mail.delivery" $href=_email_url />
+        <_Sys_Stat_Tile $label="Sites" $icon="bi-buildings" $value=_s.sites $sub="tenants, excluding the Default site" $href=Rsx.Route('_Sys_Sites_Action') />
+        <_Sys_Stat_Tile $label="Sign-in identities" $icon="bi-people" $value=_s.login_users $sub="login users" $href=Rsx.Route('_Sys_Users_Action') />
+    </_Sys_Stat_Grid>
+<% } %>
+</Define:_Sys_Dashboard_Summary>

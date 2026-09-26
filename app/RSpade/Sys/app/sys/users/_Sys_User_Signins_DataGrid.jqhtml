@@ -1,0 +1,48 @@
+<%--
+_Sys_User_Signins_DataGrid - an identity's Sign-ins tab: every _login_history row it
+has, newest first, a page at a time.
+
+$base_params=({login_user_id: <id>}) - the identity (required); sent with every request
+
+Server half: _Sys_User_Signins_DataGrid.php (each row through
+Login_History::present_record(); search on IP or user agent). Grid key "signins". The
+table holds successful sign-ins (and any outcome an application records itself) for
+rsx.sessions.login_history_retention_days; framework failures are never rows.
+--%>
+<Define:_Sys_User_Signins_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="signins"
+    $data_source=_Sys_Users_Controller.signins_fetch
+    $title="Sign-ins"
+    $sort="created_at"
+    $order="desc"
+    $per_page=25
+    $search="Search IP or browser...">
+    <Slot:header>
+        <tr>
+            <th data-sortby="created_at">When</th>
+            <th>Outcome</th>
+            <th data-sortby="ip_address">IP</th>
+            <th>Device</th>
+            <th>Location</th>
+            <th>Email given</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr>
+            <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+            <td>
+                <_Sys_Status_Badge $status=(row.status === 'success' ? 'ok' : 'fail') $label=row.status_label />
+                <% if (row.failure_reason) { %>
+                    <span class="_Sys_User_Signins_DataGrid__dim"><%= row.failure_reason %></span>
+                <% } %>
+            </td>
+            <td class="_Sys_User_Signins_DataGrid__mono"><%= row.ip_address %></td>
+            <td><span title="<%= row.user_agent || '' %>"><%= row.user_agent_parsed.summary %></span></td>
+            <td><%= row.location || '' %></td>
+            <td><%= row.email %></td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-box-arrow-in-right" $title="No sign-ins recorded" $body="Nothing in the retention window: this identity has not signed in, or its history has been pruned." />
+    </Slot:empty>
+</Define:_Sys_User_Signins_DataGrid>

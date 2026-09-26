@@ -421,12 +421,23 @@ DOCKER-ACCELERATED TESTING
     EVERY INVOCATION IS DISPATCHED TO SIBLING DOCKER CONTAINERS when the gate
     below passes: either suite, any selector, one class or the whole suite. The
     runner builds a test image, serves a work queue over a unix socket, and
-    starts N containers that pull whole classes from it - N never larger than
-    the number of classes selected, so a single class is a single container.
+    starts N containers that pull whole classes from it - N is ceil(cores / 3)
+    (cores counted from /proc/cpuinfo), never larger than the number of classes
+    selected, so a single class is a single container; --workers=N overrides it.
     Each container is a complete isolated environment: its own mysqld on a RAM
     datadir, its own redis, its own rsx-lockd, its own filesystem and flag
-    files. The output and the exit code are identical to a single-process run,
+    files, which is why a container is budgeted three cores rather than one.
+    The output and the exit code are identical to a single-process run,
     because both print through the same printer.
+
+    A RUN'S CONTAINERS DIE WITH THE RUN. SIGTERM, SIGINT or SIGHUP to rsx:test
+    is forwarded to the orchestrator, which kills and removes that run's
+    containers before rsx:test exits 1 ("test run interrupted"). A SIGKILL
+    anywhere is covered structurally: rsx:test's death closes the orchestrator's
+    stdin, which tears the run down the same way, and every container holds a
+    connection to the orchestrator's queue socket and ends itself the moment
+    that connection closes - so killing the orchestrator itself leaves nothing
+    running either. An interrupted run records no verdict.
 
     ONE CLASS IN ONE CONTAINER IS NOT PARALLELISM, IT IS CONSISTENCY. A subset
     that ran somewhere else would be a subset with its own semantics - its own
@@ -573,9 +584,20 @@ PER-TEST STATE RESET
 
 CLASS BOUNDARIES AND DETACHED PROCESSES
 
-    A process a test starts DETACHED - a task worker Task::dispatch() spawns
-    through Rsx_Artisan::dispatch_detached() - belongs to the test class that
-    started it and ends at that class's boundary, never during a later class.
+    TASK DISPATCH ENQUEUES ONLY UNDER THE SUITE. Task::dispatch() writes its
+    _tasks row and spawns no worker while a test run is in progress, and neither
+    does an rsx:task:process tick a test runs: a detached worker is a whole PHP
+    boot racing the test that queued it, and a class that sends mail, uploads a
+    file and saves a model can dispatch several a second. A test that asserts on
+    queued work drives it itself - Task::internal(), the service method, or
+    Artisan::call('rsx:task:worker') in-process. A test whose SUBJECT is the
+    spawn opts in with Task::spawn_workers_under_test(true); the runner resets it
+    to false at every class boundary.
+
+    A process a test starts DETACHED - a task worker spawned by an opted-in
+    Task::spawn_worker(), or any Rsx_Artisan::dispatch_detached() call - belongs
+    to the test class that started it and ends at that class's boundary, never
+    during a later class.
     Under the suite dispatch_detached() registers each child (pid plus kernel
     start time) before it returns, and at the end of every class, and at the end
     of the run, the runner WAITS until every registered process has exited. The

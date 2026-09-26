@@ -69,8 +69,11 @@ EXECUTION MODES
 
     2. Background (async)
        $id = Task::dispatch($service, $task, $params, $options);
-       Inserts a pending row AND, when the task is due now, spawns a detached worker so it
-       runs within ~1 second. Returns the pollable task id (for #[Exclusive]/#[Debounce]
+       Inserts a pending row AND, when the task is due now and the pool has a free slot,
+       spawns a detached worker so it runs within ~1 second (at the cap nothing is spawned:
+       a busy worker reaches the row when it finishes its current task, and the cron tick
+       covers the rest). Under the test suite dispatch() ENQUEUES ONLY - see TESTING below.
+       Returns the pollable task id (for #[Exclusive]/#[Debounce]
        identities that coalesce onto an already-pending run, returns that pending row's id).
        $options: 'queue', 'timeout' (the execution cap enforced by the cron tick's reaper -
        see EXECUTION TIMEOUT below), and 'scheduled_for' - a FUTURE 'scheduled_for' is the
@@ -250,17 +253,30 @@ THE WORKER POOL
 
     One shared pool of generic workers drains the queue. Concurrency is capped by
     rsx.tasks.global_max_workers via a Redis worker-slot registry (Task_Worker_Registry),
-    NOT by counting rows: each spawned worker atomically claims a slot on startup and
-    exits immediately if the pool is full, so simultaneous spawns admit exactly the cap.
-    A crashed worker's slot expires after worker_heartbeat_ttl (90s) and frees capacity -
-    there is no 30-minute wedge.
+    NOT by counting rows.
+
+    A SLOT IS ADMITTED BEFORE THE WORKER IS SPAWNED. Every spawn - Task::dispatch() and
+    the cron tick alike - first reserves a slot (one atomic Redis script counting live
+    workers PLUS outstanding reservations against the cap) and starts a process only when
+    that succeeded; the child converts the reservation into its live slot at start. So a
+    full pool starts nothing at all, and any number of concurrent dispatches, on any number
+    of hosts, never start more than the free slots between them. A worker run by hand has
+    no reservation and competes for a free slot, exiting at once if there is none.
+
+    A reservation has no TTL. It ends when the child converts it, when the spawner releases
+    it because the spawn produced no process, or when the cron tick finds the process it
+    names gone from this host (a reservation names its owner as host:pid - the spawner, then
+    the child) and releases it. A crashed worker's LIVE slot expires after
+    worker_heartbeat_ttl (90s) and frees capacity - there is no 30-minute wedge.
 
     Priority order (a single order, no per-queue routing): a worker claims run-now tasks
     first (dispatched, FIFO by enqueue time), then due scheduled tasks (by next_run_at).
     The `queue` column is a label only; it no longer isolates workers.
 
     Worker management runs on Redis (the slot registry). Redis is required framework-wide
-    (cache + manifest), so if it is unreachable the process fails loudly at bootstrap.
+    (cache + manifest), so if it is unreachable the process fails loudly at bootstrap - and
+    a registry call that fails later THROWS: dispatch() and the cron tick never spawn
+    around an admission gate they could not consult.
 
 CONFIGURATION (config/rsx.php 'tasks')
 
@@ -308,12 +324,14 @@ COMMANDS
 
     Each tick it: (1) recovers stuck tasks; (2) revives any cron tracker found sitting in
     a terminal state (see FAILURE BEHAVIOR); (3) reconciles #[Schedule] tracker rows from
-    the manifest; (4) if there is pending work, spawns up to (global_max_workers - live)
-    detached workers. It does NOT itself become a worker. --once drains one task inline
+    the manifest; (4) releases spawn reservations whose process is gone from this host, then,
+    if there is pending work, spawns detached workers until the pool declines. It does NOT
+    itself become a worker. --once drains one task inline
     (testing); --force-scheduled marks all schedules due now.
 
     You rarely run rsx:task:worker by hand - the processor and Task::dispatch() spawn
-    them. A worker admits to the pool, drains by the priority order until empty (or
+    them. A worker admits to the pool (converting the slot its spawner reserved for it, or,
+    run by hand, taking a free one), drains by the priority order until empty (or
     --max-time), then deregisters and exits.
 
 MAINTENANCE MODE
@@ -454,10 +472,30 @@ EXAMPLES
             return ['status' => $s['status'], 'result' => $s['result']];
         }
 
+TESTING
+
+    Under the test suite (rsx:test, Rsx_Test_Abstract::suite_is_running()) nothing spawns
+    a worker: Task::dispatch() writes its row and returns, and an rsx:task:process tick a
+    test runs spawns nothing either. A detached worker would be a whole PHP boot racing the
+    test that queued it. A test that asserts on queued work drives it itself:
+
+        Task::internal('My_Service', 'my_task', $params);    // run the task in-process
+        Artisan::call('rsx:task:worker');                     // drain the queue in-process
+
+    A test whose SUBJECT is the spawn opts in for its class:
+
+        Task::spawn_workers_under_test(true);
+
+    The runner resets it to false at every class boundary, and the harness waits at that
+    boundary for every detached process the class started (rsx:man testing, CLASS
+    BOUNDARIES AND DETACHED PROCESSES).
+
 TROUBLESHOOTING
 
     Dispatched task stays 'pending'
-        - Is the pool at global_max_workers? (check the Redis registry / live workers)
+        - Is the pool at global_max_workers? (rsx:health "Redis Connectivity" shows live
+          workers and spawn reservations)
+        - Inside a test? dispatch() spawns nothing under the suite (see TESTING).
         - Did you pass a future 'scheduled_for'? Then it waits until due.
         - Cron is the backstop for due rows: * * * * * php artisan rsx:task:process
 

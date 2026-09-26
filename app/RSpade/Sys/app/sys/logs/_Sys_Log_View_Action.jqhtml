@@ -1,0 +1,72 @@
+<%--
+_Sys_Log_View_Action - one file of the log directory, read in windows of lines by
+byte offset (_Sys_Logs_Controller.read / follow; _Sys_Log_Reader is the contract).
+
+The toolbar: a filter applied server-side to every window read (hash key "q"), Follow
+(not for a .gz) and Jump to end. Under it a status line (lines loaded, the byte range,
+what the filter kept, following) and the pane: "Load earlier" at the top while the
+range does not start at byte 0, then one _Sys_Log_Batch per read.
+
+Three states: loading, a load failure (_Sys_Not_Found for a name the directory listing
+does not hold, _Sys_Error for anything else), and the viewer.
+--%>
+<Define:_Sys_Log_View_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+    <% if (this.data.loading) { %>
+        <Spinner class="_Sys_Log_View_Action__loading" />
+    <% } else if (this.data.load_error && this.data.load_error.code === Ajax.ERROR_NOT_FOUND) { %>
+        <_Sys_Not_Found $record_type="Log file" $back_label="All logs" $back_url=(Rsx.Route('_Sys_Logs_Action')) />
+    <% } else if (this.data.load_error) { %>
+        <_Sys_Error $error_data=this.data.load_error.message />
+    <% } else { %>
+        <% const _f = this.data.first; %>
+        <_Sys_Page_Header $title=_f.file $icon="bi-file-earmark-text"
+            $subtitle=(_f.size_human + ', modified ' + Rsx_Time.format_datetime(_f.modified))>
+            <Slot:meta>
+                <span class="_Sys_Log_View_Action__chip"><%= _f.format %></span>
+                <% if (_f.compressed) { %>
+                    <span class="_Sys_Log_View_Action__chip">gzip</span>
+                <% } %>
+            </Slot:meta>
+            <Slot:actions>
+                <a class="btn btn-sm btn-secondary" href="<%= Rsx.Route('_Sys_Logs_Action') %>">All logs</a>
+            </Slot:actions>
+        </_Sys_Page_Header>
+
+        <div class="_Sys_Log_View_Action__toolbar">
+            <input $sid="filter" type="search" class="form-control form-control-sm _Sys_Log_View_Action__filter"
+                placeholder="Filter lines..." value="<%= Rsx.url_hash_get('q') || '' %>" />
+            <% if (!_f.compressed) { %>
+                <button type="button" $sid="follow" class="btn btn-sm btn-secondary" data-action="follow" aria-pressed="false">
+                    <i class="bi bi-broadcast"></i> Follow
+                </button>
+            <% } %>
+            <button type="button" class="btn btn-sm btn-secondary" data-action="tail">
+                <i class="bi bi-arrow-down"></i> Jump to end
+            </button>
+        </div>
+
+        <% if (_f.compressed) { %>
+            <div class="_Sys_Log_View_Action__hint">
+                A compressed file is read by decompressing it from the start on every page, and is never followed.
+            </div>
+        <% } %>
+
+        <div $sid="notice" class="_Sys_Log_View_Action__notice" style="display: none"></div>
+        <div $sid="status" class="_Sys_Log_View_Action__status"></div>
+
+        <div $sid="pane" class="_Sys_Log_View_Action__pane">
+            <div $sid="earlier" class="_Sys_Log_View_Action__edge">
+                <button type="button" class="btn btn-sm btn-secondary" data-action="earlier">
+                    <i class="bi bi-arrow-up"></i> Load earlier
+                </button>
+            </div>
+            <div $sid="bof" class="_Sys_Log_View_Action__edge">Start of file</div>
+            <div $sid="batches"></div>
+            <div $sid="empty" class="_Sys_Log_View_Action__empty">No lines to show in the loaded range.</div>
+        </div>
+    <% } %>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Log_View_Action>

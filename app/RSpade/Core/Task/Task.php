@@ -16,6 +16,7 @@ use App\RSpade\Core\Task\Task_Concurrency;
 use App\RSpade\Core\Task\Task_Instance;
 use App\RSpade\Core\Task\Task_Status;
 use App\RSpade\Core\Task\Task_Worker_Registry;
+use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Task - Unified task execution system
@@ -127,11 +128,13 @@ class Task
     /**
      * Dispatch a task: enqueue it and run it promptly.
      *
-     * Inserts a pending _tasks row and, when the task is due now, immediately spawns a
-     * detached worker so it runs within ~a second (an over-spawned worker self-declines via
-     * the Redis worker registry). The ONLY thing that defers a run is a future
+     * Inserts a pending _tasks row and, when the task is due now and the worker pool has
+     * room, immediately spawns a detached worker so it runs within ~a second (spawn_worker():
+     * admission is reserved in the Redis worker registry BEFORE anything is started, so a
+     * full pool starts nothing). The ONLY thing that defers a run is a future
      * 'scheduled_for': such a one-shot waits and is picked up by the cron tick (or a later
-     * spawn) once it comes due.
+     * spawn) once it comes due. Under the test suite nothing is spawned unless the test
+     * opted in - see spawn_workers_under_test().
      *
      * For #[Exclusive]/#[Debounce] tasks the enqueue is coalescing (at most one running +
      * one pending per identity - see Task_Concurrency); unmanaged tasks get their own row.
@@ -178,9 +181,10 @@ class Task
 
         // Run promptly. Managed tasks always spawn now (the coalesced row governs their
         // debounce timing); an unmanaged task with a future scheduled_for is deferred to the
-        // cron tick. Spawning at the cap is a no-op (the worker self-declines).
+        // cron tick. At the cap nothing is spawned: a busy worker reaches this row when it
+        // finishes its current one, and the cron tick covers the rest.
         if ($managed || !\Illuminate\Support\Carbon::parse($scheduled_for)->isFuture()) {
-            static::spawn_worker($queue);
+            static::spawn_worker();
         }
 
         return $id;
@@ -266,31 +270,83 @@ class Task
     }
 
     /**
-     * Spawn a detached background worker (fire-and-forget). The authoritative concurrency
-     * gate is the worker's own atomic admission against the Redis slot registry
-     * (Task_Worker_Registry) - an over-spawned worker self-declines and exits. The
-     * live_count() pre-check here is a cheap optimization only, not the correctness gate,
-     * and is skipped silently on any Redis hiccup. Workers are generic (one pool, no queue
-     * routing); the $queue arg is accepted for compatibility and ignored.
+     * Whether spawn_worker() may start a process while the test suite is running. See
+     * spawn_workers_under_test().
      *
-     * @param string $queue Ignored (retained for call-site compatibility).
+     * @var bool
+     */
+    private static bool $spawn_workers_under_test = false;
+
+    /**
+     * Opt THIS test class in to real worker spawns.
+     *
+     * Under the test suite (Rsx_Test_Abstract::suite_is_running()) dispatch() ENQUEUES ONLY:
+     * a detached worker is a whole PHP boot racing the test that dispatched it, and a class
+     * that sends mail, uploads a file and saves a model can dispatch several a second. A test
+     * that asserts on queued work drives it itself - Task::internal(), the service method,
+     * or Artisan::call('rsx:task:worker') in-process. A test whose SUBJECT is the spawn calls
+     * this with true; the harness puts it back to false at every class boundary, so the
+     * opt-in never outlives the class that made it.
+     *
+     * @param bool $enabled
      * @return void
      */
-    public static function spawn_worker(string $queue = 'default'): void
+    public static function spawn_workers_under_test(bool $enabled): void
     {
-        try {
-            if (Task_Worker_Registry::live_count() >= (int) config('rsx.tasks.global_max_workers', 1)) {
-                return; // pool full; a spawned worker would self-decline anyway
-            }
-        } catch (\Throwable $e) {
-            // Redis hiccup - skip the optimization; the worker's own admission is the gate.
+        self::$spawn_workers_under_test = $enabled;
+    }
+
+    /**
+     * Spawn a detached background worker (fire-and-forget) - if, and only if, the pool has
+     * room for it.
+     *
+     * ADMISSION HAPPENS BEFORE THE SPAWN. A slot is reserved atomically in the Redis worker
+     * registry first (Task_Worker_Registry::reserve_spawn(), which counts live workers plus
+     * outstanding reservations against rsx.tasks.global_max_workers); when the pool is full
+     * nothing is started at all. The token rides to the child, whose admit() converts it into
+     * its live slot. A spawn that reports no pid releases its reservation here; a child that
+     * dies before admitting is reclaimed by the rsx:task:process reaper.
+     *
+     * A Redis failure THROWS: the registry is the admission gate, and Redis is a hard
+     * framework dependency. Workers are generic - one pool, no queue routing.
+     *
+     * @return bool True when a worker was spawned, false when the pool is full (or the test
+     *              suite is running without spawn_workers_under_test()).
+     */
+    public static function spawn_worker(): bool
+    {
+        if (Rsx_Test_Abstract::suite_is_running() && !self::$spawn_workers_under_test) {
+            return false;
+        }
+
+        $token = Task_Worker_Registry::reserve_spawn();
+        if ($token === null) {
+            return false;
         }
 
         // Fully detached: we do NOT wait for this worker, so it must NOT inherit our
         // lock group. A worker that ran concurrently while holding a lock this process
         // also holds would break the exclusion both of them think they have - which is
         // why propagation is opt-in and this caller does not opt in.
-        Rsx_Artisan::dispatch_detached('rsx:task:worker');
+        $pid = null;
+        try {
+            $pid = Rsx_Artisan::dispatch_detached(
+                'rsx:task:worker',
+                [Task_Worker_Registry::RESERVATION_FLAG . '=' . $token]
+            );
+        } finally {
+            if ($pid === null) {
+                Task_Worker_Registry::release_reservation($token);
+            }
+        }
+
+        if ($pid === null) {
+            return false;
+        }
+
+        Task_Worker_Registry::hand_off_reservation($token, $pid);
+
+        return true;
     }
 
     /**

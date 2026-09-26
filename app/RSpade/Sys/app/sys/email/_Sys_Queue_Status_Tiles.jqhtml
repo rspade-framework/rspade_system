@@ -1,0 +1,31 @@
+<%--
+_Sys_Queue_Status_Tiles - one tile per queue status, the headline strip both queues on
+the Email & SMS screen open with.
+
+$counts   - [{status, label, count}] (required): a summary endpoint's counts, one per
+            status in the enum's order (_Sys_Enum_Words::status_tiles()).
+$tab      - the screen's tab key that shows this queue's grid ('email' or 'sms').
+$grid_key - that grid's $grid_key ('mail' or 'sms').
+
+Each tile is a real link to the grid filtered to its status - {tab, <grid_key>_f_status}
+- so it opens in a new tab as one. A plain click is the SCREEN's to handle: the tile
+carries data-status and data-grid-key, and _Sys_Email_Action narrows the grid in place.
+Pending and failed are toned when non-zero.
+--%>
+<Define:_Sys_Queue_Status_Tiles>
+    <%
+        const _tones = {pending: 'warn', failed: 'fail'};
+        const _hash_for = (status) => ({tab: this.args.tab, [this.args.grid_key + '_f_status']: status});
+    %>
+    <_Sys_Stat_Grid>
+        <% for (const _c of this.args.counts) { %>
+            <_Sys_Stat_Tile
+                data-status="<%= _c.status %>"
+                data-grid-key="<%= this.args.grid_key %>"
+                $label=_c.label
+                $value=_c.count
+                $tone=(_c.count && _tones[_c.status] ? _tones[_c.status] : null)
+                $href=(Rsx.Route('_Sys_Email_Action', {}, _hash_for(_c.status))) />
+        <% } %>
+    </_Sys_Stat_Grid>
+</Define:_Sys_Queue_Status_Tiles>

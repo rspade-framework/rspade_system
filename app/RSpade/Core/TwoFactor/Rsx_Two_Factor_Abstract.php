@@ -740,7 +740,7 @@ abstract class Rsx_Two_Factor_Abstract
      *  5. On success the pending value is forgotten FIRST, then the realm signs the identity
      *     in, then the success is recorded.
      *  6. The sign-in REFUSES an identity the realm will not admit - a staff identity holding
-     *     no enabled site membership (users.is_enabled), a portal user the portal's account
+     *     no active site membership (users.is_enabled + sites.is_enabled), a portal user the portal's account
      *     vocabulary rejects (Portal_User_Model::can_login(), or a user of another site). A
      *     correct code from such an identity is recorded STATUS_FAILED_DISABLED and then fails
      *     with the wrong-code message, so the two are indistinguishable from the outside.

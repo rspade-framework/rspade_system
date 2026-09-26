@@ -16,6 +16,13 @@
  *   {"id":N,"method":"queue.result","worker_id":W,"class","short","results","duration"[,"error"]}
  *       -> {"id":N,"ok":true}
  *
+ * A CONNECTION THAT NEVER SENDS ANYTHING IS LEGAL, and it is how a container knows this
+ * process is alive. The worker wrapper (resource/docker/rsx-test-worker-run.sh) opens one at
+ * the start of the container and only ever reads it; the kernel closes it when this process
+ * dies - by any signal, SIGKILL included - and the wrapper then ends its container, because a
+ * worker whose orchestrator is gone has nobody left to report to. No method, no heartbeat, no
+ * deadline: the closed connection IS the signal.
+ *
  * THE HOLDER MAP IS THE DEAD-WORKER STORY. queue.next records which worker took a class
  * and queue.result clears it, so when a container exits the orchestrator can name every
  * class that worker was still holding. Those classes get NO record - which is exactly what
@@ -85,6 +92,10 @@ class Queue_Server {
 
         this.result_count = 0;
         this.server = null;
+
+        // Every open connection, so close() can end the ones a peer is holding open (the
+        // wrappers' liveness connections) instead of waiting on them forever.
+        this.sockets = new Set();
     }
 
     /**
@@ -126,6 +137,12 @@ class Queue_Server {
                 }
                 resolve();
             });
+
+            // server.close() stops accepting and then waits for every open connection to end.
+            // A liveness connection ends only when its container does, so end them here.
+            for (const socket of this.sockets) {
+                socket.destroy();
+            }
         });
     }
 
@@ -149,6 +166,9 @@ class Queue_Server {
 
     __handle_connection(socket) {
         const reader = new Frame_Reader();
+
+        this.sockets.add(socket);
+        socket.on('close', () => { this.sockets.delete(socket); });
 
         socket.on('error', () => {
             // A worker that died mid-request drops its connection. That is a dead-worker

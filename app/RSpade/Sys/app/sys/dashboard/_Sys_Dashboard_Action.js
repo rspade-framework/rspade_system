@@ -1,8 +1,13 @@
 /**
  * _Sys_Dashboard_Action - the control panel's Dashboard screen.
  *
- * A placeholder page: the chrome, the route and the gate are real; the body is
- * one sentence naming what will live here.
+ * A table of contents: two self-loading regions, each with its own on_load and its
+ * own loading/error/content states, so the slow health probes never hold up the
+ * headline numbers.
+ *
+ *     _Sys_Dashboard_Summary - the tiles (_Sys_Dashboard_Controller.summary)
+ *     _Sys_Dashboard_Health  - the rsx:health report (_Sys_Dashboard_Controller.health),
+ *                              with its own "Re-run checks" action
  */
 @route('/_sys')
 @layout('_Sys_Layout')

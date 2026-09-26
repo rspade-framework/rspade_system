@@ -1,0 +1,27 @@
+._Sys_Sms_DataGrid {
+    // One line per row; a narrow screen scrolls the table sideways instead.
+    td,
+    th {
+        white-space: nowrap;
+    }
+
+    &__id {
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+    }
+
+    &__original {
+        color: var(--rsx-dim);
+        font-size: 11.5px;
+    }
+
+    &__body {
+        max-width: 320px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    &__site {
+        color: var(--rsx-dim);
+    }
+}

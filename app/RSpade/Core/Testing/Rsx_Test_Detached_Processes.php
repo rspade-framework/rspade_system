@@ -13,7 +13,7 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
  * Containment of DETACHED processes started under a test run.
  *
  * Rsx_Artisan::dispatch_detached() returns before its child has done anything - that is
- * what detached means - so a process a test started (a task worker Task::dispatch() spawned)
+ * what detached means - so a process a test started (a task worker from an opted-in Task::spawn_worker())
  * can outlive the class that started it and act during a LATER class: rebuild the manifest,
  * claim a queue row, write a file. The later class then fails for a reason that is not its
  * own, and only under the orderings where the two overlap.

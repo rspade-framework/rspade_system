@@ -193,13 +193,47 @@ WHAT NEVER RENDERS A PAGE
     bootstrap/rsx_preboot_page.php, which carries the framework error screen's
     look by hand. See rsx:man maintenance_mode.
 
-    THE SPA'S IN-APP ERRORS. A denial or a missing record INSIDE a live SPA
-    session mounts a component into the layout's content area - no navigation, no
-    round trip, the nav and session chrome still alive around it. Those bodies
-    are the application's own theme components in
-    rsx/theme/components/feedback/errors/, and they are edited directly. The two
-    sides say the same things about the same outcomes and are kept aligned by
-    hand; neither renders the other.
+    THE SPA'S IN-APP ERRORS are a different mechanism with no page at all - see
+    SPA ERROR SCREENS below.
+
+SPA ERROR SCREENS
+    A denial, an unclaimed URL or a failed action INSIDE a live SPA session
+    mounts a component into the layout's content area - no navigation, no round
+    trip, the nav and session chrome still alive around it. The JS twin of the
+    funnel does it:
+
+        Error_Screens.unauthorized({message, section})   // an @auth gate denied
+        Error_Screens.not_found({record_type, back_label, back_url})
+        Error_Screens.fatal(error)                        // boot/render failure
+
+    WHICH COMPONENT is whatever the running bundle REGISTERED, once, from a
+    static on_app_modules_define():
+
+        class Error_Screen_Components {
+            static on_app_modules_define() {
+                Error_Screens.set_components({
+                    unauthorized: 'Unauthorized_Error_Page_Component',
+                    not_found: 'Not_Found_Error_Page_Component',
+                    fatal: 'Generic_Error_Page_Component',
+                });
+            }
+        }
+
+    All three keys are required. The component receives the outcome's arguments
+    above (fatal: error_data, the message string) and may ignore any of them.
+    There is NO DEFAULT: a bundle that registered nothing, or registered a name
+    it does not carry, THROWS the first time it needs an error screen, naming
+    set_components(). The template registers its set in
+    rsx/theme/components/feedback/errors/error_screen_components.js beside the
+    components themselves, so every bundle that includes rsx/theme - the staff
+    app and the portal - has it; the framework's /_sys panel registers its own.
+    To rebrand an outcome, edit the component, or register a different one.
+
+    The in-app bodies and the /error/ pages say the same things about the same
+    outcomes and are kept aligned by hand; neither renders the other.
+
+    Reference: system/app/RSpade/resource/reference_app/theme/components/
+    feedback/errors/.
 
 THE FALLBACK CHAIN
     Resolution, for a status in a realm:
@@ -337,6 +371,8 @@ FILES
     system/app/RSpade/Core/Errors/Error_Context.php    what a page is told
     system/app/RSpade/Core/Errors/Error_Pages.php      which route answers
     system/app/RSpade/Core/Errors/Error_Screens.php    the funnel
+    system/app/RSpade/Core/SPA/Error_Screens.js        its SPA twin, and the
+                                                       set_components() registry
     system/app/RSpade/Core/Dispatch/Dispatcher.php     render_error_route, the
                                                        preview intercept,
                                                        page_failure_response

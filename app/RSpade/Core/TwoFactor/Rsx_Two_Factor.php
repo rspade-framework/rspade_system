@@ -117,8 +117,8 @@ class Rsx_Two_Factor extends Rsx_Two_Factor_Abstract
     }
 
     /**
-     * RsxAuth::login() stamps last_login and REFUSES an identity holding no enabled site
-     * membership (users.is_enabled - the framework's switch). It records nothing itself, by
+     * RsxAuth::login() stamps last_login and REFUSES an identity holding no active site
+     * membership (users.is_enabled + sites.is_enabled - the framework's switches). It records nothing itself, by
      * design, so the caller records the outcome.
      */
     protected static function __sign_in(Rsx_Model_Abstract $identity): bool

@@ -313,8 +313,9 @@ API REFERENCE
             by the Ajax browser entry point, ahead of the #[Auth] gates. Returns
             true when the request may proceed; LOGS THE SESSION OUT and returns
             false when the users row for (login_user_id, site_id) is missing or
-            its is_enabled is false. Creates nothing and costs at most one query
-            (it reuses get_user()'s cache). True for an anonymous caller, for a
+            not active (User_Model::is_active(): its is_enabled is false, or its
+            site is disabled or deleted). Creates nothing and costs at most two
+            queries, the membership and its site (it reuses get_user()'s cache). True for an anonymous caller, for a
             caller with no tenant, and for the headless Bearer tier. See SITE
             MEMBERSHIP under ACCOUNT STATE below; an application does not call it.
 
@@ -427,10 +428,19 @@ API REFERENCE
             guard, same throw; a return of 0 means the user had no active
             sessions.
 
+        Session::developer_terminate_sessions(int $login_user_id,
+                                              ?int $session_id = null): int
+            The DEVELOPER primitive: end one session of any login identity, or
+            (null) every one except the caller's own current session.
+            Authorized by Session::is_developer() alone - no role, any site.
+            REFUSAL THROWS AjaxUnauthorizedException for a non-developer; 0 means
+            only "no such active row" (or the caller's own current session).
+
         Session::_deactivate_sessions_for_user(int $login_user_id,
                                                ?int $except_session_id = null,
                                                string $scope = 'internal',
-                                               ?int $actor_login_user_id = null): int
+                                               ?int $actor_login_user_id = null,
+                                               ?int $only_session_id = null): int
             FRAMEWORK-INTERNAL, NO AUTHORIZATION. For callers with no acting user
             to authorize against - CLI maintenance, or an app-internal flow that
             has already applied its own authorization and is executing the
@@ -513,17 +523,17 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
 
     RsxAuth::attempt() checks exactly three things: the address resolves to a live
     login identity, the password matches, and the identity holds at least one
-    ENABLED site membership. It does NOT read login_users.status_id, is_activated
+    ACTIVE site membership (enabled, on an enabled site). It does NOT read login_users.status_id, is_activated
     or is_verified, and it never will. Those three columns are APPLICATION
     vocabulary - they ship with the template as a starting point, they are meant to
     be overridden, and "suspended" means whatever your product says it means. A
     framework that guessed would either lock out an app that uses the column
     differently or quietly authenticate one that expected it to be enforced.
 
-    users.is_enabled is the other case entirely. It is written by the framework's
-    own user-management surfaces and read by the framework wherever an identity is
-    established, so its meaning is fixed and the framework enforces it. AN
-    APPLICATION DELETES ITS OWN is_enabled CHECKS: repeating one adds nothing, and
+    users.is_enabled and sites.is_enabled are the other case entirely. They are
+    written by the framework's own management surfaces and read by the framework
+    wherever an identity is established, so their meaning is fixed and the
+    framework enforces them. AN APPLICATION DELETES ITS OWN is_enabled CHECKS: repeating one adds nothing, and
     a listing that filters on it while the framework enforces it elsewhere is how
     the two drift.
 
@@ -532,8 +542,14 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
         users.is_enabled        FRAMEWORK. The per-site membership switch -
                                 "this person no longer works here". Enforced at
                                 login and at every request; see SITE MEMBERSHIP
-                                below. User_Model::is_active() and the ->enabled()
-                                scope read the same column.
+                                below. The ->enabled() scope reads this column
+                                alone; User_Model::is_active() and the ->active()
+                                scope read it together with sites.is_enabled.
+        sites.is_enabled        FRAMEWORK. The per-site switch - "this whole
+                                workspace is switched off". A membership on a
+                                disabled (or deleted) site is unusable, exactly as
+                                if it were disabled itself. The Default site
+                                (id 0) can never be disabled: the save throws.
         login_users.status_id   APPLICATION. Along with is_activated /
         (+ is_activated,        is_verified, the account-level state of the
            is_verified)         cross-site identity. Yours to define and yours to
@@ -578,11 +594,20 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
     lookup and a deleted account is classified NOT_FOUND - the same answer a
     stranger's address gets, which is the right answer to give a stranger.
 
-    SITE MEMBERSHIP (users.is_enabled) - THE FRAMEWORK'S OWN ENFORCEMENT
+    SITE MEMBERSHIP (users.is_enabled, sites.is_enabled) - THE FRAMEWORK'S OWN
+    ENFORCEMENT
+
+    A membership is ACTIVE when both switches are on: the users row is enabled and
+    not deleted, and its site is enabled and not deleted. That is one definition,
+    in two spellings - User_Model::is_active() for a row, the ->active() scope for
+    a query - and every rule below asks it. A site picker lists and accepts with
+    ->active() too, so it never offers a site the framework would refuse:
+
+        User_Model::where('login_user_id', $id)->active()->get();
 
     Two rules, and an application writes neither of them.
 
-    AT LOGIN. An identity holding no enabled membership on ANY site fails exactly
+    AT LOGIN. An identity holding no active membership on ANY site fails exactly
     the way a wrong password fails: attempt() returns false and the caller cannot
     tell the two apart. The audit trail keeps the distinction the caller is denied
     - Login_History::record_failure() with STATUS_FAILED_DISABLED. The predicate is
@@ -605,21 +630,29 @@ ACCOUNT STATE (WHO MAY LOG IN AT ALL)
         Session::enforce_enabled_membership(): bool
 
     When the session names a login user and a site, and the users row for that pair
-    is MISSING or its is_enabled is false, the session is LOGGED OUT and false is
+    is MISSING or not active (its is_enabled is false, or the SITE is disabled or
+    deleted), the session is LOGGED OUT and false is
     returned. The staff dispatcher calls it once per request immediately before the
     #[Auth] gates, and the Ajax browser entry point calls it before its own gates;
     both then answer response_auth_required() through their ordinary channel - a
     redirect to login with the intended URL captured for a page, the auth_required
     envelope for an Ajax call. Disabling an account therefore ends the sessions
-    that were already open, which is the only reading of "disabled" worth having.
+    that were already open, and disabling a site ends every session serving it -
+    which is the only reading of "disabled" worth having. An identity's
+    memberships on OTHER sites are unaffected: it still signs in to those.
 
     The EFFECTIVE identity is what is checked. Under impersonation the session
     carries the target, so disabling an account ends an impersonation of it exactly
     as it ends that account's own sessions.
 
     The external API tier is enforced separately and earlier - Rsx_Api_Bearer
-    refuses a key whose membership is not active before it mints an identity - and
-    CLI processes have no session row to enforce against.
+    refuses a key whose membership is not active (User_Model::is_active(), so a
+    disabled site's keys stop working too) before it mints an identity - and CLI
+    processes have no session row to enforce against.
+
+    STAFF ONLY. The portal realm does not read either switch: a portal's site is
+    the application's own declaration (Portal_Session::set_site_id(), rsx:man
+    portal), and its sign-in and per-request rules are the application's.
 
     Enforce your own IDENTITY statuses in TWO places, and understand why both
     (site membership needs neither - the framework does it):
@@ -844,28 +877,54 @@ IMPERSONATION
           must validate this before calling begin_impersonation().
 
     Client exposure (window.rsxapp):
-        When impersonating, the framework surfaces an ids-only block so an app can
-        render an "impersonation active" banner synchronously:
+        When impersonating, the framework surfaces a block so an app can render
+        an "impersonation active" banner synchronously:
 
             window.rsxapp.impersonation = {
                 impersonator_login_user_id: 42,
+                impersonator_email: "dev@example.com",
                 started_at: "2026-07-09T15:04:05.000Z"
             }   // or null when not impersonating
 
-        Core exposes IDs only - the app resolves the display name (it owns
-        User_Model). window.rsxapp.user already reflects the EFFECTIVE (target)
-        user during impersonation; that stays correct and unchanged.
+        The impersonator is named by LOGIN IDENTITY (login_users id and email);
+        a richer display name is the app's to resolve (it owns User_Model).
+        window.rsxapp.user already reflects the EFFECTIVE (target) user during
+        impersonation; that stays correct and unchanged.
+
+    The system panel's entry and exit:
+        The framework's own caller is the /_sys panel's "Sign in as this user"
+        on a Users detail (rsx:man sys_panel, IMPERSONATION) - developers only,
+        never onto a developer, onto one of the identity's ACTIVE memberships.
+        It stores the developer's current site in the session value store
+        (Session::put_value('sys.impersonation.return_site', <site id>)), calls
+        set_site_id(<chosen site>) and then begin_impersonation(), and loads
+        `/`. GET /_sys/stop-impersonating
+        (Rsx.Route('_Sys_Impersonation_Controller::stop'), published into every
+        bundle) requires the IMPERSONATOR to be a developer, calls
+        stop_impersonation(), restores and forgets the stored site, and lands
+        on /_sys/users/<id>. It is the one panel route gated is_logged_in
+        rather than is_sysadmin, since the effective identity is not a
+        developer while impersonating.
+
+        THE APP'S SITE DECLARATION WINS. A Main::init() that calls
+        set_site_id() on every request (the single-tenant template's
+        Session::set_site_id(1)) moves the session off the chosen site on the
+        very next request, and enforce_enabled_membership() then checks the
+        EFFECTIVE identity on the declared site: an active membership there
+        continues the impersonation on that site; none signs the whole session
+        out (logout() is the hard exit, so the developer's own sign-in ends
+        too).
 
     Usage:
         Authorization - who may impersonate - is the APP's responsibility, not
         core's (same policy as the portal). The app resolves the target user to a
         login_user_id, gates the action with its own ACL, and calls begin.
 
-            // App-owned authorization gate. The template ships this as a
-            // marked #[Auth_Check] composite (manager AND not already
-            // impersonating) - see rsx:man auth_gates.
+            // App-owned authorization gate: an #[Auth_Check] the application
+            // declares (rsx:man auth_gates). The template declares none for
+            // staff impersonation - its one entry point is the /_sys panel.
             #[Ajax_Endpoint]
-            #[Auth('can_impersonate')]
+            #[Auth('can_impersonate_staff')]
             public static function impersonate(Request $request, array $params = [])
             {
                 $target = User_Model::find($params['user_id']);
@@ -878,7 +937,9 @@ IMPERSONATION
             }
 
         Render the banner from window.rsxapp.impersonation plus an app-resolved
-        name, with an "exit" control that calls stop_impersonation().
+        name, with an "exit" control that calls stop_impersonation(). The
+        template's banner (Impersonation_Banner) links the panel's stop route
+        instead, because the panel is what began the impersonation there.
 
 EXAMPLES
     Login Form Processing:
@@ -1314,7 +1375,7 @@ SESSION MANAGEMENT
         // Returns same structure as above, or null if not logged in
 
     Terminate Sessions:
-        Four public functions and one internal one. Pick by WHOSE sessions you
+        Five public functions and one internal one. Pick by WHOSE sessions you
         are ending and WHO is asking:
 
         // SELF, one device. Fail-closed: the owning-user predicate is inside the
@@ -1333,6 +1394,14 @@ SESSION MANAGEMENT
         // sparing one session. Same authorization.
         $count = Session::terminate_all_sessions_for_user($login_user_id);
         $count = Session::terminate_all_sessions_for_user($login_user_id, $except_id);
+
+        // ANY IDENTITY, ONE DEVICE OR EVERYTHING - the DEVELOPER primitive, for
+        // an install-wide operator surface (the /_sys panel). Authorized by
+        // Session::is_developer() alone, so it answers across every site where
+        // the admin rule below cannot. null ends every session but the caller's
+        // own current one.
+        $count = Session::developer_terminate_sessions($login_user_id, $session_id);
+        $count = Session::developer_terminate_sessions($login_user_id);
 
         // FRAMEWORK-INTERNAL, NO AUTHORIZATION. For a caller with no acting user
         // to authorize against: CLI maintenance, or an app-internal flow that has
@@ -1370,6 +1439,11 @@ SESSION MANAGEMENT
             the actor's own CURRENT session id
                             false - an admin screen must never sign the operator
                             out of the browser they are working in
+
+        developer_terminate_sessions() keeps the same contract with a different
+        rule: a caller that is not a developer is REFUSED by the throw, and 0
+        means only that no active row matched (the caller's own current session
+        included - it is never ended from there).
 
         This shape exists because the alternative already cost a release: an
         admin "terminate session" button wired to the SELF-ONLY
@@ -1418,7 +1492,8 @@ SESSION MANAGEMENT
               ]);
 
           Listen with #[OnEvent('session.terminated')]. 'self' is a user managing
-          their own devices, 'admin' is one user ending another's, 'internal' is
+          their own devices, 'admin' is one user ending another's (through the
+          admin primitives or developer_terminate_sessions()), 'internal' is
           the unchecked framework path (actor null - "the framework did this, no
           operator was involved").
 
@@ -1436,6 +1511,8 @@ SESSION MANAGEMENT
           terminate_session_for_user()
         - Forcing a user out everywhere after a password reset, a role change or
           a suspension -> terminate_all_sessions_for_user()
+        - A developer-only, install-wide operator screen (the /_sys panel's
+          Users screen) -> developer_terminate_sessions()
         - An unattended job (CLI cleanup, a queued consequence of an already
           authorized action) -> _deactivate_sessions_for_user()
 

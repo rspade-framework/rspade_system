@@ -1,0 +1,13 @@
+<%--
+_Sys_Unauthorized - the panel's access-denied body.
+
+$message - the sentence shown [optional]
+
+Registered as the SPA's unauthorized screen (_Sys_Error_Screens). It offers no
+link: the panel cannot know where the application's home is, and the sidebar is
+still on screen around it.
+--%>
+<Define:_Sys_Unauthorized tag="div">
+    <% const _message = this.args.message || 'You do not have permission to view this page.'; %>
+    <_Sys_Empty_State $icon="bi-shield-lock" $title="Access denied" $body=_message />
+</Define:_Sys_Unauthorized>

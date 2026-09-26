@@ -1,5 +1,5 @@
 // _Apidocs_Home - the landing pane of the API reference.
-// Inherits the midnight palette custom properties from ._Apidocs_Page.
+// Reads the --rsx-* palette custom properties Sys/theme/theme.scss declares on :root.
 // The panel itself (surface, border, radius, padding) comes from the _Apidocs_Endpoint_Card
 // class this component also carries - the landing pane and an endpoint page are the same
 // card. Only the contents are styled here.

@@ -10,6 +10,8 @@ SYNOPSIS
     The URL:
         https://your.host/_sys                 dashboard (SPA)
         https://your.host/_sys/logout          sign out of the panel
+        https://your.host/_sys/stop-impersonating
+                                               end a "Sign in as this user"
 
     Linking to it from application code:
         if (Permission::can_access('_Sys_Dashboard_Action')) {
@@ -19,6 +21,11 @@ SYNOPSIS
         // JavaScript
         if (Permission.can_access('_Sys_Dashboard_Action')) {
             const url = Rsx.Route('_Sys_Dashboard_Action');
+        }
+
+    An impersonation banner's exit link (see IMPERSONATION):
+        if (window.rsxapp.impersonation) {
+            const stop = Rsx.Route('_Sys_Impersonation_Controller::stop');
         }
 
     Switching it off (rsx/resource/config/rsx.php):
@@ -41,19 +48,292 @@ DESCRIPTION
     administrators do with tenants, billing or customers. Those are application
     concepts and they stay in the application.
 
-    The panel today is chrome and scaffolding. Seven screens exist -
-    dashboard, debug flags, tasks, email, logs, sites, users - and each has a
-    real route, a real gate, a real nav entry and a real page frame; the bodies
-    are one sentence each naming what will live there. The feature set arrives
-    over releases. What is already load-bearing is the SHAPE: the tree, the
-    namespace, the gate and the switch, all of which an application has to
-    coexist with from day one.
+    It has seven screens, in sidebar order: Dashboard, Debug Flags, Tasks,
+    Email & SMS, Logs, Sites and Users, each described below. A screen over
+    site-scoped data reads EVERY site, never the developer's own tenant. What
+    an application has to coexist with is the panel's SHAPE - the tree, the
+    URL, the gate, the switch and the reserved namespace - covered in the
+    sections after IMPERSONATION.
+
+    The dashboard (`/_sys`) shows the box at a glance, install-wide rather than
+    for the developer's own tenant: the application mode and whether the build
+    is sealed, the manifest build key, live task workers, tasks that failed in
+    the last 24 hours, mail pending across every site, the mail delivery mode,
+    and the site count (the Default site, id 0, excluded) and sign-in identity
+    count - each tile linking to its screen. Beneath them is the `rsx:health`
+    report for this box's mode, grouped FAIL, WARN, INFO, OK with each row's
+    detail and remediation, the not-applicable checks listed by label, and a
+    "Re-run checks" action. The report is run INSIDE the web request, by the
+    same Health_Check_Runner the command uses, so it describes the web tier;
+    the one row that cannot be observed from there - the CLI extension tier -
+    reads INFO and points at `php artisan rsx:health`. The two halves load
+    independently, so the active probes never hold up the tiles.
+
+    Debug Flags (`/_sys/debug-flags`) sets console_debug for THIS BROWSER.
+    The override - enabled, the filter (all, whitelist, blacklist or specific)
+    with its channels, and the benchmark, location and backtrace prefixes - is
+    stored in the developer's session and never written to .env or any config
+    file: every page and Ajax call that browser makes runs under it, PHP output
+    and window.rsxapp.console_debug alike, and no other browser, developer or
+    CLI process sees it. It applies only while the signed-in identity is a
+    developer, is read afresh on every request (so it lapses the moment the
+    developer flag is removed), does nothing in strict production (where
+    console_debug is off), leaves the output destinations (outputs.*) to the
+    configuration, and ends with the session; Reset removes it sooner. The
+    channel picker lists every channel a console_debug() call names in the
+    source - the rsx:console_debug:list_channels scan, run when the screen
+    loads. Beneath the form, read-only, every rsx.console_debug and
+    rsx.development value in force for this browser, each marked with where it
+    came from: this browser's override, the environment (naming the key), or a
+    config file. rsx:man console_debug.
+
+    Tasks (`/_sys/tasks`) is the `_tasks` table, install-wide, in three tabs.
+    RUNNING lists every row a worker is executing now - id, task, PID, start
+    time, heartbeat age, queue - with a Kill action that asks for an
+    explanation and does what `rsx:tasks:kill` does: SIGTERM, a 5 second
+    grace, SIGKILL, the explanation recorded as the row's status reason (a
+    schedule's tracker row goes back to pending rather than terminal).
+    HISTORY is every row, newest first, filtered by status, task class and
+    "finished within" (by completed_at, the dashboard's own definition of a
+    recent failure), searched by class or method, sortable by id, start and
+    finish. A row opens its detail (`/_sys/tasks/<id>`): every column, the
+    params and result as JSON, the error and the log lines, Kill while it
+    runs, and Re-dispatch for a failed or killed one-shot row - the same
+    service, method, params and queue enqueued as a NEW row, the old row left
+    as it was. Datetimes show in the viewer's timezone. The dashboard's
+    worker and failed-task tiles open the Running tab and the history
+    filtered to failures in the last 24 hours.
+
+    SCHEDULES lists every #[Schedule] declaration beside its tracker row:
+    the declared phrase and its cron form, whether the task is #[Exclusive]
+    or #[Debounce], the tracker's status, next run, last success,
+    consecutive failures and, while it is failing, the last error (linking to the
+    tracker's detail).
+    A declaration the scheduler has not reconciled yet reads "not yet
+    scheduled". A schedule whose consecutive failures reach
+    rsx.tasks.failing_schedule_warn_after - the threshold the rsx:health
+    "Failing Schedules" row uses - is marked failing. Run now dispatches the
+    task once, with no params, on its declared queue, as an ordinary
+    one-shot row; the tracker and its next run are not touched. An
+    #[Exclusive] or #[Debounce] task that already has a queued run coalesces
+    onto it, and the flash says so and links to that row instead.
+
+    Email & SMS (`/_sys/email`) is the two outbound queues, install-wide -
+    every site's rows - in two tabs, EMAIL (the default) and SMS.
+
+    EMAIL is the mail queue. A tile per status (a click narrows the queue to it), then
+    how the install delivers: the delivery mode, the transport, the
+    development catcher's Maildir in aiosmtpd mode, and the row that has
+    waited longest. The queue beneath is every message newest first,
+    filtered by status, category and site, searched by recipient (the
+    envelope address or, on a dev host, who it was really for) or subject.
+    A row opens its detail (`/_sys/email/<id>`): the envelope, category,
+    status, attempts, dedupe key, site, transport and Message-ID, the last
+    error, the attachments, headers and frozen template data, and the body -
+    the rendered HTML in a sandboxed frame (no scripts, and no remote image,
+    font or stylesheet is fetched: a message opened here tells nobody it was
+    read) or the plain-text part. In aiosmtpd mode the detail also lists the
+    catcher files that carry the row's X-RSX-Email-Id header, or says the
+    message never landed there. Resend puts a finished message back on the
+    queue with exactly the rules of rsx:mail:resend - one implementation
+    serves both: a pending or sending row is refused, and a blocked row
+    (the recipient opted out) asks first, because resending it overrides a
+    consent record. The dashboard's pending-mail tile opens the queue
+    filtered to pending.
+
+    SMS is the SMS queue, read-only. The same tile per status (a click
+    narrows the SMS queue to it), the SMS delivery mode (rsx.sms.delivery:
+    no SMS provider exists, so suppressed or disabled) and the row that has
+    waited longest; beneath, every SMS newest first, filtered by status,
+    category and site, searched by number (the recipient or, on a dev host,
+    who it was really for) or message text. A row opens its detail
+    (`/_sys/email/sms/<id>`): the message, the last error (on a suppressed
+    row, the reason it was not delivered), recipient, category, site,
+    attempts, dedupe key, related record, transport and timestamps. There is
+    no resend: the SMS queue has no resend contract.
+
+    Logs (`/_sys/logs`) lists the files at the top of the log directory
+    (storage/logs, or wherever RSX_STORAGE_PATH puts it) - name, format, size,
+    modified - newest first, searchable by name. Dotfiles, subdirectories and
+    symlinks are not listed. A file opens in the viewer (`/_sys/logs/<name>`),
+    which shows its TAIL - the last 200 lines - and reads by byte offset from
+    there, so a large file is never loaded whole: Load earlier reads the 200
+    lines before the loaded range, and Follow polls every 2 seconds for
+    complete lines appended after it (paused while the tab is hidden, stopped
+    when the screen is left). A file rotated or truncated while followed is
+    detected - its inode or its first bytes changed, or it shrank - and the
+    viewer says so and restarts from the new tail. The filter (kept in the URL
+    as #q=) is applied on the server to every window read; it narrows what is
+    shown without moving the loaded range. laravel*.log files are grouped into
+    entries - a level badge, the time, the environment and the message, with
+    the lines under the header (a stack trace) folded beneath it; a window
+    that opens inside an entry reaches back to its header when that is within
+    another 200 lines. csp_violations.log shows each report pretty-printed.
+    Anything else is shown line by line. A .gz file is readable and never
+    followed; it cannot be read backward, so every page decompresses the file
+    from its start up to that page - a cost in time proportional to the
+    uncompressed bytes before the page, never in memory.
+
+    The name in the URL is looked up in the directory listing and never joined
+    onto a path, and its real path must lie directly in the log directory, so
+    nothing outside it can be named. The viewer is read-only: no delete, no
+    download. Each read (opening a file, Load earlier, a new filter) is
+    logged at debug level with the developer's login_user_id; Follow's polls
+    are not, or a followed laravel.log would record its own polling.
+
+    Sites (`/_sys/sites`) lists the tenants - every site but the Default
+    site (id 0, the infrastructure target of sessionless writes, never a
+    tenant) and the soft-deleted ones - with id, name, slug, enabled,
+    timezone, member count (live memberships, enabled or not) and created
+    date, filtered by enabled or disabled, searched by name or slug. A row
+    opens the site (`/_sys/sites/<id>`; the Default site, a deleted site and
+    a missing id are not found): its facts, who created and last updated it,
+    and its members - email (linking to the member's identity on the Users
+    screen), name, role, whether the membership is enabled, whether it is
+    ACTIVE (User_Model::is_active(): the membership enabled and the site
+    enabled), last sign-in - searchable and filtered by the membership's own
+    switch. Rename edits the name and the slug; both are
+    required and capped at their column's length, and the slug must be
+    unused by any other site, deleted ones included. Changing a slug moves
+    whatever application code looks the site up by it
+    (Site_Model::find_by_slug()). Disable and Enable ask first and name the
+    count of members with an enabled membership: disabling a site signs each
+    of them out on their next request, refuses their sign-in and stops their
+    API keys until it is enabled again - nothing is deleted. The site the
+    developer's own session is on cannot be disabled from here, and the
+    Default site never can. There is no delete.
+
+    Users (`/_sys/users`) lists the LOGIN IDENTITIES - the cross-site
+    sign-ins (login_users), not the per-site memberships - with id, email,
+    status (Active, Inactive, Suspended), the developer flag, verified, the
+    membership count (live memberships on any site, enabled or not), last
+    sign-in and created date; filtered by status and by developer, searched
+    by email. A soft-deleted identity is not listed. A row opens the identity
+    (`/_sys/users/<id>`, the login_users id; a soft-deleted or missing id is
+    not found), in four tabs:
+
+      Overview   its facts, and every membership across every site: the site
+                 (linking to the Sites screen), the name on it, role, whether
+                 the membership is enabled, whether it is ACTIVE, whether it
+                 requires a second factor, whether it may use the API, and
+                 its invitation state (pending, accepted, expired).
+      Sessions   its live sessions (Session::get_sessions_for_user()): device,
+                 IP, site, session type, signed in, last active, and for an
+                 impersonated session the identity doing it. "This browser"
+                 marks the developer's own session on their own identity.
+      Sign-ins   its whole _login_history, newest first, a page at a time
+                 (outcome, IP, device, location, the email given), searched
+                 by IP or browser. The table holds what Login_History stores -
+                 successful sign-ins for the retention window; failures are
+                 counters and log lines, never rows.
+      Security   whether a password or provider sign-in owes a second factor,
+                 each confirmed factor (kind, label, enrolled, last used),
+                 whether it holds a passkey, the COUNT of unspent recovery
+                 codes, and each connected sign-in provider account. Metadata
+                 only: no TOTP seed, passkey key, recovery code or provider
+                 user key is ever sent to the browser.
+
+    The Users screen's actions each ask first, and each is refused - with the
+    reason, before anything is asked - where it would lock the developer out
+    of the panel they are using:
+
+      Sign in as this user (header)
+                 impersonation - see IMPERSONATION below.
+      Change status (header)
+                 sets Active, Inactive or Suspended. Status is APPLICATION
+                 vocabulary (rsx:man session): the framework itself neither
+                 refuses a sign-in nor ends a session on it, so what a status
+                 does is whatever the application's own login code makes of
+                 it, and the dialog says so. Refused on your own identity.
+      End all sessions (header)
+                 signs every browser holding the identity out now (each is
+                 pushed to reload). On your own identity it spares the browser
+                 you are using.
+      Enable / Disable (a membership row)
+                 the membership's own switch (users.is_enabled): a disabled
+                 membership cannot sign in to its site and a session on it
+                 ends on its next request. Refused for the membership your own
+                 session is on.
+      End (a session row)
+                 signs that one browser out. Refused for the session you are
+                 using - sign out instead.
+      Remove / Remove all (Security, second factors)
+                 the calls rsx:users:2fa:remove makes: one factor (its recovery
+                 codes go with the last one), or every factor and recovery
+                 code. Refused on your own identity.
+      Disconnect / Disconnect all (Security, sign-in providers)
+                 Rsx_Sso::unlink() / unlink_all(). Nothing checks that another
+                 way to sign in remains. Refused on your own identity.
+
+    Sessions end through Session::developer_terminate_sessions() (rsx:man
+    session), so each one fires `session.terminated` with the developer as
+    actor. A status or membership change is an ordinary model save - it
+    stamps updated_at and the updated_by pair (the last writer), and neither
+    model records revisions. Removing a factor or disconnecting a provider is
+    recorded nowhere. There is no delete, and is_developer is never editable
+    here (it is set by hand in the database).
+
+    On a narrow screen (below 768px) the panel's sidebar collapses behind a
+    menu button in the top bar.
+
+IMPERSONATION
+    "Sign in as this user" on a Users detail browses the APPLICATION as that
+    login identity, with full read and write (Session::begin_impersonation(),
+    rsx:man session IMPERSONATION). DEVELOPERS ONLY: it is a panel action,
+    gated is_sysadmin like every other.
+
+    Entry. The dialog names the identity and its status (application
+    vocabulary - never refused on) and, when the identity has more than one
+    ACTIVE membership (User_Model::is_active(): the membership and its site
+    both enabled), asks which site; with one, that site is used. The endpoint
+    then stores the developer's current site in the session value store
+    (Session::put_value('sys.impersonation.return_site', ...)), calls
+    Session::set_site_id() with the chosen site and
+    Session::begin_impersonation(), and the browser leaves the panel for `/`
+    with a full page load. Refused, with the reason, before anything is asked:
+    your own identity; a developer (the session would carry that identity's
+    panel access); a session already impersonating (the one-level rule); an
+    identity with no active membership.
+
+    WHICH SITE THE SESSION LANDS ON IS THE APPLICATION'S CALL. The chosen site
+    holds only in an application that lets the session's site stand. An
+    application whose Main::init() declares its staff site on EVERY request
+    (Session::set_site_id(1) - the single-tenant template does exactly this)
+    moves the session back to its own site on the next request, and the
+    framework's per-request membership check then asks about the impersonated
+    identity on THAT site: with an active membership there, the impersonation
+    continues on the application's site whatever was chosen; without one, the
+    whole session is signed out (Session::logout() is a hard exit - the
+    developer's own sign-in goes with it). The dialog says so.
+
+    Exit. GET /_sys/stop-impersonating (`_Sys_Impersonation_Controller::stop`)
+    ends it: Session::stop_impersonation(), the stored site restored and
+    forgotten, and a redirect to the impersonated identity's
+    /_sys/users/<id>. Not impersonating: a redirect to `/`. An impersonation
+    whose IMPERSONATOR is not a developer (one some other code began) is
+    refused and left running. It is a GET because it is a link in a banner;
+    like GET /logout it only ENDS a privilege.
+
+    THE ONE PANEL SURFACE NOT GATED is_sysadmin. While impersonating, the
+    effective identity is the impersonated one, never a developer, so the
+    route is gated is_logged_in on its own controller (a method gate only
+    narrows its class gate) and checks the impersonator in its body.
+
+    THE BANNER IS THE APPLICATION'S. The framework ships the state
+    (window.rsxapp.impersonation: impersonator id and email, start time) and
+    publishes the stop route into every bundle through
+    `always_published_routes`, so `Rsx.Route('_Sys_Impersonation_Controller::stop')`
+    answers in an application bundle - a STRING carrier, legal under
+    NAME-RESERVED-02 exactly as the dashboard link is. The template's banner
+    is `Impersonation_Banner`, mounted in its staff SPA layout:
+    system/app/RSpade/resource/reference_app/theme/components/ui/impersonation_banner/
 
 THE TREE
         system/app/RSpade/Sys/
           theme/          _Sys_Theme_Bundle: its own Bootstrap build, its own
                           palette tokens, its own components
-          lib/            shared panel classes
+          lib/            shared panel classes (_Sys_Endpoint_Controller_Abstract,
+                          _Sys_Enum_Words)
           handlers/       #[OnEvent] handlers
           app/sys/        the panel module - bundle, SPA bootstrap controller,
                           route controller, layout, one directory per screen
@@ -102,17 +382,23 @@ THE GATE
     An anonymous caller is sent to the login page rather than shown a refusal,
     like any other gated staff surface.
 
+    ONE EXCEPTION: GET /_sys/stop-impersonating is gated is_logged_in, because
+    during an impersonation the signed-in identity is never a developer; its
+    body refuses unless the IMPERSONATOR is one (IMPERSONATION above).
+
 THE SWITCH
     `config('rsx.sys_panel.enabled')`, framework default TRUE. An application
     turns it off in `rsx/resource/config/rsx.php`:
 
         'sys_panel' => ['enabled' => false],
 
-    A disabled panel answers NOT FOUND at every `/_sys` URL - the refusal is a
-    `pre_dispatch()` returning the framework's 404 screen, stated on both
-    `_Sys_Spa_Controller` (which covers every SPA screen) and `_Sys_Controller`
-    (the server-rendered routes). No manifest or dispatcher mechanism removes a
-    route by config, so 404 is the honest answer rather than an absent route.
+    A disabled panel answers NOT FOUND at every `/_sys` URL and on every panel
+    Ajax endpoint - the refusal is ONE `pre_dispatch()` returning
+    `response_not_found()` (the 404 page on a page, the not_found envelope on an
+    Ajax call), declared on `_Sys_Endpoint_Controller_Abstract` in `Sys/lib/` and
+    inherited by every panel controller. No manifest or dispatcher mechanism
+    removes a route by config, so 404 is the honest answer rather than an absent
+    route.
 
     A link built with `Permission::can_access(...)` disappears on its own when
     the gate denies; the config switch is enforced at dispatch, so a link to a
@@ -149,12 +435,15 @@ THE RESERVED NAMESPACE
 
     They are framework internals that happen to be visible. Do not extend
     `_Sys_Layout`, do not render `<_Sys_Section>`, do not call a `_Sys_*`
-    controller method, do not link to a `/_sys` sub-path by hand. The ONE
-    sanctioned use is linking to the panel through the two indirections that
-    are contracts in their own right: `Rsx::Route('_Sys_Dashboard_Action')`
-    and `Permission::can_access('_Sys_Dashboard_Action')`. Everything else
-    in the tree may be renamed, restructured or deleted in any release. The
-    section below says exactly what makes that one name special.
+    controller method, do not link to a `/_sys` sub-path by hand. The
+    sanctioned uses are links through indirections that are contracts in
+    their own right: to the panel, `Rsx::Route('_Sys_Dashboard_Action')` and
+    `Permission::can_access('_Sys_Dashboard_Action')`; and out of an
+    impersonation the panel began, `Rsx.Route('_Sys_Impersonation_Controller::stop')`
+    (IMPERSONATION above). Everything else in the tree may be renamed,
+    restructured or deleted in any release. The section below says exactly
+    what makes the entry name special; the stop route is published the same
+    way.
 
     `NAME-RESERVED-02` (critical, manifest-time) enforces that paragraph.
     Application code under `rsx/` that references a `_`-prefixed name the
@@ -169,10 +458,9 @@ THE RESERVED NAMESPACE
     The manifest is the whole scope, which is what keeps the rule from being a
     blanket underscore ban: your own `static::__helper()` calls, `__construct`,
     `__DIR__` and every vendor API are untouched, and `static::` / `self::` /
-    `parent::` receivers are never checked at all. The two sanctioned carriers
+    `parent::` receivers are never checked at all. The sanctioned carriers
     above are STRINGS handed to a resolver and the rule never reads a string
     literal, so they stay legal with no allowlist to keep in step.
-
 
 THE ENTRY ROUTE IS SPECIAL: `_Sys_Dashboard_Action`
     One name in the reserved namespace is addressable from application code,
@@ -205,16 +493,15 @@ THE ENTRY ROUTE IS SPECIAL: `_Sys_Dashboard_Action`
 
     REFERENCING IT AS A STRING IS NOT A NAME-RESERVED-02 VIOLATION. Strings are
     the sanctioned carrier - that rule reads code, never string literals - so
-    these four calls need no exception comment. Any OTHER `_Sys_*` reference is
-    refused: this is THE canonical way to link to the /_sys dashboard, and there
-    is no second one.
+    these four calls need no exception comment. Any OTHER `_Sys_*` reference -
+    the stop-impersonating link aside (IMPERSONATION) - is refused: this is THE
+    canonical way to link to the /_sys dashboard, and there is no second one.
 
     AN APPLICATION MAY ADD ITS OWN published targets by appending to
     `always_published_routes` in `rsx/resource/config/rsx.php` (the merge is
     append-only, so the framework's entry always remains). A configured target
     with no routes in the manifest FAILS THE BUNDLE COMPILE rather than silently
     resolving to a placeholder URL.
-
 
 THE MODIFICATION RULE
     The tree is framework property. All of `system/` is overwritten by
@@ -279,11 +566,12 @@ FILES
 SEE ALSO
     rsx:man external_api - the API console's engine, keys, and mount contract
     rsx:man auth_gates - #[Auth], the check vocabulary, can_access()
+    rsx:man session - IMPERSONATION: the mechanism the Users screen drives
+    rsx:man console_debug - the per-browser override the Debug Flags screen stores
     rsx:man class_override - the copy-and-replace pattern is_sysadmin uses
     rsx:man config_rsx - the two-tier config merge and where to override
     rsx:man framework_debug_and_contrib - filing a framework change request
     rsx:man coding_standards - NAME-RESERVED-01/-02 and the full name shape
-    rsx:man code_quality - the rule catalog and the shared pass ledger
     skill rspade:sys-panel - working alongside the panel from application code
 
 SYS_PANEL(1)                    RSpade Manual                    SYS_PANEL(1)

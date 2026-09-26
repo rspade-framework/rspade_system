@@ -45,8 +45,11 @@ bundle)**
   `_spa_title`, `auth` -> `_auth_checks[]`, `portal_spa` -> `_spa_controller_method` +
   `_is_portal_spa`.
 - `Error_Screens.js` - the JS twin of `Core/Errors/Error_Screens.php`. Same three outcomes rendered
-  INTO the live layout instead of as a new page; the bodies are app-owned theme components under
-  `rsx/theme/components/feedback/errors/`, so there is no override machinery on this side.
+  INTO the live layout instead of as a new page. The bodies are whatever the running bundle
+  registered through `Error_Screens.set_components({unauthorized, not_found, fatal})` from a static
+  `on_app_modules_define()` - the template's set beside its components in
+  `rsx/theme/components/feedback/errors/`, the panel's in `Sys/app/sys/_Sys_Error_Screens.js`. No
+  default: an unregistered bundle throws naming the call.
 - `Default_Layout.js` + `.jqhtml` - the `$sid="content"` passthrough `match_url_to_route()` supplies
   when an action declares no `@layout`.
 - `Spa_Session_Controller.php` - `#[Auth('public')]` `#[Auth_Realm('any')]` `get_state`, returning

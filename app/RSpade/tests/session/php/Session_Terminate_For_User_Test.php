@@ -20,6 +20,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  *   Session::terminate_session_for_user()      - one session of any user
  *   Session::terminate_all_sessions_for_user() - every session of any user
  *   Session::_deactivate_sessions_for_user()   - the unchecked framework-internal path
+ *   Session::developer_terminate_sessions()    - one or every session of any identity,
+ *                                                authorized by Session::is_developer() alone
  *
  * The contract under test has two halves that must never be conflated:
  *   REFUSAL THROWS AjaxUnauthorizedException - the actor may not do this at all.
@@ -469,6 +471,170 @@ class Session_Terminate_For_User_Test extends Rsx_Test_Abstract
         static::__assert_equals('internal', $captured[0]['scope'], 'scope internal');
         static::__assert_null($captured[0]['actor_login_user_id'], 'no operator is named');
         static::__assert_equals($session_id, $captured[0]['session_id'], 'the deactivated row is named');
+    }
+
+    // =====================================================================
+    // developer_terminate_sessions - authorized by is_developer() alone
+    // =====================================================================
+
+    /**
+     * A developer acting on site 1 as the LEAST privileged role.
+     */
+    private static function __make_developer(): User_Model
+    {
+        $developer = self::__make_user(self::__subordinate_role());
+
+        DB::table('login_users')->where('id', $developer->login_user_id)->update(['is_developer' => 1]);
+
+        return $developer;
+    }
+
+    /**
+     * No role is consulted: a developer holding a subordinate role ends one session of an
+     * identity that has NO users row on the acting site - the target the admin primitive
+     * refuses (sess-termfu-08) - through the same _deactivate path, so the same event fires:
+     * actor = the developer, scope 'admin'.
+     */
+    public static function test_a_developer_ends_one_session_of_any_identity()
+    {
+        $developer = self::__make_developer();
+
+        $stranger = new Login_User_Model();
+        $stranger->email = 'terminate_dev_stranger_' . uniqid() . '@example.com';
+        $stranger->password = Login_User_Model::hash_password('secret-password');
+        $stranger->status_id = Login_User_Model::STATUS_ACTIVE;
+        $stranger->save();
+
+        $ended = self::__insert_session((int) $stranger->id);
+        $kept = self::__insert_session((int) $stranger->id);
+
+        self::__act_as($developer);
+
+        $captured = [];
+
+        Event_Registry::_set_test_handlers('session.terminated', [
+            function ($data) use (&$captured) {
+                $captured[] = $data;
+            },
+        ]);
+
+        try {
+            $count = Session::developer_terminate_sessions((int) $stranger->id, $ended);
+        } finally {
+            Event_Registry::_clear_test_handlers();
+        }
+
+        static::__assert_equals(1, $count, 'the one session ended');
+        static::__assert_false(self::__is_active($ended), 'the named row is deactivated');
+        static::__assert_true(self::__is_active($kept), 'the identity\'s other session is untouched');
+        static::__assert_count(1, $captured, 'one session.terminated for the one row');
+        static::__assert_equals((int) $developer->login_user_id, $captured[0]['actor_login_user_id'], 'actor is the developer');
+        static::__assert_equals((int) $stranger->id, $captured[0]['target_login_user_id'], 'target is the identity');
+        static::__assert_equals($ended, $captured[0]['session_id'], 'the deactivated row is named');
+        static::__assert_equals('admin', $captured[0]['scope'], 'another identity\'s session is scope admin');
+    }
+
+    /**
+     * With no session id every active session of the identity ends, EXCEPT the developer's
+     * own current one - on their own identity that keeps the browser they are using, and
+     * the event reads scope 'self'.
+     */
+    public static function test_a_developer_ends_every_session_but_their_own_current_one()
+    {
+        $developer = self::__make_developer();
+        $target = self::__make_user(self::__superior_role());
+        $target_rows = [self::__insert_session((int) $target->login_user_id), self::__insert_session((int) $target->login_user_id)];
+        $own_other = self::__insert_session((int) $developer->login_user_id);
+
+        self::__act_as($developer);
+
+        $current_session_id = Session::get_session_id();
+
+        static::__assert_equals(2, Session::developer_terminate_sessions((int) $target->login_user_id), 'both of the target\'s sessions');
+        static::__assert_false(self::__is_active($target_rows[0]), 'first row deactivated');
+        static::__assert_false(self::__is_active($target_rows[1]), 'second row deactivated');
+
+        $captured = [];
+
+        Event_Registry::_set_test_handlers('session.terminated', [
+            function ($data) use (&$captured) {
+                $captured[] = $data;
+            },
+        ]);
+
+        try {
+            $count = Session::developer_terminate_sessions((int) $developer->login_user_id);
+        } finally {
+            Event_Registry::_clear_test_handlers();
+        }
+
+        static::__assert_equals(1, $count, 'only the developer\'s OTHER session');
+        static::__assert_false(self::__is_active($own_other), 'the other browser is signed out');
+        static::__assert_true(self::__is_active($current_session_id), 'the current session is spared');
+        static::__assert_count(1, $captured, 'one event');
+        static::__assert_equals('self', $captured[0]['scope'], 'the developer\'s own identity is scope self');
+    }
+
+    /**
+     * ABSENCE RETURNS 0: an unknown id, another identity's session id, and the developer's
+     * own CURRENT session id named explicitly - none of them throws, none is touched.
+     */
+    public static function test_developer_termination_absence_is_zero()
+    {
+        $developer = self::__make_developer();
+        $target = self::__make_user(self::__subordinate_role());
+        $other = self::__make_user(self::__subordinate_role());
+        $others_row = self::__insert_session((int) $other->login_user_id);
+
+        self::__act_as($developer);
+
+        $current_session_id = Session::get_session_id();
+
+        static::__assert_equals(0, Session::developer_terminate_sessions((int) $target->login_user_id, 999000111), 'an unknown id');
+        static::__assert_equals(0, Session::developer_terminate_sessions((int) $target->login_user_id, $others_row), 'a session of a different identity');
+        static::__assert_true(self::__is_active($others_row), 'which stays active');
+        static::__assert_equals(0, Session::developer_terminate_sessions((int) $developer->login_user_id, $current_session_id), 'the current session');
+        static::__assert_true(self::__is_active($current_session_id), 'which stays active');
+    }
+
+    /**
+     * REFUSAL THROWS: a caller that is not a developer - even one whose role may administer
+     * the target - and a caller with no identity at all.
+     */
+    public static function test_developer_termination_refuses_a_non_developer()
+    {
+        $admin = self::__make_user(self::__superior_role());
+        $target = self::__make_user(self::__subordinate_role());
+        $session_id = self::__insert_session((int) $target->login_user_id);
+
+        foreach (['a role that may administer the target' => $admin, 'nobody signed in' => null] as $who => $actor) {
+            if ($actor === null) {
+                self::__act_as_nobody();
+            } else {
+                self::__act_as($actor);
+            }
+
+            $threw = false;
+
+            try {
+                Session::developer_terminate_sessions((int) $target->login_user_id, $session_id);
+            } catch (AjaxUnauthorizedException $e) {
+                $threw = true;
+            }
+
+            static::__assert_true($threw, "{$who}: refused with AjaxUnauthorizedException");
+
+            $threw = false;
+
+            try {
+                Session::developer_terminate_sessions((int) $target->login_user_id);
+            } catch (AjaxUnauthorizedException $e) {
+                $threw = true;
+            }
+
+            static::__assert_true($threw, "{$who}: the bulk form is refused too");
+            static::__assert_true(self::__is_active($session_id), "{$who}: the row is intact");
+        }
     }
 
     public static function teardown(): void

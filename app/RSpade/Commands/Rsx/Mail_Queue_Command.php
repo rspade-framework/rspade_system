@@ -19,6 +19,9 @@ use Illuminate\Console\Command;
  * whether mail is moving. With a --status or --recipient it answers "what happened to
  * that message", listing rows newest first.
  *
+ * EVERY SITE. Both shapes read the whole install's queue (the CLI runs as site 0, which
+ * owns no mail); the listing names each row's site.
+ *
  * THE LISTING IS BOUNDED ON PURPOSE. --limit is the caller saying how many rows they
  * want to look at, which is the one shape a LIMIT is always right in (see the Do The
  * Whole Job mandate): nothing here processes a set, it prints one.
@@ -58,11 +61,15 @@ class Mail_Queue_Command extends Command
             return 1;
         }
 
-        if ($status === '' && $recipient === '') {
-            return $this->__summary($json);
-        }
+        // THE WHOLE INSTALL. The queue is one table for every tenant, and the CLI's own site
+        // (0) says nothing about which of them an operator is asking after.
+        return Email_Queue_Model::without_site_scope(function () use ($status, $recipient, $json) {
+            if ($status === '' && $recipient === '') {
+                return $this->__summary($json);
+            }
 
-        return $this->__listing($status, $recipient, $json);
+            return $this->__listing($status, $recipient, $json);
+        });
     }
 
     /**
@@ -70,18 +77,15 @@ class Mail_Queue_Command extends Command
      */
     private function __summary(bool $json): int
     {
+        $by_status = Email_Queue_Model::status_counts();
         $counts = [];
-        $total = 0;
 
         foreach (self::STATUS_NAMES as $name => $id) {
-            $count = Email_Queue_Model::where('status_id', $id)->count();
-            $counts[$name] = $count;
-            $total += $count;
+            $counts[$name] = $by_status[$id];
         }
 
-        $oldest = Email_Queue_Model::where('status_id', Email_Queue_Model::STATUS_PENDING)
-            ->orderBy('created_at', 'asc')
-            ->first();
+        $total = array_sum($counts);
+        $oldest = Email_Queue_Model::oldest_pending();
 
         $payload = [
             'delivery' => Rsx_Mail_Transport::delivery_mode(),
@@ -151,6 +155,7 @@ class Mail_Queue_Command extends Command
         foreach ($records as $record) {
             $payload[] = [
                 'id' => (int) $record->id,
+                'site_id' => (int) $record->site_id,
                 'status' => $record->status_id__label,
                 'to_address' => $record->to_address,
                 'dev_original_to' => $record->dev_original_to,
@@ -179,6 +184,7 @@ class Mail_Queue_Command extends Command
         foreach ($payload as $row) {
             $rows[] = [
                 $row['id'],
+                $row['site_id'],
                 $row['status'],
                 $this->__truncate($row['to_address'], 32),
                 $this->__truncate((string) $row['subject'], 40),
@@ -189,7 +195,7 @@ class Mail_Queue_Command extends Command
         }
 
         $this->table(
-            ['ID', 'Status', 'To', 'Subject', 'Att', 'Sent / last attempt', 'Last error'],
+            ['ID', 'Site', 'Status', 'To', 'Subject', 'Att', 'Sent / last attempt', 'Last error'],
             $rows
         );
 

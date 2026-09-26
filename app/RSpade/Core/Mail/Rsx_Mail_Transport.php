@@ -382,6 +382,97 @@ class Rsx_Mail_Transport
     }
 
     /**
+     * The development catcher's captured copies of one queue row, newest first.
+     *
+     * MATCHED BY HEADER, NEVER BY RECENCY. Every message the builder sends carries
+     * X-RSX-Email-Id: <queue row id> (Rsx_Mail_Builder::_apply_headers()), so a captured
+     * file is tied to its row by what it says about itself - not by being the newest file
+     * in a Maildir other work also writes into. A row that was resent can have several.
+     *
+     * CHEAP BY CONSTRUCTION: each file in new/ and cur/ is opened and read only up to the
+     * blank line that ends its header block - the body is never read. The cost is one open
+     * per captured message, and the Maildir is pruned on the queue retention schedule
+     * (Mail_Queue_Service::cleanup).
+     *
+     * A Maildir that does not exist is an answer, not an error: the catcher has written
+     * nothing on this box yet (or this box has none).
+     *
+     * @return array{maildir: string, exists: bool, files: array<int, array{name: string,
+     *               path: string, delivered_at: string, size: int}>}
+     */
+    public static function catcher_files_for(int $email_id): array
+    {
+        $maildir = rtrim((string) config('rsx.mail.catcher_maildir'), '/');
+        $files = [];
+
+        foreach (['new', 'cur'] as $subdir) {
+            $path = $maildir . '/' . $subdir;
+
+            if (!is_dir($path)) {
+                continue;
+            }
+
+            foreach (scandir($path) as $entry) {
+                $file = $path . '/' . $entry;
+
+                if ($entry === '.' || $entry === '..' || !is_file($file)) {
+                    continue;
+                }
+
+                if (static::_catcher_file_email_id($file) === $email_id) {
+                    $mtime = (int) filemtime($file);
+                    $files[] = [
+                        'name' => $subdir . '/' . $entry,
+                        'path' => $file,
+                        'mtime' => $mtime,
+                        'delivered_at' => gmdate('Y-m-d\TH:i:s.000\Z', $mtime),
+                        'size' => (int) filesize($file),
+                    ];
+                }
+            }
+        }
+
+        usort($files, fn ($a, $b) => $b['mtime'] <=> $a['mtime']);
+
+        foreach ($files as &$file) {
+            unset($file['mtime']);
+        }
+
+        return ['maildir' => $maildir, 'exists' => is_dir($maildir), 'files' => $files];
+    }
+
+    /**
+     * The X-RSX-Email-Id a captured message carries, read from its header block only;
+     * null when it carries none.
+     */
+    private static function _catcher_file_email_id(string $file): ?int
+    {
+        $handle = fopen($file, 'rb');
+
+        if ($handle === false) {
+            throw new \RuntimeException("Cannot read the captured message {$file}");
+        }
+
+        try {
+            while (($line = fgets($handle)) !== false) {
+                $line = rtrim($line, "\r\n");
+
+                if ($line === '') {
+                    return null;
+                }
+
+                if (preg_match('/^X-RSX-Email-Id:\s*(\d+)\s*$/i', $line, $match)) {
+                    return (int) $match[1];
+                }
+            }
+
+            return null;
+        } finally {
+            fclose($handle);
+        }
+    }
+
+    /**
      * Where an SMTP mailer connects. The scheme follows Laravel: 'smtps' when declared or
      * when the port is 465, 'smtp' when not.
      *

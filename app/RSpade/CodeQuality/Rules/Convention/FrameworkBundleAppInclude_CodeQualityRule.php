@@ -26,8 +26,9 @@ use App\RSpade\Core\Naming\Rsx_Paths;
  * with nothing in the framework to point at, because the framework had not changed.
  *
  * The fix is never to include the app path. It is to own the dependency on the framework
- * side - _Apidocs_Confirm_Dialog and _apidocs_page_reset.scss are what those four includes
- * became - so the console renders identically no matter what the host app does to itself.
+ * side - the framework application's own theme (Sys/theme: its Bootstrap build, tokens and
+ * _Sys_Modal) is what those four includes became - so the console renders identically no
+ * matter what the host app does to itself.
  * The same reasoning later moved Button_Utils out of the optional Lib tier and into
  * Core/Ui: a dependency of a CORE api belongs where every bundle already looks.
  *
@@ -294,8 +295,8 @@ class FrameworkBundleAppInclude_CodeQualityRule extends CodeQualityRule_Abstract
                 . "\n"
                 . "FIX: own the dependency on the framework side instead of borrowing the app's. The API docs console is "
                 . "the worked example - it dropped rsx/theme/variables.scss, rsx/theme/responsive.scss, Bootstrap5_Src_Bundle "
-                . "and rsx/lib/modal in favour of framework-owned equivalents beside the components that need them "
-                . "(_Apidocs_Confirm_Dialog, _apidocs_page_reset.scss), so it renders identically whatever the host app does. "
+                . "and rsx/lib/modal in favour of the framework application's own theme (app/RSpade/Sys/theme: its "
+                . "Bootstrap build, tokens and _Sys_Modal), so it renders identically whatever the host app does. "
                 . "See app/RSpade/Sys/app/apidocs/_Apidocs_Bundle.php for the resulting include list.\n"
                 . "\n"
                 . "Naming a bundle CLASS instead of a path does not make the dependency framework-owned - what matters is "

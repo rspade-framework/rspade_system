@@ -1,6 +1,6 @@
 ---
 name: error-pages
-description: "Declaring an application's full-page error screens as routes under the reserved /error/ prefix - #[Route('/error/404')] and #[Portal_Route('/error/404')], the Error_Context a page receives as $params['error'], /error/generic as the catch-all, the framework page as the last fallback, and the development-only preview. Use when building or restyling a 404 / 403 / 500 / 419 page, adding an error page for another status, wiring the portal's own error screens, responding to a ROUTE-ERROR-01 manifest-build failure, chasing a \"Page Expired\" response, or finding a log line reading \"failed while rendering\"."
+description: "Declaring an application's full-page error screens as routes under the reserved /error/ prefix - #[Route('/error/404')] and #[Portal_Route('/error/404')], the Error_Context a page receives as $params['error'], /error/generic as the catch-all, the framework page as the last fallback, and the development-only preview. Use when building or restyling a 404 / 403 / 500 / 419 page, adding an error page for another status, wiring the portal's own error screens, responding to a ROUTE-ERROR-01 manifest-build failure, chasing a \"Page Expired\" response, or finding a log line reading \"failed while rendering\"; also when registering the SPA's in-app error screens with Error_Screens.set_components() or hitting \"No error screen components are registered\"."
 ---
 
 # Error pages
@@ -106,7 +106,7 @@ An **anonymous denial** (302 to the realm's login through `Login_Redirect` — o
 
 **The pre-boot tier cannot be an application page.** The maintenance 503, the framework-version refusal and the first-run screen all run before Laravel exists — no autoloader, no config, no route table — so they render the standalone shell `system/bootstrap/rsx_preboot_page.php`, kept aligned with the framework page by hand.
 
-The SPA's **in-app** 403/404 are a different mechanism: theme components in `rsx/theme/components/feedback/errors/`, mounted into the live layout, edited directly.
+The SPA's **in-app** 403/404/fatal are a different mechanism: components mounted into the live layout by `Error_Screens.unauthorized()` / `not_found()` / `fatal()`, whichever the bundle registered once with `Error_Screens.set_components({unauthorized, not_found, fatal})` from a static `on_app_modules_define()`. The template's set and its registration live in `rsx/theme/components/feedback/errors/`; rebrand by editing a component or registering another. **No default** - a bundle that registered nothing throws `No error screen components are registered` the first time it needs one (`rsx:man error_pages`, SPA ERROR SCREENS).
 
 ## Reference implementation
 

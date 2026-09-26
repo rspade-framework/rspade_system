@@ -294,6 +294,56 @@ class Rsx_Mail
     }
 
     // =========================================================================
+    // RESEND
+    // =========================================================================
+
+    /** resend() put the row back on the queue and kicked the drain. */
+    const RESEND_QUEUED = 'queued';
+
+    /** resend() did nothing: the row is PENDING or SENDING, so the queue already has it. */
+    const RESEND_ALREADY_QUEUED = 'already_queued';
+
+    /** resend() did nothing: the row is BLOCKED and $force was not given. */
+    const RESEND_BLOCKED = 'blocked';
+
+    /**
+     * Put a finished queue row back on the queue - the ONE implementation of the resend
+     * rules, shared by rsx:mail:resend and the /_sys Email screen.
+     *
+     *   PENDING / SENDING  refused (RESEND_ALREADY_QUEUED): the queue already has it, and
+     *                      resetting a row a drain is mid-way through would send it twice.
+     *   BLOCKED            refused (RESEND_BLOCKED) unless $force: Blocked means the
+     *                      recipient asked not to receive this category. That is a consent
+     *                      record, and a resend that quietly overrode it would make the
+     *                      unsubscribe link a lie - so it is possible, never accidental.
+     *   anything else      reset_for_resend() (status PENDING, attempts 0, error cleared,
+     *                      due now) and the drain kicked (RESEND_QUEUED).
+     *
+     * SCOPE: the row is saved under whatever site scope the caller runs in. An operator
+     * surface acting on any tenant's row (the command, the panel) runs this inside
+     * Email_Queue_Model::without_site_scope().
+     *
+     * @return string One of the RESEND_* constants
+     */
+    public static function resend(Email_Queue_Model $record, bool $force = false): string
+    {
+        $status_id = (int) $record->status_id;
+
+        if ($status_id === Email_Queue_Model::STATUS_PENDING || $status_id === Email_Queue_Model::STATUS_SENDING) {
+            return self::RESEND_ALREADY_QUEUED;
+        }
+
+        if ($status_id === Email_Queue_Model::STATUS_BLOCKED && !$force) {
+            return self::RESEND_BLOCKED;
+        }
+
+        $record->reset_for_resend();
+        static::_kick_drain();
+
+        return self::RESEND_QUEUED;
+    }
+
+    // =========================================================================
     // BLOCKLIST API
     // =========================================================================
 

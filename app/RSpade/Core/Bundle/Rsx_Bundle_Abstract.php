@@ -7,6 +7,8 @@ use App\RSpade\CodeQuality\RuntimeChecks\BundleErrors;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Bundle\BundleCompiler;
 use App\RSpade\Core\Csp\Rsx_Csp;
+use App\RSpade\Core\Debug\Console_Debug_Override;
+use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
@@ -78,6 +80,106 @@ abstract class Rsx_Bundle_Abstract
      * Format: ['bundle_class' => 'Bundle_Name', 'calling_location' => 'file:line']
      */
     public static ?array $_has_rendered = null;
+
+    /**
+     * window.rsxapp.impersonation for a staff request: the framework-owned block a banner
+     * renders from synchronously, or null when the session is not impersonating.
+     *
+     * The impersonator is named by LOGIN IDENTITY (id + email - login_users is the
+     * framework's table, and the email is the one name every identity has); a richer
+     * name is the app's to resolve from its own User_Model. window.rsxapp.user already
+     * reflects the effective (target) user during impersonation.
+     *
+     * @return array|null {impersonator_login_user_id: int, impersonator_email: ?string, started_at: string}
+     */
+    public static function impersonation_payload(): ?array
+    {
+        if (!Session::is_impersonating()) {
+            return null;
+        }
+
+        return [
+            'impersonator_login_user_id' => Session::get_impersonator_login_user_id(),
+            'impersonator_email' => Session::get_impersonator_login_user()?->email,
+            'started_at' => Session::get_impersonation_started_at(),
+        ];
+    }
+
+    /**
+     * window.rsxapp.console_debug for this request: config('rsx.console_debug'), then a
+     * developer's per-browser override, then the rsx:debug harness headers. Rendered only
+     * where Manifest::_should_include_debug_info() (development and debug modes).
+     *
+     * @return array
+     */
+    public static function console_debug_payload(): array
+    {
+        // A developer's per-browser override (the /_sys Debug Flags screen) as the
+        // front controller resolved it for this request - the same one PHP output
+        // follows. The harness headers below still win over it.
+        $console_debug_config = Console_Debug_Override::overlay(
+            config('rsx.console_debug', []),
+            Debugger::session_override()
+        );
+
+        // Build console_debug settings
+        $filter_mode = $console_debug_config['filter_mode'] ?? 'all';
+
+        // Get the appropriate channel list based on filter mode
+        $filter_channels = [];
+        if ($filter_mode === 'whitelist') {
+            $filter_channels = $console_debug_config['whitelist'] ?? [];
+        } elseif ($filter_mode === 'blacklist') {
+            $filter_channels = $console_debug_config['blacklist'] ?? [];
+        }
+
+        $console_debug = [
+            'enabled' => $console_debug_config['enabled'] ?? true,
+            'filter_mode' => $filter_mode,
+            'filter_channels' => $filter_channels,
+            'specific_channel' => $console_debug_config['specific_channel'] ?? null,
+            'include_timestamp' => $console_debug_config['include_timestamp'] ?? false,
+            'include_benchmark' => $console_debug_config['include_benchmark'] ?? false,
+            'include_location' => $console_debug_config['include_location'] ?? false,
+            'include_backtrace' => $console_debug_config['include_backtrace'] ?? false,
+            'outputs' => [
+                'browser' => ($console_debug_config['outputs']['web'] ?? true),
+                'laravel_log' => ($console_debug_config['outputs']['laravel_log'] ?? false),
+            ],
+        ];
+
+        // Check for Playwright test headers that override console_debug settings
+        // Only from loopback IPs without proxy headers
+        $request = request();
+        if ($request && $request->hasHeader('X-Playwright-Test') && is_loopback_ip()) {
+            // Check for disable header first
+            if ($request->hasHeader('X-Console-Debug-Disable')) {
+                $console_debug['enabled'] = false;
+            }
+
+            // Check for console debug filter header
+            if ($request->hasHeader('X-Console-Debug-Filter')) {
+                $filter = $request->header('X-Console-Debug-Filter');
+                if ($filter) {
+                    $console_debug['filter_mode'] = 'specific';
+                    $console_debug['specific_channel'] = strtoupper($filter);
+                }
+            }
+
+            // Check for benchmark header
+            if ($request->hasHeader('X-Console-Debug-Benchmark')) {
+                $console_debug['include_benchmark'] = true;
+            }
+
+            // Check for all channels header
+            if ($request->hasHeader('X-Console-Debug-All')) {
+                $console_debug['filter_mode'] = 'all';
+                $console_debug['specific_channel'] = null;
+            }
+        }
+
+        return $console_debug;
+    }
 
     /**
      * Render a bundle's HTML output
@@ -342,14 +444,7 @@ abstract class Rsx_Bundle_Abstract
             $rsxapp_data['site'] = Session::get_site();
             $rsxapp_data['csrf'] = Session::get_csrf_token();
 
-            // Framework-owned impersonation flag (ids only - the app resolves the
-            // display name for any banner, since it owns User_Model). null when the
-            // session is not impersonating. window.rsxapp.user already reflects the
-            // effective (target) user during impersonation.
-            $rsxapp_data['impersonation'] = Session::is_impersonating() ? [
-                'impersonator_login_user_id' => Session::get_impersonator_login_user_id(),
-                'started_at' => Session::get_impersonation_started_at(),
-            ] : null;
+            $rsxapp_data['impersonation'] = static::impersonation_payload();
         }
 
         // Declarative auth gates for the ACTIVE realm (the same portal/staff split
@@ -534,65 +629,7 @@ abstract class Rsx_Bundle_Abstract
         // Add console_debug config in development AND debug modes (strict production
         // omits it; call sites are stripped from the bundle there). Policy helper.
         if (Manifest::_should_include_debug_info()) {
-            $console_debug_config = config('rsx.console_debug', []);
-
-            // Build console_debug settings
-            $filter_mode = $console_debug_config['filter_mode'] ?? 'all';
-
-            // Get the appropriate channel list based on filter mode
-            $filter_channels = [];
-            if ($filter_mode === 'whitelist') {
-                $filter_channels = $console_debug_config['whitelist'] ?? [];
-            } elseif ($filter_mode === 'blacklist') {
-                $filter_channels = $console_debug_config['blacklist'] ?? [];
-            }
-
-            $console_debug = [
-                'enabled' => $console_debug_config['enabled'] ?? true,
-                'filter_mode' => $filter_mode,
-                'filter_channels' => $filter_channels,
-                'specific_channel' => $console_debug_config['specific_channel'] ?? null,
-                'include_timestamp' => $console_debug_config['include_timestamp'] ?? false,
-                'include_benchmark' => $console_debug_config['include_benchmark'] ?? false,
-                'include_location' => $console_debug_config['include_location'] ?? false,
-                'include_backtrace' => $console_debug_config['include_backtrace'] ?? false,
-                'outputs' => [
-                    'browser' => ($console_debug_config['outputs']['web'] ?? true),
-                    'laravel_log' => ($console_debug_config['outputs']['laravel_log'] ?? false),
-                ],
-            ];
-
-            // Check for Playwright test headers that override console_debug settings
-            // Only from loopback IPs without proxy headers
-            $request = request();
-            if ($request && $request->hasHeader('X-Playwright-Test') && is_loopback_ip()) {
-                // Check for disable header first
-                if ($request->hasHeader('X-Console-Debug-Disable')) {
-                    $console_debug['enabled'] = false;
-                }
-
-                // Check for console debug filter header
-                if ($request->hasHeader('X-Console-Debug-Filter')) {
-                    $filter = $request->header('X-Console-Debug-Filter');
-                    if ($filter) {
-                        $console_debug['filter_mode'] = 'specific';
-                        $console_debug['specific_channel'] = strtoupper($filter);
-                    }
-                }
-
-                // Check for benchmark header
-                if ($request->hasHeader('X-Console-Debug-Benchmark')) {
-                    $console_debug['include_benchmark'] = true;
-                }
-
-                // Check for all channels header
-                if ($request->hasHeader('X-Console-Debug-All')) {
-                    $console_debug['filter_mode'] = 'all';
-                    $console_debug['specific_channel'] = null;
-                }
-            }
-
-            $rsxapp_data['console_debug'] = $console_debug;
+            $rsxapp_data['console_debug'] = static::console_debug_payload();
         }
 
         // Filter out keys starting with single underscore (but allow double underscore like __MODEL)

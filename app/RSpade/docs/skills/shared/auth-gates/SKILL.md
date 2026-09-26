@@ -267,6 +267,6 @@ Separately fatal at scan time, before that pass: an `#[Auth_Check]` that is para
 - **Build error naming a check that exists.** It exists in the *other* realm. Portal surfaces resolve only against `Portal_Permission`; staff surfaces only against `Permission`.
 - **A hidden link that should be visible.** `can_access()` reads the DESTINATION's gates - fix the destination's declaration, never the link.
 - **`can_access()` throws "unknown target".** The spelling must match `Rsx::Route()` exactly; for a surface that may not exist in this install, use `Auth_Gates::accessible_route()` instead.
-- **Denial screens** are `Error_Screens` (PHP `unauthorized()`/`not_found()`/`fatal()`, JS `Error_Screens.unauthorized()`). Customize the full-page side by declaring `#[Route('/error/403')]` (portal: `#[Portal_Route]`) - skill `rspade:error-pages`, `rsx:man error_pages`. The SPA side is the theme components in `rsx/theme/components/feedback/errors/`, edited directly.
+- **Denial screens** are `Error_Screens` (PHP `unauthorized()`/`not_found()`/`fatal()`, JS `Error_Screens.unauthorized()`). Customize the full-page side by declaring `#[Route('/error/403')]` (portal: `#[Portal_Route]`) - skill `rspade:error-pages`, `rsx:man error_pages`. The SPA side mounts the components the bundle registered with `Error_Screens.set_components()` (the template's, in `rsx/theme/components/feedback/errors/`) - `rsx:man error_pages`, SPA ERROR SCREENS.
 
 Details: `php artisan rsx:man auth_gates`. Related: `rspade:permissions-acl`, `rspade:portal-core`, `rspade:session-auth`.

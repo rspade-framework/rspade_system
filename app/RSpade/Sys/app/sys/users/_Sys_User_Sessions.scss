@@ -1,0 +1,40 @@
+._Sys_User_Sessions {
+    display: block;
+
+    // One line per row; a narrow screen scrolls the table sideways instead.
+    td,
+    th {
+        white-space: nowrap;
+    }
+
+    &__loading {
+        display: block;
+        width: 40px;
+        height: 40px;
+        margin: 20px auto;
+    }
+
+    &__mono {
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+    }
+
+    &__dim {
+        margin-left: 4px;
+        color: var(--rsx-dim);
+    }
+
+    &__note {
+        margin-left: 6px;
+        padding: 1px 6px;
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+        color: var(--rsx-dim);
+        font-size: 11px;
+    }
+
+    // A row's own action, pinned to the right edge of the table.
+    &__actions {
+        text-align: right;
+    }
+}

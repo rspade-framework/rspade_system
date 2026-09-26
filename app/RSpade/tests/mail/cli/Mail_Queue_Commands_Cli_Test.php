@@ -8,7 +8,9 @@
 namespace App\RSpade\Tests\Mail\Cli;
 
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Models\Email_Queue_Model;
+use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
 
@@ -23,6 +25,10 @@ use App\RSpade\Tests\Mail\Php\Mail_Notification_Fixture_Email;
  * RUN IN-PROCESS, VIA Artisan::call(), per tests/CLAUDE.md's preference for the cli kind.
  * A spawned artisan would read the DEVELOPER's database and report on rows this test
  * never wrote.
+ *
+ * EVERY SITE. The CLI runs as site 0, which owns no mail, so all three read the whole
+ * install's queue; the cross-site tests plant a row under a SECOND site and run the
+ * commands as site 0.
  *
  * THE BLOCKED CASE IS THE ONE THAT MATTERS MOST. Blocked is a consent record - the
  * recipient asked not to receive this - so a resend that quietly overrode it would make
@@ -242,5 +248,92 @@ class Mail_Queue_Commands_Cli_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(1, $exit_code, 'a missing row is an error');
         static::__assert_contains('999999999', $output, 'and the message names what was asked for');
+    }
+
+    // =========================================================================
+    // Every site - the CLI's own site (0) owns no mail
+    // =========================================================================
+
+    /**
+     * A row queued under a second site, written with DB::table() so no acting site
+     * stamps it.
+     */
+    private static function __plant_on_second_site(int $status_id): int
+    {
+        $site = new Site_Model();
+        $site->slug = 'mail-cli-' . uniqid();
+        $site->name = 'Mail CLI Second Site';
+        $site->save();
+
+        return (int) DB::table('_email_queue')->insertGetId([
+            'site_id' => (int) $site->id,
+            'to_address' => 'second_site_' . uniqid() . '@example.com',
+            'subject' => 'Second site probe',
+            'email_class' => 'Mail_Cli_Probe_Email',
+            'category_id' => Email_Queue_Model::CATEGORY_NOTIFICATION,
+            'status_id' => $status_id,
+            'attempt_count' => 3,
+            'last_error' => 'it broke',
+            'created_at' => now(),
+        ]);
+    }
+
+    /**
+     * Run a command as the CLI does: on site 0.
+     *
+     * @return array{0: int, 1: string}
+     */
+    private static function __run_as_site_zero(string $command, array $arguments = []): array
+    {
+        static::__acting_as_site(0);
+
+        $exit_code = Artisan::call($command, $arguments);
+
+        return [$exit_code, Artisan::output()];
+    }
+
+    public static function test_queue_lists_and_counts_another_sites_row()
+    {
+        [, $before] = static::__run_as_site_zero('rsx:mail:queue', ['--json' => true]);
+        $id = static::__plant_on_second_site(Email_Queue_Model::STATUS_FAILED);
+        $address = DB::table('_email_queue')->where('id', $id)->value('to_address');
+
+        [, $after] = static::__run_as_site_zero('rsx:mail:queue', ['--json' => true]);
+
+        static::__assert_equals(
+            json_decode(trim($before), true)['counts']['failed'] + 1,
+            json_decode(trim($after), true)['counts']['failed'],
+            'the summary counts a row on a site the CLI is not acting as'
+        );
+
+        [$exit_code, $output] = static::__run_as_site_zero('rsx:mail:queue', ['--recipient' => $address, '--json' => true]);
+        $payload = json_decode(trim($output), true);
+
+        static::__assert_equals(0, $exit_code, 'the listing ran');
+        static::__assert_equals([$id], array_column($payload, 'id'), 'and lists the second site\'s row');
+        static::__assert_true($payload[0]['site_id'] > 1, 'naming the site it belongs to');
+    }
+
+    public static function test_show_finds_another_sites_row()
+    {
+        $id = static::__plant_on_second_site(Email_Queue_Model::STATUS_FAILED);
+
+        [$exit_code, $output] = static::__run_as_site_zero('rsx:mail:show', ['id' => $id, '--json' => true]);
+
+        static::__assert_equals(0, $exit_code, 'the row is found');
+        static::__assert_equals($id, json_decode(trim($output), true)['id'], 'and shown');
+    }
+
+    public static function test_resend_resets_another_sites_row()
+    {
+        $id = static::__plant_on_second_site(Email_Queue_Model::STATUS_FAILED);
+
+        [$exit_code, ] = static::__run_as_site_zero('rsx:mail:resend', ['id' => $id]);
+
+        $row = DB::table('_email_queue')->where('id', $id)->first();
+
+        static::__assert_equals(0, $exit_code, 'the resend succeeded');
+        static::__assert_equals(Email_Queue_Model::STATUS_PENDING, (int) $row->status_id, 'the second site\'s row is queued again');
+        static::__assert_equals(0, (int) $row->attempt_count, 'with its attempts reset');
     }
 }

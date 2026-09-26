@@ -1,0 +1,38 @@
+<%--
+_Sys_Logs_DataGrid - the Logs screen's file list: every top-level file of the log
+directory (dotfiles and symlinks excluded), newest first.
+
+Server half: _Sys_Logs_DataGrid.php over _Sys_Log_Reader::list_files() (search on the
+name; sort name / size / modified). State lives in the URL hash under the grid key
+"logs". Every row links to the viewer (_Sys_Log_View_Action).
+--%>
+<Define:_Sys_Logs_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="logs"
+    $data_source=_Sys_Logs_Controller.datagrid_fetch
+    $sort="modified"
+    $order="desc"
+    $per_page=50
+    $search="Search file names...">
+    <Slot:header>
+        <tr>
+            <th data-sortby="name">File</th>
+            <th>Format</th>
+            <th data-sortby="size">Size</th>
+            <th data-sortby="modified">Modified</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr data-href="<%= Rsx.Route('_Sys_Log_View_Action', {file: row.name}) %>">
+            <td class="_Sys_Logs_DataGrid__name">
+                <i class="<%= 'bi ' + (row.compressed ? 'bi-file-earmark-zip' : 'bi-file-earmark-text') %>"></i>
+                <%= row.name %>
+            </td>
+            <td class="_Sys_Logs_DataGrid__format"><%= row.format %><%= row.compressed ? ', gzip' : '' %></td>
+            <td><%= row.size_human %></td>
+            <td><%= Rsx_Time.format_datetime(row.modified) %></td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-journal-text" $title="No log files" $body="The log directory holds no files yet." />
+    </Slot:empty>
+</Define:_Sys_Logs_DataGrid>

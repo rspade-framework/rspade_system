@@ -19,9 +19,11 @@ non-obvious ordering rule a change here must not break.
 
 PHP fills the run directory (`classes.json`, an `ipc/` directory) and spawns
 `node orchestrator.js --run-dir= --workers= --image= --dev-image= --project-root=
---framework-developer= --suite=` through
+--framework-developer= --suite= --watch-parent-stdin=true` through
 `RsxLocks::command_without_inherited_locks()` and a Symfony `Process` with `setTimeout(null)`,
 streaming its output live and keeping the last 20 lines to repeat under a failure message.
+Node's stdin is a Symfony `InputStream` PHP holds open for its whole life and never writes to
+(see "Teardown" below).
 The worker inside a container sends back the SAME per-class record the sequential loop would
 have printed, so the two paths print through one printer and cannot drift.
 
@@ -317,8 +319,9 @@ whatever class the queue hands it.
 **The CMD is a readiness wrapper, not `php artisan` directly.**
 `resource/docker/rsx-test-worker-run.sh` polls `supervisorctl status` until every program is
 RUNNING and then pings rsx-lockd over `/dev/tcp` (the lockd wire protocol answers `ping`
-pre-hello), and only then `exec`s the worker - same pid, so the container's exit status IS the
-worker's. The entrypoint waits for redis and mysql only, because those are the two IT needs;
+pre-hello), and only then runs the worker - whose exit status becomes the container's. Before
+any of that it opens the LIVENESS CONNECTION (see "Teardown" below) and runs the readiness wait
+plus the worker beside it, `wait -n -p` deciding which ended first. The entrypoint waits for redis and mysql only, because those are the two IT needs;
 rsx-lockd and mail-catcher both declare `startsecs=5` and are still coming up when the CMD
 starts. That race cost **17 failures across three mail concerns plus a health-command
 failure**, every one a service that was RUNNING seconds later. SPAWNING IS NOT READINESS -
@@ -347,6 +350,10 @@ writes one line, reads ONE line with `fgets`, closes, with no read timeout.
 {"id":N,"method":"queue.result","worker_id":W,"class","short","results","duration"[,"error"]}
     -> {"id":N,"ok":true}
 ```
+
+**A connection that never sends anything is legal**, and it is the liveness connection: the
+wrapper opens one at container start and only reads it. `Queue_Server` tracks every open
+connection and `close()` destroys them, so a held connection can never keep the server open.
 
 The frame codec is `rsx-lockd/lib/protocol.js` itself (`encode_frame`, `decode_frame`,
 `Frame_Reader`, `MAX_FRAME_BYTES` - the 1 MB cap on a peer that never sends a newline),
@@ -434,8 +441,38 @@ half-run or a silent skip. A daemon that has not reaped a handful of containers 
 minutes is not slow, it is wedged. **Nothing else here is bounded**: not the build, not a
 container, not the suite, not one `docker` call (`lib/docker.js` carries no deadline at all).
 
-`SIGTERM`/`SIGINT` (registered before anything is created): kill and remove every labelled
-container, close the queue, remove the generated `.dockerignore`, exit 1.
+## Teardown - a run's containers die with the run
+
+Four ways a run ends early, and none leaves a container running:
+
+- **`SIGTERM`/`SIGINT`/`SIGHUP` to node** (registered before anything is created): kill and
+  remove the containers carrying THIS run's label value (`rsx-test-run=<run_id>`, never the
+  bare key - other runs' leftovers are the sweep's business), close the queue, remove the
+  generated `.dockerignore`, exit 1. Once a teardown has begun it owns the exit: `main()`
+  resolving underneath it (killing the containers ends `run_workers()`) must not exit 0,
+  or PHP would read an interrupted run as a completed one and cache its verdict.
+- **`SIGTERM`/`SIGINT`/`SIGHUP` to PHP**: `run_docker()` traps them (pcntl, async), forwards
+  `SIGTERM` to node, keeps WAITING until node has torn down and exited, then prints
+  "test run interrupted" and exits 1 - no verdict is recorded.
+- **`SIGKILL` to PHP**: node's stdin is PHP's `InputStream`; the kernel closes it with PHP, and
+  under `--watch-parent-stdin=true` end-of-file on stdin runs the same teardown. Node's own
+  stdout/stderr (pipes to the dead PHP) get a no-op `error` listener so an EPIPE cannot crash
+  it before the teardown finishes. The flag is off for a hand invocation, whose stdin says
+  nothing about anybody's liveness.
+- **`SIGKILL` to node**: nothing in node can act, so the CONTAINERS act. The wrapper's first
+  step is `hold_orchestrator_connection` - a `php -r` that connects to the queue socket, sends
+  nothing, and reads until end-of-file (`default_socket_timeout=-1`, loop on `feof()`, so a
+  read giving up is never mistaken for a closed peer). The kernel closes that connection when
+  node dies; the wrapper then `kill -KILL -1` (everything in the container but PID 1 and
+  itself) and exits, the entrypoint finds supervisor gone and exits, and `--rm` removes the
+  container. A refused connect means the same thing - the socket is served before any
+  container starts. PHP reports node's death by signal as "the test orchestrator was killed".
+
+**Peer disappearance, never slowness**: no heartbeat, no "silent for N seconds" deadline
+anywhere in it. A class in flight when the orchestrator dies is abandoned - it has nobody to
+report to. `tests/test_runner/cli/test_runner_orchestrator_teardown.sh` asserts the node half
+against a fake `docker` on PATH; `Worker_Container_Liveness_Test` (explicit-only, needs the
+daemon) asserts the container half against the real image.
 
 ## The singleton flock
 
@@ -472,13 +509,17 @@ protects.
 
 ## Worker counts and measured numbers
 
-`min(WORKER_MAX=8, cores, floor(MemTotal_MB / WORKER_MEMORY_MB=1000))`, floor 1, and never
-more containers than classes. `--workers=N` overrides the formula (an experiment knob; the
-floors still apply). Cores from `/proc/cpuinfo`, memory from `/proc/meminfo` - no shell. A
-container is a whole environment (mysqld on tmpfs + redis + rsx-lockd + php), which is why
-memory floors it as well as cores. **8 workers on this box.**
+`ceil(cores / CORES_PER_WORKER=3)`, floor 1, and never more containers than classes.
+`--workers=N` overrides the formula (an experiment knob; the floors still apply). Cores from
+`/proc/cpuinfo` - no shell. A container is a whole environment (mysqld on tmpfs + redis +
+rsx-lockd + php-fpm + nginx + the worker and what it spawns), so one per core oversubscribed
+the host into a load average in the hundreds; three cores per container keeps the box usable
+while the suite runs. **6 workers on this 16-core box.** `/proc/cpuinfo` counts the cores the
+kernel has, not a cgroup CPU quota (`cpu.max`) a container might be confined to; this box has
+none. The worker count is in no cache key - a verdict does not depend on how many containers
+produced it.
 
-Measured on this box, whole framework suite:
+Measured on this box, whole framework suite, at the former 8 workers:
 
 | Run | Wall time |
 |---|---|
@@ -536,4 +577,6 @@ as which COPY layers are re-transferred, not as a different wall time.
 9. **`Dockerfile.test` is a template, not a build input.** Anything the generator has to know
    about the checkout is read from the checkout, never restated in a second list.
 10. **A symlink is recreated, never COPYed** - COPY dereferences it.
+11. **A run's containers die with the run**, by every route in "Teardown" - and the SIGKILL
+    routes stay STRUCTURAL (a closed pipe, a closed socket), never a timer.
 9. **ASCII only** - `[OK]` / `[ERROR]`, no emoji, no box drawing.

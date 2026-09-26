@@ -1,0 +1,25 @@
+<%--
+_Sys_Site_Rename_Form - the Rename dialog's body: a site's name and slug, posted with
+its id to _Sys_Sites_Controller.rename. Open it through _Sys_Site_Rename_Form.open(site),
+which hosts it in _Sys_Modal.form().
+
+$site - the site as _Sys_Sites_Controller.detail returns it (required); its
+        field_lengths carry Site_Model::field_length() for both columns
+
+Every rule is the SERVER's: both fields required, each within its column's length, the
+slug unique across every site. A failure comes back as field errors and the dialog
+stays open.
+--%>
+<Define:_Sys_Site_Rename_Form>
+    <% const _s = this.args.site; %>
+    <Rsx_Form $controller="_Sys_Sites_Controller" $method="rename" $data=({name: _s.name, slug: _s.slug})>
+        <Form_Errors />
+        <input type="hidden" name="site_id" value="<%= _s.id %>" />
+        <_Sys_Form_Field $label="Name" $required=true>
+            <_Sys_Text_Input $name="name" $max_length=_s.field_lengths.name />
+        </_Sys_Form_Field>
+        <_Sys_Form_Field $label="Slug" $required=true $help="Unique across every site. Application code that looks a site up by its slug (Site_Model::find_by_slug()) follows the new one.">
+            <_Sys_Text_Input $name="slug" $max_length=_s.field_lengths.slug />
+        </_Sys_Form_Field>
+    </Rsx_Form>
+</Define:_Sys_Site_Rename_Form>

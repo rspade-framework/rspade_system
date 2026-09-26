@@ -9,30 +9,16 @@ namespace App\RSpade\Sys\App\Sys;
 
 use Illuminate\Http\Request;
 use App\RSpade\Core\Auth\RsxAuth;
-use App\RSpade\Core\Controller\Rsx_Controller_Abstract;
-use App\RSpade\Core\Errors\Error_Screens;
+use App\RSpade\Sys\Lib\_Sys_Endpoint_Controller_Abstract;
 
 /**
  * The control panel's server-rendered routes - everything that cannot be a SPA
- * action because it ends the session or leaves the panel.
+ * action because it ends the session or leaves the panel. The rsx.sys_panel.enabled
+ * refusal is inherited from _Sys_Endpoint_Controller_Abstract.
  */
 #[Auth('is_sysadmin')]
-class _Sys_Controller extends Rsx_Controller_Abstract
+class _Sys_Controller extends _Sys_Endpoint_Controller_Abstract
 {
-    /**
-     * The same refusal _Sys_Spa_Controller performs, for the panel's non-SPA
-     * routes. Restated rather than inherited: a controller's pre_dispatch is its
-     * own declaration of what it refuses.
-     */
-    public static function pre_dispatch(Request $request, array $params = [])
-    {
-        if (!config('rsx.sys_panel.enabled')) {
-            return Error_Screens::not_found($request);
-        }
-
-        return null;
-    }
-
     /**
      * Sign out of the panel.
      *

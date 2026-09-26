@@ -37,6 +37,7 @@ function api_render_response_note($target, prefix, message, level) {
  * @param {string} status_text HTTP status text
  * @param {number} ms          Round trip, milliseconds
  * @param {string} pretty      The body, already pretty-printed when it parsed as JSON
+ *                             (_Sys_Code_Pane.pretty())
  */
 function api_render_response($target, prefix, status, status_text, ms, pretty) {
     const bucket = Math.floor(status / 100);
@@ -72,19 +73,6 @@ function api_render_response($target, prefix, status, status_text, ms, pretty) {
 
     if (typeof hljs !== 'undefined') {
         hljs.highlightElement(code_el);
-    }
-}
-
-/**
- * Pretty-print a response body when it is JSON, and leave it exactly as received when it is
- * not. A non-JSON body (an HTML error page, a plain-text refusal) is shown verbatim: it is
- * the useful evidence, and reformatting it would hide what actually came back.
- */
-function api_pretty_body(text) {
-    try {
-        return JSON.stringify(JSON.parse(text), null, 2);
-    } catch (e) {
-        return text;
     }
 }
 

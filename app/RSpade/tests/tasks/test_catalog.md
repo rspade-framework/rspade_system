@@ -66,6 +66,20 @@ Type: php / cli. Last updated: 2026-08-31.
 | task-d-06 | temp directory auto-cleanup timing | php | time-dependent | deferred |
 | task-d-07 | `set_status()` key-value tracking, `set_temp_expiration()` | php | methods documented but absent (see issues) | deferred |
 
+## Task_Spawn_Admission_Test (php, per-test transaction + Redis) - admitted before spawned
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-spawn-01 | reservations count against the cap; an unreserved worker is refused behind them | cap 2, three reserve_spawn() | two tokens, then null; admit() false | implemented |
+| task-spawn-02 | live slots and reservations share one count | cap 2, one live + reserve twice | one token, then null | implemented |
+| task-spawn-03 | admit($token) converts the reservation into a live slot even when the pool reads full | cap 1, reserved | admit() false, admit($token) true, 0 reserved, 1 live | implemented |
+| task-spawn-04 | a reservation no longer outstanding is no free pass | cap 1 full, admit('no-such') | false | implemented |
+| task-spawn-05 | the spawner's release frees the slot at once | reserve, release | full, then free | implemented |
+| task-spawn-06 | the owner is the spawner, then the child's pid; a hand-off after conversion resurrects nothing | reserve, hand_off, admit, hand_off | host:pid each step; 0 reserved | implemented |
+| task-spawn-07 | the reaper releases only this host's reservations whose pid is gone | dead / alive / other-host owners | 1 reclaimed; alive + other-host remain | implemented |
+| task-spawn-08 | under the suite dispatch() enqueues only | Task::dispatch() | pending row; detached registry unchanged; 0 reserved; spawn_worker() false | implemented |
+| task-spawn-09 | opted in, spawn_worker() starts a real worker under a reservation naming the child, and no reservation outlives it | spawn_workers_under_test(true) | true; child registered; owner = child (or converted); 0 reserved after contain() + reclaim | implemented |
+
 ## Task_Killer_Test (php) - force-kill running tasks (rsx:tasks:kill / kill-all)
 
 | ID | Purpose | Input | Expected | Status |

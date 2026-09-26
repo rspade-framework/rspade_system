@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Models;
 
 use App\RSpade\Core\Database\Models\Rsx_Site_Model_Abstract;
+use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Mail\Rsx_Mail_Transport;
 use App\RSpade\Core\Models\Email_Attachment_Model;
 
@@ -525,7 +526,7 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
      *
      * The row keeps its identity, its frozen subject and data, its attachments and its
      * history of having failed - what is cleared is the state that stops the drain
-     * looking at it. Only rsx:mail:resend calls this, and only for a row that has
+     * looking at it. Only Rsx_Mail::resend() calls this, and only for a row that has
      * finished: a PENDING or SENDING row is already the queue's business.
      *
      * next_attempt_at IS SET TO NOW, NOT NULLED, AND THAT IS LOAD-BEARING. The stale
@@ -534,6 +535,9 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
      * next drain would fail it again - making the resend the stale message itself names
      * a permanent no-op. `now()` says what the resend means: attempt it immediately, and
      * start its patience over from this moment.
+     *
+     * The rules deciding WHETHER a row may be reset live in Rsx_Mail::resend(); this
+     * method is the mechanics only.
      */
     public function reset_for_resend(): void
     {
@@ -555,6 +559,37 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     }
 
     /**
+     * How many rows sit in each status, every status present (a zero is a count).
+     *
+     * SCOPE: whatever the caller runs under, as pending_count() does. The operator
+     * readers (rsx:mail:queue, the /_sys Email screen) call it outside the site scope.
+     *
+     * @return array<int, int> status_id => rows
+     */
+    public static function status_counts(): array
+    {
+        $counts = [];
+
+        foreach (array_keys(static::$enums['status_id']) as $status_id) {
+            $counts[$status_id] = static::where('status_id', $status_id)->count();
+        }
+
+        return $counts;
+    }
+
+    /**
+     * The PENDING row that has waited longest, or null when nothing is waiting.
+     * Scope as status_counts().
+     */
+    public static function oldest_pending(): ?self
+    {
+        return static::where('status_id', self::STATUS_PENDING)
+            ->orderBy('created_at', 'asc')
+            ->orderBy('id', 'asc')
+            ->first();
+    }
+
+    /**
      * Terminal failure that no retry can fix (a render or build error - a code bug).
      */
     public function mark_failed(string $error): void
@@ -573,6 +608,35 @@ abstract class Email_Queue_Model_Abstract extends Rsx_Site_Model_Abstract
     public function attachments()
     {
         return $this->hasMany(Email_Attachment_Model::class, 'email_queue_id')->orderBy('sort_order');
+    }
+
+    /**
+     * Each attachment as an operator reads it - file name, MIME type, disposition, cid,
+     * and the size of the blob it points at (null once the blob has been released).
+     * rsx:mail:show and the /_sys Email screen both report this.
+     *
+     * @return array<int, array{file_name: string, mime_type: string, disposition: string,
+     *               cid: ?string, size: ?int}>
+     */
+    public function attachment_summary(): array
+    {
+        $summary = [];
+
+        foreach ($this->attachments as $attachment) {
+            $storage = $attachment->file_storage_id === null
+                ? null
+                : File_Storage_Model::find($attachment->file_storage_id);
+
+            $summary[] = [
+                'file_name' => $attachment->file_name,
+                'mime_type' => $attachment->mime_type,
+                'disposition' => $attachment->disposition_id__label,
+                'cid' => $attachment->cid,
+                'size' => $storage === null ? null : (int) $storage->size,
+            ];
+        }
+
+        return $summary;
     }
 
     /**

@@ -1,0 +1,22 @@
+<%--
+_Sys_Text_Input - a single-line text input for a panel form.
+
+$name - the form field name (required inside an <Rsx_Form>)
+$max_length - REQUIRED. The maximum length: Model.field_length('column') for a
+              column, a number for a custom limit, or -1 for unlimited.
+$type="text" - the input type: text, email, url, number, password, search [optional]
+$placeholder - placeholder text [optional]
+$disabled - render disabled; val() still reads and writes it [optional]
+
+    <_Sys_Form_Field $label="Name">
+        <_Sys_Text_Input $name="name" $max_length=Site_Model.field_length('name') />
+    </_Sys_Form_Field>
+--%>
+<Define:_Sys_Text_Input>
+    <input $sid="input"
+           type="<%= this.args.type || 'text' %>"
+           class="form-control form-control-sm"
+           placeholder="<%= this.args.placeholder || '' %>"
+           <% if (this.args.max_length > 0) { %>maxlength="<%= this.args.max_length %>"<% } %>
+           <% if (this.args.disabled) { %>disabled<% } %> />
+</Define:_Sys_Text_Input>

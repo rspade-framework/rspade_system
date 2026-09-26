@@ -176,7 +176,7 @@ class Schema_Contract
                         'where' => 'Rsx_Time site-default timezone resolution',
                         'migration' => '2026_01_12_073624 (sites.timezone)',
                     ],
-                    'is_enabled' => ['where' => 'Site_Model::is_active()'],
+                    'is_enabled' => ['where' => 'Site_Model::is_active(), User_Model::is_active() / scopeActive(), RsxAuth::has_enabled_membership(), Session::enforce_enabled_membership()'],
                     'deleted_at' => ['where' => 'SoftDeletes - every query the model issues'],
                 ],
                 'unique' => [

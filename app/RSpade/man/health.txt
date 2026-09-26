@@ -449,7 +449,11 @@ PHP EXTENSION CONTRACT
         Environment_Health_Checks::php_environment()   the DIAGNOSTIC - one OK
             summary row per tier ("PHP Extensions", "PHP CLI Extensions") listing
             what is loaded, plus one FAIL row per missing extension carrying its
-            own remediation.
+            own remediation. The CLI tier is checked only when the report itself
+            runs under the CLI SAPI (rsx:health); run anywhere else - the /_sys
+            dashboard runs it inside a web request - it is ONE INFO row saying the
+            tier is not observable from that SAPI and naming rsx:health
+            (Environment_Health_Checks::cli_tier_rows()).
 
         Rsx_Php_Requirements::enforce()                the GUARD - the first
             statement of Rsx_Framework_Provider::boot(). Runs on EVERY web request

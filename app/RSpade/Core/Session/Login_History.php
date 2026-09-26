@@ -58,7 +58,8 @@ class Login_History
      * SUCCESS row when it does).
      *
      * FAILED_DISABLED is written by the framework wherever a sign-in is refused because the
-     * identity holds no ENABLED site membership (users.is_enabled): RsxAuth::attempt(),
+     * identity holds no ACTIVE site membership (users.is_enabled + sites.is_enabled,
+     * User_Model::is_active()): RsxAuth::attempt(),
      * Rsx_Two_Factor::verify_challenge() and verify_passkey_login(), and Rsx_Sso when
      * RsxAuth::login() refuses. Site
      * membership is the framework's switch, so the framework records its own refusals.
@@ -207,21 +208,36 @@ class Login_History
             ->orderBy('created_at', 'desc')
             ->limit($limit)
             ->get()
-            ->map(function ($record) {
-                return [
-                    'id' => $record->id,
-                    'email' => $record->email_attempted,
-                    'ip_address' => $record->ip_address,
-                    'user_agent' => $record->user_agent,
-                    'user_agent_parsed' => User_Agent::parse($record->user_agent),
-                    'location' => self::_format_location($record),
-                    'status' => $record->status,
-                    'status_label' => self::_get_status_label($record->status),
-                    'failure_reason' => $record->failure_reason,
-                    'created_at' => $record->created_at,
-                ];
-            })
+            ->map(fn ($record) => self::present_record($record))
             ->toArray();
+    }
+
+    /**
+     * One _login_history row in the shape get_history_for_user() answers: the attempted
+     * email, IP, raw and parsed user agent, location, status + its label, failure reason
+     * and created_at.
+     *
+     * The one presenter for the table, public so a reader that pages the rows itself (the
+     * /_sys panel's per-identity sign-in grid, which reads every row a page at a time where
+     * get_history_for_user() answers the newest $limit) presents them identically.
+     *
+     * @param object $record A _login_history row (a DB::table() row object)
+     * @return array
+     */
+    public static function present_record(object $record): array
+    {
+        return [
+            'id' => $record->id,
+            'email' => $record->email_attempted,
+            'ip_address' => $record->ip_address,
+            'user_agent' => $record->user_agent,
+            'user_agent_parsed' => User_Agent::parse($record->user_agent),
+            'location' => self::_format_location($record),
+            'status' => $record->status,
+            'status_label' => self::_get_status_label($record->status),
+            'failure_reason' => $record->failure_reason,
+            'created_at' => $record->created_at,
+        ];
     }
 
     /**
@@ -332,6 +348,7 @@ class Login_History
             self::STATUS_FAILED_DISABLED => 'Failed - Account Disabled',
             self::STATUS_FAILED_NOT_FOUND => 'Failed - User Not Found',
             self::STATUS_FAILED_SSO => 'Failed - SSO Sign-In',
+            self::STATUS_FAILED_PASSKEY => 'Failed - Passkey Sign-In',
             default => ucfirst(str_replace('_', ' ', $status)),
         };
     }

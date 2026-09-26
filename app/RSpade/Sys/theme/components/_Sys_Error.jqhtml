@@ -1,0 +1,25 @@
+<%--
+_Sys_Error - the panel's something-went-wrong body.
+
+$error_data - the failure: a message string, or an error object from a catch
+              (its message is shown; the object itself goes to the console,
+              where the stack is) [optional]
+
+Registered as the SPA's fatal screen (_Sys_Error_Screens); a panel page's
+three-state template renders it directly for a failed load.
+--%>
+<Define:_Sys_Error tag="div">
+    <%
+        const _data = this.args.error_data;
+        let _message = 'An unexpected error occurred.';
+        if (is_string(_data) && _data !== '') {
+            _message = _data;
+        } else if (_data && _data.message) {
+            _message = _data.message;
+        }
+        this.retry = () => window.location.reload();
+    %>
+    <_Sys_Empty_State $icon="bi-x-octagon" $title="Something went wrong" $body=_message>
+        <Slot:cta><button type="button" class="btn btn-sm btn-primary" @click=this.retry>Reload</button></Slot:cta>
+    </_Sys_Empty_State>
+</Define:_Sys_Error>

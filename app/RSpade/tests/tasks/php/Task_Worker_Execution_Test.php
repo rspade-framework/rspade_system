@@ -250,13 +250,11 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Task::dispatch() returns a pollable integer id backing a real pending row and
-     * fires a prompt worker.
+     * Task::dispatch() returns a pollable integer id backing a real pending row.
      *
-     * NOTE: dispatch() also spawns a DETACHED worker. That worker connects to the dev
-     * DB (the default connection outside this in-process test-DB swap), not this test
-     * DB, so it is a harmless side effect and cannot mutate the row asserted on here.
-     * Kept last because of that spawn.
+     * Under the test suite dispatch() enqueues ONLY - no detached worker is spawned
+     * (Task::spawn_workers_under_test(); Task_Spawn_Admission_Test) - so the row is still
+     * pending when it is read back.
      */
     public static function test_dispatch_returns_pollable_id()
     {

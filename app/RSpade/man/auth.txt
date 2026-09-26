@@ -77,9 +77,10 @@ IDENTITY MODEL
             email               Invited email (before login_user is linked)
             first_name / last_name / phone   Display + contact
             role_id             Site role (enum 100-800, see PERMISSIONS below)
-            is_enabled          Active membership flag. FRAMEWORK-OWNED and
-                                framework-enforced at login and at every request
-                                (see Site membership below)
+            is_enabled          Membership flag. FRAMEWORK-OWNED and
+                                framework-enforced at login and at every request,
+                                together with sites.is_enabled (see Site
+                                membership below)
             invite_code         Random 32-char code for the accept URL
             invite_accepted_at  NULL until accepted (marks membership active)
             invite_expires_at   Invitation expiry
@@ -184,15 +185,17 @@ AUTHENTICATION
         put the checks (login function + Main::pre_dispatch(), with the ejection
         recipe): rsx:man session, ACCOUNT STATE.
 
-    Site membership (users.is_enabled):
-        THE FRAMEWORK'S, not the application's, and enforced twice. An identity
-        with no enabled membership on any site fails attempt() exactly as a wrong
-        password does (recorded STATUS_FAILED_DISABLED), and RsxAuth::login()
-        refuses it too - so the second-factor, federated and dev-auth doors are
-        closed by the same rule. At request time
-        Session::enforce_enabled_membership() ends a session whose membership was
-        disabled or deleted, before the gates, and the caller gets the ordinary
-        auth-required answer. An application deletes its own is_enabled checks.
+    Site membership (users.is_enabled, sites.is_enabled):
+        THE FRAMEWORK'S, not the application's, and enforced twice. A membership
+        is ACTIVE when it and its site are both enabled (User_Model::is_active(),
+        the ->active() scope). An identity with no active membership on any site
+        fails attempt() exactly as a wrong password does (recorded
+        STATUS_FAILED_DISABLED), and RsxAuth::login() refuses it too - so the
+        second-factor, federated and dev-auth doors are closed by the same rule.
+        At request time Session::enforce_enabled_membership() ends a session whose
+        membership or site was disabled or deleted, before the gates, and the
+        caller gets the ordinary auth-required answer. An application deletes its
+        own is_enabled checks.
         Full treatment: rsx:man session, ACCOUNT STATE / SITE MEMBERSHIP.
 
 AUTHORIZATION (DECLARATIVE GATES)

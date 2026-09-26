@@ -26,6 +26,8 @@
 
 **The suite runs at exactly three moments**: (1) the test you JUST WROTE or JUST CHANGED, run by itself (the class name, or `--filter=`), without asking; (2) the end of a major phase or epic, ONCE, the full suite or the affected groups, and read the output then; (3) when the user asks. A patch handed to you to apply is verified by the smoke test and by the tests it touched - nothing more. **You are still to write a test for every feature you write** - the restriction targets RUNNING, never writing.
 
+**A test run is one FOREGROUND command, awaited to the end and read.** Never start `rsx:test` in the background and move on to other work, never start a second run beside one in flight, and **never re-run a test because it was slow** - slowness is load, not failure, and a second copy doubles the load that made the first one slow. A framework run occupies several full-stack containers (mysql, php-fpm, nginx and the rest in each), so a run abandoned or duplicated is paid for by everything else on the host.
+
 ### Trust the code quality rules
 
 When `rsx:check` flags a violation, read the rule's remediation text: it specifies what, why, how to fix, and whether to fix autonomously or ask. **Trust it as authoritative — don't outsmart rules or apply "common sense" overrides.**

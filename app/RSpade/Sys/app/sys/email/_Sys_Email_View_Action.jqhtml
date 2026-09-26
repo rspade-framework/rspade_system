@@ -1,0 +1,167 @@
+<%--
+_Sys_Email_View_Action - one _email_queue row, any site's: its envelope and delivery
+facts, the last error, the rendered HTML body (sandboxed) and the plain-text body,
+the attachments, the headers and frozen template data, and - in aiosmtpd mode - the
+copies the development catcher captured. Resend puts a finished message back on
+the queue (rsx:mail:resend's rules; a Blocked row asks first).
+
+Three states: loading, a load failure (_Sys_Not_Found for a missing id, _Sys_Error
+for anything else), and the record. The body tabs keep the hash key "body".
+--%>
+<Define:_Sys_Email_View_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+    <% if (this.data.loading) { %>
+        <Spinner class="_Sys_Email_View_Action__loading" />
+    <% } else if (this.data.load_error && this.data.load_error.code === Ajax.ERROR_NOT_FOUND) { %>
+        <_Sys_Not_Found $record_type="Email" $back_label="Back to email" $back_url=(Rsx.Route('_Sys_Email_Action')) />
+    <% } else if (this.data.load_error) { %>
+        <_Sys_Error $error_data=this.data.load_error.message />
+    <% } else { %>
+        <%
+            const _e = this.data.email;
+            const _catcher = this.data.catcher;
+            const _when = (iso) => iso ? Rsx_Time.format_datetime(iso) : null;
+            const _address = _Sys_Email_View_Action.address;
+            const _list = _Sys_Email_View_Action.address_list;
+            const _is_suppressed = _e.status === 'suppressed';
+            const _site = '#' + _e.site_id + (_e.site_name ? ' ' + _e.site_name : '');
+        %>
+        <_Sys_Page_Header $title=(_e.subject || '(no subject)') $icon="bi-envelope" $subtitle=('#' + _e.id + ' to ' + _e.to_address)>
+            <Slot:meta>
+                <_Sys_Status_Badge $status=_e.status />
+                <span class="_Sys_Email_View_Action__chip"><%= _e.category_id__label %></span>
+            </Slot:meta>
+            <Slot:actions>
+                <% if (_e.can_resend) { %>
+                    <button type="button" class="btn btn-sm btn-primary" data-action="resend"><i class="bi bi-arrow-repeat"></i> Resend</button>
+                <% } %>
+                <a class="btn btn-sm btn-secondary" href="<%= Rsx.Route('_Sys_Email_Action') %>">All email</a>
+            </Slot:actions>
+        </_Sys_Page_Header>
+
+        <% if (_e.last_error) { %>
+            <%-- On a Suppressed row last_error is the REASON nothing was delivered, and
+                 nothing went wrong - so it is not drawn as an error. --%>
+            <_Sys_Section $title=(_is_suppressed ? 'Not delivered' : 'Last error') $icon=(_is_suppressed ? 'bi-info-circle' : 'bi-exclamation-octagon')>
+                <_Sys_Code_Pane $text=_e.last_error />
+            </_Sys_Section>
+        <% } %>
+
+        <_Sys_Section $title="Details" $icon="bi-info-circle">
+            <_Sys_Detail_List>
+                <_Sys_Detail_Item $label="Status"><_Sys_Status_Badge $status=_e.status /></_Sys_Detail_Item>
+                <_Sys_Detail_Item $label="To" $value=(_address(_e.to_address, _e.to_name)) />
+                <_Sys_Detail_Item $label="Originally to" $value=_e.dev_original_to />
+                <_Sys_Detail_Item $label="Reply-To" $value=(_address(_e.reply_to, _e.reply_to_name)) />
+                <_Sys_Detail_Item $label="CC" $value=_list(_e.cc) />
+                <_Sys_Detail_Item $label="BCC" $value=_list(_e.bcc) />
+                <_Sys_Detail_Item $label="Category" $value=_e.category_id__label />
+                <_Sys_Detail_Item $label="Site" $value=_site />
+                <_Sys_Detail_Item $label="Email class" $value=_e.email_class $mono=true />
+                <_Sys_Detail_Item $label="Attempts" $value=_e.attempt_count />
+                <_Sys_Detail_Item $label="Dedupe key" $value=_e.dedupe_key $mono=true />
+                <_Sys_Detail_Item $label="Related" $value=(_e.related_id ? _e.related_type + ':' + _e.related_id : null) $mono=true />
+                <_Sys_Detail_Item $label="Transport" $value=_e.transport $mono=true />
+                <_Sys_Detail_Item $label="Message-ID" $value=_e.message_id_header $mono=true />
+                <_Sys_Detail_Item $label="Queued" $value=_when(_e.created_at) />
+                <_Sys_Detail_Item $label="Next attempt" $value=_when(_e.next_attempt_at) />
+                <_Sys_Detail_Item $label="Last attempt" $value=_when(_e.last_attempt_at) />
+                <_Sys_Detail_Item $label="Sent" $value=_when(_e.sent_at) />
+                <_Sys_Detail_Item $label="Updated" $value=_when(_e.updated_at) />
+            </_Sys_Detail_List>
+        </_Sys_Section>
+
+        <% if (_catcher) { %>
+            <_Sys_Section $title="Development catcher" $icon="bi-inbox" $count=_catcher.files.length $flush=(_catcher.files.length > 0)>
+                <% if (_catcher.files.length) { %>
+                    <div class="table-responsive">
+                        <table class="table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Captured file</th>
+                                    <th>Delivered</th>
+                                    <th>Size</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <% for (const _f of _catcher.files) { %>
+                                    <tr>
+                                        <td class="_Sys_Email_View_Action__mono" title="<%= _f.path %>"><%= _f.name %></td>
+                                        <td><%= Rsx_Time.format_datetime(_f.delivered_at) %></td>
+                                        <td><%= bytes_to_human(_f.size) %></td>
+                                    </tr>
+                                <% } %>
+                            </tbody>
+                        </table>
+                    </div>
+                <% } else if (_catcher.exists) { %>
+                    <_Sys_Empty_State $icon="bi-inbox" $title="Not in the catcher" $body=('No captured message in ' + _catcher.maildir + ' carries X-RSX-Email-Id: ' + _e.id + '.') />
+                <% } else { %>
+                    <_Sys_Empty_State $icon="bi-inbox" $title="Not in the catcher" $body=('The catcher has not created its Maildir yet (' + _catcher.maildir + ').') />
+                <% } %>
+            </_Sys_Section>
+        <% } %>
+
+        <_Sys_Section $title="Body" $icon="bi-file-richtext">
+            <% if (_e.is_rendered) { %>
+                <_Sys_Tabs $hash="body" $tabs=([
+                    {key: 'html', label: 'HTML', icon: 'bi-filetype-html'},
+                    {key: 'text', label: 'Plain text', icon: 'bi-file-text'},
+                ])>
+                    <Slot:html><_Sys_Email_Preview $html=_e.preview_html /></Slot:html>
+                    <Slot:text><_Sys_Code_Pane $text=_e.rendered_text $max_height=640 /></Slot:text>
+                </_Sys_Tabs>
+            <% } else { %>
+                <%-- The stored body or nothing: re-rendering the template here would show
+                     today's markup over the frozen data, which is not what was sent. --%>
+                <_Sys_Empty_State $icon="bi-hourglass-split" $title="Not rendered" $body="The body is recorded when the queue drain builds the message; this row has not been built." />
+            <% } %>
+        </_Sys_Section>
+
+        <% if (_e.attachments.length) { %>
+            <_Sys_Section $title="Attachments" $icon="bi-paperclip" $count=_e.attachments.length $flush=true>
+                <div class="table-responsive">
+                    <table class="table mb-0">
+                        <thead>
+                            <tr>
+                                <th>File</th>
+                                <th>Type</th>
+                                <th>Part</th>
+                                <th>CID</th>
+                                <th>Size</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% for (const _a of _e.attachments) { %>
+                                <tr>
+                                    <td><%= _a.file_name %></td>
+                                    <td class="_Sys_Email_View_Action__mono"><%= _a.mime_type %></td>
+                                    <td><%= _a.disposition %></td>
+                                    <td class="_Sys_Email_View_Action__mono"><%= _a.cid || '' %></td>
+                                    <td><%= _a.size === null ? '(released)' : bytes_to_human(_a.size) %></td>
+                                </tr>
+                            <% } %>
+                        </tbody>
+                    </table>
+                </div>
+            </_Sys_Section>
+        <% } %>
+
+        <_Sys_Section $title="Headers" $icon="bi-list-ul">
+            <_Sys_Code_Pane $json=_e.headers />
+        </_Sys_Section>
+
+        <_Sys_Section $title="Template data" $icon="bi-braces">
+            <_Sys_Code_Pane $json=_e.template_data />
+        </_Sys_Section>
+
+        <% if (_e.transport_response) { %>
+            <_Sys_Section $title="Transport response" $icon="bi-reply">
+                <_Sys_Code_Pane $text=_e.transport_response />
+            </_Sys_Section>
+        <% } %>
+    <% } %>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Email_View_Action>

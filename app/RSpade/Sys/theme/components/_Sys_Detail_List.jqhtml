@@ -1,0 +1,15 @@
+<%--
+_Sys_Detail_List - a key/value list of <_Sys_Detail_Item> rows.
+
+Label column on the left, value on the right, one fact per row; the columns
+stack when the container is narrow.
+
+    <_Sys_Detail_List>
+        <_Sys_Detail_Item $label="Status"><_Sys_Status_Badge $status=_task.status /></_Sys_Detail_Item>
+        <_Sys_Detail_Item $label="Queue" $value=_task.queue />
+        <_Sys_Detail_Item $label="Lock key" $value=_task.lock_key $mono=true />
+    </_Sys_Detail_List>
+--%>
+<Define:_Sys_Detail_List tag="dl">
+    <%= content() %>
+</Define:_Sys_Detail_List>

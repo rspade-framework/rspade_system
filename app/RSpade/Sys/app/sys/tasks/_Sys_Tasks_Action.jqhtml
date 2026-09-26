@@ -1,9 +1,24 @@
+<%--
+_Sys_Tasks_Action - the Tasks screen shell: three tabs, each a self-loading region.
+
+    running   - _Sys_Tasks_Running (what workers are executing now; Kill)
+    history   - _Sys_Tasks_DataGrid (every _tasks row; filters, search, row -> detail)
+    schedules - _Sys_Tasks_Schedules (every #[Schedule] and its tracker; Run now)
+
+The active tab is the hash key "tab"; the history grid's state is under "tasks_*".
+--%>
 <Define:_Sys_Tasks_Action>
 <_Sys_Page_Scaffold>
     <Slot:main>
-        <_Sys_Section $title="Tasks" $icon="bi-list-check">
-            <p class="mb-0">The tasks screen: queued, running and scheduled #[Task] work will be listed and inspected here.</p>
-        </_Sys_Section>
+        <_Sys_Tabs $sid="tabs" $hash="tab" $tabs=([
+            {key: 'running', label: 'Running', icon: 'bi-play-circle'},
+            {key: 'history', label: 'History', icon: 'bi-clock-history'},
+            {key: 'schedules', label: 'Schedules', icon: 'bi-calendar-event'},
+        ])>
+            <Slot:running><_Sys_Tasks_Running $sid="running" /></Slot:running>
+            <Slot:history><_Sys_Tasks_DataGrid $sid="history" /></Slot:history>
+            <Slot:schedules><_Sys_Tasks_Schedules $sid="schedules" /></Slot:schedules>
+        </_Sys_Tabs>
     </Slot:main>
 </_Sys_Page_Scaffold>
 </Define:_Sys_Tasks_Action>

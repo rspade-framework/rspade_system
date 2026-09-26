@@ -1,0 +1,41 @@
+<%--
+_Sys_DataGrid_Body - the <tbody> of a _Sys_DataGrid_Abstract, and the ONLY part of
+a grid that talks to the server. Rendered by the grid; never used on its own.
+
+$data_source - the fetch endpoint
+$params - the request, set by the grid before each reload(); absent = not loaded yet
+$filtered - the request narrows the set (search or a filter)
+$has_empty - the grid supplied <Slot:empty>
+
+Three states: loading (a spinner), empty ("No matches" with Clear filters when
+filtered, otherwise the grid's own empty state or a plain one), and the rows.
+--%>
+<Define:_Sys_DataGrid_Body tag="tbody">
+    <% if (!this.data.loaded) { %>
+        <tr class="_Sys_DataGrid_Abstract__state-row">
+            <td colspan="999">
+                <div class="_Sys_DataGrid_Abstract__spinner"><Spinner /></div>
+            </td>
+        </tr>
+    <% } else if (this.data.records.length === 0) { %>
+        <tr class="_Sys_DataGrid_Abstract__state-row">
+            <td colspan="999">
+                <% if (this.args.filtered) { %>
+                    <_Sys_Empty_State $icon="bi-search" $title="No matches" $body="Nothing matches the current search and filters.">
+                        <Slot:cta>
+                            <button type="button" class="btn btn-sm btn-secondary" data-grid-action="clear">Clear filters</button>
+                        </Slot:cta>
+                    </_Sys_Empty_State>
+                <% } else if (this.args.has_empty) { %>
+                    <%= content('empty'); %>
+                <% } else { %>
+                    <_Sys_Empty_State $icon="bi-inbox" $title="Nothing here yet" />
+                <% } %>
+            </td>
+        </tr>
+    <% } else { %>
+        <% for (const row of this.data.records) { %>
+            <%= content('row', row); %>
+        <% } %>
+    <% } %>
+</Define:_Sys_DataGrid_Body>

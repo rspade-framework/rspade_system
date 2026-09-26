@@ -177,12 +177,13 @@ class Task_Worker_Registry_Test extends Rsx_Test_Abstract
 
     /**
      * Return this process and Redis to a known-empty state: drop this process's slot (so
-     * worker_id() is null) and clear every registry member.
+     * worker_id() is null) and clear every registry member and spawn reservation (admission
+     * counts both - see Task_Spawn_Admission_Test).
      */
     private static function _reset(): void
     {
         Task_Worker_Registry::deregister();
-        self::_redis()->del(self::_zset_key());
+        self::_redis()->del(self::_zset_key(), self::_zset_key() . ':reserved');
     }
 
     /**

@@ -1,0 +1,12 @@
+<%--
+_Sys_Stat_Grid - an auto-filling row of equal <_Sys_Stat_Tile> children that
+wraps as the page narrows.
+
+    <_Sys_Stat_Grid>
+        <_Sys_Stat_Tile $label="Sites" $value=_sites />
+        <_Sys_Stat_Tile $label="Users" $value=_users />
+    </_Sys_Stat_Grid>
+--%>
+<Define:_Sys_Stat_Grid>
+    <%= content() %>
+</Define:_Sys_Stat_Grid>

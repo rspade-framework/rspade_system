@@ -1,0 +1,126 @@
+<%--
+_Sys_User_Security - an identity's Security tab: its second factors and its connected
+sign-in providers, as metadata only - never a TOTP seed, a passkey key or a recovery
+code (Rsx_Two_Factor::list_credentials() and Rsx_Sso::identities_list() answer no such
+thing, and neither does this screen).
+
+$login_user_id - the identity (required)
+$email         - its email, for the confirm text (required)
+
+Self-loading (_Sys_Users_Controller.security). Two sections: "Two-factor" (whether a
+password or federated sign-in owes a challenge, each confirmed factor, the count of
+unspent recovery codes) and "Sign-in providers" (each connected account).
+
+Actions: each factor's Remove and the section's Remove all
+(_Sys_Users_Controller.remove_two_factor - the calls rsx:users:2fa:remove makes), each
+provider's Disconnect and the section's Disconnect all (unlink_sso). Each confirms,
+then reloads this region. On the acting identity the payload's refusal is explained
+instead.
+--%>
+<Define:_Sys_User_Security>
+<% if (this.data.loading) { %>
+    <_Sys_Section $title="Security" $icon="bi-shield-lock">
+        <Spinner class="_Sys_User_Security__loading" />
+    </_Sys_Section>
+<% } else if (this.data.error_data) { %>
+    <_Sys_Section $title="Security" $icon="bi-shield-lock">
+        <_Sys_Error $error_data=this.data.error_data />
+    </_Sys_Section>
+<% } else { %>
+    <%
+        const _tf = this.data.two_factor;
+        const _sso = this.data.sso;
+    %>
+    <div class="_Sys_User_Security__stack">
+        <_Sys_Section $title="Two-factor" $icon="bi-shield-lock" $count=_tf.credentials.length $flush=true>
+            <Slot:actions>
+                <% if (_tf.credentials.length || _tf.recovery_codes_remaining) { %>
+                    <button type="button" class="btn btn-sm btn-danger" data-action="remove-all-factors"><i class="bi bi-shield-x"></i> Remove all</button>
+                <% } %>
+            </Slot:actions>
+            <Slot:body>
+            <div class="_Sys_User_Security__facts">
+                <_Sys_Detail_List>
+                    <_Sys_Detail_Item $label="Second factor">
+                        <_Sys_Status_Badge $status=(_tf.is_enabled ? 'ok' : 'muted') $label=(_tf.is_enabled ? 'Enabled' : 'Not enrolled') />
+                        <span class="_Sys_User_Security__dim"><%= _tf.is_enabled ? 'a password or provider sign-in is challenged' : 'a password alone signs in' %></span>
+                    </_Sys_Detail_Item>
+                    <_Sys_Detail_Item $label="Passkey" $value=(_tf.has_passkey ? 'Yes - may also sign in without a password' : 'No') />
+                    <_Sys_Detail_Item $label="Recovery codes" $value=(_tf.recovery_codes_remaining + ' unspent') />
+                </_Sys_Detail_List>
+            </div>
+            <% if (_tf.credentials.length) { %>
+                <div class="table-responsive">
+                    <table class="table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Factor</th>
+                                <th>Label</th>
+                                <th>Enrolled</th>
+                                <th>Last used</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% for (const row of _tf.credentials) { %>
+                                <tr>
+                                    <td><%= row.type_id__label %></td>
+                                    <td><%= row.label || '' %></td>
+                                    <td><%= row.confirmed_at ? Rsx_Time.format_datetime(row.confirmed_at) : '' %></td>
+                                    <td><%= row.last_used_at ? Rsx_Time.format_datetime(row.last_used_at) : 'Never' %></td>
+                                    <td class="_Sys_User_Security__actions">
+                                        <button type="button" class="btn btn-sm btn-danger" data-action="remove-factor" data-credential-id="<%= row.id %>">Remove</button>
+                                    </td>
+                                </tr>
+                            <% } %>
+                        </tbody>
+                    </table>
+                </div>
+            <% } %>
+            </Slot:body>
+        </_Sys_Section>
+
+        <_Sys_Section $title="Sign-in providers" $icon="bi-key" $count=_sso.identities.length $flush=true>
+            <Slot:actions>
+                <% if (_sso.identities.length) { %>
+                    <button type="button" class="btn btn-sm btn-danger" data-action="unlink-all"><i class="bi bi-x-circle"></i> Disconnect all</button>
+                <% } %>
+            </Slot:actions>
+            <Slot:body>
+            <% if (!_sso.identities.length) { %>
+                <_Sys_Empty_State $icon="bi-key" $title="No connected providers" $body=(_sso.is_enabled ? 'This identity signs in with no external provider.' : 'No sign-in provider is enabled on this install.') />
+            <% } else { %>
+                <div class="table-responsive">
+                    <table class="table mb-0">
+                        <thead>
+                            <tr>
+                                <th>Provider</th>
+                                <th>Account email</th>
+                                <th>Account name</th>
+                                <th>Connected</th>
+                                <th>Last sign-in</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% for (const row of _sso.identities) { %>
+                                <tr>
+                                    <td><%= row.provider_label %></td>
+                                    <td><%= row.email || '' %></td>
+                                    <td><%= row.name || '' %></td>
+                                    <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+                                    <td><%= row.last_login_at ? Rsx_Time.format_datetime(row.last_login_at) : 'Never' %></td>
+                                    <td class="_Sys_User_Security__actions">
+                                        <button type="button" class="btn btn-sm btn-danger" data-action="unlink" data-link-id="<%= row.id %>">Disconnect</button>
+                                    </td>
+                                </tr>
+                            <% } %>
+                        </tbody>
+                    </table>
+                </div>
+            <% } %>
+            </Slot:body>
+        </_Sys_Section>
+    </div>
+<% } %>
+</Define:_Sys_User_Security>

@@ -1,0 +1,20 @@
+._Sys_Logs_DataGrid {
+    td,
+    th {
+        white-space: nowrap;
+    }
+
+    &__name {
+        font-family: var(--rsx-mono);
+        font-size: 12.5px;
+
+        .bi {
+            margin-right: 6px;
+            color: var(--rsx-dim);
+        }
+    }
+
+    &__format {
+        color: var(--rsx-dim);
+    }
+}

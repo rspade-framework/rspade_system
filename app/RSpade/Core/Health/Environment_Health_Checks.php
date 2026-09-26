@@ -76,10 +76,43 @@ class Environment_Health_Checks
             ];
         }
 
-        // The CLI tier, reported separately because it is a promise about a different
-        // SAPI: pcntl is compiled into php-cli and NOT into php-fpm, so a box can be
-        // correct for the web tier and wrong for the CLI tier. rsx:health always runs
-        // under the CLI SAPI, so what it sees here IS what a command would get.
+        foreach (static::cli_tier_rows(PHP_SAPI) as $row) {
+            $rows[] = $row;
+        }
+
+        return $rows;
+    }
+
+    /**
+     * The CLI extension tier, as seen from the SAPI this report runs under.
+     *
+     * Reported separately because it is a promise about a different SAPI: pcntl is
+     * compiled into php-cli and NOT into php-fpm, so a box can be correct for the web
+     * tier and wrong for the CLI tier. Under the CLI SAPI (rsx:health) what this process
+     * sees IS what a command would get. Under any other SAPI - the report run inside a
+     * web request, by the /_sys dashboard - the CLI tier is not observable at all, so
+     * the answer is one INFO row saying so rather than a FAIL per extension the web
+     * tier was never meant to carry.
+     *
+     * The SAPI is a PARAMETER (as in Rsx_Php_Requirements::extensions_for_sapi()) so a
+     * test can ask for the web-request answer without being php-fpm.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public static function cli_tier_rows(string $sapi): array
+    {
+        if ($sapi !== 'cli') {
+            return [[
+                'label' => 'PHP CLI Extensions',
+                'status' => 'INFO',
+                'detail' => "not observable from the {$sapi} SAPI this report runs under"
+                    . ' - run php artisan rsx:health to check the CLI tier ('
+                    . implode(', ', Rsx_Php_Requirements::REQUIRED_CLI_EXTENSIONS) . ')',
+            ]];
+        }
+
+        $rows = [];
+
         $cli_missing = Rsx_Php_Requirements::missing_cli_extensions();
         $cli_present = array_values(array_diff(Rsx_Php_Requirements::REQUIRED_CLI_EXTENSIONS, $cli_missing));
 

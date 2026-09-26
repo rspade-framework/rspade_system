@@ -40,23 +40,25 @@ You can create custom channels by simply using them in your console_debug() call
 
 ## CONFIGURATION
 
-Configuration is managed in `config/rsx.php` under the `console_debug` section:
+The `console_debug` section of `config('rsx')` (framework `system/config/rsx.php`,
+overridden in `rsx/resource/config/rsx.php`). The framework ships only two keys:
 
 ```php
 'console_debug' => [
     'enabled' => env('CONSOLE_DEBUG_ENABLED', true),
-    'outputs' => [
-        'cli' => env('CONSOLE_DEBUG_CLI', false),
-        'web' => env('CONSOLE_DEBUG_WEB', true),
-        'ajax' => env('CONSOLE_DEBUG_AJAX', true),
-        'laravel_log' => env('CONSOLE_DEBUG_LOG', false),
-    ],
-    'filter_mode' => env('CONSOLE_DEBUG_FILTER_MODE', 'all'),
-    'whitelist' => ['AUTH', 'DISPATCH', 'JS_INIT', 'UI', 'TEST', 'AJAX', 'RSX_INIT', 'JQHTML_INIT'],
-    'blacklist' => [],
-    'include_benchmark' => env('CONSOLE_DEBUG_BENCHMARK', false),
+    'filter_mode' => 'all',
 ],
 ```
+
+Every other key takes its default from `Debugger` unless the application's config sets it:
+
+* outputs.cli (false), outputs.web (true), outputs.ajax (true), outputs.laravel_log (false)
+* filter_mode - all, whitelist, blacklist or specific (see FILTER MODES)
+* whitelist / blacklist - channel lists for those modes ([])
+* specific_channel - comma-separated channel(s) for the specific mode (null)
+* include_benchmark - timing prefix on each message (false)
+* include_location, include_backtrace - JavaScript output only (false)
+* enable_get_trace - allow `?__trace=1` on a page URL (off)
 
 ## FILTER MODES
 
@@ -72,36 +74,70 @@ Only shows messages from channels listed in the whitelist array.
 Shows all messages except those from channels in the blacklist array.
 
 ### specific
-Only shows messages from a single specific channel set via CONSOLE_DEBUG_SPECIFIC.
+Only shows messages from the channel(s) named in `specific_channel`.
 
 ## ENVIRONMENT VARIABLES
 
-You can override configuration using environment variables:
+The environment keys console_debug reads:
 
-* CONSOLE_DEBUG_ENABLED - Master switch (true/false)
-* CONSOLE_DEBUG_FILTER - Override filter with channel name or ALL
-* CONSOLE_DEBUG_CLI - Enable CLI output (true/false)
-* CONSOLE_DEBUG_WEB - Enable browser console output (true/false)
-* CONSOLE_DEBUG_AJAX - Include in AJAX responses (true/false)
-* CONSOLE_DEBUG_LOG - Write to Laravel log (true/false)
-* CONSOLE_DEBUG_BENCHMARK - Include timing prefixes (true/false)
-* CONSOLE_DEBUG_LOCATION - Include file location (true/false)
-* CONSOLE_DEBUG_BACKTRACE - Include stack trace (true/false)
+* CONSOLE_DEBUG_ENABLED - Master switch (true/false), through the shipped config
+* CONSOLE_DEBUG_FILTER - Channel name(s), comma-separated; replaces the filter mode for
+  PHP output only. Present but empty, it names no channel and silences PHP output.
+* CONSOLE_DEBUG_CLI - CLI (stderr) output (true/false)
+* CONSOLE_DEBUG_WEB - Browser console output (true/false)
+* CONSOLE_DEBUG_AJAX - Include messages in Ajax responses (true/false)
+
+The template application's own config (`rsx/resource/config/rsx.php`) maps the rest of
+the keys to environment variables too: CONSOLE_DEBUG_LOG, CONSOLE_DEBUG_FILTER_MODE,
+CONSOLE_DEBUG_SPECIFIC, CONSOLE_DEBUG_WHITELIST, CONSOLE_DEBUG_BLACKLIST,
+CONSOLE_DEBUG_BENCHMARK, CONSOLE_DEBUG_LOCATION, CONSOLE_DEBUG_BACKTRACE and
+ENABLE_GET_TRACE. An application whose config does not map a key sets it in the config
+file, or per browser through the override below.
+
+`rsx:debug` additionally reads CONSOLE_DEBUG_FILTER and CONSOLE_DEBUG_BENCHMARK as the
+defaults of its --console-debug-filter and --console-debug-benchmark flags.
+
+## PER-BROWSER OVERRIDE (DEVELOPERS)
+
+A developer can change console_debug for their own browser, without touching `.env`,
+from the control panel's Debug Flags screen (`/_sys/debug-flags`). The override sets:
+
+* enabled
+* the filter mode (all, whitelist, blacklist, specific) and its channel list
+* include_benchmark, include_location, include_backtrace
+
+It is stored against the browser's session (`Session::put_value('sys.console_debug')`,
+read through `Console_Debug_Override`) and applied to every page and Ajax request that
+browser makes - PHP output (`Debugger`) and `window.rsxapp.console_debug` alike. Other
+browsers, other developers and CLI processes never see it. It applies only:
+
+* while the session's identity is a developer (`Session::is_developer()`), checked on
+  every request - removing the developer flag disables it immediately;
+* where console_debug is active at all (development and debug modes; never strict
+  production).
+
+It leaves `outputs.*` and `enable_get_trace` to the configuration, replaces
+CONSOLE_DEBUG_FILTER for that browser, and ends with the session (the screen's Reset
+removes it sooner). Precedence, lowest to highest: config file, environment, the
+per-browser override, the rsx:debug harness headers. It takes effect when the request's
+dispatch begins, so output emitted earlier during framework boot follows the
+configuration.
+
+The screen also lists every channel in use (the `rsx:console_debug:list_channels` scan)
+and every rsx.console_debug value in force with its source.
 
 ## QUICK DEBUGGING
 
-For quick debugging sessions, use the CONSOLE_DEBUG_FILTER environment variable:
+For one headless render, pass the rsx:debug flags:
 
 ```bash
-# Show only AUTH channel
-CONSOLE_DEBUG_FILTER=AUTH php artisan serve
-
-# Show all channels
-CONSOLE_DEBUG_FILTER=ALL php artisan serve
-
-# With benchmarking
-CONSOLE_DEBUG_BENCHMARK=true php artisan serve
+php artisan rsx:debug / --console-debug-filter=AUTH     # only the AUTH channel
+php artisan rsx:debug / --console-debug-all             # every channel
+php artisan rsx:debug / --console-debug-benchmark       # with timing prefixes
 ```
+
+For your own browser, use the Debug Flags screen (PER-BROWSER OVERRIDE above). For
+every request on the box, set CONSOLE_DEBUG_FILTER in `.env` (empty it to remove it).
 
 ## OUTPUT DESTINATIONS
 
@@ -118,7 +154,7 @@ DISPATCH Processing route: /dashboard
 ```
 
 ### Laravel Log
-When CONSOLE_DEBUG_LOG is enabled, messages are written to storage/logs/laravel.log:
+When outputs.laravel_log is enabled, messages are written to storage/logs/laravel.log:
 ```
 [2024-01-15 10:23:45] local.DEBUG: [DISPATCH] Processing route: /dashboard
 ```
@@ -128,11 +164,9 @@ When CONSOLE_DEBUG_AJAX is enabled, debug messages are included in the AJAX resp
 
 ## BENCHMARKING
 
-Enable benchmark timing to see how long operations take:
-
-```bash
-CONSOLE_DEBUG_BENCHMARK=true php artisan serve
-```
+Enable benchmark timing to see how long operations take: `include_benchmark` in the
+config, the Benchmark switch on the Debug Flags screen, or
+`php artisan rsx:debug / --console-debug-benchmark`.
 
 Output includes timing in seconds since request start:
 ```
@@ -149,7 +183,18 @@ The console_debug system integrates with Playwright testing via special headers:
 * X-Console-Debug-Benchmark - Enable timing for test
 * X-Console-Debug-All - Show all channels for test
 
-These headers only work from localhost in non-production environments.
+These headers only work from localhost in non-production environments, and win over a
+developer's per-browser override.
+
+## LISTING CHANNELS
+
+```bash
+php artisan rsx:console_debug:list_channels [--php] [--js] [--count]
+```
+
+Every channel a console_debug() call names as a string literal under system/app and
+rsx/ (a channel built at run time is not found). The Debug Flags screen offers the same
+list.
 
 ## JAVASCRIPT INTEGRATION
 
@@ -212,9 +257,9 @@ Remove or comment out console_debug calls once you've fixed the issue:
    >>> config('rsx.console_debug.whitelist')
    ```
 
-3. Use CONSOLE_DEBUG_FILTER=ALL to bypass filtering:
+3. Bypass filtering for one render:
    ```bash
-   CONSOLE_DEBUG_FILTER=ALL php artisan rsx:debug /
+   php artisan rsx:debug / --console-debug-all
    ```
 
 ### Too Many Messages
@@ -225,9 +270,9 @@ Remove or comment out console_debug calls once you've fixed the issue:
    'whitelist' => ['AUTH', 'ERROR'],
    ```
 
-2. Use environment variable for temporary filtering:
+2. Narrow your own browser temporarily on the Debug Flags screen, or one render:
    ```bash
-   CONSOLE_DEBUG_FILTER=AUTH php artisan serve
+   php artisan rsx:debug / --console-debug-filter=AUTH
    ```
 
 ### JavaScript Messages Not Logged
@@ -302,6 +347,7 @@ public static function get_active_users()
 ## SEE ALSO
 
 * php artisan rsx:debug - Test routes with console_debug enabled
+* rsx:man sys_panel - the Debug Flags screen that sets the per-browser override
 * system/config/rsx.php - Main configuration file
 * system/app/RSpade/Core/Debug/Debugger.php - PHP implementation
 * system/app/RSpade/Core/Js/Debugger.js - JavaScript implementation

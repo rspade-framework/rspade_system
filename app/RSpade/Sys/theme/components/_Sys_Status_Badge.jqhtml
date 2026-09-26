@@ -1,0 +1,27 @@
+<%--
+_Sys_Status_Badge - one status pill, coloured by a fixed tone map.
+
+$status - the status key (required, case-insensitive). Either a tone -
+          ok | warn | fail | info | muted - or a known status word:
+            tasks: pending, running, completed, failed, killed
+            mail/SMS: pending, sending, sent, failed, blocked, suppressed
+            login identities: active, inactive, suspended
+$label - the text shown [optional; default: the status word, capitalised]
+
+An unknown status THROWS rather than painting a grey pill: a new status value is
+a decision about what colour it is, made once in _Sys_Status_Badge.TONES.
+
+    <_Sys_Status_Badge $status=_task.status />
+    <_Sys_Status_Badge $status="ok" $label="Healthy" />
+--%>
+<Define:_Sys_Status_Badge tag="span">
+    <%
+        const _key = str(this.args.status).toLowerCase();
+        const _tone = _Sys_Status_Badge.tone_for(_key);
+        const _label = this.args.label !== undefined && this.args.label !== null && this.args.label !== ''
+            ? this.args.label
+            : _key.charAt(0).toUpperCase() + _key.slice(1);
+        const _class = '_Sys_Status_Badge__pill _Sys_Status_Badge__pill--' + _tone;
+    %>
+    <span class="<%= _class %>"><%= _label %></span>
+</Define:_Sys_Status_Badge>

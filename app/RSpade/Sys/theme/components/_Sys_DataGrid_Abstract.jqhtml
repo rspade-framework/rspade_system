@@ -1,0 +1,82 @@
+<%--
+_Sys_DataGrid_Abstract - the panel's paginated table: a toolbar (search, filter
+selects), a sortable head, a body that loads one page at a time, and a footer
+(range + pagination). The server half is _Sys_DataGrid_Abstract.php.
+
+A concrete grid is a <Define> that extends this one and fills slots; declared
+settings are args on that <Define>:
+
+$grid_key - the STABLE name the grid's state lives under in the URL hash
+            (required; lowercase identifier). Hash keys are <key>_page, <key>_sort,
+            <key>_order, <key>_q and <key>_f_<filter>, so a link addresses a
+            filtered grid: Rsx.Route('_Sys_Tasks_Action', {}, {tasks_f_status: 'failed'}).
+$data_source - the Ajax endpoint forwarding to the PHP grid's fetch() (required)
+$sort / $order / $per_page - the starting state; declare both $sort and $order
+$search - the search box placeholder; no search box without it [optional]
+$filters - [{key, label, options, default?}] - one select per entry [optional].
+           key is the request param __build_query() reads; label is the "all"
+           option's text; options is [{value, label}] or an Ajax endpoint that
+           answers that list; default is applied when the hash says nothing
+$title - a title at the head of the toolbar [optional]
+$base_params - {key: value} sent with EVERY request and never kept in the hash:
+           the fixed scope of a grid embedded in a record's screen, such as
+           {site_id: 12} for that site's members [optional]
+
+Slots: <Slot:header> (the <tr> of <th>; a sortable one carries the LITERAL
+attribute data-sortby="key"), <Slot:row> (one <tr>, receives `row`; a
+<tr data-href="..."> makes every plain cell a link), <Slot:empty> (the unfiltered
+empty state) [optional], <Slot:toolbar> (extra toolbar buttons) [optional].
+
+    <Define:_Sys_Tasks_DataGrid extends="_Sys_DataGrid_Abstract"
+        $grid_key="tasks" $data_source=_Sys_Tasks_Controller.datagrid_fetch
+        $sort="id" $order="desc" $per_page=25 $search="Search class or method..."
+        $filters=([{key: 'status', label: 'All statuses', options: [{value: 'failed', label: 'Failed'}]}])>
+        <Slot:header><tr><th data-sortby="id">ID</th><th>Class</th></tr></Slot:header>
+        <Slot:row><tr data-href="<%= Rsx.Route('_Sys_Task_View_Action', row.id) %>"><td><%= row.id %></td><td><%= row.class %></td></tr></Slot:row>
+        <Slot:empty><_Sys_Empty_State $icon="bi-list-check" $title="No tasks yet" /></Slot:empty>
+    </Define:_Sys_Tasks_DataGrid>
+--%>
+<Define:_Sys_DataGrid_Abstract class="card">
+    <%
+        const _toolbar = content('toolbar');
+        const _has_empty = !!content('empty');
+        const _filters = this.args.filters || [];
+    %>
+    <div class="_Sys_DataGrid_Abstract__toolbar card-header">
+        <% if (this.args.title) { %>
+            <span class="_Sys_DataGrid_Abstract__title"><%= this.args.title %></span>
+        <% } %>
+        <div class="_Sys_DataGrid_Abstract__controls">
+            <% if (this.args.search) { %>
+                <input type="search" class="form-control form-control-sm _Sys_DataGrid_Abstract__search" $sid="search" placeholder="<%= this.args.search %>" aria-label="<%= this.args.search %>" />
+            <% } %>
+            <% for (const _filter of _filters) { %>
+                <_Sys_DataGrid_Filter $filter=_filter $value=(this.state.filters[_filter.key]) />
+            <% } %>
+            <% if (_toolbar) { %>
+                <%= _toolbar %>
+            <% } %>
+        </div>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-hover mb-0 _Sys_DataGrid_Abstract__table">
+            <thead $sid="head">
+                <%= content('header'); %>
+            </thead>
+            <_Sys_DataGrid_Body $sid="body" $data_source=this.args.data_source $has_empty=_has_empty>
+                <Slot:row>
+                    <%= content('row', row); %>
+                </Slot:row>
+                <Slot:empty>
+                    <%= content('empty'); %>
+                </Slot:empty>
+            </_Sys_DataGrid_Body>
+        </table>
+    </div>
+    <div class="_Sys_DataGrid_Abstract__footer card-footer" $sid="footer" hidden>
+        <span class="_Sys_DataGrid_Abstract__range" $sid="range"></span>
+        <nav aria-label="Pagination">
+            <ul class="pagination pagination-sm mb-0" $sid="pager"></ul>
+        </nav>
+    </div>
+</Define:_Sys_DataGrid_Abstract>

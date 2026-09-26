@@ -225,7 +225,7 @@ class _Apidocs_File_Tester extends Component {
 
         const ms = Math.round(performance.now() - started);
 
-        api_render_response(this.$sid('response'), '_Apidocs_File_Tester', res.status, res.statusText, ms, api_pretty_body(text));
+        api_render_response(this.$sid('response'), '_Apidocs_File_Tester', res.status, res.statusText, ms, _Sys_Code_Pane.pretty(text));
     }
 
     _render_message(message, level) {

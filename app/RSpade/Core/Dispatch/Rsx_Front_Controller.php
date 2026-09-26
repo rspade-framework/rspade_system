@@ -44,7 +44,8 @@ use App\RSpade\Core\Revisions\Revision;
  *   2. Rsx_Request_Channel::classify() - ASSET, API, AJAX or PAGE, plus the realm. Decided
  *      once, read by everything after it.
  *   3. The fixed preamble: the revision unit of work, Manifest::init(), the development
- *      hostname tripwire, and (AJAX and PAGE only) the first-run setup screen.
+ *      hostname tripwire, and (AJAX and PAGE only) the first-run setup screen and a
+ *      developer's per-browser console_debug override (Debugger::apply_session_override()).
  *   4. The channel's pipeline: AssetHandler (ASSET), Api_Dispatcher (API), Dispatcher
  *      (AJAX and PAGE, in the realm the request was classified in).
  *   5. Any Throwable becomes a response through the channel's error policy, inside the
@@ -148,6 +149,10 @@ class Rsx_Front_Controller
         // offered the first account. Development mode only; an asset or an API call never
         // probes for it.
         Rsx_First_User_Setup::check();
+
+        // A developer's per-browser console_debug override (the /_sys Debug Flags
+        // screen), from here to the end of the request. Session readers only.
+        Debugger::apply_session_override();
 
         return Dispatcher::dispatch($url, $method, [], $request);
     }

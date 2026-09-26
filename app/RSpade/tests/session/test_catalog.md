@@ -1,7 +1,7 @@
 # Test catalog: session
 
 Status legend: `implemented` | `deferred` (reason) | `blocked` (see issues) | `planned`.
-Type: php / cli / asset / http / playwright. Last updated: 2026-09-17.
+Type: php / cli / asset / http / playwright. Last updated: 2026-09-26.
 
 ## Session_Cli_Test (php, default isolation) - CLI impersonation & resolvers
 
@@ -212,7 +212,8 @@ and delete their keys in teardown.
 `terminate_session_for_user()` / `terminate_all_sessions_for_user()` authorize
 self-or-can_admin_role and THROW `AjaxUnauthorizedException` on refusal, while ABSENCE
 still returns false/0. `_deactivate_sessions_for_user()` is the unchecked
-framework-internal path. Roles used: ROOT_ADMIN(200) over MANAGER(500), MANAGER over
+framework-internal path. `developer_terminate_sessions()` is authorized by
+`Session::is_developer()` alone and runs through that internal path. Roles used: ROOT_ADMIN(200) over MANAGER(500), MANAGER over
 MANAGER (peer), USER(600) under MANAGER.
 
 | ID | Purpose | Type | Input | Expected | Status |
@@ -234,6 +235,10 @@ MANAGER (peer), USER(600) under MANAGER.
 | sess-termfu-15 | session.terminated scope is 'internal' with a null actor | php | unchecked helper | 1 event, scope 'internal', actor null | implemented |
 | sess-termfu-16 | each terminate path pushes a realtime session refresh | php/http | any deactivation | one push_session_refresh('staff', id) per row | deferred (no in-process assertion seam for the emissions outbox; verified live via the B3 harness, no-throw + queued) |
 | sess-termfu-17 | the concurrent-session cap does NOT emit termination events | php | sign-in past max_web_sessions_per_user | rows evicted, no session.terminated | deferred (documented divergence: cap eviction is capacity management, not termination) |
+| sess-termfu-18 | `developer_terminate_sessions()`: a developer holding a subordinate role ends ONE session of an identity with no users row on the acting site (no role is consulted) | php | developer acting, stranger identity with two rows | 1; named row inactive, other active; one session.terminated: actor = developer, scope 'admin' | implemented |
+| sess-termfu-19 | `developer_terminate_sessions()` with no id ends every session but the developer's own current one | php | target with two rows; developer with one other row | 2 then 1; current session active; event scope 'self' on the developer's own identity | implemented |
+| sess-termfu-20 | `developer_terminate_sessions()` ABSENCE is 0, never a throw | php | unknown id, another identity's row, the current session id | 0 each; rows untouched | implemented |
+| sess-termfu-21 | `developer_terminate_sessions()` REFUSES a non-developer | php | an administering role; nobody signed in | AjaxUnauthorizedException for the one and the bulk form; row intact | implemented |
 
 ## Rsx_Auth_Attempt_Test (php, default isolation) - attempt() classification + recording
 
@@ -331,7 +336,7 @@ every user-scoped endpoint while the actor stamp was correct.
 | sess-ajaxdbg-08 | several sites, --site chooses | rows on A and B, `--site=B` | site B and B's users row | implemented |
 
 
-## Enabled_Membership_Test (php, default isolation) - `users.is_enabled` is the framework's
+## Enabled_Membership_Test (php, default isolation) - `users.is_enabled` and `sites.is_enabled` are the framework's
 
 The framework's own site-membership switch, enforced in two places: at sign-in
 (`RsxAuth::attempt()` / `RsxAuth::login()` / `has_enabled_membership()`) and at request time
@@ -352,4 +357,9 @@ refuses a cross-site save or delete.
 | sess-enabled-07 | request time: a DELETED membership ends it too | php | acting identity, then soft-delete the row | false, logged out | implemented |
 | sess-enabled-08 | anonymous is permitted and asking creates nothing | php | no identity | true, `has_session()` false | implemented |
 | sess-enabled-09 | end to end: a disabled membership mid-session redirects a page to login and answers an Ajax call `auth_required` | http | live session, disable the row, request a page / call an endpoint | 302 to login / `auth_required` envelope | deferred (the http harness runs against the development database; disabling a live account's membership there is not a fixture the suite may create - verified by hand with `rsx:debug` during W2) |
+| sess-enabled-10 | an enabled membership on a DISABLED site is refused like a wrong password | php | one enabled membership, its site `is_enabled = 0` | `attempt()` false, no identity, no success row, counter 1, `failed_disabled` logged; `login()` false | implemented |
+| sess-enabled-11 | a disabled site locks out only its own memberships | php | enabled memberships on a disabled and an enabled site | `attempt()` true, identity set | implemented |
+| sess-enabled-12 | `->active()` / `is_active()` - the one definition a site picker lists and accepts from - drop a disabled or deleted site | php | memberships on an enabled, a disabled and a soft-deleted site | scope lists only the enabled site; `is_active()` true / false / false | implemented |
+| sess-enabled-13 | request time: disabling the SITE ends the session | php | acting identity, then `sites.is_enabled = 0` | `enforce_enabled_membership()` false, logged out | implemented |
+| sess-enabled-14 | the Default site (id 0) refuses to be disabled | php | `Site_Model::find(0)`, `is_enabled = 0`, save | `RuntimeException` "cannot be disabled", row unchanged | implemented |
 | SESSION-USER-EXPORT-01 | User_Model::toArray() and its JSON encoding (window.rsxapp.user, model fetch, the API) omit invite_code, invite_accepted_at and invite_expires_at | php | user 1 with an invite code set in memory | none of the three keys present; the code never appears in the JSON | implemented |

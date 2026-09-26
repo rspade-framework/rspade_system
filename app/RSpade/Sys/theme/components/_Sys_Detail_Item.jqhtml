@@ -1,0 +1,33 @@
+<%--
+_Sys_Detail_Item - one fact in a <_Sys_Detail_List>.
+
+$label - the key, plain text (required)
+$value - the value as plain text [optional; use loose content for markup]
+$mono - render the value in the monospace face (ids, keys, paths) [optional]
+
+The value is the loose content when there is any, otherwise $value. An EMPTY
+value - $value null, undefined or '' with no content - renders the muted em-dash,
+so a missing fact reads as missing rather than as a blank row.
+
+    <_Sys_Detail_Item $label="PID" $value=_task.worker_pid />
+    <_Sys_Detail_Item $label="Site"><a href="<%= _site_url %>"><%= _site.name %></a></_Sys_Detail_Item>
+--%>
+<Define:_Sys_Detail_Item tag="div">
+    <%
+        if (!this.args.label) throw new Error('_Sys_Detail_Item requires $label');
+        const _content = content();
+        const _value = this.args.value;
+        const _is_empty = !_content && (_value === undefined || _value === null || _value === '');
+        const _value_class = '_Sys_Detail_Item__value' + (this.args.mono && !_is_empty ? ' _Sys_Detail_Item__value--mono' : '');
+    %>
+    <dt class="_Sys_Detail_Item__label"><%= this.args.label %></dt>
+    <dd class="<%= _value_class %>">
+        <% if (_content) { %>
+            <%= _content %>
+        <% } else if (_is_empty) { %>
+            <span class="_Sys_Detail_Item__empty">&mdash;</span>
+        <% } else { %>
+            <%= _value %>
+        <% } %>
+    </dd>
+</Define:_Sys_Detail_Item>

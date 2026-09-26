@@ -1,0 +1,26 @@
+._Sys_User_View_Action {
+    display: block;
+
+    &__loading {
+        display: block;
+        width: 48px;
+        height: 48px;
+        margin: 48px auto;
+    }
+
+    &__note {
+        padding: 1px 6px;
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+        color: var(--rsx-dim);
+        font-size: 11px;
+    }
+
+    // The overview tab holds two sections; the scaffold's block gap spaces only its
+    // own children, so the tab panel spaces its pair itself.
+    &__stack {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rsx-block-gap);
+    }
+}

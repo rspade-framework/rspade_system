@@ -1,9 +1,12 @@
+<%--
+_Sys_Users_Action - the Users screen: every login identity on the install in one grid
+(_Sys_Users_DataGrid, grid key "users"). A row opens the identity (_Sys_User_View_Action):
+its memberships across every site, sessions, sign-ins and security state.
+--%>
 <Define:_Sys_Users_Action>
 <_Sys_Page_Scaffold>
     <Slot:main>
-        <_Sys_Section $title="Users" $icon="bi-person-badge">
-            <p class="mb-0">The users screen: the identities that may sign in to this install will be listed and administered here.</p>
-        </_Sys_Section>
+        <_Sys_Users_DataGrid />
     </Slot:main>
 </_Sys_Page_Scaffold>
 </Define:_Sys_Users_Action>

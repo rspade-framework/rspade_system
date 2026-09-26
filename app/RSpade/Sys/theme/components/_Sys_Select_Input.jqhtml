@@ -1,0 +1,23 @@
+<%--
+_Sys_Select_Input - a native <select> for a panel form.
+
+$name - the form field name (required inside an <Rsx_Form>)
+$options - [{value, label}] or ['a', 'b'] (a bare string is its own label) (required)
+$placeholder - a leading empty option with this label; its value is '' [optional]
+$disabled - render disabled; val() still reads and writes it [optional]
+
+Values compare as strings, so val(3) and val('3') select the same option.
+
+    <_Sys_Select_Input $name="status" $placeholder="Any status"
+        $options=([{value: 'failed', label: 'Failed'}, {value: 'killed', label: 'Killed'}]) />
+--%>
+<Define:_Sys_Select_Input>
+    <select $sid="input" class="form-select form-select-sm" <% if (this.args.disabled) { %>disabled<% } %>>
+        <% if (this.args.placeholder) { %>
+            <option value=""><%= this.args.placeholder %></option>
+        <% } %>
+        <% for (const _opt of _Sys_Select_Input.normalize_options(this.args.options)) { %>
+            <option value="<%= _opt.value %>"><%= _opt.label %></option>
+        <% } %>
+    </select>
+</Define:_Sys_Select_Input>

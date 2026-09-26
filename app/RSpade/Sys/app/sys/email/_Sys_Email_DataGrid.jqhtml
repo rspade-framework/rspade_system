@@ -1,0 +1,59 @@
+<%--
+_Sys_Email_DataGrid - the Email screen's queue: every _email_queue row on the
+install, newest first, every site's.
+
+Server half: _Sys_Email_DataGrid.php (filters status / category / site, search on
+the recipient - envelope and original - or the subject). Status and category filter
+by their lowercase WORD. State lives in the URL hash under the grid key "mail", so
+the Dashboard's pending-mail tile links here as
+Rsx.Route('_Sys_Email_Action', {}, {mail_f_status: 'pending'}).
+
+Every row links to its detail screen (_Sys_Email_View_Action).
+--%>
+<Define:_Sys_Email_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="mail"
+    $data_source=_Sys_Email_Controller.datagrid_fetch
+    $sort="id"
+    $order="desc"
+    $per_page=25
+    $search="Search recipient or subject..."
+    $filters=([
+        {key: 'status', label: 'All statuses', options: _Sys_Email_Controller.status_options},
+        {key: 'category', label: 'All categories', options: _Sys_Email_Controller.category_options},
+        {key: 'site', label: 'All sites', options: _Sys_Email_Controller.site_options},
+    ])>
+    <Slot:header>
+        <tr>
+            <th data-sortby="id">ID</th>
+            <th>Recipient</th>
+            <th>Subject</th>
+            <th>Status</th>
+            <th>Category</th>
+            <th>Site</th>
+            <th data-sortby="attempt_count">Attempts</th>
+            <th data-sortby="created_at">Queued</th>
+            <th data-sortby="sent_at">Sent</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr data-href="<%= Rsx.Route('_Sys_Email_View_Action', row.id) %>">
+            <td class="_Sys_Email_DataGrid__id"><%= row.id %></td>
+            <td class="_Sys_Email_DataGrid__recipient">
+                <%= row.to_address %>
+                <% if (row.dev_original_to) { %>
+                    <div class="_Sys_Email_DataGrid__original">for <%= row.dev_original_to %></div>
+                <% } %>
+            </td>
+            <td class="_Sys_Email_DataGrid__subject" title="<%= row.error_excerpt || '' %>"><%= row.subject %></td>
+            <td><_Sys_Status_Badge $status=row.status /></td>
+            <td><%= row.category_id__label %></td>
+            <td class="_Sys_Email_DataGrid__site">#<%= row.site_id %><% if (row.site_name) { %> <%= row.site_name %><% } %></td>
+            <td><%= row.attempt_count %></td>
+            <td><%= Rsx_Time.format_datetime(row.created_at) %></td>
+            <td><%= row.sent_at ? Rsx_Time.format_datetime(row.sent_at) : '' %></td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-envelope" $title="The queue is empty" $body="No email has been queued on this install." />
+    </Slot:empty>
+</Define:_Sys_Email_DataGrid>

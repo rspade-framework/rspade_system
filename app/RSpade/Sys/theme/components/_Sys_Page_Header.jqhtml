@@ -1,0 +1,40 @@
+<%--
+_Sys_Page_Header - a heading block at the top of a page body: title, subtitle,
+trailing actions.
+
+$title - the heading, plain text (required)
+$subtitle - a muted line under the title, plain text [optional]
+$icon="bi-person" - a Bootstrap Icons class before the title [optional]
+
+<Slot:meta> - chips beside the title, e.g. <_Sys_Status_Badge> [optional]
+<Slot:actions> - a trailing cluster of buttons [optional]
+
+The layout's top bar already names the SCREEN; this names the RECORD a detail
+page is about ("user@example.com", "Task #1432") and carries its actions.
+
+    <_Sys_Page_Header $title=_task.name $subtitle=_task.queue>
+        <Slot:meta><_Sys_Status_Badge $status=_task.status /></Slot:meta>
+        <Slot:actions><button class="btn btn-sm btn-primary">Re-dispatch</button></Slot:actions>
+    </_Sys_Page_Header>
+--%>
+<Define:_Sys_Page_Header>
+    <% if (!this.args.title && this.args.title !== 0) throw new Error('_Sys_Page_Header requires $title'); %>
+    <% const _slots = this.args._slots || {}; %>
+    <div class="_Sys_Page_Header__text">
+        <div class="_Sys_Page_Header__heading">
+            <% if (this.args.icon) { %>
+                <i class="<%= '_Sys_Page_Header__icon bi ' + this.args.icon %>"></i>
+            <% } %>
+            <h2 class="_Sys_Page_Header__title"><%= this.args.title %></h2>
+            <% if (_slots.meta) { %>
+                <div class="_Sys_Page_Header__meta"><%= content('meta') %></div>
+            <% } %>
+        </div>
+        <% if (this.args.subtitle) { %>
+            <div class="_Sys_Page_Header__subtitle"><%= this.args.subtitle %></div>
+        <% } %>
+    </div>
+    <% if (_slots.actions) { %>
+        <div class="_Sys_Page_Header__actions"><%= content('actions') %></div>
+    <% } %>
+</Define:_Sys_Page_Header>

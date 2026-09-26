@@ -1,0 +1,50 @@
+<%--
+_Sys_Sites_DataGrid - the Sites screen's grid: every tenant on the install, newest
+first. Site 0 (the Default site, an infrastructure FK target) and soft-deleted sites
+are never listed.
+
+Server half: _Sys_Sites_DataGrid.php (filter enabled = enabled | disabled, search on
+name or slug, member_count per row). State lives in the URL hash under the grid key
+"sites": Rsx.Route('_Sys_Sites_Action', {}, {sites_f_enabled: 'disabled'}).
+
+Every row links to its detail screen (_Sys_Site_View_Action).
+--%>
+<Define:_Sys_Sites_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="sites"
+    $data_source=_Sys_Sites_Controller.datagrid_fetch
+    $sort="id"
+    $order="desc"
+    $per_page=25
+    $search="Search name or slug..."
+    $filters=([
+        {key: 'enabled', label: 'Enabled and disabled', options: [
+            {value: 'enabled', label: 'Enabled'},
+            {value: 'disabled', label: 'Disabled'},
+        ]},
+    ])>
+    <Slot:header>
+        <tr>
+            <th data-sortby="id">ID</th>
+            <th data-sortby="name">Name</th>
+            <th data-sortby="slug">Slug</th>
+            <th>Status</th>
+            <th>Timezone</th>
+            <th>Members</th>
+            <th data-sortby="created_at">Created</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr data-href="<%= Rsx.Route('_Sys_Site_View_Action', row.id) %>">
+            <td class="_Sys_Sites_DataGrid__mono"><%= row.id %></td>
+            <td><%= row.name %></td>
+            <td class="_Sys_Sites_DataGrid__mono"><%= row.slug %></td>
+            <td><_Sys_Status_Badge $status=(row.is_enabled ? 'ok' : 'muted') $label=(row.is_enabled ? 'Enabled' : 'Disabled') /></td>
+            <td><%= row.timezone %></td>
+            <td><%= row.member_count %></td>
+            <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-buildings" $title="No sites yet" $body="This install serves no tenant besides the Default site." />
+    </Slot:empty>
+</Define:_Sys_Sites_DataGrid>

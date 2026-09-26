@@ -28,7 +28,7 @@ routable and carries no leading underscore, and every framework route is `/_`-pr
 | ERR-18 | Unknown SPA URL renders the not-found body in the layout | playwright | `Spa.dispatch()` to an unmatched current URL | Not_Found component present, layout alive | planned (same) | 2026-08-07 |
 | ERR-19 | `Error_Screens.fatal()` renders and stops the action | playwright | direct call | Generic component present, action null | planned (same) | 2026-08-07 |
 | ERR-20 | curl status matrix, staff and portal | http | anon gated / authed gated / unknown URL / portal gated | 302 / 200 / 404 / 302 portal login | planned (manual curl during W4) | 2026-08-07 |
-| ERR-21 | A missing theme error component fails loud | playwright | unregister the component, call a screen | throws naming the component | planned | 2026-08-07 |
+| ERR-21 | A missing theme error component fails loud | playwright | unregister the component, call a screen | throws naming the component | implemented as `sys_panel` RP-ERR-02/03 (`sys_panel/playwright/sys_panel_toolkit.js`) | 2026-09-26 |
 | ERR-22 | The exact status page beats the catch-all | php | synthetic tables with both | `/error/404` resolved | implemented | 2026-09-21 |
 | ERR-23 | A status with no page falls to the catch-all | php | synthetic table with generic only | `/error/generic` resolved | implemented | 2026-09-21 |
 | ERR-24 | The generic preview skips the exact lookup | php | `resolve(500, staff, false)` with both declared | `/error/generic` resolved | implemented | 2026-09-21 |

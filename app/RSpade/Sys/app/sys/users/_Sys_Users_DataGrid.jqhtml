@@ -1,0 +1,58 @@
+<%--
+_Sys_Users_DataGrid - the Users screen's grid: every login identity on the install,
+newest first. A login identity is the cross-site sign-in (one email, one password);
+its site memberships are counted per row and listed on its detail screen.
+
+Server half: _Sys_Users_DataGrid.php (filters status = active | inactive | suspended
+and developer = yes | no, search on email, membership_count per row). State lives in
+the URL hash under the grid key "users":
+Rsx.Route('_Sys_Users_Action', {}, {users_f_developer: 'yes'}).
+
+Every row links to its detail screen (_Sys_User_View_Action).
+--%>
+<Define:_Sys_Users_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="users"
+    $data_source=_Sys_Users_Controller.datagrid_fetch
+    $sort="id"
+    $order="desc"
+    $per_page=25
+    $search="Search email..."
+    $filters=([
+        {key: 'status', label: 'All statuses', options: _Sys_Users_Controller.status_options},
+        {key: 'developer', label: 'Developers and not', options: [
+            {value: 'yes', label: 'Developers'},
+            {value: 'no', label: 'Not developers'},
+        ]},
+    ])>
+    <Slot:header>
+        <tr>
+            <th data-sortby="id">ID</th>
+            <th data-sortby="email">Email</th>
+            <th data-sortby="status_id">Status</th>
+            <th>Developer</th>
+            <th>Verified</th>
+            <th>Memberships</th>
+            <th data-sortby="last_login">Last sign-in</th>
+            <th data-sortby="created_at">Created</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr data-href="<%= Rsx.Route('_Sys_User_View_Action', row.id) %>">
+            <td class="_Sys_Users_DataGrid__mono"><%= row.id %></td>
+            <td><%= row.email %></td>
+            <td><_Sys_Status_Badge $status=row.status $label=row.status_label /></td>
+            <td>
+                <% if (row.is_developer) { %>
+                    <_Sys_Status_Badge $status="info" $label="Developer" />
+                <% } %>
+            </td>
+            <td><%= row.is_verified ? 'Yes' : 'No' %></td>
+            <td><%= row.membership_count %></td>
+            <td><%= row.last_login ? Rsx_Time.format_datetime(row.last_login) : 'Never' %></td>
+            <td><%= row.created_at ? Rsx_Time.format_datetime(row.created_at) : '' %></td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-person-badge" $title="No identities" $body="Nobody can sign in to this install yet." />
+    </Slot:empty>
+</Define:_Sys_Users_DataGrid>

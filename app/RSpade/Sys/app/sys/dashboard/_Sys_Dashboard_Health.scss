@@ -1,0 +1,166 @@
+._Sys_Dashboard_Health {
+    display: block;
+
+    &__loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 24px 16px;
+    }
+
+    &__spinner {
+        width: 48px;
+        height: 48px;
+    }
+
+    &__loading_text {
+        font-size: 13px;
+        color: var(--rsx-dim);
+    }
+
+    &__summary {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 16px;
+        padding-bottom: 12px;
+        margin-bottom: 4px;
+        border-bottom: 1px solid var(--rsx-border);
+    }
+
+    &__tally {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    &__tally_count {
+        font-size: 15px;
+        font-weight: 600;
+    }
+
+    &__mode {
+        margin-left: auto;
+        font-size: 12px;
+        color: var(--rsx-dim);
+    }
+
+    // A <details> group: the summary line is the only hit area, so it alone gets a
+    // pointer; the chevron turns when the group is open.
+    &__group {
+        margin-top: 12px;
+
+        > summary {
+            list-style: none;
+
+            &::-webkit-details-marker {
+                display: none;
+            }
+        }
+    }
+
+    &__group_title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--rsx-muted);
+        cursor: pointer;
+    }
+
+    &__group_count {
+        color: var(--rsx-dim);
+    }
+
+    &__chevron {
+        font-size: 11px;
+    }
+
+    details[open] > summary > &__chevron {
+        transform: rotate(90deg);
+    }
+
+    &__rows {
+        border: 1px solid var(--rsx-border);
+        border-radius: 6px;
+        margin-top: 6px;
+    }
+
+    &__row {
+        padding: 10px 14px;
+
+        & + & {
+            border-top: 1px solid var(--rsx-border);
+        }
+    }
+
+    // Flex-wrap rather than a viewport breakpoint: the region's own width decides, so
+    // the detail drops under the label wherever the row is narrow.
+    &__row_head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 4px 12px;
+
+        > ._Sys_Status_Badge {
+            flex: 0 0 64px;
+        }
+    }
+
+    &__label {
+        flex: 0 1 240px;
+        min-width: 120px;
+        font-weight: 600;
+        overflow-wrap: anywhere;
+    }
+
+    &__detail {
+        flex: 1 1 320px;
+        min-width: 0;
+        color: var(--rsx-muted);
+        font-size: 13px;
+        overflow-wrap: anywhere;
+    }
+
+    &__remediation {
+        margin-top: 6px;
+        font-size: 13px;
+
+        > summary {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--rsx-accent);
+            cursor: pointer;
+            list-style: none;
+
+            &::-webkit-details-marker {
+                display: none;
+            }
+        }
+    }
+
+    &__remediation_text {
+        @include rsx-text-mono;
+
+        margin-top: 4px;
+        padding: 8px 10px;
+        background: var(--rsx-bg);
+        border: 1px solid var(--rsx-border);
+        border-radius: 4px;
+        font-size: 12px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+    }
+
+    &__skipped {
+        margin-top: 14px;
+        font-size: 12px;
+        color: var(--rsx-dim);
+    }
+}

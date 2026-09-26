@@ -1,0 +1,38 @@
+SPA ERROR SCREENS ARE REGISTERED BY THE BUNDLE
+Date: 2026-09-26
+
+IF YOU DO NOTHING: the first SPA error screen your app shows - a denied @auth
+    action, a URL no action claims, an action that fails to boot - throws
+    "No error screen components are registered" instead of rendering, in the
+    staff app and the portal alike.
+
+SUMMARY
+    Error_Screens (the framework class that mounts an error body into the live
+    SPA layout) used to mount three fixed component names from the template
+    theme. More than one application now runs on the SPA - the framework's own
+    /_sys panel ships its own error bodies - so the running bundle REGISTERS
+    its set once, from a static on_app_modules_define():
+
+        Error_Screens.set_components({
+            unauthorized: 'Unauthorized_Error_Page_Component',
+            not_found: 'Not_Found_Error_Page_Component',
+            fatal: 'Generic_Error_Page_Component',
+        });
+
+    All three keys are required. There is no default.
+
+    Contract: php artisan rsx:man error_pages (SPA ERROR SCREENS)
+
+ACTION REQUIRED - CODE
+    Copy the reference app's registration into your theme, beside your error
+    components:
+        system/app/RSpade/resource/reference_app/theme/components/feedback/errors/error_screen_components.js
+    to
+        rsx/theme/components/feedback/errors/error_screen_components.js
+    If you renamed or replaced any of the three components, name yours in the
+    call instead.
+
+VERIFICATION
+    Browse a SPA URL that does not exist (for example /contacts/does-not-exist
+    in a staff module): the not-found body renders inside your layout, and the
+    browser console shows no "No error screen components are registered".

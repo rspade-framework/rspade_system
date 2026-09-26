@@ -1,0 +1,57 @@
+<%--
+_Sys_Debug_Flags_Reference - read-only: the rsx.console_debug and rsx.development
+values in force for this browser's requests, each with where it came from.
+
+$state - _Sys_Debug_Flags_Controller.state() (required)
+
+Sources: "this browser" (this browser's override), "env" (the environment sets the key
+the configuration reads - named beside it), "config" (a config file's own value). The
+console_debug values are PHP's (Debugger::effective_console_config()); the browser's
+window.rsxapp.console_debug is built from the same configuration and override.
+--%>
+<Define:_Sys_Debug_Flags_Reference>
+<%
+    const _state = this.args.state;
+    const _tables = [
+        {title: 'rsx.console_debug', icon: 'bi-terminal', prefix: 'rsx.console_debug.', rows: _state.console_debug},
+        {title: 'rsx.development', icon: 'bi-wrench', prefix: 'rsx.development.', rows: _state.development},
+    ];
+%>
+<% for (const _table of _tables) { %>
+    <_Sys_Section $title=_table.title $icon=_table.icon $count=_table.rows.length $flush=true>
+        <% if (!_table.rows.length) { %>
+            <_Sys_Empty_State $icon="bi-inbox" $title="Nothing configured" $body=("config('" + _table.title + "') is empty.") />
+        <% } else { %>
+            <div class="table-responsive">
+                <table class="table mb-0">
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Value</th>
+                            <th>Source</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <% for (const _row of _table.rows) { %>
+                            <tr>
+                                <td class="_Sys_Debug_Flags_Reference__key"><%= _table.prefix + _row.key %></td>
+                                <td class="_Sys_Debug_Flags_Reference__value"><%= _Sys_Debug_Flags_Reference.format_value(_row.value) %></td>
+                                <td>
+                                    <% if (_row.source === 'browser') { %>
+                                        <_Sys_Status_Badge $status="info" $label="this browser" />
+                                    <% } else if (_row.source === 'env') { %>
+                                        <_Sys_Status_Badge $status="warn" $label="env" />
+                                        <span class="_Sys_Debug_Flags_Reference__env"><%= _row.env %></span>
+                                    <% } else { %>
+                                        <_Sys_Status_Badge $status="muted" $label="config" />
+                                    <% } %>
+                                </td>
+                            </tr>
+                        <% } %>
+                    </tbody>
+                </table>
+            </div>
+        <% } %>
+    </_Sys_Section>
+<% } %>
+</Define:_Sys_Debug_Flags_Reference>

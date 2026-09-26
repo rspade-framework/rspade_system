@@ -25,6 +25,8 @@ use App\RSpade\Core\Locks\RsxLocks;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Time\Rsx_Time;
 use App\RSpade\Core\Support\Rsx_Fingerprint;
+use Symfony\Component\Process\Exception\ProcessSignaledException;
+use Symfony\Component\Process\InputStream;
 use Symfony\Component\Process\Process;
 
 /**
@@ -66,18 +68,13 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     const CACHE_VERSION = 3;
 
     /**
-     * Ceiling on the container count regardless of how big the box is. A container is a
-     * whole environment (mysqld + redis + rsx-lockd + php), so the useful ceiling is set by
-     * what the docker daemon and the host page cache tolerate, not by core count alone.
+     * Host cores per container. A container is a whole environment (mysqld on tmpfs + redis +
+     * rsx-lockd + php-fpm + nginx + the worker and whatever it spawns), so one container per
+     * core oversubscribes the box several times over - a full run on a 16-core host measured a
+     * load average in the hundreds. ceil(cores / 3) leaves the host responsive while the suite
+     * runs (owner ruling, 2026-09-26).
      */
-    const WORKER_MAX = 8;
-
-    /**
-     * Megabytes of RAM budgeted per container. Each one runs its datadir on tmpfs plus a
-     * mysqld, a redis and a PHP process, so the worker count is floored by memory as well
-     * as by cores: min(WORKER_MAX, cores, floor(MemTotal_MB / WORKER_MEMORY_MB)).
-     */
-    const WORKER_MEMORY_MB = 1000;
+    const CORES_PER_WORKER = 3;
 
     /**
      * The image the workers run, built by the orchestrator from Dockerfile.test.
@@ -188,7 +185,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
                             {--framework : Run framework tests (under app/RSpade) instead of application tests}
                             {--fresh : Drop and recreate the test database, then run all migrations}
                             {--sequential : Force the single-process runner even when the docker gate would pass}
-                            {--workers= : Override the container count for a docker run (default: min(8, cores, RAM_GB))}';
+                            {--workers= : Override the container count for a docker run (default: ceil(cores / 3))}';
 
     /**
      * The console command description.
@@ -1569,9 +1566,9 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
     }
 
     /**
-     * How many containers to run: min(WORKER_MAX, cores, floor(RAM_MB / WORKER_MEMORY_MB)),
-     * floor 1, never more containers than classes. --workers=N overrides the formula (an
-     * experiment knob; the floors of 1 and the class count still apply).
+     * How many containers to run: ceil(cores / CORES_PER_WORKER), floor 1, never more
+     * containers than classes. --workers=N overrides the formula (an experiment knob; the
+     * floors of 1 and the class count still apply).
      *
      * @param int $class_count
      * @return int
@@ -1583,8 +1580,7 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             return max(1, min((int) $override, max(1, $class_count)));
         }
 
-        $by_memory = (int) floor($this->__memory_mb() / self::WORKER_MEMORY_MB);
-        $n = min(self::WORKER_MAX, $this->__cpu_cores(), $by_memory);
+        $n = (int) ceil($this->__cpu_cores() / self::CORES_PER_WORKER);
 
         return max(1, min($n, max(1, $class_count)));
     }
@@ -1600,21 +1596,6 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $count = ($cpuinfo === false) ? 0 : (int) preg_match_all('/^processor\s*:/mi', $cpuinfo);
 
         return max(1, $count);
-    }
-
-    /**
-     * Total system memory in megabytes, from /proc/meminfo's MemTotal (kB).
-     *
-     * @return int
-     */
-    private function __memory_mb(): int
-    {
-        $meminfo = @file_get_contents('/proc/meminfo');
-        if ($meminfo === false || !preg_match('/^MemTotal:\s*(\d+)\s*kB/mi', $meminfo, $m)) {
-            return 0;
-        }
-
-        return (int) ((int) $m[1] / 1024);
     }
 
     /**
@@ -1707,6 +1688,8 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             // it is running the framework suite while it runs the application one is a log
             // that lies.
             '--suite=' . $suite,
+            // Node tears the run down when this pipe closes - see $parent_pipe below.
+            '--watch-parent-stdin=true',
         ]);
 
         $process = new Process($command);
@@ -1714,19 +1697,71 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         $process->setTimeout(null);
         $process->setWorkingDirectory(base_path());
 
+        // THE RUN DIES WITH THIS PROCESS. Node's stdin is a pipe we hold open for as long as
+        // we live and never write to: when this process ends - SIGKILL included, which
+        // nothing can trap - the kernel closes it, node reads end-of-file and tears the
+        // run's containers down (orchestrator.js, --watch-parent-stdin).
+        $parent_pipe = new InputStream();
+        $process->setInput($parent_pipe);
+
+        // A TERMINATION WE CAN SEE IS FORWARDED, AND WAITED FOR. SIGTERM, SIGINT or SIGHUP
+        // here becomes SIGTERM to node, and this process keeps waiting until node has killed
+        // and removed the containers and exited - so the operator's prompt comes back to a
+        // clean box, not to one still being cleaned. (Ctrl+C reaches node directly as well,
+        // through the terminal's process group; its teardown runs once either way.)
+        $interrupted_by = null;
+        $previous_handlers = [];
+        pcntl_async_signals(true);
+        foreach ([SIGTERM, SIGINT, SIGHUP] as $signal) {
+            $previous_handlers[$signal] = pcntl_signal_get_handler($signal);
+            pcntl_signal($signal, static function (int $received) use ($process, &$interrupted_by): void {
+                $interrupted_by = $received;
+                if ($process->isRunning()) {
+                    $process->signal(SIGTERM);
+                }
+            });
+        }
+
         // Streamed, not captured: the operator watches the build and the containers live.
         // The tail is kept only to repeat the last lines if node fails.
         $tail = [];
-        $process->run(function ($type, $buffer) use (&$tail) {
-            $this->output->write($buffer);
+        $orchestrator_signal = null;
+        try {
+            $process->run(function ($type, $buffer) use (&$tail) {
+                $this->output->write($buffer);
 
-            foreach (explode("\n", rtrim($buffer, "\n")) as $line) {
-                $tail[] = $line;
+                foreach (explode("\n", rtrim($buffer, "\n")) as $line) {
+                    $tail[] = $line;
+                }
+                if (count($tail) > self::ORCHESTRATOR_TAIL_LINES) {
+                    $tail = array_slice($tail, -self::ORCHESTRATOR_TAIL_LINES);
+                }
+            });
+        } catch (ProcessSignaledException $e) {
+            // Node was killed by a signal it could not handle (SIGKILL). Its containers end
+            // themselves: each one holds a connection to node's queue socket and exits when
+            // that connection closes (rsx-test-worker-run.sh).
+            $orchestrator_signal = $e->getSignal();
+        } finally {
+            $parent_pipe->close();
+            foreach ($previous_handlers as $signal => $handler) {
+                pcntl_signal($signal, $handler);
             }
-            if (count($tail) > self::ORCHESTRATOR_TAIL_LINES) {
-                $tail = array_slice($tail, -self::ORCHESTRATOR_TAIL_LINES);
-            }
-        });
+        }
+
+        if ($orchestrator_signal !== null) {
+            $this->newLine();
+            $this->error('[ERROR] the test orchestrator was killed (signal ' . $orchestrator_signal . ') - its containers end themselves when it dies; nothing was recorded');
+
+            return 1;
+        }
+
+        if ($interrupted_by !== null) {
+            $this->newLine();
+            $this->error('[ERROR] test run interrupted (signal ' . $interrupted_by . ') - its containers were removed; nothing was recorded');
+
+            return 1;
+        }
 
         if ($process->getExitCode() !== 0) {
             // Node's non-zero exit means the INFRASTRUCTURE failed (image build, zombie

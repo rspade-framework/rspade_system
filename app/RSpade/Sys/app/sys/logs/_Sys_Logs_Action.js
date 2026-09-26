@@ -1,8 +1,6 @@
 /**
- * _Sys_Logs_Action - the control panel's Logs screen.
- *
- * A placeholder page: the chrome, the route and the gate are real; the body is
- * one sentence naming what will live here.
+ * _Sys_Logs_Action - the control panel's Logs screen: the log directory's files, each
+ * row opening the viewer (_Sys_Log_View_Action). See the .jqhtml.
  */
 @route('/_sys/logs')
 @layout('_Sys_Layout')

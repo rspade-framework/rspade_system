@@ -1013,26 +1013,28 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
-     * Is the signed-in identity still an ENABLED member of the site this request serves?
+     * Is the signed-in identity still an ACTIVE member of the site this request serves?
      *
      * THE REQUEST-TIME HALF OF THE FRAMEWORK'S is_enabled CONTRACT. RsxAuth::attempt() and
-     * RsxAuth::login() refuse an identity with no enabled membership at sign-in; this is what
+     * RsxAuth::login() refuse an identity with no active membership at sign-in; this is what
      * keeps a session that was legitimate five minutes ago from outliving the membership behind
-     * it. When the users row for (login_user_id, site_id) is MISSING or its is_enabled is false,
-     * the session is LOGGED OUT and false is returned, and the transport that asked answers
+     * it. When the users row for (login_user_id, site_id) is MISSING or is not active
+     * (User_Model::is_active(): users.is_enabled off, or its SITE disabled or deleted), the
+     * session is LOGGED OUT and false is returned, and the transport that asked answers
      * response_unauthorized() through its ordinary channel - a login redirect for a page, the
      * auth_required envelope for an Ajax call. Turning the switch off therefore ends the sessions
-     * that were already open, which is the only reading of "disabled" worth having.
+     * that were already open - for one membership or, through sites.is_enabled, for a whole
+     * site - which is the only reading of "disabled" worth having.
      *
      * THE EFFECTIVE IDENTITY IS WHAT IS CHECKED. Under impersonation the session carries the
      * TARGET, so it is the target's membership that is asked about: disabling an account ends an
      * impersonation of it, the same as it ends that account's own sessions.
      *
-     * CREATES NOTHING and costs at most ONE query. It reads the accessors, which answer from the
-     * session row the request already loaded, and goes through get_user(), so a request that has
-     * already resolved its user pays nothing at all. A caller with no identity, no tenant, or a
-     * headless API identity (which the Bearer dispatcher has already checked) is permitted here:
-     * "there is nobody to disable" is not a denial.
+     * CREATES NOTHING and costs at most TWO queries - the membership and its site. It reads the
+     * accessors, which answer from the session row the request already loaded, and goes through
+     * get_user(), so a request that has already resolved its user pays only for the site. A
+     * caller with no identity, no tenant, or a headless API identity (which the Bearer dispatcher
+     * has already checked) is permitted here: "there is nobody to disable" is not a denial.
      *
      * Invoked ONCE per request, by the dispatcher immediately before the #[Auth] gates and by the
      * Ajax browser entry point before its gates. Nothing else calls it; CLI processes and the
@@ -1054,7 +1056,7 @@ class Session extends Rsx_System_Model_Abstract
 
         $user = self::get_user();
 
-        if ($user !== null && $user->is_enabled) {
+        if ($user !== null && $user->is_active()) {
             return true;
         }
 
@@ -1712,6 +1714,11 @@ class Session extends Rsx_System_Model_Abstract
         self::$_cli_login_user_id = null;
         self::$_cli_user_id = null;
 
+        // The CLI half of web impersonation (begin_impersonation() in CLI) is context too:
+        // a test that began one must not hand it to the next test.
+        self::$_cli_impersonator_login_user_id = null;
+        self::$_cli_impersonation_started_at = null;
+
         // A declared tenant is script-scoped, and for a test the SCRIPT is the test:
         // leaving it set would leak the declaration into every later test in the run.
         self::$_temporary_site_id = null;
@@ -2285,13 +2292,69 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
+     * Terminate one session of a login identity, or all of them - the DEVELOPER primitive,
+     * for the framework's /_sys panel and any other developer-only operator surface.
+     *
+     * AUTHORIZATION IS Session::is_developer() AND NOTHING ELSE. The admin primitives above
+     * resolve the target's role on the ACTING site (the single-tenant rule), which cannot
+     * answer for an operator who administers the whole install across every site. A
+     * developer (login_users.is_developer, set only by hand in the database) holds install
+     * authority by definition, so no role is consulted and the target may be any identity,
+     * on any site - another developer included. A caller that is not a developer is REFUSED
+     * by a throw, never answered with 0.
+     *
+     * REFUSAL THROWS; ABSENCE RETURNS 0 - the contract of the admin primitives:
+     *   - not a developer                -> AjaxUnauthorizedException
+     *   - $session_id not an active session of $login_user_id -> 0
+     *   - $session_id is the caller's OWN CURRENT session     -> 0 (signing yourself out
+     *     is logout()'s job, never an operator screen's)
+     * With $session_id null every active session of the identity ends EXCEPT the caller's
+     * own current one, so a developer ending their own sessions keeps the browser they are
+     * using.
+     *
+     * Runs through _deactivate_sessions_for_user(), so every ended row gets the realtime
+     * refresh push and one 'session.terminated' event - actor = the developer, scope 'self'
+     * when the identity is the developer's own and 'admin' otherwise, exactly as the admin
+     * primitives report.
+     *
+     * @param int $login_user_id login_users.id whose sessions end
+     * @param int|null $session_id One _sessions.id to end; null for every one
+     * @return int Number of sessions terminated
+     * @throws AjaxUnauthorizedException when the caller is not a developer
+     */
+    public static function developer_terminate_sessions(int $login_user_id, ?int $session_id = null): int
+    {
+        self::init();
+
+        if (!self::is_developer()) {
+            throw new AjaxUnauthorizedException('Only a developer may terminate sessions from here.');
+        }
+
+        $actor_login_user_id = (int) self::get_login_user_id();
+        $current_session_id = self::$_session ? (int) self::$_session->id : null;
+
+        if ($session_id !== null && $session_id === $current_session_id) {
+            return 0;
+        }
+
+        return self::_deactivate_sessions_for_user(
+            $login_user_id,
+            $current_session_id,
+            $actor_login_user_id === $login_user_id ? 'self' : 'admin',
+            $actor_login_user_id,
+            $session_id
+        );
+    }
+
+    /**
      * FRAMEWORK-INTERNAL, NO AUTHORIZATION - deactivate every active session of a login
-     * user (optionally sparing one).
+     * user (optionally sparing one, or narrowed to one).
      *
      * For callers that have NO acting user to authorize against: CLI maintenance, and
      * app-internal flows that have already applied their own authorization and are simply
      * executing the consequence. PUBLIC callers - anything driven by a signed-in operator -
-     * use the guarded functions (terminate_session_for_user / terminate_all_sessions_for_user),
+     * use the guarded functions (terminate_session_for_user / terminate_all_sessions_for_user,
+     * or developer_terminate_sessions for a developer-only surface),
      * which throw on refusal.
      *
      * Fires the same refresh push and 'session.terminated' event per row as the guarded
@@ -2302,19 +2365,26 @@ class Session extends Rsx_System_Model_Abstract
      * @param int|null $except_session_id Optional session ID to exclude
      * @param string $scope Event scope: 'internal' (default), or the guarded wrapper's 'self'/'admin'
      * @param int|null $actor_login_user_id Event actor; null for a genuinely unattributed call
+     * @param int|null $only_session_id Narrow to this one session (still only if it is the
+     *                                  identity's and active); null for every session
      * @return int Number of sessions terminated
      */
     public static function _deactivate_sessions_for_user(
         int $login_user_id,
         ?int $except_session_id = null,
         string $scope = 'internal',
-        ?int $actor_login_user_id = null
+        ?int $actor_login_user_id = null,
+        ?int $only_session_id = null
     ): int {
         $query = static::where('login_user_id', $login_user_id)
             ->where('active', true);
 
         if ($except_session_id !== null) {
             $query->where('id', '!=', $except_session_id);
+        }
+
+        if ($only_session_id !== null) {
+            $query->where('id', $only_session_id);
         }
 
         // Plucked before the UPDATE - see terminate_all_other_sessions() for why.

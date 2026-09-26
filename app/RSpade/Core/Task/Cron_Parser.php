@@ -358,4 +358,15 @@ class Cron_Parser
     {
         return $this->expression;
     }
+
+    /**
+     * The expression as standard 5-field cron: a phrase ("daily at 3am") translated, a
+     * cron expression returned as written.
+     *
+     * @return string
+     */
+    public function get_cron_expression(): string
+    {
+        return self::_normalize_expression($this->expression);
+    }
 }

@@ -1,0 +1,40 @@
+<%--
+_Sys_Stat_Tile - one headline number: label over a big value.
+
+$label - the metric label, plain text (required)
+$value - the value, plain text or a number; 0 renders honestly (required)
+$sub - a small line under the value [optional]
+$tone - ok | warn | fail | info | muted: colours the value and the edge accent [optional]
+$href - makes the whole tile a link, e.g. Rsx.Route('_Sys_Tasks_Action') [optional]
+$icon="bi-cpu" - a Bootstrap Icons class beside the label [optional]
+
+Lay several side by side in a <_Sys_Stat_Grid>:
+
+    <_Sys_Stat_Grid>
+        <_Sys_Stat_Tile $label="Pending mail" $value=_pending $tone=(_pending ? 'warn' : 'ok') $href=_mail_url />
+    </_Sys_Stat_Grid>
+--%>
+<Define:_Sys_Stat_Tile tag="div">
+    <%
+        if (!this.args.label) throw new Error('_Sys_Stat_Tile requires $label');
+        if (this.args.value === undefined) throw new Error('_Sys_Stat_Tile requires $value');
+        const _tones = ['ok', 'warn', 'fail', 'info', 'muted'];
+        if (this.args.tone && !_tones.includes(this.args.tone)) throw new Error('_Sys_Stat_Tile: unknown $tone ' + this.args.tone);
+        this.$.toggleClass('_Sys_Stat_Tile--link', !!this.args.href);
+        for (const _t of _tones) this.$.toggleClass('_Sys_Stat_Tile--' + _t, this.args.tone === _t);
+        const _value = (this.args.value === null || this.args.value === '') ? '—' : this.args.value;
+    %>
+    <% if (this.args.href) { %>
+        <a class="_Sys_Stat_Tile__link" href="<%= this.args.href %>" aria-label="<%= this.args.label %>"></a>
+    <% } %>
+    <div class="_Sys_Stat_Tile__label">
+        <% if (this.args.icon) { %>
+            <i class="<%= 'bi ' + this.args.icon %>"></i>
+        <% } %>
+        <%= this.args.label %>
+    </div>
+    <div class="_Sys_Stat_Tile__value"><%= _value %></div>
+    <% if (this.args.sub) { %>
+        <div class="_Sys_Stat_Tile__sub"><%= this.args.sub %></div>
+    <% } %>
+</Define:_Sys_Stat_Tile>

@@ -10,7 +10,8 @@
  *     node system/bin/rsx-testd/orchestrator.js \
  *          --run-dir=<abs> --workers=N --image=rspade-test:latest \
  *          --dev-image=rspade/rspade-server-dev:latest --project-root=<abs> \
- *          --framework-developer=true|false --suite=framework|application
+ *          --framework-developer=true|false --suite=framework|application \
+ *          [--watch-parent-stdin=true]
  *
  * The sequence: sweep leftover containers -> generate the build-context filter and the
  * Dockerfile -> build the test image (the dev image it is FROM was verified, and built if
@@ -126,6 +127,11 @@ function parse_argv(argv) {
         // names the suite it is running; nothing about the WORK depends on it, because a
         // worker runs whatever class the queue hands it.
         suite: options.suite,
+        // Optional. `true` when the parent (Rsx_Test_Command) holds our stdin open for its
+        // whole life: end-of-file on it means the parent is gone - by any signal, SIGKILL
+        // included - and this run tears down. Off for a hand invocation, whose stdin may be a
+        // terminal or /dev/null and says nothing about anybody's liveness.
+        watch_parent_stdin: options['watch-parent-stdin'] === 'true',
     };
 }
 
@@ -478,24 +484,38 @@ function prune_run_dirs(project_root) {
 // MAIN
 // =============================================================================
 
+/**
+ * Shared between main() and the teardown it registers: once an interrupt has begun, the
+ * teardown owns the exit. main() may still resolve underneath it (killing the containers ends
+ * run_workers()), and an exit(0) from there would report an interrupted run as a completed one.
+ */
+const state = { interrupted: false };
+
 async function main() {
     const options = parse_argv(process.argv);
     const run_id = path.basename(options.run_dir);
 
-    // Registered before anything is created, so an interrupt at any point takes the
-    // containers, the socket and the generated build filter with it.
+    // TEARDOWN ON INTERRUPT. Registered before anything is created, so an interrupt at any
+    // point takes THIS run's containers, the socket and the generated build filter with it.
+    // Only this run's label VALUE is acted on (rsx-test-run=<run_id>), never the bare key:
+    // leftovers of other runs are the sweep's business at the start of a run, not ours.
+    //
+    // SIGKILL cannot be trapped, and neither can a parent that died by it. Those two are
+    // covered structurally rather than here: every container holds a connection to the
+    // queue socket and ends itself the moment that connection closes (the worker wrapper,
+    // resource/docker/rsx-test-worker-run.sh), and PHP keeps our stdin open for its whole
+    // life, so its death - by any signal - reads here as end-of-file on stdin.
     let queue = null;
-    let interrupted = false;
 
-    const handle_signal = async (signal) => {
-        if (interrupted) {
+    const teardown = async (reason) => {
+        if (state.interrupted) {
             return;
         }
-        interrupted = true;
+        state.interrupted = true;
 
-        log_error('received ' + signal + ' - killing test containers');
+        log_error(reason + ' - killing this run\'s test containers');
 
-        const ids = await docker.ps_ids(RUN_LABEL, true);
+        const ids = await docker.ps_ids(RUN_LABEL + '=' + run_id, true);
         if (ids.length > 0) {
             await docker.kill_containers(ids);
             await docker.rm_containers(ids);
@@ -510,8 +530,23 @@ async function main() {
         process.exit(1);
     };
 
-    process.on('SIGTERM', () => { handle_signal('SIGTERM'); });
-    process.on('SIGINT', () => { handle_signal('SIGINT'); });
+    // Our stdout and stderr are pipes to that same parent. When it dies they break, and an
+    // unhandled EPIPE would crash this process before the teardown below has killed a single
+    // container. There is nobody left to read a report at that point, so the write error has
+    // no audience; the stdin watch is what acts on the death.
+    for (const stream of [process.stdout, process.stderr]) {
+        stream.on('error', () => {});
+    }
+
+    for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+        process.on(signal, () => { teardown('received ' + signal); });
+    }
+
+    if (options.watch_parent_stdin) {
+        process.stdin.on('end', () => { teardown('the parent process is gone (stdin closed)'); });
+        process.stdin.on('error', () => { teardown('the parent process is gone (stdin error)'); });
+        process.stdin.resume();
+    }
 
     if (!(await docker.info())) {
         throw new Fatal('the docker daemon is not reachable (docker info failed)');
@@ -548,7 +583,13 @@ async function main() {
     try {
         await run_workers(options, queue, run_id);
     } finally {
-        await queue.close();
+        if (!state.interrupted) {
+            await queue.close();
+        }
+    }
+
+    if (state.interrupted) {
+        return;
     }
 
     log(
@@ -567,8 +608,16 @@ async function main() {
 }
 
 main().then(
-    () => process.exit(0),
+    () => {
+        // An interrupted run exits from its teardown, with 1, once the containers are gone.
+        if (!state.interrupted) {
+            process.exit(0);
+        }
+    },
     (err) => {
+        if (state.interrupted) {
+            return;
+        }
         log_error(err instanceof Fatal ? err.message : (err.stack || String(err)));
         process.exit(1);
     }

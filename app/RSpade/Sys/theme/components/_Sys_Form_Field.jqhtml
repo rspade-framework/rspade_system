@@ -1,0 +1,32 @@
+<%--
+_Sys_Form_Field - presentation around ONE panel input: label, required mark, help.
+
+$label - the label, plain text [optional]
+$required - shows an asterisk. PRESENTATION ONLY: it announces a SERVER rule and
+            enforces nothing - validation lives in the endpoint, once.
+$help - a muted line under the input, plain text [optional]
+
+The input is the loose content, and $name goes on the INPUT, never here. Error
+markup is not rendered here either: a failed submit is drawn by the form's one
+error renderer, under the field it targets (this element is its .form-group).
+
+    <_Sys_Form_Field $label="Explanation" $required=true $help="Recorded on the task.">
+        <_Sys_Textarea_Input $name="explanation" $max_length=-1 />
+    </_Sys_Form_Field>
+--%>
+<Define:_Sys_Form_Field tag="div" class="form-group">
+    <% if (this.args.label) { %>
+        <label class="_Sys_Form_Field__label form-label" $sid="label">
+            <%= this.args.label %>
+            <% if (this.args.required) { %>
+                <span class="_Sys_Form_Field__required">*</span>
+            <% } %>
+        </label>
+    <% } %>
+    <div class="_Sys_Form_Field__control">
+        <%= content() %>
+    </div>
+    <% if (this.args.help) { %>
+        <div class="_Sys_Form_Field__help"><%= this.args.help %></div>
+    <% } %>
+</Define:_Sys_Form_Field>

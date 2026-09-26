@@ -1,0 +1,86 @@
+<%--
+_Sys_Task_View_Action - one _tasks row: its facts, params, result, error and logs,
+with Kill (while running) and Re-dispatch (failed or killed one-shot rows).
+
+Three states: loading, a load failure (_Sys_Not_Found for a missing id,
+_Sys_Error for anything else), and the record.
+--%>
+<Define:_Sys_Task_View_Action>
+<_Sys_Page_Scaffold>
+    <Slot:main>
+    <% if (this.data.loading) { %>
+        <Spinner class="_Sys_Task_View_Action__loading" />
+    <% } else if (this.data.load_error && this.data.load_error.code === Ajax.ERROR_NOT_FOUND) { %>
+        <_Sys_Not_Found $record_type="Task" $back_label="Back to tasks" $back_url=(Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'history'})) />
+    <% } else if (this.data.load_error) { %>
+        <_Sys_Error $error_data=this.data.load_error.message />
+    <% } else { %>
+        <%
+            const _t = this.data.task;
+            const _when = (iso) => iso ? Rsx_Time.format_datetime(iso) : null;
+            const _heartbeat = _t.last_heartbeat_at
+                ? Rsx_Time.format_datetime(_t.last_heartbeat_at) + ' (' + Rsx_Time.relative(_t.last_heartbeat_at) + ')'
+                : null;
+            const _logs = _t.logs.join('\n');
+        %>
+        <_Sys_Page_Header $title=('Task #' + _t.id) $icon="bi-list-check" $subtitle=(_t.class + '::' + _t.method)>
+            <Slot:meta>
+                <_Sys_Status_Badge $status=_t.status />
+                <% if (_t.is_cron) { %>
+                    <span class="_Sys_Task_View_Action__cron">schedule</span>
+                <% } %>
+            </Slot:meta>
+            <Slot:actions>
+                <% if (_t.can_kill) { %>
+                    <button type="button" class="btn btn-sm btn-danger" data-action="kill"><i class="bi bi-x-octagon"></i> Kill</button>
+                <% } %>
+                <% if (_t.can_redispatch) { %>
+                    <button type="button" class="btn btn-sm btn-primary" data-action="redispatch"><i class="bi bi-arrow-repeat"></i> Re-dispatch</button>
+                <% } %>
+                <a class="btn btn-sm btn-secondary" href="<%= Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'history'}) %>">All tasks</a>
+            </Slot:actions>
+        </_Sys_Page_Header>
+
+        <_Sys_Section $title="Details" $icon="bi-info-circle">
+            <_Sys_Detail_List>
+                <_Sys_Detail_Item $label="Status"><_Sys_Status_Badge $status=_t.status /></_Sys_Detail_Item>
+                <_Sys_Detail_Item $label="Status reason" $value=_t.status_reason />
+                <_Sys_Detail_Item $label="Task" $value=(_t.class + '::' + _t.method) $mono=true />
+                <_Sys_Detail_Item $label="Queue" $value=_t.queue />
+                <_Sys_Detail_Item $label="Scheduled for" $value=_when(_t.scheduled_for) />
+                <_Sys_Detail_Item $label="Created" $value=_when(_t.created_at) />
+                <_Sys_Detail_Item $label="Started" $value=_when(_t.started_at) />
+                <_Sys_Detail_Item $label="Completed" $value=_when(_t.completed_at) />
+                <_Sys_Detail_Item $label="Last heartbeat" $value=_heartbeat />
+                <_Sys_Detail_Item $label="Worker PID" $value=_t.worker_pid $mono=true />
+                <_Sys_Detail_Item $label="Lock key" $value=_t.lock_key $mono=true />
+                <_Sys_Detail_Item $label="Consecutive failures" $value=_t.consecutive_failures />
+                <_Sys_Detail_Item $label="Last error at" $value=_when(_t.last_error_at) />
+                <% if (_t.is_cron) { %>
+                    <_Sys_Detail_Item $label="Schedule" $value=_t.cron_expression $mono=true />
+                    <_Sys_Detail_Item $label="Next run" $value=_when(_t.next_run_at) />
+                <% } %>
+            </_Sys_Detail_List>
+        </_Sys_Section>
+
+        <% if (_t.error) { %>
+            <_Sys_Section $title="Error" $icon="bi-exclamation-octagon">
+                <_Sys_Code_Pane $text=_t.error />
+            </_Sys_Section>
+        <% } %>
+
+        <_Sys_Section $title="Params" $icon="bi-box-arrow-in-right">
+            <_Sys_Code_Pane $json=_t.params />
+        </_Sys_Section>
+
+        <_Sys_Section $title="Result" $icon="bi-box-arrow-right">
+            <_Sys_Code_Pane $json=_t.result />
+        </_Sys_Section>
+
+        <_Sys_Section $title="Logs" $icon="bi-journal-text" $count=_t.logs.length>
+            <_Sys_Code_Pane $text=_logs $max_height=600 />
+        </_Sys_Section>
+    <% } %>
+    </Slot:main>
+</_Sys_Page_Scaffold>
+</Define:_Sys_Task_View_Action>

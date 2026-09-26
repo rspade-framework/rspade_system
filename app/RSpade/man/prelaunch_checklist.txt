@@ -1557,6 +1557,27 @@ ENTRY 14: THE SCHEMA CONTRACT, THE HOSTNAME AND THE DOCUMENT SANDBOX (rsx:health
         php artisan rsx:man prod            (APP_URL, the build, the deployment)
 
 
+ENTRY 15: DISABLED SITES (a switch that looks like a wrong password)
+
+    What to audit
+        Every site row that is switched off, and whether it is meant to be:
+
+            php artisan db:query "SELECT id, name, is_enabled, deleted_at FROM sites WHERE id <> 0 AND (is_enabled = 0 OR deleted_at IS NOT NULL)"
+
+    Why it matters
+        sites.is_enabled is enforced by the framework: a membership on a
+        disabled or deleted site cannot sign in, a live session on it ends at
+        its next request, and an API key held through it stops working. The
+        refusal is deliberately indistinguishable from a wrong password (the
+        audit trail records failed_disabled), so a site left disabled by old
+        data or a test fixture fails silently for every one of its users.
+
+    Guidelines
+        1. Every row the query returns is either intentionally closed or is
+           re-enabled before launch.
+        2. Re-enabling is a data change (UPDATE sites SET is_enabled = 1) or
+           the Sites screen in the /_sys panel; no code changes.
+
 SEE ALSO
     rsx:man login_redirect
     rsx:man session

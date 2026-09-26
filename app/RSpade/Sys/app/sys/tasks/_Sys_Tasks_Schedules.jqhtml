@@ -1,0 +1,99 @@
+<%--
+_Sys_Tasks_Schedules - the Tasks screen's Schedules tab: every #[Schedule]
+declaration beside its tracker row, with Run now per schedule.
+
+Self-loading (_Sys_Tasks_Controller.schedules); Refresh reloads this region only.
+A tracker is never terminal, so its status says little: "Last success" is its
+completed_at, "Failures" the runs that threw since. A row whose failures reach
+rsx.tasks.failing_schedule_warn_after is toned fail. The task name and the last
+error link to the tracker's detail view.
+--%>
+<Define:_Sys_Tasks_Schedules>
+<% if (this.data.loading) { %>
+    <_Sys_Section $title="Schedules" $icon="bi-calendar-event">
+        <Spinner class="_Sys_Tasks_Schedules__loading" />
+    </_Sys_Section>
+<% } else if (this.data.error_data) { %>
+    <_Sys_Section $title="Schedules" $icon="bi-calendar-event">
+        <_Sys_Error $error_data=this.data.error_data />
+    </_Sys_Section>
+<% } else { %>
+    <%
+        const _rows = this.data.rows;
+    %>
+    <_Sys_Section $title="Schedules" $icon="bi-calendar-event" $count=_rows.length $flush=true>
+        <Slot:actions>
+            <button type="button" class="btn btn-sm btn-secondary" data-action="refresh">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </Slot:actions>
+        <Slot:body>
+            <% if (!_rows.length) { %>
+                <_Sys_Empty_State $icon="bi-calendar-x" $title="No schedules" $body="No task method declares #[Schedule]." />
+            <% } else { %>
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                        <thead>
+                            <tr>
+                                <th>Task</th>
+                                <th>Schedule</th>
+                                <th>Status</th>
+                                <th>Next run</th>
+                                <th>Last success</th>
+                                <th>Failures</th>
+                                <th>Last error</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <% for (const [_i, row] of _rows.entries()) { %>
+                                <% const _t = row.tracker; %>
+                                <tr class="<%= row.failing ? '_Sys_Tasks_Schedules__row--fail' : '' %>">
+                                    <td>
+                                        <div class="_Sys_Tasks_Schedules__class"><%= row.class_short %>::</div>
+                                        <% if (_t) { %>
+                                            <a class="_Sys_Tasks_Schedules__mono" href="<%= Rsx.Route('_Sys_Task_View_Action', _t.id) %>"><%= row.method %></a>
+                                        <% } else { %>
+                                            <span class="_Sys_Tasks_Schedules__mono"><%= row.method %></span>
+                                        <% } %>
+                                        <% if (row.concurrency) { %>
+                                            <span class="_Sys_Tasks_Schedules__tag"><%= row.concurrency %></span>
+                                        <% } %>
+                                    </td>
+                                    <td>
+                                        <div><%= row.schedule %></div>
+                                        <% if (row.cron !== row.schedule) { %>
+                                            <div class="_Sys_Tasks_Schedules__cron"><%= row.cron %></div>
+                                        <% } %>
+                                    </td>
+                                    <% if (!_t) { %>
+                                        <td colspan="5" class="_Sys_Tasks_Schedules__dim">not yet scheduled</td>
+                                    <% } else { %>
+                                        <td><_Sys_Status_Badge $status=(row.failing ? 'fail' : _t.status) $label=(row.failing ? 'Failing' : null) /></td>
+                                        <td><%= _t.next_run_at ? Rsx_Time.format_datetime(_t.next_run_at) : '' %></td>
+                                        <td><%= _t.completed_at ? Rsx_Time.format_datetime(_t.completed_at) : 'never' %></td>
+                                        <td class="<%= row.failing ? '_Sys_Tasks_Schedules__failures' : '' %>"><%= _t.consecutive_failures || '' %></td>
+                                        <td>
+                                            <% if (_t.last_error_at && _t.consecutive_failures > 0) { %>
+                                                <a class="_Sys_Tasks_Schedules__error" href="<%= Rsx.Route('_Sys_Task_View_Action', _t.id) %>">
+                                                    <span class="_Sys_Tasks_Schedules__error-at"><%= Rsx_Time.relative(_t.last_error_at) %></span>
+                                                    <%= _t.error_excerpt || '' %>
+                                                </a>
+                                            <% } %>
+                                        </td>
+                                    <% } %>
+                                    <td class="text-end">
+                                        <button type="button" class="btn btn-sm btn-primary" data-action="run_now" data-index="<%= _i %>">
+                                            <i class="bi bi-play-fill"></i> Run now
+                                        </button>
+                                    </td>
+                                </tr>
+                            <% } %>
+                        </tbody>
+                    </table>
+                </div>
+            <% } %>
+        </Slot:body>
+    </_Sys_Section>
+<% } %>
+</Define:_Sys_Tasks_Schedules>

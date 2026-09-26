@@ -1,0 +1,38 @@
+._Sys_User_Security {
+    display: block;
+
+    // One line per row; a narrow screen scrolls the table sideways instead.
+    td,
+    th {
+        white-space: nowrap;
+    }
+
+    &__loading {
+        display: block;
+        width: 40px;
+        height: 40px;
+        margin: 20px auto;
+    }
+
+    &__stack {
+        display: flex;
+        flex-direction: column;
+        gap: var(--rsx-block-gap);
+    }
+
+    // The section is flush for its table; the facts above it keep a card's padding.
+    &__facts {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--rsx-border);
+    }
+
+    &__dim {
+        margin-left: 6px;
+        color: var(--rsx-dim);
+    }
+
+    // A row's own action, pinned to the right edge of the table.
+    &__actions {
+        text-align: right;
+    }
+}

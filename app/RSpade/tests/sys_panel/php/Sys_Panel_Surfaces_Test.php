@@ -30,10 +30,16 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
         '/_sys'             => '_Sys_Dashboard_Action',
         '/_sys/debug-flags' => '_Sys_Debug_Flags_Action',
         '/_sys/tasks'       => '_Sys_Tasks_Action',
+        '/_sys/tasks/:id'   => '_Sys_Task_View_Action',
         '/_sys/email'       => '_Sys_Email_Action',
+        '/_sys/email/:id'   => '_Sys_Email_View_Action',
+        '/_sys/email/sms/:id' => '_Sys_Sms_View_Action',
         '/_sys/logs'        => '_Sys_Logs_Action',
+        '/_sys/logs/:file'  => '_Sys_Log_View_Action',
         '/_sys/sites'       => '_Sys_Sites_Action',
+        '/_sys/sites/:id'   => '_Sys_Site_View_Action',
         '/_sys/users'       => '_Sys_Users_Action',
+        '/_sys/users/:id'   => '_Sys_User_View_Action',
     ];
 
     private static function __routes(): array
@@ -77,10 +83,10 @@ class Sys_Panel_Surfaces_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * RP-SPA-02 - The panel has EXACTLY these seven screens: no eighth SPA route
+     * RP-SPA-02 - The panel has EXACTLY these SPA routes: no other SPA route
      * arrived on the panel's bootstrap controller unnoticed.
      */
-    public static function test_the_panel_has_exactly_seven_screens()
+    public static function test_the_panel_has_exactly_these_screens()
     {
         $found = [];
 

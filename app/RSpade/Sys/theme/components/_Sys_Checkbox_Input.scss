@@ -1,0 +1,18 @@
+._Sys_Checkbox_Input {
+    display: block;
+
+    // Form_Utils marks the INPUT COMPONENT (this element, found by its data-name) with
+    // .is-invalid, not the box inside it, so Bootstrap's own .form-check-input.is-invalid
+    // rule never matches. This carries the invalid state down to the box and its label.
+    &.is-invalid .form-check-input {
+        border-color: var(--bs-form-invalid-border-color);
+
+        &:focus {
+            box-shadow: 0 0 0 0.25rem rgba(var(--bs-danger-rgb), 0.25);
+        }
+    }
+
+    &.is-invalid .form-check-label {
+        color: var(--bs-form-invalid-color);
+    }
+}

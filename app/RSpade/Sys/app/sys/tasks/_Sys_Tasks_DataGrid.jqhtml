@@ -1,0 +1,62 @@
+<%--
+_Sys_Tasks_DataGrid - the Tasks screen's history: every _tasks row, newest first.
+
+Server half: _Sys_Tasks_DataGrid.php (filters status / class / since, search on
+class or method). State lives in the URL hash under the grid key "tasks", so the
+Dashboard's failed-tasks tile links here as
+Rsx.Route('_Sys_Tasks_Action', {}, {tab: 'history', tasks_f_status: 'failed', tasks_f_since: '24h'}).
+
+Every row links to its detail screen (_Sys_Task_View_Action).
+--%>
+<Define:_Sys_Tasks_DataGrid extends="_Sys_DataGrid_Abstract"
+    $grid_key="tasks"
+    $data_source=_Sys_Tasks_Controller.datagrid_fetch
+    $sort="id"
+    $order="desc"
+    $per_page=25
+    $search="Search class or method..."
+    $filters=([
+        {key: 'status', label: 'All statuses', options: [
+            {value: 'pending', label: 'Pending'},
+            {value: 'running', label: 'Running'},
+            {value: 'completed', label: 'Completed'},
+            {value: 'failed', label: 'Failed'},
+            {value: 'killed', label: 'Killed'},
+        ]},
+        {key: 'class', label: 'All classes', options: _Sys_Tasks_Controller.class_options},
+        {key: 'since', label: 'Finished any time', options: [
+            {value: '1h', label: 'Finished in the last hour'},
+            {value: '24h', label: 'Finished in the last 24 hours'},
+            {value: '7d', label: 'Finished in the last 7 days'},
+            {value: '30d', label: 'Finished in the last 30 days'},
+        ]},
+    ])>
+    <Slot:header>
+        <tr>
+            <th data-sortby="id">ID</th>
+            <th>Task</th>
+            <th>Status</th>
+            <th>Queue</th>
+            <th data-sortby="started_at">Started</th>
+            <th data-sortby="completed_at">Finished</th>
+        </tr>
+    </Slot:header>
+    <Slot:row>
+        <tr data-href="<%= Rsx.Route('_Sys_Task_View_Action', row.id) %>">
+            <td class="_Sys_Tasks_DataGrid__id"><%= row.id %></td>
+            <td>
+                <span class="_Sys_Tasks_DataGrid__task"><%= row.class_short %>::<%= row.method %></span>
+                <% if (row.is_cron) { %>
+                    <span class="_Sys_Tasks_DataGrid__cron">schedule</span>
+                <% } %>
+            </td>
+            <td><_Sys_Status_Badge $status=row.status /></td>
+            <td><%= row.queue %></td>
+            <td><%= row.started_at ? Rsx_Time.format_datetime(row.started_at) : '' %></td>
+            <td><%= row.completed_at ? Rsx_Time.format_datetime(row.completed_at) : '' %></td>
+        </tr>
+    </Slot:row>
+    <Slot:empty>
+        <_Sys_Empty_State $icon="bi-list-check" $title="No tasks yet" $body="Nothing has been dispatched on this install." />
+    </Slot:empty>
+</Define:_Sys_Tasks_DataGrid>
