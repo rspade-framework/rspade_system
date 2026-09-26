@@ -189,6 +189,48 @@ it is a coin toss.
 
 `Rpc_Lifecycle_Test::__poll_until()` is the worked example.
 
+## Shared global state (settle, then assert)
+
+**A test may not assert on shared global state unless it first brings that state to a known
+baseline inside the test itself.** Shared global state is anything another class can move:
+the on-disk manifest index and the build tree, caches (`RsxCache`, Redis), the scanned
+trees' files and mtimes, queues (`_tasks`, the mail queue), the lock daemon. At least
+sixteen classes create and delete fixture files inside scanned trees, and manifest change
+detection is size + mtime, so the next boot after any of them legitimately rebuilds. The
+docker queue decides which classes precede this one, so "the classes before me left it
+alone" is never true by construction.
+
+The pattern is SETTLE-THEN-ASSERT: perform the operation once to absorb whatever the tree
+already carries, take the baseline, perform it again, assert on the second.
+`Manifest_Boot_Is_Idle_Test::test_a_child_boot_does_not_rewrite_the_index` is the worked
+example (a settling child boot, then a measured one). Where the property is a DECISION rather
+than an effect, test the decision as a pure function over synthetic input instead
+(`Manifest_Freshness_Decision_Test` over `Manifest_Store::stale_reason()`), and keep the
+effect test as the thin end-to-end proof.
+
+## Detached processes are contained at the class boundary
+
+`Rsx_Artisan::dispatch_detached()` returns before its child has done anything, so a detached
+process a test starts (the task worker `Task::dispatch()` spawns) could otherwise outlive its
+class and act during a later one - rebuild the manifest, claim a queue row. The harness owns
+every such process (`Core/Testing/Rsx_Test_Detached_Processes.php`):
+
+- under the suite, `dispatch_detached()` REGISTERS the child - its pid and kernel start time,
+  in the per-run file `Rsx_Project_Paths::test_detached_registry_file()` - before it returns,
+  from whichever process spawned it (the runner, a synchronous child, a detached child);
+- `Rsx_Test_Abstract::run()` CONTAINS at the end of every outermost class run, and the runner
+  once more at the end of the run (sequential loop and docker worker alike): it WAITS until
+  every registered process has exited, repeating until the registry stays empty, so a
+  detached grandchild is waited for too.
+
+**The wait has no deadline**, by mandate. `rsx:task:worker` exits as soon as no pending task
+remains, so a boundary costs exactly the work the class queued (a few seconds per
+task-dispatching class under docker contention). A detached command that never ends by design
+would hold the boundary open: that is a visible hang, and the fix is to give that command an
+end or to terminate it here deliberately - never to cap the wait. Identity is pid + start
+time, so a reused pid is never waited for; a zombie counts as exited.
+`tests/harness/php/Detached_Process_Containment_Test.php` pins the mechanism.
+
 ## Running
 
 ```bash

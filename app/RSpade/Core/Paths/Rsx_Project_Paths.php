@@ -311,6 +311,12 @@ class Rsx_Project_Paths
         return self::tmp_path('test-storage');
     }
 
+    /** The test run's registry of detached processes a test started (Rsx_Test_Detached_Processes). */
+    public static function test_detached_registry_file(): string
+    {
+        return self::tmp_path('test-detached-processes');
+    }
+
     /** Cached test results, keyed by build. */
     public static function test_results_dir(): string
     {

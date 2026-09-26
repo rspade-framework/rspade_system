@@ -25,6 +25,18 @@ Inner class: `Nested_Run_Fixture_Test_Abstract` - declared abstract so the runne
 | harness-08 | a result recorded before a nested run exists to be lost | __pass() | entry present | implemented |
 | harness-09 | a nested `run()` returns its OWN results and leaves the caller's array and `$current_test` untouched | `Nested_Run_Fixture_Test_Abstract::run()` inside a test_* method | 2 inner results; caller results identical; current_test restored | implemented |
 
+## Detached_Process_Containment_Test (php, no transactions)
+
+Subject: `Core/Testing/Rsx_Test_Detached_Processes.php` - the class-boundary containment of
+detached processes (see `tests/CLAUDE.md`, "Detached processes are contained at the class
+boundary").
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| harness-10 | `dispatch_detached()` under the suite registers its child before returning | `Rsx_Artisan::dispatch_detached('--version')` | registry holds a `<pid> <start time>` line; `contain()` empties it | implemented |
+| harness-11 | `contain()` returns only after a registered process has exited | a registered `bash -c 'sleep 1'` child | the child is no longer running when `contain()` returns | implemented |
+| harness-12 | a reused pid is not mistaken for the registered process | registry line naming this running process with a foreign start time | `contain()` returns at once and consumes the entry | implemented |
+
 ## Planned
 
 | ID | Purpose | Type | Reason | Status |

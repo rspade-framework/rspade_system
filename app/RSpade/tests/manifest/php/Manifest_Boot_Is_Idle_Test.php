@@ -13,7 +13,7 @@ use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
- * A boot on an unchanged tree does not rebuild the manifest.
+ * A boot on a tree unchanged since the last build does not rebuild the manifest.
  *
  * The index records the generated stub files (under the tmp tree) as entries the source
  * scan never returns. Cache validation must recognise them as generated through the path
@@ -21,7 +21,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * deleted file, every boot rebuilds, and the rebuild writes the same entries back.
  *
  * The proof is a child boot: inside the suite the manifest carries the test trees the
- * loaded index does not, so in-process validation is not a measure of freshness.
+ * loaded index does not, so in-process validation is not a measure of freshness. The rule
+ * itself, over synthetic data, is Manifest_Freshness_Decision_Test.
  */
 class Manifest_Boot_Is_Idle_Test extends Rsx_Test_Abstract
 {
@@ -49,20 +50,32 @@ class Manifest_Boot_Is_Idle_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A real boot in a child process leaves the index file untouched.
+     * A second child boot, on the tree the first one left, leaves the index file untouched.
+     *
+     * The index on disk is SHARED state: any class that ran before this one may have added or
+     * removed a file in a scanned tree, and the next boot then rebuilds - correctly. So the
+     * first boot SETTLES the index (it may rebuild, absorbing whatever changed), and only the
+     * second is measured: nothing changed between the two, so it must not write.
+     *
+     * The index is saved by writing a temp file and renaming it over the old one, so a save
+     * always moves the inode - which catches a rewrite inside the same mtime second.
      */
     public static function test_a_child_boot_does_not_rewrite_the_index()
     {
         $index = Rsx_Project_Paths::manifest_index_file();
-        clearstatcache(true, $index);
-        $before = filemtime($index);
 
         $output = [];
         $exit = Rsx_Artisan::run('--version', [], $output);
-
-        static::__assert_equals(0, $exit, 'the child booted: ' . implode("\n", $output));
+        static::__assert_equals(0, $exit, 'the settling child booted: ' . implode("\n", $output));
 
         clearstatcache(true, $index);
-        static::__assert_equals($before, filemtime($index), 'the index was not rewritten by a boot on an unchanged tree');
+        $before = [fileinode($index), filemtime($index)];
+
+        $output = [];
+        $exit = Rsx_Artisan::run('--version', [], $output);
+        static::__assert_equals(0, $exit, 'the measured child booted: ' . implode("\n", $output));
+
+        clearstatcache(true, $index);
+        static::__assert_equals($before, [fileinode($index), filemtime($index)], 'the index was not rewritten by a boot on a tree unchanged since the last build');
     }
 }

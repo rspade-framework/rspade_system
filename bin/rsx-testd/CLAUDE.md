@@ -304,7 +304,11 @@ Started in the FOREGROUND as a child process (never `-d`), combined output to
   cache read-only gives a worker exactly the browsers the sequential run uses; absent, the
   container is short a browser in precisely the way the host is.
 - **No codebase mount.** The tree is baked, so `storage/`, the flock directory and the build
-  output are per-container and writable.
+  output are per-container and writable. So is `tmp/`, which is why the detached-process
+  registry (`Rsx_Test_Detached_Processes`) is per-container: a container's class boundary
+  waits for the detached processes ITS classes started and never for another container's.
+  The worker gets that containment from `$class::run()` and once more after the queue
+  drains - nothing on the node side is involved (`app/RSpade/tests/CLAUDE.md`).
 
 **The third CMD argument is the SUITE** (`framework` or `application`), so a worker's own
 header names what it is running. Nothing about the work depends on it - a worker runs

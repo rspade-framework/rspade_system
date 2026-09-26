@@ -509,39 +509,32 @@ class Manifest_Store
 
     public static function _validate_cached_data()
     {
-        // If cache exists, check if anything changed
-        $files = Manifest::_get_rsx_files();
+        // Observe the tree once: every file the source scan returns, with its size and mtime
+        // as they are on disk right now (null when the scan named a file that has since gone).
+        $observed = [];
 
-        // Check for changed files
-        foreach ($files as $file) {
-            if (Manifest::_has_changed($file)) {
-                return false;
-            }
+        foreach (Manifest::_get_rsx_files() as $file) {
+            $absolute_path = base_path($file);
+
+            $observed[$file] = file_exists($absolute_path)
+                ? [filesize($absolute_path), filemtime($absolute_path)]
+                : null;
         }
 
-        // Check for deleted files. file_index is the WHOLE tree - path => [size, mtime] -
-        // which is exactly what this sweep and _has_changed() need, and is why the cold half
-        // of the index never has to be loaded to answer "is the cache stale".
-        $existing_files = array_flip($files);
+        $stale_reason = self::stale_reason(
+            Manifest::$data['data']['file_index'] ?? [],
+            Manifest::$data['data']['files'] ?? [],
+            $observed
+        );
 
-        foreach (array_keys(Manifest::$data['data']['file_index'] ?? []) as $cached_file) {
-            // A generated entry (a stub under the tmp tree, a build output) is recorded in
-            // the index but never returned by the source scan, so its absence from the scan
-            // says nothing about staleness. The owner's predicate decides what is generated;
-            // a directory-name literal here is what made every boot rebuild once the
-            // stub trees moved.
-            if (Rsx_Project_Paths::is_generated_key($cached_file)) {
-                continue;
+        if ($stale_reason !== null) {
+            // Only show the message once per page load
+            if (!Manifest::$__shown_rescan_message) {
+                console_debug('MANIFEST', '* ' . $stale_reason . ' *');
+                Manifest::$__shown_rescan_message = true;
             }
-            if (!isset($existing_files[$cached_file])) {
-                // Only show the message once per page load
-                if (!Manifest::$__shown_rescan_message) {
-                    console_debug('MANIFEST', '* Deleted file ' . $cached_file . ' is triggering manifest rescan *');
-                    Manifest::$__shown_rescan_message = true;
-                }
 
-                return false;
-            }
+            return false;
         }
 
         // Phase-6 stub outputs (controller js-stubs + model js-model-stubs) live in the
@@ -572,6 +565,71 @@ class Manifest_Store
         }
 
         return true;
+    }
+
+    /**
+     * THE freshness decision: does a loaded index still describe the tree the scan observed?
+     *
+     * Returns null when it does, or a one-line reason naming the first file that makes it
+     * stale. Pure over its arguments - no filesystem, no manifest statics - so the rule is
+     * asserted directly with synthetic data (Manifest_Freshness_Decision_Test).
+     *
+     * Two sweeps, in this order:
+     *
+     *   1. Every SCANNED file must be recorded with the size and mtime observed now. The live
+     *      `files` entry wins over the `file_index` entry when both exist (during a build the
+     *      index is the stale half; the live map is what the build has already updated). A
+     *      file recorded nowhere is new; a file the scan named but that is gone is deleted.
+     *   2. Every INDEXED file must still be scanned - except a generated entry (a stub under
+     *      the tmp tree, a build output), which the index records and the source scan never
+     *      returns, so its absence from the scan says nothing about staleness. The path
+     *      owner's predicate decides what is generated; a directory-name literal here is what
+     *      made every boot rebuild once the stub trees moved.
+     *
+     * @param array $file_index Manifest::$data['data']['file_index']: path => [size, mtime]
+     * @param array $live_files Manifest::$data['data']['files']: path => metadata with size/mtime
+     * @param array $observed   path => [size, mtime] for every file the source scan returned,
+     *                          or null for a scanned file no longer on disk
+     * @return string|null Null when fresh, else why the index is stale
+     */
+    public static function stale_reason(array $file_index, array $live_files, array $observed): ?string
+    {
+        foreach ($observed as $file => $now) {
+            $live = $live_files[$file] ?? null;
+            $indexed = $file_index[$file] ?? null;
+
+            if ($live === null && $indexed === null) {
+                return 'New file ' . $file . ' is triggering manifest rescan';
+            }
+
+            $old_size = $live !== null ? ($live['size'] ?? null) : ($indexed[0] ?? null);
+            $old_mtime = $live !== null ? ($live['mtime'] ?? null) : ($indexed[1] ?? null);
+
+            if ($now === null) {
+                return 'File ' . $file . ' appears to be deleted, triggering manifest rescan';
+            }
+
+            // Size first, then mtime; an entry missing either is incomplete and never fresh.
+            if ($old_size === null || $old_size != $now[0]) {
+                return 'File ' . $file . ' has changed size, triggering manifest rescan';
+            }
+
+            if ($old_mtime === null || $old_mtime != $now[1]) {
+                return 'File ' . $file . ' has changed mtime, triggering manifest rescan';
+            }
+        }
+
+        foreach (array_keys($file_index) as $cached_file) {
+            if (Rsx_Project_Paths::is_generated_key($cached_file)) {
+                continue;
+            }
+
+            if (!array_key_exists($cached_file, $observed)) {
+                return 'Deleted file ' . $cached_file . ' is triggering manifest rescan';
+            }
+        }
+
+        return null;
     }
 
     /**

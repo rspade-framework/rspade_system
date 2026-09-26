@@ -13,6 +13,8 @@ suite becomes untrustworthy, so these are foundational.
 - `app/RSpade/Core/Testing/Rsx_Test_Abstract.php` - base class, assertions, flags
 - `app/RSpade/Commands/Rsx/Rsx_Test_Command.php` - runner: discovery, suite split,
   per-class DB reset, transaction wrapping, deterministic ordering
+- `app/RSpade/Core/Testing/Rsx_Test_Detached_Processes.php` - registry and class-boundary
+  wait for detached processes a test started
 
 ## Man page(s)
 
@@ -33,6 +35,9 @@ suite becomes untrustworthy, so these are foundational.
   base, so late static binding gives every subclass the SAME storage. `run()` saves
   and restores both, so a test that runs another test class inside itself cannot wipe
   the caller's results. (php)
+- Detached-process containment: `dispatch_detached()` under the suite registers its child
+  (pid + start time) and the class boundary waits until it has exited, with no deadline;
+  identity survives pid reuse. (php)
 
 ## Documents
 

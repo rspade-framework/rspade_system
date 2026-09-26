@@ -571,6 +571,26 @@ PER-TEST STATE RESET
     fails standalone is the signature of borrowed static state - almost always
     this one.
 
+CLASS BOUNDARIES AND DETACHED PROCESSES
+
+    A process a test starts DETACHED - a task worker Task::dispatch() spawns
+    through Rsx_Artisan::dispatch_detached() - belongs to the test class that
+    started it and ends at that class's boundary, never during a later class.
+    Under the suite dispatch_detached() registers each child (pid plus kernel
+    start time) before it returns, and at the end of every class, and at the end
+    of the run, the runner WAITS until every registered process has exited. The
+    wait has no deadline: rsx:task:worker exits as soon as no pending task
+    remains, so a boundary costs exactly the work the class queued. Both paths -
+    the sequential loop and each docker worker - run it, because both call
+    Rsx_Test_Abstract::run().
+
+    SHARED STATE IS SETTLED BEFORE IT IS ASSERTED. The manifest index, caches,
+    queues and the mtimes of the scanned trees are shared by every class in a
+    process, and the docker queue varies which classes precede a given one. A
+    test that asserts on one of them first brings it to a known baseline inside
+    the test itself - the first child boot may rebuild the index; the second is
+    the one measured - and never assumes the classes before it left it alone.
+
 PRODUCTION MODE
 
     THE SUITE DOES NOT RUN IN A PRODUCTION MODE. On a box whose RSX_MODE is

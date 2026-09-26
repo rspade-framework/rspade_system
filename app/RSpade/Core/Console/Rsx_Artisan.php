@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Console;
 
 use App\RSpade\Core\Locks\Lockd_Client;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Core\Testing\Rsx_Test_Detached_Processes;
 
 /**
  * THE sanctioned way for PHP code to invoke `php artisan` as a SUBPROCESS.
@@ -104,6 +105,9 @@ class Rsx_Artisan
      * Spawn an artisan command fully detached and return IMMEDIATELY. Output is discarded
      * and the child is reparented to init when we exit.
      *
+     * Under the test suite the child is registered with Rsx_Test_Detached_Processes, and
+     * the harness waits for it to exit at the end of the test class that started it.
+     *
      * Locks do NOT propagate unless the caller promises to wait - read the class docblock
      * before passing true.
      *
@@ -127,12 +131,26 @@ class Rsx_Artisan
         $close_locks = \App\RSpade\Core\Locks\RsxLocks::shell_prefix_without_inherited_locks();
 
         // The redirect detaches the child's I/O and the trailing '&' backgrounds it, so
-        // this call returns without waiting for anything.
+        // this call returns without waiting for anything. `echo $!` prints the child's pid:
+        // a backgrounded simple command is forked and exec'd directly, so $! IS the php
+        // process.
         //
         // Explicit `bash -c`: shell_exec() runs /bin/sh, which is dash on Debian/Ubuntu, and
         // dash rejects the multi-digit fd redirections in $close_locks (POSIX guarantees only
         // single-digit fds; `exec 11>&-` parses there as a command named 11).
-        shell_exec('bash -c ' . escapeshellarg($close_locks . $command_line . ' > /dev/null 2>&1 &'));
+        $pid = trim((string) shell_exec('bash -c ' . escapeshellarg($close_locks . $command_line . ' > /dev/null 2>&1 & echo $!')));
+
+        // Under the suite the harness owns every detached child: it is registered BEFORE this
+        // returns, and the class boundary waits for it to exit (Rsx_Test_Detached_Processes).
+        if (Rsx_Test_Abstract::suite_is_running()) {
+            if (!ctype_digit($pid)) {
+                throw new \RuntimeException(
+                    "dispatch_detached({$command}) under the test suite did not report the child's pid"
+                );
+            }
+
+            Rsx_Test_Detached_Processes::register((int) $pid);
+        }
     }
 
     /**

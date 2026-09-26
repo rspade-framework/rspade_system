@@ -13,6 +13,7 @@ use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Testing\Rsx_Test_Detached_Processes;
 use App\RSpade\Core\Turnstile\Rsx_Turnstile;
 
 /**
@@ -131,6 +132,9 @@ abstract class Rsx_Test_Abstract
     /** @var int|null */
     private static $__boot_user_id = null;
 
+    /** @var int How many run() calls are on the stack (a test may call run() on another class). */
+    private static $__run_depth = 0;
+
     /** @var bool True once the boot context above has been captured. */
     private static $__boot_captured = false;
 
@@ -220,25 +224,46 @@ abstract class Rsx_Test_Abstract
             self::$__boot_path_overrides = Rsx_Project_Paths::_overrides();
         }
 
+        self::$__run_depth++;
+
         try {
             return static::_run_tests();
         } finally {
+            self::$__run_depth--;
             static::$results = $outer_results;
             static::$current_test = $outer_current_test;
 
-            // A CLASS boundary is always the boot CONTEXT - site AND identity. Deliberately
-            // NOT per test: a class may create its own site in setup() (once per class) and
-            // scope every test to it - Realtime_User_Refresh_Test does exactly that - so
-            // restoring between tests would silently re-scope the class's own fixtures out
-            // of view. Between classes there is no such expectation, and that is where the
-            // leak did damage.
-            static::__restore_boot_context();
-
-            // The path overrides are process-global and belong to the RUN. A class may
-            // redirect a root inside its own body; between classes the run's set is what
-            // holds, file-subsystem isolation included.
-            Rsx_Project_Paths::_restore_overrides(self::$__boot_path_overrides);
+            try {
+                // A detached process this class started (a task worker) ends HERE, not during
+                // the next class: the boundary waits until every one has exited. Only at the
+                // outermost run() - a nested run() is part of the calling test, whose own class
+                // boundary contains everything that test started.
+                if (self::$__run_depth === 0) {
+                    Rsx_Test_Detached_Processes::contain();
+                }
+            } finally {
+                static::__restore_class_boundary();
+            }
         }
+    }
+
+    /**
+     * The process-global state a class may have changed, put back at its boundary.
+     */
+    private static function __restore_class_boundary(): void
+    {
+        // A CLASS boundary is always the boot CONTEXT - site AND identity. Deliberately
+        // NOT per test: a class may create its own site in setup() (once per class) and
+        // scope every test to it - Realtime_User_Refresh_Test does exactly that - so
+        // restoring between tests would silently re-scope the class's own fixtures out
+        // of view. Between classes there is no such expectation, and that is where the
+        // leak did damage.
+        static::__restore_boot_context();
+
+        // The path overrides are process-global and belong to the RUN. A class may
+        // redirect a root inside its own body; between classes the run's set is what
+        // holds, file-subsystem isolation included.
+        Rsx_Project_Paths::_restore_overrides(self::$__boot_path_overrides);
     }
 
     /**

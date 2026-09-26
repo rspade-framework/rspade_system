@@ -366,6 +366,10 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
             $this->newLine();
         }
 
+        // Every class boundary already waited for the detached processes its class started;
+        // the run's end is one more boundary, for anything the runner itself started.
+        \App\RSpade\Core\Testing\Rsx_Test_Detached_Processes::contain();
+
         // The run is over: drop what it cached under the test suffix so the next run
         // starts from the database, not from a previous run's answers.
         \App\RSpade\Core\Cache\RsxCache::clear();
@@ -2133,6 +2137,10 @@ class Rsx_Test_Command extends FrameworkDeveloperCommand
         Manifest::init();
 
         $this->worker_consume_queue($worker_id, $socket_path);
+
+        // The container's run ends only when every detached process it started has exited
+        // (each class boundary already waited for its own).
+        \App\RSpade\Core\Testing\Rsx_Test_Detached_Processes::contain();
 
         return 0;
     }
