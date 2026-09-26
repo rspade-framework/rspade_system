@@ -227,3 +227,15 @@ the resolver `rsx:git` runs to produce the union in the first place.
 | MWP-04 | the resolver produces the sorted key-union in the writer command's own JSON shape, and the accounting line the proxy quotes | php | base/ours/theirs | 3 keys in filename order; ours=2 theirs=2 merged=3 | implemented | 2026-09-21 |
 | MWP-05 | an EMPTY base stage (the file is new on both sides) is not a failure | php | empty base | both sides' keys | implemented | 2026-09-21 |
 | MWP-06 | a stage that is not a whitelist exits 2 naming the stage, and writes nothing | php | malformed ours, then a theirs with no migrations map | exit 2 both times | implemented | 2026-09-21 |
+
+## Reindex_By_Column_Drop_Test (php)
+
+`2026_09_25_193921_reindex_identity_tables` drops `login_users.deleted_at`,
+`portal_users.deleted_at` and `user_profiles.site_id` single-column indexes BY COLUMN,
+because the migrations that created them skip their whole step when the column already
+exists, and an application that reached the column first named its index itself.
+
+| ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
+|----|--------------------------|------|-------|----------|--------|--------------|
+| RBC-01 | an application-named single-column index is dropped; a composite containing the column and an index on another column are kept | php | probe with idx_app_named_site, (site_id,user_id), (user_id) | PRIMARY, idx_site_user, idx_user | implemented | 2026-09-26 |
+| RBC-02 | no single-column index on the column drops nothing | php | probe with only (user_id, deleted_at) | PRIMARY, idx_user_deleted | implemented | 2026-09-26 |

@@ -36,6 +36,18 @@ return new class extends Migration
      * own name, the named copy is the one dropped: the survivor is then the index
      * normalization re-creates on a database replayed from scratch, so both paths converge.
      *
+     * THREE OF THE DROPS ARE BY COLUMN, NOT BY NAME. login_users.deleted_at,
+     * portal_users.deleted_at and user_profiles.site_id were each added by a migration that
+     * skips its whole step when the column already exists
+     * (2026_08_09_112232_add_deleted_at_to_actor_tables,
+     * 2026_09_09_105542_add_site_id_to_user_profiles): an application that reached the same
+     * column first in its own migration also indexed it under its own name, and the framework's
+     * name never existed there. What this migration removes is "the single-column index on
+     * that column", so that is what it looks up - every index whose ONLY column is the one
+     * named, whatever it is called. None is also a correct state (the redundant index is
+     * already absent), so an empty lookup drops nothing. This lookup is the consequence of
+     * those two guards and is confined to the columns they cover.
+     *
      * @return void
      */
     public function up()
@@ -48,8 +60,7 @@ return new class extends Migration
                 DROP INDEX idx_login_users_is_verified,
                 DROP INDEX idx_login_users_is_developer,
                 DROP INDEX idx_login_users_status_id,
-                DROP INDEX idx_login_users_last_login,
-                DROP INDEX idx_login_users_deleted_at
+                DROP INDEX idx_login_users_last_login
         ");
 
         DB::statement("
@@ -71,8 +82,7 @@ return new class extends Migration
                 DROP INDEX idx_portal_users_email,
                 DROP INDEX idx_portal_users_is_verified,
                 DROP INDEX idx_portal_users_status_id,
-                DROP INDEX idx_portal_users_last_login,
-                DROP INDEX idx_portal_users_deleted_at
+                DROP INDEX idx_portal_users_last_login
         ");
 
         DB::statement("
@@ -87,9 +97,9 @@ return new class extends Migration
                 DROP INDEX idx_permission_id
         ");
 
-        DB::statement("
-            ALTER TABLE user_profiles DROP INDEX idx_site_id
-        ");
+        $this->drop_single_column_indexes('login_users', 'deleted_at');
+        $this->drop_single_column_indexes('portal_users', 'deleted_at');
+        $this->drop_single_column_indexes('user_profiles', 'site_id');
 
         DB::statement("
             ALTER TABLE portal_notifications
@@ -97,6 +107,25 @@ return new class extends Migration
                 DROP INDEX idx_portal_notifications_type,
                 DROP INDEX idx_portal_notifications_subject
         ");
+    }
+
+    /**
+     * Drop every index on $table whose only column is $column.
+     */
+    private function drop_single_column_indexes(string $table, string $column): void
+    {
+        $rows = DB::select(
+            "SELECT index_name AS index_name
+               FROM information_schema.statistics
+              WHERE table_schema = DATABASE() AND table_name = ?
+              GROUP BY index_name
+             HAVING COUNT(*) = 1 AND MAX(column_name) = ? AND MAX(index_name) <> 'PRIMARY'",
+            [$table, $column]
+        );
+
+        foreach ($rows as $row) {
+            DB::statement("ALTER TABLE `{$table}` DROP INDEX `{$row->index_name}`");
+        }
     }
 
     /**
