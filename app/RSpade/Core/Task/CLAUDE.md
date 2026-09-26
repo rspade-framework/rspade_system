@@ -9,8 +9,9 @@ says what is in this DIRECTORY.
 ## What is here
 
 - `Task.php` — the public facade: `dispatch()`, `status()`, coalescing enqueue, prompt
-  detached-worker spawn (`spawn_worker()`: reserve a slot, then spawn; nothing under the test
-  suite unless `spawn_workers_under_test(true)`).
+  detached-worker spawn (`spawn_worker()`: refuse while this process's own spawned workers
+  fill the cap, reserve a slot, refuse while this host's workers fill the cap, then spawn),
+  and the process-level switch `spawn_workers(bool)` (OFF by default under the test suite).
 - `Task_Instance.php` — the `$task` handle passed to every task method (`info`/`error`/`debug`,
   `update_progress`, `set_result`, `heartbeat`).
 - `Task_Command_ManifestSupport.php` — bakes the `#[Command]` table (`data['task_commands']`)
@@ -28,6 +29,8 @@ says what is in this DIRECTORY.
 - `Task_Worker_Registry.php` — the Redis worker-slot registry enforcing
   `rsx.tasks.global_max_workers` across the pool: a ZSET of live slots (heartbeat-scored) and
   a HASH of spawn reservations (`token => host:pid`, no TTL) that `admit($token)` converts.
+  Also the two flush-proof counts read from `/proc` (`is_worker_process()`,
+  `host_worker_count()`), recognising a worker by its command-line text.
 - `Task_Killer.php`, `Task_Status.php`, `Task_Health_Checks.php`, `Cleanup_Service.php` —
   kill paths, status vocabulary, `rsx:health` probes, retention pruning.
 
@@ -43,6 +46,10 @@ says what is in this DIRECTORY.
   `reclaim_orphaned_reservations()` (every `rsx:task:process` tick) when its owner pid is gone
   from this host. Never give a reservation a TTL, and never spawn a worker without one - a
   pre-spawn check that is not the admission itself lets concurrent dispatches all pass it.
+- **The registry is never the only count.** It lives in Redis, and a flush empties it under
+  running workers. The process-local and host counts in `spawn_worker()` only REFUSE, never
+  admit, and neither may be replaced by a time window or a spawn-rate budget: they are counts
+  of processes that exist, so they are right at any speed.
 - **The reaper's stuck-task cap is framework infrastructure, not licence to add timeouts.**
   See the no-timeout mandate.
 - Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]` classes.

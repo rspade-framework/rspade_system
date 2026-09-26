@@ -97,6 +97,32 @@ REVISION HISTORY: THE SCRIPT OWNS ITS UNITS OF WORK
        OUTSIDE it, so a rollback takes only that unit's row with it. Full contract:
        rsx:man revisions, THE UNIT OF WORK.
 
+TASK DISPATCH: A WRITE MAY START A WORKER
+       Everything the script does that dispatches a task (Task::dispatch() - a model
+       whose hooks queue work, a mail send, an upload, an application service) does so
+       exactly as it would in a web request: the row is queued, and when the worker
+       pool has room a detached rsx:task:worker is started on the spot. Each of those
+       is a whole PHP process. The pool cap still holds - including after a Redis flush,
+       because a spawn is also refused while this process's own spawned workers, or the
+       workers running on this host, fill rsx.tasks.global_max_workers - but a script
+       writing tens of thousands of rows keeps that pool busy for its whole run, and
+       every one of those processes competes with the script for the CPU.
+
+       A script that writes many rows turns spawning off, once, after the include:
+
+           $app = require '<project>/system/script.php';
+           Task::spawn_workers(false);   // App\RSpade\Core\Task\Task
+
+       For the rest of the process dispatch() still queues every row and returns its
+       id; it starts nothing. The cron tick (rsx:task:process, every minute) spawns the
+       workers that drain the queue, on the pool's own schedule. Nothing is lost and
+       nothing runs twice: #[Exclusive]/#[Debounce] coalescing works on the queued rows
+       exactly as before. Task::spawning_workers() reports the setting.
+
+       Not the answer: `supervisorctl stop tasks` (that program only runs the cron
+       tick; the script itself is the spawner) and rsx:maintenance:enable (it stops
+       Redis, which the script needs). Full contract: rsx:man tasks, SPAWNING OFF.
+
 MAINTENANCE MODE
        While the maintenance flag is up, an external script is REFUSED:
 
@@ -194,7 +220,7 @@ EXAMPLE
 
 SEE ALSO
        rsx:man task_commands - giving a #[Task] an artisan command, for work INSIDE the app
-       rsx:man tasks - #[Task], #[Schedule], dispatch, the worker pool
+       rsx:man tasks - #[Task], #[Schedule], dispatch, the worker pool, Task::spawn_workers()
        rsx:man artisan_commands - hand-written framework commands and the pre-boot interceptions
        rsx:man maintenance_mode - the flag, the window, and what it blocks
        rsx:man session - the session lifecycle and the CLI identity statics

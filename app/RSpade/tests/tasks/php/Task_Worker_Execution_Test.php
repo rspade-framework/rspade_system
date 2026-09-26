@@ -253,7 +253,7 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
      * Task::dispatch() returns a pollable integer id backing a real pending row.
      *
      * Under the test suite dispatch() enqueues ONLY - no detached worker is spawned
-     * (Task::spawn_workers_under_test(); Task_Spawn_Admission_Test) - so the row is still
+     * (Task::spawn_workers(); Task_Spawn_Admission_Test) - so the row is still
      * pending when it is read back.
      */
     public static function test_dispatch_returns_pollable_id()

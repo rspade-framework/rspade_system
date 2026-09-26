@@ -590,9 +590,10 @@ CLASS BOUNDARIES AND DETACHED PROCESSES
     boot racing the test that queued it, and a class that sends mail, uploads a
     file and saves a model can dispatch several a second. A test that asserts on
     queued work drives it itself - Task::internal(), the service method, or
-    Artisan::call('rsx:task:worker') in-process. A test whose SUBJECT is the
-    spawn opts in with Task::spawn_workers_under_test(true); the runner resets it
-    to false at every class boundary.
+    Artisan::call('rsx:task:worker') in-process. It is the Task::spawn_workers()
+    switch, whose default under the suite is OFF: a test whose SUBJECT is the
+    spawn opts in with Task::spawn_workers(true), and the runner calls
+    Task::spawn_workers(false) at every class boundary.
 
     A process a test starts DETACHED - a task worker spawned by an opted-in
     Task::spawn_worker(), or any Rsx_Artisan::dispatch_detached() call - belongs

@@ -217,8 +217,9 @@ the manifest, claim a queue row.
 **`Task::dispatch()` spawns NO worker under the suite** (nor does an `rsx:task:process` tick a
 test runs): it enqueues and returns. A test that asserts on queued work drives it itself -
 `Task::internal()`, the service method, or `Artisan::call('rsx:task:worker')` in-process. A
-test whose subject is the spawn calls `Task::spawn_workers_under_test(true)`; the runner resets
-it at every class boundary.
+test whose subject is the spawn calls `Task::spawn_workers(true)` (the process-level spawn
+switch, OFF by default under the suite); the runner calls `Task::spawn_workers(false)` at every
+class boundary.
 
 The harness owns every detached process that remains (`Core/Testing/Rsx_Test_Detached_Processes.php`):
 

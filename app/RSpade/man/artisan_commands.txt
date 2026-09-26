@@ -116,7 +116,8 @@ SPAWNING A COMMAND FROM PHP
 
            Rsx_Artisan::passthru($cmd, $args)   streams the child's output through
            Rsx_Artisan::run($cmd, $args, $out, $env)  captures it
-           Rsx_Artisan::dispatch_detached($cmd, $args) fire and forget
+           Rsx_Artisan::dispatch_detached($cmd, $args) fire and forget (waits only for
+                                                the pid handshake - rsx:man locks)
 
        The synchronous forms attach --_lock-group=<id> so the child JOINS the parent's
        lock group instead of queueing behind locks the blocked parent holds. In-process

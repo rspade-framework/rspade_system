@@ -133,8 +133,8 @@ class Task
      * admission is reserved in the Redis worker registry BEFORE anything is started, so a
      * full pool starts nothing). The ONLY thing that defers a run is a future
      * 'scheduled_for': such a one-shot waits and is picked up by the cron tick (or a later
-     * spawn) once it comes due. Under the test suite nothing is spawned unless the test
-     * opted in - see spawn_workers_under_test().
+     * spawn) once it comes due. A process that turned spawning off - and every test, unless
+     * it opted in - enqueues only; see spawn_workers().
      *
      * For #[Exclusive]/#[Debounce] tasks the enqueue is coalescing (at most one running +
      * one pending per identity - see Task_Concurrency); unmanaged tasks get their own row.
@@ -270,57 +270,120 @@ class Task
     }
 
     /**
-     * Whether spawn_worker() may start a process while the test suite is running. See
-     * spawn_workers_under_test().
+     * Whether this process spawns workers at all - see spawn_workers(). Null is the process
+     * default: spawn, except under the test suite.
      *
-     * @var bool
+     * @var bool|null
      */
-    private static bool $spawn_workers_under_test = false;
+    private static ?bool $spawn_workers = null;
 
     /**
-     * Opt THIS test class in to real worker spawns.
+     * Pids of the workers THIS process spawned, pruned to the ones still running at every
+     * spawn_worker() call. Never holds more than rsx.tasks.global_max_workers entries.
      *
-     * Under the test suite (Rsx_Test_Abstract::suite_is_running()) dispatch() ENQUEUES ONLY:
-     * a detached worker is a whole PHP boot racing the test that dispatched it, and a class
-     * that sends mail, uploads a file and saves a model can dispatch several a second. A test
-     * that asserts on queued work drives it itself - Task::internal(), the service method,
-     * or Artisan::call('rsx:task:worker') in-process. A test whose SUBJECT is the spawn calls
-     * this with true; the harness puts it back to false at every class boundary, so the
-     * opt-in never outlives the class that made it.
+     * @var int[]
+     */
+    private static array $spawned_worker_pids = [];
+
+    /**
+     * Turn worker spawning on or off for the rest of THIS process.
+     *
+     * Off, dispatch() still ENQUEUES - every row is written exactly as before - but starts no
+     * worker; the cron tick (rsx:task:process, every minute) spawns the workers that drain the
+     * queue. This is the sanctioned switch for a long-running script that writes many rows:
+     * every model save, mail send or upload may dispatch a task, and each dispatch that finds
+     * room in the pool starts a whole PHP process. Turning spawning off leaves the work to the
+     * pool's own schedule and keeps the script's CPU for the script.
+     *
+     * It is also the test-suite behaviour. Under rsx:test the default is OFF: a detached worker
+     * is a whole PHP boot racing the test that dispatched it, so a test that asserts on queued
+     * work drives it itself (Task::internal(), the service method, or
+     * Artisan::call('rsx:task:worker') in-process). A test whose SUBJECT is the spawn calls
+     * this with true; the harness calls it with false at every class boundary, so the opt-in
+     * never outlives the class that made it.
+     *
+     * It governs this process only. A worker, a web request and the cron tick each decide
+     * for themselves.
      *
      * @param bool $enabled
      * @return void
      */
-    public static function spawn_workers_under_test(bool $enabled): void
+    public static function spawn_workers(bool $enabled): void
     {
-        self::$spawn_workers_under_test = $enabled;
+        self::$spawn_workers = $enabled;
+    }
+
+    /**
+     * Does this process spawn workers? The value spawn_workers() set, or the process default:
+     * true, except under the test suite.
+     *
+     * @return bool
+     */
+    public static function spawning_workers(): bool
+    {
+        return self::$spawn_workers ?? !Rsx_Test_Abstract::suite_is_running();
     }
 
     /**
      * Spawn a detached background worker (fire-and-forget) - if, and only if, the pool has
      * room for it.
      *
-     * ADMISSION HAPPENS BEFORE THE SPAWN. A slot is reserved atomically in the Redis worker
-     * registry first (Task_Worker_Registry::reserve_spawn(), which counts live workers plus
-     * outstanding reservations against rsx.tasks.global_max_workers); when the pool is full
-     * nothing is started at all. The token rides to the child, whose admit() converts it into
-     * its live slot. A spawn that reports no pid releases its reservation here; a child that
-     * dies before admitting is reclaimed by the rsx:task:process reaper.
+     * THE POOL IS FULL WHEN ANY OF THREE COUNTS REACHES rsx.tasks.global_max_workers. Each is
+     * a lower bound on the number of running workers:
+     *
+     *   1. The workers THIS process spawned that are still running (/proc, no shared state).
+     *      A flush cannot erase it, and it is what caps a script that dispatches on every
+     *      write: once its own spawns fill the cap, every further dispatch returns here, with
+     *      no Redis call and no /proc scan, until one of them exits.
+     *   2. The Redis registry - the cluster-wide gate, and the only one that ADMITS. A slot is
+     *      reserved atomically (Task_Worker_Registry::reserve_spawn(), live workers plus
+     *      outstanding reservations against the cap) before anything is started; the token
+     *      rides to the child, whose admit() converts it into its live slot. A spawn that
+     *      reports no pid releases its reservation here; a child that dies before admitting
+     *      is reclaimed by the rsx:task:process reaper.
+     *   3. The workers running on THIS host (Task_Worker_Registry::host_worker_count(), one
+     *      pass over /proc) - the floor for every OTHER process on the host (web requests,
+     *      other scripts, the cron tick) when the registry has been emptied under running
+     *      workers. Taken only once 2 has reserved, i.e. only when a spawn is about to happen:
+     *      the scan costs well under a millisecond on a quiet host and ~20 ms with 1,500
+     *      processes, which the process start it guards dwarfs. A refusal here gives the
+     *      reservation back.
+     *
+     * 1 and 3 exist because 2 lives in Redis: a flush (a reset script, FLUSHALL, eviction)
+     * empties the live set and the reservations while the workers keep running, and with the
+     * registry alone every later dispatch then read an empty pool - a downstream field report
+     * (2026-09-26) measured 1,532 concurrent workers from one bulk import. 1 and 3 only ever
+     * REFUSE; they never admit what the registry refuses.
      *
      * A Redis failure THROWS: the registry is the admission gate, and Redis is a hard
      * framework dependency. Workers are generic - one pool, no queue routing.
      *
-     * @return bool True when a worker was spawned, false when the pool is full (or the test
-     *              suite is running without spawn_workers_under_test()).
+     * @return bool True when a worker was spawned; false when the pool is full or this
+     *              process does not spawn workers (spawn_workers()).
      */
     public static function spawn_worker(): bool
     {
-        if (Rsx_Test_Abstract::suite_is_running() && !self::$spawn_workers_under_test) {
+        if (!self::spawning_workers()) {
+            return false;
+        }
+
+        $cap = Task_Worker_Registry::max_workers();
+
+        self::$spawned_worker_pids = array_values(array_filter(
+            self::$spawned_worker_pids,
+            [Task_Worker_Registry::class, 'is_worker_process']
+        ));
+        if (count(self::$spawned_worker_pids) >= $cap) {
             return false;
         }
 
         $token = Task_Worker_Registry::reserve_spawn();
         if ($token === null) {
+            return false;
+        }
+
+        if (Task_Worker_Registry::host_worker_count() >= $cap) {
+            Task_Worker_Registry::release_reservation($token);
             return false;
         }
 
@@ -344,6 +407,7 @@ class Task
             return false;
         }
 
+        self::$spawned_worker_pids[] = $pid;
         Task_Worker_Registry::hand_off_reservation($token, $pid);
 
         return true;

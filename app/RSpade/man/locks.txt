@@ -249,6 +249,13 @@ LOCK GROUPS AND SUBPROCESSES
     silently. Pass it only when the caller genuinely joins the spawned process
     before continuing its own critical section.
 
+    dispatch_detached() returns the child's pid, and getting it is a short
+    SYNCHRONOUS handshake: bash starts, forks the child, prints its pid and exits.
+    The caller waits for exactly that - never for the child to be scheduled, boot
+    or do anything - so it costs what starting a process costs on this host: a
+    few milliseconds when quiet, longer when saturated. A null return means no
+    process was started.
+
     ARTISAN-SPAWN-01 (rsx:check) enforces this. Artisan::call() is in-process on
     this connection, already reentrant, and is not flagged.
 

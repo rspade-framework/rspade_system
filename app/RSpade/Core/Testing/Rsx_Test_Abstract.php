@@ -265,9 +265,9 @@ abstract class Rsx_Test_Abstract
         // holds, file-subsystem isolation included.
         Rsx_Project_Paths::_restore_overrides(self::$__boot_path_overrides);
 
-        // Task::spawn_workers_under_test() is a per-CLASS opt-in; the next class starts from
+        // Task::spawn_workers(true) is a per-CLASS opt-in; the next class starts from
         // enqueue-only again.
-        \App\RSpade\Core\Task\Task::spawn_workers_under_test(false);
+        \App\RSpade\Core\Task\Task::spawn_workers(false);
     }
 
     /**

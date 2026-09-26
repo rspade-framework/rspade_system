@@ -9,6 +9,7 @@ namespace App\RSpade\Core\Task;
 
 use RuntimeException;
 use App\RSpade\Core\Database\Rsx_Connection_Scope;
+use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Task_Worker_Registry - Redis-backed registry of live task workers.
@@ -37,6 +38,16 @@ use App\RSpade\Core\Database\Rsx_Connection_Scope;
  *     spawns, the child once hand_off_reservation() has recorded the child's pid - and a
  *     reservation whose owner no longer runs on this host can never be converted.
  * A child whose reservation was reclaimed before it started simply admits the ordinary way.
+ *
+ * THE REGISTRY IS NOT THE ONLY COUNT. A Redis flush (FLUSHALL, FLUSHDB, eviction, a reset
+ * script) empties the live set and the reservations while the workers they described keep
+ * running; the registry then reads an empty pool and admits spawns the cap no longer
+ * protects - a downstream field report (2026-09-26) measured 1,532 concurrent workers from
+ * one bulk-writing script after exactly that. So the spawner also consults two counts that
+ * live OUTSIDE Redis and cannot be flushed (Task::spawn_worker()): the workers its own
+ * process spawned that are still running (is_worker_process()), and the workers running on
+ * this host (host_worker_count(), one /proc scan). Each is a lower bound on the true pool
+ * size; the pool is full when ANY of the three says so.
  *
  * Redis owns ONLY this ephemeral worker-slot state. The durable queue (_tasks), the
  * atomic dequeue lock, and per-identity run-locks stay in MySQL. Losing just this registry
@@ -121,7 +132,7 @@ LUA;
                 self::_reservations_key(),
                 $now,
                 $now - $ttl,
-                self::_max_workers(),
+                self::max_workers(),
                 $worker_id,
                 $ttl * 4,
                 (string) $reservation,
@@ -172,7 +183,7 @@ LUA;
                 self::_zset_key(),
                 self::_reservations_key(),
                 time() - self::_ttl(),
-                self::_max_workers(),
+                self::max_workers(),
                 $token,
                 self::_owner(getmypid()),
             ],
@@ -327,6 +338,81 @@ LUA;
     }
 
     /**
+     * Is this pid a running task worker of THIS project? Read from /proc/<pid>/cmdline, so it
+     * needs no Redis and survives a flush of the registry.
+     *
+     * A worker is a process whose command line names both this project's artisan path and
+     * the rsx:task:worker command - the command line Rsx_Artisan::dispatch_detached() builds.
+     * The match is on the command-line TEXT, not on exact argv tokens, so a worker is
+     * recognised from the moment it is forked: until its exec the child is a copy of the
+     * spawning bash, whose single `-c` argument carries that same text. And the command line,
+     * rather than bare pid existence, is what makes the answer safe to act on: a pid the
+     * kernel reused for an unrelated process is not a worker, and an exited worker nobody has
+     * reaped yet (a zombie) has an empty command line.
+     *
+     * @param int $pid
+     * @return bool
+     */
+    public static function is_worker_process(int $pid): bool
+    {
+        $cmdline = self::_process_cmdline($pid);
+
+        return $cmdline !== null && self::_is_this_projects_worker($cmdline);
+    }
+
+    /**
+     * How many task workers of this pool are running on THIS host - one pass over /proc, no
+     * shell, no Redis. The flush-proof floor under the registry: Task::spawn_worker() refuses
+     * to spawn when this alone reaches the cap, so an emptied registry never means an
+     * unlimited pool on the host doing the spawning.
+     *
+     * "This pool" is this project's workers (is_worker_process()) on the same side of the
+     * test-suite boundary as the caller: a worker started under rsx:test carries
+     * --_test-run and works against the test database, so it is counted by a test process
+     * and not by the development box's own dispatches, and the reverse. A worker started by
+     * hand from the project root (`php artisan rsx:task:worker`, a relative artisan path) is
+     * not recognised; it is still admitted by the registry like any other. The count errs
+     * high, never low: the brief handshake shell of a spawn in progress carries the same text
+     * and is counted while it lives.
+     *
+     * @return int
+     */
+    public static function host_worker_count(): int
+    {
+        $under_test = Rsx_Test_Abstract::suite_is_running();
+        $count = 0;
+
+        foreach (scandir('/proc') as $entry) {
+            if (!ctype_digit($entry)) {
+                continue;
+            }
+
+            $cmdline = self::_process_cmdline((int) $entry);
+            if ($cmdline === null || !self::_is_this_projects_worker($cmdline)) {
+                continue;
+            }
+
+            if (str_contains($cmdline, Rsx_Test_Abstract::TEST_RUN_FLAG) !== $under_test) {
+                continue;
+            }
+
+            $count++;
+        }
+
+        return $count;
+    }
+
+    /**
+     * rsx.tasks.global_max_workers, never below one.
+     *
+     * @return int
+     */
+    public static function max_workers(): int
+    {
+        return max(1, (int) config('rsx.tasks.global_max_workers', 1));
+    }
+
+    /**
      * Release this process's worker slot. Called on graceful exit and as a shutdown
      * handler (covers a fatal that is not a SIGKILL); SIGKILL is covered by TTL expiry.
      * Best-effort and idempotent.
@@ -378,7 +464,8 @@ LUA;
 
         return [
             'status' => 'OK',
-            'detail' => 'connected; ' . $live . ' live worker(s), ' . self::reserved_count() . ' spawn reservation(s)',
+            'detail' => 'connected; ' . $live . ' live worker(s), ' . self::reserved_count() . ' spawn reservation(s), '
+                . self::host_worker_count() . ' worker process(es) running on this host',
         ];
     }
 
@@ -438,9 +525,37 @@ LUA;
         return $pid > 0 && file_exists('/proc/' . $pid);
     }
 
-    private static function _max_workers(): int
+    /**
+     * A process's command line from /proc/<pid>/cmdline (argv, NUL-separated), or null when
+     * there is none to read.
+     *
+     * A process can exit between the /proc listing and this read, and that race IS the
+     * answer "not running" - so a failed read is suppressed and means gone. An empty command
+     * line (a zombie, a kernel thread) is null too.
+     *
+     * @param int $pid
+     * @return string|null
+     */
+    private static function _process_cmdline(int $pid): ?string
     {
-        return max(1, (int) config('rsx.tasks.global_max_workers', 1));
+        if ($pid <= 0) {
+            return null;
+        }
+
+        $raw = @file_get_contents('/proc/' . $pid . '/cmdline');
+
+        return ($raw === false || $raw === '') ? null : $raw;
+    }
+
+    /**
+     * Does this command line run the task worker through THIS project's artisan?
+     *
+     * @param string $cmdline
+     * @return bool
+     */
+    private static function _is_this_projects_worker(string $cmdline): bool
+    {
+        return str_contains($cmdline, 'rsx:task:worker') && str_contains($cmdline, base_path('artisan'));
     }
 
     private static function _ttl(): int

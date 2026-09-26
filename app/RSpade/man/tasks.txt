@@ -72,7 +72,8 @@ EXECUTION MODES
        Inserts a pending row AND, when the task is due now and the pool has a free slot,
        spawns a detached worker so it runs within ~1 second (at the cap nothing is spawned:
        a busy worker reaches the row when it finishes its current task, and the cron tick
-       covers the rest). Under the test suite dispatch() ENQUEUES ONLY - see TESTING below.
+       covers the rest). A process that called Task::spawn_workers(false) - and every test,
+       unless it opted in - ENQUEUES ONLY; see SPAWNING OFF and TESTING below.
        Returns the pollable task id (for #[Exclusive]/#[Debounce]
        identities that coalesce onto an already-pending run, returns that pending row's id).
        $options: 'queue', 'timeout' (the execution cap enforced by the cron tick's reaper -
@@ -273,10 +274,50 @@ THE WORKER POOL
     first (dispatched, FIFO by enqueue time), then due scheduled tasks (by next_run_at).
     The `queue` column is a label only; it no longer isolates workers.
 
+    THE REGISTRY IS NOT THE ONLY COUNT. It lives in Redis, and a flush (a reset script,
+    FLUSHALL, eviction) empties the live set and the reservations while the workers keep
+    running. So before it spawns, Task::spawn_worker() also refuses when either of two
+    counts that live outside Redis reaches the cap:
+
+        - the workers THIS process spawned that are still running (read from /proc). This
+          is what caps a script that dispatches on every write: once its own spawns fill
+          the cap, each further dispatch returns at once - no Redis call, no scan - until
+          one of them exits;
+        - the workers of this pool running on THIS host (one pass over /proc, taken only
+          when a spawn is about to happen: under a millisecond on a quiet host, ~20 ms with
+          1,500 processes). A worker spawned under rsx:test carries --_test-run and is
+          counted only by test processes, and the reverse.
+
+    Both only ever refuse; the registry is still the one gate that admits, and the one that
+    coordinates a cluster. A worker is recognised by its command line (this project's
+    artisan path plus rsx:task:worker), so a worker started by hand from the project root
+    with a relative `php artisan` is not counted by these two - the registry still admits
+    it like any other.
+
     Worker management runs on Redis (the slot registry). Redis is required framework-wide
     (cache + manifest), so if it is unreachable the process fails loudly at bootstrap - and
     a registry call that fails later THROWS: dispatch() and the cron tick never spawn
     around an admission gate they could not consult.
+
+SPAWNING OFF: LONG-RUNNING SCRIPTS
+
+    Every dispatch() that finds room in the pool starts a worker, and a lot of ordinary code
+    dispatches: a model save whose hooks queue a task, a mail send, an upload. A script that
+    writes thousands of rows can therefore start a process per write for as long as the pool
+    has room. Turn that off for the rest of the process:
+
+        Task::spawn_workers(false);
+
+    dispatch() still writes every row exactly as before and returns its id; it starts no
+    worker. The cron tick (rsx:task:process, every minute) spawns the workers that drain the
+    queue, so the work runs on the pool's own schedule instead of competing with the script
+    for the CPU. Task::spawning_workers() reports the current setting. The switch governs
+    THIS process only - web requests, the cron tick and the workers themselves are
+    unaffected. It is the same switch the test suite uses (see TESTING).
+
+    Neither `supervisorctl stop tasks` nor rsx:maintenance:enable is the answer: the
+    supervisor program only runs the cron tick, and maintenance mode stops Redis, which the
+    script needs. See rsx:man scripting.
 
 CONFIGURATION (config/rsx.php 'tasks')
 
@@ -474,9 +515,9 @@ EXAMPLES
 
 TESTING
 
-    Under the test suite (rsx:test, Rsx_Test_Abstract::suite_is_running()) nothing spawns
-    a worker: Task::dispatch() writes its row and returns, and an rsx:task:process tick a
-    test runs spawns nothing either. A detached worker would be a whole PHP boot racing the
+    Under the test suite (rsx:test, Rsx_Test_Abstract::suite_is_running()) spawning is OFF
+    by default - Task::spawning_workers() is false: Task::dispatch() writes its row and
+    returns, and an rsx:task:process tick a test runs spawns nothing either. A detached worker would be a whole PHP boot racing the
     test that queued it. A test that asserts on queued work drives it itself:
 
         Task::internal('My_Service', 'my_task', $params);    // run the task in-process
@@ -484,9 +525,9 @@ TESTING
 
     A test whose SUBJECT is the spawn opts in for its class:
 
-        Task::spawn_workers_under_test(true);
+        Task::spawn_workers(true);
 
-    The runner resets it to false at every class boundary, and the harness waits at that
+    The runner calls Task::spawn_workers(false) at every class boundary, and the harness waits at that
     boundary for every detached process the class started (rsx:man testing, CLASS
     BOUNDARIES AND DETACHED PROCESSES).
 
@@ -494,7 +535,8 @@ TROUBLESHOOTING
 
     Dispatched task stays 'pending'
         - Is the pool at global_max_workers? (rsx:health "Redis Connectivity" shows live
-          workers and spawn reservations)
+          workers, spawn reservations and the worker processes running on this host)
+        - Did this process call Task::spawn_workers(false)? Then the cron tick drains it.
         - Inside a test? dispatch() spawns nothing under the suite (see TESTING).
         - Did you pass a future 'scheduled_for'? Then it waits until due.
         - Cron is the backstop for due rows: * * * * * php artisan rsx:task:process
@@ -516,7 +558,7 @@ HISTORICAL NOTE
     Earlier the cron path spawned workers with Symfony Process and killed them on command
     exit (the Process destructor SIGKILLs), so the queue never drained under cron; and all
     artisan commands took a global WRITE lock, serializing workers to an effective pool of
-    one. Fixed by spawning detached (shell_exec '... &') and by leaving artisan commands
+    one. Fixed by spawning detached (bash '... &') and by leaving artisan commands
     unguarded (each command, and each #[Task], now owns its concurrency via explicit locks).
     The web side's counterpart global lock is gone too - see rsx:man locks.
 

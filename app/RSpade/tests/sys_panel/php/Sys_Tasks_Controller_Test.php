@@ -24,7 +24,7 @@ use App\RSpade\Sys\App\Sys\Tasks\_Sys_Tasks_Controller;
  * Runs in the default per-test transaction; every row is planted inside it. No planted
  * row carries a worker_pid, so a kill signals no process at all. Re-dispatch goes through
  * Task::dispatch(), which under the test suite enqueues only - this class does not opt in
- * to Task::spawn_workers_under_test() - so the test asserts the new PENDING row, never
+ * with Task::spawn_workers(true) - so the test asserts the new PENDING row, never
  * its execution. The schedule rows use the framework's own #[Schedule] declarations,
  * with their tracker rows deleted or planted inside the transaction.
  */

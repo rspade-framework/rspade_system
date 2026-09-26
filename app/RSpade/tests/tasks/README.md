@@ -13,7 +13,7 @@ all background/scheduled work in the framework.
 ## Source files
 
 - `app/RSpade/Core/Task/Task.php` - dispatch/internal/status, scheduled-task discovery,
-  `spawn_worker()` and the test-suite spawn opt-in
+  `spawn_worker()` and the process-level spawn switch `spawn_workers()`
 - `app/RSpade/Core/Task/Task_Worker_Registry.php` - the worker-slot registry: live slots and
   spawn reservations
 - `app/RSpade/Core/Task/Task_Instance.php` - per-run lifecycle, logs, temp dir
@@ -55,12 +55,14 @@ all background/scheduled work in the framework.
 - The alias driven for real: stdout the value, stderr the narration, `-q`, `--debug`, a
   throwing task's exit 1, and the `rsx:task:list` COMMAND column. (cli - spawns artisan
   with the two streams redirected apart)
-- Spawn admission: a worker slot is RESERVED in the Redis registry before a worker is
+- Spawn admission: a worker slot is RESERVED in the Redis worker registry before a worker is
   spawned (live + reserved counted against the cap), the child converts it, the spawner
   releases it on a failed spawn, the cron tick reclaims one whose pid is gone from this host;
-  and under the suite `Task::dispatch()` enqueues only unless the class opted in with
-  `Task::spawn_workers_under_test(true)`. (php - Redis + per-test transaction;
-  `Task_Spawn_Admission_Test`)
+  the two flush-proof counts read from /proc (this process's own running spawns, this host's
+  workers) refuse a spawn over an emptied registry, driven by FIFO-held fixture processes
+  whose command lines are a worker's; and `Task::spawn_workers(false)` - the suite's default,
+  reset at every class boundary - makes `Task::dispatch()` enqueue only. (php - Redis +
+  per-test transaction; `Task_Spawn_Admission_Test`)
 - Full lifecycle execution by the worker/cron processor (`rsx:task:process`),
   stuck-task detection, CLI output of `rsx:task:list`/`run`. (cli/integration - deferred)
 

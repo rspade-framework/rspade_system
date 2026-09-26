@@ -78,7 +78,11 @@ Type: php / cli. Last updated: 2026-08-31.
 | task-spawn-06 | the owner is the spawner, then the child's pid; a hand-off after conversion resurrects nothing | reserve, hand_off, admit, hand_off | host:pid each step; 0 reserved | implemented |
 | task-spawn-07 | the reaper releases only this host's reservations whose pid is gone | dead / alive / other-host owners | 1 reclaimed; alive + other-host remain | implemented |
 | task-spawn-08 | under the suite dispatch() enqueues only | Task::dispatch() | pending row; detached registry unchanged; 0 reserved; spawn_worker() false | implemented |
-| task-spawn-09 | opted in, spawn_worker() starts a real worker under a reservation naming the child, and no reservation outlives it | spawn_workers_under_test(true) | true; child registered; owner = child (or converted); 0 reserved after contain() + reclaim | implemented |
+| task-spawn-09 | opted in, spawn_worker() starts a real worker under a reservation naming the child, and no reservation outlives it | spawn_workers(true) | true; child registered; owner = child (or converted); 0 reserved after contain() + reclaim | implemented |
+| task-spawn-10 | a flushed registry with this process's own worker still running spawns nothing | empty registry; fixture worker (no --_test-run) recorded as this process's spawn; cap 1 | is_worker_process() true; host floor 0; spawn_worker() false; 0 reserved; detached registry unchanged; exited fixture is not a worker | implemented |
+| task-spawn-11 | the host floor refuses at the cap and gives the reservation back | empty registry; no own spawns; fixture worker with --_test-run; cap 1 | host_worker_count() 1; spawn_worker() false; 0 reserved; detached registry unchanged; 0 after the fixture exits | implemented |
+| task-spawn-12 | Task::spawn_workers(false) enqueues without spawning | spawn_workers(true) then (false); dispatch() | spawning_workers() follows; pending row; nothing started; 0 reserved | implemented |
+| task-spawn-13 | the class boundary turns spawning back off | spawn_workers(true); Rsx_Test_Abstract::__restore_class_boundary() | spawning_workers() false | implemented |
 
 ## Task_Killer_Test (php) - force-kill running tasks (rsx:tasks:kill / kill-all)
 
