@@ -106,9 +106,11 @@ DESCRIPTION
 
     SCHEDULES lists every #[Schedule] declaration beside its tracker row:
     the declared phrase and its cron form, whether the task is #[Exclusive]
-    or #[Debounce], the tracker's status, next run, last success,
-    consecutive failures and, while it is failing, the last error (linking to the
-    tracker's detail).
+    or #[Debounce], the tracker's status, next run, the LAST RUN (when it
+    ran and whether it completed, failed or was abandoned by a worker that
+    died or disconnected), last success, consecutive failures and, when the
+    last run did not complete, the last error (linking to the tracker's
+    detail).
     A declaration the scheduler has not reconciled yet reads "not yet
     scheduled". A schedule whose consecutive failures reach
     rsx.tasks.failing_schedule_warn_after - the threshold the rsx:health

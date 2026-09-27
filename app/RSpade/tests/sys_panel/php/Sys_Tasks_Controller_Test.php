@@ -304,6 +304,23 @@ class Sys_Tasks_Controller_Test extends Rsx_Test_Abstract
 
         DB::table('_tasks')->where('id', $tracker_id)->update(['consecutive_failures' => $threshold]);
         static::__assert_true(static::__schedule_row($tracked)['failing'], 'the threshold itself is failing');
+
+        // The last run is the later of the last success and the last failure.
+        static::__assert_equals('2026-03-04T01:02:03.000Z', $row['tracker']['last_run_at'], 'a failure after the last success is the last run');
+        static::__assert_equals('failed', $row['tracker']['last_outcome'], 'a plain failure reads failed');
+
+        DB::table('_tasks')->where('id', $tracker_id)->update(['status_reason' => 'abandoned (recycled): worker 7 gone']);
+        static::__assert_equals('abandoned', static::__schedule_row($tracked)['tracker']['last_outcome'], 'the reaper\'s prefix reads abandoned');
+
+        DB::table('_tasks')->where('id', $tracker_id)->update(['completed_at' => '2026-03-04 02:00:00.000', 'status_reason' => null]);
+        $after_success = static::__schedule_row($tracked)['tracker'];
+        static::__assert_equals('2026-03-04T02:00:00.000Z', $after_success['last_run_at'], 'a later success is the last run');
+        static::__assert_equals('completed', $after_success['last_outcome'], 'and reads completed');
+
+        DB::table('_tasks')->where('id', $tracker_id)->update(['completed_at' => null, 'last_error_at' => null]);
+        $never = static::__schedule_row($tracked)['tracker'];
+        static::__assert_null($never['last_run_at'], 'a tracker that never ran has no last run');
+        static::__assert_null($never['last_outcome'], 'and no outcome');
     }
 
     /**

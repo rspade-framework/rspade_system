@@ -35,7 +35,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
     /** The _tasks datetime columns, converted to ISO on every row that leaves here. */
     public const DATETIME_COLUMNS = [
         'scheduled_for', 'next_run_at', 'started_at', 'completed_at', 'last_error_at',
-        'last_heartbeat_at', 'created_at', 'updated_at',
+        'last_heartbeat_at', 'created_at', 'updated_at', 'last_run_at',
     ];
 
     /** Characters of a tracker's last error shown on the Schedules tab. */
@@ -196,7 +196,8 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
      *
      * @return array {failing_threshold, rows: [{class, class_short, method, queue, schedule,
      *                cron, concurrency, failing, tracker: null|{id, status, next_run_at,
-     *                completed_at, consecutive_failures, last_error_at, error_excerpt}}]}
+     *                completed_at, consecutive_failures, last_error_at, error_excerpt,
+     *                last_run_at, last_outcome}}]}
      */
     #[Ajax_Endpoint]
     public static function schedules(Request $request, array $params = [])
@@ -206,7 +207,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
         $trackers = DB::table('_tasks')
             ->whereNotNull('next_run_at')
             ->get(['id', 'class', 'method', 'status', 'next_run_at', 'completed_at',
-                'consecutive_failures', 'last_error_at', 'error'])
+                'consecutive_failures', 'last_error_at', 'error', 'status_reason'])
             ->keyBy(fn ($row) => $row->class . '::' . $row->method);
 
         $rows = [];
@@ -223,7 +224,7 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
                     'consecutive_failures' => (int) $tracker->consecutive_failures,
                     'last_error_at' => $tracker->last_error_at,
                     'error_excerpt' => static::__error_excerpt($tracker->error),
-                ]);
+                ] + static::__last_run($tracker));
                 unset($tracker['is_cron']);
             }
 
@@ -313,6 +314,33 @@ class _Sys_Tasks_Controller extends _Sys_Endpoint_Controller_Abstract
         }
 
         return $row;
+    }
+
+    /**
+     * A tracker's most recent run and how it ended.
+     *
+     * completed_at is stamped only by a success and last_error_at only by a failure or an
+     * abandonment, so the later of the two is the last run. The reaper prefixes an
+     * abandoned run's status_reason with 'abandoned'; any other failure is 'failed'.
+     *
+     * @return array{last_run_at: ?string, last_outcome: ?string}
+     */
+    private static function __last_run(object $tracker): array
+    {
+        $success = $tracker->completed_at;
+        $failure = $tracker->last_error_at;
+
+        if ($success === null && $failure === null) {
+            return ['last_run_at' => null, 'last_outcome' => null];
+        }
+
+        if ($failure === null || ($success !== null && strtotime($success) >= strtotime($failure))) {
+            return ['last_run_at' => $success, 'last_outcome' => 'completed'];
+        }
+
+        $abandoned = str_starts_with((string) $tracker->status_reason, 'abandoned');
+
+        return ['last_run_at' => $failure, 'last_outcome' => $abandoned ? 'abandoned' : 'failed'];
     }
 
     /**

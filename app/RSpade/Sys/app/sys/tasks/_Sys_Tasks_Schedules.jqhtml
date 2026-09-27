@@ -39,6 +39,7 @@ error link to the tracker's detail view.
                                 <th>Schedule</th>
                                 <th>Status</th>
                                 <th>Next run</th>
+                                <th>Last run</th>
                                 <th>Last success</th>
                                 <th>Failures</th>
                                 <th>Last error</th>
@@ -67,14 +68,22 @@ error link to the tracker's detail view.
                                         <% } %>
                                     </td>
                                     <% if (!_t) { %>
-                                        <td colspan="5" class="_Sys_Tasks_Schedules__dim">not yet scheduled</td>
+                                        <td colspan="6" class="_Sys_Tasks_Schedules__dim">not yet scheduled</td>
                                     <% } else { %>
                                         <td><_Sys_Status_Badge $status=(row.failing ? 'fail' : _t.status) $label=(row.failing ? 'Failing' : null) /></td>
                                         <td><%= _t.next_run_at ? Rsx_Time.format_datetime(_t.next_run_at) : '' %></td>
+                                        <td>
+                                            <% if (_t.last_run_at) { %>
+                                                <div><%= Rsx_Time.format_datetime(_t.last_run_at) %></div>
+                                                <_Sys_Status_Badge $status=(_t.last_outcome === 'completed' ? 'completed' : 'failed') $label=(_t.last_outcome === 'abandoned' ? 'Abandoned' : null) />
+                                            <% } else { %>
+                                                <span class="_Sys_Tasks_Schedules__dim">never</span>
+                                            <% } %>
+                                        </td>
                                         <td><%= _t.completed_at ? Rsx_Time.format_datetime(_t.completed_at) : 'never' %></td>
                                         <td class="<%= row.failing ? '_Sys_Tasks_Schedules__failures' : '' %>"><%= _t.consecutive_failures || '' %></td>
                                         <td>
-                                            <% if (_t.last_error_at && _t.consecutive_failures > 0) { %>
+                                            <% if (_t.last_error_at && (_t.consecutive_failures > 0 || _t.last_outcome !== 'completed')) { %>
                                                 <a class="_Sys_Tasks_Schedules__error" href="<%= Rsx.Route('_Sys_Task_View_Action', _t.id) %>">
                                                     <span class="_Sys_Tasks_Schedules__error-at"><%= Rsx_Time.relative(_t.last_error_at) %></span>
                                                     <%= _t.error_excerpt || '' %>
