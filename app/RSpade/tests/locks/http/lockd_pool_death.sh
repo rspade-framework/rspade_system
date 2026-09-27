@@ -59,14 +59,14 @@ h.run(async function () {
         const member = h.spawn_helper('lockd_pool_member.js', ['--pool=DEATH']);
         const joined = await member.wait_for('UNLOCKED', WAIT_MS);
         h.check('the member process joined and released the lock', joined !== null);
-        const member_id = member.lines.find((l) => l.line.startsWith('JOINED ')).line.slice(7);
+        const [wid, generation] = member.lines.find((l) => l.line.startsWith('JOINED ')).line.slice(7).split(' ').map(Number);
 
         const checker = await h.connect();
         await checker.request({ op: 'pool.lock', pool: 'DEATH' });
         h.check('it counts as a member',
             (await checker.request({ op: 'pool.count', pool: 'DEATH' })).members === 1);
         h.check('member_alive says so',
-            (await checker.request({ op: 'pool.member_alive', pool: 'DEATH', member_id: member_id })).alive === true);
+            (await checker.request({ op: 'pool.member_alive', pool: 'DEATH', wid: wid, generation: generation })).alive === true);
         await checker.request({ op: 'pool.unlock', pool: 'DEATH' });
 
         // kill -9: no leave, no unlock, no last words.
@@ -77,8 +77,9 @@ h.run(async function () {
         await checker.request({ op: 'pool.lock', pool: 'DEATH' });
         h.check('count drops to 0 with no leave ever sent',
             (await checker.request({ op: 'pool.count', pool: 'DEATH' })).members === 0);
-        h.check('member_alive answers false for the dead member',
-            (await checker.request({ op: 'pool.member_alive', pool: 'DEATH', member_id: member_id })).alive === false);
+        const dead = await checker.request({ op: 'pool.member_alive', pool: 'DEATH', wid: wid, generation: generation });
+        h.check('member_alive answers not alive, and known, for the dead member',
+            dead.alive === false && dead.known === true);
         await checker.request({ op: 'pool.unlock', pool: 'DEATH' });
         checker.close();
     }
@@ -190,7 +191,8 @@ h.run(async function () {
         h.check('the dump renders a pools section naming the pool',
             /^pools$/m.test(dump.stdout) && /^  SHOWN$/m.test(dump.stdout));
         h.check('the dump shows the pool lock held and the membership per connection',
-            /HELD     POOL  SHOWN/.test(dump.stdout) && /MEMBER   POOL  SHOWN   as pm_[0-9a-f]{32}/.test(dump.stdout));
+            /HELD     POOL  SHOWN/.test(dump.stdout) && /MEMBER   POOL  SHOWN   as wid \d+/.test(dump.stdout));
+        h.check('the dump header shows the pool generation', /pool generation: \d+/.test(dump.stdout));
         if (dump.status !== 0) h.note(dump.stdout + dump.stderr);
         member.kill('SIGKILL');
     }

@@ -258,6 +258,16 @@ answered with **exactly one frame** echoing the request `id`; `pool.lock` is ans
 it is granted, everything else at once. A refusal is an `error` frame, and is an answer
 too. Every op except `pool.stats` requires the caller to hold that pool's lock.
 
+**Worker ids and the generation.** A member is identified by the pair `(wid, generation)`.
+The **wid** is an integer from one daemon-wide counter, so it is unique across every pool
+for the daemon's lifetime: the first wid after startup is random in `[0, 10000000)`, each
+later join gets the previous plus one, wrapping from `1000000000` to `0`, and a wid that a
+live member still holds is skipped. The **generation** is a random positive integer
+(`<= 2^53 - 1`) the daemon picks once at startup. A restart starts a new generation, and the
+new daemon cannot know whether a previous generation's worker is still running - so a
+question about another generation is answered `known: false`, and the caller settles it
+with its own evidence (a pid on its own host).
+
 #### pool.lock
 
 ```json
@@ -283,20 +293,19 @@ Hands the lock to the next waiter. `error` when the caller is not the holder.
 
 ```json
 --> {"op":"pool.join","pool":"tasks:9f2c...","id":"p3"}
-<-- {"id":"p3","status":"ok","pool":"tasks:9f2c...","member_id":"pm_5b0e4c...(32 hex)"}
+<-- {"id":"p3","status":"ok","pool":"tasks:9f2c...","wid":4812077,"generation":6120548213388411}
 ```
 
-Makes this connection a member. `member_id` is minted from 128 random bits - never derived
-from a connection id, since those restart at `c1` whenever the daemon restarts and a
-recycled id would make a dead member look alive. Store it wherever other processes need to
-ask about this member. `error` when the caller does not hold the lock or is already a
-member of this pool.
+Makes this connection a member and assigns it the next free wid. Store the `wid` and
+`generation` together wherever other processes need to ask about this member; neither is
+meaningful alone. `error` when the caller does not hold the lock or is already a member of
+this pool.
 
 #### pool.leave
 
 ```json
 --> {"op":"pool.leave","pool":"tasks:9f2c...","id":"p4"}
-<-- {"id":"p4","status":"ok","pool":"tasks:9f2c...","member_id":"pm_5b0e4c..."}
+<-- {"id":"p4","status":"ok","pool":"tasks:9f2c...","wid":4812077}
 ```
 
 `error` when the caller does not hold the lock or is not a member. Leaving is the polite
@@ -315,12 +324,30 @@ for me?" is `members < max` whether or not the caller has joined yet. Requires t
 #### pool.member_alive
 
 ```json
---> {"op":"pool.member_alive","pool":"tasks:9f2c...","member_id":"pm_5b0e4c...","id":"p6"}
-<-- {"id":"p6","status":"ok","pool":"tasks:9f2c...","member_id":"pm_5b0e4c...","alive":false}
+--> {"op":"pool.member_alive","pool":"tasks:9f2c...","wid":4812077,"generation":6120548213388411,"id":"p6"}
+<-- {"id":"p6","status":"ok","pool":"tasks:9f2c...","wid":4812077,"generation":6120548213388411,"alive":false,"known":true}
 ```
 
-Whether that member id is still a member of this pool. `false` means it left or its
-connection is gone. Requires the lock.
+`known: true` when `generation` is this daemon's; `alive` then says whether that wid is a
+member of this pool (`false`: it left or its connection is gone). `known: false` (with
+`alive: false`) when the generation is another daemon lifetime's - this daemon cannot know.
+`error` when the `wid` is not an integer in `[0, 1000000000)` or the `generation` not a
+positive safe integer. Requires the lock.
+
+#### pool.members_alive
+
+```json
+--> {"op":"pool.members_alive","pool":"tasks:9f2c...","id":"p9",
+     "items":[{"wid":4812077,"generation":6120548213388411},{"wid":17,"generation":88}]}
+<-- {"id":"p9","status":"ok","pool":"tasks:9f2c...","results":[
+     {"wid":4812077,"generation":6120548213388411,"alive":true,"known":true},
+     {"wid":17,"generation":88,"alive":false,"known":false}]}
+```
+
+`pool.member_alive` for many workers in one round trip - one result per item, in order,
+each exactly as `pool.member_alive` would answer it. An empty `items` answers an empty
+`results`. One malformed item refuses the whole request (`error`, naming the item index).
+Requires the lock.
 
 #### pool.stats
 
@@ -330,15 +357,16 @@ pool. `holder` says whether the lock is currently held.
 
 ```json
 --> {"op":"pool.stats","pool":"tasks:9f2c...","id":"p7"}
-<-- {"id":"p7","status":"ok","pool":"tasks:9f2c...","members":3,"holder":false,"waiting":0}
+<-- {"id":"p7","status":"ok","generation":6120548213388411,"pool":"tasks:9f2c...","members":3,"holder":false,"waiting":0}
 
 --> {"op":"pool.stats","id":"p8"}
-<-- {"id":"p8","status":"ok","pools":[{"pool":"tasks:9f2c...","members":3,"holder":false,"waiting":0}]}
+<-- {"id":"p8","status":"ok","generation":6120548213388411,"pools":[{"pool":"tasks:9f2c...","members":3,"holder":false,"waiting":0}]}
 ```
 
-`dump` includes every pool (holder, queue, members with their ids) and, per connection,
-which pool locks it holds, waits for and is a member of; `stats` reports the number of live
-pools as `pools`.
+`dump` includes `pool_generation`, every pool (holder, queue, members with their wids) and,
+per connection, which pool locks it holds, waits for and is a member of (as `wid`); `stats`
+reports the number of live pools as `pools`. The daemon logs its generation at startup
+(`[OK] Pool generation N`).
 
 ### ping
 
@@ -442,12 +470,12 @@ response frame.
 
 ```
 rsx-lockd state
-  connections: 3   locks: 2   semaphores: 0   pools: 1
+  connections: 3   locks: 2   semaphores: 0   pools: 1   pool generation: 6120548213388411
   granted: 19   released: 17   timed_out: 1   deadlocked: 2   dropped_connections: 16
 
 c17  web-01:2346918  via 127.0.0.1:48398  up 1.4s
     HELD     WRITE SITE_1   for 1.4s
-    MEMBER   POOL  tasks:9f2c...   as pm_5b0e4c...
+    MEMBER   POOL  tasks:9f2c...   as wid 4812077
 
 c18  web-01:2346926  via 127.0.0.1:48406  up 0.7s
     WAITING  WRITE SITE_1   for 0.7s   (no timeout)
@@ -461,11 +489,11 @@ pools
   tasks:9f2c...
     lock:    free
     queue:   empty
-    members: 1 (c17)
+    members: 1 (c17 wid 4812077)
 ```
 
 A connection's pool state prints as `HELD     POOL  <pool>`, `WAITING  POOL  <pool>` and
-`MEMBER   POOL  <pool>   as <member_id>`.
+`MEMBER   POOL  <pool>   as wid <wid>`.
 
 ### exec
 

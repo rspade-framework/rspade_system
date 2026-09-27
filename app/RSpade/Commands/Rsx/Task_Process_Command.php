@@ -34,12 +34,12 @@ use App\RSpade\Core\Task\Cron_Parser;
  * 3. Reconciles #[Schedule] tracker rows against the manifest (create new, regenerate
  *    on a changed cron expression, delete removed) so schedule edits take effect within
  *    one tick.
- * 4. If there is pending work, spawns detached workers until the pool is full. It does NOT
- *    become a worker itself.
+ * 4. If work is due, tries ONE Task::spawn_worker(). It does NOT become a worker itself.
  *
- * Every spawn reads the pool's count before a process is started (Task::spawn_worker()), so
- * a full pool starts nothing; a worker that starts anyway admits itself under the pool lock
- * and exits when it finds no room.
+ * One try per tick is enough: a worker drains the queue until nothing is claimable, and every
+ * dispatch tries a spawn of its own. The spawn reads the pool's count first, so a full pool
+ * (or maintenance mode) starts nothing; a worker that starts anyway admits itself under the
+ * pool lock and exits when it finds no room.
  */
 class Task_Process_Command extends Command
 {
@@ -71,8 +71,8 @@ class Task_Process_Command extends Command
         // Step 3: reconcile #[Schedule] tracker rows with the manifest
         $this->reconcile_schedules($this->option('force-scheduled'));
 
-        // Step 4: spawn workers to cover pending work (up to the pool cap)
-        $this->spawn_deficit_workers();
+        // Step 4: one worker try, when work is due
+        $this->spawn_worker_for_due_work();
 
         // Testing aid: drain one task inline instead of relying on a spawned worker.
         if ($this->option('once')) {
@@ -85,26 +85,32 @@ class Task_Process_Command extends Command
     /**
      * Recover RUNNING rows that will never settle on their own. Two arms:
      *
-     * 1. DEAD WORKER - started longer ago than cleanup_stuck_after and the worker is gone.
-     *    On-demand rows are failed; cron tracker rows are recycled to pending (their
-     *    next_run_at was already advanced before the run, so they simply fire again on
-     *    schedule) - failing them would silently kill the cron.
+     * 1. ABANDONED - the row's worker is gone. An on-demand row goes back to pending for a
+     *    paced retry (FAILED once rsx.tasks.retry.attempts runs were abandoned); a cron tracker
+     *    counts the run as done and waits for its next cadence - failing it would silently
+     *    kill the cron. settle_abandoned() has the detail. There is NO grace period: the
+     *    verdicts below are evidence, never an age.
      *
-     *    "Gone" is rsx-lockd's answer: the row's worker_member_key is no longer a member of the
-     *    pool (member_alive()), which is true the moment the worker's connection closed, on
-     *    whatever host it ran. The verdicts and the settle writes are taken UNDER THE POOL
-     *    LOCK (THE RULE: pool ops and `_tasks` rows only), so the view of the pool and of the
-     *    rows is one consistent snapshot. The cleanup_stuck_after grace still applies, so a
-     *    daemon restart - which ends every membership while the workers keep running - never
-     *    reaps a task that is still running unless it has also outlived the grace.
+     *    The verdict for a row carrying a pool identity (worker_id + worker_generation) comes
+     *    from rsx-lockd, in ONE pool.members_alive round trip for every such row, UNDER THE
+     *    POOL LOCK (THE RULE: pool ops and `_tasks` rows only), so the view of the pool and of
+     *    the rows is one consistent snapshot:
      *
-     *    A row with NO worker_member_key was claimed by a worker from before the pool existed
-     *    (or run inline by --once, which is not a pool member): for those the verdict is the
-     *    local pid probe, posix_kill(worker_pid, 0), exactly as before - a verdict that is only
-     *    meaningful on the host that ran the worker. Retire it once no such rows can remain.
+     *      - the daemon's own generation (known): not alive means the worker's connection is
+     *        gone, wherever it ran - abandoned;
+     *      - an older generation (known: false - the daemon restarted since the claim, and a
+     *        restart ends every membership while the workers keep running): only the host
+     *        that ran the worker can tell, by its pid. On this host a dead pid is abandoned
+     *        and a live one is left to record its own outcome; a row from another host is
+     *        left alone for that host's own tick (the Task Worker Pool health row counts
+     *        them).
      *
-     * 2. TIMED OUT - the worker is alive AND its pid is alive on this host, and it has exceeded
-     *    its execution cap (the row's own timeout, else rsx.tasks.default_timeout). Task_Killer
+     *    A row with NO worker_id was run inline by --once or by Task::internal(), neither of
+     *    which is a pool member: the verdict is the local pid probe, posix_kill(worker_pid, 0),
+     *    taken only on the row's own host (a NULL worker_host is taken as local).
+     *
+     * 2. TIMED OUT - the worker is alive AND runs on this host, and it has exceeded its
+     *    execution cap (the row's own timeout, else rsx.tasks.default_timeout). Task_Killer
      *    settles it the same way rsx:tasks:kill does: SIGTERM -> 5s -> SIGKILL, then KILLED
      *    (on-demand) or recycled to PENDING (cron tracker). This is the ONLY enforcement of
      *    tasks.timeout, so the cap's granularity is one cron tick. It runs AFTER the pool lock
@@ -114,8 +120,8 @@ class Task_Process_Command extends Command
      */
     private function detect_stuck_tasks(): void
     {
-        $cleanup_after = (int) config('rsx.tasks.cleanup_stuck_after', 1800);
         $default_timeout = (int) config('rsx.tasks.default_timeout', 0);
+        $this_host = Task_Pool::host();
 
         $live = [];
 
@@ -125,53 +131,57 @@ class Task_Process_Command extends Command
                 ->where('status', Task_Status::RUNNING)
                 ->get();
 
+            // BIGINT columns may arrive as strings: the daemon is asked in integers.
+            $members = [];
             foreach ($running_tasks as $task) {
-                $member_id = $task->worker_member_key;
+                if ($task->worker_id !== null) {
+                    $members[$task->id] = ['wid' => (int) $task->worker_id, 'generation' => (int) $task->worker_generation];
+                }
+            }
+            $verdicts = $members ? Task_Pool::members_alive($members) : [];
 
-                if ($member_id !== null) {
-                    $worker_alive = Task_Pool::member_alive($member_id);
-                    $worker = "pool member {$member_id}, PID {$task->worker_pid}";
+            foreach ($running_tasks as $task) {
+                $pid = (int) $task->worker_pid;
+                $local = $task->worker_host === null || $task->worker_host === $this_host;
+                $pid_alive = $local && $pid > 0 && posix_kill($pid, 0);
+
+                if ($task->worker_id !== null) {
+                    $verdict = $verdicts[$task->id];
+
+                    if ($verdict['known']) {
+                        if ($verdict['alive']) {
+                            if ($local) {
+                                $live[] = $task;
+                            }
+                            continue;
+                        }
+                        $reason = "worker {$task->worker_id} is no longer connected to rsx-lockd"
+                            . " (host {$task->worker_host}, PID {$task->worker_pid})";
+                    } else {
+                        if (!$local) {
+                            // Another host's worker from an older daemon generation: only
+                            // that host's pid evidence can settle it.
+                            continue;
+                        }
+                        if ($pid_alive) {
+                            $live[] = $task;
+                            continue;
+                        }
+                        $reason = "worker {$task->worker_id} of a previous rsx-lockd generation is no longer"
+                            . " running (PID {$task->worker_pid} is gone on {$this_host})";
+                    }
                 } else {
-                    $worker_alive = $task->worker_pid && posix_kill($task->worker_pid, 0);
-                    $worker = "PID {$task->worker_pid}";
+                    if (!$local) {
+                        continue;
+                    }
+                    if ($pid_alive) {
+                        $live[] = $task;
+                        continue;
+                    }
+                    $reason = "worker PID {$task->worker_pid} is no longer running";
                 }
 
-                if ($worker_alive) {
-                    $live[] = $task;
-                    continue;
-                }
-
-                if ($task->started_at === null || strtotime($task->started_at) > time() - $cleanup_after) {
-                    // Worker is gone but the row has not aged past the stuck threshold yet.
-                    continue;
-                }
-
-                // Settle only the row as it was read: RUNNING under the same worker.
-                $row = DB::table('_tasks')
-                    ->where('id', $task->id)
-                    ->where('status', Task_Status::RUNNING)
-                    ->where('worker_pid', $task->worker_pid)
-                    ->where('worker_member_key', $member_id);
-
-                if ($task->next_run_at !== null) {
-                    // Cron tracker row: recycle it, do not fail it.
-                    $this->warn("[STUCK TASK] Recycling stuck cron tracker {$task->id} ({$worker} gone)");
-                    $row->update([
-                        'status' => Task_Status::PENDING,
-                        'worker_pid' => null,
-                        'worker_member_key' => null,
-                        'updated_at' => now(),
-                    ]);
-                    continue;
-                }
-
-                $this->warn("[STUCK TASK] Failing stuck task {$task->id} ({$worker} not responding)");
-                $row->update([
-                    'status' => Task_Status::FAILED,
-                    'error' => 'Task stuck - worker process not responding',
-                    'completed_at' => now(),
-                    'updated_at' => now(),
-                ]);
+                $this->settle_abandoned($task, $reason);
             }
         } finally {
             // A lost connection already released the lock at the daemon (and holds_lock()
@@ -187,6 +197,119 @@ class Task_Process_Command extends Command
                 $this->enforce_task_timeout($task, $default_timeout);
             }
         }
+    }
+
+    /**
+     * Settle a RUNNING row whose worker is gone - under the pool lock, and only the row as it
+     * was read (still RUNNING under the same worker). Abandonment is not a failure of the
+     * task, so neither kind of row is failed for it outright:
+     *
+     *   - a CRON TRACKER counts the run as done: PENDING, next_run_at = the next cadence
+     *     strictly after now (never due at once - the claim's advanced next_run_at may already
+     *     be past after a long run), the four worker columns cleared. The abandonment is
+     *     recorded as a failed run (error, last_error_at, consecutive_failures + 1), so a
+     *     schedule whose runs keep dying reaches the Failing Schedules health row.
+     *   - a ONE-SHOT row is retried: PENDING with scheduled_for = now + base * 2^(n-1), n
+     *     being this abandonment's number (consecutive_failures + 1; a one-shot that throws
+     *     is terminal, so on a live one-shot the counter holds only abandonments), started_at
+     *     and the four worker columns cleared. The attempts-th abandonment FAILS it for good.
+     *     Pacing is rsx.tasks.retry (base_seconds, attempts).
+     *
+     * @param object $task The RUNNING _tasks row as detect_stuck_tasks() read it
+     * @param string $reason Which worker is gone, and how that is known
+     */
+    private function settle_abandoned(object $task, string $reason): void
+    {
+        $row = DB::table('_tasks')
+            ->where('id', $task->id)
+            ->where('status', Task_Status::RUNNING)
+            ->where('worker_pid', $task->worker_pid)
+            ->where('worker_id', $task->worker_id)
+            ->where('worker_generation', $task->worker_generation);
+
+        $abandonment = (int) $task->consecutive_failures + 1;
+
+        if ($task->next_run_at !== null) {
+            if ($task->cron_expression === null) {
+                shouldnt_happen("Cron tracker {$task->id} ({$task->class}::{$task->method}) has no cron_expression");
+            }
+            $next_run_at = date('Y-m-d H:i:s', (new Cron_Parser($task->cron_expression))->get_next_run_time());
+
+            $this->warn("[ABANDONED TASK] Cron tracker {$task->id} ({$task->class}::{$task->method}) waits for its next run at {$next_run_at}: {$reason}");
+            $row->update([
+                'status' => Task_Status::PENDING,
+                'status_reason' => 'abandoned (recycled): ' . $reason,
+                'error' => "Task abandoned - {$reason}",
+                'last_error_at' => now(),
+                'consecutive_failures' => $abandonment,
+                'next_run_at' => $next_run_at,
+                'worker_pid' => null,
+                'worker_id' => null,
+                'worker_generation' => null,
+                'worker_host' => null,
+                'updated_at' => now(),
+            ]);
+
+            return;
+        }
+
+        [$base_seconds, $attempts] = static::__retry_pacing();
+
+        if ($abandonment >= $attempts) {
+            $this->warn("[ABANDONED TASK] Failing task {$task->id} ({$task->class}::{$task->method}) after {$abandonment} abandoned attempt(s): {$reason}");
+            $row->update([
+                'status' => Task_Status::FAILED,
+                'status_reason' => "abandoned: {$reason}; attempt {$abandonment} of {$attempts}, not retried",
+                'error' => "Task abandoned - {$reason}. It was abandoned on all {$attempts} attempts"
+                    . ' (rsx.tasks.retry.attempts) and is not retried again.',
+                'last_error_at' => now(),
+                'consecutive_failures' => $abandonment,
+                'completed_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            return;
+        }
+
+        $retry_at = time() + $base_seconds * (2 ** ($abandonment - 1));
+        $next_attempt = $abandonment + 1;
+        $retry_iso = date('c', $retry_at);
+
+        $this->warn("[ABANDONED TASK] Task {$task->id} ({$task->class}::{$task->method}) will retry as attempt {$next_attempt} of {$attempts} at {$retry_iso}: {$reason}");
+        $row->update([
+            'status' => Task_Status::PENDING,
+            'status_reason' => "abandoned: {$reason}; retry as attempt {$next_attempt} of {$attempts} at {$retry_iso}",
+            'error' => "Task abandoned - {$reason}",
+            'last_error_at' => now(),
+            'consecutive_failures' => $abandonment,
+            'scheduled_for' => date('Y-m-d H:i:s', $retry_at),
+            'started_at' => null,
+            'worker_pid' => null,
+            'worker_id' => null,
+            'worker_generation' => null,
+            'worker_host' => null,
+            'updated_at' => now(),
+        ]);
+    }
+
+    /**
+     * rsx.tasks.retry, validated: [base_seconds, attempts].
+     *
+     * @return array{0: int, 1: int}
+     */
+    private static function __retry_pacing(): array
+    {
+        $base_seconds = config('rsx.tasks.retry.base_seconds');
+        $attempts = config('rsx.tasks.retry.attempts');
+
+        if (!is_int($base_seconds) || $base_seconds < 0) {
+            throw new \RuntimeException('rsx.tasks.retry.base_seconds must be an integer >= 0, got ' . var_export($base_seconds, true));
+        }
+        if (!is_int($attempts) || $attempts < 1) {
+            throw new \RuntimeException('rsx.tasks.retry.attempts must be an integer >= 1, got ' . var_export($attempts, true));
+        }
+
+        return [$base_seconds, $attempts];
     }
 
     /**
@@ -251,7 +374,9 @@ class Task_Process_Command extends Command
             DB::table('_tasks')->where('id', $tracker->id)->update([
                 'status' => Task_Status::PENDING,
                 'worker_pid' => null,
-                'worker_member_key' => null,
+                'worker_id' => null,
+                'worker_generation' => null,
+                'worker_host' => null,
                 'updated_at' => now(),
             ]);
 
@@ -340,29 +465,19 @@ class Task_Process_Command extends Command
     }
 
     /**
-     * Spawn detached workers to cover pending work, up to the pool cap.
-     *
-     * Workers are spawned one at a time until spawn_worker() declines - each reads the pool's
-     * count first, and this process's own still-running spawns cap the loop, so a tick never
-     * starts more than the cap. A worker started while others were still joining finds the
-     * pool full under the pool lock and exits. An unreachable rsx-lockd throws: the pool is
-     * the admission count, and the daemon is a hard dependency.
+     * Try ONE worker spawn when work is due. Task::spawn_worker() declines when the pool is
+     * full, maintenance mode is up or this process's own spawns fill the cap; the worker it
+     * starts joins only if the pool still has room once it holds the pool lock. An unreachable
+     * rsx-lockd throws: the pool is the admission count, and the daemon is a hard dependency.
      */
-    private function spawn_deficit_workers(): void
+    private function spawn_worker_for_due_work(): void
     {
         if (!$this->has_pending_work()) {
             return;
         }
 
-        $max = Task_Pool::max_workers();
-
-        $spawned = 0;
-        while ($spawned < $max && Task::spawn_worker()) {
-            $spawned++;
-        }
-
-        if ($spawned > 0) {
-            $this->info("[WORKER SPAWN] Pending work present; spawned {$spawned} worker(s)");
+        if (Task::spawn_worker()) {
+            $this->info('[WORKER SPAWN] Pending work present; spawned a worker');
         }
     }
 
@@ -398,7 +513,7 @@ class Task_Process_Command extends Command
     {
         // The claim is taken under the pool lock, exactly as a worker's is (THE RULE: pool ops
         // and `_tasks` rows only). This inline run is NOT a pool member, so its row carries no
-        // worker_member_key and the stuck-task reaper judges it by its local pid.
+        // worker_id and the stuck-task reaper judges it by its pid, on this host.
         Task_Pool::lock();
 
         try {
@@ -417,6 +532,7 @@ class Task_Process_Command extends Command
                     'status' => Task_Status::RUNNING,
                     'started_at' => now(),
                     'worker_pid' => getmypid(),
+                    'worker_host' => Task_Pool::host(),
                     'updated_at' => now(),
                 ]);
             }

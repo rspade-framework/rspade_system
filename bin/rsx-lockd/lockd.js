@@ -385,7 +385,8 @@ function print_dump(dump, own_conn_id) {
     console.log('  connections: ' + dump.connections.length
         + '   locks: ' + dump.locks.length
         + '   semaphores: ' + dump.semaphores.length
-        + '   pools: ' + dump.pools.length);
+        + '   pools: ' + dump.pools.length
+        + '   pool generation: ' + dump.pool_generation);
     console.log('  granted: ' + dump.counters.granted
         + '   released: ' + dump.counters.released
         + '   timed_out: ' + dump.counters.timed_out
@@ -428,8 +429,8 @@ function print_dump(dump, own_conn_id) {
         for (const entry of conn.pools) {
             if (entry.holds_lock) console.log('    HELD     POOL  ' + entry.pool);
             if (entry.waiting) console.log('    WAITING  POOL  ' + entry.pool + '   (no timeout)');
-            if (entry.member_id !== null) {
-                console.log('    MEMBER   POOL  ' + entry.pool + '   as ' + entry.member_id);
+            if (entry.wid !== null) {
+                console.log('    MEMBER   POOL  ' + entry.pool + '   as wid ' + entry.wid);
             }
         }
         console.log('');
@@ -460,7 +461,7 @@ function print_dump(dump, own_conn_id) {
         console.log('pools');
         for (const pool of dump.pools) {
             const queue = pool.queue.map((q) => q.conn_id).join(' -> ') || 'empty';
-            const members = pool.members.map((m) => m.conn_id).join(', ') || 'none';
+            const members = pool.members.map((m) => m.conn_id + ' wid ' + m.wid).join(', ') || 'none';
             console.log('  ' + pool.pool);
             console.log('    lock:    ' + (pool.holder === null ? 'free' : pool.holder
                 + ' for ' + seconds(pool.held_ms)));

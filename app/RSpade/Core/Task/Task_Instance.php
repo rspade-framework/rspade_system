@@ -5,6 +5,7 @@ namespace App\RSpade\Core\Task;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
 
 /**
@@ -180,6 +181,7 @@ class Task_Instance
                 ->update([
                     'started_at' => now(),
                     'worker_pid' => getmypid(),
+                    'worker_host' => Task_Pool::host(),
                     'updated_at' => now(),
                 ]);
         }
@@ -188,12 +190,14 @@ class Task_Instance
     /**
      * Mark task as completed.
      *
-     * A ONE-SHOT row goes terminal COMPLETED.
+     * A ONE-SHOT row goes terminal COMPLETED. Either kind has its failure streak cleared
+     * (consecutive_failures 0, status_reason null) - on a one-shot the streak is the attempts
+     * the reaper saw abandoned before this one succeeded.
      *
      * A CRON TRACKER goes straight back to PENDING - it is not "done", it is waiting for
-     * the next cadence its already-advanced next_run_at names - and its failure counter is
-     * cleared. completed_at is still written, and on a tracker it means LAST SUCCESSFUL RUN
-     * (the row itself is never terminal, so nothing else would record that).
+     * the next cadence its already-advanced next_run_at names. completed_at is still
+     * written, and on a tracker it means LAST SUCCESSFUL RUN (the row itself is never
+     * terminal, so nothing else would record that).
      *
      * The row write is a single UPDATE either way: there is no COMPLETED-then-PENDING
      * window for a SIGKILL to strand the schedule in.
@@ -219,14 +223,18 @@ class Task_Instance
                 $update['result'] = json_encode($result);
             }
 
+            // A success ends the streak on EVERY row: a tracker counts failed runs, and a
+            // one-shot retried after an abandonment counts its abandoned attempts. The recycle
+            // or retry wrote status_reason so the listing could say what went wrong; a success
+            // must clear it, or the row reads as failing beside a zero failure count.
+            $update['consecutive_failures'] = 0;
+            $update['status_reason'] = null;
+
             if ($is_tracker) {
                 $update['worker_pid'] = null;
-                $update['worker_member_key'] = null;
-                $update['consecutive_failures'] = 0;
-                // A recycled failure writes status_reason so the listing can say what went
-                // wrong; a later success must clear it, or the row reads as failing forever
-                // beside a zero failure count.
-                $update['status_reason'] = null;
+                $update['worker_id'] = null;
+                $update['worker_generation'] = null;
+                $update['worker_host'] = null;
             }
 
             DB::table('_tasks')->where('id', $this->id)->update($update);
@@ -274,7 +282,9 @@ class Task_Instance
 
             if ($is_tracker) {
                 $update['worker_pid'] = null;
-                $update['worker_member_key'] = null;
+                $update['worker_id'] = null;
+                $update['worker_generation'] = null;
+                $update['worker_host'] = null;
                 $update['status_reason'] = 'failed (recycled): ' . self::__summarize_error($error);
             } else {
                 $update['completed_at'] = now();

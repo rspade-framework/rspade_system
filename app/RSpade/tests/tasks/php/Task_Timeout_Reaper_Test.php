@@ -21,7 +21,7 @@ use App\RSpade\Core\Testing\Rsx_Test_Abstract;
  * _tasks.timeout, else rsx.tasks.default_timeout - is killed through Task_Killer (SIGTERM ->
  * 5s -> SIGKILL) and settled exactly as rsx:tasks:kill settles it: KILLED for an on-demand
  * row, recycled to PENDING for a cron tracker. With neither cap defined the task runs
- * unbounded. The dead-worker arm (cleanup_stuck_after) is unchanged and covered elsewhere.
+ * unbounded. The abandoned-worker arm is covered by Task_Worker_Execution_Test.
  *
  * Each test spawns a REAL killable child as the worker so the liveness probe sees a live
  * process that is NOT this test runner. The tick is driven with Artisan::call (no --once,

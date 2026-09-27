@@ -1434,9 +1434,6 @@ return [
         // Set to 0 to run uncapped tasks unbounded (a row's own timeout still applies).
         'default_timeout' => 1800,  // 30 minutes
 
-        // How long before a task is considered stuck (seconds)
-        'cleanup_stuck_after' => 1800,  // 30 minutes
-
         // Default TTL for task temp directories (seconds)
         'temp_directory_default_ttl' => 3600,  // 1 hour
 
@@ -1450,18 +1447,17 @@ return [
         // whatever this is set to.
         'failing_schedule_warn_after' => 3,
 
-        // Queue-specific configuration
-        'queues' => [
-            'default' => [
-                'max_workers' => 1,
-            ],
-            'scheduled' => [
-                'max_workers' => 1,
-            ],
-            // Future queues can be added here:
-            // 'video' => ['max_workers' => 2],
-            // 'export' => ['max_workers' => 1],
-            // 'email' => ['max_workers' => 5],
+        // Re-running work a dead or disconnected worker ABANDONED (the rsx:task:process
+        // reaper's verdict - never a task that threw, which is FAILED as always). Owner-set
+        // pacing, not a timeout: it bounds nothing's run time and cuts nothing short.
+        // An abandoned one-shot row goes back to PENDING with scheduled_for =
+        // now + base_seconds * 2^(n-1), n being that row's abandonment count; the
+        // attempts-th abandonment FAILS it for good. An abandoned #[Schedule] tracker is
+        // not retried here - that run counts as done and the tracker waits for its next
+        // cadence.
+        'retry' => [
+            'base_seconds' => 600,  // 10 minutes, doubling per abandonment
+            'attempts' => 5,        // runs allowed before an abandoned one-shot is FAILED
         ],
     ],
 

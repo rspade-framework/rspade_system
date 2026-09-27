@@ -598,19 +598,19 @@ TASK SYSTEM
     'tasks' => [
         'global_max_workers' => env('RSX_TASK_MAX_WORKERS', 3),
         'default_timeout' => 1800,             # 30 min
-        'cleanup_stuck_after' => 1800,         # 30 min
         'temp_directory_default_ttl' => 3600,  # 1 hour
         'task_retention_days' => 30,
         'failing_schedule_warn_after' => 3,
-        'queues' => [
-            'default'   => ['max_workers' => 1],
-            'scheduled' => ['max_workers' => 1],
-        ],
+        'retry' => ['base_seconds' => 600, 'attempts' => 5],
     ]
 
-    Unified task execution: worker concurrency, timeouts, retention, and
-    per-queue worker caps. global_max_workers bounds the single shared
-    pool. See: php artisan rsx:man tasks
+    Unified task execution: worker concurrency, timeouts and retention.
+    global_max_workers bounds the single shared pool; there are no
+    per-queue caps (the queue column is a label). 'retry' paces the re-run of
+    a one-shot whose worker died or disconnected (ABANDONED): back to pending
+    base_seconds * 2^(n-1) after its n-th abandonment, FAILED on the
+    attempts-th. It is pacing, not a timeout, and a task that throws is never
+    retried. See: rsx:man tasks (STUCK TASK RECOVERY)
 
 LOCKS
     'locks' => [

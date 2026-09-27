@@ -436,8 +436,15 @@ FRAMEWORK INVENTORY
                                  it. WARN when there are more members than the
                                  cap (the cap was lowered under running workers,
                                  or two configurations share one database and
-                                 host); FAIL when the daemon cannot be reached or
-                                 refuses pool.stats - nothing can be admitted;
+                                 host); WARN when RUNNING rows claimed under a
+                                 previous rsx-lockd generation sit on OTHER hosts
+                                 ("N running task(s) from a previous rsx-lockd
+                                 generation on host(s) ..." - each host's
+                                 rsx:task:process reaps its own, so a host that
+                                 no longer runs one leaves them RUNNING; rsx:man
+                                 tasks, STUCK TASK RECOVERY); FAIL when the daemon
+                                 cannot be reached or refuses pool.stats -
+                                 nothing can be admitted;
                                  INFO while the maintenance flag is up, when the
                                  daemon is stopped on purpose.
         Turnstile                INFO when disabled; FAIL when enabled with a

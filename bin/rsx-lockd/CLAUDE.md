@@ -14,7 +14,7 @@ exit codes). This file is the map of the implementation.
 | `lockd.js` | CLI dispatch, `.env` load, pidfile, daemonize, `dump` rendering, `exec` | Only inside `main()`, only under `require.main === module` |
 | `lib/protocol.js` | Frame encode/decode, the newline splitter, HMAC hello, mode/timeout normalization, THE timeout message | **None. Pure.** |
 | `lib/locktable.js` | The entire lock state machine: holders, queues, grants, timeouts, semaphores, deadlock detection. Owns the `Pool_Table` instance (`table.pool`) so connection cleanup cannot forget it | **None.** Delivery and timers are injected. |
-| `lib/pool.js` | Worker pool accounting (`pool.*` ops): per-pool FIFO mutex + member set, random member ids, per-connection cleanup. Bespoke - shares no code with locks/semaphores | **None.** Delivery and the member-id source are injected. |
+| `lib/pool.js` | Worker pool accounting (`pool.*` ops): per-pool FIFO mutex + member set, worker ids (wid) + the daemon generation, per-connection cleanup. Bespoke - shares no code with locks/semaphores | **None.** Delivery, the generation and the first wid are injected. |
 | `lib/server.js` | `net.Server` over unix and/or tcp, per-connection state, hello gate, frame dispatch | Binds sockets |
 | `lib/config.js` | Config search order, JSON parse, total validation | Reads the file it is told to read |
 | `lockd-run.sh` | Supervisor entry: wait for `lockd.js`, then `exec node` | Invoke as `bash lockd-run.sh` - never rely on the exec bit |
@@ -56,7 +56,7 @@ The pool machine is reached the same way, through the table that owns it:
 
 ```js
 const table = new Lock_Table({ deliver, now: () => 0, set_timeout: () => null,
-    clear_timeout: () => {}, pool_random_id: () => 'pm_test' + (++n) });
+    clear_timeout: () => {}, pool_generation: 777, pool_first_wid: 100 });
 table.pool.lock('a', {id: 1, pool: 'P'});   // -> granted frame
 table.pool.lock('b', {id: 2, pool: 'P'});   // -> null (parked)
 table.drop_connection('a');                 // -> deliver(b, granted)
@@ -107,8 +107,13 @@ table.drop_connection('a');                 // -> deliver(b, granted)
     pool client waits for the answer on every call, so a missing frame is a hung worker.
 12. **Pool waits never enter `conn.waits`.** The deadlock detector walks `conn.waits`;
     pool waits live only in `lib/pool.js`. See "Worker pools" for why that is correct and
-    what keeps it correct. Membership is never keyed by conn id outside the connection's
-    lifetime: a member id is random (`pm_` + 32 hex), because conn ids restart at `c1`.
+    what keeps it correct. A member is identified by `(wid, generation)`, never by conn id
+    (conn ids restart at `c1`). The wid comes from ONE daemon-wide counter (random start in
+    `[0, 10000000)`, +1 per join, wrapping from `1000000000` to 0, skipping a wid any live
+    member holds), so no two live members share one in any pool. The counter restarts with
+    the daemon too, which is why the generation exists: a wid from another generation is
+    answered `known: false`, never `alive: false` - this daemon cannot know about a previous
+    daemon's workers, and a caller that read `false` as "dead" would reap live work.
 
 ## Lock groups (subprocess inheritance)
 
@@ -146,6 +151,12 @@ is room, claims a task row, and releases the lock; a crashed worker stops being 
 the moment its connection closes. Owner requirements it exists to meet: membership and
 the pool lock are released on disconnect whether or not the worker sent leave/unlock, and
 every pool command is acknowledged so a worker never sends one and quits unanswered.
+
+The worker stores the `(wid, generation)` that `pool.join` answered on the task row it
+claims, and the reaper asks `pool.member_alive` / `pool.members_alive` about it. `known:
+true, alive: false` is proof the worker is gone (its connection closed under this daemon);
+`known: false` means the row predates this daemon, and only the claiming host's own pid
+check can settle it.
 
 **It is bespoke on purpose.** No modes, no timeout, no group inheritance, no deadlock
 detection. Do not "unify" it with the lock or semaphore code - each of those features is

@@ -63,10 +63,19 @@ all background/scheduled work in the framework.
   at every class boundary - makes `Task::dispatch()` enqueue only. Other members are simulated
   on the RsxLocks connection. (php - live rsx-lockd + per-test transaction;
   `Task_Spawn_Admission_Test`)
-- Dead-worker recovery: `rsx:task:process` settles a stuck RUNNING row whose
-  `worker_member_key` is no longer a pool member, leaves a live member's row alone, and
-  judges a row with no member key by its local pid. (php - committed rows;
+- Abandoned-worker recovery, with no grace period: `rsx:task:process` abandons at once a
+  RUNNING row whose current-generation worker (`worker_id` + `worker_generation`) is no
+  longer a pool member, leaves a live member's row alone, judges an older generation's row
+  by its pid on its own host and leaves another host's alone (counted by the Task Worker
+  Pool health WARN), and judges a row with no `worker_id` by its pid; a worker that lost
+  the pool between claim and run hands its row back to PENDING. (php - committed rows;
   `Task_Worker_Execution_Test`)
+- Abandonment retries: an abandoned one-shot goes back to PENDING with `scheduled_for` =
+  now + `rsx.tasks.retry.base_seconds` * 2^(n-1) and is FAILED on the `attempts`-th
+  abandonment; an abandoned tracker waits for its next cadence, the run counted as failed;
+  a task that throws is never retried. (php - committed rows; `Task_Abandonment_Retry_Test`)
+- Maintenance mode spawns nothing, and one `rsx:task:process` tick tries exactly one spawn.
+  (`Task_Spawn_Admission_Test`)
 - A pool member's detached child never carries its membership: every rsx-lockd socket is
   closed in the child (`RsxLocks::inherited_lock_fds()`). (php - real processes;
   `Task_Pool_Test`)

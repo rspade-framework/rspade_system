@@ -33,8 +33,8 @@ use App\RSpade\Core\Task\Cron_Parser;
  *   1. Pool lock. If the pool already holds global_max_workers OTHER members: unlock and
  *      exit 0. Otherwise join.
  *   2. Still under the lock: claim the next row by the single priority order (run-now tasks
- *      FIFO, then due cron tasks by next_run_at) and mark it RUNNING with this worker's pid
- *      and member id. Unlock.
+ *      FIFO, then due cron tasks by next_run_at) and mark it RUNNING with this worker's pool
+ *      identity (worker_id + worker_generation), worker_host and worker_pid. Unlock.
  *   3. Run the task - no pool lock held.
  *   4. Pool lock. Record the outcome, then claim the next row (back to 2). When nothing is
  *      claimable, or --max-time has passed: leave, unlock, exit.
@@ -45,9 +45,13 @@ use App\RSpade\Core\Task\Cron_Parser;
  * deadlock detector, and this is what makes that safe. claim_next_task() asserts it holds
  * the lock, because a claim without it double-runs work silently.
  *
- * A LOST POOL CONNECTION mid-task ends the worker: the daemon has already dropped its
- * membership, so it records the outcome of the row it holds (a row already claimed by this
- * worker cannot race another claim), says so loudly and exits non-zero.
+ * A LOST POOL CONNECTION ends the worker, and the daemon has already dropped its membership:
+ *
+ *   - lost at the unlock right after a claim, before the task ran: the worker puts its own row
+ *     back to PENDING exactly as it found it (release_unrun_claim()), says so loudly and exits
+ *     non-zero - nothing ran, so there is no outcome to record;
+ *   - lost while the task ran: it records the outcome of the row it holds (a row already
+ *     claimed by this worker cannot race another claim), says so loudly and exits non-zero.
  *
  * Workers are UNGUARDED: nothing serializes them for you - they run concurrently, and each
  * #[Task] is responsible for its own critical-section locking (see RsxLocks).
@@ -92,13 +96,13 @@ class Task_Worker_Command extends Command
                 return 0;
             }
 
-            $member_id = Task_Pool::join();
-            $this->info("[WORKER] Joined the pool ({$member_id})");
+            $identity = Task_Pool::join();
+            $this->info("[WORKER] Joined the pool (wid {$identity['wid']}, generation {$identity['generation']})");
 
             // Invariant at the top of every iteration: this process holds the pool lock and
             // is a member.
             while (true) {
-                $claim = $this->claim_next_task($member_id);
+                $claim = $this->claim_next_task($identity);
 
                 if ($claim === null) {
                     $this->info('[WORKER] No more pending tasks, exiting');
@@ -111,7 +115,16 @@ class Task_Worker_Command extends Command
 
                 [$task_row, $run_lock] = $claim;
 
-                Task_Pool::unlock();
+                try {
+                    Task_Pool::unlock();
+                } catch (RuntimeException $e) {
+                    // The daemon has already dropped this worker - the reaper may treat the
+                    // row as abandoned - and the task has not started. Hand the row back.
+                    $this->release_unrun_claim($task_row, $run_lock, $identity, $e->getMessage());
+                    Task_Pool::disconnect();
+
+                    return 1;
+                }
 
                 [$task_instance, $outcome] = $this->run_task($task_row);
 
@@ -125,7 +138,7 @@ class Task_Worker_Command extends Command
                 } catch (RuntimeException $e) {
                     $lost = $e->getMessage();
                 }
-                if ($lost === null && Task_Pool::member_id() !== $member_id) {
+                if ($lost === null && (Task_Pool::wid() !== $identity['wid'] || Task_Pool::generation() !== $identity['generation'])) {
                     $lost = 'the pool membership ended while the task ran';
                 }
 
@@ -180,7 +193,7 @@ class Task_Worker_Command extends Command
      *         run lock; CLAIM_SKIPPED for a row set aside (claim again); null when nothing is
      *         claimable.
      */
-    private function claim_next_task(string $member_id)
+    private function claim_next_task(array $identity)
     {
         // Two workers claiming without the lock both select the same row and both run it -
         // and nothing downstream would ever notice.
@@ -246,7 +259,9 @@ class Task_Worker_Command extends Command
             'status' => Task_Status::RUNNING,
             'started_at' => now(),
             'worker_pid' => getmypid(),
-            'worker_member_key' => $member_id,
+            'worker_id' => $identity['wid'],
+            'worker_generation' => $identity['generation'],
+            'worker_host' => Task_Pool::host(),
             'updated_at' => now(),
         ];
 
@@ -259,6 +274,52 @@ class Task_Worker_Command extends Command
         DB::table('_tasks')->where('id', $task_row->id)->update($claim);
 
         return [$task_row, $run_lock];
+    }
+
+    /**
+     * Hand back a claim whose task never ran: the pool connection was lost between the claim
+     * and the run. The row goes back to PENDING as the claim found it - the four worker
+     * columns and started_at cleared, a cron tracker's next_run_at restored to the due time
+     * the claim advanced - so the next worker claims it again. The identity run lock is
+     * released (it lives on this process's RsxLocks connection, not the pool's).
+     *
+     * The write matches only the row still RUNNING under THIS worker's identity: once the
+     * daemon dropped the membership, a reaper tick may already have settled it, and that
+     * verdict stands.
+     *
+     * Loud on purpose, and the worker exits non-zero after it.
+     *
+     * @param object $task_row The row as claim_next_task() selected it
+     * @param Task_Lock|null $run_lock Held identity run lock for managed tasks (else null)
+     * @param array{wid: int, generation: int} $identity This worker's pool identity
+     * @param string $reason Why the pool connection is gone
+     */
+    private function release_unrun_claim(object $task_row, ?Task_Lock $run_lock, array $identity, string $reason): void
+    {
+        $restored = DB::table('_tasks')
+            ->where('id', $task_row->id)
+            ->where('status', Task_Status::RUNNING)
+            ->where('worker_id', $identity['wid'])
+            ->where('worker_generation', $identity['generation'])
+            ->update([
+                'status' => Task_Status::PENDING,
+                'started_at' => null,
+                'next_run_at' => $task_row->next_run_at,
+                'worker_pid' => null,
+                'worker_id' => null,
+                'worker_generation' => null,
+                'worker_host' => null,
+                'updated_at' => now(),
+            ]);
+
+        $run_lock?->release();
+
+        $message = "[WORKER] Lost the task pool connection after claiming task {$task_row->id}"
+            . " ({$task_row->class}::{$task_row->method}) and before running it; "
+            . ($restored ? 'the row is back to pending' : 'the row was already settled by the reaper')
+            . " and this worker is exiting: {$reason}";
+        $this->error($message);
+        Log::error($message);
     }
 
     /**

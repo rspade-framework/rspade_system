@@ -69,8 +69,9 @@ concern (`Maintenance_Flock_Locks_Test`), not here.
   PHP/node HMAC parity, and lock-group inheritance with all four of its boundaries
   (foreign group, read-vs-write, dying member, malformed id).
   Worker pools (`lockd_pool_*.sh`): the pure state machine through the export seam
-  (`lockd_pool_unit.sh`, no daemon), every op acknowledged exactly once plus FIFO, count,
-  member_alive, name isolation and not-holder errors over the wire (`lockd_pool_protocol.sh`),
+  (`lockd_pool_unit.sh`, no daemon, including wid wraparound and skip-in-use), every op acknowledged exactly once plus FIFO, count,
+  worker ids (wid + generation, known:false across generations), member_alive and the batch
+  members_alive, name isolation and not-holder errors over the wire (`lockd_pool_protocol.sh`),
   and membership/lock release on `kill -9`, disconnect and `release_all`
   (`lockd_pool_death.sh`, using the `resource/lockd_pool_member.js` helper process).
 - **cli** (shell) - `lockd exec`: exit-code contract (child code, 124 timeout), `--quiet`,

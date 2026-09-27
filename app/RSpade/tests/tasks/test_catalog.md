@@ -60,7 +60,7 @@ Type: php / cli. Last updated: 2026-09-26.
 |----|---------|------|--------|--------|
 | task-d-01 | full pending->running->completed lifecycle persisted in DB | php | now unblocked (ISSUE-1 fixed); worker-driven lifecycle test not yet authored | planned |
 | task-d-02 | scheduled processor `rsx:task:process` runs due tasks | cli | needs cron processor invocation + time control | deferred |
-| task-d-03 | stuck-task detection (DEAD worker arm, cleanup_stuck_after) | php | covered by Task_Worker_Execution_Test task-exec-05..08 (rows planted 2000s old); the TIMEOUT arm by Task_Timeout_Reaper_Test | implemented |
+| task-d-03 | stuck-task detection (ABANDONED worker arm, no grace period) | php | covered by Task_Worker_Execution_Test task-exec-05..08, 10-12 (rows planted just now) and the retry pacing by Task_Abandonment_Retry_Test; the TIMEOUT arm by Task_Timeout_Reaper_Test | implemented |
 | task-d-04 | `rsx:task:list` / `rsx:task:run` CLI output | cli | command-output test; lower priority | planned |
 | task-d-05 | queue concurrency enforcement | php | needs worker concurrency simulation | deferred |
 | task-d-06 | temp directory auto-cleanup timing | php | time-dependent | deferred |
@@ -73,7 +73,7 @@ Other members are real members on a second daemon connection (the RsxLocks one, 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | task-spawn-01 | a worker that finds the pool full exits without joining | cap 1, one other member; in-process rsx:task:worker | exit 0, "Worker pool is full"; no membership; lock free; members 1 | implemented |
-| task-spawn-02 | a worker below the cap joins, claims nothing, and leaves before returning | cap 2, one other member; empty queue | "Joined the pool (pm_...)"; member_id() null after; members back to 1; lock free | implemented |
+| task-spawn-02 | a worker below the cap joins, claims nothing, and leaves before returning | cap 2, one other member; empty queue | "Joined the pool (wid N, generation G)"; wid() null after; members back to 1; lock free | implemented |
 | task-spawn-03 | spawn_worker() reads the pool count before starting anything | cap 1: other member present, then gone; spawn_workers(true) | false + nothing registered, lock released; then true, child registered; members 0 after contain() | implemented |
 | task-spawn-04 | a member process counts itself | this process joined; cap 1 | spawn_worker() false; nothing started | implemented |
 | task-spawn-05 | spawn_worker() under the pool lock refuses instead of parking behind itself | Task_Pool::lock() held | RuntimeException "holds the task pool lock" | implemented |
@@ -81,27 +81,41 @@ Other members are real members on a second daemon connection (the RsxLocks one, 
 | task-spawn-07 | under the suite dispatch() enqueues only | Task::dispatch() | pending row; detached registry unchanged; spawn_worker() false | implemented |
 | task-spawn-08 | Task::spawn_workers(false) enqueues without spawning | spawn_workers(true) then (false); dispatch() | spawning_workers() follows; pending row; nothing started | implemented |
 | task-spawn-09 | the class boundary turns spawning back off | spawn_workers(true); Rsx_Test_Abstract::__restore_class_boundary() | spawning_workers() false | implemented |
+| task-spawn-10 | maintenance mode starts nothing | Framework_Maintenance::$force_active_for_tests; empty pool, cap 3; dispatch() | spawn_worker() false; nothing registered; row PENDING | implemented |
+| task-spawn-11 | one rsx:task:process tick tries exactly one spawn | due on-demand row; empty pool, cap 3; spawn_workers(true) | "spawned a worker"; exactly one detached process registered | implemented |
 
-## Task_Worker_Execution_Test (php, $requires_db_reset + no-tx) - the worker loop and dead-worker recovery
+## Task_Worker_Execution_Test (php, $requires_db_reset + no-tx) - the worker loop and abandoned-worker recovery
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
 | task-exec-01 | tier-1 run-now rows are claimed before due tier-2 cron rows | one of each; in-process worker | run order B, A | implemented |
 | task-exec-02 | a cron tracker recycles after it runs | due tracker | PENDING, worker_pid null, next_run_at advanced, result recorded | implemented |
 | task-exec-03 | an on-demand row completes | pending row | COMPLETED with result | implemented |
-| task-exec-04 | the claim records pid and pool member id; the worker leaves the pool | pending row | worker_pid = this pid; worker_member_key 'pm_...'; that member not alive after | implemented |
-| task-exec-05 | a row whose pool member is gone is failed even though its pid is alive | RUNNING 2000s, dead member key, live pid | FAILED | implemented |
-| task-exec-06 | a row whose worker is still a member is left alone, however old | this process joined; row with its member key and a dead pid | still RUNNING | implemented |
-| task-exec-07 | a row with no member key is judged by its local pid | RUNNING 2000s, NULL member key, dead pid | FAILED | implemented |
-| task-exec-08 | a stuck cron tracker is recycled, not failed, and both worker columns cleared | real #[Schedule] identity, dead member key | PENDING; worker_pid and worker_member_key null | implemented |
+| task-exec-04 | the claim records the pool identity, host and pid; the worker leaves the pool | pending row | worker_pid = this pid; worker_id set; worker_generation = the daemon's; worker_host = this host; member_alive alive false, known true after | implemented |
+| task-exec-05 | a current-generation worker that left the pool is abandoned at once, even with a live pid | RUNNING just now, departed wid, live pid | PENDING for a retry (scheduled_for in the future, worker columns null), error names "worker <wid> is no longer connected to rsx-lockd" | implemented |
+| task-exec-06 | a row whose worker is still a member is left alone | this process joined; row with its identity and a dead pid | still RUNNING | implemented |
+| task-exec-07 | a row with no worker_id is judged by its pid, on its own host only | NULL worker_id: dead pid here; dead pid on another host | PENDING for a retry; the other host's row RUNNING | implemented |
+| task-exec-08 | an abandoned cron tracker is recycled, not failed, and all four worker columns cleared | real #[Schedule] identity, departed wid, next_run_at in the past | PENDING; worker_pid/id/generation/host null; status_reason "abandoned (recycled)"; next_run_at in the future | implemented |
 | task-exec-09 | dispatch() returns a pollable id | Test_Echo_Service | int id, pending row | implemented |
+| task-exec-10 | an older-generation row on this host is judged by its pid | older generation: dead pid; live pid | PENDING for a retry, consecutive_failures 1 ("of a previous rsx-lockd generation"); RUNNING | implemented |
+| task-exec-11 | an older-generation row on another host is left alone and counted by health | older generation on two other hosts (3 rows) + one on this host | other-host row RUNNING; previous_generation_rows() = 3 on 2 hosts; Task Worker Pool WARN naming them | implemented |
+| task-exec-12 | a claim lost before the run goes back to pending | RUNNING tracker under a wid; release_unrun_claim() via reflection; then again on a FAILED row | PENDING, started_at + four worker columns null, next_run_at restored; FAILED row untouched, "already settled by the reaper" | implemented |
+
+## Task_Abandonment_Retry_Test (php, $requires_db_reset + no-tx) - what the reaper does with an abandoned row
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| task-retry-01 | an abandoned one-shot retries after base * 2^(n-1); the retry waits; a success clears the streak | pending one-shot, twice put RUNNING under a departed wid and reaped; a worker before and after scheduled_for is due | PENDING, consecutive_failures 1 then 2, scheduled_for = now + 600 then now + 1200 (from time() around the tick), started_at + four worker columns null, status_reason "retry as attempt 2 of 5 at ..."; nothing claimed while not due; then COMPLETED, consecutive_failures 0, status_reason null | implemented |
+| task-retry-02 | the attempts-th abandonment fails the row for good | one-shot with consecutive_failures attempts-1, reaped | FAILED, completed_at set, consecutive_failures = attempts, error names the attempts and rsx.tasks.retry.attempts | implemented |
+| task-retry-03 | an abandoned tracker counts the run as done and waits for its next cadence | real #[Schedule] tracker, next_run_at an hour ago, RUNNING under a departed wid | PENDING, next_run_at = Cron_Parser's next run after now, four worker columns null, consecutive_failures 1, last_error_at set, status_reason "abandoned (recycled)" | implemented |
+| task-retry-04 | a one-shot that THROWS is not retried | pending one-shot on a throwing fixture, a worker then a reaper tick | FAILED, ran exactly once | implemented |
 
 ## Task_Pool_Test (php, no transactions, live rsx-lockd) - the worker pool client
 
 | ID | Purpose | Input | Expected | Status |
 |----|---------|-------|----------|--------|
-| task-pool-01 | every call is applied by the daemon before it returns | lock/join/member_alive/leave/unlock, pool.stats read over the RsxLocks connection after each | holder/members move with each call; stats() agrees | implemented |
-| task-pool-02 | join/count/member_alive/leave/unlock are refused without the lock; second join and second leave refused | calls without the lock, then doubled calls under it | RuntimeException carrying "refused pool.<op>"; bookkeeping unchanged | implemented |
+| task-pool-01 | every call is applied by the daemon before it returns; join answers wid + generation; member_alive / members_alive answer alive + known | lock/join/member_alive/members_alive/leave/unlock, pool.stats read over the RsxLocks connection after each | holder/members move with each call; stats() agrees, generation included; another generation known false; batch keyed and ordered | implemented |
+| task-pool-02 | join/count/member_alive/members_alive/leave/unlock are refused without the lock; second join and second leave refused | calls without the lock, then doubled calls under it | RuntimeException carrying "refused pool.<op>"; bookkeeping unchanged | implemented |
 | task-pool-03 | count() excludes the caller | count before join, after join, after leave | equal each time; stats() counts the caller | implemented |
 | task-pool-04 | a SIGKILLed member child is no longer counted or alive | child PHP joins + unlocks, then SIGKILL | member_alive false, count back to base | implemented |
 | task-pool-05 | a member child that dies holding the lock hands it to the parked waiter | child holds the lock, SIGKILLs itself once pool.stats shows a waiter | parent's lock() granted; child exit 137; its member not alive | implemented |
@@ -116,6 +130,7 @@ Other members are real members on a second daemon connection (the RsxLocks one, 
 | task-kill-01 | on-demand RUNNING task: SIGTERM->SIGKILL the worker, row -> KILLED + status_reason, worker_pid cleared | real detached victim pid on a RUNNING row | outcome 'killed', process dead, status KILLED, reason recorded | implemented |
 | task-kill-02 | cron tracker (next_run_at set) recycles to PENDING (schedule survives), not terminal | RUNNING cron tracker row | outcome 'recycled', status PENDING, next_run_at kept, reason recorded | implemented |
 | task-kill-03 | rsx:tasks:kill-all requires --explanation | Artisan::call with no --explanation | non-zero exit | implemented |
+| task-kill-04 | a row claimed on another host is settled without a signal | RUNNING row, worker_host another host, pid of a live local victim | outcome 'killed_no_process'; victim still alive; KILLED; four worker columns null | implemented |
 
 ## Task_Timeout_Reaper_Test (php) - execution-timeout arm of rsx:task:process
 

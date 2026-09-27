@@ -7,9 +7,14 @@
 
 namespace App\RSpade\Tests\Tasks\Php;
 
+use Illuminate\Console\OutputStyle;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
+use Symfony\Component\Console\Input\ArrayInput;
+use Symfony\Component\Console\Output\BufferedOutput;
+use App\RSpade\Commands\Rsx\Task_Worker_Command;
 use App\RSpade\Core\Task\Task;
+use App\RSpade\Core\Task\Task_Health_Checks;
 use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -31,9 +36,12 @@ use App\RSpade\Tests\Tasks\Php\Task_Exec_Fixture_Service;
  * reconcile leaves it in place.
  *
  * The worker joins this environment's rsx-lockd task pool on this process's Task_Pool
- * connection and leaves it before returning. The stuck-row tests plant the pool member id
- * a worker would have written: one that is not a member (a dead worker) or this process's
- * own live membership, plus one row with no member id (claimed before rows carried one), judged by its pid.
+ * connection and leaves it before returning. The abandoned-row tests plant the identity a
+ * worker would have written (worker_id + worker_generation + worker_host + worker_pid): a wid
+ * of the daemon's own generation that has left the pool (a dead worker) or this process's own
+ * live membership; a wid of an older generation on this host (judged by its pid) or on another
+ * host (left alone); and a row with no worker_id (an inline run), judged by its pid. Every
+ * planted row started NOW: there is no grace period, so age never enters a verdict.
  *
  * Commits real rows to _tasks, so this class provisions a clean baseline once
  * and opts out of per-test transactions. Each test clears its own residue before running.
@@ -49,8 +57,8 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     // Helpers
     // -------------------------------------------------------------------------
 
-    /** A member id the daemon never minted (its ids are 'pm_' + hex), so it is never alive. */
-    const DEAD_MEMBER = 'pm_never_a_member';
+    /** A host name no test box carries. */
+    const OTHER_HOST = 'task-worker-execution-test.other-host.invalid';
 
     /** A pid no Linux host hands out (pid_max tops out at 4194304). */
     const DEAD_PID = 2147480000;
@@ -65,10 +73,10 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Plant an on-demand fixture row RUNNING since 2000 s ago (past the default
-     * cleanup_stuck_after of 1800 s) under the given worker.
+     * Plant an on-demand fixture row RUNNING since just now under the given worker.
+     * $host null = this host.
      */
-    private static function __plant_running_row(?string $member_id, int $pid): int
+    private static function __plant_running_row(?int $wid, ?int $generation, int $pid, ?string $host = null): int
     {
         return DB::table('_tasks')->insertGetId([
             'class' => self::FIX,
@@ -77,12 +85,36 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
             'status' => Task_Status::RUNNING,
             'params' => json_encode([]),
             'next_run_at' => null,
-            'started_at' => date('Y-m-d H:i:s', time() - 2000),
+            'started_at' => date('Y-m-d H:i:s'),
             'worker_pid' => $pid,
-            'worker_member_key' => $member_id,
+            'worker_id' => $wid,
+            'worker_generation' => $generation,
+            'worker_host' => $host ?? Task_Pool::host(),
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
         ]);
+    }
+
+    /** The identity of a worker of the daemon's CURRENT generation that has left the pool. */
+    private static function __departed_identity(): array
+    {
+        Task_Pool::lock();
+        try {
+            $identity = Task_Pool::join();
+            Task_Pool::leave();
+        } finally {
+            Task_Pool::unlock();
+        }
+
+        return $identity;
+    }
+
+    /** A generation that is not the daemon's own. */
+    private static function __older_generation(): int
+    {
+        $current = Task_Pool::stats()['generation'];
+
+        return $current === 1 ? 2 : $current - 1;
     }
 
     // -------------------------------------------------------------------------
@@ -195,8 +227,8 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A worker's claim records both its pid and its pool member id on the row, and the row
-     * keeps them once it completes.
+     * A worker's claim records its pool identity (worker_id + worker_generation), its host and
+     * its pid on the row, and the row keeps them once it completes.
      */
     public static function test_claim_records_the_pool_member()
     {
@@ -222,54 +254,59 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
 
         static::__assert_equals(Task_Status::COMPLETED, $row->status);
         static::__assert_equals(getmypid(), (int) $row->worker_pid, 'the in-process worker is this pid');
-        static::__assert_true(
-            is_string($row->worker_member_key) && str_starts_with($row->worker_member_key, 'pm_'),
-            'the claim recorded the daemon-minted member id: ' . var_export($row->worker_member_key, true)
-        );
+        static::__assert_not_null($row->worker_id, 'the claim recorded the wid');
+        static::__assert_equals(Task_Pool::stats()['generation'], (int) $row->worker_generation, 'and the daemon generation');
+        static::__assert_equals(Task_Pool::host(), $row->worker_host, 'and this host');
 
         Task_Pool::lock();
-        $alive = Task_Pool::member_alive($row->worker_member_key);
+        $verdict = Task_Pool::member_alive((int) $row->worker_id, (int) $row->worker_generation);
         Task_Pool::unlock();
-        static::__assert_false($alive, 'the worker left the pool when it finished');
+        static::__assert_equals(['alive' => false, 'known' => true], $verdict, 'the worker left the pool when it finished');
     }
 
     /**
-     * A stuck on-demand row whose pool member is gone is failed by the processor's stuck-task
-     * recovery - even though its pid is alive (this process): the pool, not the pid, decides.
+     * A RUNNING row whose worker, of the daemon's current generation, is no longer a member
+     * is abandoned on the next tick - started a moment ago, and with a live pid (this
+     * process): the pool, not the pid or an age, decides. An abandoned one-shot goes back to
+     * pending for a paced retry (Task_Abandonment_Retry_Test covers the pacing).
      */
-    public static function test_stuck_on_demand_row_marked_failed()
+    public static function test_current_generation_departed_worker_is_abandoned_at_once()
     {
         static::__reset_fixture();
 
-        $id = static::__plant_running_row(self::DEAD_MEMBER, getmypid());
+        $identity = static::__departed_identity();
+        $id = static::__plant_running_row($identity['wid'], $identity['generation'], getmypid());
 
         Artisan::call('rsx:task:process');
 
         $row = DB::table('_tasks')->where('id', $id)->first();
 
-        static::__assert_equals(Task_Status::FAILED, $row->status);
+        static::__assert_equals(Task_Status::PENDING, $row->status, 'abandoned, so retried');
+        static::__assert_contains("worker {$identity['wid']} is no longer connected to rsx-lockd", (string) $row->error);
+        static::__assert_null($row->worker_id);
+        static::__assert_greater_than(time(), strtotime($row->scheduled_for), 'the retry waits');
     }
 
     /**
-     * A RUNNING row whose worker is still a pool member is left alone, however old it is.
+     * A RUNNING row whose worker is still a pool member is left alone.
      */
     public static function test_row_of_a_live_member_is_not_reaped()
     {
         static::__reset_fixture();
 
         Task_Pool::lock();
-        $member_id = Task_Pool::join();
+        $identity = Task_Pool::join();
         Task_Pool::unlock();
 
         try {
             // A dead pid on purpose: the membership is the verdict, not the pid.
-            $id = static::__plant_running_row($member_id, self::DEAD_PID);
+            $id = static::__plant_running_row($identity['wid'], $identity['generation'], self::DEAD_PID);
 
             Artisan::call('rsx:task:process');
 
             $row = DB::table('_tasks')->where('id', $id)->first();
             static::__assert_equals(Task_Status::RUNNING, $row->status, 'a live member\'s row keeps running');
-            static::__assert_equals($member_id, $row->worker_member_key);
+            static::__assert_equals($identity['wid'], (int) $row->worker_id);
         } finally {
             Task_Pool::lock();
             Task_Pool::leave();
@@ -279,25 +316,94 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * A RUNNING row with no pool member id - claimed before rows carried one - is judged by the
-     * local pid: a dead pid fails it.
+     * A row from an OLDER daemon generation on THIS host is settled by its pid: a dead pid is
+     * abandoned (back to pending for a retry), a live one is left to record its own outcome.
      */
-    public static function test_row_without_a_member_is_judged_by_pid()
+    public static function test_older_generation_on_this_host_is_judged_by_pid()
     {
         static::__reset_fixture();
 
-        $id = static::__plant_running_row(null, self::DEAD_PID);
+        $older = static::__older_generation();
+        $dead = static::__plant_running_row(17, $older, self::DEAD_PID);
+        $live = static::__plant_running_row(18, $older, getmypid());
+
+        Artisan::call('rsx:task:process');
+
+        $dead_row = DB::table('_tasks')->where('id', $dead)->first();
+        static::__assert_equals(Task_Status::PENDING, $dead_row->status, 'dead pid -> abandoned');
+        static::__assert_equals(1, (int) $dead_row->consecutive_failures);
+        static::__assert_contains('worker 17 of a previous rsx-lockd generation', (string) $dead_row->error);
+
+        $live_row = DB::table('_tasks')->where('id', $live)->first();
+        static::__assert_equals(Task_Status::RUNNING, $live_row->status, 'live pid -> left alone');
+        static::__assert_equals(18, (int) $live_row->worker_id);
+
+        DB::table('_tasks')->where('class', self::FIX)->delete();
+    }
+
+    /**
+     * A row from an older generation on ANOTHER host is left alone - even with a dead pid,
+     * which on this box means nothing - for that host's own tick, and counted by the health
+     * row. A row of the current generation or of this host is not counted.
+     */
+    public static function test_older_generation_on_another_host_is_left_and_counted()
+    {
+        static::__reset_fixture();
+
+        $current = Task_Pool::stats()['generation'];
+        $older = static::__older_generation();
+
+        $other = static::__plant_running_row(21, $older, self::DEAD_PID, self::OTHER_HOST);
+        static::__plant_running_row(22, $older, getmypid(), self::OTHER_HOST);
+        static::__plant_running_row(23, $older, getmypid(), 'b-' . self::OTHER_HOST);
+        static::__plant_running_row(24, $older, getmypid());
+
+        Artisan::call('rsx:task:process');
+
+        $row = DB::table('_tasks')->where('id', $other)->first();
+        static::__assert_equals(Task_Status::RUNNING, $row->status, 'another host\'s older-generation row is left alone');
+
+        static::__assert_equals(
+            ['count' => 3, 'hosts' => ['b-' . self::OTHER_HOST, self::OTHER_HOST]],
+            Task_Health_Checks::previous_generation_rows($current),
+            'three rows on two other hosts; this host\'s row is not counted'
+        );
+
+        $health = Task_Health_Checks::task_worker_pool();
+        static::__assert_equals('WARN', $health['status'], 'the health row warns: ' . json_encode($health));
+        static::__assert_contains('3 running task(s) from a previous rsx-lockd generation on host(s) b-' . self::OTHER_HOST . ', ' . self::OTHER_HOST, $health['detail']);
+
+        DB::table('_tasks')->where('class', self::FIX)->delete();
+        static::__assert_equals(['count' => 0, 'hosts' => []], Task_Health_Checks::previous_generation_rows($current));
+    }
+
+    /**
+     * A RUNNING row with no worker_id - an inline run, no pool member - is judged by the pid on
+     * its own host: a dead pid abandons it; another host's row is left alone.
+     */
+    public static function test_row_without_a_worker_id_is_judged_by_pid()
+    {
+        static::__reset_fixture();
+
+        $id = static::__plant_running_row(null, null, self::DEAD_PID);
+        $other = static::__plant_running_row(null, null, self::DEAD_PID, self::OTHER_HOST);
 
         Artisan::call('rsx:task:process');
 
         $row = DB::table('_tasks')->where('id', $id)->first();
+        static::__assert_equals(Task_Status::PENDING, $row->status);
+        static::__assert_contains('worker PID ' . self::DEAD_PID . ' is no longer running', (string) $row->error);
 
-        static::__assert_equals(Task_Status::FAILED, $row->status);
+        static::__assert_equals(Task_Status::RUNNING, DB::table('_tasks')->where('id', $other)->value('status'), 'another host\'s pid is not judged here');
+
+        DB::table('_tasks')->where('class', self::FIX)->delete();
     }
 
     /**
-     * A stuck CRON tracker (RUNNING, old started_at, pool member gone) is recycled to
-     * pending, not failed, and both worker columns are cleared. Uses a REAL manifest
+     * An abandoned CRON tracker (RUNNING, its current-generation worker gone) is recycled to
+     * pending, not failed, all four worker columns are cleared, and its next_run_at - planted
+     * in the past, as a long run leaves the claim's advanced value - becomes the next cadence
+     * after now. Uses a REAL manifest
      * #[Schedule] task so the processor's reconcile step leaves the tracker in place.
      */
     public static function test_stuck_cron_tracker_recycled_not_failed()
@@ -315,17 +421,21 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
             ->whereNotNull('next_run_at')
             ->delete();
 
+        $identity = static::__departed_identity();
+
         $id = DB::table('_tasks')->insertGetId([
             'class' => $def['class'],
             'method' => $def['method'],
             'queue' => $def['queue'],
             'status' => Task_Status::RUNNING,
             'params' => json_encode([]),
-            'next_run_at' => date('Y-m-d H:i:s', time() + 3600),
+            'next_run_at' => date('Y-m-d H:i:s', time() - 3600),
             'cron_expression' => $def['cron_expression'],
-            'started_at' => date('Y-m-d H:i:s', time() - 2000),
+            'started_at' => date('Y-m-d H:i:s'),
             'worker_pid' => self::DEAD_PID,
-            'worker_member_key' => self::DEAD_MEMBER,
+            'worker_id' => $identity['wid'],
+            'worker_generation' => $identity['generation'],
+            'worker_host' => Task_Pool::host(),
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s'),
         ]);
@@ -337,7 +447,77 @@ class Task_Worker_Execution_Test extends Rsx_Test_Abstract
         static::__assert_not_null($row, 'real-schedule cron tracker should survive reconcile');
         static::__assert_equals(Task_Status::PENDING, $row->status);
         static::__assert_null($row->worker_pid);
-        static::__assert_null($row->worker_member_key);
+        static::__assert_null($row->worker_id);
+        static::__assert_null($row->worker_generation);
+        static::__assert_null($row->worker_host);
+        static::__assert_contains('abandoned (recycled)', (string) $row->status_reason);
+        static::__assert_greater_than(time(), strtotime($row->next_run_at), 'never due at once');
+    }
+
+    /**
+     * A worker that lost its pool connection between the claim and the run hands its row back:
+     * PENDING, started_at and the four worker columns cleared, a tracker's next_run_at restored
+     * to the due time the claim advanced. A row the reaper already settled is left as it is.
+     * (The loss itself cannot be staged in-process, so the hand-back is driven directly.)
+     */
+    public static function test_a_claim_lost_before_the_run_goes_back_to_pending()
+    {
+        static::__reset_fixture();
+
+        $identity = ['wid' => 31, 'generation' => Task_Pool::stats()['generation']];
+        $due = date('Y-m-d H:i:s', time() - 60);
+
+        $id = DB::table('_tasks')->insertGetId([
+            'class' => self::FIX,
+            'method' => 'marker_a',
+            'queue' => 'scheduled',
+            'status' => Task_Status::RUNNING,
+            'params' => json_encode([]),
+            'next_run_at' => date('Y-m-d H:i:s', time() + 300),
+            'cron_expression' => 'every 5 minutes',
+            'started_at' => date('Y-m-d H:i:s'),
+            'worker_pid' => getmypid(),
+            'worker_id' => $identity['wid'],
+            'worker_generation' => $identity['generation'],
+            'worker_host' => Task_Pool::host(),
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s'),
+        ]);
+        $claimed_as = (object) ['id' => $id, 'class' => self::FIX, 'method' => 'marker_a', 'next_run_at' => $due];
+
+        $output = static::__release_unrun_claim($claimed_as, $identity);
+
+        $row = DB::table('_tasks')->where('id', $id)->first();
+        static::__assert_equals(Task_Status::PENDING, $row->status);
+        static::__assert_null($row->started_at);
+        static::__assert_equals(strtotime($due), strtotime($row->next_run_at), 'the due time is restored');
+        static::__assert_null($row->worker_pid);
+        static::__assert_null($row->worker_id);
+        static::__assert_null($row->worker_generation);
+        static::__assert_null($row->worker_host);
+        static::__assert_contains("claiming task {$id}", $output);
+        static::__assert_contains('the row is back to pending', $output);
+
+        // Already settled by the reaper: the hand-back matches nothing.
+        DB::table('_tasks')->where('id', $id)->update(['status' => Task_Status::FAILED]);
+        $output = static::__release_unrun_claim($claimed_as, $identity);
+        static::__assert_equals(Task_Status::FAILED, DB::table('_tasks')->where('id', $id)->value('status'));
+        static::__assert_contains('already settled by the reaper', $output);
+
+        DB::table('_tasks')->where('class', self::FIX)->delete();
+    }
+
+    /** Drive Task_Worker_Command::release_unrun_claim() and return what it printed. */
+    private static function __release_unrun_claim(object $task_row, array $identity): string
+    {
+        $buffer = new BufferedOutput();
+        $command = new Task_Worker_Command();
+        $command->setOutput(new OutputStyle(new ArrayInput([]), $buffer));
+
+        (new \ReflectionMethod(Task_Worker_Command::class, 'release_unrun_claim'))
+            ->invoke($command, $task_row, null, $identity, 'test: connection lost');
+
+        return $buffer->fetch();
     }
 
     /**

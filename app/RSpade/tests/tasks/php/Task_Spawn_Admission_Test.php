@@ -10,6 +10,7 @@ namespace App\RSpade\Tests\Tasks\Php;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
+use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Locks\Lockd_Client;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Task\Task;
@@ -34,6 +35,8 @@ use App\RSpade\Core\Testing\Rsx_Test_Detached_Processes;
  * joining this environment's pool with raw pool.* frames. It is a real member on a real
  * connection, distinct from the Task_Pool connection the code under test uses, so the count
  * a worker or a spawner reads includes it exactly as it would include another worker.
+ *
+ * Maintenance mode starts nothing, and one rsx:task:process tick tries exactly one spawn.
  *
  * And Task::spawn_workers(false) makes dispatch() enqueue ONLY - the test-suite default, which
  * a class overrides with Task::spawn_workers(true) and the harness resets at the class
@@ -63,7 +66,7 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 
             static::__assert_equals(0, $exit_code, 'a full pool is an ordinary exit');
             static::__assert_contains('Worker pool is full', $output);
-            static::__assert_null(Task_Pool::member_id(), 'the worker never joined');
+            static::__assert_null(Task_Pool::wid(), 'the worker never joined');
             static::__assert_false(Task_Pool::holds_lock(), 'and released the pool lock');
 
             $stats = Task_Pool::stats();
@@ -91,11 +94,11 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 
             static::__assert_equals(0, $exit_code);
             static::__assert_true(
-                preg_match('/Joined the pool \((pm_[^)]+)\)/', $output, $match) === 1,
-                'the worker joined and named its member id: ' . $output
+                preg_match('/Joined the pool \(wid \d+, generation \d+\)/', $output) === 1,
+                'the worker joined and named its wid and generation: ' . $output
             );
             static::__assert_contains('No more pending tasks', $output);
-            static::__assert_null(Task_Pool::member_id(), 'the worker left');
+            static::__assert_null(Task_Pool::wid(), 'the worker left');
             static::__assert_false(Task_Pool::holds_lock(), 'and released the pool lock');
 
             $stats = Task_Pool::stats();
@@ -189,6 +192,79 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
             Task_Pool::unlock();
             Task::spawn_workers(false);
         }
+    }
+
+    /**
+     * Maintenance mode starts nothing, whatever room the pool has: the row stays pending for
+     * the first tick after the window closes.
+     */
+    public static function test_spawn_worker_starts_nothing_under_maintenance()
+    {
+        config(['rsx.tasks.global_max_workers' => 3]);
+        self::_set_spawned_pids([]);
+
+        $registry_before = self::_detached_registry();
+        static::__assert_equals(0, Task_Pool::stats()['members'], 'the pool is empty');
+
+        Task::spawn_workers(true);
+        Framework_Maintenance::$force_active_for_tests = true;
+        try {
+            $id = Task::dispatch('Test_Echo_Service', 'echo_params', ['probe' => 'maintenance']);
+            static::__assert_equals(false, Task::spawn_worker(), 'maintenance mode starts no worker');
+        } finally {
+            Framework_Maintenance::$force_active_for_tests = null;
+            Task::spawn_workers(false);
+        }
+
+        static::__assert_equals($registry_before, self::_detached_registry(), 'no process was started');
+        static::__assert_equals(Task_Status::PENDING, DB::table('_tasks')->where('id', $id)->value('status'), 'the row stays pending');
+    }
+
+    // =========================================================================
+    // The cron tick tries once
+    // =========================================================================
+
+    /**
+     * With due work and a pool of three with room for all three, one rsx:task:process tick
+     * starts exactly ONE worker.
+     */
+    public static function test_the_tick_tries_one_spawn()
+    {
+        config(['rsx.tasks.global_max_workers' => 3]);
+        self::_set_spawned_pids([]);
+
+        static::__assert_equals(0, Task_Pool::stats()['members'], 'the pool is empty');
+
+        // Due on-demand work, visible to the tick (it runs in this transaction). The worker
+        // it starts cannot see the uncommitted row, finds nothing and exits.
+        DB::table('_tasks')->insert([
+            'class' => 'Test_Echo_Service',
+            'method' => 'echo_params',
+            'queue' => 'default',
+            'status' => Task_Status::PENDING,
+            'params' => json_encode(['probe' => 'one-per-tick']),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $registry_before = self::_detached_registry();
+
+        Task::spawn_workers(true);
+        try {
+            $exit_code = Artisan::call('rsx:task:process');
+            $output = Artisan::output();
+        } finally {
+            Task::spawn_workers(false);
+        }
+
+        static::__assert_equals(0, $exit_code, 'the tick exits cleanly: ' . $output);
+        static::__assert_contains('spawned a worker', $output);
+
+        $registered = array_filter(explode("\n", trim(substr(self::_detached_registry(), strlen($registry_before)))));
+        static::__assert_equals(1, count($registered), 'exactly one worker was started: ' . json_encode($registered));
+
+        Rsx_Test_Detached_Processes::contain();
+        self::_set_spawned_pids([]);
     }
 
     // =========================================================================
@@ -301,15 +377,15 @@ class Task_Spawn_Admission_Test extends Rsx_Test_Abstract
 
     /**
      * Join this environment's pool on the RsxLocks connection - a member that is not this
-     * process's Task_Pool connection. Returns its member id.
+     * process's Task_Pool connection. Returns its wid.
      */
-    private static function _phantom_join(): string
+    private static function _phantom_join(): int
     {
         self::_phantom('pool.lock', 'granted');
-        $member_id = self::_phantom('pool.join')['member_id'];
+        $wid = self::_phantom('pool.join')['wid'];
         self::_phantom('pool.unlock');
 
-        return $member_id;
+        return $wid;
     }
 
     /** The phantom member leaves (under the pool lock, as the protocol requires). */

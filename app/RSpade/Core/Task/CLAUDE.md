@@ -9,7 +9,8 @@ says what is in this DIRECTORY.
 ## What is here
 
 - `Task.php` — the public facade: `dispatch()`, `status()`, coalescing enqueue, prompt
-  detached-worker spawn (`spawn_worker()`: refuse while this process's own spawned workers
+  detached-worker spawn (`spawn_worker()`: refuse under maintenance mode, refuse while this
+  process's own spawned workers
   fill the cap (`is_worker_process()`, `/proc`), then read the pool count under the pool lock,
   unlock, and spawn only below the cap), and the process-level switch `spawn_workers(bool)`
   (OFF by default under the test suite).
@@ -30,9 +31,12 @@ says what is in this DIRECTORY.
 - `Cron_Parser.php` — normalizes both 5-field cron and the plain-English `#[Schedule]` phrases.
 - `Task_Pool.php` — the client of rsx-lockd's worker-pool accountant (`pool.*` ops,
   `system/bin/rsx-lockd/README.md` "Worker pools"): ONE lifelong connection per process, no
-  lock group, every call acknowledged. The pool lock, membership (`join`/`leave`),
-  `count()` (excludes the caller), `member_alive()`, `stats()`, `max_workers()`, and the
-  `holds_lock()`/`member_id()` bookkeeping call sites assert with. The worker loop itself is
+  lock group, every call acknowledged. The pool lock, membership (`join()` answers the
+  member's `wid` + `generation`, `leave`), `count()` (excludes the caller),
+  `member_alive(wid, generation)` and the batch `members_alive()` (each answering
+  `alive` + `known`), `stats()` (with the daemon's current generation), `max_workers()`,
+  `host()` (the `worker_host` value), and the `holds_lock()`/`wid()`/`generation()`
+  bookkeeping call sites assert with. The worker loop itself is
   `Commands/Rsx/Task_Worker_Command.php`; the reaper is `Task_Process_Command.php`.
 - `Task_Killer.php`, `Task_Status.php`, `Task_Health_Checks.php`, `Cleanup_Service.php` —
   kill paths, status vocabulary, `rsx:health` probes (Task Worker Pool, scheduler liveness,
@@ -60,12 +64,29 @@ says what is in this DIRECTORY.
   the worker's socket keeps its membership alive after it dies. Every spawn seam closes the
   daemon sockets `Lockd_Connection::open_socket_inodes()` names
   (`RsxLocks::inherited_lock_fds()`); a new spawn path of a long-lived child must use one.
-- **Dead-worker recovery asks the daemon.** `rsx:task:process` settles a RUNNING row whose
-  `worker_member_key` is no longer a member (after `cleanup_stuck_after`, so a daemon restart
-  never reaps live work). A row with a NULL `worker_member_key` - claimed before the pool
-  existed, or run inline by `rsx:task:process --once`, which is not a member - falls back to
-  the local `posix_kill(worker_pid, 0)` probe. Timeout kills stay pid-based and local.
-  Wherever a row's `worker_pid` is cleared, `worker_member_key` is cleared with it.
+- **Abandoned-worker recovery is evidence, never age.** A worker's claim writes
+  `worker_id` + `worker_generation` (its pool identity), `worker_host` and `worker_pid`.
+  `rsx:task:process` asks the daemon about every RUNNING row with a `worker_id` in ONE
+  `members_alive()` under the pool lock: the daemon's own generation and not alive ->
+  abandoned at once; an older generation (`known: false`)
+  -> this host judges its own rows by pid and leaves other hosts' rows alone (the Task Worker
+  Pool health row counts those). A row with no `worker_id` (`--once`, `Task::internal()`) is
+  the local pid probe, on its own host only. No grace period exists and none may be added.
+  Timeout kills are pid-based and local, and `Task_Killer` signals only a row whose
+  `worker_host` is this machine. Wherever a row's `worker_pid` is cleared, `worker_id`,
+  `worker_generation` and `worker_host` are cleared with it.
+- **Abandonment is retried; a throw never is.** `settle_abandoned()` puts an abandoned
+  one-shot back to PENDING with `scheduled_for` = now + `rsx.tasks.retry.base_seconds` *
+  2^(n-1), n counted in `consecutive_failures`, and FAILS it on the `retry.attempts`-th
+  abandonment; an abandoned tracker counts the run as a failed run and waits for the next
+  cadence strictly after now (`Cron_Parser`), never due at once. A task that throws settles
+  through `Task_Instance::mark_failed()` exactly as before - no retry, no opt-in. A success
+  (`mark_completed()`) clears `consecutive_failures` and `status_reason` on every row.
+  `rsx.tasks.retry` is owner-set pacing, not a timeout.
+- **Maintenance spawns nothing.** `spawn_worker()` returns false while
+  `Framework_Maintenance::is_active()`; the row stays PENDING for the first tick after the
+  window. The tick tries ONE `spawn_worker()` when work is due - a worker drains until
+  nothing is claimable, so the tick never loops spawns.
 - **The reaper's stuck-task cap is framework infrastructure, not licence to add timeouts.**
   See the no-timeout mandate.
 - Attributes are reflection-only — never define `#[Task]`/`#[Schedule]`/`#[Command]` classes.

@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Task\Task_Pool;
+use App\RSpade\Core\Task\Task_Status;
 use App\RSpade\Core\Time\Rsx_Time;
 
 /**
@@ -50,6 +51,11 @@ class Task_Health_Checks
      *
      * More members than the cap is a WARN - admission happens under the pool lock, so it
      * means the cap was lowered under running workers, or two configurations share a pool.
+     *
+     * RUNNING rows claimed under a previous rsx-lockd generation on ANOTHER host are a WARN
+     * too (previous_generation_rows()): each host's rsx:task:process settles its own such
+     * rows by pid, so they stay RUNNING for as long as their host runs no tick - a host that
+     * was retired, or whose cron is gone.
      * An unreachable daemon or a refused pool.stats is a FAIL: nothing can be admitted. Under
      * the maintenance flag the daemon is stopped on purpose, which is INFO (the Lock Server
      * row's convention; the flag is read off disk, as a probe of the box right now).
@@ -93,10 +99,48 @@ class Task_Health_Checks
             ];
         }
 
+        $previous = self::previous_generation_rows($stats['generation']);
+        if ($previous['count'] > 0) {
+            return [
+                'status' => 'WARN',
+                'detail' => $detail . '; ' . $previous['count'] . ' running task(s) from a previous rsx-lockd'
+                    . ' generation on host(s) ' . implode(', ', $previous['hosts']) . '; each host\'s'
+                    . ' rsx:task:process reaps its own - a host that no longer runs one leaves them RUNNING',
+                'remediation' => 'confirm the rsx:task:process cron runs on each named host; for a host'
+                    . ' that is gone, settle its rows with rsx:tasks:kill <id> --explanation="..."',
+            ];
+        }
+
         return [
             'status' => 'OK',
             'detail' => $detail,
         ];
+    }
+
+    /**
+     * RUNNING rows claimed by a pool member of an rsx-lockd generation other than $generation,
+     * on a host other than this one - the rows this host's reaper can never settle.
+     *
+     * @param int $generation The daemon's current generation (Task_Pool::stats())
+     * @return array{count: int, hosts: string[]}
+     */
+    public static function previous_generation_rows(int $generation): array
+    {
+        $rows = DB::table('_tasks')
+            ->where('status', Task_Status::RUNNING)
+            ->whereNotNull('worker_id')
+            ->where('worker_generation', '!=', $generation)
+            ->where('worker_host', '!=', Task_Pool::host())
+            ->get(['worker_host']);
+
+        $hosts = [];
+        foreach ($rows as $row) {
+            $hosts[$row->worker_host] = true;
+        }
+        $hosts = array_keys($hosts);
+        sort($hosts);
+
+        return ['count' => count($rows), 'hosts' => $hosts];
     }
 
     /**

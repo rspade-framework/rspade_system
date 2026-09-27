@@ -9,7 +9,6 @@ namespace App\RSpade\Tests\Tasks\Php;
 
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
-use App\RSpade\Core\Database\Rsx_Connection_Scope;
 use App\RSpade\Core\Task\Task;
 use App\RSpade\Core\Task\Task_Status;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
@@ -57,18 +56,6 @@ class Task_Failure_Recycle_Test extends Rsx_Test_Abstract
     // -------------------------------------------------------------------------
 
     /**
-     * Clear the Redis worker-slot registry so a fresh worker admits into the pool.
-     */
-    private static function __clear_registry(): void
-    {
-        $redis = new \Redis();
-        $redis->connect(env('REDIS_HOST', '127.0.0.1'), (int) env('REDIS_PORT', 6379));
-        $redis->select(1);
-        $redis->del('rsx:tasks:workers:' . Rsx_Connection_Scope::token());
-        $redis->close();
-    }
-
-    /**
      * Remove any residual fixture rows and reset the fixture's execution log.
      */
     private static function __reset_fixture(): void
@@ -99,7 +86,6 @@ class Task_Failure_Recycle_Test extends Rsx_Test_Abstract
 
     private static function __run_worker(): void
     {
-        static::__clear_registry();
         Artisan::call('rsx:task:worker', ['--max-time' => 30]);
     }
 

@@ -43,6 +43,7 @@ const OPS = [
     'pool.leave',
     'pool.count',
     'pool.member_alive',
+    'pool.members_alive',
     'pool.stats',
 ];
 

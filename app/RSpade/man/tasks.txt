@@ -265,13 +265,24 @@ THE WORKER POOL
     on any host, with no heartbeat, no lease, no TTL and no reservation anywhere. A Redis
     flush changes nothing about the pool.
 
+    A WORKER IS NAMED BY (wid, generation). Joining answers an integer worker id (wid) and
+    the daemon's GENERATION - a random integer rsx-lockd picks once at startup, so every
+    daemon restart is a new generation. A wid is meaningful only with its generation: a
+    restarted daemon cannot know whether an older generation's worker still runs, and says
+    so (known: false) rather than guessing. The claim records both on the row, with the
+    worker's host and pid (see TASK DATABASE SCHEMA).
+
     THE WORKER'S LOOP. Every pool step runs under the POOL LOCK, a FIFO mutex the daemon
     holds per pool:
 
         1. Take the pool lock. If global_max_workers OTHER workers are already members,
            release it and exit 0 - the pool is full. Otherwise join.
         2. Still under the lock, claim the next row by the priority order below and mark it
-           RUNNING with this worker's worker_pid and worker_member_key. Release the lock.
+           RUNNING with this worker's worker_id, worker_generation, worker_host and
+           worker_pid. Release the lock. A worker whose pool connection is lost at that
+           release - after the claim, before the run - puts the row back to PENDING exactly
+           as it found it, logs "[WORKER] Lost the task pool connection after claiming task
+           ..." and exits 1; nothing ran.
         3. Run the task, holding no pool lock.
         4. Take the pool lock, record the outcome on the row, and claim again (back to 2).
            When nothing is claimable, or --max-time has passed, leave the pool, release the
@@ -288,9 +299,10 @@ THE WORKER POOL
     framework code only - a task itself never runs under the pool lock.
 
     SPAWNING. Every spawn - Task::dispatch() and the cron tick alike - goes through
-    Task::spawn_worker(), which starts a detached `rsx:task:worker` only when all three hold:
+    Task::spawn_worker(), which starts a detached `rsx:task:worker` only when all four hold:
 
         - this process spawns workers at all (see SPAWNING OFF below);
+        - maintenance mode is not up (see MAINTENANCE MODE);
         - fewer than global_max_workers of the workers THIS process spawned are still
           running (read from /proc, no daemon round trip). This is what caps a script that
           dispatches on every write: once its own spawns fill the cap, each further dispatch
@@ -302,6 +314,9 @@ THE WORKER POOL
     These checks only avoid starting a process that is doomed to exit; two spawners racing
     can both see room, and the loser's worker finds the pool full in step 1 and exits.
     A worker run by hand is admitted exactly the same way.
+
+    The cron tick tries ONE spawn per tick, and only when work is due. That is enough: a
+    worker drains until nothing is claimable, and every dispatch() tries a spawn of its own.
 
     Priority order (a single order, no per-queue routing): a worker claims run-now tasks
     first (dispatched, FIFO by enqueue time), then due scheduled tasks (by next_run_at).
@@ -337,10 +352,18 @@ CONFIGURATION (config/rsx.php 'tasks')
     'tasks' => [
         'global_max_workers'   => env('RSX_TASK_MAX_WORKERS', 3),  // pool size (fixed per env)
         'default_timeout'      => 1800,   // execution cap for a row carrying no timeout (0 = none)
-        'cleanup_stuck_after'  => 1800,   // dead-worker recovery grace (STUCK TASK RECOVERY)
         'task_retention_days'  => 30,     // how long completed/failed rows are kept
         'failing_schedule_warn_after' => 3,  // consecutive failed runs before rsx:health WARNs
+        'retry' => [
+            'base_seconds' => 600,  // first retry of an ABANDONED one-shot, doubling per abandonment
+            'attempts'     => 5,    // the abandonment that FAILS an abandoned one-shot for good
+        ],
     ],
+
+    'retry' is pacing for re-running work a dead or disconnected worker abandoned (STUCK TASK
+    RECOVERY). It is not a timeout: it bounds nothing's run time. It never applies to a task
+    that throws. base_seconds must be an integer >= 0 and attempts an integer >= 1, or the
+    reaper throws.
 
     #[Task('...', queue: 'reports')] sets a per-task queue LABEL. NOTE: 'timeout' is NOT a
     #[Task] argument - it is a Task::dispatch() option and a _tasks column.
@@ -360,8 +383,8 @@ EXECUTION TIMEOUT
 
     Granularity is the cron tick interval (one minute), not the second: a task may overrun its
     cap by up to a tick before the reaper sees it. The kill signals a pid, so it acts only on a
-    worker running on the host where the tick runs. The separate dead-worker sweep (STUCK TASK
-    RECOVERY) handles the other case - a RUNNING row whose worker is GONE.
+    row whose worker_host is the host where the tick runs. The separate abandoned-worker sweep
+    (STUCK TASK RECOVERY) handles the other case - a RUNNING row whose worker is GONE.
 
 COMMANDS
 
@@ -379,9 +402,8 @@ COMMANDS
 
     Each tick it: (1) recovers stuck tasks (STUCK TASK RECOVERY) and enforces timeouts;
     (2) revives any cron tracker found sitting in a terminal state (see FAILURE BEHAVIOR);
-    (3) reconciles #[Schedule] tracker rows from the manifest; (4) if there is pending work,
-    spawns detached workers until Task::spawn_worker() declines. It does NOT itself become a
-    worker. --once claims one task under the pool lock and runs it inline without joining
+    (3) reconciles #[Schedule] tracker rows from the manifest; (4) if work is due, tries ONE
+    Task::spawn_worker(). It does NOT itself become a worker. --once claims one task under the pool lock and runs it inline without joining
     the pool (testing); --force-scheduled marks all schedules due now.
 
     You rarely run rsx:task:worker by hand - the processor and Task::dispatch() spawn
@@ -397,8 +419,10 @@ MAINTENANCE MODE
 
         rsx:task:process   REFUSED (exit 75) - the cron tick must not fire into a stopped
                            environment. Cron keeps calling it; every call exits immediately.
-        rsx:task:worker    REFUSED (exit 75) - and so a dispatch made during the window
-                           simply leaves its row PENDING until the window lifts.
+        rsx:task:worker    REFUSED (exit 75). Task::spawn_worker() starts nothing at all
+                           while the window is up, so a dispatch made during it leaves
+                           its row PENDING, and the first tick after the window lifts
+                           starts its worker.
         rsx:task:run       REFUSED unless --force. A human may insist; --force is consumed
                            by the gate and never reaches the task's parameters.
 
@@ -412,16 +436,24 @@ TASK DATABASE SCHEMA (_tasks)
 
     id, class, method, queue, status,   // status: pending|running|completed|failed|killed
     params (JSON), result (JSON), logs (TEXT), error (TEXT),
-    status_reason (TEXT; one-line explanation for a KILLED, kill-recycled or failure-recycled
-      transition; NULL otherwise),
-    consecutive_failures (INT; runs that threw since the last success; 0 after a success),
+    status_reason (TEXT; one-line explanation for a KILLED, kill-recycled, failure-recycled or
+      abandoned transition; NULL otherwise, and cleared by a success),
+    consecutive_failures (INT; failed runs since the last success - on a tracker, runs that
+      threw or were abandoned; on a pending one-shot, its abandoned attempts; 0 after a success),
     last_error_at (TIMESTAMP; when the last failure was recorded; NULL if none),
     scheduled_for (run no earlier than), next_run_at (recurring tracker; NULL on one-shots),
     cron_expression (stored schedule for tracker rows; NULL otherwise),
     started_at, completed_at, last_heartbeat_at,
-    timeout, worker_pid, worker_member_key (the worker's rsx-lockd pool member id while the
-      row is RUNNING; NULL otherwise, and NULL on a row run inline by --once),
+    timeout, worker_pid,
+    worker_id, worker_generation (BIGINT; the claiming worker's rsx-lockd pool identity -
+      its wid and the daemon generation that issued it; NULL on a row run inline by --once
+      or Task::internal(), which are not pool members),
+    worker_host (VARCHAR; the claiming worker's hostname - the only host whose pid evidence
+      may settle or signal the row),
     lock_key, created_at, updated_at
+
+    worker_pid, worker_id, worker_generation and worker_host are written together by the
+    claim and cleared together wherever a row is recycled or killed.
 
     On a TRACKER row, completed_at means LAST SUCCESSFUL RUN (the row is never terminal, so
     nothing else records it). On a one-shot it means what it always did: when the row settled.
@@ -438,18 +470,21 @@ FAILURE BEHAVIOR
     strand the schedule.
 
     A ONE-SHOT (dispatched) task that throws goes terminal FAILED with completed_at and
-    last_error_at set, as always. There is NO retry mechanism anywhere in the task system: a
-    failed one-shot stays failed until something dispatches it again.
+    last_error_at set, as always. A task that throws is NEVER retried, and there is no opt-in:
+    a failed one-shot stays failed until something dispatches it again. The only retry in the
+    task system is for work a dead or disconnected worker ABANDONED - the task never reported
+    an outcome at all (STUCK TASK RECOVERY).
 
     Any Throwable counts. A TypeError inside a task settles and records its message exactly
     like an Exception.
 
-    A success resets consecutive_failures to 0 and stamps completed_at.
+    A success resets consecutive_failures to 0, clears status_reason and stamps completed_at -
+    on a tracker and on a one-shot alike.
 
     THE INVARIANT: A CRON TRACKER IS NEVER PERMANENTLY TERMINAL. One tracker row exists per
     #[Schedule] and IS that schedule - park it in FAILED or KILLED and the schedule stops
     forever, silently, while the row still looks registered. Every settle path (failure,
-    kill, timeout, dead-worker recovery) therefore recycles a tracker instead of failing it,
+    kill, timeout, abandoned-worker recovery) therefore recycles a tracker instead of failing it,
     and rsx:task:process ENFORCES the rule each tick: a tracker found in any terminal state
     is revived to pending, loudly ([STRANDED SCHEDULE], logged), with its failure record
     preserved. That sweep should never fire - it exists for strands the settle paths cannot
@@ -467,8 +502,8 @@ FAILURE BEHAVIOR
 
 KILLING RUNNING TASKS
 
-    Force-kill running task instances (distinct from the stuck-task reaper, which only acts
-    after cleanup_stuck_after). Used by rsx:framework:pull to quiesce work before an update.
+    Force-kill running task instances (distinct from the stuck-task reaper, which acts only on
+    a row whose worker is gone). Used by rsx:framework:pull to quiesce work before an update.
 
         php artisan rsx:tasks:list                                  Running instances (+ schedules)
         php artisan rsx:tasks:kill <id> --explanation="..."          Kill one running task
@@ -479,8 +514,9 @@ KILLING RUNNING TASKS
     recurring CRON TRACKER row is RECYCLED to pending instead (a terminal status would silently
     stop its schedule). Nothing else needs releasing: an #[Exclusive]/#[Debounce] run lock and
     the worker's pool membership both belong to the worker's rsx-lockd connections, which the
-    daemon drops the moment the process dies. The kill signals a pid, so it reaches a worker
-    running on the host where the command runs.
+    daemon drops the moment the process dies. The kill signals a pid, so it signals only a row
+    whose worker_host is the host where the command runs (or is NULL); a row claimed on
+    another host is settled without any signal, and its worker runs on until it finishes.
 
     A recurring schedule keeps exactly ONE tracker row (next_run_at + cron_expression). When
     due, a worker advances next_run_at (so the cadence holds even if the run is slow or
@@ -491,26 +527,60 @@ KILLING RUNNING TASKS
 
 STUCK TASK RECOVERY
 
-    A RUNNING row whose worker is gone and whose start predates cleanup_stuck_after is
-    recovered by the cron tick: an on-demand row is marked failed; a cron tracker row is
-    recycled to pending (its next_run_at is already advanced), so the schedule survives -
-    the same rule FAILURE BEHAVIOR states, applied to a row that will never settle itself.
+    A RUNNING row whose worker is gone is ABANDONED, and the cron tick settles it. The task
+    never reported an outcome, so abandonment is not a failure of the task, and neither kind
+    of row is failed for it outright. There is NO grace period: every verdict below is
+    evidence, never an age.
 
-    "Gone" is rsx-lockd's answer. Under the pool lock the tick asks whether the row's
-    worker_member_key is still a member of the pool (member_alive), which is false the
-    moment the worker's connection closed, on whatever host it ran. The verdicts and the
-    settle writes happen under that one lock, so they are one consistent view of the pool
-    and the rows.
+    ABANDONMENT RETRIES. An abandoned ONE-SHOT goes back to PENDING with
 
-    The cleanup_stuck_after grace still applies to every verdict. A restart of rsx-lockd
-    ends every membership while the workers keep running their current tasks, so without
-    the grace a daemon restart would reap live work; with it, only a row that has also
-    outlived the grace is settled. (Such a worker notices the lost connection when it next
-    takes the pool lock, records its own row's outcome, logs the loss and exits.)
+        scheduled_for = now + rsx.tasks.retry.base_seconds * 2^(n-1)
 
-    A row with NO worker_member_key - run inline by rsx:task:process --once, which is not a
-    pool member - is judged by the local pid probe instead, a verdict that is only
-    meaningful on the host that ran it.
+    where n is this abandonment's number, counted in consecutive_failures (600s, 1200s,
+    2400s, 4800s at the defaults). started_at and the four worker columns are cleared; error
+    and last_error_at describe the abandonment ("Task abandoned - worker <wid> is no longer
+    connected to rsx-lockd ..."); status_reason names the attempt ("abandoned: <reason>;
+    retry as attempt 2 of 5 at <ISO time>"). A worker claims it once scheduled_for is due,
+    like any deferred dispatch. The rsx.tasks.retry.attempts-th abandonment (5) FAILS the row
+    for good, completed_at set, the error naming the attempts. Task::status() on the id reads
+    'pending' again while a retry waits.
+
+    An abandoned CRON TRACKER counts the run as done: PENDING, next_run_at the next cadence
+    strictly after now (never due at once - a long run may already be past the next_run_at
+    its claim advanced), the four worker columns cleared, status_reason "abandoned (recycled):
+    <reason>". The abandonment is recorded as a failed run (error, last_error_at,
+    consecutive_failures + 1), so a schedule whose runs keep dying reaches the Failing
+    Schedules health row - the same rule FAILURE BEHAVIOR states, applied to a row that will
+    never settle itself.
+
+    Each host's tick asks rsx-lockd about every RUNNING row carrying a worker_id in ONE
+    pool.members_alive round trip, under the pool lock, and settles under that same lock, so
+    the verdicts are one consistent view of the pool and the rows:
+
+        the daemon's own generation     not alive -> abandoned, at once, whatever host ran it
+                                        (its connection is gone). Alive -> running.
+        an older generation, THIS host  the daemon restarted since the claim and cannot know;
+                                        the pid decides. Dead -> abandoned. Alive -> left
+                                        alone: the worker records its own outcome.
+        an older generation, ANOTHER    left alone - only that host's pid evidence can settle
+        host                            it, on that host's own tick. rsx:health's Task Worker
+                                        Pool row WARNs while any such row remains.
+        no worker_id                    run inline (--once, Task::internal()), not a pool
+                                        member: the pid on its own host decides (a NULL
+                                        worker_host is taken as local); another host's row is
+                                        left alone.
+
+    A daemon restart therefore never reaps live work: every running worker is then of an
+    older generation and is judged by its own pid. Such a worker notices the lost connection
+    when it next takes the pool lock, records its own row's outcome, logs the loss and exits 1.
+
+    A worker of the CURRENT generation whose connection dropped while its process lives on is
+    reaped at once. If it then finishes, its own settle overwrites the reaper's verdict with
+    its real outcome. Until then the row may be claimed again once its retry (or, for a
+    tracker, its next cadence) is due, so a task that outlives its own worker's connection by
+    that long runs twice at once. For an #[Exclusive]/#[Debounce] identity the run lock
+    prevents that only while the original worker's RsxLocks connection, which holds it, is
+    still open.
 
 EXAMPLES
 
@@ -598,13 +668,21 @@ TROUBLESHOOTING
         - Running workers keep running their current task. Their memberships ended with
           their connections, so when each next takes the pool lock it records its row's
           outcome, logs "[WORKER] Lost the task pool connection ..." and exits 1; the next
-          tick spawns fresh workers. The cleanup_stuck_after grace keeps the reaper off
-          tasks that are still running (STUCK TASK RECOVERY).
+          tick spawns a fresh worker. A restarted daemon is a new generation, so its rows
+          are judged by their pids and still-running tasks are not reaped (STUCK TASK
+          RECOVERY).
 
     Task Worker Pool WARN: more members than global_max_workers
         - Admission happens under the pool lock, so this means the cap was lowered under
           running workers (they drain as they finish), or two configurations share one
           database and host.
+
+    Task Worker Pool WARN: running task(s) from a previous rsx-lockd generation on host(s) ...
+        - Rows claimed before the daemon last restarted, on other hosts. Each host's
+          rsx:task:process settles its own by pid; a host that no longer runs one (retired,
+          or its cron is gone) leaves them RUNNING. Restore that host's cron, or settle the
+          rows with rsx:tasks:kill <id> --explanation="..." (no signal is sent to a row
+          from another host).
 
     Scheduled task runs but never succeeds
         - php artisan rsx:tasks:list - the Schedules table shows consecutive failures and

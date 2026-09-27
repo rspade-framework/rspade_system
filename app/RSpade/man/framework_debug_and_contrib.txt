@@ -1380,25 +1380,27 @@ SUBSYSTEM PRIMERS
     when there is nothing to do:
 
         1  REAP. Under the pool lock, load every running row and ask the
-           daemon whether its worker's member id is still a pool member (a
-           row with no member id falls back to the local pid probe). A gone
-           worker whose row has run longer than the stuck threshold has its
-           tracker recycled to pending or its one-shot failed - the threshold
-           is what stops a daemon restart, which ends every membership, from
-           reaping live work. After the lock is released, a live worker whose
-           pid runs on this host is held to the row's timeout (or the
-           configured default; zero on both means unbounded) and killed if it
-           is over. This is the only place a task timeout is enforced, so its
-           granularity is the cron interval.
+           daemon, in one batch, about each row's worker identity (wid plus
+           the daemon generation that issued it). The daemon's own generation
+           and not a member: abandoned at once - tracker recycled to pending,
+           one-shot failed. An older generation (the daemon restarted and
+           cannot know): only the row's own host judges it, by pid, and
+           another host's row is left for that host's tick. A row with no
+           wid is the pid probe on its own host. There is no age threshold.
+           After the lock is released, a live worker on this host is held to
+           the row's timeout (or the configured default; zero on both means
+           unbounded) and killed if it is over. This is the only place a task
+           timeout is enforced, so its granularity is the cron interval.
         2  REVIVE STRANDED SCHEDULES. Any tracker sitting in failed or
            killed goes back to pending, loudly, touching only the status -
            the failure record survives.
         3  RECONCILE SCHEDULES against the manifest: insert a missing
            tracker; delete and reinsert one whose expression changed, so the
            next run time is recomputed; delete one whose method is gone.
-        4  SPAWN. If there is pending work, spawn detached workers one at a
-           time until the spawn call declines (its own spawns or the pool's
-           members have reached the cap).
+        4  SPAWN. If work is due, try ONE spawn; the call declines under
+           maintenance mode or when its own spawns or the pool's members have
+           reached the cap. A worker drains until nothing is claimable, so
+           one try per tick is enough.
 
     THE TICK NEVER BECOMES A WORKER. A worker is a separate process
     (rsx:task:worker) that holds ONE lifelong connection to the lock daemon

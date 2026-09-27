@@ -449,7 +449,11 @@ THE RSX LOCKD DAEMON
     counts the other members, joins if there is room, claims a _tasks row and
     releases the lock; its membership is its connection, so a worker that exits,
     crashes or is SIGKILLed stops being counted at once, and a pool lock its
-    connection held passes to the next waiter. Every pool op is answered with
+    connection held passes to the next waiter. A member is identified by a
+    worker id (wid, from one daemon-wide counter) plus the daemon's GENERATION,
+    a random number chosen at daemon start; asked about another generation's
+    wid, the daemon answers "unknown" rather than "gone", since it cannot know
+    about a previous daemon's workers. Every pool op is answered with
     exactly one acknowledgement frame, and the PHP client waits for it on every
     call. The pool name is the application's connection scope token, so two
     applications sharing one daemon never share a pool. Full treatment:
@@ -508,9 +512,10 @@ THE RSX LOCKD CLI
     already released; if dump still shows it, the connection really is open - a
     hung process holding a socket.
 
-    dump also lists every worker pool (its lock holder, queue and members with
-    their member ids), and each connection's pool state prints as
-    `HELD POOL <pool>`, `WAITING POOL <pool>` or `MEMBER POOL <pool> as <id>`.
+    dump also prints the pool generation and lists every worker pool (its lock
+    holder, queue and members with their wids), and each connection's pool
+    state prints as `HELD POOL <pool>`, `WAITING POOL <pool>` or
+    `MEMBER POOL <pool> as wid <wid>`.
 
         node lockd.js exec --name=<lock> [--mode=read|write] [--timeout=<secs>]
                            [--quiet] -- <command...>

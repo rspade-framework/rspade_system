@@ -89,6 +89,39 @@ class Task_Killer_Test extends Rsx_Test_Abstract
         }
     }
 
+    /**
+     * A pid names a process on one machine: a row claimed on ANOTHER host is settled without a
+     * signal, and the local process that happens to carry that pid lives on.
+     */
+    public static function test_a_row_from_another_host_is_settled_unsignalled()
+    {
+        $pid = self::__spawn_victim();
+        try {
+            $id = DB::table('_tasks')->insertGetId([
+                'class' => 'Test_Killer_Service', 'method' => 'run', 'queue' => 'default',
+                'status' => Task_Status::RUNNING, 'worker_pid' => $pid, 'next_run_at' => null,
+                'worker_id' => 41, 'worker_generation' => 7,
+                'worker_host' => 'task-killer-test.other-host.invalid',
+                'started_at' => now(), 'created_at' => now(), 'updated_at' => now(),
+            ]);
+
+            $row = DB::table('_tasks')->where('id', $id)->first();
+            $outcome = Task_Killer::kill($row, 'other host');
+
+            static::__assert_equals('killed_no_process', $outcome);
+            static::__assert_true((bool) posix_kill($pid, 0), 'the local process carrying that pid was not signalled');
+
+            $after = DB::table('_tasks')->where('id', $id)->first();
+            static::__assert_equals(Task_Status::KILLED, $after->status);
+            static::__assert_null($after->worker_pid);
+            static::__assert_null($after->worker_id);
+            static::__assert_null($after->worker_generation);
+            static::__assert_null($after->worker_host);
+        } finally {
+            self::__reap($pid);
+        }
+    }
+
     public static function test_kill_all_requires_explanation()
     {
         $code = Artisan::call('rsx:tasks:kill-all');

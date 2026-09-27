@@ -7,7 +7,9 @@ TEST_NAME="rsx-lockd worker pool ops over the wire"
 #     on a raw socket that records every inbound frame, since the ordinary client drops
 #     frames nobody asked for;
 #   - the pool lock grants in FIFO order across connections;
-#   - count excludes the caller; member_alive answers true/false;
+#   - join answers a wid and this daemon's generation, and wids increase by one per join;
+#   - count excludes the caller; member_alive answers alive/known, and known:false for
+#     another generation; members_alive answers a batch in order;
 #   - pools with different names are independent;
 #   - the lock-requiring ops answer error to a caller that does not hold the lock, and a
 #     second join is refused;
@@ -47,7 +49,8 @@ h.run(async function () {
             { op: 'pool.lock', pool: 'ACK', id: 'k1' },
             { op: 'pool.join', pool: 'ACK', id: 'k2' },
             { op: 'pool.count', pool: 'ACK', id: 'k3' },
-            { op: 'pool.member_alive', pool: 'ACK', member_id: 'pm_nobody', id: 'k4' },
+            { op: 'pool.member_alive', pool: 'ACK', wid: 0, generation: 1, id: 'k4' },
+            { op: 'pool.members_alive', pool: 'ACK', items: [{ wid: 0, generation: 1 }], id: 'k4b' },
             { op: 'pool.stats', pool: 'ACK', id: 'k5' },
             { op: 'pool.stats', id: 'k6' },
             { op: 'pool.leave', pool: 'ACK', id: 'k7' },
@@ -69,13 +72,17 @@ h.run(async function () {
         const by_id = {};
         for (const frame of raw.frames) by_id[frame.id] = frame;
         h.check('pool.lock -> granted', by_id.k1.status === 'granted' && by_id.k1.pool === 'ACK');
-        h.check('pool.join -> ok with a member_id', by_id.k2.status === 'ok' && /^pm_[0-9a-f]{32}$/.test(by_id.k2.member_id));
+        h.check('pool.join -> ok with a wid and a generation',
+            by_id.k2.status === 'ok' && Number.isInteger(by_id.k2.wid) && by_id.k2.wid >= 0
+            && Number.isSafeInteger(by_id.k2.generation) && by_id.k2.generation > 0);
         h.check('pool.count -> ok, 0 (the caller excluded)', by_id.k3.status === 'ok' && by_id.k3.members === 0);
-        h.check('pool.member_alive -> ok, false for an unknown id', by_id.k4.status === 'ok' && by_id.k4.alive === false);
+        h.check('pool.member_alive -> ok, alive false', by_id.k4.status === 'ok' && by_id.k4.alive === false);
+        h.check('pool.members_alive -> ok with one result', by_id.k4b.status === 'ok' && by_id.k4b.results.length === 1);
         h.check('pool.stats (named) -> ok with members/holder/waiting',
             by_id.k5.status === 'ok' && by_id.k5.members === 1 && by_id.k5.holder === true && by_id.k5.waiting === 0);
+        h.check('pool.stats carries the same generation join answered', by_id.k5.generation === by_id.k2.generation);
         h.check('pool.stats (all) -> ok with a pools list', by_id.k6.status === 'ok' && Array.isArray(by_id.k6.pools));
-        h.check('pool.leave -> ok', by_id.k7.status === 'ok' && by_id.k7.member_id === by_id.k2.member_id);
+        h.check('pool.leave -> ok, echoing the wid', by_id.k7.status === 'ok' && by_id.k7.wid === by_id.k2.wid);
         h.check('pool.unlock -> ok', by_id.k8.status === 'ok');
         h.check('pool.unlock when not the holder -> error', by_id.k9.status === 'error');
         h.check('an invalid pool name -> error', by_id.k10.status === 'error');
@@ -140,17 +147,30 @@ h.run(async function () {
         h.check('a non-member counts every member', (await b.request({ op: 'pool.count', pool: 'COUNT' })).members === 1);
         const b_join = await b.request({ op: 'pool.join', pool: 'COUNT' });
         h.check('a member counts every OTHER member', (await b.request({ op: 'pool.count', pool: 'COUNT' })).members === 1);
-        h.check('member_alive is true for a live member',
-            (await b.request({ op: 'pool.member_alive', pool: 'COUNT', member_id: a_join.member_id })).alive === true);
-        h.check('two joins mint two different member ids', a_join.member_id !== b_join.member_id);
+        const a_alive = await b.request({ op: 'pool.member_alive', pool: 'COUNT', wid: a_join.wid, generation: a_join.generation });
+        h.check('member_alive is alive and known for a live member', a_alive.alive === true && a_alive.known === true);
+        h.check('the next join takes the next wid, same generation',
+            b_join.wid === a_join.wid + 1 && b_join.generation === a_join.generation);
+        const stale = await b.request({ op: 'pool.member_alive', pool: 'COUNT', wid: a_join.wid,
+            generation: a_join.generation === 1 ? 2 : a_join.generation - 1 });
+        h.check('another generation answers known:false, alive:false', stale.status === 'ok'
+            && stale.known === false && stale.alive === false);
+        const batch = await b.request({ op: 'pool.members_alive', pool: 'COUNT', items: [
+            { wid: a_join.wid, generation: a_join.generation },
+            { wid: b_join.wid, generation: b_join.generation },
+            { wid: b_join.wid + 1, generation: b_join.generation },
+        ] });
+        h.check('members_alive answers each item in order',
+            batch.status === 'ok' && batch.results.map((r) => r.alive + '/' + r.known).join(',')
+                === 'true/true,true/true,false/true');
         await b.request({ op: 'pool.unlock', pool: 'COUNT' });
 
         h.check('pool.stats is readable WITHOUT the lock and counts everyone',
             (await pool_stats(observer, 'COUNT')).members === 2);
 
         // Errors for a caller that does not hold the lock.
-        for (const op of ['pool.unlock', 'pool.join', 'pool.leave', 'pool.count', 'pool.member_alive']) {
-            const frame = await observer.request({ op: op, pool: 'COUNT', member_id: a_join.member_id });
+        for (const op of ['pool.unlock', 'pool.join', 'pool.leave', 'pool.count', 'pool.member_alive', 'pool.members_alive']) {
+            const frame = await observer.request({ op: op, pool: 'COUNT', wid: a_join.wid, generation: a_join.generation, items: [] });
             h.check(op + ' without the lock answers error', frame.status === 'error');
         }
         h.check('those refusals changed nothing', (await pool_stats(observer, 'COUNT')).members === 2);
@@ -161,8 +181,8 @@ h.run(async function () {
         h.check('another pool name is a different lock (granted while COUNT is held)', other.status === 'granted');
         h.check('and a different member set',
             (await b.request({ op: 'pool.count', pool: 'COUNT_OTHER' })).members === 0);
-        h.check('a member id from one pool is not alive in another',
-            (await b.request({ op: 'pool.member_alive', pool: 'COUNT_OTHER', member_id: a_join.member_id })).alive === false);
+        h.check('a wid from one pool is not alive in another',
+            (await b.request({ op: 'pool.member_alive', pool: 'COUNT_OTHER', wid: a_join.wid, generation: a_join.generation })).alive === false);
 
         // ---- dump / stats carry pool state -------------------------------------------
         const dump = await observer.request({ op: 'dump' });
@@ -171,7 +191,8 @@ h.run(async function () {
             count_pool && count_pool.holder === a.conn_id && count_pool.members.length === 2);
         const a_view = dump.connections.find((c) => c.conn_id === a.conn_id);
         h.check('dump shows the pool per connection',
-            a_view && a_view.pools.some((p) => p.pool === 'COUNT' && p.holds_lock && p.member_id === a_join.member_id));
+            a_view && a_view.pools.some((p) => p.pool === 'COUNT' && p.holds_lock && p.wid === a_join.wid));
+        h.check('dump carries the pool generation', dump.pool_generation === a_join.generation);
         h.check('dump carries pool counters', dump.pool_counters && dump.pool_counters.joined >= 3);
         const stats = await observer.request({ op: 'stats', name: 'anything' });
         h.check('stats reports the live pool count', stats.pools >= 2);

@@ -63,7 +63,8 @@ class Lock_Table {
         this.pool = options.pool || new Pool_Table({
             deliver: (conn_id, frame) => this.deliver(conn_id, frame),
             now: () => this.now(),
-            random_id: options.pool_random_id,
+            generation: options.pool_generation,
+            first_wid: options.pool_first_wid,
         });
 
         // Lifetime counters, reported by stats/dump. Cheap and invaluable when a box is
@@ -788,6 +789,7 @@ class Lock_Table {
             semaphores: semaphores,
             pools: this.pool.dump(),
             counters: Object.assign({}, this.counters),
+            pool_generation: this.pool.generation,
             pool_counters: Object.assign({}, this.pool.counters),
         };
     }

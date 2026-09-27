@@ -10,6 +10,7 @@ namespace App\RSpade\Core\Task;
 use Exception;
 use Illuminate\Support\Facades\DB;
 use App\RSpade\Core\Console\Rsx_Artisan;
+use App\RSpade\Core\Framework\Framework_Maintenance;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Service\Rsx_Service_Abstract;
 use App\RSpade\Core\Task\Task_Concurrency;
@@ -329,8 +330,11 @@ class Task
      * Spawn a detached background worker (fire-and-forget) - if, and only if, the pool has
      * room for it.
      *
-     * Two refusals come before the spawn, cheapest first:
+     * Three refusals come before the spawn, cheapest first:
      *
+     *   0. Maintenance mode (Framework_Maintenance::is_active()): nothing is started while the
+     *      window is up - the worker command itself is refused there. The row stays PENDING,
+     *      and the first rsx:task:process tick after the window closes starts its worker.
      *   1. The workers THIS process spawned that are still running (is_worker_process(),
      *      /proc, no shared state). This is what caps a script that dispatches on every
      *      write: once its own spawns fill the cap, every further dispatch returns here,
@@ -349,12 +353,16 @@ class Task
      * A lost or unreachable daemon THROWS: the pool is the admission count, and rsx-lockd is
      * a hard framework dependency. Workers are generic - one pool, no queue routing.
      *
-     * @return bool True when a worker was spawned; false when the pool is full or this
-     *              process does not spawn workers (spawn_workers()).
+     * @return bool True when a worker was spawned; false when the pool is full, maintenance
+     *              mode is up, or this process does not spawn workers (spawn_workers()).
      */
     public static function spawn_worker(): bool
     {
         if (!self::spawning_workers()) {
+            return false;
+        }
+
+        if (Framework_Maintenance::is_active()) {
             return false;
         }
 
@@ -377,7 +385,7 @@ class Task
         // THE RULE: under the pool lock, pool ops only.
         Task_Pool::lock();
         try {
-            $members = Task_Pool::count() + (Task_Pool::member_id() !== null ? 1 : 0);
+            $members = Task_Pool::count() + (Task_Pool::wid() !== null ? 1 : 0);
         } finally {
             // A lost connection already released the lock at the daemon (and holds_lock()
             // says so); unlocking then would only bury the real failure under a refusal.

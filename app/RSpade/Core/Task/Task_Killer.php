@@ -3,14 +3,16 @@
 namespace App\RSpade\Core\Task;
 
 use Illuminate\Support\Facades\DB;
+use App\RSpade\Core\Task\Task_Pool;
 use App\RSpade\Core\Task\Task_Status;
 
 /**
  * Force-kills a running task's worker process and settles its _tasks row.
  *
  * Sequence: SIGTERM (15) -> up to 5s grace -> SIGKILL (9), using the row's worker_pid and the
- * same posix_kill($pid, 0) liveness probe the stuck-task reaper uses. Signal numbers are literal
- * (15/9) so no pcntl constants are required.
+ * same posix_kill($pid, 0) liveness probe the stuck-task reaper uses - only when the row's
+ * worker_host is this machine (or NULL); a row claimed on another host is settled unsignalled.
+ * Signal numbers are literal (15/9) so no pcntl constants are required.
  *
  * Row settle: an ON-DEMAND row (next_run_at IS NULL) goes terminal KILLED with the explanation on
  * status_reason. A CRON TRACKER row (next_run_at set) is RECYCLED to PENDING instead - a terminal
@@ -28,7 +30,7 @@ class Task_Killer
     private const SIGKILL = 9;
 
     /**
-     * @param object $row A RUNNING _tasks row (id, worker_pid, next_run_at).
+     * @param object $row A RUNNING _tasks row (id, worker_pid, worker_host, next_run_at).
      * @return string 'killed' | 'killed_no_process' | 'recycled'
      */
     public static function kill(object $row, string $explanation): string
@@ -36,7 +38,13 @@ class Task_Killer
         $pid = $row->worker_pid ? (int) $row->worker_pid : 0;
         $signalled = false;
 
-        if ($pid > 0 && @posix_kill($pid, 0)) {
+        // A pid names a process on ONE machine. A row claimed on another host is settled
+        // without a signal: sending it here would reach whatever unrelated process holds that
+        // pid on this box. A NULL worker_host predates the column and is taken as local.
+        $host = $row->worker_host ?? null;
+        $local = $host === null || $host === Task_Pool::host();
+
+        if ($local && $pid > 0 && @posix_kill($pid, 0)) {
             @posix_kill($pid, self::SIGTERM);
             $signalled = true;
 
@@ -57,7 +65,9 @@ class Task_Killer
             DB::table('_tasks')->where('id', $row->id)->update([
                 'status'        => Task_Status::PENDING,
                 'worker_pid'    => null,
-                'worker_member_key' => null,
+                'worker_id'     => null,
+                'worker_generation' => null,
+                'worker_host'   => null,
                 'status_reason' => 'killed (recycled): ' . $explanation,
                 'updated_at'    => now(),
             ]);
@@ -68,7 +78,9 @@ class Task_Killer
             'status'        => Task_Status::KILLED,
             'status_reason' => $explanation,
             'worker_pid'    => null,
-            'worker_member_key' => null,
+            'worker_id'     => null,
+            'worker_generation' => null,
+            'worker_host'   => null,
             'completed_at'  => now(),
             'updated_at'    => now(),
         ]);

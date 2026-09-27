@@ -10,7 +10,7 @@
  *     stdout: READY                       connected and authenticated
  *             REQUESTED                   pool.lock went out (may park silently)
  *             LOCKED                      pool.lock granted
- *             JOINED <member_id>          pool.join answered
+ *             JOINED <wid> <generation>   pool.join answered
  *             UNLOCKED                    pool.unlock answered (only without --stay-locked)
  *             ERROR <message>
  *
@@ -61,7 +61,7 @@ async function main() {
 
     if (!flag('no-join', false)) {
         const joined = await expect(client, { op: 'pool.join', pool: pool }, 'ok');
-        say('JOINED ' + joined.member_id);
+        say('JOINED ' + joined.wid + ' ' + joined.generation);
     }
 
     if (!flag('stay-locked', false) && !flag('no-join', false)) {
