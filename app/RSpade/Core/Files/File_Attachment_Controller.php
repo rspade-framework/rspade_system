@@ -68,7 +68,7 @@ use App\RSpade\Core\Session\Session;
  * GET /_download_zip/:key                           - Stream a multi-file ZIP for a minted download request
  * GET /_inline/:key                                 - View file inline (browser display)
  * GET /_thumbnail/dynamic/:key/:type/:width/:height? - Generate dynamic thumbnail (WebP)
- * GET /_icon_by_extension/:extension                - Get file type icon as PNG
+ * GET /_icon_by_extension/:extension                - Get file type icon (PNG, or SVG with ?style=outline)
  *
  * FILE RESPONSE PATTERN:
  *   Use Response facade methods for file responses from static route methods:
@@ -1797,24 +1797,57 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     // ============================================================================================
 
     /**
-     * Get file type icon as PNG by extension
+     * Get a file type icon by extension: the colour PNG, or the outline SVG with ?style=outline
      *
      * Route: /_icon_by_extension/:extension
      *
+     * Query:
+     *   style   'color' (default) or 'outline'; anything else is a 400
+     *   width   colour PNG only, 10..256, default 64
+     *   height  colour PNG only, 10..256, default 64
+     *
+     * BOTH REALMS, DELIBERATELY. The #[Portal_Route] serves the same handler in the portal's
+     * route table, so a portal on its own domain (where every request is a portal request and
+     * the staff table is never consulted) still has its file icons. The class-level
+     * #[Auth('public')] covers both rows: an icon is framework artwork, never a stored file.
+     *
+     * SECURITY (outline): the SVG is framework-owned bytes read from resource/icons/outline/
+     * and served verbatim - never an uploaded file, and never passed through ImageMagick, so
+     * the disabled SVG coder policy is unaffected. It still goes through
+     * harden_file_response(), so the document it would become if opened directly is inert
+     * (FILE_RESPONSE_CSP) and the browser never sniffs it as anything else (nosniff).
+     *
      * @param string $extension File extension (without dot)
-     * @return Response PNG image data
+     * @return Response PNG image data, or SVG markup for style=outline
      */
     #[Route('/_icon_by_extension/:extension', methods: ['GET'])]
+    #[Portal_Route('/_icon_by_extension/:extension', methods: ['GET'])]
     public static function icon_by_extension(Request $request, array $params = [])
     {
         $extension = $params['extension'] ?? '';
-        $width = (int)($request->query('width', 64));
-        $height = (int)($request->query('height', 64));
+        $style = $request->query('style', File_Attachment_Icons::STYLE_COLOR);
 
         // Validate extension is alphanumeric
         if (!ctype_alnum($extension)) {
             abort(400, 'Invalid extension');
         }
+
+        if ($style === File_Attachment_Icons::STYLE_OUTLINE) {
+            return static::harden_file_response(Response::make(File_Attachment_Icons::get_outline_icon_svg($extension), 200, [
+                'Content-Type' => 'image/svg+xml',
+                'Content-Disposition' => 'inline',
+                // A week, and not immutable: the URL names an extension, not the artwork, so a
+                // remapped icon must reach a browser within a bounded time after an update.
+                'Cache-Control' => 'public, max-age=604800',
+            ]));
+        }
+
+        if ($style !== File_Attachment_Icons::STYLE_COLOR) {
+            abort(400, 'Invalid style');
+        }
+
+        $width = (int)($request->query('width', 64));
+        $height = (int)($request->query('height', 64));
 
         // Enforce minimum dimensions
         if ($width < 10) {

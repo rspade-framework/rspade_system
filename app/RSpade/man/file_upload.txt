@@ -755,7 +755,7 @@ HTTP ENDPOINTS
         GET  /_download_zip/:key                             Stream a ZIP set
         GET  /_thumbnail/dynamic/:key/:type/:width/:height?  Dynamic thumbnail
         GET  /_thumbnail/preset/:key/:preset_name            Preset thumbnail
-        GET  /_icon_by_extension/:extension                  File-type icon
+        GET  /_icon_by_extension/:extension                  File-type icon (both realms)
 
     EVERY ONE OF THESE EXCEPT /_icon_by_extension ALSO ACCEPTS AN API KEY.
     Authorization: Bearer rsx_... authenticates the request exactly as a session
@@ -1202,20 +1202,72 @@ THUMBNAILS
 
 FILE TYPE ICONS
 
-    GET /_icon_by_extension/:extension
+    One extension map (File_Attachment_Icons), two renditions of each entry:
 
-    A PNG file-type icon for displaying types visually. Every icon is a PNG on
-    disk (generic ones are 512px rasters of the SVG artwork beside them), because
-    ImageMagick reads raster coders only.
+        color    the full-colour artwork, a PNG. What stands in for a thumbnail
+                 that cannot be rendered (rsx:man thumbnails).
+        outline  a square 24x24 stroke mark in currentColor with no fills
+                 (Tabler Icons, MIT), for a list row, a chip, or anything
+                 beside text. It takes the colour of the text around it.
+
+    Every recognised extension has both; an unrecognised one (or none) gets the
+    generic file mark in both. The map is the only list - the route, the
+    attachment accessors and <File_Type_Icon> all read it.
+
+    In a page: <File_Type_Icon>
+
+        <File_Type_Icon $file_name=doc.name />
+        <File_Type_Icon $extension="pdf" />
+        <File_Type_Icon $attachment=attachment />   (reads file_extension)
+
+    Renders the outline SVG INLINE - the map and the artwork are baked into
+    every bundle, staff and portal, at compile time, so a list costs no request
+    per row. 1em square by default (it tracks the font size); resize it with
+    ordinary CSS on .File_Type_Icon, colour it with `color`. Give one argument;
+    none throws. The file's own picture is <Attachment_Thumbnail>.
+
+    PHP:
+
+        File_Attachment_Icons::get_icon_resource_by_file_extension($ext)
+            path of the colour PNG (relative to the project root)
+        File_Attachment_Icons::get_icon_resource_by_file_extension($ext,
+                File_Attachment_Icons::STYLE_OUTLINE)
+            path of the outline SVG; any other style throws
+        File_Attachment_Icons::get_outline_icon_svg($ext)   the SVG markup
+        $attachment->get_icon_resource($style = STYLE_COLOR)
+        $attachment->get_outline_icon_svg()
+
+    HTTP:
+
+    GET /_icon_by_extension/:extension
         extension  alphanumeric, no dot ('pdf', 'jpg', 'stl')
-        width      query param, 10..256, default 64
-        height     query param, 10..256, default 64
+        style      query param, 'color' (default) or 'outline'; anything else
+                   is a 400
+        width      colour only, 10..256, default 64
+        height     colour only, 10..256, default 64
 
         <img src="/_icon_by_extension/pdf?width=64&height=64">
-        <img src="/_icon_by_extension/<?= $file->file_extension ?>">
+        /_icon_by_extension/pdf?style=outline
 
-    Icons are cached by extension + dimensions. Cache-Control: public,
-    max-age=86400.
+    Colour: image/png, Cache-Control: public, max-age=86400. Outline:
+    image/svg+xml, Cache-Control: public, max-age=604800. Both carry the file
+    response hardening (the sandboxing Content-Security-Policy and
+    X-Content-Type-Options: nosniff). An SVG loaded through <img> or CSS
+    background cannot inherit currentColor (it draws black); inline it with
+    <File_Type_Icon>, or use the URL as a CSS mask-image over a background
+    of currentColor.
+
+    BOTH REALMS. The route is declared as #[Route] and #[Portal_Route] on the
+    one handler, public, so a portal on its own domain - where the staff route
+    table is never consulted - serves its icons too. On a prefix-mode portal
+    it answers at the bare path and under the portal prefix alike.
+
+    NEVER IMAGEMAGICK FOR SVG. The colour PNGs are the only icons ImageMagick
+    reads. The outline SVGs are framework-owned files served verbatim and
+    inlined as text; they never reach ImageMagick, so the disabled SVG coder
+    (rsx:man thumbnails, the "ImageMagick Coder Policy" rsx:health row) stays
+    disabled. The artwork, its licence and how to add an icon:
+    system/app/RSpade/Core/Files/resource/icons/README.md.
 
 STAFF ROW VISIBILITY: Staff_Authorizable
 

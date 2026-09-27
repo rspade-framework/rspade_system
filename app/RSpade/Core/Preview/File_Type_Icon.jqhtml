@@ -1,0 +1,26 @@
+<%--
+File_Type_Icon
+
+The outline file-type mark for one file: a square 24x24 stroke icon drawn in currentColor with no
+fills, rendered INLINE (no request per row), so it takes the colour of the text around it - muted,
+selected and dark-mode states included. For a list row, a chip, or anywhere a file name sits beside
+text. The picture of the file itself is <Attachment_Thumbnail>; this is the TYPE mark.
+
+The extension -> icon map is the server's (File_Attachment_Icons), baked into every bundle at
+compile time, so the component and GET /_icon_by_extension/:ext?style=outline always agree. An
+unrecognised or missing extension renders the generic file mark.
+
+Args (give ONE; the first present wins, in this order):
+  $extension  - the extension, without the dot, any case ('pdf', 'DOCX')
+  $attachment - a File_Attachment_Model record (or its payload); reads file_extension
+  $file_name  - a file name; the extension is whatever follows the last dot ('Q3 report.xlsx')
+
+Size: 1em square by default, so it scales with the font; the host resizes it with ordinary CSS on
+the .File_Type_Icon element. There are no size arguments.
+
+    <File_Type_Icon $file_name=doc.name />
+    <File_Type_Icon class="text-muted" $extension="pdf" />
+--%>
+<Define:File_Type_Icon tag="span" aria-hidden="true">
+    <%!= File_Type_Icon.svg_for_args(this.args) %>
+</Define:File_Type_Icon>

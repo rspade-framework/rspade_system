@@ -78,3 +78,11 @@
 | SVG-07 | `/_upload` answers an unparseable SVG with 422 `unparseable_svg` | http | authenticated multipart upload | 422 JSON | planned | 2026-09-25 |
 | SVG-08 | `/_inline` of an SVG answers with the sandboxing CSP and nosniff | http | authenticated GET | both headers present | planned | 2026-09-25 |
 | ATT-IMAGICK-01 | Every framework Imagick call site runs Imagick_Policy::assert_safe() first: a permissive verdict throws naming the readable coders and the remedy, a correct one passes, and the thumbnail renderer refuses before reading | php | injected verdicts via Imagick_Policy::$verdict_for_tests | throw / pass / refuse-before-read | implemented |
+| ICON-01 | Every extension in the one map resolves to an outline SVG on disk, the payload carries its artwork, lookup is case-insensitive | php | get_outline_icon_payload() + STYLE_OUTLINE lookup | file exists per extension | implemented | 2026-09-27 |
+| ICON-02 | An unrecognised, empty or null extension gets the generic outline mark | php | unknownext / '' / null | outline/file.svg bytes | implemented | 2026-09-27 |
+| ICON-03 | Every outline SVG is a 24x24 currentColor stroke with no fill but none and no script/handler/link/style | php | every baked icon | assertions per icon | implemented | 2026-09-27 |
+| ICON-04 | ?style=outline serves image/svg+xml verbatim with FILE_RESPONSE_CSP, nosniff and a public week-long cache | php | icon_by_extension in-process | headers + bytes | implemented | 2026-09-27 |
+| ICON-05 | An unknown style is refused: 400 on the route, Rsx_Caller_Exception in PHP | php | style=bogus | HttpException / Rsx_Caller_Exception | implemented | 2026-09-27 |
+| ICON-06 | The colour PNG path is unchanged (default style, image/png, one-day cache, same bytes as get_icon_as_png) | php | pdf/docx/unknownext | .png paths, PNG response | implemented | 2026-09-27 |
+| ICON-07 | /_icon_by_extension/:extension is declared in BOTH the staff and the portal route tables, GET only, one handler | php | manifest routes + portal_routes | both rows present | implemented | 2026-09-27 |
+| ICON-08 | Attachment accessors: get_outline_icon_svg() and get_icon_resource($style) answer from the same map | php | unsaved attachment, docx | equal to the class answers | implemented | 2026-09-27 |

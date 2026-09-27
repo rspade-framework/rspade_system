@@ -1,6 +1,6 @@
 ---
 name: file-attachments
-description: "Uploading files in RSX and attaching them to records - the mandatory file.upload.authorize gate, Ajax.upload(form_data) as the browser transport (POST /api/v1/files for an external integration), the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, attaching a file uploaded through the external API, showing a thumbnail or avatar, showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks."
+description: "Uploading files in RSX and attaching them to records - the mandatory file.upload.authorize gate, Ajax.upload(form_data) as the browser transport (POST /api/v1/files for an external integration), the claim flow (find_by_key + can_user_assign_this_file + attach_to/add_to), rendering the size ceiling in a label, inline vs download URLs, displaying a thumbnail with <Attachment_Thumbnail $attachment_id> (the only way - an app never builds a thumbnail URL and ships file_attachment_id instead), a currentColor file-type mark with <File_Type_Icon $file_name> (never a hand-rolled extension map), creating attachments programmatically, the retention/disposal lifecycle, and multi-file ZIP downloads. Use when building an upload UI, attaching files to a model, attaching a file uploaded through the external API, showing a thumbnail, avatar or file-type icon, showing or downloading a stored file, deleting/recovering attachments, or wiring the file authorization hooks."
 ---
 
 # File attachments
@@ -244,6 +244,10 @@ A record that cannot be fetched (deleted, or not visible to this caller) paints 
 
 `File_Attachment_Model.thumbnail_url(record, {type, width, height, preset})` is the single JS builder the component calls. Reach for it directly only when a component genuinely cannot sit at that spot — a widget addressed by attachment **key** rather than id, say — and say why in a comment. Presets live in `config('rsx.thumbnails.presets')` (`profile`, `gallery`, `icon_small`, `icon_large` ship) and **throw** if undefined. `has_thumbnail()` is true iff a renderer is registered for the mime or the blob has rendered.
 
+### File-type marks: `<File_Type_Icon>`, never your own extension map
+
+For a list row, a chip, or anything beside a file name, the TYPE mark is `<File_Type_Icon $file_name=doc.name />` (or `$extension="pdf"`, or `$attachment=record`). It renders a square outline SVG inline, strokes in `currentColor` with no fills, so it takes the text colour (muted, selected, dark mode) and costs no request per row; 1em square, resized by ordinary CSS on `.File_Type_Icon`. It works in staff and portal bundles alike. The extension map is `File_Attachment_Icons`'s, baked into every bundle - **an app never keeps its own extension-to-icon table**; to add or change a type, class-override `File_Attachment_Icons` (its one `EXTENSION_ICONS` map drives the component, the route and the PHP accessors together). Unknown extensions get the generic file mark. Server side: `$attachment->get_outline_icon_svg()` / `File_Attachment_Icons::get_outline_icon_svg($ext)`; over HTTP: `/_icon_by_extension/:ext?style=outline` (`image/svg+xml`, public, both realms). The coloured PNG (`/_icon_by_extension/:ext`, no style) is unchanged and is what stands in for an unrenderable thumbnail. The SVGs are framework artwork served verbatim - never through ImageMagick. `rsx:man file_upload` (FILE TYPE ICONS).
+
 ---
 
 ## 6. Model properties and programmatic creation
@@ -370,7 +374,7 @@ Do not compare `created_by` to a user id — authorship is a polymorphic PAIR an
 
 ## System endpoints
 
-`POST /_upload` · `GET /_download/:key` · `GET /_inline/:key` · `GET /_download_zip/:key` · `GET /_thumbnail/preset/:key/:preset` · `GET /_thumbnail/dynamic/:key/:type/:width/:height?` · `GET /_icon_by_extension/:extension` · `GET /_preview/pdf/:key`
+`POST /_upload` · `GET /_download/:key` · `GET /_inline/:key` · `GET /_download_zip/:key` · `GET /_thumbnail/preset/:key/:preset` · `GET /_thumbnail/dynamic/:key/:type/:width/:height?` · `GET /_icon_by_extension/:extension[?style=outline]` · `GET /_preview/pdf/:key`
 
 Every one that serves bytes answers with `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox` and `X-Content-Type-Options: nosniff` (`File_Attachment_Controller::harden_file_response()`), so a stored HTML or SVG opened in a tab is inert. **An SVG is sanitized on upload, refused (422 `unparseable_svg`) when it cannot be parsed, and never rasterised** — its thumbnail is the extension icon (`rsx:man file_upload`, SVG).
 

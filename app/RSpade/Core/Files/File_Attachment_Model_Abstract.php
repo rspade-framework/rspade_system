@@ -768,11 +768,30 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * 48px originals, and generic category icons are 512px rasters of the SVG artwork beside
      * them (ImageMagick reads raster coders only).
      *
+     * With File_Attachment_Icons::STYLE_OUTLINE it is the outline SVG instead (see
+     * get_outline_icon_svg()).
+     *
+     * @param string $style File_Attachment_Icons::STYLE_COLOR (default) or STYLE_OUTLINE
      * @return string Relative path to icon file from project root
      */
-    public function get_icon_resource()
+    public function get_icon_resource(string $style = File_Attachment_Icons::STYLE_COLOR)
     {
-        return File_Attachment_Icons::get_icon_resource_by_file_extension($this->file_extension);
+        return File_Attachment_Icons::get_icon_resource_by_file_extension($this->file_extension, $style);
+    }
+
+    /**
+     * Get this file's outline type icon as inline SVG markup
+     *
+     * A square 24x24 stroke mark in currentColor with no fills, resolved from the same
+     * extension map as get_icon_resource(), with the generic file mark for an unrecognised
+     * extension. Framework-owned artwork read verbatim - never ImageMagick. The browser-side
+     * equivalent is <File_Type_Icon $file_name=...>.
+     *
+     * @return string SVG markup
+     */
+    public function get_outline_icon_svg(): string
+    {
+        return File_Attachment_Icons::get_outline_icon_svg($this->file_extension);
     }
 
     /**

@@ -1,0 +1,17 @@
+// 1em square by default, so the mark tracks the surrounding font size; the host resizes the
+// .File_Type_Icon element with ordinary CSS. The SVG strokes in currentColor, so colour is
+// inherited from the text around it.
+.File_Type_Icon {
+    display: inline-block;
+    flex-shrink: 0;
+    width: 1em;
+    height: 1em;
+    line-height: 1;
+    vertical-align: -0.125em;
+
+    svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+    }
+}

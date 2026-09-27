@@ -2,161 +2,263 @@
 
 namespace App\RSpade\Core\Files;
 
+use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Files\Imagick_Policy;
 
 /**
  * File attachment icon resource management
  *
- * Provides static methods for determining the appropriate icon resource
- * for different file types based on file extension.
+ * Answers "which picture stands for a file of this extension", in two renditions drawn from
+ * ONE extension map (EXTENSION_ICONS below - there is no second list anywhere, in PHP or JS):
+ *
+ *   STYLE_COLOR   - the full-colour artwork, always a PNG on disk (resource/icons/*.png). This
+ *                   is what stands in for a thumbnail that cannot be rendered, and it is the
+ *                   only rendition ImageMagick ever reads.
+ *   STYLE_OUTLINE - a square 24x24 stroke mark (resource/icons/outline/*.svg, Tabler Icons,
+ *                   MIT) drawn in currentColor with no fills, for a list row or a chip beside
+ *                   text. It is served as SVG bytes and inlined by the <File_Type_Icon>
+ *                   component; it NEVER reaches ImageMagick.
  *
  * EVERY ICON THIS CLASS RASTERISES IS A PNG. ImageMagick is configured to read raster
  * coders only (resource/docker/imagemagick/policy.xml, and the "ImageMagick Coder Policy"
  * rsx:health row), because its SVG coder is a local-file-read primitive. The generic
- * icons are drawn as SVG (resource/icons/*.svg, the source artwork) and shipped as
+ * colour icons are drawn as SVG (resource/icons/*.svg, the source artwork) and shipped as
  * 512px PNG rasters of those files beside them; README.md there has the command that
- * regenerates them.
+ * regenerates them. The outline SVGs are a separate, framework-owned set that is only ever
+ * read as text and handed to a browser verbatim, so the coder policy is unaffected by them.
  */
 class File_Attachment_Icons
 {
+    /** The full-colour PNG rendition (the default everywhere a style is accepted). */
+    public const STYLE_COLOR = 'color';
+
+    /** The square currentColor stroke rendition, delivered as SVG markup. */
+    public const STYLE_OUTLINE = 'outline';
+
+    /** The icon directory, relative to the project root. */
+    private const ICON_DIR = 'system/app/RSpade/Core/Files/resource/icons';
+
+    /**
+     * THE extension map: lowercased extension => [colour PNG file, outline icon name].
+     *
+     * The outline name is a file in resource/icons/outline/ without its .svg suffix, and is the
+     * Tabler Icons name it was vendored under. A Tabler file-type-* glyph is used where one
+     * names the format; otherwise the closest analog (README.md in resource/icons lists the
+     * choices). An extension absent from this map gets GENERIC_ICONS.
+     */
+    private const EXTENSION_ICONS = [
+        // Brand-specific colour icons
+        'pdf' => ['pdf.png', 'file-type-pdf'],
+        'psd' => ['psd.png', 'photo'],
+        'ai' => ['ai.png', 'file-ai'],
+
+        // Images
+        'jpg' => ['image.png', 'file-type-jpg'],
+        'jpeg' => ['image.png', 'file-type-jpg'],
+        'png' => ['image.png', 'file-type-png'],
+        'gif' => ['image.png', 'photo'],
+        'bmp' => ['image.png', 'file-type-bmp'],
+        'svg' => ['image.png', 'file-type-svg'],
+        'webp' => ['image.png', 'photo'],
+        'ico' => ['image.png', 'photo'],
+        'tiff' => ['image.png', 'photo'],
+        'tif' => ['image.png', 'photo'],
+        'heic' => ['image.png', 'photo'],
+        'heif' => ['image.png', 'photo'],
+        'raw' => ['image.png', 'photo'],
+        'cr2' => ['image.png', 'photo'],
+        'nef' => ['image.png', 'photo'],
+
+        // Videos
+        'mp4' => ['video.png', 'movie'],
+        'avi' => ['video.png', 'movie'],
+        'mov' => ['video.png', 'movie'],
+        'wmv' => ['video.png', 'movie'],
+        'flv' => ['video.png', 'movie'],
+        'mkv' => ['video.png', 'movie'],
+        'webm' => ['video.png', 'movie'],
+        'mpeg' => ['video.png', 'movie'],
+        'mpg' => ['video.png', 'movie'],
+        'm4v' => ['video.png', 'movie'],
+        '3gp' => ['video.png', 'movie'],
+
+        // Audio
+        'mp3' => ['audio.png', 'file-music'],
+        'wav' => ['audio.png', 'file-music'],
+        'flac' => ['audio.png', 'file-music'],
+        'aac' => ['audio.png', 'file-music'],
+        'ogg' => ['audio.png', 'file-music'],
+        'm4a' => ['audio.png', 'file-music'],
+        'wma' => ['audio.png', 'file-music'],
+        'aiff' => ['audio.png', 'file-music'],
+        'alac' => ['audio.png', 'file-music'],
+
+        // Archives
+        'zip' => ['archive.png', 'file-type-zip'],
+        'rar' => ['archive.png', 'file-zip'],
+        '7z' => ['archive.png', 'file-zip'],
+        'tar' => ['archive.png', 'file-zip'],
+        'gz' => ['archive.png', 'file-zip'],
+        'bz2' => ['archive.png', 'file-zip'],
+        'xz' => ['archive.png', 'file-zip'],
+        'iso' => ['archive.png', 'disc'],
+        'dmg' => ['archive.png', 'disc'],
+
+        // Text files
+        'txt' => ['text.png', 'file-type-txt'],
+        'md' => ['text.png', 'file-text'],
+        'rtf' => ['text.png', 'file-text'],
+        'log' => ['text.png', 'file-text'],
+
+        // Code files
+        'php' => ['code.png', 'file-type-php'],
+        'js' => ['code.png', 'file-type-js'],
+        'ts' => ['code.png', 'file-type-ts'],
+        'jsx' => ['code.png', 'file-type-jsx'],
+        'tsx' => ['code.png', 'file-type-tsx'],
+        'html' => ['code.png', 'file-type-html'],
+        'css' => ['code.png', 'file-type-css'],
+        'scss' => ['code.png', 'file-code'],
+        'sass' => ['code.png', 'file-code'],
+        'less' => ['code.png', 'file-code'],
+        'json' => ['code.png', 'file-code'],
+        'xml' => ['code.png', 'file-type-xml'],
+        'yaml' => ['code.png', 'file-code'],
+        'yml' => ['code.png', 'file-code'],
+        'py' => ['code.png', 'file-code'],
+        'java' => ['code.png', 'file-code'],
+        'c' => ['code.png', 'file-code'],
+        'cpp' => ['code.png', 'file-code'],
+        'h' => ['code.png', 'file-code'],
+        'cs' => ['code.png', 'file-code'],
+        'rb' => ['code.png', 'file-code'],
+        'go' => ['code.png', 'file-code'],
+        'rs' => ['code.png', 'file-type-rs'],
+        'swift' => ['code.png', 'file-code'],
+        'kt' => ['code.png', 'file-code'],
+        'sql' => ['code.png', 'file-type-sql'],
+        'sh' => ['code.png', 'file-code'],
+        'bash' => ['code.png', 'file-code'],
+
+        // 3D Models
+        'stl' => ['3d_model.png', 'file-3d'],
+        'obj' => ['3d_model.png', 'file-3d'],
+        'fbx' => ['3d_model.png', 'file-3d'],
+        'dae' => ['3d_model.png', 'file-3d'],
+        'blend' => ['3d_model.png', 'file-3d'],
+        '3ds' => ['3d_model.png', 'file-3d'],
+        'f3d' => ['3d_model.png', 'file-3d'],
+        'step' => ['3d_model.png', 'file-3d'],
+        'stp' => ['3d_model.png', 'file-3d'],
+
+        // Documents
+        'doc' => ['document.png', 'file-type-doc'],
+        'docx' => ['document.png', 'file-type-docx'],
+        'odt' => ['document.png', 'file-text'],
+        'pages' => ['document.png', 'file-text'],
+
+        // Spreadsheets
+        'xls' => ['spreadsheet.png', 'file-type-xls'],
+        'xlsx' => ['spreadsheet.png', 'file-excel'],
+        'ods' => ['spreadsheet.png', 'file-spreadsheet'],
+        'numbers' => ['spreadsheet.png', 'file-spreadsheet'],
+        'csv' => ['spreadsheet.png', 'file-type-csv'],
+
+        // Presentations
+        'ppt' => ['presentation.png', 'file-type-ppt'],
+        'pptx' => ['presentation.png', 'presentation'],
+        'odp' => ['presentation.png', 'presentation'],
+        'key' => ['presentation.png', 'presentation'],
+    ];
+
+    /** The generic icons for an extension EXTENSION_ICONS does not recognise. */
+    private const GENERIC_ICONS = ['file.png', 'file'];
+
     /**
      * Get the icon resource path for a given file extension
      *
-     * @param string $extension File extension (without dot)
-     * @return string Relative path to icon file
+     * @param string|null $extension File extension (without dot), any case
+     * @param string $style STYLE_COLOR (a PNG) or STYLE_OUTLINE (an SVG)
+     * @return string Path to the icon file, relative to the project root
      */
-    public static function get_icon_resource_by_file_extension($extension)
+    public static function get_icon_resource_by_file_extension($extension, string $style = self::STYLE_COLOR)
     {
-        $extension = strtolower($extension);
-        $base_path = 'system/app/RSpade/Core/Files/resource/icons';
+        $icons = self::EXTENSION_ICONS[strtolower((string) $extension)] ?? self::GENERIC_ICONS;
 
-        $icon_map = [
-            // Brand-specific PNG icons
-            'pdf' => 'pdf.png',
-            'psd' => 'psd.png',
-            'ai' => 'ai.png',
+        if ($style === self::STYLE_COLOR) {
+            return self::ICON_DIR . '/' . $icons[0];
+        }
 
-            // Images - generic
-            'jpg' => 'image.png',
-            'jpeg' => 'image.png',
-            'png' => 'image.png',
-            'gif' => 'image.png',
-            'bmp' => 'image.png',
-            'svg' => 'image.png',
-            'webp' => 'image.png',
-            'ico' => 'image.png',
-            'tiff' => 'image.png',
-            'tif' => 'image.png',
-            'heic' => 'image.png',
-            'heif' => 'image.png',
-            'raw' => 'image.png',
-            'cr2' => 'image.png',
-            'nef' => 'image.png',
+        if ($style === self::STYLE_OUTLINE) {
+            return self::ICON_DIR . '/outline/' . $icons[1] . '.svg';
+        }
 
-            // Videos
-            'mp4' => 'video.png',
-            'avi' => 'video.png',
-            'mov' => 'video.png',
-            'wmv' => 'video.png',
-            'flv' => 'video.png',
-            'mkv' => 'video.png',
-            'webm' => 'video.png',
-            'mpeg' => 'video.png',
-            'mpg' => 'video.png',
-            'm4v' => 'video.png',
-            '3gp' => 'video.png',
+        throw new Rsx_Caller_Exception("Unknown file icon style '{$style}' - expected '" . self::STYLE_COLOR . "' or '" . self::STYLE_OUTLINE . "'");
+    }
 
-            // Audio
-            'mp3' => 'audio.png',
-            'wav' => 'audio.png',
-            'flac' => 'audio.png',
-            'aac' => 'audio.png',
-            'ogg' => 'audio.png',
-            'm4a' => 'audio.png',
-            'wma' => 'audio.png',
-            'aiff' => 'audio.png',
-            'alac' => 'audio.png',
+    /**
+     * Get the outline icon for a file extension as SVG markup
+     *
+     * SECURITY: the markup is a framework-owned file under resource/icons/outline/, read as
+     * text and returned verbatim. It never reaches ImageMagick (whose SVG coder stays disabled
+     * - see the class docblock), and no uploaded byte can ever be selected here: the extension
+     * only picks a key in EXTENSION_ICONS, and an unknown one gets the generic icon.
+     *
+     * @param string|null $extension File extension (without dot), any case
+     * @return string The SVG document: 24x24 viewBox, strokes in currentColor, no fills
+     */
+    public static function get_outline_icon_svg($extension): string
+    {
+        return self::__read_outline_icon(basename(static::get_icon_resource_by_file_extension($extension, self::STYLE_OUTLINE), '.svg'));
+    }
 
-            // Archives
-            'zip' => 'archive.png',
-            'rar' => 'archive.png',
-            '7z' => 'archive.png',
-            'tar' => 'archive.png',
-            'gz' => 'archive.png',
-            'bz2' => 'archive.png',
-            'xz' => 'archive.png',
-            'iso' => 'archive.png',
-            'dmg' => 'archive.png',
+    /**
+     * The outline map and artwork as the <File_Type_Icon> component consumes them
+     *
+     * BundleCompiler bakes this into every bundle (File_Type_Icon._define()), so the component
+     * renders inline with no request per icon, from the same map the server resolves with.
+     * Each distinct SVG appears once, keyed by icon name; the arrays are sorted so two
+     * identical checkouts emit identical bundle bytes.
+     *
+     * @return array{extensions: array<string, string>, generic: string, icons: array<string, string>}
+     */
+    public static function get_outline_icon_payload(): array
+    {
+        $extensions = [];
+        $icons = [];
 
-            // Text files
-            'txt' => 'text.png',
-            'md' => 'text.png',
-            'rtf' => 'text.png',
-            'log' => 'text.png',
+        foreach (self::EXTENSION_ICONS as $extension => $pair) {
+            $extensions[$extension] = $pair[1];
+            $icons[$pair[1]] = true;
+        }
+        $icons[self::GENERIC_ICONS[1]] = true;
 
-            // Code files
-            'php' => 'code.png',
-            'js' => 'code.png',
-            'ts' => 'code.png',
-            'jsx' => 'code.png',
-            'tsx' => 'code.png',
-            'html' => 'code.png',
-            'css' => 'code.png',
-            'scss' => 'code.png',
-            'sass' => 'code.png',
-            'less' => 'code.png',
-            'json' => 'code.png',
-            'xml' => 'code.png',
-            'yaml' => 'code.png',
-            'yml' => 'code.png',
-            'py' => 'code.png',
-            'java' => 'code.png',
-            'c' => 'code.png',
-            'cpp' => 'code.png',
-            'h' => 'code.png',
-            'cs' => 'code.png',
-            'rb' => 'code.png',
-            'go' => 'code.png',
-            'rs' => 'code.png',
-            'swift' => 'code.png',
-            'kt' => 'code.png',
-            'sql' => 'code.png',
-            'sh' => 'code.png',
-            'bash' => 'code.png',
+        ksort($extensions);
+        ksort($icons);
 
-            // 3D Models
-            'stl' => '3d_model.png',
-            'obj' => '3d_model.png',
-            'fbx' => '3d_model.png',
-            'dae' => '3d_model.png',
-            'blend' => '3d_model.png',
-            '3ds' => '3d_model.png',
-            'f3d' => '3d_model.png',
-            'step' => '3d_model.png',
-            'stp' => '3d_model.png',
+        foreach (array_keys($icons) as $name) {
+            $icons[$name] = self::__read_outline_icon($name);
+        }
 
-            // Documents
-            'doc' => 'document.png',
-            'docx' => 'document.png',
-            'odt' => 'document.png',
-            'pages' => 'document.png',
-
-            // Spreadsheets
-            'xls' => 'spreadsheet.png',
-            'xlsx' => 'spreadsheet.png',
-            'ods' => 'spreadsheet.png',
-            'numbers' => 'spreadsheet.png',
-            'csv' => 'spreadsheet.png',
-
-            // Presentations
-            'ppt' => 'presentation.png',
-            'pptx' => 'presentation.png',
-            'odp' => 'presentation.png',
-            'key' => 'presentation.png',
+        return [
+            'extensions' => $extensions,
+            'generic' => self::GENERIC_ICONS[1],
+            'icons' => $icons,
         ];
+    }
 
-        $icon_file = $icon_map[$extension] ?? 'file.png';
-        return $base_path . '/' . $icon_file;
+    /**
+     * Read one vendored outline icon by name.
+     */
+    private static function __read_outline_icon(string $name): string
+    {
+        $full_path = dirname(base_path()) . '/' . self::ICON_DIR . '/outline/' . $name . '.svg';
+
+        if (!is_file($full_path)) {
+            shouldnt_happen("Outline file type icon missing from the framework tree: {$full_path}");
+        }
+
+        return file_get_contents($full_path);
     }
 
     /**

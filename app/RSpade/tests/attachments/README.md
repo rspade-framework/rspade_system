@@ -81,6 +81,12 @@ Related framework capabilities on the file-attachment subsystem:
    ships a migration that calls it - and it walks every row, all sites, trashed included, writing
    only what differs through a direct query-builder UPDATE rather than save().
 
+9. **File-type icons** - `File_Attachment_Icons` holds ONE extension map giving every extension a
+   colour PNG (the thumbnail stand-in, the only rendition ImageMagick reads) and an outline SVG
+   (Tabler, 24x24 currentColor stroke, no fills) served verbatim by
+   `/_icon_by_extension/:ext?style=outline` - declared in both the staff and portal route tables -
+   and baked into every bundle for the `<File_Type_Icon>` component.
+
 ## Source under test
 
 - `system/app/RSpade/Core/Files/File_Attachment_Model.php` (residency APIs, ingest metadata,
@@ -89,7 +95,8 @@ Related framework capabilities on the file-attachment subsystem:
 - `system/app/RSpade/Core/Files/File_Storage_Model.php` (`store_blob`)
 - `system/app/RSpade/Core/Files/File_Attachment_Model_Abstract.php` (`file_type_label_for()`,
   `regenerate_file_type_labels()`, the `save()` derivation)
-- `system/app/RSpade/Core/Files/File_Attachment_Controller.php` (upload gate, serve paths, renderer registry)
+- `system/app/RSpade/Core/Files/File_Attachment_Controller.php` (upload gate, serve paths, renderer registry, the icon route)
+- `system/app/RSpade/Core/Files/File_Attachment_Icons.php` (the extension map, both icon renditions)
 - `system/app/RSpade/Core/Events/Event_Registry.php` (`has_handlers()` + the test-handler seam)
 - `system/app/RSpade/Core/Files/Rsx_Attachment_Handler_Abstract.php`
 - `system/app/RSpade/Core/Files/Rsx_Thumbnail_Renderer_Abstract.php` + Imagick/LibreOffice renderers

@@ -507,7 +507,7 @@ RENDER PIPELINE (non-image files)
     does NOT do this: a cache-warming pass skips such a blob rather than queueing work
     as a side effect.
 
-    THE PLACEHOLDER is the file-type icon from File_Attachment_Icons (brand icons
+    THE PLACEHOLDER is the colour file-type icon from File_Attachment_Icons (brand icons
     for PDF/Photoshop/Illustrator, category icons for document/video/audio/archive),
     rasterized to the requested geometry - the same picture a file with no renderer
     at all gets, which is deliberate: "not rendered yet" and "never renders" look

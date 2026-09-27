@@ -41,6 +41,12 @@ class Core_Bundle extends Rsx_Bundle_Abstract
                 'app/RSpade/Breadcrumbs',  // Progressive breadcrumb resolution
                 'app/RSpade/Lib',
             ],
+            // The outline file-type icons BundleCompiler bakes into every bundle for
+            // <File_Type_Icon> live under a resource/ directory, which no include scans, so
+            // editing or adding one must invalidate the compiled output explicitly.
+            'watch' => [
+                'app/RSpade/Core/Files/resource/icons/outline',
+            ],
             'npm' => [
                 'DOMPurify' => "import DOMPurify from 'dompurify'",
                 'sha1' => "import sha1 from 'js-sha1'",
