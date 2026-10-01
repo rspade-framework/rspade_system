@@ -17,14 +17,18 @@ use App\RSpade\Core\Manifest\Manifest;
  * whether a page is safe to serve twice - not a deployment setting somebody has to
  * remember to turn on for the feature to work, or off for it to stop.
  *
- * Cache key format: fpc:{build_key}:{sha1(url)}
+ * Cache key format: fpc:{build_key}:{host}:{sha1(path?sorted_query)} - cache_key() is the
+ * PHP spelling of the proxy's make_cache_key(), and the two must agree. The HOST is the
+ * request's, lowercased and without a port: one application answers on more than one host
+ * (APP_URL's, and a client portal on a host of its own), and the same path on two hosts is
+ * two different pages.
  * Redis DB: 2, the reduced-volatility cache. The authority on the database map is the
  * RsxCache class header; the Node proxy (system/bin/fpc-proxy.js) names the same number
  * in its own constant. Database 0 is flushed on every database transaction rollback, which
  * would throw away a page cache for reasons that have nothing to do with the page.
  *
  * WHAT CLEARS AN ENTRY, and there is nothing else:
- *   - php artisan rsx:fpc:clear [--url=/path]  (this class's clear()/clear_url())
+ *   - php artisan rsx:fpc:clear [--url=/path|--url=https://host/path]  (clear()/clear_url())
  *   - php artisan rsx:clean, which empties Redis DB 2 whole through
  *     RsxCache::clear_reduced_volatility() - so does cache:clear, which delegates to it
  *   - a build-key rotation, which orphans every fpc:{old_key}:* entry at once
@@ -89,18 +93,85 @@ class Rsx_FPC
     }
 
     /**
-     * Clear FPC cache for a specific URL
+     * The Redis key the proxy stores a page under - the mirror of make_cache_key() in
+     * system/bin/fpc-proxy.js. Pure.
      *
-     * @param string $url The URL path with optional query string (e.g., '/about' or '/search?q=test')
-     * @return bool True if an entry was deleted
+     * @param string $host The request host (any case; a port is dropped)
+     * @param string $url The path with an optional query string (parameters are sorted)
+     * @param string $build_key The build the entry belongs to
+     * @return string
      */
-    public static function clear_url(string $url): bool
+    public static function cache_key(string $host, string $url, string $build_key): string
+    {
+        return 'fpc:' . $build_key . ':' . static::key_host($host) . ':' . static::__path_hash($url);
+    }
+
+    /**
+     * A host as the cache key spells it: lowercased, no port, an IPv6 literal unbracketed.
+     * Mirrors cache_key_host() in system/bin/fpc-proxy.js.
+     *
+     * @param string $host
+     * @return string
+     */
+    public static function key_host(string $host): string
+    {
+        $host = strtolower(trim($host));
+
+        if ($host !== '' && $host[0] === '[') {
+            $close = strpos($host, ']');
+
+            return $close === false ? $host : substr($host, 1, $close - 1);
+        }
+
+        $colon = strpos($host, ':');
+
+        return $colon === false ? $host : substr($host, 0, $colon);
+    }
+
+    /**
+     * Clear the cached page for one URL.
+     *
+     * A FULL URL ('https://portal.example.com/about') clears that page on that host only. A
+     * bare PATH ('/about', '/search?q=test') clears it on EVERY host it was cached under - the
+     * APP_URL host, a portal host, any sub-host the application answers on - because the
+     * host is stored in clear in the key and the path's hash is matched across all of them.
+     *
+     * @param string $url A path with optional query string, or an absolute http(s) URL
+     * @return int The number of entries deleted
+     */
+    public static function clear_url(string $url): int
     {
         $redis = self::_get_redis();
 
         $build_key = Manifest::get_build_key();
+        $host = parse_url($url, PHP_URL_HOST);
 
-        // Parse and sort query params to match the proxy's key generation
+        if (is_string($host) && $host !== '') {
+            $path = (string) (parse_url($url, PHP_URL_PATH) ?: '/');
+            $query = parse_url($url, PHP_URL_QUERY);
+
+            return (int) $redis->del(static::cache_key($host, $query ? $path . '?' . $query : $path, $build_key));
+        }
+
+        $pattern = 'fpc:' . $build_key . ':*:' . static::__path_hash($url);
+        $count = 0;
+
+        $iterator = null;
+        do {
+            $keys = $redis->scan($iterator, $pattern, 100);
+            if ($keys !== false && count($keys) > 0) {
+                $count += $redis->del($keys);
+            }
+        } while ($iterator > 0);
+
+        return $count;
+    }
+
+    /**
+     * sha1 of the path plus its query parameters sorted by name - the proxy's derivation.
+     */
+    private static function __path_hash(string $url): string
+    {
         $parsed = parse_url($url);
         $path = $parsed['path'] ?? $url;
 
@@ -112,10 +183,7 @@ class Rsx_FPC
             $full_url = $path;
         }
 
-        $hash = sha1($full_url);
-        $key = "fpc:{$build_key}:{$hash}";
-
-        return $redis->del($key) > 0;
+        return sha1($full_url);
     }
 
     /**

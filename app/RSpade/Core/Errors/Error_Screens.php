@@ -355,9 +355,9 @@ class Error_Screens
             return url('/');
         }
 
-        // A portal on its own domain is already at the root; a prefixed portal
-        // lives under it, and the staff root is somebody else's application.
-        return Rsx_Portal::has_dedicated_domain() ? url('/') : url(Rsx_Portal::get_prefix());
+        // The portal's own root (its prefix, on its host): the staff root is somebody
+        // else's application.
+        return rsx_absolute_url(Rsx_Portal::portal_path('/'));
     }
 
     /**

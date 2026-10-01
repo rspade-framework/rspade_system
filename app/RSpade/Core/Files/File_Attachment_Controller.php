@@ -17,6 +17,7 @@ use App\RSpade\Core\Files\Rsx_File_Upload;
 use App\RSpade\Core\Files\Spreadsheet_Rendition;
 use App\RSpade\Core\Files\Zip_Download_Request_Model;
 use App\RSpade\Core\Files\Zip_Stream;
+use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
@@ -69,6 +70,14 @@ use App\RSpade\Core\Session\Session;
  * GET /_inline/:key                                 - View file inline (browser display)
  * GET /_thumbnail/dynamic/:key/:type/:width/:height? - Generate dynamic thumbnail (WebP)
  * GET /_icon_by_extension/:extension                - Get file type icon (PNG, or SVG with ?style=outline)
+ *
+ * BOTH REALMS: every route above (and POST /_upload) is declared twice, #[Route] and
+ * #[Portal_Route], on the same handler. A portal page requests them under the portal's own
+ * address (Rsx_Portal::internal_url() / Rsx_Portal.internal_url(), which every framework
+ * URL builder goes through), so they are dispatched, CSRF-checked and authorized as PORTAL
+ * requests - on the portal's own host, where the staff table is never consulted, and under
+ * its prefix on the application host, where the bare path would be a staff request. The
+ * file.*.authorize gates receive the realm's own user (_gate_user()).
  *
  * FILE RESPONSE PATTERN:
  *   Use Response facade methods for file responses from static route methods:
@@ -385,6 +394,22 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
     }
 
     /**
+     * The 'user' a file.*.authorize gate is handed: the REALM's own identity - the portal user
+     * on a portal request, the staff user otherwise - never "whoever is logged in". The same
+     * realm-honest rule /_upload (Rsx_File_Upload::accept()) and get_preview_info() follow; a
+     * browser on the application host carries both identities on one session, and a portal
+     * request must never be authorized as its staff side.
+     *
+     * @return \App\RSpade\Core\Models\User_Model|\App\RSpade\Core\Models\Portal_User_Model|null
+     */
+    public static function _gate_user()
+    {
+        return Rsx_Portal::is_portal_request()
+            ? Portal_Session::get_portal_user()
+            : Session::get_user();
+    }
+
+    /**
      * Download file as attachment (forces download dialog)
      *
      * Route: /_download/:key
@@ -392,6 +417,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * Security: Checks BOTH file.thumbnail.authorize AND file.download.authorize
      */
     #[Route('/_download/:key', methods: ['GET'])]
+    #[Portal_Route('/_download/:key', methods: ['GET'])]
     public static function download_file(Request $request, array $params = [])
     {
         // An API client may present its key here instead of a cookie session; this is a no-op
@@ -415,7 +441,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Event: file.thumbnail.authorize (gate) - Check thumbnail access first
         $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => static::_gate_user(),
             'request' => $request,
         ]);
 
@@ -426,7 +452,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Event: file.download.authorize (gate) - Then check download-specific access
         $download_auth = Rsx::trigger_gate('file.download.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => static::_gate_user(),
             'request' => $request,
         ]);
 
@@ -475,6 +501,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * Security: Checks BOTH file.thumbnail.authorize AND file.download.authorize
      */
     #[Route('/_inline/:key', methods: ['GET'])]
+    #[Portal_Route('/_inline/:key', methods: ['GET'])]
     public static function inline(Request $request, array $params = [])
     {
         // An API client may present its key here instead of a cookie session; this is a no-op
@@ -498,7 +525,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Event: file.thumbnail.authorize (gate) - Check thumbnail access first
         $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => static::_gate_user(),
             'request' => $request,
         ]);
 
@@ -509,7 +536,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Event: file.download.authorize (gate) - Then check download-specific access
         $download_auth = Rsx::trigger_gate('file.download.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => static::_gate_user(),
             'request' => $request,
         ]);
 
@@ -593,6 +620,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * @return StreamedResponse
      */
     #[Route('/_download_zip/:key', methods: ['GET'])]
+    #[Portal_Route('/_download_zip/:key', methods: ['GET'])]
     public static function download_multiple_zip(Request $request, array $params = [])
     {
         // An API client may present its key here instead of a cookie session; this is a no-op
@@ -643,7 +671,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
             // Cascading auth gates - identical order to download_file().
             $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
                 'attachment' => $attachment,
-                'user' => Session::get_user(),
+                'user' => static::_gate_user(),
                 'request' => $request,
             ]);
             if ($thumbnail_auth !== true) {
@@ -652,7 +680,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
 
             $download_auth = Rsx::trigger_gate('file.download.authorize', [
                 'attachment' => $attachment,
-                'user' => Session::get_user(),
+                'user' => static::_gate_user(),
                 'request' => $request,
             ]);
             if ($download_auth !== true) {
@@ -1149,6 +1177,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * @param string $preset_name Preset name from config
      */
     #[Route('/_thumbnail/preset/:key/:preset_name', methods: ['GET'])]
+    #[Portal_Route('/_thumbnail/preset/:key/:preset_name', methods: ['GET'])]
     public static function thumbnail_preset(Request $request, array $params = [])
     {
         // An API client may present its key here instead of a cookie session; this is a no-op
@@ -1187,7 +1216,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Event: file.thumbnail.authorize (gate) - Check thumbnail access
         $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => static::_gate_user(),
             'request' => $request,
         ]);
 
@@ -1226,6 +1255,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      * @param int    $height Optional thumbnail height in pixels
      */
     #[Route('/_thumbnail/dynamic/:key/:type/:width/:height?', methods: ['GET'])]
+    #[Portal_Route('/_thumbnail/dynamic/:key/:type/:width/:height?', methods: ['GET'])]
     public static function thumbnail(Request $request, array $params = [])
     {
         // An API client may present its key here instead of a cookie session; this is a no-op
@@ -1273,7 +1303,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
         // Event: file.thumbnail.authorize (gate) - Check thumbnail access
         $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => static::_gate_user(),
             'request' => $request,
         ]);
 
@@ -1807,7 +1837,7 @@ class File_Attachment_Controller extends Rsx_Controller_Abstract
      *   height  colour PNG only, 10..256, default 64
      *
      * BOTH REALMS, DELIBERATELY. The #[Portal_Route] serves the same handler in the portal's
-     * route table, so a portal on its own domain (where every request is a portal request and
+     * route table, so a portal on its own host (where every request is a portal request and
      * the staff table is never consulted) still has its file icons. The class-level
      * #[Auth('public')] covers both rows: an icon is framework artwork, never a stored file.
      *

@@ -2012,11 +2012,20 @@ define('ARG_MAX_SINGLE_BYTES', 32 * 4096);
  * Use it only where an absolute URL is genuinely required (emails, external APIs);
  * same-origin links in HTML stay relative.
  *
- * @param string $path Relative URL path (e.g., "/_download/abc123")
+ * An ALREADY-ABSOLUTE http(s) URL passes through unchanged. That is what makes
+ * rsx_absolute_url(Rsx_Portal::Route(...)) correct from any context: Route() answers an
+ * absolute URL on the portal's own origin whenever the caller is not on the portal's
+ * host, and a path otherwise.
+ *
+ * @param string $path Relative URL path (e.g., "/_download/abc123"), or an absolute URL
  * @return string Absolute URL (e.g., "https://myapp.example.com/_download/abc123")
  */
 function rsx_absolute_url(string $path): string
 {
+    if (preg_match('#^https?://#i', $path)) {
+        return $path;
+    }
+
     // Ensure path starts with /
     if (!str_starts_with($path, '/')) {
         $path = '/' . $path;

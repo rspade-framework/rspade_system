@@ -105,6 +105,47 @@ IDENTITY MODEL
 
     Full accessor list and semantics: rsx:man session.
 
+OPERATOR COMMANDS
+    Two artisan commands repair a login identity's credentials when nobody is
+    signed in to do it through a screen. Both name the identity with
+    --user=<id|email> (a login_users.id, or its current email address), the
+    same resolver every rsx:users:* command uses, and both accept --json for
+    the shared envelope ({ok, command, data} / {ok:false, error:{code,
+    message}}, exit 1 on an error).
+
+    rsx:users:password:set --user=<id|email>
+                           [--password=<value> | --password-stdin]
+                           [--keep-sessions] [--json]
+        Sets the password. With neither source flag it prompts twice on the
+        terminal with no echo; --password-stdin reads the first line of stdin
+        (its line ending stripped, nothing else); --password puts the value on
+        the command line, where shell history and the process list can read
+        it. Two sources at once is an error, and so is a call with no terminal
+        and no source (--json included). The only rule applied to the value is
+        that it is not empty - a password policy is application vocabulary.
+        Every active session of the identity ENDS (each gets the realtime
+        refresh push and a session.terminated event, scope 'internal');
+        --keep-sessions leaves them active.
+        Error codes: user_required, user_not_found, password_required,
+        password_source_conflict, password_mismatch, password_empty.
+
+            printf '%s\n' "$NEW_PASSWORD" | \
+                php artisan rsx:users:password:set --user=ops@example.com \
+                --password-stdin
+
+    rsx:users:email:set --user=<id|email> --email=<new address> [--json]
+        Changes login_users.email, the address the identity signs in with.
+        Every users row of the identity whose email EQUALS THE OLD ADDRESS is
+        changed with it - on every site, trashed memberships included - in one
+        transaction; a membership whose address had been set to something else
+        is left as it is. The new address is trimmed, must be a valid address,
+        and must not belong to any other identity, a soft-deleted one included
+        (login_users.email is UNIQUE and the index ignores soft deletes).
+        is_verified is left as it was, and no session ends. Setting the address
+        the identity already has is a successful no-op (action "none").
+        Error codes: user_required, user_not_found, email_required,
+        email_invalid, email_in_use.
+
 AUTHENTICATION
     RsxAuth facade (App\RSpade\Core\Auth\RsxAuth):
         A thin credential-check wrapper. It authenticates against login_users
@@ -382,7 +423,8 @@ IMPERSONATION
     login_user_id swap (Session::begin_impersonation() / stop_impersonation() /
     is_impersonating()). It is intentionally full read/write; WHO may impersonate
     is the app's decision. This is separate from the CLIENT PORTAL's
-    cross-domain, read-only "view as client" handoff. Both are documented in
+    read-only "View as Client", which writes a portal identity onto the row
+    (through a linked-session handshake when the portal has its own host). Both are documented in
     detail elsewhere:
 
         rsx:man session   - main web impersonation API + window.rsxapp block

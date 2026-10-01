@@ -23,6 +23,9 @@ Framework core:
   boundary; it forks on the EXPERIENCE of the request (B-76)
 - `Core/Time/Rsx_Time.php`, `Core/Sms/Rsx_Sms.php`, `Core/Settings/Rsx_Settings.php`,
   `Core/Throttle/Rsx_Throttle.php` - the other site seams, same fork
+- `Core/Portal/Portal_Session.php` (`begin_impersonation_from_staff()`), `Core/Session/Session_Link.php`,
+  `Core/Session/Session_Link_Controller.php`, `Core/Session/Rsx_Signed_Url.php` - staff "View as
+  Client" and the linked-session handshake that joins a portal on its own host to the staff row
 - `Core/Portal/Rsx_Portal.php`, `Core/Js/Rsx_Portal.js` - portal URL generation, which
   selects and generates with `Rsx`'s own routines and adds only the portal base
 - `Lib/Flash/Flash_Alert.php` - flash alerts are EXPERIENCE-scoped (`_flash_alerts.is_portal`);

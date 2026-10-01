@@ -1,6 +1,6 @@
 ---
 name: environment-config
-description: "Configuring an RSpade environment - the two-tier config merge and how to add or override a key, deciding config file vs .env, setting APP_URL on a new host (the $HOSTNAME token, the https requirement and the development http allowance) and diagnosing the dev-mode hostname-guard fatal, repairing .env symlink drift with rsx:env:heal, and which helper resolves which path. Use when standing up a new box, adding a config key, or debugging \"wrong hostname\"/\"config edit did nothing\" symptoms."
+description: "Configuring an RSpade environment - the two-tier config merge and how to add or override a key, deciding config file vs .env, setting APP_URL (and PORTAL_URL, the client portal's address) on a new host (the $HOSTNAME token, the https requirement and the development http allowance) and diagnosing the dev-mode hostname-guard fatal, repairing .env symlink drift with rsx:env:heal, and which helper resolves which path. Use when standing up a new box, adding a config key, or debugging \"wrong hostname\"/\"config edit did nothing\" symptoms."
 ---
 
 # Environment and configuration
@@ -91,9 +91,13 @@ The literal token `$HOSTNAME` - **unquoted, no braces; that is the only spelling
 
 **Spell the port whenever it is not the scheme default.** `APP_URL` and every URL built for the browser must name the authority the browser actually used: a container published on `:8080` needs `http://localhost:8080`, or the realtime socket connects to `:80` and silently never opens. `Rsx::get_http_host()` is the port-carrying spelling (`Rsx::get_hostname()` is the port-stripped IDENTITY, and stays that way). **Any proxy in front of the app must forward the port too** - in nginx that means `proxy_set_header Host $http_host`, never `$host`, which strips it.
 
+### PORTAL_URL - the client portal's address
+
+`PORTAL_URL` uses exactly `APP_URL`'s syntax and rules: `$HOSTNAME` resolved by the same seam, https outside development, a non-default port spelled out. **Blank (the default) serves the portal at `APP_URL` + `/_portal`.** Set it to give the portal another prefix (`https://myapp.com/client-portal`) or a host of its own (`https://portal.myapp.com/`, optionally with a prefix). The host and prefix are derived from it (`Rsx_Portal_Url`); a value **equal to `APP_URL`**, a malformed path, or a prefix claiming a framework path (`api`, `error`, `ws`, any `_` name but `_portal`) refuses to boot, and the `rsx:health` "Portal URL" row reports the result. A separate portal host needs its own DNS name and TLS in front exactly like `APP_URL`'s. Full layout and classification rules: `rsx:man portal` (PORTAL URL).
+
 ### Diagnosing the hostname-guard fatal
 
-In **development mode only**, every web request verifies the browsed host matches the `APP_URL` host and **fatals loudly on mismatch**. That is not a bug being pedantic: it catches a pasted `.env` pointing at another instance, which otherwise produces a working-looking app writing to somebody else's database.
+In **development mode only**, every web request verifies the browsed host matches a declared host - the `APP_URL` host, or `PORTAL_URL`'s host when the portal has one of its own - and **fatals loudly on mismatch**, naming the request host and every declared host. Production's `Rsx::get_hostname()` likewise serves the `APP_URL` host, its sub-hosts and the portal host, and fatals on anything else. That is not a bug being pedantic: it catches a pasted `.env` pointing at another instance, which otherwise produces a working-looking app writing to somebody else's database.
 
 - Loopback REQUESTS (localhost, 127.*, ::1) are exempt - so curl testing keeps working.
 - A loopback-VALUED `APP_URL` is **not** exempt; `APP_URL=https://localhost` on a real hostname still fatals.

@@ -461,6 +461,11 @@ FILE ENDPOINTS
         /_preview/sheet/:key
 
     A bad Bearer on one of these is a 401 - it never degrades to anonymous.
+    Fetch them on the APPLICATION host at their bare paths. The same routes
+    also answer in the portal realm (under the portal's prefix, or on its own
+    host) for portal pages; a Bearer key presented on a PORTAL-realm file route
+    is answered with the API's 404 not_found, never signed into a portal
+    request - the API does not exist on the portal (rsx:man portal).
     Read authorization runs the file.thumbnail.authorize and (for bytes)
     file.download.authorize gates; a denial and a missing file are both 404.
 
@@ -1478,12 +1483,12 @@ ENVIRONMENT INTERACTIONS AND CAVEATS
     reaches the page pipeline that sets the cache marker, and #[FPC] on an API
     endpoint throws at scan time.
 
-    The portal's dedicated domain. When the client portal runs on a host of its
-    own (config('rsx.portal.domain')), the API does not exist on that host:
+    The portal's own host. When PORTAL_URL gives the client portal a host of
+    its own (rsx:man portal, PORTAL URL), the API does not exist on that host:
     every /api/ path there answers 404 {"error": {"code": "not_found"}} before
-    any credential is read. Call the API on the staff host. With the portal
-    under a path prefix on the staff host, /api/vN/... on that host is the API
-    as usual (and <portal-prefix>/api/... is an ordinary portal URL).
+    any credential is read. Call the API on the APP_URL host. With the portal
+    under a path prefix on the application host, /api/vN/... on that host is
+    the API as usual (and <portal-prefix>/api/... is an ordinary portal URL).
 
     Main_Abstract::pre_dispatch. RUNS for API dispatch, after the bearer identity,
     the scope check and the #[Auth] gates, before the controller - so an

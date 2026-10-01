@@ -65,7 +65,7 @@ the staff tabs alone - it is not an id disambiguator.
 
 - **Session mutation** (confirmed-different gated): wired at `Session::set_login_user_id()`
   / `set_site_id()` / logout + `Portal_Session::set_portal_user_id()` / logout — a re-save of
-  the same value is silent; impersonation begin/stop inherit it; `claim_impersonation()` does NOT push.
+  the same value is silent; staff impersonation begin/stop inherit it; portal "View as Client" (`Session::_apply_portal_impersonation()`) does NOT push.
 - **User record**: `User_Model` save/soft-delete (first_name/last_name/role_id/is_enabled) and
   `User_Permission_Model` grant/deny/remove push the affected staff (site_id, user_id).
 - **Always-anchored client**: when realtime is enabled AND `window.rsxapp.session_hash` is a

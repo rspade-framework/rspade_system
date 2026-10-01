@@ -380,8 +380,8 @@ THE CEREMONY
         The exemption is path-exact: /_sso/google/callback and
         /_sso/apple/callbackx are enforced normally, and the test suite pins
         that pair. The client portal's Apple callback
-        (Rsx_Portal_Sso::apple_callback_path() - /_portal/_sso/apple/callback
-        in prefix mode) is exempted beside it for the same reason: its POST
+        (Rsx_Portal_Sso::apple_callback_path() - <portal prefix>/_sso/apple/callback,
+        /_portal/_sso/apple/callback by default) is exempted beside it for the same reason: its POST
         leg is the same do-nothing 303, to the portal callback.
 
 THE POLICY HOOKS
@@ -822,8 +822,9 @@ FRAMEWORK ENDPOINTS
 
     Rsx_Portal_Sso_Controller is the portal twin (#[Auth_Realm('portal')],
     force-included the same way): the same ceremony pair declared with
-    #[Portal_Route] - so '/_portal/_sso/:provider/begin|callback' in prefix
-    mode, '/_sso/...' on a dedicated portal domain - and the same three Ajax
+    #[Portal_Route] - so '<portal prefix>/_sso/:provider/begin|callback' on
+    the portal's host ('/_portal/_sso/...' by default, '/_sso/...' at the root
+    of a portal host of its own) - and the same three Ajax
     endpoints behind the portal's is_logged_in, on the portal's Ajax channel.
 
 THE CLIENT PORTAL REALM
@@ -845,8 +846,15 @@ THE CLIENT PORTAL REALM
     and must finish on the host whose cookie jar started it. So the portal
     callback is its own URL, and it must be registered in each provider's
     console BESIDE the staff one: Rsx_Portal_Sso::callback_url('google')
-    prints it (https://<host>/_portal/_sso/google/callback in prefix mode,
-    https://<portal domain>/_sso/google/callback with rsx.portal.domain).
+    prints it: the portal's ORIGIN + PREFIX + /_sso/<key>/callback, both
+    derived from PORTAL_URL (rsx:man portal, PORTAL URL):
+
+        PORTAL_URL (blank)                  https://<APP_URL host>/_portal/_sso/google/callback
+        https://portal.myapp.com/           https://portal.myapp.com/_sso/google/callback
+        https://myapp.com/clients           https://myapp.com/clients/_sso/google/callback
+
+    Changing PORTAL_URL changes this URI, so every provider console needs the
+    new one (rsx:man prelaunch_checklist, ENTRY 16).
 
     ITS OWN HOOKS, NEVER THE STAFF ONES. The portal fires DISTINCT hook names,
     each payload carrying 'portal_user' where the staff one carries

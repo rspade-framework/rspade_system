@@ -1,7 +1,7 @@
 # Test catalog: fpc
 
 Status legend: `implemented` | `deferred` | `blocked` | `planned`.
-Type: http / php. Last updated: 2026-06-16.
+Type: http / php. Last updated: 2026-10-01.
 
 ## http/fpc_cache_behavior.sh (http - live FPC proxy)
 
@@ -29,7 +29,21 @@ the chain actually lives - the manifest rows of the two real routes in
 | fpc-ttl-06 | the TTL rides on the SAME header that says "cache this", and the proxy no longer reads a TTL from the environment | `MARKER_HEADER` + fpc-proxy.js source | `X-RSpade-FPC`; no `FPC_TTL_MINS` | implemented |
 | fpc-clear-01 | `rsx:fpc:clear` reports what it cleared and for which build | `Artisan::call` | exit 0, names the build key | implemented |
 | fpc-clear-02 | `--url` clears one page and names it; a page that was not cached is not a failure | `--url=/test-fpc/ttl` | exit 0, names the path | implemented |
-| fpc-clear-03 | it removes the entry the proxy would have written - the key format is a contract between the two | seeded `fpc:{build_key}:{sha1}` in DB 2 | key gone after the command | implemented |
+
+## php/Fpc_Cache_Key_Test.php (php)
+
+The key is `fpc:{build_key}:{host}:{sha1(path?sorted_query)}`: one application answers on
+several hosts (APP_URL's, a client portal on its own host), so the request Host - lowercased,
+port dropped - is part of every key. The key is a contract between `Rsx_FPC` and
+`system/bin/fpc-proxy.js`, so the proxy's own `compose_cache_key()` is run and compared.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| fpc-key-01 | the same path on two hosts is two keys | `cache_key()` app vs portal host | different; documented format | implemented |
+| fpc-key-02 | the host is compared without case or port | `App.Example.TEST:8080`, `[::1]:6200` | same key as the bare host | implemented |
+| fpc-key-03 | query parameters are sorted | `?b=2&a=1` vs `?a=1&b=2` | same key | implemented |
+| fpc-key-04 | PHP and the proxy compute the same key | four host/url cases through `node -e require(fpc-proxy.js)` | identical | implemented |
+| fpc-clear-03 | a full URL clears that host only; a bare path (`rsx:fpc:clear --url=/x`) clears it on every host and leaves other paths | seeded proxy keys in DB 2 for two hosts + another path | per row | implemented |
 
 ## Planned
 
@@ -38,4 +52,4 @@ the chain actually lives - the manifest rows of the two real routes in
 | fpc-p-01 | authenticated / uncacheable responses bypass cache | http | needs auth fixture over HTTP | planned |
 | fpc-p-02 | TTL expiry causes re-render | http | time-dependent (the declaration side is covered by fpc-ttl-01..06) | planned |
 | fpc-p-03 | invalidation clears the right `fpc:*` keys | http | needs invalidation trigger | planned |
-| fpc-p-04 | cache-key derivation / bypass-rule unit logic | php | the in-process decision logic, isolated from HTTP | planned |
+| fpc-p-04 | bypass-rule unit logic (the key derivation is Fpc_Cache_Key_Test) | php | the in-process decision logic, isolated from HTTP | planned |

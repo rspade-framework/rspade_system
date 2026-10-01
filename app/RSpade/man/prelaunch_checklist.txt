@@ -114,9 +114,9 @@ ENTRY 1: LOGIN REDIRECT WIRING (intended-URL threading)
         The client portal wires the same four calls (Portal_Main::pre_dispatch
         captures; the portal login/register forms carry hidden_input(); the login
         and register controllers consume() at their terminal). Verify it end to
-        end, minding prefix mode (portal served under /_portal, no dedicated
-        domain - the common dev/single-host layout):
-        1. While logged OUT, visit a protected deep portal URL in prefix mode
+        end, minding where PORTAL_URL places it (the examples use the default,
+        /_portal on the application host):
+        1. While logged OUT, visit a protected deep portal URL
            (e.g. /_portal/workspace/5).
         2. Assert the 302 goes to /_portal/login?redirect=%2F_portal%2F... and,
            after portal login, you land on the deep URL you requested - not the
@@ -124,8 +124,9 @@ ENTRY 1: LOGIN REDIRECT WIRING (intended-URL threading)
         3. Repeat with hostile / cross-context values and assert each degrades to
            the portal dashboard, no error: /login (staff route, cross-context),
            //evil.example (off-host), /_portal/login (loop).
-        4. If the portal runs in domain mode, repeat with un-prefixed paths
-           (/workspace/5 valid; /login rejected by the portal exclusion list).
+        4. If PORTAL_URL gives the portal its own host with no prefix, repeat
+           there with un-prefixed paths (/workspace/5 valid; /login rejected by
+           the portal exclusion list); with another prefix, repeat under it.
 
     Related follow-ups (framework-side, not app wiring)
         - BACKLOG B-31: when the framework dispatcher's non-Ajax unauthorized
@@ -242,8 +243,9 @@ ENTRY 3: NO STATE-CHANGING GET ENDPOINTS (CSRF completeness)
           request-access) follow exactly this shape.
         Sanctioned exception, one-time-token links: a GET that acts on a
           single-use, unguessable, server-issued token delivered out of band
-          (email verification / password-reset / invite-accept links, an
-          impersonation handoff token) is acceptable. The token itself is the
+          (email verification / password-reset / invite-accept links, the
+          signed one-time legs of the "View as Client" linked-session handshake)
+          is acceptable. The token itself is the
           anti-forgery defense - an attacker cannot forge the victim's one-time
           secret - so no ambient cookie is being ridden. Keep such tokens
           cryptographically random and single-use.
@@ -525,13 +527,14 @@ ENTRY 5: PORTAL EXPERIENCE BOUNDARY (the staff facade answering portal questions
            form login. The originating downstream bug hid for eleven development
            phases for exactly this reason. Perform at least one REAL form login.
 
-        7. If you are deploying the portal on a DEDICATED DOMAIN rather than a path
-           prefix, treat the whole portal as unverified until you have walked step 5
-           on that domain. Domain mode has its own cookie jar and therefore its own
-           session row with the staff properties NULL, which means code paths that
-           "work" in prefix mode by borrowing the staff identity
-           simply return nothing there - a different and much louder set of
-           failures, none of which prefix-mode testing will show you.
+        7. If PORTAL_URL gives the portal a HOST OF ITS OWN, treat the whole portal
+           as unverified until you have walked step 5 on that host. It has its own
+           cookie jar and therefore its own session row with the staff properties
+           NULL, which means code paths that "work" on the application host by
+           borrowing the staff identity simply return nothing there - a different
+           and much louder set of failures, none of which same-host testing will
+           show you. Walk "View as Client" there too: it crosses the two hosts
+           through the linked-session handshake (rsx:man portal).
 
     Dos and don'ts
         DO   fork on Rsx_Portal::is_portal_request() in any code both experiences
@@ -1578,6 +1581,41 @@ ENTRY 15: DISABLED SITES (a switch that looks like a wrong password)
         2. Re-enabling is a data change (UPDATE sites SET is_enabled = 1) or
            the Sites screen in the /_sys panel; no code changes.
 
+ENTRY 16: CHANGING PORTAL_URL (what the old portal address leaves behind)
+
+    What to audit
+        Whether PORTAL_URL is the value the portal will launch with, and - if it
+        has ever changed on a box with real data, or will change after launch -
+        everything that recorded the old address:
+
+            php artisan rsx:health          # the "Portal URL" row: origin + prefix
+
+    Why it matters
+        PORTAL_URL (rsx:man portal, PORTAL URL) is read live, so routing, links
+        and the page cache follow a change at once. Three things were fixed to
+        the OLD address when they were made, and nothing fails loudly for them:
+        - SSO: a provider console registers the portal's callback URL (portal
+          origin + prefix + /_sso/<key>/callback, printed by
+          Rsx_Portal_Sso::callback_url()). The old URI no longer matches, so
+          every portal federated sign-in fails at the provider.
+        - Passkeys: a portal passkey is bound to its relying-party id, which is
+          the portal's HOST (rsx:man two_factor). A passkey enrolled under the
+          old host is not offered on the new one; affected portal users sign in
+          with their password or a recovery path and enrol again. A prefix-only
+          change on the same host does not affect passkeys.
+        - Stored URLs: anything that persisted a portal URL - a portal
+          notification's payload url, a link inside an email already sent, an
+          application column holding Rsx_Portal::Route() output - still carries
+          the old prefix or host.
+
+    Guidelines
+        1. Settle PORTAL_URL before launch; treat a later change as a migration.
+        2. Update the portal redirect URI in EVERY enabled provider console in
+           the same change (rsx:man sso).
+        3. A host change: tell portal users who use passkeys to enrol again.
+        4. Rewrite or expire stored portal URLs your application keeps (the
+           template's portal notification payloads among them).
+
 SEE ALSO
     rsx:man login_redirect
     rsx:man session
@@ -1599,3 +1637,5 @@ SEE ALSO
     rsx:man template_app
     rsx:man external_api
     rsx:man standard_library
+    rsx:man sso
+    rsx:man two_factor

@@ -384,7 +384,8 @@ COMMON PITFALLS
     Hostname guard hard-fatals before auth
         In development mode, Rsx_Env_Hostname_Guard throws a RuntimeException on
         every web request whose Host header is neither loopback
-        (localhost/127.*/::1) nor an exact match for APP_URL's host. A BASE_URL
+        (localhost/127.*/::1) nor an exact match for APP_URL's host (or PORTAL_URL's,
+        when the portal has a host of its own). A BASE_URL
         pointing at a mismatched or typo'd hostname 500s for reasons unrelated
         to your test. The reference test uses http://localhost precisely to stay
         inside the loopback exemption; prefer it unless a real host is required.

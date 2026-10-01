@@ -60,7 +60,7 @@ These rows hold the property boundary that replaced the old row boundary.
 |----|---------|------|-------|----------|--------|--------------|
 | PORTAL-PROP-01 | a portal identity sets no staff property | php | row with portal_user_id | login_user_id null, site_id 0, portal_site_id set | implemented | 2026-08-10 |
 | PORTAL-PROP-02 | both identities on ONE row is legal | php | row with both ids | both readable | implemented | 2026-08-10 |
-| PORTAL-PROP-03 | the impersonation handoff carries only portal properties | php | create_impersonation_session() | portal_user_id/portal_site_id/impersonator_user_id set, staff columns null | implemented | 2026-08-10 |
+| PORTAL-PROP-03 | View as Client writes only portal properties | php | Session::_apply_portal_impersonation() on a row with a staff login | portal_user_id/portal_site_id/impersonator_user_id/impersonation_started_at set; login_user_id intact, impersonator_login_user_id null | implemented | 2026-10-01 |
 | PORTAL-PROP-04 | a session with no portal identity is not a portal session | php | staff-only row token | Portal_Session::find_by_token null; Session::find_by_token finds it | implemented | 2026-08-10 |
 | PORTAL-PROP-05 | a portal session resolves through both facades | php | portal row token | both find it - it is one row | implemented | 2026-08-10 |
 | PORTAL-PROP-06 | the staff session list never returns a portal-only row | php | portal row, staff list for the same integer | empty | implemented | 2026-08-10 |
@@ -76,7 +76,7 @@ These rows hold the property boundary that replaced the old row boundary.
 
 Every framework seam that resolves a site used to ask the STAFF facade unconditionally,
 so on a portal request the tenant came from whatever the co-resident staff cookie was on
-(prefix mode) or from site 0 (domain mode). Each row below declares a STAFF site and a
+(portal on the application host) or from site 0 (portal on its own host). Each row below declares a STAFF site and a
 DIFFERENT PORTAL site, then asserts which one the seam picks; under the old behavior every
 portal row returns the staff site.
 
@@ -118,3 +118,98 @@ on a staff one (rsx:man anchors).
 | PORTAL-ROUTE-03 | an empty anchor appends nothing | php | `at => ''` | no fragment | implemented | 2026-09-25 |
 | PORTAL-ROUTE-04 | the JS twin: same parity, #at= not ?at=, non-string action refused, a portal SPA action resolved by name | playwright | probe routes written into `Rsx._routes` / `Rsx_Portal._routes` on `/_sys`, a probe portal SPA class | identical URLs; refusal names "must be a string" | implemented (`playwright/portal_route_parity.js`) | 2026-09-25 |
 | PORTAL-ROUTE-05 | the hash argument: the portal URL carries the hash state before the anchor, identical to the staff URL with the portal base (the JS twin is DISP-53 d) | php | `['tab' => 'a b', 'gone' => null]` with the PORTAL-ROUTE-01 params | `portal_path('/test-route-parity/5/7?x=1#tab=a%20b&at=a%20b')` | implemented (`Portal_Route_Parity_Test`) | 2026-09-25 |
+
+## Portal_Url_Test (php) - PORTAL_URL: derivation, refusals, classification, URL generation
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| PORTAL-URL-01 | a blank PORTAL_URL derives APP_URL's origin + /_portal; default port dropped, non-default kept | php | `parse('', APP_URL)` | origin/host/prefix/separate | implemented | 2026-10-01 |
+| PORTAL-URL-02 | blank PORTAL_URL with an empty APP_URL derives only the prefix | php | `parse('', '')` | origin '', prefix /_portal | implemented | 2026-10-01 |
+| PORTAL-URL-03 | a path on the application host is a same-host prefix (case, trailing slash normalised) | php | `https://APP.../clients/` | prefix /clients, not separate | implemented | 2026-10-01 |
+| PORTAL-URL-04 | a host of its own, no prefix | php | `https://Portal...:443/` | prefix '', separate | implemented | 2026-10-01 |
+| PORTAL-URL-05 | a host of its own with a prefix and a port | php | `http://portal...:8443/x/y/` | origin with port, prefix /x/y | implemented | 2026-10-01 |
+| PORTAL-URL-06 | `$HOSTNAME` / `${HOSTNAME}` resolve in PORTAL_URL before config | php | `patch_environment()` over a raw PORTAL_URL | OS hostname substituted | implemented | 2026-10-01 |
+| PORTAL-URL-07 | usable values pass; http under the development allowance | php | `check()` | null | implemented | 2026-10-01 |
+| PORTAL-URL-08 | nothing is checked while APP_URL is empty | php | garbage PORTAL_URL, empty APP_URL | null | implemented | 2026-10-01 |
+| PORTAL-URL-09 | equal to APP_URL is refused after normalisation (slash, port, case, scheme) | php | five spellings | "must not equal APP_URL" | implemented | 2026-10-01 |
+| PORTAL-URL-10 | the APP_URL scheme rule applies (https outside development, http/https only) | php | http without allowance, ftp | APP_URL's messages naming PORTAL_URL | implemented | 2026-10-01 |
+| PORTAL-URL-11 | a non-absolute value is refused | php | bare host, bare path | "must be an absolute" | implemented | 2026-10-01 |
+| PORTAL-URL-12 | credentials, query and fragment are refused | php | three values | "may carry only" | implemented | 2026-10-01 |
+| PORTAL-URL-13 | malformed path segments are refused | php | `.`, empty segment, `%`, space | "path segments" | implemented | 2026-10-01 |
+| PORTAL-URL-14 | a framework-owned first segment is refused; /_portal allowed; deeper segments free | php | api, error, ws, `_` names | "belongs to the framework" | implemented | 2026-10-01 |
+| PORTAL-URL-15 | the rsx:health "Portal URL" row reports the derivation and FAILs a refusal | php | three configs | OK / OK / FAIL | implemented | 2026-10-01 |
+| PORTAL-URL-16 | default layout: prefix decides on any host (loopback included); artifacts realm-agnostic | php | synthetic requests | channel/realm/portal_host/realm_path | implemented | 2026-10-01 |
+| PORTAL-URL-17 | a same-host prefix wins over staff routes beneath it | php | `rsx.portal.url` = APP_URL + /clients | /clients/view/5 portal | implemented | 2026-10-01 |
+| PORTAL-URL-18 | a separate host without a prefix is the portal throughout; API refused there; app host staff | php | own host, no prefix | per row | implemented | 2026-10-01 |
+| PORTAL-URL-19 | a separate host with a prefix: outside-prefix paths stay portal realm, /api outside is the refused API, the prefix means nothing on the app host | php | own host + /x | per row | implemented | 2026-10-01 |
+| PORTAL-URL-20 | outside the prefix on the portal host is the portal 404 | php | front controller, portal fixture route in and out of /x | 200 / 404 | implemented | 2026-10-01 |
+| PORTAL-URL-21 | a same-host portal generates paths from CLI and loopback | php | `Route()`, `portal_path()` | `/_portal/...` | implemented | 2026-10-01 |
+| PORTAL-URL-22 | a separate-host portal generates absolute URLs off its host and paths on it | php | ambient request on app host vs portal host | absolute / relative | implemented | 2026-10-01 |
+| PORTAL-URL-23 | `rsx_absolute_url()` passes an absolute URL through; the emailed-link spelling is right from staff | php | absolute input; `rsx_absolute_url(Route())` | unchanged / portal origin | implemented | 2026-10-01 |
+| PORTAL-URL-24 | `is_under_prefix()` / `strip_prefix()` respect segment boundaries and query strings | php | `/_portalx`, `/_portal?tab=1` | per row | implemented | 2026-10-01 |
+| PORTAL-URL-25 | the boot guard throws the first refusal on a live boot | cli | a refused PORTAL_URL in .env, any artisan command | RuntimeException naming PORTAL_URL | deferred (needs .env edited; `validate()` is `check()` + throw, covered by 07-14) | 2026-10-01 |
+
+## Portal_Host_Reach_Test (php) - the framework file and report endpoints answer in the portal realm
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| PORTAL-REACH-01 | every framework endpoint a portal page uses is in BOTH route tables, on one handler, with the same verbs | php | manifest `routes` vs `portal_routes` for /_upload, /_icon_by_extension, /_download, /_inline, /_download_zip, /_thumbnail/*, /_preview/*, /_csp-report | same Class::method and methods | implemented | 2026-10-01 |
+| PORTAL-REACH-02 | under the default prefix they classify portal and resolve in the portal table; the bare path stays staff | php | `/_portal/_thumbnail/...`, `/_portal/_inline/k`, `/_portal/_preview/pdf/k`, POST `/_portal/_csp-report`, bare `/_inline/k` | realm, realm_path, handler per row | implemented | 2026-10-01 |
+| PORTAL-REACH-03 | on a portal host of its own they are portal requests at the root | php | `rsx.portal.url` = own host | portal realm, portal-table handler | implemented | 2026-10-01 |
+| PORTAL-REACH-04 | on a portal host with a prefix they are under it | php | own host + /x | `/x/_inline/k` -> inline | implemented | 2026-10-01 |
+| PORTAL-REACH-05 | `Rsx_Portal::internal_url()` and the attachment URL builders follow the request's realm | php | staff, default-prefix portal, own host, own host + /x | bare / `/_portal/...` / bare / `/x/...` | implemented | 2026-10-01 |
+| PORTAL-REACH-06 | the CSP report-uri names the realm's own collector | php | `report_path()`, `compose('portal')` | `/_portal/_csp-report`; bare at the root of its own host | implemented | 2026-10-01 |
+| PORTAL-REACH-07 | the portal collector is CSRF-exempt (foreign Origin, no token) and a portal POST beside it is not | php | `Rsx_Csrf::enforce()` | no throw / HttpResponseException | implemented | 2026-10-01 |
+| PORTAL-REACH-08 | an API key presented to a portal-realm file route is the API's 404; no key leaves the request untouched | php | `Rsx_Api_Bearer::authenticate_web_request()` | 404 not_found / null | implemented | 2026-10-01 |
+| PORTAL-REACH-09 | a signed-in portal user loads a shared document's thumbnail, inline view and preview on a separate portal host | http | PORTAL_URL on its own host, a portal session, a shared attachment | 200 bytes on each | deferred (needs PORTAL_URL set in .env; the orchestrator's live check) | 2026-10-01 |
+
+## Portal_Session_Impersonation_Test (php) - begin_impersonation_from_staff()
+
+Staff "View as Client" has one entry point. Same host: the impersonation lands on the
+caller's own row and the landing URL comes back. Separate host: leg 1 of the linked-session
+handshake comes back and nothing is applied yet. The caller's `can_impersonate` answer is set
+by `Portal_Impersonation_Grant_Fixture` (the check is the application's rule).
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| PORTAL-IMP-01 | same host: the impersonation is written onto the caller's own row | php | blank PORTAL_URL, granted staff caller | `/_portal/`; portal_user_id/portal_site_id/impersonator_user_id/impersonation_started_at on the row, login_user_id intact; is_impersonating() | implemented | 2026-10-01 |
+| PORTAL-IMP-02 | same host under another prefix lands under it | php | PORTAL_URL = APP_URL + /clients | `/clients/` | implemented | 2026-10-01 |
+| PORTAL-IMP-03 | begin never touches the target's last_login | php | begin | last_login still null | implemented | 2026-10-01 |
+| PORTAL-IMP-04 | separate host: leg 1 on the portal origin under its prefix, code stored as its hash, nothing applied yet | php | PORTAL_URL https://portal.example.test/x | URL `https://portal.example.test/x/_session_link/open?c=..&s=..`; no session token in it; `_session_links` row bound to the caller's row; no portal props on the row | implemented | 2026-10-01 |
+| PORTAL-IMP-05 | a caller whose can_impersonate denies is refused | php | grant false | AjaxUnauthorizedException; nothing started | implemented | 2026-10-01 |
+| PORTAL-IMP-06 | the impersonator id must be the signed-in staff user | php | someone else's id | RuntimeException | implemented | 2026-10-01 |
+| PORTAL-IMP-07 | is_impersonating()/get_impersonator_user_id() follow the CLI flag | php | cli_set_impersonator_user_id | true / id | implemented | 2026-10-01 |
+| PORTAL-IMP-08 | stop_impersonation() clears it | php | stop | false | implemented | 2026-10-01 |
+
+## Portal_Session_Link_Test (php) - the linked-session handshake, leg by leg
+
+A portal on its own host with a prefix (`https://portal.example.test/x`). Each leg is a
+request rebuilt on the host it is addressed to, with exactly that host's cookies. Legs 1 and 2
+and every leg-3 refusal run through `Session_Link_Controller`; leg 3's success runs through
+`Session_Link::complete()`, because the cookie seam it feeds refuses in CLI - the cookie itself
+is proved by `session/http/session_link_handshake.sh` (sess-http-07).
+
+| ID | Purpose | Type | Input | Expected | Status | Last updated |
+|----|---------|------|-------|----------|--------|--------------|
+| PORTAL-LINK-01 | every leg is in both route tables on one handler, GET only | php | manifest | `/_session_link/{open,confirm,complete}` in `routes` and `portal_routes` | implemented | 2026-10-01 |
+| PORTAL-LINK-02 | the portal legs resolve under the prefix on the portal host; confirm resolves staff on the app host | php | classify + resolve | portal realm / staff realm | implemented | 2026-10-01 |
+| PORTAL-LINK-03 | happy path: leg 1 nonce cookie (path /x/_session_link, HttpOnly, Lax) + 302 to the staff host; leg 2 applies the impersonation to the staff row + 302 to the portal host; leg 3 names the staff row; every code burned; no URL carries the token | php | three legs | as stated | implemented | 2026-10-01 |
+| PORTAL-LINK-04 | leg 1 refuses a tampered signature and burns nothing | php | bad `s` | 400 generic page; code survives; genuine link then works | implemented | 2026-10-01 |
+| PORTAL-LINK-05 | leg 1 refuses a replayed code | php | second use | 400; no nonce | implemented | 2026-10-01 |
+| PORTAL-LINK-06 | leg 1 refuses an expired code | php | expires_at in the past | 400 | implemented | 2026-10-01 |
+| PORTAL-LINK-07 | leg 1 refuses its URL presented on the staff host | php | same query on APP_URL's host | 400 | implemented | 2026-10-01 |
+| PORTAL-LINK-08 | leg 2 refuses a replayed code | php | second use | 400 | implemented | 2026-10-01 |
+| PORTAL-LINK-09 | leg 2 refuses a tampered signature | php | bad `s` | 400; nothing applied | implemented | 2026-10-01 |
+| PORTAL-LINK-10 | leg 2 refuses an expired code | php | expires_at in the past | 400; nothing applied | implemented | 2026-10-01 |
+| PORTAL-LINK-11 | leg 2 refuses another leg's code even correctly signed (the leg binding is in the store) | php | leg-1 code re-signed for leg 2 | 400; nothing applied | implemented | 2026-10-01 |
+| PORTAL-LINK-12 | leg 2 refuses a browser whose staff cookie names another row | php | another live row's token | 400; neither row linked | implemented | 2026-10-01 |
+| PORTAL-LINK-13 | leg 2 refuses a browser with no staff cookie | php | no rsx | 400; nothing applied | implemented | 2026-10-01 |
+| PORTAL-LINK-14 | leg 2 refuses an impersonator whose can_impersonate now denies | php | grant withdrawn after leg 1 | 400; nothing applied | implemented | 2026-10-01 |
+| PORTAL-LINK-15 | leg 3 refuses a missing nonce cookie, and the refusal burns the code | php | no rsx_link | 400; the right nonce afterwards gets null | implemented | 2026-10-01 |
+| PORTAL-LINK-16 | leg 3 refuses a mismatched nonce cookie | php | random nonce | 400 | implemented | 2026-10-01 |
+| PORTAL-LINK-17 | leg 3 refuses a replayed code | php | second use | 400 | implemented | 2026-10-01 |
+| PORTAL-LINK-18 | leg 3 refuses an expired code | php | expires_at in the past | 400 | implemented | 2026-10-01 |
+| PORTAL-LINK-19 | leg 3 refuses a tampered signature | php | bad `s` | 400 | implemented | 2026-10-01 |
+| PORTAL-LINK-20 | Session_Cleanup_Service::cleanup_session_links removes expired links only | php | one live, one expired | expired gone, live kept | implemented | 2026-10-01 |
+| PORTAL-LINK-21 | Session::_clone_session_to_this_host() refuses in CLI | php | call in CLI | RuntimeException (no browser) | implemented | 2026-10-01 |
+| PORTAL-LINK-22 | a live separate-host round trip on the dev box (two real hosts) | http | needs PORTAL_URL on another host in the box's .env | - | deferred (the suite never edits a box's .env, and a docker worker's .env is the dev box's defaults; the host binding is PORTAL-LINK-07/11 in-process and the cookie is sess-http-07 over HTTP in the same-host layout) | 2026-10-01 |

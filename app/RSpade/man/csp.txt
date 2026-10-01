@@ -203,10 +203,13 @@ THE COLLECTOR
     csp_violations.log.1, .2.gz and so on, pruned at the retention edge. Triage
     older than the plain band means reaching for zcat. See rsx:man logrotate.
 
-    DEPLOYMENT NOTE: the path is a STAFF-realm route. With
-    prefix-based portal detection a portal page posts here fine
-    (/_csp-report is not under the portal prefix). An install serving its
-    portal from a SEPARATE DOMAIN would need the same path routed there too.
+    BOTH REALMS: the collector is routed in the staff AND the portal route
+    table on one handler (#[Route] + #[Portal_Route]). A portal page's policy
+    names the portal's own collector, <portal prefix>/_csp-report
+    (Rsx_Csp::report_path('portal'); the bare /_csp-report at the root of a
+    portal host of its own), so a portal page reports on whichever host and
+    prefix PORTAL_URL places the portal (rsx:man portal). CSRF exempts both
+    paths. Every report lands in the same log.
 
 TRIAGE
     A resource the page needs is blocked. The log is where you find out what

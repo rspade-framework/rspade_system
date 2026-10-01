@@ -140,8 +140,11 @@ class Dispatcher
         $realm = static::__realm(Rsx_Request_Channel::realm());
 
         // The path inside the realm: a portal path under the portal's prefix is matched
-        // without it.
-        $path = $realm['realm'] === Auth_Gates::REALM_PORTAL ? Rsx_Portal::strip_prefix($url) : $url;
+        // without it. A request on the portal's own host OUTSIDE its prefix is classified
+        // portal (Rsx_Request_Channel) and is a portal path no route matches.
+        $is_portal = $realm['realm'] === Auth_Gates::REALM_PORTAL;
+        $path = $is_portal ? Rsx_Portal::strip_prefix($url) : $url;
+        $outside_prefix = $is_portal && Rsx_Request_Channel::is_portal_host() && !Rsx_Portal::is_under_prefix($url);
 
         // Portal_Main::init() - the FIRST application code to run in a portal request, and
         // the documented place to declare the portal's site (Portal_Session::set_site_id).
@@ -170,10 +173,14 @@ class Dispatcher
         }
 
         if (Rsx_Request_Channel::current() === Rsx_Request_Channel::AJAX) {
+            if ($outside_prefix) {
+                throw new NotFoundHttpException();
+            }
+
             return static::__dispatch_ajax($request, $path);
         }
 
-        return static::__dispatch_page($realm, $path, $method, $extra_params, $request);
+        return static::__dispatch_page($realm, $path, $method, $extra_params, $request, $outside_prefix);
     }
 
     /**
@@ -239,9 +246,12 @@ class Dispatcher
      * @param string $method
      * @param array $extra_params
      * @param Request $request
+     * @param bool $outside_prefix A portal-host request outside the portal's prefix: public
+     *                             files are served, everything else is the realm's 404 (no
+     *                             route, no error-page preview, no unhandled_route hook)
      * @return mixed
      */
-    private static function __dispatch_page(array $realm, string $path, string $method, array $extra_params, Request $request)
+    private static function __dispatch_page(array $realm, string $path, string $method, array $extra_params, Request $request, bool $outside_prefix = false)
     {
         // A public file? (Build artifacts - /_compiled/, /_vendor/ - are the ASSET channel.)
         // A real file wins. When there is no such file this returns null and dispatch
@@ -254,6 +264,10 @@ class Dispatcher
             if ($asset_response !== null) {
                 return $asset_response;
             }
+        }
+
+        if ($outside_prefix) {
+            return static::__transform_response($realm, Error_Screens::not_found($request), $method, $request);
         }
 
         // HEAD is matched and handled as GET; the original method is kept for the response.

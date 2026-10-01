@@ -20,7 +20,7 @@ use App\RSpade\Tests\Dispatch\Php\Front_Controller_Fixture_Controller;
  * exactly once (a build-artifact miss is a plain-text 404; a 404 raised after the action
  * returned is a 404 page, with the action run once); a second entry while a dispatch is
  * in flight is refused; no Laravel route is reachable; and the external API does not
- * answer on the portal's dedicated domain.
+ * answer on the portal's own host.
  */
 class Front_Controller_Test extends Rsx_Test_Abstract
 {
@@ -133,15 +133,15 @@ class Front_Controller_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * The API is the staff host's. On the portal's dedicated domain every /api/ path is
-     * the API's own not_found, before any credential is asked for.
+     * The API is the staff host's. On the portal's own host every /api/ path is the API's
+     * own not_found, before any credential is asked for.
      */
-    public static function test_the_api_does_not_answer_on_a_dedicated_portal_domain()
+    public static function test_the_api_does_not_answer_on_the_portal_host()
     {
         static::__fresh();
 
-        $original = config('rsx.portal.domain');
-        config(['rsx.portal.domain' => 'portal.front-controller-test.invalid']);
+        $original = config('rsx.portal.url');
+        config(['rsx.portal.url' => 'https://portal.front-controller-test.invalid/']);
 
         try {
             $response = static::__handle('http://portal.front-controller-test.invalid/api/v1/me');
@@ -154,7 +154,7 @@ class Front_Controller_Test extends Rsx_Test_Abstract
             $response = static::__handle('http://localhost/api/v1/me');
             static::__assert_equals(401, $response->getStatusCode());
         } finally {
-            config(['rsx.portal.domain' => $original]);
+            config(['rsx.portal.url' => $original]);
         }
     }
 }

@@ -427,9 +427,9 @@ return [
     |
     | portal_excluded_prefixes is the same loop-prevention list for the client
     | portal's login flow, applied when the request is a portal request. It is
-    | expressed in PORTAL-NAMESPACE terms (unprefixed): in prefix mode the portal
-    | prefix is stripped before the comparison, in domain mode it matches
-    | directly. The default covers the framework's shipped portal auth routes;
+    | expressed in PORTAL-NAMESPACE terms (unprefixed): the portal's prefix
+    | (from PORTAL_URL; none at the root of a portal host) is stripped before
+    | the comparison. The default covers the framework's shipped portal auth routes;
     | apps add their own portal login-flow routes here.
     |
     | See: php artisan rsx:man login_redirect
@@ -470,21 +470,30 @@ return [
     | the main app.
     |
     | An application merges its own overrides on top of these (see
-    | rsx/resource/config/rsx.php), e.g. to wire PORTAL_DOMAIN from .env or add
-    | app-specific knobs. These defaults let the portal subsystem run sanely on
-    | their own.
+    | rsx/resource/config/rsx.php) to add app-specific knobs. These defaults
+    | let the portal subsystem run sanely on their own.
     |
-    | URL strategy:
-    | - Set 'domain' to serve the portal from a dedicated host (production).
-    | - Leave 'domain' null to serve it under the 'prefix' path (development).
+    | 'url' (PORTAL_URL) is WHERE the portal is served, written exactly like
+    | APP_URL - scheme, host, optional port, optional path, the $HOSTNAME
+    | token. The portal's host and path prefix are derived from it
+    | (Rsx_Portal_Url):
+    |
+    |   (blank)                      APP_URL's origin + /_portal
+    |   https://portal.myapp.com/    its own host, no prefix
+    |   https://myapp.com/clients    the application host, under /clients
+    |                                (on that host the portal wins over any
+    |                                staff route under the same path)
+    |   https://portal.myapp.com/x   its own host, under /x
+    |
+    | Refused at boot: a value equal to APP_URL, http outside development, a
+    | query/fragment/credentials, a path segment outside [A-Za-z0-9_-], and a
+    | first segment the framework owns (api, error, ws, any /_ name other than
+    | /_portal). See rsx:man portal.
     |
     */
     'portal' => [
-        // Dedicated portal host (e.g. 'portal.example.com'); null = use prefix.
-        'domain' => null,
-
-        // URL prefix used when no dedicated domain is configured.
-        'prefix' => '/_portal',
+        // Where the portal is served; blank = APP_URL + '/_portal'.
+        'url' => env('PORTAL_URL', ''),
 
         // Portal session lifetime, in days.
         'session_lifetime_days' => 30,

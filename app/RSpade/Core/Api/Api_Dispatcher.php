@@ -27,7 +27,7 @@ use App\RSpade\Core\Session\Session;
  * /api/vN/, classified before assets, Ajax and pages), so this dispatcher owns the whole
  * request:
  *
- *   0. the portal's dedicated domain has no API - every path there is 404 not_found;
+ *   0. the portal's own host (PORTAL_URL) has no API - every path there is 404 not_found;
  *   1. verb gate (GET/POST only; HEAD and everything else -> 405);
  *   2. Bearer authentication FIRST (uniform 401 across the namespace, no route probing) -
  *      establishes a headless, cookie-less Session identity via Session::_set_api_identity();
@@ -182,7 +182,7 @@ class Api_Dispatcher
         $user_id = null;
         $site_id = null;
 
-        // --- The portal's dedicated domain has no API ---
+        // --- The portal's own host has no API ---
         // The API is the staff application's. When the portal runs on a host of its own,
         // /api/... on that host is not the API: every path under it answers the ordinary
         // unknown-endpoint 404, before any credential is looked at, so the portal host

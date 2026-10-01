@@ -62,8 +62,9 @@ DESCRIPTION
     touches the staff-facing Session. Use it for customers, clients, vendors, or
     any external audience that must log in but must never see the internal app.
 
-    The portal is served either from a dedicated domain (production) or from a
-    URL prefix (development); see URL DETECTION. A request is routed to the
+    Where the portal is served is one setting, PORTAL_URL: under /_portal on the
+    application's own host by default, or under any prefix (or none) on that
+    host or a host of its own; see PORTAL URL. A request is routed to the
     portal realm when the front controller classifies it so, and the one
     Dispatcher then reads the portal's route table, hooks, dev-auth header and
     CSP realm (rsx:man dispatch, THE REALM DESCRIPTOR).
@@ -80,43 +81,130 @@ DESCRIPTION
         - Portal_Spa_Controller, layout, auth controllers, screens
         - app-specific models (memberships, invitations, projects, ...)
 
-URL DETECTION
-    Controlled by config('rsx.portal.domain') and config('rsx.portal.prefix'):
-      - domain set    -> portal is every request whose host is that domain.
-      - domain null   -> portal is every request whose path starts with prefix
-                         (default '/_portal'); the prefix is stripped before
-                         routes are matched.
-    The decision is made ONCE per request, before anything is dispatched, by
-    Rsx_Request_Channel::classify() (rsx:man dispatch); Rsx_Portal::
-    is_portal_request() / Rsx_Portal.is_portal() report it, and
-    Rsx_Portal::set_portal_request() declares it outside a request (CLI, tests).
-    Rsx_Portal::get_normalized_path() returns the path with the prefix removed;
-    Rsx_Portal::strip_prefix($url) does the same for any URL.
+PORTAL URL
+    PORTAL_URL in .env (config('rsx.portal.url')) says where the portal lives.
+    It is written exactly like APP_URL: a scheme, a host, an optional port, an
+    optional path, and the $HOSTNAME token (resolved by the same boot seam;
+    skill rspade:environment-config). Blank - the shipped default - means
+    APP_URL's origin plus /_portal.
 
-    The external API is the staff host's. On a dedicated portal domain every
-    /api/ path answers the API's 404 not_found; in prefix mode /api/vN/... on
-    the staff host is the API and <prefix>/api/... is an ordinary portal URL
-    (rsx:man external_api).
+    Everything else is DERIVED from it by Rsx_Portal_Url, the one owner:
+      origin()            scheme://host[:port], a default port dropped
+      host()              the lowercased host, no port
+      prefix()            '' or '/seg[/seg]', no trailing slash
+      is_separate_host()  the portal host differs from APP_URL's host (ports
+                          are not compared: two ports on one name are one host)
 
-INTERNAL ENDPOINTS (AJAX, BATCH, UPLOAD)
+    The four layouts:
+      PORTAL_URL                          origin                     prefix
+      (blank)                             APP_URL's origin           /_portal
+      https://myapp.com/client-portal     https://myapp.com          /client-portal
+      https://portal.myapp.com/           https://portal.myapp.com   (none)
+      https://portal.myapp.com/clients    https://portal.myapp.com   /clients
+
+    Classification - decided ONCE per request, before anything is dispatched,
+    by Rsx_Request_Channel::classify() (rsx:man dispatch):
+      portal on the application host
+          a path under the prefix is the portal realm; every other path is
+          staff. The prefix is stripped before portal routes are matched.
+      portal on its own host
+          EVERY request on that host is the portal realm. A path outside the
+          prefix there is a portal path no route matches, answered by the
+          portal's 404 - never a staff page. On any other host the request is
+          staff, the prefix included.
+      /_compiled and /_vendor (build artifacts) are realm-agnostic on every
+      host. Rsx_Portal::is_portal_request() / Rsx_Portal.is_portal() report the
+      answer, Rsx_Portal::set_portal_request() declares it outside a request
+      (CLI, tests), and Rsx_Portal::strip_prefix($url) returns a URL's path
+      inside the portal.
+
+    The external API is the staff host's. On a portal's own host every /api/
+    path answers the API's 404 not_found. With the portal under a prefix on the
+    application host, /api/vN/... on that host is the API and <prefix>/api/...
+    is an ordinary portal URL (rsx:man external_api).
+
+    SHADOWING. A same-host prefix may match staff routes (PORTAL_URL=
+    https://myapp.com/clients while the staff app has /clients pages): the
+    portal wins. Those staff URLs become unreachable on a hard load - the
+    request is classified portal before any route is consulted - so pick a
+    prefix the staff app does not use.
+
+    Refused at boot (Rsx_Framework_Provider::boot(), every web request and
+    every artisan command; each message names PORTAL_URL):
+      - a value equal to APP_URL: the same host and the same path, after both
+        are normalised ($HOSTNAME resolved, scheme and host lowercased, the
+        default port dropped, a trailing slash dropped) - whatever the scheme
+      - a scheme APP_URL's rule refuses: https outside development; http only
+        in development and during a test run
+      - anything but an absolute http(s) URL; credentials, a query string or a
+        fragment
+      - a path segment outside [A-Za-z0-9_-] (an empty segment included)
+      - a first segment the framework owns: api, error, ws, or any name
+        beginning with '_' other than _portal
+    The checks are skipped while APP_URL is blank (the development first-run
+    state). The rsx:health "Portal URL" row reports the derived origin and
+    prefix, and FAILs on the same conditions (rsx:man health).
+
+    URLs in every layout:
+      Rsx_Portal::Route() / Rsx_Portal::portal_path() (and their JS twins)
+      answer a PATH when the caller is on the portal's host - always, in a
+      same-host layout - and an ABSOLUTE URL on the portal's origin otherwise:
+      a staff page, CLI or a task when the portal has its own host.
+      rsx_absolute_url() passes an absolute URL through unchanged, so
+      rsx_absolute_url(Rsx_Portal::Route(...)) is right from any context - an
+      emailed portal link included (rsx:man email, EMAIL-TEMPLATE-01).
+
+      window.rsxapp.portal carries {origin, prefix, separate_host} in EVERY
+      bundle, staff included, so staff-page JS links into a portal on another
+      host. Rsx_Portal.origin() / host() / prefix() / is_separate_host() read
+      it. On a portal page the same object also carries the portal permission
+      block (AUTHORIZATION).
+
+    A portal on its own host is fully served: the development hostname guard
+    and production Rsx::get_hostname() accept PORTAL_URL's host (rsx:man
+    realtime), the framework file routes and the CSP collector answer there
+    (INTERNAL ENDPOINTS), the full-page cache keys by host (rsx:man fpc),
+    passkeys use it as the relying party (rsx:man two_factor), SSO calls back
+    to it (rsx:man sso), and rsx:debug --portal browses it (TESTING). View as
+    Client crosses the two cookie jars with a linked-session handshake
+    (IMPERSONATION).
+
+INTERNAL ENDPOINTS (AJAX, BATCH, UPLOAD, FILES)
     The framework internal endpoints are served on BOTH channels by the SAME
     handlers:
 
         /_ajax/<Controller>/<action>  the AJAX channel -> Ajax::handle_browser_request
         /_ajax/_batch                 the AJAX channel -> Ajax::handle_batch_request
         /_upload                      File_Attachment_Controller::upload
-                                      (#[Route] and #[Portal_Route])
+        /_download/:key, /_inline/:key, /_download_zip/:key,
+        /_thumbnail/preset/..., /_thumbnail/dynamic/...,
+        /_icon_by_extension/:ext      File_Attachment_Controller
+        /_preview/...                 File_Preview_Controller
+        /_csp-report                  Csp_Report_Controller (POST)
+        /_session_link/...            Session_Link_Controller (IMPERSONATION)
 
+    Each route above is declared #[Route] and #[Portal_Route] on one handler.
     The AJAX channel (a POST under /_ajax/) has no route row; the Dispatcher
     hands it to the one Ajax core in the request's realm (rsx:man
-    ajax_error_handling). A portal page calls them under the portal's own base
-    - /_portal/_ajax/... in prefix mode, /_ajax/... on the portal domain (the
-    host already selects the portal realm). The client derives that automatically:
+    ajax_error_handling). A portal page calls every one of them under the
+    portal's own prefix - /_portal/_ajax/... by default, the bare /_ajax/... at
+    the root of a portal host - so it is dispatched, CSRF-checked and
+    authorized as a PORTAL request. The URL builders derive that themselves:
 
-        Rsx_Portal.internal_url('/_ajax/Foo/bar')
-          staff page               -> /_ajax/Foo/bar
-          portal page, prefix mode -> /_portal/_ajax/Foo/bar
-          portal page, domain mode -> /_ajax/Foo/bar
+        Rsx_Portal.internal_url('/_ajax/Foo/bar')     (JS)
+        Rsx_Portal::internal_url('/_thumbnail/...')   (PHP)
+          staff request / page, CLI, a task -> /_ajax/Foo/bar
+          portal page, default PORTAL_URL   -> /_portal/_ajax/Foo/bar
+          portal page, no prefix            -> /_ajax/Foo/bar
+
+    A portal request is always on the portal's host, so the result is a path.
+    Every framework URL builder - attachment download/inline/thumbnail URLs,
+    <Document_Preview> and pdf.js, the ZIP download, a portal page's CSP
+    report-uri (Rsx_Csp::report_path('portal')) - goes through it, and the
+    file.*.authorize gates receive the REALM's own user (the portal user on a
+    portal request, never the staff side of the same session). A Bearer API key
+    presented on a portal-realm file route is answered with the API's 404: the
+    API does not exist in the portal realm (rsx:man external_api).
 
     Ajax.call() (and therefore every generated controller stub) and
     Ajax.upload() already go through it; application code that builds an
@@ -208,7 +296,7 @@ SESSION & AUTH
 
     Storage: the portal identity lives in portal-shaped COLUMNS on the browser's
     _sessions row - portal_user_id, portal_site_id, impersonator_user_id,
-    handoff_* (see rsx:man session). Portal_Session is a static FACADE over those
+    impersonation_started_at (see rsx:man session). Portal_Session is a static FACADE over those
     properties, not a model - there is no Portal_Session::where(), no instances,
     and no portal table. The facade's public surface below is the whole API; use
     it rather than querying sessions yourself. A portal session ENDS by CLEARING
@@ -239,9 +327,7 @@ SESSION & AUTH
     Device session management (for a "your sessions" screen):
       get_sessions_for_user(?int $id = null): array
                                          ALL live sessions carrying this portal
-                                         identity, most recent first. Excludes
-                                         the "View as Client" handoff rows, which
-                                         are transport, not devices. Capped per
+                                         identity, most recent first. Capped per
                                          user at sign-in by
                                          rsx.sessions.max_web_sessions_per_user
                                          (default 25); see rsx:man session
@@ -269,16 +355,19 @@ PORTAL SESSIONS
       There is ONE session per browser: one 'rsx' cookie, one _sessions row, one
       csrf_token, shared by the staff app and the portal. The portal identity is a
       set of PROPERTIES on that row - portal_user_id, portal_site_id,
-      impersonator_user_id, handoff_* - alongside the staff properties
+      impersonator_user_id, impersonation_started_at - alongside the staff properties
       (login_user_id, site_id, impersonator_login_user_id). A browser signed into
       both carries both, on one row, and that is normal.
 
       site_id is STAFF-only; the portal's tenant is portal_site_id, because one
       browser can legitimately be on a different tenant in each experience.
 
-      A dedicated portal domain needs no machinery: per-origin cookie jars mean
-      that browser holds its own row on that origin, with the staff properties
-      null. There is no portal session table and no portal session model:
+      A portal on its own host (PORTAL URL) is reached through a separate
+      cookie jar, so the browser holds an 'rsx' cookie per host, and ordinarily
+      each names its own row - the portal host's with the staff properties
+      null. The one place the two are joined is "View as Client": the
+      linked-session handshake points the portal host's cookie at the staff
+      browser's row (IMPERSONATION). There is no portal session table and no portal session model:
       Portal_Session is a static facade over the portal properties. See rsx:man
       session for the table itself.
 
@@ -461,7 +550,7 @@ PORTAL LOGIN FLOW
       Portal_Register_Controller        /register invitation-code signup
       Portal_Password_Reset_Controller  /password/reset  request + token
       Portal_Request_Access_Controller  /request-access  invite lookup
-      Portal_Impersonate_Controller     staff "view as client" claim/stop
+      Portal_Impersonate_Controller     /impersonate/stop  ends "view as client"
 
     What the framework gives you:
       #[Portal_Route(..., methods:['GET','POST'])]  the route (GET renders, POST
@@ -853,43 +942,100 @@ IMPERSONATION (VIEW AS CLIENT)
       impersonator_user_id      staff User_Model id; NULL = a normal portal login.
                                 This both flags the session and records provenance.
       impersonation_started_at  audit / optional auto-expiry.
-      handoff_token             single-use, short-TTL token for the claim handoff.
-      handoff_expires_at        claim window for the handoff token.
+    portal_user_id and portal_site_id are set to the target, replacing any portal
+    identity already on the row; the staff properties are untouched.
 
-    Cross-domain-safe handoff. Staff are on the main-app domain; the portal often
-    has its own domain/cookie, so the main app cannot set the portal cookie
-    directly. Flow:
-      1. Staff endpoint calls Portal_Session::create_impersonation_session(
-         $portal_user_id, $staff_user_id, $site_id) -> returns a single-use handoff
-         token. This inserts a single-use HANDOFF row - pure transport, carrying
-         the target portal user, the site and the staff id, and excluded from the
-         device-session list; it does NOT set a cookie and does NOT touch the
-         contact's last_login. Unclaimed handoffs are collected on the next call.
-      2. Staff JS opens the claim URL in a new tab (target=_blank):
-         Rsx_Portal::Route('Portal_Impersonate_Controller::claim', ['t'=>$token]).
-      3. The portal claim route (#[Auth('public')]) calls
-         Portal_Session::claim_impersonation($token): validate + burn the token
-         (the transport row is consumed), then stamp the impersonated portal
-         identity onto THE CLAIMING BROWSER'S OWN session - minting it if that
-         browser has none - and redirect to the dashboard. Any portal identity
-         already in that browser is replaced; the staff login on the same session
-         is untouched. An expired/used token renders an "invalid link" page.
-         THIS is what makes the flow cross-domain-safe: the claiming browser may
-         be on the portal domain with its own cookie jar and its own row.
-    Never put the real session_token in a URL; the handoff token exists for exactly
-    this reason (single-use, ~60s TTL).
+    Starting one. A staff Ajax endpoint (gated #[Auth('can_impersonate')]) calls
+
+      Portal_Session::begin_impersonation_from_staff(
+          $portal_user_id, $impersonator_user_id, $portal_site_id): string
+
+    and the staff page opens the URL it returns in a new tab. It throws
+    AjaxUnauthorizedException unless the staff-realm can_impersonate check
+    passes, requires $impersonator_user_id to be the caller's own staff user,
+    and never touches the target's last_login. What the URL is depends on the
+    layout (PORTAL URL):
+
+      Same host (the portal under a prefix on APP_URL's host): one cookie, one
+        row. The impersonation is written straight onto the caller's own row
+        and the portal's landing URL is returned.
+      Separate host: the browser holds a different 'rsx' cookie on the portal
+        host, and no host can set a cookie for the other. The call starts the
+        LINKED-SESSION HANDSHAKE below and returns the URL of its first leg.
+
+    THE LINKED-SESSION HANDSHAKE (Session_Link, Session_Link_Controller)
+      Three GET legs, each a top-level navigation and a redirect - the only
+      transport that crosses hosts (a cross-host POST is refused by the CSRF
+      Origin check, a cross-host fetch by CSP connect-src). The routes are
+      #[Auth('public')] and declared in both route tables; the legs
+      authenticate by one-time codes and cookies, not by a gate.
+
+        1. portal host  <prefix>/_session_link/open
+             Redeems code 1. Sets the nonce cookie rsx_link on the portal host
+             (HttpOnly, Secure outside development, SameSite=Lax, path
+             <prefix>/_session_link, 120 s; only its SHA-256 is stored). Mints
+             code 2 bound to (the staff row, the nonce hash, the intent) and
+             redirects to the staff host.
+        2. staff host   /_session_link/confirm
+             Redeems code 2. REQUIRES the browser's own staff cookie to name the
+             bound row - the same browser owns the staff session - and its staff
+             user to be the recorded impersonator, then re-checks can_impersonate
+             for that user NOW (a permission withdrawn since the click still
+             refuses). Applies the impersonation to the row. Mints code 3 bound to
+             (the row, the nonce hash) and redirects to the portal host.
+        3. portal host  <prefix>/_session_link/complete
+             Redeems code 3. REQUIRES the rsx_link cookie to hash to the bound
+             nonce - the browser at leg 3 is the one that reached leg 1. Points the
+             portal host's 'rsx' cookie at the row (Session::
+             _clone_session_to_this_host(); a row this host's cookie named before
+             is deactivated), clears rsx_link and lands on the portal.
+
+      The portal cookie is set on the LAST leg, after both hosts have proved it
+      is the same browser. Codes are 256-bit random, stored only as a SHA-256 in
+      _session_links, bound to one leg, and burned atomically - a code works
+      once, on its own leg. Every leg URL is also HMAC-signed over (leg, code,
+      target host) with a key derived from app.key (Rsx_Signed_Url), so a code
+      moved to another leg or the other host is refused before any lookup. The
+      session token and the intent never appear in a URL.
+
+      120 SECONDS (Session_Link::EXPIRY_SECONDS) is a SECURITY WINDOW, not an
+      operation timeout: it bounds how long a minted-but-unused link (a leaked
+      URL, an abandoned tab) stays an open door. The legs cross in well under a
+      second; a lapsed window means clicking "View as Client" again. Expired
+      codes are swept hourly by Session_Cleanup_Service::cleanup_session_links
+      (rsx:man session).
+
+      ANY failure on any leg - a bad signature, a replayed or expired code, the
+      wrong browser at leg 2, a missing or mismatched nonce at leg 3 - answers
+      one generic 400 ("This link has expired or was already used.") on that
+      host, and NOTHING is linked. Which check failed is never disclosed or
+      logged.
+
+      After the handshake ONE row serves both hosts through two cookies - the
+      same shape as the same-host layout. Session::reset(), which deactivates
+      the row, ends the session on both hosts whichever host calls it; a portal logout or
+      stop_impersonation() clears only the portal properties, and the staff
+      login on the row is untouched.
+
+    Ending one. Portal_Session::stop_impersonation() clears the portal
+    properties on the browser's row (the template's /impersonate/stop route
+    calls it). On a separate host the portal host keeps its cookie on the
+    shared row.
 
     Framework API (Portal_Session):
-      create_impersonation_session($portal_user_id, $impersonator_user_id, $site_id): string
-      claim_impersonation($handoff_token): bool   // validate+burn, stamp this browser
+      begin_impersonation_from_staff($portal_user_id, $impersonator_user_id,
+                                     $portal_site_id): string  // URL to open
       stop_impersonation(): void                  // clear the portal properties
       is_impersonating(): bool                    // current session is impersonated
       get_impersonator_user_id(): ?int            // the staff id (audit/UI)
       cli_set_impersonator_user_id(?int): void    // test seeding
     JS mirror (UI affordance only): Rsx_Portal.is_impersonating(),
-    Rsx_Portal.impersonator_user_id() - read from window.rsxapp.portal. stop()
-    leaves the staff member's own staff login untouched: it lives in different
-    columns on the same row.
+    Rsx_Portal.impersonator_user_id() - read from window.rsxapp.portal.
+
+    can_impersonate is a FRAMEWORK-DECLARED staff check (Permission_Abstract,
+    #[Replaceable]) that DENIES by default. An application offering View as
+    Client redeclares it on its Permission class with its own rule and names it
+    on the endpoint that starts one (rsx:man auth_gates).
 
     READ-ONLY IS ENFORCED BY THE FRAMEWORK, DENY BY DEFAULT.
     Every Ajax call is a POST, reads included, so a write cannot be told from a
@@ -932,8 +1078,9 @@ IMPERSONATION (VIEW AS CLIENT)
 
     Replacing the staff member's own portal identity in that browser is acceptable
     and expected (the new tab shares the browser's one session). Permission to
-    impersonate is the app's call - the template gates begin_portal_impersonation
-    on Permission::has_role(User_Model::ROLE_MANAGER).
+    impersonate is the app's call - the template redeclares can_impersonate as the
+    User_Model::ROLE_MANAGER floor and gates Frontend_Contacts_Controller::
+    begin_portal_impersonation on it.
 
 URL GENERATION
     Mandatory - never hardcode portal URLs. Same surface in PHP and JS:
@@ -941,24 +1088,27 @@ URL GENERATION
       Rsx_Portal::Route('Portal_Project_View_Action', 123)  // id param
       Rsx_Portal::Route('...Action', ['id'=>1,'tab'=>'x'])  // named + query
       Rsx_Portal::Route('...Action', 1, ['tab'=>'files'])   // + #tab=files
-      Rsx_Portal::url($action, $params, $hash)              // absolute
+      Rsx_Portal::portal_path('/login')                     // a non-route path
+      rsx_absolute_url(Rsx_Portal::Route(...))              // absolute, any context
+    Off the portal's host (a staff page, CLI, a task, with the portal on its own
+    host) Route() and portal_path() already answer an absolute URL on the
+    portal's origin; rsx_absolute_url() passes it through (PORTAL URL).
     JavaScript: Rsx_Portal.Route(...), Rsx_Portal.is_portal(), Rsx_Portal.user()
     (the current portal user payload), Rsx_Portal.is_impersonating() (see
     IMPERSONATION). Integer param -> 'id'; array -> named params; extras become the
     query string, and the reserved `at` key becomes the #at= anchor (rsx:man
     anchors); the third argument is the hash state (rsx:man routing, URL
     FRAGMENT STATE). Selection, token replacement and encoding are Rsx::Route()'s own
-    routines; the portal adds only its base (prefix, or nothing on a dedicated
-    domain) and its own route table.
+    routines; the portal adds only its address (its prefix, and its origin when
+    the caller is off its host) and its own route table.
 
 CONFIGURATION
     Framework defaults live in config/rsx.php; an app layers overrides via
     rsx/resource/config/rsx.php. Keys under 'portal':
-      domain                       dedicated host, or null to use the prefix
-      prefix                       URL prefix in prefix mode (default '/_portal')
+      url                          where the portal is served (PORTAL_URL;
+                                   blank = APP_URL + /_portal) - see PORTAL URL
       session_lifetime_days        portal session lifetime (default 30)
-      invitation_expiry_days       invitation code validity (framework default 7;
-                                   the template app overrides to 14)
+      invitation_expiry_days       invitation code validity (default 14)
       password_min_length          minimum portal password length (default 8)
       password_reset_expiry_hours  reset token validity (default 1)
 
@@ -972,8 +1122,11 @@ TESTING
       php artisan rsx:debug /dashboard --portal --portal-user=1
       php artisan rsx:debug /_portal/mail --portal --portal-user=client@x.com
     --portal selects the portal stack; --portal-user accepts an id or email.
-    A signed dev-auth token logs the request in as that portal user; the path
-    works with or without the '/_portal' prefix. Disabled in production.
+    A signed dev-auth token logs the request in as that portal user. The path is
+    the path INSIDE the portal - one carrying the portal's prefix has it
+    stripped - and is browsed at the portal's own address: PORTAL_URL's host
+    and prefix, with the APP_URL host and the portal host both mapped to
+    loopback. Disabled in production.
 
     The harness declares NO site of its own - it browses the portal the
     application serves, so the site is the one Portal_Main::init() declared. A
@@ -1253,5 +1406,8 @@ SEE ALSO
     rsx:man sso - Rsx_Portal_Sso: federated sign-in for portal users
     rsx:man config_rsx
     rsx:man migrations
+    rsx:man external_api - the API is absent on a portal's own host
+    rsx:man fpc - the page cache is keyed by host
+    skill rspade:portal-core - recipes for routing, the site declaration and View as Client
 
-RSX Framework              Last updated 2026-09-24                  PORTAL(3)
+RSX Framework              Last updated 2026-10-01                  PORTAL(3)

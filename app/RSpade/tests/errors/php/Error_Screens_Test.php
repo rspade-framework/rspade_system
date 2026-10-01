@@ -16,6 +16,7 @@ use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Errors\Error_Screens;
 use App\RSpade\Core\Exceptions\Web_Exception_Handler;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 use App\RSpade\Tests\Errors\Php\Error_Screens_Route_Fixture_Controller;
@@ -110,7 +111,10 @@ class Error_Screens_Test extends Rsx_Test_Abstract
 
         $location = $response->headers->get('Location');
         static::__assert_contains('login', $location);
-        static::__assert_contains('_portal', $location);
+        static::__assert_true(
+            str_starts_with((string) parse_url($location, PHP_URL_PATH), (string) parse_url(Rsx_Portal::portal_path('/'), PHP_URL_PATH)),
+            "the portal login lives under the portal's prefix, got {$location}"
+        );
     }
 
     // =========================================================================

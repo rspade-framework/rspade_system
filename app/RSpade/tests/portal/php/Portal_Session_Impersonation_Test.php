@@ -7,45 +7,65 @@
 
 namespace App\RSpade\Tests\Portal\Php;
 
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
+use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
+use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Models\Portal_User_Model;
+use App\RSpade\Core\Models\User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
+use App\RSpade\Tests\Portal\Php\Portal_Impersonation_Grant_Fixture;
 
 /**
- * Tests for the framework's portal impersonation primitives on Portal_Session:
- * create_impersonation_session() (a single-use HANDOFF row - pure transport, no
- * last_login touch), claim_impersonation() (resolve + burn, then stamp the payload
- * onto the CLAIMING browser's own session), expiry,
- * is_impersonating()/get_impersonator_user_id() via the CLI flag, and
- * stop_impersonation(). Read-only enforcement is the application's job and is covered
- * by the app suite, not here.
+ * Portal_Session::begin_impersonation_from_staff() - the one entry point of staff "View as
+ * Client" - plus is_impersonating() / get_impersonator_user_id() / stop_impersonation().
  *
- * Row assertions read _sessions directly (Portal_Session is a facade over the portal
- * PROPERTIES of the one session row and has no query builder of its own).
+ * Same host (the portal under a prefix on APP_URL's host): the impersonation lands on the
+ * caller's own session row and the portal's landing URL comes back. Separate host
+ * (PORTAL_URL names another host): nothing is written yet, and the first leg of the
+ * linked-session handshake comes back, absolute on the portal origin. The handshake legs
+ * themselves are Portal_Session_Link_Test.
  *
- * Runs in the default per-test transaction (rolled back afterward).
+ * The caller is a real staff user whose session is this process's CLI row; its
+ * can_impersonate answer is set by Portal_Impersonation_Grant_Fixture, since that check is
+ * the application's rule. Layouts are config('rsx.portal.url') overrides,
+ * set by each test and restored in teardown.
+ *
+ * Default per-test transaction (rolled back afterward). Read-only enforcement is
+ * Portal_Impersonation_Read_Only_Test.
  */
 class Portal_Session_Impersonation_Test extends Rsx_Test_Abstract
 {
     private const SITE_ID = 1;
-    private const IMPERSONATOR_ID = 99; // arbitrary staff user id (no FK on the column)
+
+    private const PORTAL_HOST = 'portal.example.test';
+
+    private static $saved_portal_url;
+
+    private static $saved_request;
 
     public static function setup(): void
     {
+        self::$saved_portal_url = config('rsx.portal.url');
+        self::$saved_request = app('request');
         static::__acting_as_site(self::SITE_ID);
     }
 
     public static function teardown(): void
     {
-        // Clear any CLI impersonation/identity flags between tests.
-        Portal_Session::cli_set_impersonator_user_id(null);
-        Portal_Session::cli_set_portal_user_id(0);
+        config(['rsx.portal.url' => self::$saved_portal_url]);
+        app()->instance('request', self::$saved_request);
+        Portal_Impersonation_Grant_Fixture::uninstall();
+        static::__reset_session();
     }
 
-    /**
-     * Seed an active, verified portal user on the test site.
-     */
+    // =====================================================================
+    // Fixtures
+    // =====================================================================
+
     private static function __make_portal_user(): Portal_User_Model
     {
         $user = new Portal_User_Model();
@@ -59,74 +79,153 @@ class Portal_Session_Impersonation_Test extends Rsx_Test_Abstract
         return $user;
     }
 
-    // =====================================================================
-    // create_impersonation_session
-    // =====================================================================
-
-    public static function test_create_creates_a_single_use_handoff_row()
+    /**
+     * A staff user on the test site, signed in as the caller, whose can_impersonate check
+     * answers $may_impersonate (Portal_Impersonation_Grant_Fixture).
+     */
+    private static function __sign_in_staff(bool $may_impersonate): User_Model
     {
-        $user = static::__make_portal_user();
+        Portal_Impersonation_Grant_Fixture::install($may_impersonate);
+        static::__acting_as_site(self::SITE_ID);
 
-        $handoff = Portal_Session::create_impersonation_session($user->id, self::IMPERSONATOR_ID, self::SITE_ID);
+        $email = 'impersonator_' . uniqid() . '@example.com';
 
-        static::__assert_equals(64, strlen($handoff), 'handoff token is 32 bytes hex');
+        $login_user = new Login_User_Model();
+        $login_user->email = $email;
+        $login_user->password = Hash::make('secret-password');
+        $login_user->is_activated = true;
+        $login_user->is_verified = true;
+        $login_user->status_id = Login_User_Model::STATUS_ACTIVE;
+        $login_user->save();
 
-        $session = Session::where('handoff_token', $handoff)->first();
-        static::__assert_not_null($session, 'handoff row created');
-        static::__assert_equals($user->id, (int) $session->portal_user_id, 'bound to the target portal user');
-        static::__assert_equals(self::IMPERSONATOR_ID, (int) $session->impersonator_user_id, 'stamped with the staff impersonator id');
-        static::__assert_not_null($session->impersonation_started_at, 'impersonation_started_at recorded');
-        static::__assert_not_null($session->handoff_expires_at, 'handoff has an expiry');
+        $user = new User_Model();
+        $user->login_user_id = $login_user->id;
+        $user->email = $email;
+        $user->first_name = 'Staff';
+        $user->last_name = 'Impersonator';
+        $user->role_id = static::most_privileged_role_id();
+        $user->is_enabled = 1;
+        $user->save();
+
+        static::__acting_as_user($user->id);
+
+        return $user;
     }
 
-    public static function test_create_does_not_touch_target_last_login()
+    /**
+     * Point the configuration at a layout and the request at the staff host.
+     */
+    private static function __layout(string $portal_url): void
     {
-        $user = static::__make_portal_user();
-        static::__assert_null($user->last_login, 'seeded user has no last_login');
-
-        Portal_Session::create_impersonation_session($user->id, self::IMPERSONATOR_ID, self::SITE_ID);
-
-        $reloaded = Portal_User_Model::find($user->id);
-        static::__assert_null($reloaded->last_login, 'impersonation must not pollute the contact last_login');
+        config(['rsx.portal.url' => $portal_url]);
+        app()->instance('request', Request::create(rtrim((string) config('app.url'), '/') . '/contacts'));
     }
 
     // =====================================================================
-    // claim_impersonation (resolve + single-use burn) + expiry
+    // Same host
     // =====================================================================
 
-    public static function test_claim_succeeds_once_then_token_is_burned()
+    public static function test_same_host_writes_the_impersonation_onto_the_callers_row()
     {
-        $user = static::__make_portal_user();
-        $handoff = Portal_Session::create_impersonation_session($user->id, self::IMPERSONATOR_ID, self::SITE_ID);
+        static::__layout('');
+        $staff = static::__sign_in_staff(true);
+        $target = static::__make_portal_user();
 
-        static::__assert_true(Portal_Session::claim_impersonation($handoff), 'first claim succeeds');
-        static::__assert_false(Portal_Session::claim_impersonation($handoff), 'second claim fails (token burned)');
+        $url = Portal_Session::begin_impersonation_from_staff($target->id, $staff->id, self::SITE_ID);
 
-        static::__assert_false(
-            Session::where('handoff_token', $handoff)->exists(),
-            'the transport row is consumed by the claim'
+        static::__assert_equals('/_portal/', $url, 'the portal landing page, on this host');
+
+        $row = Session::find(Session::get_session_id());
+        static::__assert_equals($target->id, (int) $row->portal_user_id, 'the target portal user, on the caller\'s own row');
+        static::__assert_equals(self::SITE_ID, (int) $row->portal_site_id, 'its tenant');
+        static::__assert_equals($staff->id, (int) $row->impersonator_user_id, 'the staff impersonator');
+        static::__assert_not_null($row->impersonation_started_at, 'the start time');
+        static::__assert_equals($staff->login_user_id, (int) $row->login_user_id, 'the staff login on that row is untouched');
+
+        static::__assert_equals($target->id, Portal_Session::get_portal_user_id(), 'the portal identity is in force');
+        static::__assert_true(Portal_Session::is_impersonating(), 'and it is an impersonation');
+        static::__assert_equals($staff->id, Portal_Session::get_impersonator_user_id(), 'by the caller');
+    }
+
+    public static function test_same_host_under_another_prefix_lands_under_it()
+    {
+        static::__layout(rtrim((string) config('app.url'), '/') . '/clients');
+        $staff = static::__sign_in_staff(true);
+        $target = static::__make_portal_user();
+
+        $url = Portal_Session::begin_impersonation_from_staff($target->id, $staff->id, self::SITE_ID);
+
+        static::__assert_equals('/clients/', $url);
+    }
+
+    public static function test_begin_does_not_touch_the_targets_last_login()
+    {
+        static::__layout('');
+        $staff = static::__sign_in_staff(true);
+        $target = static::__make_portal_user();
+        static::__assert_null($target->last_login, 'seeded user has no last_login');
+
+        Portal_Session::begin_impersonation_from_staff($target->id, $staff->id, self::SITE_ID);
+
+        static::__assert_null(Portal_User_Model::find($target->id)->last_login, 'impersonation must not pollute the contact last_login');
+    }
+
+    // =====================================================================
+    // Separate host
+    // =====================================================================
+
+    public static function test_separate_host_returns_the_first_handshake_leg_and_writes_nothing_yet()
+    {
+        static::__layout('https://' . self::PORTAL_HOST . '/x');
+        $staff = static::__sign_in_staff(true);
+        $target = static::__make_portal_user();
+
+        $url = Portal_Session::begin_impersonation_from_staff($target->id, $staff->id, self::SITE_ID);
+
+        static::__assert_true(
+            str_starts_with($url, 'https://' . self::PORTAL_HOST . '/x/_session_link/open?'),
+            "leg 1, absolute on the portal origin, under its prefix; got {$url}"
         );
 
-        // In CLI there is no browser to stamp, so the claim lands on the CLI overrides.
-        static::__assert_equals($user->id, Portal_Session::get_portal_user_id(), 'the claimed portal identity is in force');
-        static::__assert_true(Portal_Session::is_impersonating(), 'and it is an impersonation');
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $query);
+        static::__assert_equals(['c', 's'], array_keys($query), 'a code and a signature, nothing else');
+        static::__assert_false(str_contains($url, Session::find(Session::get_session_id())->session_token), 'the session token is never in the URL');
+
+        $link = DB::table('_session_links')->where('code_hash', hash('sha256', $query['c']))->first();
+        static::__assert_not_null($link, 'the code is stored as its hash');
+        static::__assert_equals(Session::get_session_id(), (int) $link->session_id, 'bound to the caller\'s row');
+
+        $row = Session::find(Session::get_session_id());
+        static::__assert_null($row->portal_user_id, 'nothing is applied until the staff leg');
+        static::__assert_null($row->impersonator_user_id);
     }
 
-    public static function test_claim_fails_for_expired_handoff()
+    // =====================================================================
+    // Refusals
+    // =====================================================================
+
+    public static function test_a_caller_without_can_impersonate_is_refused()
     {
-        $user = static::__make_portal_user();
-        $handoff = Portal_Session::create_impersonation_session($user->id, self::IMPERSONATOR_ID, self::SITE_ID);
+        static::__layout('');
+        $staff = static::__sign_in_staff(false);
+        $target = static::__make_portal_user();
 
-        // Force the handoff window into the past.
-        Session::where('handoff_token', $handoff)->raw_bulk()->update(['handoff_expires_at' => now()->subMinutes(5)]);
+        static::__assert_throws(AjaxUnauthorizedException::class, function () use ($target, $staff) {
+            Portal_Session::begin_impersonation_from_staff($target->id, $staff->id, self::SITE_ID);
+        });
 
-        static::__assert_false(Portal_Session::claim_impersonation($handoff), 'expired handoff is rejected');
+        static::__assert_false(Portal_Session::is_impersonating(), 'nothing was started');
     }
 
-    public static function test_claim_fails_for_unknown_token()
+    public static function test_the_impersonator_must_be_the_signed_in_staff_user()
     {
-        static::__assert_false(Portal_Session::claim_impersonation('does-not-exist'), 'unknown token rejected');
-        static::__assert_false(Portal_Session::claim_impersonation(''), 'empty token rejected');
+        static::__layout('');
+        $staff = static::__sign_in_staff(true);
+        $target = static::__make_portal_user();
+
+        static::__assert_throws(\RuntimeException::class, function () use ($target, $staff) {
+            Portal_Session::begin_impersonation_from_staff($target->id, $staff->id + 1000, self::SITE_ID);
+        }, 'must be the signed-in staff user');
     }
 
     // =====================================================================
@@ -135,24 +234,19 @@ class Portal_Session_Impersonation_Test extends Rsx_Test_Abstract
 
     public static function test_is_impersonating_reflects_cli_flag()
     {
-        // teardown() runs once per class, and a claim earlier in this class leaves the
-        // CLI overrides set - so this test establishes its own clean slate.
-        Portal_Session::cli_set_impersonator_user_id(null);
-        Portal_Session::cli_set_portal_user_id(0);
-
         static::__assert_false(Portal_Session::is_impersonating(), 'no impersonation by default');
         static::__assert_null(Portal_Session::get_impersonator_user_id(), 'no impersonator by default');
 
-        Portal_Session::cli_set_impersonator_user_id(self::IMPERSONATOR_ID);
+        Portal_Session::cli_set_impersonator_user_id(99);
 
         static::__assert_true(Portal_Session::is_impersonating(), 'flag set -> impersonating');
-        static::__assert_equals(self::IMPERSONATOR_ID, Portal_Session::get_impersonator_user_id(), 'impersonator id reported');
+        static::__assert_equals(99, Portal_Session::get_impersonator_user_id(), 'impersonator id reported');
     }
 
     public static function test_stop_impersonation_clears_the_flag()
     {
         Portal_Session::cli_set_portal_user_id(123);
-        Portal_Session::cli_set_impersonator_user_id(self::IMPERSONATOR_ID);
+        Portal_Session::cli_set_impersonator_user_id(99);
         static::__assert_true(Portal_Session::is_impersonating(), 'impersonating before stop');
 
         Portal_Session::stop_impersonation();

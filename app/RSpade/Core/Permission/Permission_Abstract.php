@@ -122,6 +122,23 @@ abstract class Permission_Abstract
     }
 
     /**
+     * May this staff user view the client portal AS a portal user ("View as Client")?
+     *
+     * Portal_Session::begin_impersonation_from_staff() asks it before starting, and the
+     * staff leg of the linked-session handshake (Session_Link) asks it again for the user
+     * on the browser's own staff session, so a permission withdrawn between the click and
+     * the redirect still refuses. DENIES by default: an application that offers View as
+     * Client redeclares it with its own rule (#[Replaceable], so no parent:: call is owed)
+     * and normally puts the same name on the endpoint that starts it.
+     */
+    #[Auth_Check]
+    #[Replaceable]
+    public static function can_impersonate(): bool
+    {
+        return false;
+    }
+
+    /**
      * Whether every gate declared on a TARGET surface passes for the current user.
      *
      * Targets use the spellings Rsx::Route() takes: 'Controller::method' (a bare

@@ -698,11 +698,16 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
     /**
      * Get the inline viewing URL for this file
      *
+     * Every file URL below is a path in the REALM OF THE CURRENT REQUEST: the bare path for
+     * a staff request, CLI or the external API, and the same path under the portal's prefix
+     * for a portal request (Rsx_Portal::internal_url()) - the file routes exist in both
+     * route tables, so a portal page's links are served, and authorized, as portal requests.
+     *
      * @return string
      */
     public function get_url()
     {
-        return "/_inline/{$this->key}";
+        return Rsx_Portal::internal_url("/_inline/{$this->key}");
     }
 
     /**
@@ -712,7 +717,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      */
     public function get_download_url()
     {
-        return "/_download/{$this->key}";
+        return Rsx_Portal::internal_url("/_download/{$this->key}");
     }
 
     /**
@@ -731,9 +736,9 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         $version = $this->__thumbnail_version();
 
         if ($height === null) {
-            return "/_thumbnail/dynamic/{$this->key}/{$type}/{$width}?v={$version}";
+            return Rsx_Portal::internal_url("/_thumbnail/dynamic/{$this->key}/{$type}/{$width}?v={$version}");
         }
-        return "/_thumbnail/dynamic/{$this->key}/{$type}/{$width}/{$height}?v={$version}";
+        return Rsx_Portal::internal_url("/_thumbnail/dynamic/{$this->key}/{$type}/{$width}/{$height}?v={$version}");
     }
 
     /**
@@ -755,7 +760,7 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
         }
 
         // ?v= is the render cache-buster - see get_thumbnail_url().
-        return "/_thumbnail/preset/{$this->key}/{$preset_name}?v=" . $this->__thumbnail_version();
+        return Rsx_Portal::internal_url("/_thumbnail/preset/{$this->key}/{$preset_name}?v=" . $this->__thumbnail_version());
     }
 
     /**
@@ -881,8 +886,8 @@ abstract class File_Attachment_Model_Abstract extends Rsx_Site_Model_Abstract
      * row, so this endpoint cannot be used to enumerate attachment ids.
      *
      * 'user' is realm-honest for the same reason File_Preview_Controller::get_preview_info is:
-     * a portal page reaching a staff-facade read would hand the app's gate the STAFF user in
-     * prefix mode. This method is the STAFF path; portal_fetch() below is the portal one.
+     * a portal page reaching a staff-facade read would hand the app's gate the STAFF user when
+     * the portal is on the application host. This method is the STAFF path; portal_fetch() below is the portal one.
      *
      * SHAPE: toArray() plus the blob embedded under its own relationship name, file_storage,
      * carrying ONLY the five fields the client has any business with. Embedded rather than

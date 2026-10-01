@@ -167,7 +167,7 @@ They stop the framework's OWN write paths, and they do not (and cannot) stop som
 3. **Generated-file keys are LOGICAL.** A generated stub is recorded as `tmp/js-stubs/<name>.js` whatever `RSX_TMP_PATH` resolves to, so two boxes with different overrides produce identical indexes and identical build keys.
 4. **Bundle filenames are `{Bundle}__{app|vendor}.{hash8}.{ext}`**, the hash8 deriving from the same relative-path + content inputs plus the committed lockfile hashes and npm declarations. Minified output is reproducible given the pinned, committed `node_modules`.
 
-**Bonus, and it is a real one**: because build_key is content-derived and stable across checkouts, full-page-cache keys (`fpc:{build_key}:...`) are **cluster-shareable** - two nodes on the same build hit the same FPC entries. (`rsx:man fpc`.)
+**Bonus, and it is a real one**: because build_key is content-derived and stable across checkouts, full-page-cache keys (`fpc:{build_key}:{host}:...`) are **cluster-shareable** - two nodes on the same build hit the same FPC entries. (`rsx:man fpc`.)
 
 ---
 

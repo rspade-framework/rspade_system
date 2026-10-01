@@ -32,7 +32,9 @@ so its tests are `http` type, not PHP.
 - The per-route TTL declaration, end to end from the attribute to the marker value the
   proxy reads, plus the `rsx:fpc:clear` lever. (php - `Fpc_Ttl_Marker_Test`, which reads
   the manifest rows of the two real routes in `Fpc_Ttl_Fixture_Controller`)
-- Cache key derivation and bypass-rule logic that can run in-process. (php) - planned
+- Cache key derivation - the host-aware key, agreement with the proxy's own
+  `compose_cache_key()`, and the per-host / every-host clear. (php - `Fpc_Cache_Key_Test`)
+- Bypass-rule logic that can run in-process. (php) - planned
 
 ## Documents
 

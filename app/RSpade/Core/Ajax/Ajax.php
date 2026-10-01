@@ -816,7 +816,8 @@ class Ajax
      * Evaluate the REALM and the declarative #[Auth] gates an Ajax endpoint declares.
      *
      * Each realm has its own internal-endpoint channel (/_ajax/... for staff,
-     * <portal-prefix>/_ajax/... or /_ajax/... on the portal's domain for the portal), so
+     * <portal-prefix>/_ajax/... for the portal - /_ajax/... when the portal is at the root
+     * of its own host), so
      * the realm of the request is known and meaningful here. The surface's own realm is
      * checked FIRST - a staff request must not reach a portal endpoint, nor a portal
      * request a staff one, whatever the gate names say (see

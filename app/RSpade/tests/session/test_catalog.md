@@ -186,6 +186,16 @@ and delete their keys in teardown.
 |----|---------|-------|----------|--------|
 | sess-http-06 | token minted once at creation; login is a pure record update (no rotation, no cookie re-emission); same token then authenticates | anon session -> POST /login -> GET /dashboard | step1 Set-Cookie rsx; step2 NO Set-Cookie rsx + token unchanged; step3 200 | implemented |
 
+## http/session_link_handshake.sh (http - live server)
+
+The linked-session handshake end to end, as two cookie jars (staff, portal side) against the
+live server in its configured same-host layout (SKIP on a separate-host box; SKIP when the
+application's can_impersonate denies its most privileged role). Self-seeding via tinker.
+
+| ID | Purpose | Input | Expected | Status |
+|----|---------|-------|----------|--------|
+| sess-http-07 | the three legs end with the portal side's ONE rsx cookie set to the staff row's token; the replaced portal-side row is deactivated; the nonce cookie is cleared; the staff row carries the impersonation; a replayed leg 3 is refused | seeded staff row + portal-side row, leg 1 from Session_Link::begin_impersonation() | leg 1 302 + rsx_link; leg 2 302; leg 3 302 with exactly one `Set-Cookie: rsx=<staff token>`; replaced row active=0; replay 400 with the generic message | implemented |
+
 ## Deferred / planned
 
 | ID | Purpose | Type | Reason | Status |

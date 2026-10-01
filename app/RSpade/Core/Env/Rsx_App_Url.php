@@ -93,6 +93,20 @@ class Rsx_App_Url
      */
     public static function enforce_scheme(string $app_url, bool $allow_http): void
     {
+        $problem = self::scheme_problem($app_url, $allow_http, 'APP_URL');
+
+        if ($problem !== null) {
+            throw new RuntimeException($problem);
+        }
+    }
+
+    /**
+     * The scheme rule itself, for any key that carries an APP_URL-shaped value: the
+     * message naming $key when $url breaks the rule, null when it passes. PORTAL_URL
+     * is held to exactly this rule (Rsx_Portal_Url), so the two can never disagree.
+     */
+    public static function scheme_problem(string $url, bool $allow_http, string $key): ?string
+    {
         // EMPTY IN DEVELOPMENT IS THE FIRST-RUN STATE, not a misconfiguration.
         //
         // A fresh install ships APP_URL blank on purpose: a container cannot know
@@ -104,45 +118,51 @@ class Rsx_App_Url
         //
         // Outside development there is no such screen and no such excuse: a blank
         // APP_URL there is a deployment nobody finished configuring.
-        if (trim($app_url) === '' && $allow_http) {
-            return;
+        if (trim($url) === '' && $allow_http) {
+            return null;
         }
 
-        $scheme = strtolower((string) parse_url($app_url, PHP_URL_SCHEME));
+        $scheme = strtolower((string) parse_url($url, PHP_URL_SCHEME));
 
         if ($scheme === 'https') {
-            return;
+            return null;
         }
 
         if ($scheme === 'http' && $allow_http) {
-            return;
+            return null;
         }
 
         if ($scheme === 'http') {
-            throw new RuntimeException(
-                'APP_URL must be https outside development mode. http is accepted only'
+            return $key . ' must be https outside development mode. http is accepted only'
                 . ' in development (RSX_MODE=development), where a local container may'
                 . ' have no SSL terminator in front of it; debug and production assume'
                 . ' upstream SSL termination and emit Secure session cookies that a'
                 . ' plain-http page would discard. Use Caddy or a similar reverse proxy'
-                . ' for SSL termination and set APP_URL=https://... in .env.'
-                . ' Current value: "' . $app_url . '".'
-            );
+                . ' for SSL termination and set ' . $key . '=https://... in .env.'
+                . ' Current value: "' . $url . '".';
         }
 
-        throw new RuntimeException(
-            'APP_URL must be an http:// or https:// URL. Set it in .env (the $HOSTNAME'
-            . ' token resolves to the OS hostname, e.g. APP_URL=https://$HOSTNAME;'
+        return $key . ' must be an http:// or https:// URL. Set it in .env (the $HOSTNAME'
+            . ' token resolves to the OS hostname, e.g. ' . $key . '=https://$HOSTNAME;'
             . ' a local development container typically uses'
-            . ' APP_URL=http://localhost:8080). Current value: "' . $app_url . '".'
-        );
+            . ' ' . $key . '=http://localhost:8080). Current value: "' . $url . '".';
     }
 
     /**
-     * Boot seam (substitution only): read the raw APP_URL, resolve the $HOSTNAME
-     * token, and write the resolved value back into $_ENV / $_SERVER / putenv so
-     * env() and every config file that reads env('APP_URL') see the resolved
-     * hostname. Scheme enforcement is NOT done here - see enforce_scheme_from_env().
+     * Whether this process accepts an http (or, in development, empty) APP_URL: development
+     * mode, or the test-run allowance described at enforce_scheme_from_env().
+     */
+    public static function http_allowed(): bool
+    {
+        return Rsx::is_development() || Rsx_Test_Abstract::suite_is_running();
+    }
+
+    /**
+     * Boot seam (substitution only): read the raw APP_URL and PORTAL_URL, resolve the
+     * $HOSTNAME token in each, and write the resolved values back into $_ENV / $_SERVER /
+     * putenv so env() and every config file that reads env('APP_URL') or
+     * env('PORTAL_URL') see the resolved hostname. Scheme enforcement is NOT done here -
+     * see enforce_scheme_from_env() and Rsx_Portal_Url::validate().
      *
      * Registered from bootstrap/app.php via afterLoadingEnvironment(), which runs
      * after phpdotenv has loaded .env and before LoadConfiguration reads it.
@@ -154,14 +174,18 @@ class Rsx_App_Url
             $os_hostname = (string) gethostname();
         }
 
-        $raw = $_ENV['APP_URL'] ?? $_SERVER['APP_URL'] ?? getenv('APP_URL');
-        $raw = is_string($raw) ? $raw : '';
+        // PORTAL_URL is written in APP_URL's syntax (rsx:man portal), so it takes the same
+        // substitution. A blank PORTAL_URL stays blank: it means "derived from APP_URL".
+        foreach (['APP_URL', 'PORTAL_URL'] as $key) {
+            $raw = $_ENV[$key] ?? $_SERVER[$key] ?? getenv($key);
+            $raw = is_string($raw) ? $raw : '';
 
-        $resolved = self::resolve($raw, $os_hostname);
+            $resolved = self::resolve($raw, $os_hostname);
 
-        $_ENV['APP_URL'] = $resolved;
-        $_SERVER['APP_URL'] = $resolved;
-        putenv('APP_URL=' . $resolved);
+            $_ENV[$key] = $resolved;
+            $_SERVER[$key] = $resolved;
+            putenv($key . '=' . $resolved);
+        }
     }
 
     /**
@@ -183,9 +207,6 @@ class Rsx_App_Url
      */
     public static function enforce_scheme_from_env(): void
     {
-        self::enforce_scheme(
-            (string) env('APP_URL'),
-            Rsx::is_development() || Rsx_Test_Abstract::suite_is_running()
-        );
+        self::enforce_scheme((string) env('APP_URL'), self::http_allowed());
     }
 }

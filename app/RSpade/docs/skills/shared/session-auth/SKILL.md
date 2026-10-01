@@ -1,6 +1,6 @@
 ---
 name: session-auth
-description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::attempt() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifecycle windows and the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, or a \"log in as user\" feature - and see the csrf and login-redirect references for those two subsystems."
+description: "Working with RSpade sessions and the login flow - Session facade reads/writes, RsxAuth::attempt() and login history, account-state enforcement, device-session screens, self vs admin termination guards, session lifecycle windows and the concurrent cap, and web impersonation (begin_impersonation/stop_impersonation). Use when building a login or logout page, a \"where you're signed in\" screen, an admin sign-this-user-out button, an account-status check, or a \"log in as user\" feature, or resetting a password or sign-in email from the CLI (rsx:users:password:set, rsx:users:email:set) - and see the csrf and login-redirect references for those two subsystems."
 ---
 
 # Sessions and Login
@@ -130,7 +130,7 @@ $sessions = Session::get_sessions_for_user($login_user_id);   // admin view
 $info     = Session::get_current_session_info();              // this session, or null
 ```
 
-Only ACTIVE sessions are returned, and **the WHOLE set of them on purpose** - a user cannot terminate a session they were not shown. Two things keep the set small, neither a cap on the query: the concurrent-session cap, and retention by type. (`Portal_Session::get_sessions_for_user()` is the same query on `portal_user_id`, additionally excluding "View as Client" handoff rows - single-use transport, not a device anyone is on.)
+Only ACTIVE sessions are returned, and **the WHOLE set of them on purpose** - a user cannot terminate a session they were not shown. Two things keep the set small, neither a cap on the query: the concurrent-session cap, and retention by type. (`Portal_Session::get_sessions_for_user()` is the same query on `portal_user_id`.)
 
 ### Terminating - pick by whose sessions, and who is asking
 
@@ -200,7 +200,7 @@ public static function on_terminated(array $payload) {
 
 ## Web impersonation ("log in as user")
 
-Same-cookie, in-place `login_user_id` swap - contrast the portal's cross-domain, read-only handoff.
+Same-cookie, in-place `login_user_id` swap - contrast the portal's read-only "View as Client" (`Portal_Session::begin_impersonation_from_staff()`, which writes a portal identity onto the row - through a linked-session handshake when the portal has its own host; skill `rspade:portal-core`).
 
 ```php
 Session::begin_impersonation(int $target_login_user_id);  // throws if not logged in,
@@ -256,6 +256,17 @@ $membership = User_Model::where('login_user_id', Session::get_login_user_id())
 if (!$membership) { return response_unauthorized(); }
 Session::set_site_id((int) $params['site_id']);
 ```
+
+---
+
+## Operator credential repair (CLI)
+
+When nobody can sign in to fix an account through a screen, an operator sets the credentials from the command line. `--user` takes a `login_users.id` or the current email address, exactly as `rsx:users:2fa:*` and `rsx:users:sso:*` do.
+
+- `rsx:users:password:set --user=<id|email>` prompts twice with no echo; `--password-stdin` reads the first line of stdin for a script; `--password=` works but lands in shell history and the process list. It **ends every session of the identity** unless `--keep-sessions`, and enforces no policy beyond "not empty".
+- `rsx:users:email:set --user=<id|email> --email=<new>` moves the sign-in address and every membership (`users` row, any site, trashed included) that showed the OLD address, refusing an address any other identity holds - a soft-deleted one included.
+
+Never write a one-off script or raw SQL for either: a hand-written `UPDATE login_users SET password` skips the session termination, and a hand-moved email leaves the memberships behind. Contract and error codes: `rsx:man auth` (OPERATOR COMMANDS).
 
 ---
 

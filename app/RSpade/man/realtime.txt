@@ -144,8 +144,11 @@ SETUP
             (see AUTO-RECONNECT / STALE-RECONNECT RELOAD).
 
     Dev-mode hostname guard: in development mode (RSX_MODE=development), every
-    web request verifies that the browsed request host matches the APP_URL host
-    declared in .env, and fatals loudly on a mismatch, naming both hosts. This
+    web request verifies that the browsed request host matches a host declared
+    in .env - the APP_URL host, or PORTAL_URL's host when the client portal has
+    a host of its own (rsx:man portal, PORTAL URL) - and fatals loudly on a
+    mismatch, naming the request host and every declared host. Hosts compare
+    exactly (a sub-host does not match) and without ports. This
     catches a pasted .env pointing at another instance (silent dead realtime
     otherwise, since the relay URL is derived from the host). Loopback REQUESTS
     (localhost / 127.* / ::1) are exempt; a loopback-VALUED APP_URL is NOT
@@ -1232,9 +1235,11 @@ SESSION REFRESH PUSH
        only push on an actual change). Wired at the explicit mutation points:
        Session::set_login_user_id() / set_site_id() / logout() and
        Portal_Session::set_portal_user_id() / logout(). Web impersonation
-       begin/stop inherit it (they delegate to set_login_user_id). Portal
-       claim_impersonation() deliberately does NOT push (the claiming browser is
-       already navigating to the new session).
+       begin/stop inherit it (they delegate to set_login_user_id). Starting a
+       portal "View as Client" (Session::_apply_portal_impersonation(), behind
+       Portal_Session::begin_impersonation_from_staff() and the linked-session
+       handshake) deliberately does NOT push: the browser that asked is already
+       navigating to the impersonated portal.
 
     2. USER RECORD. When a staff user's record changes an identity-affecting
        field (first_name, last_name, role_id, is_enabled) or is soft-deleted, or

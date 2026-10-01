@@ -270,7 +270,7 @@ class Rsx_External_Resources {
             + '  Declare the resource in a *.externals.php file beside the feature that needs it,\n'
             + "  then load it by identifier with Rsx.load_external('<identifier>').\n"
             + '  See: php artisan rsx:man external_resources\n'
-            + '  This violation was also reported to /_csp-report.'
+            + '  This violation was also recorded in storage/logs/csp_violations.log.'
         );
     }
 }

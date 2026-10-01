@@ -755,13 +755,26 @@ HTTP ENDPOINTS
         GET  /_download_zip/:key                             Stream a ZIP set
         GET  /_thumbnail/dynamic/:key/:type/:width/:height?  Dynamic thumbnail
         GET  /_thumbnail/preset/:key/:preset_name            Preset thumbnail
-        GET  /_icon_by_extension/:extension                  File-type icon (both realms)
+        GET  /_icon_by_extension/:extension                  File-type icon
+
+    BOTH REALMS. Every route above is declared #[Route] AND #[Portal_Route] on
+    the same handler (so is /_preview/*, in File_Preview_Controller). A portal
+    page requests them under the portal's own address - <portal prefix>/_download
+    /..., the bare path at the root of a portal host of its own - so they are
+    dispatched, CSRF-checked and authorized as PORTAL requests. Never build one
+    of these URLs by hand: the framework builders (the attachment's URL
+    helpers, <Attachment_Thumbnail>, <Document_Preview>, Ajax.upload()) go
+    through Rsx_Portal::internal_url() / Rsx_Portal.internal_url(), which
+    rebase a path onto the current request's realm (rsx:man portal, INTERNAL
+    ENDPOINTS).
 
     EVERY ONE OF THESE EXCEPT /_icon_by_extension ALSO ACCEPTS AN API KEY.
     Authorization: Bearer rsx_... authenticates the request exactly as a session
     cookie would, so an integration reaches bytes with no browser (/_preview/pdf,
     in File_Preview_Controller, likewise). A bad Bearer is a 401 - it never
-    degrades to anonymous; no Bearer at all is still anonymous as before.
+    degrades to anonymous; no Bearer at all is still anonymous as before. The
+    key is a STAFF credential: a Bearer on a PORTAL-realm file route answers the
+    API's 404 not_found (rsx:man external_api).
 
     And the external REST API adds three of its own (Files_Api_Controller):
 
@@ -1258,9 +1271,9 @@ FILE TYPE ICONS
     of currentColor.
 
     BOTH REALMS. The route is declared as #[Route] and #[Portal_Route] on the
-    one handler, public, so a portal on its own domain - where the staff route
-    table is never consulted - serves its icons too. On a prefix-mode portal
-    it answers at the bare path and under the portal prefix alike.
+    one handler, public, so a portal on its own host - where the staff route
+    table is never consulted - serves its icons too. On the application host it
+    answers at the bare path and under the portal prefix alike.
 
     NEVER IMAGEMAGICK FOR SVG. The colour PNGs are the only icons ImageMagick
     reads. The outline SVGs are framework-owned files served verbatim and
@@ -1326,6 +1339,13 @@ SECURITY HOOKS
 
     Hook data (view/download gates):
         {attachment: File_Attachment_Model, user: User|null, request: Request}
+
+    'user' is REALM-HONEST on every file route, exactly as on the upload gate:
+    the Portal_User_Model on a portal request, the staff User_Model otherwise,
+    null when that realm has nobody signed in - never the other realm's
+    identity riding the same session. A handler serving both realms reads
+    $data['user'] (or Rsx_Portal::is_portal_request()) rather than a facade:
+    Session::get_user() on a portal request is the staff side of the session.
 
     Public thumbnails, authenticated downloads:
 

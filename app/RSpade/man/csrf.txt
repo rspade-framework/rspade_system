@@ -80,7 +80,8 @@ ENFORCEMENT POINT
     page - the application's own /error/419 when it declares one, the
     framework's page otherwise (rsx:man error_pages). The portal channel
     is the same path under the portal base (<portal-prefix>/_ajax/..., or
-    /_ajax/... on a portal domain); the path test matches both spellings.
+    /_ajax/... at the root of a portal host of its own - rsx:man portal); the
+    path test matches both spellings.
 
     The rejection is an already-rendered response carried by an
     HttpResponseException, and Rsx_Exception_Handler honors that exception

@@ -184,6 +184,7 @@ FRAMEWORK INVENTORY
         Pending Migrations          all
         Playwright / Chromium       development   rsx:debug refuses to run in
                                                   any other mode
+        Portal URL                  all
         Production Seal             debug, prod   there is no seal elsewhere
         Realtime Relay              all
         Redis Connectivity          all
@@ -257,6 +258,13 @@ FRAMEWORK INVENTORY
                                  read Sent or Suppressed, and nobody is told.
                                  Remediation: set APP_URL to the production hostname,
                                  then rsx:build --force.
+        Portal URL               where the client portal is served: the origin and
+                                 prefix derived from PORTAL_URL, and whether that
+                                 is the application host or a host of its own. FAIL
+                                 on exactly what refuses to boot (equal to APP_URL,
+                                 a scheme APP_URL's rule refuses, malformed, a prefix
+                                 claiming a framework path). OK with a note while
+                                 APP_URL is not configured yet. See rsx:man portal.
         Ignition Read-Only       Laravel's debug page cannot act: ignition's
                                  enable_runnable_solutions and enable_share_button
                                  are both false (system/config/ignition.php ships

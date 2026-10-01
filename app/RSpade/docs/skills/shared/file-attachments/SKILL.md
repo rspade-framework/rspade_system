@@ -88,7 +88,7 @@ if (str_starts_with((string) $data['mime_type'], 'image/') && @getimagesize($dat
 }
 ```
 
-`user` is **realm-honest**: a portal request reports the portal user, never a staff-facade read that would be null for a logged-in portal uploader. The fork is on the REALM OF THE REQUEST, not on who happens to be signed in.
+`user` is **realm-honest**: a portal request reports the portal user, never a staff-facade read that would be null for a logged-in portal uploader. The fork is on the REALM OF THE REQUEST, not on who happens to be signed in. The same holds for `file.thumbnail.authorize` and `file.download.authorize` on every file route - read `$data['user']`, never `Session::get_user()`, which on a portal request is the staff side of the same session.
 
 ---
 
@@ -181,6 +181,8 @@ $attachment->get_download_url();   // "/_download/{key}" - forces the download d
 ```
 
 Two different routes. There is no `?download=1` query parameter.
+
+**The URL builders are realm-aware.** Every file route (`/_inline`, `/_download`, `/_download_zip`, `/_thumbnail/*`, `/_preview/*`, `/_upload`, `/_icon_by_extension`) is declared in both route tables, and the builders rebase through `Rsx_Portal::internal_url()` / `Rsx_Portal.internal_url()`: on a portal request `get_url()` answers `<portal prefix>/_inline/{key}` (`/_portal/_inline/...` by default, the bare path at the root of a portal host of its own), so the bytes are fetched as a PORTAL request and the gates see the portal user. Build the URL in the request that renders it - never concatenate `/_inline/` yourself, and never ship a staff-built URL to a portal page.
 
 ```jqhtml
 <a href="<%= doc.download_url %>"><%= doc.file_name %></a>

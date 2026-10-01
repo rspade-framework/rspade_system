@@ -132,7 +132,7 @@ Worked examples: `reference_app/app/login/login_controller.php` (`passkey_login`
 
 ## The client portal
 
-`Rsx_Portal_Two_Factor` is the same API for portal users - TOTP, passkeys, recovery codes, the challenge, passwordless sign-in. What differs: credentials in `_portal_two_factor_credentials`; admission is `Portal_User_Model::can_login()` AND the site the app declared (`Portal_Session::set_site_id`) - a passkey of another tenant's portal user is refused; failures feed `Login_Throttle::record_failure()` directly (the portal has no login history); the rpId is the dedicated portal domain when configured; "View as Client" refuses enrollment and removal.
+`Rsx_Portal_Two_Factor` is the same API for portal users - TOTP, passkeys, recovery codes, the challenge, passwordless sign-in. What differs: credentials in `_portal_two_factor_credentials`; admission is `Portal_User_Model::can_login()` AND the site the app declared (`Portal_Session::set_site_id`) - a passkey of another tenant's portal user is refused; failures feed `Login_Throttle::record_failure()` directly (the portal has no login history); the rpId is the portal's HOST when `PORTAL_URL` gives it one of its own (the application host otherwise; a prefix never enters it), so moving the portal to another host strands passkeys enrolled under the old one; "View as Client" refuses enrollment and removal.
 
 **The realms never cross.** Separate tables, separate session keys, `'portal-<id>'` user handles: a staff passkey signs nobody in on the portal and the reverse. Handing a `Login_User_Model` to `Rsx_Portal_Two_Factor` (or the reverse) throws.
 

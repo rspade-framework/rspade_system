@@ -51,6 +51,8 @@ The safety-check override prohibition (shared conduct fragment) applies to this 
 
 **NEVER restart PHP/Nginx** - OPcache is disabled on this box.
 
+**The cache services may be restarted whenever useful, without asking** (owner authorization, 2026-10-01): the full-page-cache proxy (`fpc-proxy`) and Redis, via `supervisorctl -s unix:///var/run/supervisor.sock restart <program>` (the conf's own serverurl points at a missing socket). rsx-lockd is NOT a cache service - restarting it drops every held lock and still needs the owner's approval.
+
 ### Framework-only references
 
 - `rsx:man code_quality` (rule-catalog architecture), `rsx:man manifest_api`, `rsx:man manifest_build`, `rsx:man ast_sourcecode_parsers`, `rsx:man vs_code_extension` exist HERE only - publish strips them from releases; never point a shared fragment or skill at them.

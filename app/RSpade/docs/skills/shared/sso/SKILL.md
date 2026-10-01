@@ -176,11 +176,12 @@ Microsoft asserts no `email_verified`, so on such a portal Microsoft connects th
 
 ```
 https://<APP_URL host>/_sso/<provider key>/callback               staff
-https://<APP_URL host>/_portal/_sso/<provider key>/callback       portal, prefix mode
-https://<portal domain>/_sso/<provider key>/callback              portal, rsx.portal.domain
+<portal origin><portal prefix>/_sso/<provider key>/callback       portal
+  https://<APP_URL host>/_portal/_sso/google/callback               PORTAL_URL blank (default)
+  https://portal.myapp.com/_sso/google/callback                     PORTAL_URL=https://portal.myapp.com/
 ```
 
-`Rsx_Sso::callback_url($key)` / `Rsx_Portal_Sso::callback_url($key)` print the exact string.
+`Rsx_Sso::callback_url($key)` / `Rsx_Portal_Sso::callback_url($key)` print the exact string. The portal URI derives from `PORTAL_URL` (`rsx:man portal`), so **changing `PORTAL_URL` means re-registering the portal URI in every provider console** (`rsx:man prelaunch_checklist`, ENTRY 16).
 
 Matched exactly by providers. Apple's `client_id` is the **Services ID** (`com.example.web`), never a bundle id, and takes three more credentials because its client secret is an ES256 JWT minted offline per exchange.
 

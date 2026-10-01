@@ -7,35 +7,35 @@
  * route generation and portal context detection.
  *
  * Key differences from Rsx:
- * - Route() prepends portal domain/prefix
+ * - Route() applies the portal's address: its prefix, and its origin when this page is
+ *   not on the portal's host
  * - Portal-specific context detection
  * - Simpler (no event system, fewer utilities)
+ *
+ * The portal's address is the server's derivation of PORTAL_URL (PHP Rsx_Portal_Url),
+ * shipped in every bundle as window.rsxapp.portal {origin, prefix, separate_host} and read
+ * through origin() / host() / prefix() / is_separate_host().
  *
  * Usage Examples:
  * ```javascript
  * // Check if in portal context
  * if (Rsx_Portal.is_portal()) { ... }
  *
- * // Route generation (applies portal prefix/domain)
+ * // Route generation (applies the portal's prefix, and origin when needed)
  * const url = Rsx_Portal.Route('Portal_Dashboard_Action');
- * // Development: /_portal/dashboard
- * // Production: /dashboard (on portal domain)
+ * // Default PORTAL_URL: /_portal/dashboard
+ * // PORTAL_URL=https://portal.example.com/ from a staff page:
+ * //   https://portal.example.com/dashboard  (on the portal host: /dashboard)
  *
  * // Route with parameters
  * const url = Rsx_Portal.Route('Portal_Project_View_Action', 123);
- * // Development: /_portal/projects/123
+ * // Default PORTAL_URL: /_portal/projects/123
  * ```
  *
  * @static
  * @global
  */
 class Rsx_Portal {
-    /**
-     * URL prefix for portal when no dedicated domain configured
-     * Must match PHP Rsx_Portal::URL_PREFIX
-     */
-    static URL_PREFIX = '/_portal';
-
     /**
      * Storage for portal route definitions loaded from bundles
      */
@@ -51,30 +51,97 @@ class Rsx_Portal {
     // =========================================================================
 
     /**
-     * Get the configured portal domain
+     * scheme://host[:port] the portal is served on ('' before APP_URL is configured).
      *
-     * @returns {string|null} Domain if configured, null otherwise
+     * @returns {string}
      */
-    static get_domain() {
-        return window.rsxapp?.portal?.domain || null;
+    static origin() {
+        return window.rsxapp.portal.origin;
     }
 
     /**
-     * Get the portal URL prefix (used when no domain configured)
+     * The portal's host, lowercased, without a port ('' before APP_URL is configured).
      *
-     * @returns {string} The prefix, defaults to '/_portal'
+     * @returns {string}
      */
-    static get_prefix() {
-        return window.rsxapp?.portal?.prefix || Rsx_Portal.URL_PREFIX;
+    static host() {
+        const origin = Rsx_Portal.origin();
+
+        return origin === '' ? '' : new URL(origin).hostname.toLowerCase();
     }
 
     /**
-     * Check if portal is using a dedicated domain (vs URL prefix)
+     * The path the portal lives under on its host: '' or '/seg[/seg]', no trailing slash.
      *
-     * @returns {boolean} True if dedicated domain is configured
+     * @returns {string}
      */
-    static has_dedicated_domain() {
-        return !!Rsx_Portal.get_domain();
+    static prefix() {
+        return window.rsxapp.portal.prefix;
+    }
+
+    /**
+     * True when the portal is served on a host other than the application's.
+     *
+     * @returns {boolean}
+     */
+    static is_separate_host() {
+        return window.rsxapp.portal.separate_host === true;
+    }
+
+    /**
+     * Whether a path (a query string or fragment may follow) is under the portal's prefix.
+     * An empty prefix contains every path. Mirror of PHP Rsx_Portal::is_under_prefix().
+     *
+     * @param {string} path
+     * @returns {boolean}
+     */
+    static is_under_prefix(path) {
+        const prefix = Rsx_Portal.prefix();
+
+        if (prefix === '' || path === prefix) {
+            return true;
+        }
+
+        if (!path.startsWith(prefix)) {
+            return false;
+        }
+
+        return ['/', '?', '#'].includes(path.charAt(prefix.length));
+    }
+
+    /**
+     * A path with the portal's prefix removed - the path INSIDE the portal. Unchanged when
+     * the portal has no prefix or the path is not under it. Mirror of PHP
+     * Rsx_Portal::strip_prefix().
+     *
+     * @param {string} path
+     * @returns {string}
+     */
+    static strip_prefix(path) {
+        const prefix = Rsx_Portal.prefix();
+
+        if (prefix === '' || !Rsx_Portal.is_under_prefix(path)) {
+            return path;
+        }
+
+        const remainder = path.slice(prefix.length);
+
+        return remainder === '' || remainder.charAt(0) !== '/' ? '/' + remainder : remainder;
+    }
+
+    /**
+     * Whether a portal URL built here can be a host-relative path: always when the portal
+     * shares the application's host, otherwise only on a page served from the portal's
+     * host. Mirror of PHP Rsx_Portal::is_on_portal_host().
+     *
+     * @returns {boolean}
+     */
+    static is_on_portal_host() {
+        if (!Rsx_Portal.is_separate_host()) {
+            return true;
+        }
+
+        return window.location.hostname.toLowerCase() === Rsx_Portal.host();
     }
 
     // =========================================================================
@@ -135,19 +202,21 @@ class Rsx_Portal {
     // =========================================================================
 
     /**
-     * Rebase a framework INTERNAL endpoint path (/_ajax/..., /_ajax/_batch,
-     * /_upload) onto the base the current page is served under.
+     * Rebase a framework INTERNAL endpoint path (/_ajax/..., /_ajax/_batch, /_upload,
+     * and the file routes /_thumbnail/..., /_inline/..., /_download/..., /_preview/...,
+     * /_icon_by_extension/...) onto the base the current page is served under. The PHP
+     * twin is Rsx_Portal::internal_url().
      *
      * The framework serves each internal endpoint on BOTH channels: the staff
      * dispatcher answers the bare path in the staff realm, and under the portal's own
-     * base in the portal realm. Which one a page must call is decided entirely by the page
-     * itself, using the same two facts Rsx_Portal.Route() uses:
+     * prefix in the portal realm. Which one a page must call is decided by the page:
      *
-     *   staff page                -> unchanged  (/_ajax/Foo/bar)
-     *   portal page, domain mode  -> unchanged  (the portal HOST is already the
-     *                                            portal realm; adding the prefix
-     *                                            would produce a doubled portal path)
-     *   portal page, prefix mode  -> prefixed   (/_portal/_ajax/Foo/bar)
+     *   staff page   -> unchanged                (/_ajax/Foo/bar)
+     *   portal page  -> under the portal prefix  (/_portal/_ajax/Foo/bar by default;
+     *                                             unchanged when the portal is at the
+     *                                             root of its own host)
+     *
+     * A portal page is always on the portal's host, so the result is a path.
      *
      * Calling the bare path from a portal page is what made portal Ajax a STAFF
      * request: the portal session's realm, CSRF token and portal_fetch() contract
@@ -162,7 +231,7 @@ class Rsx_Portal {
             return path;
         }
 
-        return Rsx_Portal._apply_portal_base(path);
+        return Rsx_Portal.prefix() + path;
     }
 
     // =========================================================================
@@ -173,26 +242,27 @@ class Rsx_Portal {
      * Generate URL for a portal route
      *
      * Similar to Rsx.Route() but:
-     * - Returns URLs with portal domain or prefix
+     * - Returns URLs under the portal's prefix, and on the portal's origin when this page
+     *   is not on the portal's host (is_on_portal_host())
      * - Only works with portal routes
      *
      * Usage examples:
      * ```javascript
      * // Portal action route
      * const url = Rsx_Portal.Route('Portal_Dashboard_Action');
-     * // Development: /_portal/dashboard
+     * // Default PORTAL_URL: /_portal/dashboard
      *
      * // Route with integer parameter (sets 'id')
      * const url = Rsx_Portal.Route('Portal_Project_View_Action', 123);
-     * // Development: /_portal/projects/123
+     * // Default PORTAL_URL: /_portal/projects/123
      *
      * // Route with named parameters
      * const url = Rsx_Portal.Route('Portal_Project_View_Action', {id: 123, tab: 'files'});
-     * // Development: /_portal/projects/123?tab=files
+     * // Default PORTAL_URL: /_portal/projects/123?tab=files
      *
      * // Hash state (the fragment Rsx.url_hash_get() reads back)
      * const url = Rsx_Portal.Route('Portal_Project_View_Action', 123, {tab: 'files'});
-     * // Development: /_portal/projects/123#tab=files
+     * // Default PORTAL_URL: /_portal/projects/123#tab=files
      *
      * // Placeholder route
      * const url = Rsx_Portal.Route('Future_Portal_Feature::#index');
@@ -202,7 +272,7 @@ class Rsx_Portal {
      * @param {string} action Controller class, SPA action, or "Class::method"
      * @param {number|Object} [params=null] Route parameters
      * @param {Object} [hash=null] Fragment state, as Rsx.Route() takes it
-     * @returns {string} The generated URL (includes portal prefix in dev mode)
+     * @returns {string} A path, or an absolute URL when this page is not on the portal host
      */
     static Route(action, params = null, hash = null) {
         if (typeof action !== 'string') {
@@ -266,26 +336,25 @@ class Rsx_Portal {
         // (rsx:man anchors) and the hash state behave identically in both realms.
         const path = Rsx._generate_url_from_pattern(pattern, params_obj, hash);
 
-        // Apply portal prefix (in dev mode) or return as-is (domain mode)
         return Rsx_Portal._apply_portal_base(path);
     }
 
     /**
-     * Apply portal domain or prefix to a path
+     * Place a portal-namespace path at the portal's address: prefix + path, on the portal's
+     * origin unless is_on_portal_host(). Mirror of PHP Rsx_Portal::_apply_portal_base().
      *
-     * @param {string} path The route path (e.g., '/dashboard')
-     * @returns {string} Path with portal prefix (dev) or plain path (domain mode)
+     * @param {string} path The path inside the portal (e.g., '/dashboard')
+     * @returns {string}
      * @private
      */
     static _apply_portal_base(path) {
-        // If using dedicated domain, path is relative to that domain
-        if (Rsx_Portal.has_dedicated_domain()) {
-            return path;
+        const prefixed = Rsx_Portal.prefix() + path;
+
+        if (Rsx_Portal.is_on_portal_host()) {
+            return prefixed;
         }
 
-        // Development mode: prepend prefix
-        const prefix = Rsx_Portal.get_prefix();
-        return prefix + path;
+        return Rsx_Portal.origin() + prefixed;
     }
 
     /**

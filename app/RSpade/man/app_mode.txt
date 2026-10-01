@@ -308,7 +308,7 @@ DETERMINISM CONTRACT
        committed node_modules.
 
     Bonus: because build_key is content-derived and stable across checkouts,
-    the full-page cache keys (fpc:{build_key}:{...}) are cluster-shareable -
+    the full-page cache keys (fpc:{build_key}:{host}:{...}) are cluster-shareable -
     two nodes on the same build hit the same FPC entries.
 
 GUARDS

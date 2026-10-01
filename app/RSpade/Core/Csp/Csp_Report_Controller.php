@@ -31,10 +31,11 @@ use App\RSpade\Core\Time\Rsx_Time;
  * also recorded here, so the log is how a blocked resource is diagnosed - `tail -f` it while
  * adding a widget. NO TABLE IN v1: triage is `tail`/`jq` over the file, not application data.
  *
- * DEPLOYMENT NOTE: the path is served by the STAFF dispatcher. With the default prefix-based
- * portal detection a portal page posts here fine (/_csp-report is not under the portal
- * prefix). An install serving its portal from a SEPARATE DOMAIN would need the same path
- * routed there too; no such install exists today.
+ * BOTH REALMS: the route is declared #[Route] and #[Portal_Route] on this one handler. A
+ * portal page's policy names the portal's own collector (Rsx_Csp::report_path('portal') - the
+ * path under the portal prefix, or the bare path at the root of the portal's own host), so a
+ * portal page's reports reach this collector on whichever host and prefix PORTAL_URL places
+ * the portal. Rsx_Csrf exempts both paths.
  *
  * See: php artisan rsx:man csp
  */
@@ -71,6 +72,7 @@ class Csp_Report_Controller extends Rsx_Controller_Abstract
      * @return \Symfony\Component\HttpFoundation\Response
      */
     #[Route('/_csp-report', methods: ['POST'])]
+    #[Portal_Route('/_csp-report', methods: ['POST'])]
     #[Auth('public')]
     public static function report(Request $request, array $params = [])
     {

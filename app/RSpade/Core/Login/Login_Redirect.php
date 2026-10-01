@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Dispatch\Dispatcher;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 
 /**
  * Login_Redirect - intended-URL ("return to the page I was trying to visit")
@@ -38,13 +39,13 @@ use App\RSpade\Core\Portal\Rsx_Portal;
  * PORTAL CONTEXT SENSITIVITY:
  * The same four calls serve the staff app and the client portal unchanged. The
  * class reads Rsx_Portal::is_portal_request() and adapts its page-path and
- * loop-prevention rules to the active context. In portal prefix mode (no
- * dedicated portal domain) a return target must live under the portal prefix
- * (config('rsx.portal.prefix')); the prefix is stripped before the base non-page
- * and exclusion rules apply. In portal domain mode portal paths are unprefixed
- * and the base rules apply directly. Staff and portal targets are isolated in
- * both directions: a staff redirect can never point under the portal prefix, and
- * a portal redirect can never point outside it. Portal exclusions come from
+ * loop-prevention rules to the active context. In portal context a return target
+ * must live under the portal's prefix (Rsx_Portal_Url::prefix(); an empty prefix -
+ * the portal at the root of its own host - contains every path), and the prefix is
+ * stripped before the base non-page and exclusion rules apply. Staff and portal
+ * targets are isolated in both directions: a staff redirect can never point under
+ * a same-host portal prefix (whatever its spelling - the '/_' rule alone would not
+ * cover a prefix like /clients), and a portal redirect can never point outside it. Portal exclusions come from
  * config('rsx.login_redirect.portal_excluded_prefixes'), expressed in
  * portal-namespace (unprefixed) terms.
  *
@@ -80,7 +81,7 @@ class Login_Redirect
      * internal / asset / Ajax-endpoint routes (/_...), external API routes
      * (/api/...), and any excluded login-flow route (loop prevention). The
      * page-path and exclusion rules are context-aware: in a portal request the
-     * portal prefix is a page namespace (prefix mode) and the portal exclusion
+     * portal prefix is a page namespace and the portal exclusion
      * list applies - see _is_non_page_path_in_context() / _excluded_prefixes().
      *
      * Usage in an app's main.php:
@@ -107,7 +108,7 @@ class Login_Redirect
 
         // Framework-internal, asset, Ajax-endpoint (/_...) and external API
         // (/api/...) routes are never legitimate return targets. Context-aware:
-        // in portal prefix mode the portal prefix is a page namespace, so
+        // in portal context the portal prefix is a page namespace, so
         // <prefix>/... is a legitimate target while the portal's own non-page
         // sub-paths (<prefix>/_..., <prefix>/api/...) stay rejected.
         if (static::_is_non_page_path_in_context($path)) {
@@ -169,58 +170,46 @@ class Login_Redirect
 
     /**
      * Context-aware page-path predicate. Wraps the base rules with the portal
-     * namespace rule when the current request is a portal request:
+     * namespace rule:
      *
-     *   - staff context: the base rules apply to $path directly.
-     *   - portal domain mode: portal paths are unprefixed; base rules apply
-     *     directly.
-     *   - portal prefix mode: $path MUST be exactly the portal prefix or start
-     *     with prefix + '/' (anything else is not a portal page - reject). The
-     *     prefix is stripped and the base rules apply to the remainder (empty
-     *     remainder counts as '/'), so <prefix>/_... and <prefix>/api/... reject
-     *     while <prefix>/page passes.
+     *   - staff context: a path under the portal's prefix on the application host
+     *     (a same-host portal) is the portal's, never a staff target; otherwise the
+     *     base rules apply to $path directly.
+     *   - portal context: $path MUST be under the portal prefix (an empty prefix
+     *     contains every path). The prefix is stripped and the base rules apply to
+     *     the remainder, so <prefix>/_... and <prefix>/api/... reject while
+     *     <prefix>/page passes.
      */
     private static function _is_non_page_path_in_context(string $path): bool
     {
-        if (!Rsx_Portal::is_portal_request() || Rsx_Portal::has_dedicated_domain()) {
+        if (!Rsx_Portal::is_portal_request()) {
+            if (!Rsx_Portal_Url::is_separate_host() && Rsx_Portal::is_under_prefix($path)) {
+                return true;
+            }
+
             return static::_is_non_page_path($path);
         }
 
-        // Portal prefix mode: the target must live under the portal prefix.
-        $prefix = Rsx_Portal::get_prefix();
-        if ($path !== $prefix && !str_starts_with($path, $prefix . '/')) {
+        if (!Rsx_Portal::is_under_prefix($path)) {
             return true;
         }
 
-        $remainder = substr($path, strlen($prefix));
-        if ($remainder === '') {
-            $remainder = '/';
-        }
-
-        return static::_is_non_page_path($remainder);
+        return static::_is_non_page_path(Rsx_Portal::strip_prefix($path));
     }
 
     /**
-     * The portal-namespace-relative path used for exclusion matching. In portal
-     * prefix mode the portal prefix is stripped (empty remainder counts as '/');
-     * in every other context the path is returned unchanged. Callers reach this
-     * only after _is_non_page_path_in_context() has confirmed the path is a valid
-     * page path, so in prefix mode the prefix is guaranteed present.
+     * The portal-namespace-relative path used for exclusion matching: the portal
+     * prefix stripped in portal context, the path unchanged in staff context.
+     * Callers reach this only after _is_non_page_path_in_context() has confirmed
+     * the path is a valid page path.
      */
     private static function _namespace_path(string $path): string
     {
-        if (!Rsx_Portal::is_portal_request() || Rsx_Portal::has_dedicated_domain()) {
+        if (!Rsx_Portal::is_portal_request()) {
             return $path;
         }
 
-        $prefix = Rsx_Portal::get_prefix();
-        if (!str_starts_with($path, $prefix)) {
-            return $path;
-        }
-
-        $remainder = substr($path, strlen($prefix));
-
-        return $remainder === '' ? '/' : $remainder;
+        return Rsx_Portal::strip_prefix($path);
     }
 
     /**
@@ -319,7 +308,7 @@ class Login_Redirect
         }
 
         // Loop prevention: reject targets that are themselves login-flow routes.
-        // The exclusion list is namespace-relative, so in portal prefix mode the
+        // The exclusion list is namespace-relative, so in portal context the
         // portal prefix is stripped before the comparison.
         $namespace_path = static::_namespace_path($path_only);
         foreach (static::_excluded_prefixes() as $prefix) {

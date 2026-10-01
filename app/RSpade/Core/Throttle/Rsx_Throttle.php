@@ -28,7 +28,7 @@ use App\RSpade\Core\Session\Session;
  * The throttle key is (site_id, user_id, action_key). The SITE half is resolved from
  * the EXPERIENCE of the request (see __current_site_id), so a portal caller is throttled
  * within the portal's tenant rather than collapsing every tenant onto the staff session's
- * site - which, in portal domain mode, is site 0 for everyone.
+ * site - which, for a portal on its own host, is site 0 for everyone.
  *
  * The IDENTITY half is NOT realm-aware, and cannot be until a portal caller exists:
  * $user_id is documented as a LOGIN user id, and the portal realm has no login user - a

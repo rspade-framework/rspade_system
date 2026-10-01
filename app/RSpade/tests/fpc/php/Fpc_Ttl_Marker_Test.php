@@ -150,35 +150,4 @@ class Fpc_Ttl_Marker_Test extends Rsx_Test_Abstract
         static::__assert_equals(0, $exit, 'a page that was not cached is the state the operator wanted');
         static::__assert_contains(Fpc_Ttl_Fixture_Controller::TTL_PATH, $output, 'it names the page');
     }
-
-    public static function test_clearing_removes_the_entry_the_proxy_would_have_written()
-    {
-        // The key format is a CONTRACT between this class and the Node proxy, so the test
-        // writes an entry the proxy's own key derivation would produce and then clears it
-        // through the command an operator types.
-        $path = '/test-fpc/ttl';
-        $key = 'fpc:' . Manifest::get_build_key() . ':' . sha1($path);
-
-        $redis = new \Redis();
-        $redis->connect((string) env('REDIS_HOST', '127.0.0.1'), (int) env('REDIS_PORT', 6379), 2.0);
-
-        $password = env('REDIS_PASSWORD');
-        if ($password && $password !== 'null') {
-            $redis->auth($password);
-        }
-
-        $redis->select(2);
-
-        try {
-            $redis->set($key, json_encode(['html' => 'x']));
-
-            static::__assert_true((bool) $redis->exists($key), 'the entry is there to begin with');
-
-            Artisan::call('rsx:fpc:clear', ['--url' => $path]);
-
-            static::__assert_false((bool) $redis->exists($key), 'and the command removed it');
-        } finally {
-            $redis->del($key);
-        }
-    }
 }

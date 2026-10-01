@@ -2,8 +2,8 @@
 
 Full catalog of tests worth having for `Login_Redirect` (implemented and deferred).
 Implemented tests live in `php/Login_Redirect_Test.php` (staff-context validator +
-wiring calls) and `php/Login_Redirect_Portal_Test.php` (portal-context behavior,
-prefix + domain modes, cross-context isolation, config override). No database.
+wiring calls) and `php/Login_Redirect_Portal_Test.php` (portal-context behavior
+across PORTAL_URL layouts, cross-context isolation, config override). No database.
 
 ROUTABLE TARGETS ARE THIS CONCERN'S OWN. The validator's last gate is route
 registration and it rejects every `/_`-prefixed path, which is every route the framework
@@ -48,19 +48,19 @@ while the suite runs.
 | LR-31 | Logout degrades a hostile `?redirect=` over HTTP | http | GET `/logout?redirect=https://evil.example` | 302 to login default | deferred (live-server) | 2026-07-23 |
 | LR-32 | Validator rejects Ajax-endpoint path via params() (closed asymmetry) | php | `/_ajax/Foo_Controller/bar` | `[]` | implemented | 2026-07-23 |
 | LR-33 | Validator rejects API path via params() (closed asymmetry) | php | `/api/v1/me` | `[]` | implemented | 2026-09-08 |
-| LR-34 | capture() returns a prefix-mode portal page target | php | portal ctx, GET `/_portal/workspace/5` | `['redirect'=>'/_portal/workspace/5']` | implemented | 2026-07-23 |
+| LR-34 | capture() returns a portal page target under the default prefix | php | portal ctx, GET `/_portal/workspace/5` | `['redirect'=>'/_portal/workspace/5']` | implemented | 2026-07-23 |
 | LR-35 | capture() excludes the portal login route | php | portal ctx, GET `/_portal/login` | `[]` | implemented | 2026-07-23 |
-| LR-36 | params() accepts a prefix-mode portal page | php | portal ctx, `/_portal/workspace/5` | value | implemented | 2026-07-23 |
+| LR-36 | params() accepts a portal page under the default prefix | php | portal ctx, `/_portal/workspace/5` | value | implemented | 2026-07-23 |
 | LR-37 | params() rejects a non-prefix path in portal ctx | php | portal ctx, `/login` | `[]` | implemented | 2026-07-23 |
 | LR-38 | params() rejects portal login (exclusion) | php | portal ctx, `/_portal/login` | `[]` | implemented | 2026-07-23 |
 | LR-39 | params() rejects portal register (exclusion) | php | portal ctx, `/_portal/register` | `[]` | implemented | 2026-07-23 |
 | LR-40 | params() rejects portal password reset (exclusion) | php | portal ctx, `/_portal/password/reset` | `[]` | implemented | 2026-07-23 |
-| LR-41 | params() rejects portal impersonate subpath (exclusion) | php | portal ctx, `/_portal/impersonate/claim` | `[]` | implemented | 2026-07-23 |
+| LR-41 | params() rejects portal impersonate subpath (exclusion) | php | portal ctx, `/_portal/impersonate/stop` | `[]` | implemented | 2026-10-01 |
 | LR-42 | params() rejects portal non-page remainder (/_ajax) | php | portal ctx, `/_portal/_ajax/anything` | `[]` | implemented | 2026-07-23 |
 | LR-43 | params() rejects portal non-page remainder (/api) | php | portal ctx, `/_portal/api/v1/x` | `[]` | implemented | 2026-07-23 |
-| LR-44 | params() accepts unprefixed page in domain mode | php | portal domain ctx, `/workspace/5` | value | implemented | 2026-07-23 |
-| LR-45 | params() rejects login in domain mode (exclusion) | php | portal domain ctx, `/login` | `[]` | implemented | 2026-07-23 |
-| LR-46 | params() rejects register in domain mode (exclusion) | php | portal domain ctx, `/register` | `[]` | implemented | 2026-07-23 |
+| LR-44 | params() accepts unprefixed page on a portal host of its own | php | `rsx.portal.url` = own host, no prefix, `/workspace/5` | value | implemented | 2026-07-23 |
+| LR-45 | params() rejects login on a portal host of its own (exclusion) | php | `rsx.portal.url` = own host, no prefix, `/login` | `[]` | implemented | 2026-07-23 |
+| LR-46 | params() rejects register on a portal host of its own (exclusion) | php | `rsx.portal.url` = own host, no prefix, `/register` | `[]` | implemented | 2026-07-23 |
 | LR-47 | Staff ctx rejects a portal-prefix target (isolation) | php | staff ctx, `/_portal/workspace/5` | `[]` | implemented | 2026-07-23 |
 | LR-48 | Staff ctx rejects a non-page path via params() (asymmetry) | php | staff ctx, `/_ajax/foo` | `[]` | implemented | 2026-07-23 |
 | LR-49 | portal_excluded_prefixes config override honored | php | portal ctx, list `['/custom']` | `/custom` rejected, `/login` accepted | implemented | 2026-07-23 |
@@ -82,6 +82,9 @@ while the suite runs.
 | LR-65 | Portal root WITH a query kept via params() | php | portal ctx, `/_portal?tab=activity` | `['redirect'=>'/_portal?tab=activity']` | implemented | 2026-08-03 |
 | LR-66 | Routability gate resolves against the PORTAL table (registered target kept) | php | portal ctx, the portal fixture page under the prefix | value | implemented | 2026-09-08 |
 | LR-67 | Routability gate: an unroutable portal-prefix target dropped | php | portal ctx, an under-prefix path with no registered portal route | `[]` | deferred (this template registers a portal `/*` catch-all - Portal_Spa_Controller - so every under-prefix path resolves and the portal rejection branch is un-triggerable HERE, though an application without one would trigger it. Staff-side rejection proven by LR-59; portal ACCEPT branch by LR-66) | 2026-09-08 |
+| LR-68 | A prefixed portal host requires its prefix | php | `rsx.portal.url` = own host + `/x`, portal ctx | `/x/<page>` kept; the unprefixed page and `/x/login` `[]` | implemented | 2026-10-01 |
+| LR-69 | Staff ctx rejects a target under a same-host prefix that does not start with `_` | php | `rsx.portal.url` = APP_URL + `/test-login-redirect`, staff ctx, the staff fixture page | kept under the default URL, `[]` under that prefix | implemented | 2026-10-01 |
+| LR-70 | A separate-host portal's prefix names nothing on the staff host | php | `rsx.portal.url` = own host + `/test-login-redirect`, staff ctx, the staff fixture page | value | implemented | 2026-10-01 |
 
 ## Notes
 

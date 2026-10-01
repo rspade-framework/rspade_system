@@ -13,6 +13,7 @@ use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Sso\Portal_Sso_Identity_Model;
 use App\RSpade\Core\Sso\Rsx_Sso;
 use App\RSpade\Core\Sso\Rsx_Sso_Abstract;
@@ -32,8 +33,8 @@ use App\RSpade\Core\TwoFactor\Rsx_Portal_Two_Factor;
  *            on for staff must not quietly put a button on the client portal. With it off,
  *            enabled_providers() is empty and the ceremony refuses to start.
  *   URLs     the portal's own /_sso/<provider>/begin and /_sso/<provider>/callback
- *            (Rsx_Portal_Sso_Controller, #[Portal_Route]) - '/_portal/_sso/...' in prefix
- *            mode, '/_sso/...' on a dedicated portal domain. A ceremony must finish on the
+ *            (Rsx_Portal_Sso_Controller, #[Portal_Route]) - '<portal prefix>/_sso/...' on the
+ *            portal's host ('/_portal/_sso/...' by default). A ceremony must finish on the
  *            host whose cookie jar started it, so the portal callback is a SECOND redirect URI
  *            to register in each provider's console; callback_url() prints it.
  *   STORAGE  _portal_sso_identities, unique per (site_id, provider_key, provider_user_key):
@@ -78,30 +79,25 @@ class Rsx_Portal_Sso extends Rsx_Sso_Abstract
         return static::callback_path(Rsx_Sso::APPLE);
     }
 
+    /**
+     * The portal's SSO ceremony path ON THE PORTAL HOST: the portal prefix + /_sso.
+     */
     public static function base_path(): string
     {
-        return Rsx_Portal::portal_path(Rsx_Sso::BASE_PATH);
+        return Rsx_Portal_Url::prefix() . Rsx_Sso::BASE_PATH;
     }
 
     /**
-     * On a dedicated portal domain, the portal host under APP_URL's scheme; in prefix mode
-     * the application's own host.
+     * A portal-host path made absolute: on the portal's own origin when it has its own
+     * host, else on the application's (rsx_absolute_url()).
      */
     public static function absolute_url(string $path): string
     {
-        if (!Rsx_Portal::has_dedicated_domain()) {
+        if (!Rsx_Portal_Url::is_separate_host()) {
             return rsx_absolute_url($path);
         }
 
-        $domain = (string) Rsx_Portal::get_domain();
-
-        if (str_contains($domain, '://')) {
-            return rtrim($domain, '/') . $path;
-        }
-
-        $scheme = parse_url((string) config('app.url'), PHP_URL_SCHEME) ?: 'https';
-
-        return $scheme . '://' . $domain . $path;
+        return Rsx_Portal_Url::origin() . $path;
     }
 
     public static function _link_model(): string

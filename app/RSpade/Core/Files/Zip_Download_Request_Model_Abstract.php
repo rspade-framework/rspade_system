@@ -3,6 +3,7 @@
 namespace App\RSpade\Core\Files;
 
 use App\RSpade\Core\Database\Models\Rsx_System_Model_Abstract;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Time\Rsx_Time;
 
@@ -149,7 +150,7 @@ abstract class Zip_Download_Request_Model_Abstract extends Rsx_System_Model_Abst
      */
     public function get_download_url(): string
     {
-        return Rsx::Route('File_Attachment_Controller::download_multiple_zip', ['key' => $this->download_key]);
+        return Rsx_Portal::internal_url(Rsx::Route('File_Attachment_Controller::download_multiple_zip', ['key' => $this->download_key]));
     }
 
     /**

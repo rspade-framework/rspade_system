@@ -58,7 +58,7 @@ class Auth_Gates
     /**
      * The realm this request belongs to.
      *
-     * Portal requests (dedicated domain or the portal prefix) resolve check names
+     * Portal requests (Rsx_Portal::is_portal_request()) resolve check names
      * against Portal_Permission; everything else - including CLI - resolves against
      * Permission. This is the same detection the ORM endpoint uses to choose
      * between fetch() and portal_fetch().

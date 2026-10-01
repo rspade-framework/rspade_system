@@ -17,6 +17,8 @@ use App\RSpade\Core\Ide\Ide_Bridge_Token;
 use App\RSpade\Core\Models\Login_User_Model;
 use App\RSpade\Core\Paths\Rsx_Project_Paths;
 use App\RSpade\Core\Portal\Portal_User_Model;
+use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Time\Rsx_Time;
@@ -170,7 +172,7 @@ class Route_Debug_Command extends Command
         {--screenshot-width= : Screenshot width (px or preset: mobile, iphone-mobile, tablet, desktop-small, desktop-medium, desktop-large). Defaults to 1920}
         {--screenshot-path= : Path to save screenshot file (triggers screenshot capture, max height 5000px)}
         {--dump-dimensions= : Add data-dimensions attribute to elements matching selector (for layout debugging)}
-        {--portal : Test portal routes (uses /_portal/ prefix and portal authentication)}
+        {--portal : Test portal routes (browses the portal\'s address from PORTAL_URL, with portal authentication)}
         {--portal-user= : Test as specific portal user ID or email (requires --portal)}';
 
     /**
@@ -287,12 +289,11 @@ class Route_Debug_Command extends Command
             return 1;
         }
 
-        // Normalize URL for portal mode (strip /_portal/ prefix if present)
-        if ($portal_mode && str_starts_with($url, '/_portal')) {
-            $url = substr($url, 8); // Remove '/_portal'
-            if ($url === '' || $url === false) {
-                $url = '/';
-            }
+        // Normalize URL for portal mode: the path INSIDE the portal. A URL already carrying
+        // the portal's prefix ('/_portal/dashboard' by default) has it stripped; the browser
+        // script puts the prefix back on the portal's own address.
+        if ($portal_mode) {
+            $url = Rsx_Portal::strip_prefix($url);
         }
 
         // Get user ID from options (accepts ID or email)
@@ -450,8 +451,23 @@ class Route_Debug_Command extends Command
         // the signed request.
         $command_args = ['node', $playwright_script, $url . $url_fragment];
 
+        // The addresses to browse, DERIVED here and handed over: the script never reads
+        // .env, so APP_URL's $HOSTNAME and PORTAL_URL's derivation live in one place
+        // (Rsx_App_Url / Rsx_Portal_Url). Authorities keep a non-default port.
+        $app_authority = static::__authority((string) config('app.url'));
+        if ($app_authority !== '') {
+            $command_args[] = "--app-host={$app_authority}";
+        }
+
         if ($portal_mode) {
             $command_args[] = '--portal';
+
+            $portal_authority = static::__authority(Rsx_Portal_Url::origin());
+            if ($portal_authority !== '') {
+                $command_args[] = "--portal-host={$portal_authority}";
+            }
+
+            $command_args[] = '--portal-prefix=' . Rsx_Portal_Url::prefix();
         }
 
         if ($user_id) {
@@ -645,7 +661,8 @@ class Route_Debug_Command extends Command
         $this->line('  php artisan rsx:debug /dashboard --portal --portal-user=1');
         $this->line('                                                          # Test portal as user ID 1');
         $this->line('  php artisan rsx:debug /_portal/dashboard --portal --portal-user=1');
-        $this->line('                                                          # Same (/_portal/ prefix stripped)');
+        $this->line('                                                          # Same (the portal prefix is stripped)');
+        $this->line('                                                          # The portal is browsed at PORTAL_URL\'s host and prefix');
         $this->line('  php artisan rsx:debug /mail --portal --portal-user=client@example.com');
         $this->line('                                                          # Test portal as user by email');
         $this->line('');
@@ -829,5 +846,21 @@ class Route_Debug_Command extends Command
         }
 
         return $minted;
+    }
+
+    /**
+     * host[:port] of an absolute URL (the port only when the URL spells one), or '' when
+     * the URL has no host (an unconfigured APP_URL).
+     */
+    private static function __authority(string $url): string
+    {
+        $host = parse_url($url, PHP_URL_HOST);
+        if (!is_string($host) || $host === '') {
+            return '';
+        }
+
+        $port = parse_url($url, PHP_URL_PORT);
+
+        return strtolower($host) . ($port ? ':' . (int) $port : '');
     }
 }

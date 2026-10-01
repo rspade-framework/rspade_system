@@ -2,11 +2,16 @@
 
 namespace App\RSpade\Core\Portal;
 
+use App\RSpade\Core\Ajax\Exceptions\AjaxUnauthorizedException;
+use App\RSpade\Core\Auth\Auth_Gates;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
+use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Session\Session;
+use App\RSpade\Core\Session\Session_Link;
 use App\RSpade\Core\Session\User_Agent;
 
 /**
@@ -19,7 +24,7 @@ use App\RSpade\Core\Session\User_Agent;
  * properties on it through the framework-internal seams on Session:
  *
  *     portal_user_id, portal_site_id, impersonator_user_id,
- *     impersonation_started_at, handoff_token, handoff_expires_at
+ *     impersonation_started_at
  *
  * The staff facade (Session) owns the row itself and the staff properties
  * (login_user_id, site_id, impersonator_login_user_id). BOTH IDENTITIES SET AT ONCE
@@ -27,8 +32,10 @@ use App\RSpade\Core\Session\User_Agent;
  * client portal. Which set a given request consults is decided by the REQUEST's
  * experience (Rsx_Portal::is_portal_request()), never by the row.
  *
- * A dedicated portal domain needs no machinery: per-origin cookie jars mean that
- * browser holds its own row on that origin, with the staff properties simply null.
+ * A portal on its own host (PORTAL_URL) sits behind a separate cookie jar, so ordinarily
+ * the browser holds its own row there, with the staff properties null. Staff "View as
+ * Client" is the exception: the linked-session handshake points the portal host's cookie
+ * at the staff browser's row (see begin_impersonation_from_staff()).
  *
  * Consequences worth stating outright:
  * - Portal logout, terminating a portal device session and the portal sign-in cap all
@@ -612,9 +619,7 @@ class Portal_Session
      * The rows that count as this portal user's DEVICE sessions: live browser sessions
      * carrying their portal identity.
      *
-     * Excludes the "View as Client" handoff rows (handoff_token IS NOT NULL) - those
-     * are single-use transport for a token, not a device anyone is signed in on - and
-     * deactivated rows, which cannot be resumed.
+     * Excludes deactivated rows, which cannot be resumed.
      *
      * @param int $portal_user_id
      * @return \Illuminate\Database\Eloquent\Builder
@@ -623,8 +628,7 @@ class Portal_Session
     {
         return Session::_portal_query()
             ->where('portal_user_id', $portal_user_id)
-            ->where('active', true)
-            ->whereNull('handoff_token');
+            ->where('active', true);
     }
 
     /**
@@ -809,164 +813,85 @@ class Portal_Session
     // =========================================================================
     // IMPERSONATION (staff "View as Client")
     //
-    // A staff member creates a single-use HANDOFF carrying a target portal user, the
-    // site, and the staff user's id. The handoff is opened in a new browser tab; the
-    // portal claim route consumes the token and stamps those PROPERTIES onto THE
-    // CLAIMING BROWSER'S OWN SESSION - which is the whole cross-domain point (the
-    // claiming browser may be on the portal domain, with its own cookie jar and its
-    // own session row).
+    // A staff member views the portal AS a portal user. The impersonation is four
+    // PROPERTIES on the browser's session row - the portal identity, its tenant, the
+    // staff users.id doing the viewing and when it began - written by
+    // begin_impersonation_from_staff():
     //
-    // READ-ONLY BEHAVIOR IS THE APPLICATION'S RESPONSIBILITY: the framework only
-    // exposes is_impersonating(); the app must gate writes and render the read-only
-    // experience. See: php artisan rsx:man portal.
+    //   - portal under a prefix on the application host: one cookie, one row, so the
+    //     properties go straight onto the caller's own row and the portal reads them on
+    //     the next page;
+    //   - portal on its own host: the browser holds a different cookie there, so the
+    //     linked-session handshake (Session_Link) proves both hosts are the same browser
+    //     and points the portal host's cookie at the caller's row. Both hosts then share
+    //     one row.
+    //
+    // READ-ONLY BEHAVIOR: the framework refuses every portal Ajax endpoint not marked
+    // #[Portal_Impersonation_Readable] while is_impersonating(); the application renders
+    // the read-only experience. See: php artisan rsx:man portal.
     //
     // impersonator_user_id is a STAFF users.id, a different id space from the staff
     // experience's own impersonator_login_user_id (login_users.id) - which is exactly
     // why the row keeps both columns instead of collapsing them.
     // =========================================================================
 
-    // Lifetime of the single-use handoff token, in seconds.
-    const IMPERSONATION_HANDOFF_TTL_SECONDS = 60;
-
     /**
-     * Create an impersonation handoff for a target portal user and return its
-     * single-use token (claimed by the portal claim route via claim_impersonation()).
-     * Sets no cookie, touches no browser session, and does NOT touch the target
-     * user's last_login - the contact's real login history stays clean.
+     * Start viewing the portal as a portal user, from a staff request, and return the
+     * URL the staff page opens (normally in a new tab).
      *
-     * @param int $portal_user_id       Target portal user to impersonate
-     * @param int $impersonator_user_id Staff User_Model id initiating it
-     * @param int $site_id              Site scope for the impersonated portal identity
-     * @return string The handoff token
+     * Same host (the portal under a prefix on APP_URL's host): the impersonation is
+     * written onto the caller's own session row, and the portal's landing URL is returned.
+     * Separate host: a linked-session handshake is started for the caller's row and its
+     * first leg's URL is returned (absolute, on the portal's origin); the impersonation is
+     * applied on the handshake's staff leg, after the browser has proved itself.
+     *
+     * Refuses (AjaxUnauthorizedException) unless the staff realm's `can_impersonate`
+     * check passes for the caller, and requires $impersonator_user_id to be the caller's
+     * own staff user. The target user's last_login is never touched - the contact's
+     * real login history stays clean.
+     *
+     * @param int $portal_user_id       Target portal user to view as
+     * @param int $impersonator_user_id Staff users.id of the caller
+     * @param int $portal_site_id       Tenant of the target portal user
+     * @return string URL to open
+     * @throws AjaxUnauthorizedException When can_impersonate denies the caller
      */
-    public static function create_impersonation_session(int $portal_user_id, int $impersonator_user_id, int $site_id): string
+    public static function begin_impersonation_from_staff(int $portal_user_id, int $impersonator_user_id, int $portal_site_id): string
     {
-        if (empty($portal_user_id) || empty($impersonator_user_id) || empty($site_id)) {
-            shouldnt_happen('create_impersonation_session requires portal_user_id, impersonator_user_id, and site_id');
+        if ($portal_user_id <= 0 || $impersonator_user_id <= 0 || $portal_site_id <= 0) {
+            shouldnt_happen('begin_impersonation_from_staff() requires portal_user_id, impersonator_user_id and portal_site_id');
         }
 
-        // Collect handoffs nobody ever claimed. They live 60 seconds and are pure
-        // transport, so an expired one is litter, not history.
-        Session::query()
-            ->whereNotNull('handoff_token')
-            ->where('handoff_expires_at', '<', now())
-            ->raw_bulk()
-            ->delete();
+        $staff_user = Session::get_user();
 
-        $handoff_token = bin2hex(random_bytes(32));
-
-        $session = Session::_portal_new_handoff_row();
-        $session->portal_user_id = $portal_user_id;
-        $session->portal_site_id = $site_id;
-        $session->impersonator_user_id = $impersonator_user_id;
-        $session->impersonation_started_at = now();
-        // Never transmitted: no browser ever holds this row's cookie. It exists so the
-        // column's NOT NULL / UNIQUE contract is satisfied.
-        $session->session_token = bin2hex(random_bytes(32));
-        $session->csrf_token = bin2hex(random_bytes(32));
-        $session->ip_address = Session::get_client_ip() ?? 'CLI';
-        $session->user_agent = substr($_SERVER['HTTP_USER_AGENT'] ?? 'impersonation', 0, 255);
-        $session->last_active = now();
-        $session->type_id = self::__classify_session_type();
-        $session->handoff_token = $handoff_token;
-        $session->handoff_expires_at = now()->addSeconds(self::IMPERSONATION_HANDOFF_TTL_SECONDS);
-        $session->save();
-
-        return $handoff_token;
-    }
-
-    /**
-     * Classify a handoff row at the moment of creation.
-     *
-     * Shares the staff type vocabulary (Session::TYPE_*), which is what lets one
-     * retention sweep cover the whole table.
-     *
-     * @return int Session::TYPE_*
-     */
-    private static function __classify_session_type(): int
-    {
-        if (!empty($_SERVER['HTTP_X_PLAYWRIGHT_TEST'])) {
-            return Session::TYPE_PLAYWRIGHT;
+        if ($staff_user === null || (int) $staff_user->id !== $impersonator_user_id) {
+            shouldnt_happen('begin_impersonation_from_staff(): $impersonator_user_id must be the signed-in staff user');
         }
 
-        return Session::TYPE_WEB;
-    }
-
-    /**
-     * Resolve a live (non-expired) impersonation handoff by its token, return its
-     * payload, and BURN it by deleting the row (single use). Pure DB; no cookie side
-     * effects. Returns null when the token is missing, already used, or expired.
-     * Split out so the claim logic is unit-testable without a browser/cookie.
-     *
-     * @param string $handoff_token
-     * @return array|null ['portal_user_id', 'portal_site_id', 'impersonator_user_id', 'impersonation_started_at']
-     */
-    private static function _resolve_and_burn_handoff(string $handoff_token): ?array
-    {
-        if ($handoff_token === '') {
-            return null;
+        if (!Auth_Gates::evaluate('can_impersonate', Auth_Gates::REALM_STAFF)) {
+            throw new AjaxUnauthorizedException('Not authorized to view the client portal as this user.');
         }
 
-        $session = Session::query()
-            ->where('handoff_token', $handoff_token)
-            ->where('handoff_expires_at', '>=', now())
-            ->first();
+        $session_id = Session::get_session_id();
 
-        if (!$session) {
-            return null;
+        if (Rsx_Portal_Url::is_separate_host()) {
+            return Session_Link::begin_impersonation($session_id, $portal_user_id, $portal_site_id, $impersonator_user_id);
         }
 
-        $payload = [
-            'portal_user_id' => (int) $session->portal_user_id,
-            'portal_site_id' => (int) $session->portal_site_id,
-            'impersonator_user_id' => (int) $session->impersonator_user_id,
-            'impersonation_started_at' => $session->impersonation_started_at,
-        ];
-
-        // Single use - the transport row is consumed.
-        $session->delete();
-
-        return $payload;
-    }
-
-    /**
-     * Claim an impersonation handoff: validate + burn the token, then stamp the
-     * impersonated portal identity onto THIS BROWSER'S OWN session (minting it if the
-     * browser has none). Any portal identity previously in this browser is replaced;
-     * the staff login on the same session, if any, is untouched. Returns false when
-     * the token is invalid/expired. Called by the portal claim route.
-     *
-     * @param string $handoff_token
-     * @return bool
-     */
-    public static function claim_impersonation(string $handoff_token): bool
-    {
-        $payload = self::_resolve_and_burn_handoff($handoff_token);
-
-        if (!$payload) {
-            return false;
-        }
+        Session::_apply_portal_impersonation($session_id, $portal_user_id, $portal_site_id, $impersonator_user_id);
 
         if (self::__is_cli()) {
-            // No request, no cookie: the CLI overrides ARE the portal state. Assigned
-            // directly rather than through set_site_id(), which guards a request
-            // boundary this path does not have.
-            self::$_declared_site_id = $payload['portal_site_id'];
-            self::$_cli_portal_user_id = $payload['portal_user_id'];
-            self::$_cli_impersonator_user_id = $payload['impersonator_user_id'];
-        } else {
-            Session::_portal_activate();
-            Session::_set_portal_identity($payload['portal_user_id'], $payload['portal_site_id']);
-            Session::_set_portal_impersonation(
-                $payload['impersonator_user_id'],
-                $payload['impersonation_started_at']
-            );
+            // CLI reads the portal identity from these overrides, not from a row (see
+            // get_portal_user_id()); keep them in step with what was just written.
+            self::$_declared_site_id = $portal_site_id;
+            self::$_cli_portal_user_id = $portal_user_id;
+            self::$_cli_impersonator_user_id = $impersonator_user_id;
         }
 
         self::$_portal_user = null;
         self::$_site = null;
 
-        return true;
+        return Rsx_Portal::portal_path('/');
     }
 
     /**

@@ -4,6 +4,7 @@ namespace App\RSpade\Core\Csp;
 
 use RuntimeException;
 use App\RSpade\Core\Externals\Rsx_Externals;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Realtime\Realtime;
 use App\RSpade\Core\Rsx;
 
@@ -33,7 +34,8 @@ use App\RSpade\Core\Rsx;
  * depends on inline styles pervasively. Adding one here would break rendering everywhere.
  *
  * IT ALWAYS ENFORCES. There is one header name, `Content-Security-Policy`, and an undeclared
- * resource fails visibly. The policy still names `report-uri /_csp-report`, so the violation
+ * resource fails visibly. The policy still names its realm's collector (`report-uri /_csp-report`,
+ * under the portal prefix on a portal page - report_path()), so the violation
  * collector keeps recording every refusal to storage/logs/csp_violations.log - that log is the
  * triage tool for a blocked resource, not an observe-only mode.
  *
@@ -47,7 +49,11 @@ use App\RSpade\Core\Rsx;
  */
 class Rsx_Csp
 {
-    /** Where violation reports are posted. Served by Csp_Report_Controller. */
+    /**
+     * Where violation reports are posted, inside a realm's own namespace. Served by
+     * Csp_Report_Controller in both route tables; report_path() places it at a realm's
+     * address.
+     */
     public const REPORT_PATH = '/_csp-report';
 
     /** The one header name. The policy always enforces. */
@@ -144,12 +150,28 @@ class Rsx_Csp
 
         // The collector still runs under enforcement: the browser BLOCKS the resource and
         // reports it, and the log is where a blocked resource is triaged from.
-        $parts[] = 'report-uri ' . self::REPORT_PATH;
+        $parts[] = 'report-uri ' . static::report_path($realm);
 
         return [
             'header' => self::HEADER_ENFORCE,
             'value' => implode('; ', $parts),
         ];
+    }
+
+    /**
+     * The collector's path as a page of this realm posts to it: REPORT_PATH for staff, and
+     * the same path under the portal's prefix for the portal (Rsx_Portal_Url), so a portal
+     * page's reports are portal requests on the portal's own host or prefix. A path, never an
+     * absolute URL - a page reports to the host it was served from.
+     *
+     * @param string $realm 'staff' or 'portal'
+     * @return string
+     */
+    public static function report_path(string $realm): string
+    {
+        return $realm === 'portal'
+            ? Rsx_Portal_Url::prefix() . self::REPORT_PATH
+            : self::REPORT_PATH;
     }
 
     /**

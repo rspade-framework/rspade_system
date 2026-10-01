@@ -268,7 +268,7 @@ class Sys_Users_Controller_Test extends Rsx_Test_Abstract
         static::__assert_equals("sys-users-imp-{$tag}@example.com", $rows[$impersonated]['impersonator_email'], 'and its email');
         static::__assert_true(str_ends_with($rows[$impersonated]['impersonation_started_at'], 'Z'), 'impersonation_started_at as ISO UTC');
 
-        foreach (['session_token', 'csrf_token', 'handoff_token'] as $key) {
+        foreach (['session_token', 'csrf_token'] as $key) {
             static::__assert_false(array_key_exists($key, $rows[$plain]), "{$key} never leaves");
         }
     }

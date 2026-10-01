@@ -9,6 +9,7 @@ use RuntimeException;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
 
 /**
@@ -18,17 +19,13 @@ use App\RSpade\Core\Rsx;
  * route generation and portal context detection.
  *
  * Key differences from Rsx:
- * - Route() prepends portal domain/prefix
+ * - Route() applies the portal's address (Rsx_Portal_Url: its prefix, and its origin
+ *   when the caller is not on the portal's host)
  * - Portal-specific context detection
  * - Simpler (no event system, fewer utilities)
  */
 class Rsx_Portal
 {
-    /**
-     * URL prefix for portal when no dedicated domain configured
-     */
-    public const URL_PREFIX = '/_portal';
-
     /**
      * Current portal controller being executed
      * @var string|null
@@ -48,40 +45,6 @@ class Rsx_Portal
     protected static ?string $current_route_type = null;
 
     // =========================================================================
-    // Configuration Methods
-    // =========================================================================
-
-    /**
-     * Get the configured portal domain
-     *
-     * @return string|null Domain if configured, null otherwise
-     */
-    public static function get_domain(): ?string
-    {
-        return config('rsx.portal.domain');
-    }
-
-    /**
-     * Get the portal URL prefix (used when no domain configured)
-     *
-     * @return string The prefix, defaults to '/_portal'
-     */
-    public static function get_prefix(): string
-    {
-        return config('rsx.portal.prefix', self::URL_PREFIX);
-    }
-
-    /**
-     * Check if portal is using a dedicated domain (vs URL prefix)
-     *
-     * @return bool True if dedicated domain is configured
-     */
-    public static function has_dedicated_domain(): bool
-    {
-        return !empty(self::get_domain());
-    }
-
-    // =========================================================================
     // Portal Request Context Detection
     // =========================================================================
 
@@ -89,8 +52,8 @@ class Rsx_Portal
      * Is the current request a portal request?
      *
      * The answer is the request's REALM as Rsx_Request_Channel classified it, once, before
-     * anything was dispatched: the portal's dedicated domain, or its path prefix on the
-     * staff host. Outside a request (CLI, tests) it is false unless set_portal_request()
+     * anything was dispatched: on the portal's own host every request, on the application
+     * host a request under the portal's prefix (Rsx_Portal_Url). Outside a request (CLI, tests) it is false unless set_portal_request()
      * declared otherwise.
      *
      * @return bool True if this is a portal request
@@ -113,47 +76,92 @@ class Rsx_Portal
     }
 
     /**
-     * A URL with the portal's path prefix removed - the path INSIDE the portal. Unchanged
-     * when the portal has a dedicated domain (there is no prefix) or the URL is not under
-     * the prefix.
+     * Whether a path (a query string or fragment may follow) is under the portal's prefix:
+     * the prefix itself, or the prefix followed by '/', '?' or '#'. An empty prefix (the
+     * portal at the root of its own host) contains every path.
+     *
+     * @param string $path
+     * @return bool
+     */
+    public static function is_under_prefix(string $path): bool
+    {
+        $prefix = Rsx_Portal_Url::prefix();
+
+        if ($prefix === '' || $path === $prefix) {
+            return true;
+        }
+
+        if (!str_starts_with($path, $prefix)) {
+            return false;
+        }
+
+        return in_array($path[strlen($prefix)], ['/', '?', '#'], true);
+    }
+
+    /**
+     * A URL with the portal's path prefix removed - the path INSIDE the portal ('/_portal'
+     * -> '/', '/_portal/x?y' -> '/x?y'). Unchanged when the portal has no prefix or the URL
+     * is not under it.
      *
      * @param string $url
      * @return string
      */
     public static function strip_prefix(string $url): string
     {
-        if (!self::has_dedicated_domain()) {
-            $prefix = self::get_prefix();
+        $prefix = Rsx_Portal_Url::prefix();
 
-            if (str_starts_with($url, $prefix)) {
-                $url = substr($url, strlen($prefix)) ?: '/';
-            }
+        if ($prefix === '' || !static::is_under_prefix($url)) {
+            return $url;
         }
 
-        return $url;
+        $remainder = substr($url, strlen($prefix));
+
+        return ($remainder === '' || $remainder[0] !== '/') ? '/' . $remainder : $remainder;
     }
 
     /**
-     * Get the current request URL with portal prefix stripped (if applicable)
+     * Whether a URL the portal generates can be a host-relative path for the caller.
      *
-     * @return string The normalized path
+     * In a same-host layout (the portal under a prefix on APP_URL's host) always: the
+     * portal lives on whatever host the caller is on, and an absolute form, when one is
+     * needed, is rsx_absolute_url()'s job. With the portal on its own host, only when the
+     * current request's host IS the portal host; a staff page, CLI and a task (whose
+     * request carries APP_URL's host) need the absolute URL.
+     *
+     * @return bool
      */
-    public static function get_normalized_path(): string
+    public static function is_on_portal_host(): bool
     {
-        $request_uri = $_SERVER['REQUEST_URI'] ?? '/';
-
-        // Remove query string
-        $path = parse_url($request_uri, PHP_URL_PATH) ?? '/';
-
-        // If using prefix mode and path starts with prefix, strip it
-        if (!self::has_dedicated_domain()) {
-            $prefix = self::get_prefix();
-            if (str_starts_with($path, $prefix)) {
-                $path = substr($path, strlen($prefix)) ?: '/';
-            }
+        if (!Rsx_Portal_Url::is_separate_host()) {
+            return true;
         }
 
-        return $path;
+        return strtolower(request()->getHost()) === Rsx_Portal_Url::host();
+    }
+
+    /**
+     * Rebase a framework endpoint path served in BOTH realms (/_upload, /_thumbnail/...,
+     * /_inline/..., /_download/..., /_download_zip/..., /_preview/..., /_icon_by_extension/...)
+     * onto the realm of the CURRENT request - the PHP twin of Rsx_Portal.internal_url().
+     *
+     *   staff request (and CLI, tasks, the external API)  -> unchanged
+     *   portal request                                    -> under the portal's prefix
+     *
+     * A portal request is always on the portal's host, so the result is a path. Without
+     * this a portal page would request the bare path, which on the application host is a
+     * STAFF request (authorized against the staff side of the session) and on the portal's
+     * own host is outside the prefix.
+     *
+     * @param string $path An endpoint path beginning with '/'
+     * @return string
+     */
+    public static function internal_url(string $path): string
+    {
+        if (!static::is_portal_request()) {
+            return $path;
+        }
+
+        return Rsx_Portal_Url::prefix() . $path;
     }
 
     // =========================================================================
@@ -164,23 +172,28 @@ class Rsx_Portal
      * Generate URL for a portal route
      *
      * Similar to Rsx::Route() but:
-     * - Returns URLs with portal domain or prefix
+     * - Returns URLs under the portal's prefix, and on the portal's origin when the
+     *   caller is not on the portal's host (is_on_portal_host())
      * - Only works with routes that have #[Portal_Route] attribute
+     *
+     * So rsx_absolute_url(Rsx_Portal::Route(...)) is right from any context: a path is
+     * made absolute against the caller's host, an absolute URL passes through.
      *
      * Usage examples:
      * ```php
      * // Portal action route
      * $url = Rsx_Portal::Route('Portal_Dashboard_Action');
-     * // Development: /_portal/dashboard
-     * // Production: https://portal.example.com/dashboard
+     * // Default PORTAL_URL: /_portal/dashboard
+     * // PORTAL_URL=https://portal.example.com/, from a staff page or a task:
+     * //   https://portal.example.com/dashboard  (on the portal host: /dashboard)
      *
      * // Route with integer parameter
      * $url = Rsx_Portal::Route('Portal_Project_View_Action', 123);
-     * // Development: /_portal/projects/123
+     * // Default PORTAL_URL: /_portal/projects/123
      *
      * // Hash state (the fragment Rsx.url_hash_get() reads back)
      * $url = Rsx_Portal::Route('Portal_Project_View_Action', 123, ['tab' => 'files']);
-     * // Development: /_portal/projects/123#tab=files
+     * // Default PORTAL_URL: /_portal/projects/123#tab=files
      *
      * // Placeholder route
      * $url = Rsx_Portal::Route('Future_Portal_Feature::#index');
@@ -190,7 +203,7 @@ class Rsx_Portal
      * @param string $action Controller class, SPA action, or "Class::method"
      * @param int|array|\stdClass|null $params Route parameters
      * @param array|null $hash Fragment state, as Rsx::Route() takes it
-     * @return string The generated URL (may include portal domain/prefix)
+     * @return string A path, or an absolute URL when the caller is not on the portal host
      */
     public static function Route($action, $params = null, ?array $hash = null): string
     {
@@ -254,43 +267,13 @@ class Rsx_Portal
 
         $path = Rsx::_generate_url_from_pattern($selected_route['pattern'], $params_array, $class_name, $action_name, $hash);
 
-        // Apply portal prefix/domain
         return self::_apply_portal_base($path);
     }
 
     /**
-     * Generate absolute URL for a portal route
-     *
-     * @param string $action Controller class, SPA action, or "Class::method"
-     * @param int|array|\stdClass|null $params Route parameters
-     * @param array|null $hash Fragment state, as Rsx::Route() takes it
-     * @return string Full URL including protocol and domain
-     */
-    public static function url($action, $params = null, ?array $hash = null): string
-    {
-        $path = self::Route($action, $params, $hash);
-
-        // If already has domain, return as-is
-        if (str_starts_with($path, 'http://') || str_starts_with($path, 'https://')) {
-            return $path;
-        }
-
-        // Build absolute URL
-        $portal_domain = self::get_domain();
-
-        if (!empty($portal_domain)) {
-            $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-
-            return $protocol . '://' . $portal_domain . $path;
-        }
-
-        // No portal domain, use current host with path
-        return url($path);
-    }
-
-    /**
-     * A portal-namespace path as the browser addresses it: prefixed in prefix mode
-     * ('/login' -> '/_portal/login'), unchanged on a dedicated portal domain.
+     * A portal-namespace path as the browser addresses it: under the portal's prefix
+     * ('/login' -> '/_portal/login' by default), and absolute on the portal's origin when
+     * the caller is not on the portal's host - exactly as Route() builds a route's URL.
      *
      * For a framework path that is not a route target - a ceremony URL, a redirect after a
      * failure. Anything that IS a route target is Route().
@@ -304,25 +287,21 @@ class Rsx_Portal
     }
 
     /**
-     * Apply portal domain or prefix to a path
+     * Place a portal-namespace path at the portal's address: prefix + path, on the portal's
+     * origin unless is_on_portal_host().
      *
-     * @param string $path The route path (e.g., '/dashboard')
-     * @return string Path with portal prefix, or full URL if domain configured
+     * @param string $path The path inside the portal (e.g., '/dashboard')
+     * @return string
      */
     protected static function _apply_portal_base(string $path): string
     {
-        // If using dedicated domain in production, keep path as-is
-        // The domain will be handled at routing level
-        if (self::has_dedicated_domain()) {
-            // In production, the path is relative to portal domain
-            // The caller should use url() if they need full URL
+        $path = Rsx_Portal_Url::prefix() . $path;
+
+        if (static::is_on_portal_host()) {
             return $path;
         }
 
-        // Development mode: prepend prefix
-        $prefix = self::get_prefix();
-
-        return $prefix . $path;
+        return Rsx_Portal_Url::origin() . $path;
     }
 
     // =========================================================================

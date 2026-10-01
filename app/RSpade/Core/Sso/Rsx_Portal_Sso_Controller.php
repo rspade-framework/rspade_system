@@ -29,9 +29,10 @@ use App\RSpade\Core\Sso\Rsx_Sso;
  * THE CEREMONY ROUTES ARE #[Portal_Route], and that is load-bearing, not cosmetic. A portal
  * ceremony has to run inside PORTAL dispatch: that is where the application declares the
  * portal's site (Portal_Main::init()), and every lookup, link and sign-in in the portal realm
- * is scoped to that declaration. It also has to finish on the host that started it - on a
- * dedicated portal domain the browser's cookie jar for the portal is not the staff host's -
- * which is why the portal callback is its own redirect URI (Rsx_Portal_Sso::callback_url()).
+ * is scoped to that declaration. It also has to finish on the host that started it - when
+ * PORTAL_URL puts the portal on a host of its own, the browser's cookie jar there is not the
+ * staff host's - which is why the portal callback is its own redirect URI, on the portal's
+ * origin and under its prefix (Rsx_Portal_Sso::callback_url(), from Rsx_Portal_Url).
  *
  * The Apple POST leg 303s to the PORTAL callback path, and Rsx_Csrf exempts exactly that path
  * (Rsx_Portal_Sso::apple_callback_path()) beside the staff one.

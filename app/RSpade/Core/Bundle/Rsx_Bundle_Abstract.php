@@ -12,6 +12,7 @@ use App\RSpade\Core\Debug\Debugger;
 use App\RSpade\Core\Manifest\Manifest;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Session\Session;
 
@@ -428,6 +429,7 @@ abstract class Rsx_Bundle_Abstract
 
         // Add user, site, and csrf data from session
         // Use Portal_Session for portal requests, Session for regular requests
+        $portal_permission_block = [];
         if ($is_portal) {
             $rsxapp_data['is_auth'] = Portal_Session::is_logged_in();
             $rsxapp_data['user'] = Portal_Session::get_portal_user();
@@ -436,8 +438,9 @@ abstract class Rsx_Bundle_Abstract
 
             // Portal authorization block consumed by Portal_Permission.js for hiding
             // UI affordances only (the server is the enforcement boundary). Mirrors
-            // how staff resolved permissions reach window.rsxapp.
-            $rsxapp_data['portal'] = static::_build_portal_permission_block();
+            // how staff resolved permissions reach window.rsxapp. Merged over the
+            // portal address below.
+            $portal_permission_block = static::_build_portal_permission_block();
         } else {
             $rsxapp_data['is_auth'] = Session::is_logged_in();
             $rsxapp_data['user'] = Session::get_user();
@@ -446,6 +449,15 @@ abstract class Rsx_Bundle_Abstract
 
             $rsxapp_data['impersonation'] = static::impersonation_payload();
         }
+
+        // How the portal is addressed (Rsx_Portal_Url), in EVERY bundle: Rsx_Portal.js
+        // builds portal route URLs and internal-endpoint URLs from it on a portal page,
+        // and a staff page needs it to link into the portal on another host.
+        $rsxapp_data['portal'] = array_merge([
+            'origin' => Rsx_Portal_Url::origin(),
+            'prefix' => Rsx_Portal_Url::prefix(),
+            'separate_host' => Rsx_Portal_Url::is_separate_host(),
+        ], $portal_permission_block);
 
         // Declarative auth gates for the ACTIVE realm (the same portal/staff split
         // the identity fork above made - active_realm() reads the same predicate).
@@ -1072,12 +1084,6 @@ abstract class Rsx_Bundle_Abstract
             'client_roles' => [],
             'is_impersonating' => Portal_Session::is_impersonating(),
             'impersonator_user_id' => Portal_Session::get_impersonator_user_id(),
-            // How the portal is addressed. Rsx_Portal.js derives BOTH portal route
-            // URLs and internal-endpoint URLs (Rsx_Portal.internal_url) from these,
-            // so the client must read the server's actual configuration rather than
-            // assume prefix mode.
-            'domain' => Rsx_Portal::get_domain(),
-            'prefix' => Rsx_Portal::get_prefix(),
         ];
 
         if (!$block['is_auth']) {

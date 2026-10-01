@@ -209,18 +209,24 @@ HTTP MIDDLEWARE
 
 CLIENT PORTAL
     'portal' => [
-        'domain' => null,                  # dedicated host; null = prefix
-        'prefix' => '/_portal',            # path used when no domain
+        'url' => env('PORTAL_URL', ''),    # where the portal is served
         'session_lifetime_days' => 30,
-        'default_site_id' => 1,
-        'invitation_expiry_days' => 7,     # user config default: 14
+        'invitation_expiry_days' => 14,
         'password_min_length' => 8,
         'password_reset_expiry_hours' => 1,
     ]
 
-    Framework defaults for the parallel portal experience. The template app
-    overrides several of these (e.g. PORTAL_DOMAIN from .env,
-    invitation_expiry_days => 14). See: php artisan rsx:man portal
+    Framework defaults for the parallel portal experience. 'url' is PORTAL_URL,
+    written exactly like APP_URL ($HOSTNAME included); blank serves the portal at
+    APP_URL's origin + /_portal, and the portal's host and prefix are derived
+    from it (Rsx_Portal_Url). A value equal to APP_URL, http outside
+    development, or a prefix claiming a framework path refuses to boot.
+
+    There is deliberately no portal site key: which site a portal request
+    serves is declared at runtime with Portal_Session::set_site_id(). The
+    template app keeps its own 'portal.site_id' (plus
+    shared_link_default_expiry_days) in rsx/resource/config/rsx.php for that.
+    See: php artisan rsx:man portal (PORTAL URL, CONFIGURATION)
 
 PUBLIC DIRECTORY SECURITY
     'public' => [

@@ -191,7 +191,10 @@ class Auth_Gates_Seam_Test extends Rsx_Test_Abstract
 
         $location = $response->headers->get('Location');
         static::__assert_contains('login', $location);
-        static::__assert_contains('_portal', $location);
+        static::__assert_true(
+            str_starts_with((string) parse_url($location, PHP_URL_PATH), (string) parse_url(Rsx_Portal::portal_path('/'), PHP_URL_PATH)),
+            "the portal login lives under the portal's prefix, got {$location}"
+        );
     }
 
     // =========================================================================

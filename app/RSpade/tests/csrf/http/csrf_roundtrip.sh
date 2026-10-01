@@ -105,13 +105,16 @@ echo "[TEST] 5. OK - body-field-token POST passed the csrf seam" >&2
 # HttpResponseException before the chain runs; these checks are the field-level
 # proof, and they need no session: a foreign Origin rejects on layer 1.
 #
-# Portal channel: prefix mode serves the same handler at <prefix>/_ajax/...
-# (config rsx.portal.prefix, default /_portal), which is the spelling a portal
-# page's Ajax actually uses.
+# Portal channel: a portal on the application host serves the same handler at
+# <prefix>/_ajax/... (Rsx_Portal_Url::prefix(), /_portal under a blank PORTAL_URL),
+# which is the spelling a portal page's Ajax actually uses. Both facts are read from
+# the live configuration; a portal on a host of its own is not reachable as localhost,
+# so step 7 is skipped in that layout.
 # ---------------------------------------------------------------------------
-# The framework default and the template's config value. Override for a site that
-# repointed rsx.portal.prefix (a portal DOMAIN deployment would use "" instead).
-PORTAL_PREFIX="${PORTAL_PREFIX:-/_portal}"
+SYSTEM_DIR="$(cd "$(dirname "$0")/../../../../.." && pwd)"
+PORTAL_LAYOUT="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; echo (\App\RSpade\Core\Portal\Rsx_Portal_Url::is_separate_host() ? "separate" : "same") . " " . \App\RSpade\Core\Portal\Rsx_Portal_Url::prefix();' 2>/dev/null | tail -1)"
+PORTAL_SEPARATE="${PORTAL_LAYOUT%% *}"
+PORTAL_PREFIX="${PORTAL_LAYOUT#* }"
 
 # $1 = label, $2 = url, $3 = expected status, $4 = expected body substring, $5.. = extra curl args
 assert_reject() {
@@ -134,9 +137,16 @@ echo "[TEST] 6. Staff /_ajax rejection returns the ajax error contract (200 + JS
 assert_reject "staff ajax reject" "${BASE}/_ajax/Csrf_Test_Probe/noop" "200" '"error_code":"unauthorized"'
 echo "[TEST] 6. OK" >&2
 
-echo "[TEST] 7. Portal ${PORTAL_PREFIX}/_ajax rejection returns the same contract..." >&2
-assert_reject "portal ajax reject" "${BASE}${PORTAL_PREFIX}/_ajax/Csrf_Test_Probe/noop" "200" '"error_code":"unauthorized"'
-echo "[TEST] 7. OK" >&2
+if [ "$PORTAL_SEPARATE" = "same" ]; then
+    echo "[TEST] 7. Portal ${PORTAL_PREFIX}/_ajax rejection returns the same contract..." >&2
+    assert_reject "portal ajax reject" "${BASE}${PORTAL_PREFIX}/_ajax/Csrf_Test_Probe/noop" "200" '"error_code":"unauthorized"'
+    echo "[TEST] 7. OK" >&2
+elif [ "$PORTAL_SEPARATE" = "separate" ]; then
+    echo "[TEST] 7. skipped - PORTAL_URL names a host of its own" >&2
+else
+    echo "FAIL: $TEST_NAME - the portal layout could not be read from the configuration"
+    exit 1
+fi
 
 echo "[TEST] 8. Native form POST rejection returns 419..." >&2
 assert_reject "native form reject" "${BASE}/login" "419" "Page Expired"

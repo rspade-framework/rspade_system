@@ -63,10 +63,12 @@ class Rsx_Csrf
         // The CSP violation collector is the one POST a BROWSER makes entirely on its own,
         // with no page, no form and no token to attach - so a token check could only ever
         // reject it. It is exempt because there is nothing to forge: it reads nothing and
-        // writes nothing but its own diagnostic log. See Csp_Report_Controller.
+        // writes nothing but its own diagnostic log. See Csp_Report_Controller. One path per
+        // realm: the portal's collector lives under the portal prefix (Rsx_Csp::report_path()).
         $path = '/' . ltrim($request->getPathInfo(), '/');
 
-        if ($path === \App\RSpade\Core\Csp\Rsx_Csp::REPORT_PATH) {
+        if ($path === \App\RSpade\Core\Csp\Rsx_Csp::report_path('staff')
+            || $path === \App\RSpade\Core\Csp\Rsx_Csp::report_path('portal')) {
             return;
         }
 

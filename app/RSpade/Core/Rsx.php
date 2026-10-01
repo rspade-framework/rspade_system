@@ -13,6 +13,7 @@ use RuntimeException;
 use App\RSpade\Core\Debug\Rsx_Caller_Exception;
 use App\RSpade\Core\Events\Event_Registry;
 use App\RSpade\Core\Manifest\Manifest;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 
 /**
  * Core RSX framework utility class
@@ -233,8 +234,9 @@ class Rsx
      *
      * Resolution:
      * - Web mode (non-production): the request hostname (HTTP_HOST), port stripped.
-     * - Production web mode: the request hostname must match the APP_URL host
-     *   (exact, OR request host ends with ".<app_url_host>"); fatal on mismatch.
+     * - Production web mode: the request hostname must be the APP_URL host, a sub-host
+     *   of it (ends with ".<app_url_host>"), or the client portal's own host
+     *   (Rsx_Portal_Url::host(), when PORTAL_URL names one); fatal otherwise.
      * - CLI mode: the APP_URL host.
      */
     public static function get_hostname(): string
@@ -259,9 +261,13 @@ class Rsx
                     shouldnt_happen('APP_URL must be set in .env for production environments');
                 }
 
-                // Request host must equal the APP_URL host, or be a sub-host of it.
-                if ($request_host !== $app_host && !str_ends_with($request_host, '.' . $app_host)) {
-                    shouldnt_happen("Request hostname '{$request_host}' does not match APP_URL host '{$app_host}'");
+                // Request host must equal the APP_URL host, be a sub-host of it, or be the
+                // portal's own host.
+                if (!self::host_is_served($request_host, $app_host, Rsx_Portal_Url::host())) {
+                    shouldnt_happen(
+                        "Request hostname '{$request_host}' does not match the APP_URL host '{$app_host}' (or a sub-host of it)"
+                        . (Rsx_Portal_Url::is_separate_host() ? " or the PORTAL_URL host '" . Rsx_Portal_Url::host() . "'" : '')
+                    );
                 }
             }
 
@@ -277,6 +283,23 @@ class Rsx
 
         self::$_cached_hostname = $app_host;
         return $app_host;
+    }
+
+    /**
+     * Whether a production request host is one this application answers on: the APP_URL
+     * host, a sub-host of it, or the client portal's host. Pure (lowercased, port-less
+     * inputs); get_hostname() is the caller.
+     *
+     * @param string $request_host The request's host, lowercased, no port
+     * @param string $app_host The APP_URL host
+     * @param string $portal_host Rsx_Portal_Url::host() - APP_URL's host when the portal shares it
+     * @return bool
+     */
+    public static function host_is_served(string $request_host, string $app_host, string $portal_host): bool
+    {
+        return $request_host === $app_host
+            || str_ends_with($request_host, '.' . $app_host)
+            || ($portal_host !== '' && $request_host === $portal_host);
     }
 
     /**

@@ -32,7 +32,7 @@ use App\RSpade\Core\Time\Rsx_Time;
  *
  *   staff  properties: login_user_id, site_id, impersonator_login_user_id
  *   portal properties: portal_user_id, portal_site_id, impersonator_user_id,
- *                      handoff_token, handoff_expires_at, impersonation_started_at
+ *                      impersonation_started_at
  *
  * Both identities set at once on one row is NORMAL - the same human, in the same
  * browser, signed into the staff app and the client portal. This class owns the row
@@ -41,8 +41,13 @@ use App\RSpade\Core\Time\Rsx_Time;
  * There is exactly ONE activation path (__activate), so a portal login on a fresh
  * browser mints the row the same way a staff page view would.
  *
- * A dedicated portal domain needs no machinery: per-origin cookie jars mean that
- * browser holds its own row on that origin, with the staff properties simply null.
+ * A portal on its OWN host (PORTAL_URL) is reached through a separate cookie jar, so
+ * that browser holds an `rsx` cookie per host. Ordinarily each names its own row. The
+ * one place the two are joined is staff "View as Client": the linked-session handshake
+ * (Session_Link) ends with the portal host's cookie naming the SAME row as the staff
+ * host's, through _clone_session_to_this_host(). One row then serves both hosts, which
+ * is the same shape as the same-host layout: reset() on either host retires it for
+ * both, and logout on either clears only its own experience's properties.
  *
  * ---------------------------------------------------------------------------
  * WHO MINTS A ROW, AND WHO DELIBERATELY DOES NOT
@@ -60,7 +65,6 @@ use App\RSpade\Core\Time\Rsx_Time;
  *   get_session()             same, returning the model
  *   set_login_user_id($id)    WEB only - signing in demands a session
  *   begin/stop_impersonation  WEB only - both persist onto the live row
- *   _portal_activate()        a portal login on a fresh browser
  *   _set_portal_identity()    the moment a portal session becomes necessary
  *
  * Everything else creates NOTHING, on purpose:
@@ -123,8 +127,6 @@ use App\RSpade\Core\Time\Rsx_Time;
  * @property int $created_by_id
  * @property int $created_by_type
  * @property string $csrf_token
- * @property string $handoff_expires_at
- * @property string $handoff_token
  * @property int $id
  * @property string $impersonation_started_at
  * @property int $impersonator_login_user_id
@@ -286,7 +288,6 @@ class Session extends Rsx_System_Model_Abstract
         'session_token',
         'csrf_token',
         'ip_address',
-        'handoff_token',
     ];
 
     /**
@@ -501,7 +502,7 @@ class Session extends Rsx_System_Model_Abstract
      * Activate session - creates new one if needed.
      *
      * THE ONE ACTIVATION PATH. A portal login on a fresh browser arrives here too
-     * (through Session::_portal_activate()) and mints exactly the row a staff page
+     * (through Session::_set_portal_identity()) and mints exactly the row a staff page
      * view would: same cookie, same token machinery, portal properties written
      * afterwards. There is no second creation path and no site argument - a row
      * belongs to a browser, not to a tenant.
@@ -735,6 +736,85 @@ class Session extends Rsx_System_Model_Abstract
 
         // ONE cookie for the whole site - staff pages and portal pages alike.
         setcookie('rsx', self::$_session_token, Rsx_Session_Cookie::options(time() + (365 * 86400)));
+    }
+
+    /**
+     * Make an EXISTING session row this browser's session on THIS host: load it as the
+     * current session for the rest of the request and emit its token in the `rsx` cookie.
+     *
+     * The last leg of the linked-session handshake (Session_Link), on a portal served from
+     * its own host: once both hosts have proved they are the same browser, the portal
+     * host's cookie is pointed at the staff browser's row, so one row serves both hosts.
+     * Never called with a row the handshake has not just verified.
+     *
+     * The request may already have resolved a DIFFERENT row from this host's cookie, and
+     * init() then re-emitted that token. That earlier Set-Cookie is withdrawn before the
+     * new one is sent, so the response carries exactly one `rsx` cookie. The replaced row
+     * is DEACTIVATED: its token lived only in this browser's cookie on this host, which no
+     * longer holds it, so nothing could ever resume it - leaving it active would only list a
+     * device nobody is on. (A row that is the target itself is simply kept.)
+     *
+     * The session token is still minted only by __activate(): this re-emits a token that
+     * already exists, which the token-immutability rule permits (see init()).
+     *
+     * FRAMEWORK INTERNAL - for Session_Link only. Refused in CLI, where there is no
+     * browser and no response to carry a cookie.
+     *
+     * @param int $session_id An active _sessions row
+     * @return bool False when the row is gone or no longer active (nothing is changed)
+     */
+    public static function _clone_session_to_this_host(int $session_id): bool
+    {
+        if (self::__is_cli()) {
+            shouldnt_happen('Session::_clone_session_to_this_host() has no browser to give a cookie to in CLI');
+        }
+
+        if (self::$_api_identity !== null) {
+            shouldnt_happen('Session::_clone_session_to_this_host() called on a headless API request');
+        }
+
+        $row = static::where('id', $session_id)->where('active', true)->first();
+
+        if (!$row) {
+            return false;
+        }
+
+        self::init();
+
+        if (!empty(self::$_session) && (int) self::$_session->id !== $session_id) {
+            static::where('id', self::$_session->id)->raw_bulk()->update(['active' => false]);
+        }
+
+        self::$_session = $row;
+        self::$_session_token = $row->session_token;
+        self::$_site = null;
+        self::$_login_user = null;
+        self::$_user = null;
+        self::$_has_init = true;
+        self::$_has_activate = true;
+
+        // Withdraw an rsx Set-Cookie this request already queued (init() re-emits the
+        // previous token), keeping every other header exactly as it was.
+        if (self::$_has_set_cookie) {
+            $kept = [];
+            foreach (headers_list() as $header) {
+                if (stripos($header, 'Set-Cookie:') === 0 && !preg_match('/^Set-Cookie:\s*rsx=/i', $header)) {
+                    $kept[] = $header;
+                }
+            }
+
+            header_remove('Set-Cookie');
+
+            foreach ($kept as $header) {
+                header($header, false);
+            }
+
+            self::$_has_set_cookie = false;
+        }
+
+        self::_set_cookie();
+
+        return true;
     }
 
     /**
@@ -2496,42 +2576,6 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
-     * A new, UNSAVED row for the staff "View as Client" HANDOFF, and nothing else.
-     *
-     * This is the one portal row no browser holds a cookie for: pure transport for a
-     * single-use token, carrying the impersonation payload (target portal user, site,
-     * impersonator) until the claiming browser copies those properties onto its OWN
-     * session row - at which point this row is deleted. It is excluded from the
-     * device-session list (handoff_token IS NOT NULL) precisely because it is not a
-     * device.
-     *
-     * FRAMEWORK INTERNAL - for Portal_Session only.
-     *
-     * @return static
-     */
-    public static function _portal_new_handoff_row(): self
-    {
-        $session = new static();
-        $session->active = true;
-        $session->version = 1;
-
-        return $session;
-    }
-
-    /**
-     * Ensure this browser has a session row, minting one through THE activation path
-     * if it does not. A portal login on a fresh browser lands here.
-     *
-     * FRAMEWORK INTERNAL - for Portal_Session only.
-     *
-     * @return void
-     */
-    public static function _portal_activate(): void
-    {
-        self::__activate();
-    }
-
-    /**
      * The portal identity on this browser's session, or null. Creates nothing.
      *
      * FRAMEWORK INTERNAL - for Portal_Session only.
@@ -2620,25 +2664,45 @@ class Session extends Rsx_System_Model_Abstract
     }
 
     /**
-     * Stamp (or clear) the portal impersonation properties on this browser's session.
+     * Write a staff "View as Client" impersonation onto ONE session row: the portal
+     * identity to view as, its tenant, the staff users.id doing the viewing and the moment
+     * it began. Any portal identity already on the row is replaced; the staff properties
+     * are untouched.
      *
-     * FRAMEWORK INTERNAL - for Portal_Session only.
+     * Row-addressed rather than "this browser's session", because its two callers name
+     * the row explicitly: Portal_Session::begin_impersonation_from_staff() on the same
+     * host (the caller's own row), and the staff leg of the linked-session handshake
+     * (Session_Link), which has just proved the browser's staff cookie names that row.
+     * When the row is the one this request has loaded, the loaded copy is replaced with
+     * the saved one so later reads in the request see the impersonation.
      *
-     * @param int|null $impersonator_user_id Staff users.id, or null to clear
-     * @param string|null $started_at        Timestamp, or null to clear
-     * @return void
+     * FRAMEWORK INTERNAL - for Portal_Session and Session_Link only.
+     *
+     * @param int $session_id
+     * @param int $portal_user_id
+     * @param int $portal_site_id
+     * @param int $impersonator_user_id Staff users.id
+     * @return bool False when the row is gone or no longer active
      */
-    public static function _set_portal_impersonation(?int $impersonator_user_id, ?string $started_at): void
+    public static function _apply_portal_impersonation(int $session_id, int $portal_user_id, int $portal_site_id, int $impersonator_user_id): bool
     {
-        $row = self::__row_if_any();
+        $row = static::where('id', $session_id)->where('active', true)->first();
 
         if (!$row) {
-            return;
+            return false;
         }
 
+        $row->portal_user_id = $portal_user_id;
+        $row->portal_site_id = $portal_site_id;
         $row->impersonator_user_id = $impersonator_user_id;
-        $row->impersonation_started_at = $started_at;
+        $row->impersonation_started_at = now();
         $row->save();
+
+        if (!empty(self::$_session) && (int) self::$_session->id === $session_id) {
+            self::$_session = $row;
+        }
+
+        return true;
     }
 
     /**
@@ -2664,8 +2728,6 @@ class Session extends Rsx_System_Model_Abstract
         $row->portal_site_id = null;
         $row->impersonator_user_id = null;
         $row->impersonation_started_at = null;
-        $row->handoff_token = null;
-        $row->handoff_expires_at = null;
         $row->save();
     }
 
@@ -2694,8 +2756,6 @@ class Session extends Rsx_System_Model_Abstract
                 'portal_site_id' => null,
                 'impersonator_user_id' => null,
                 'impersonation_started_at' => null,
-                'handoff_token' => null,
-                'handoff_expires_at' => null,
             ]);
     }
 

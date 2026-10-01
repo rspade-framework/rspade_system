@@ -9,20 +9,22 @@ namespace App\RSpade\Tests\Dispatch\Php;
 use Illuminate\Http\Request;
 use App\RSpade\Core\Dispatch\Rsx_Request_Channel;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Testing\Rsx_Test_Abstract;
 
 /**
  * Rsx_Request_Channel::classify() - the one decision about what kind of request this is.
  *
- * Pure: a synthetic request in, a channel and a realm out. The portal's two deployment
- * shapes are driven through config: a path prefix on the staff host, and a dedicated
- * domain. No DB.
+ * Pure: a synthetic request in, a channel and a realm out. The portal's address is driven
+ * through config('rsx.portal.url'): the default prefix on the application host, and a
+ * host of its own. The full layout matrix (a separate host WITH a prefix included) is
+ * Portal_Url_Test's. No DB.
  */
 class Request_Channel_Test extends Rsx_Test_Abstract
 {
     protected static $use_database_transactions = false;
 
-    private const PORTAL_DOMAIN = 'portal.request-channel-test.invalid';
+    private const PORTAL_HOST = 'portal.request-channel-test.invalid';
 
     public static function teardown()
     {
@@ -40,17 +42,17 @@ class Request_Channel_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * Run $fn with the portal on a dedicated domain.
+     * Run $fn with the portal at the root of a host of its own.
      */
-    private static function __with_portal_domain(callable $fn): void
+    private static function __with_portal_host(callable $fn): void
     {
-        $original = config('rsx.portal.domain');
-        config(['rsx.portal.domain' => self::PORTAL_DOMAIN]);
+        $original = config('rsx.portal.url');
+        config(['rsx.portal.url' => 'https://' . self::PORTAL_HOST . '/']);
 
         try {
             $fn();
         } finally {
-            config(['rsx.portal.domain' => $original]);
+            config(['rsx.portal.url' => $original]);
         }
     }
 
@@ -83,7 +85,7 @@ class Request_Channel_Test extends Rsx_Test_Abstract
 
     public static function test_the_portal_prefix_is_the_portal_realm()
     {
-        $prefix = Rsx_Portal::get_prefix();
+        $prefix = Rsx_Portal_Url::prefix();
 
         static::__assert_equals(['page', 'portal', false], static::__classify($prefix));
         static::__assert_equals(['page', 'portal', false], static::__classify($prefix . '/dashboard'));
@@ -104,10 +106,10 @@ class Request_Channel_Test extends Rsx_Test_Abstract
         static::__assert_equals(['page', 'portal', false], static::__classify($prefix . '/api/v1/me'));
     }
 
-    public static function test_a_dedicated_domain_is_the_portal_realm()
+    public static function test_a_portal_host_of_its_own_is_the_portal_realm()
     {
-        static::__with_portal_domain(function () {
-            $base = 'http://' . self::PORTAL_DOMAIN;
+        static::__with_portal_host(function () {
+            $base = 'https://' . self::PORTAL_HOST;
 
             static::__assert_equals(['page', 'portal', true], static::__classify($base . '/dashboard'));
             static::__assert_equals(['ajax', 'portal', true], static::__classify($base . '/_ajax/Some_Controller/action', 'POST'));
@@ -117,9 +119,10 @@ class Request_Channel_Test extends Rsx_Test_Abstract
             // portal-host fact is what makes it refuse there.
             static::__assert_equals(['api', 'staff', true], static::__classify($base . '/api/v1/me'));
 
-            // The staff host is not the portal, and the prefix means nothing in domain mode.
+            // The staff host is not the portal, and the default prefix means nothing there
+            // once the portal has a host of its own.
             static::__assert_equals(['page', 'staff', false], static::__classify('http://localhost/dashboard'));
-            static::__assert_equals(['page', 'staff', false], static::__classify('http://localhost' . Rsx_Portal::URL_PREFIX . '/dashboard'));
+            static::__assert_equals(['page', 'staff', false], static::__classify('http://localhost' . Rsx_Portal_Url::DEFAULT_PREFIX . '/dashboard'));
         });
     }
 

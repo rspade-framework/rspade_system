@@ -4,7 +4,9 @@
 
 A second authenticated experience for external users (clients, vendors), running **parallel** to the staff app with its own realm of the one dispatcher, routing table and permission facade — framework in `App\RSpade\Core\Portal\` (`Portal_Session`, `Rsx_Portal`, `Portal_Main_Abstract`, `Portal_User_Model`), application in `/rsx/portal/`. Routing is `#[Portal_Route('/path')]` (server-rendered) and `@portal_spa(...)` (SPA screens), resolved in the PORTAL auth realm; URLs come from `Rsx_Portal::Route(...)` / `Rsx_Portal.Route(...)`.
 
-**ONE session per browser** — one cookie, one `_sessions` row, one CSRF token, shared with the staff app; both identities being set at once is NORMAL. **`Portal_Session` is a facade over the portal properties only — never mix the two facades' properties.**
+**Where the portal lives is `PORTAL_URL`** (`APP_URL`'s syntax; blank = `APP_URL` + `/_portal`; any prefix, or a host of its own) — never hand-join a prefix or host: `Rsx_Portal::Route()` answers an ABSOLUTE URL off the portal's host, so `rsx_absolute_url(Rsx_Portal::Route(...))` is right everywhere.
+
+**ONE session per browser per host** — on the application host one cookie, one `_sessions` row, one CSRF token, shared with the staff app; both identities being set at once is NORMAL. A portal on its own host has its own independent session there, linked to the staff row only by View as Client. **`Portal_Session` is a facade over the portal properties only — never mix the two facades' properties.**
 
 **When app code has to fork, fork on `Rsx_Portal::is_portal_request()` — never on `is_logged_in()`. Identity is not experience.** Framework surfaces serving both experiences resolve it themselves, so portal code calls `Flash_Alert` and `@csrf` exactly like staff code; never hand-roll a portal variant.
 
@@ -16,4 +18,4 @@ A second authenticated experience for external users (clients, vendors), running
 
 **Sign-in beyond the password is framework-owned here too** — `Rsx_Portal_Two_Factor` (second factors, passkeys, passwordless sign-in) and `Rsx_Portal_Sso` (off until `rsx.sso.portal_enabled`), each with its own table so no staff credential or link ever signs anybody in on the portal; the portal-side session-value store is `Portal_Session::put_value()`/`get_value()`/`forget_value()`, never `Session::`.
 
-Skill `rspade:portal-core`: routing and site-declaration recipes, the `Portal_Session` API, record-rule patterns, the internal-endpoint channel, impersonation handoff. The shipped screens, layouts and invite/membership model are the app skill `portal-app` (ships in `rsx/resource/skills/`). Details: `rsx:man portal`.
+Skill `rspade:portal-core`: routing and site-declaration recipes, the `Portal_Session` API, record-rule patterns, the internal-endpoint channel, `PORTAL_URL` layouts, View as Client (`begin_impersonation_from_staff()`, the linked-session handshake). The shipped screens, layouts and invite/membership model are the app skill `portal-app` (ships in `rsx/resource/skills/`). Details: `rsx:man portal`.

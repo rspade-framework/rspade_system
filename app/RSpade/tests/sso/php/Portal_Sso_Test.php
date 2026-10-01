@@ -17,6 +17,7 @@ use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Models\Site_Model;
 use App\RSpade\Core\Portal\Portal_Session;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\Session\Session;
 use App\RSpade\Core\Sso\Portal_Sso_Identity_Model;
 use App\RSpade\Core\Sso\Rsx_Portal_Sso;
@@ -221,14 +222,14 @@ class Portal_Sso_Test extends Rsx_Test_Abstract
         $roster = Rsx_Portal_Sso::enabled_providers();
         $fake = array_values(array_filter($roster, fn ($p) => $p['key'] === 'fake'))[0];
 
-        static::__assert_equals(Rsx_Portal::portal_path('/_sso/fake/begin'), $fake['begin_url'], 'the portal begin URL');
+        static::__assert_equals(Rsx_Portal_Url::prefix() . '/_sso/fake/begin', $fake['begin_url'], 'the portal begin URL, a path on the portal host');
 
         $response = Rsx_Portal_Sso::begin('fake');
 
         parse_str((string) parse_url($response->getTargetUrl(), PHP_URL_QUERY), $query);
 
         static::__assert_equals(Rsx_Portal_Sso::callback_url('fake'), $query['redirect_uri'], 'the portal callback is the redirect URI');
-        static::__assert_contains(Rsx_Portal::portal_path('/_sso/fake/callback'), $query['redirect_uri']);
+        static::__assert_contains(Rsx_Portal_Url::prefix() . '/_sso/fake/callback', $query['redirect_uri']);
         static::__assert_not_null(Session::get_value(Rsx_Portal_Sso::STATE_KEY), 'parked under the portal key');
         static::__assert_null(Session::get_value(Rsx_Sso::STATE_KEY), 'and not the staff one');
     }

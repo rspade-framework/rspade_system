@@ -503,6 +503,13 @@ DOCUMENT_TEXT_PREVIEW COMPONENT
     like the bytes. Text is returned uncapped up to config('rsx.search.max_text_bytes').
 
 SERVER SURFACES
+    Every /_preview/ route is declared in BOTH route tables on one handler. A
+    portal page's <Document_Preview> (and pdf.js inside it) requests them under
+    the portal's own address through Rsx_Portal.internal_url(), so they run as
+    PORTAL requests and the gates receive the portal user (rsx:man portal,
+    INTERNAL ENDPOINTS). A Bearer key on a portal-realm route answers the API's
+    404.
+
     GET /_preview/pdf/:key   (File_Preview_Controller::pdf_rendition)
         The PDF that pdf.js loads. DUAL authorization gate cascade - a rendition
         exposes the full document, so BOTH file.thumbnail.authorize AND

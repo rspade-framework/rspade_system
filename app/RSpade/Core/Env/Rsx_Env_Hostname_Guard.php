@@ -18,6 +18,10 @@ use App\RSpade\Core\Rsx;
  * while generated URLs (and the derived realtime relay URL wss://{host}/ws) point
  * at the wrong box. This guard fails loud on that mismatch during development.
  *
+ * THE DECLARED HOSTS are the APP_URL host and, when PORTAL_URL names a host of its
+ * own, the portal's host (Rsx_Portal_Url). A request passes when its host equals ANY
+ * declared host. Hosts are compared without ports, exactly as cookies are scoped.
+ *
  * check() runs once per web request (immediately before route dispatch). It is a
  * DEVELOPMENT-mode tripwire only - production sites may legitimately answer on
  * many hostnames / behind CDNs, so the guard is gated on RSX_MODE, not on
@@ -51,7 +55,7 @@ class Rsx_Env_Hostname_Guard
     /**
      * Per-request entry point. Silently returns when the guard does not apply
      * (CLI, non-development mode, no HTTP host, or a loopback request); otherwise
-     * throws RuntimeException when the request host disagrees with the APP_URL host.
+     * throws RuntimeException when the request host matches no declared host.
      */
     public static function check(): void
     {
@@ -89,13 +93,7 @@ class Rsx_Env_Hostname_Guard
 
         if ($mismatch !== null) {
             // NOTE: do NOT memoize on a mismatch - keep failing loud until fixed.
-            throw new RuntimeException(
-                'Dev-mode .env hostname mismatch: ' . $mismatch['var'] . ' host "'
-                . $mismatch['env_host'] . '" != request host "' . $mismatch['request_host']
-                . '". The .env of this instance declares a different hostname than the one'
-                . ' it is being browsed on - fix APP_URL in .env to match.'
-                . ' [rsx:man realtime]'
-            );
+            throw new RuntimeException(self::mismatch_message($mismatch));
         }
 
         self::$_checked = true;
@@ -103,36 +101,67 @@ class Rsx_Env_Hostname_Guard
 
     /**
      * Pure comparison core: given the (already normalized) request host and the
-     * collected declared entries, return the first exact mismatch or null.
+     * collected declared entries, return null when the request host equals ANY
+     * declared host, else the mismatch (every declared entry and the request host).
+     * No declared entry (APP_URL not configured yet) is never a mismatch.
      *
-     * The match is EXACT - a sub-host of the APP_URL host does NOT satisfy it (the
-     * old suffix rule is gone with RSX_HOSTNAME). Each declared entry is {var, host}.
+     * The match is EXACT - a sub-host of a declared host does NOT satisfy it. Each
+     * declared entry is {var, host}.
      *
      * @param array<int,array{var:string,host:string}> $declared
-     * @return array{var:string,env_host:string,request_host:string}|null
+     * @return array{declared:array<int,array{var:string,host:string}>,request_host:string}|null
      */
     public static function find_mismatch(string $request_host, array $declared): ?array
     {
+        if ($declared === []) {
+            return null;
+        }
+
         foreach ($declared as $entry) {
-            if ($request_host !== $entry['host']) {
-                return [
-                    'var' => $entry['var'],
-                    'env_host' => $entry['host'],
-                    'request_host' => $request_host,
-                ];
+            if ($request_host === $entry['host']) {
+                return null;
             }
         }
 
-        return null;
+        return [
+            'declared' => $declared,
+            'request_host' => $request_host,
+        ];
+    }
+
+    /**
+     * The fatal's text for a find_mismatch() result: the request host, every declared
+     * host with the variable that declared it, and what to fix.
+     *
+     * @param array{declared:array<int,array{var:string,host:string}>,request_host:string} $mismatch
+     */
+    public static function mismatch_message(array $mismatch): string
+    {
+        $declared = [];
+        foreach ($mismatch['declared'] as $entry) {
+            $declared[] = $entry['var'] . ' host "' . $entry['host'] . '"';
+        }
+
+        $matches = count($declared) === 1
+            ? 'does not match ' . $declared[0]
+            : 'matches neither ' . implode(' nor ', $declared);
+
+        return 'Dev-mode .env hostname mismatch: request host "' . $mismatch['request_host']
+            . '" ' . $matches . '.'
+            . ' The .env of this instance declares a different hostname than the one it is'
+            . ' being browsed on - fix APP_URL (or PORTAL_URL, for the client portal\'s own host)'
+            . ' in .env to match. [rsx:man realtime]';
     }
 
     /**
      * Pure declared-host builder: given the relevant raw .env values, produce the
-     * normalized comparison entries. Only APP_URL is consulted now. An empty
-     * APP_URL yields no entry; a non-empty but unparseable APP_URL is a fatal
-     * misconfiguration (fail loud). A loopback-VALUED APP_URL is NOT skipped.
+     * normalized comparison entries - the APP_URL host, then the PORTAL_URL host when
+     * it names a host other than APP_URL's (a same-host portal, or a blank PORTAL_URL,
+     * adds nothing). An empty APP_URL yields no entry at all; a non-empty but
+     * unparseable APP_URL or PORTAL_URL is a fatal misconfiguration (fail loud). A
+     * loopback-VALUED APP_URL is NOT skipped.
      *
-     * @param array{APP_URL?: ?string} $env
+     * @param array{APP_URL?: ?string, PORTAL_URL?: ?string} $env
      * @return array<int,array{var:string,host:string}>
      */
     public static function build_declared(array $env): array
@@ -140,16 +169,20 @@ class Rsx_Env_Hostname_Guard
         $declared = [];
 
         $app_url = trim((string) ($env['APP_URL'] ?? ''));
-        if ($app_url !== '') {
-            $host = parse_url($app_url, PHP_URL_HOST);
-            if ($host === null || $host === false || $host === '') {
-                throw new RuntimeException(
-                    'Dev-mode .env hostname guard: APP_URL is set to "' . $app_url
-                    . '" but no host could be parsed from it - fix APP_URL in .env'
-                    . ' (expected e.g. https://host). [rsx:man realtime]'
-                );
+        if ($app_url === '') {
+            return $declared;
+        }
+
+        $app_host = self::__host_of('APP_URL', $app_url);
+        $declared[] = ['var' => 'APP_URL', 'host' => $app_host];
+
+        $portal_url = trim((string) ($env['PORTAL_URL'] ?? ''));
+        if ($portal_url !== '') {
+            $portal_host = self::__host_of('PORTAL_URL', $portal_url);
+
+            if ($portal_host !== $app_host) {
+                $declared[] = ['var' => 'PORTAL_URL', 'host' => $portal_host];
             }
-            $declared[] = ['var' => 'APP_URL', 'host' => strtolower(trim($host))];
         }
 
         return $declared;
@@ -174,7 +207,8 @@ class Rsx_Env_Hostname_Guard
     // -------------------------------------------------------------------------
 
     /**
-     * Gather the live .env value and build the declared entry once per request.
+     * Gather the live values and build the declared entries once per request.
+     * PORTAL_URL is read as configured (rsx.portal.url, $HOSTNAME already resolved).
      *
      * @return array<int,array{var:string,host:string}>
      */
@@ -186,9 +220,28 @@ class Rsx_Env_Hostname_Guard
 
         self::$_declared_cache = self::build_declared([
             'APP_URL' => env('APP_URL'),
+            'PORTAL_URL' => config('rsx.portal.url'),
         ]);
 
         return self::$_declared_cache;
+    }
+
+    /**
+     * The lowercased host of a declared URL, or a fatal naming the variable when none
+     * can be parsed.
+     */
+    private static function __host_of(string $var, string $url): string
+    {
+        $host = parse_url($url, PHP_URL_HOST);
+        if ($host === null || $host === false || $host === '') {
+            throw new RuntimeException(
+                'Dev-mode .env hostname guard: ' . $var . ' is set to "' . $url
+                . '" but no host could be parsed from it - fix ' . $var . ' in .env'
+                . ' (expected e.g. https://host). [rsx:man realtime]'
+            );
+        }
+
+        return strtolower(trim($host));
     }
 
     /**

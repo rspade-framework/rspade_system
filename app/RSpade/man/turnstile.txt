@@ -261,6 +261,10 @@ THE VALIDATOR
     comparing it would make the documented dev recipe below unusable. The
     exemption reads Cloudflare's own marker rather than a hardcoded list of
     keys, and costs nothing in production - a real secret never sets it.
+    Rsx::get_hostname() is the BROWSED host, so a widget on a client portal
+    with a host of its own (PORTAL_URL, rsx:man portal) verifies against the
+    portal host - list that host in the Turnstile widget's hostname settings
+    in the Cloudflare dashboard beside the APP_URL host.
 
     FAIL CLOSED. A network error, a non-2xx status, or a non-JSON body from
     siteverify is a rejection with its own distinct message

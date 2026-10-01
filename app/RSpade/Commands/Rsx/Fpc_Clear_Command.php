@@ -13,7 +13,9 @@ use Illuminate\Console\Command;
  * carries #[FPC], and a cached page with no declared TTL lives until something removes
  * it - so something has to be typeable.
  *
- * WHOLE BUILD BY DEFAULT, one page with --url. The default is the build's OWN entries
+ * WHOLE BUILD BY DEFAULT, one page with --url: a bare path clears that page on every host
+ * the application answers on (the APP_URL host, a portal host), a full URL clears it on
+ * the one host it names. The default is the build's OWN entries
  * (fpc:{build_key}:*), never the whole Redis database: another build's entries are
  * another build's business, and rsx:clean is the command that empties the database
  * outright.
@@ -27,7 +29,7 @@ use Illuminate\Console\Command;
 class Fpc_Clear_Command extends Command
 {
     protected $signature = 'rsx:fpc:clear
-                            {--url= : Clear one page (path with optional query string, e.g. /about or /search?q=x)}';
+                            {--url= : Clear one page: a path (/about, /search?q=x) clears it on every host, a full URL (https://host/about) on that host only}';
 
     protected $description = 'Clear full page cache entries for the current build';
 
@@ -40,8 +42,8 @@ class Fpc_Clear_Command extends Command
 
             // A URL that was not cached is not a failure: it is the state the operator
             // wanted, reached before they asked. Say which it was and exit 0 either way.
-            $this->info($cleared
-                ? '[OK] Cleared the cached page for ' . $url
+            $this->info($cleared > 0
+                ? '[OK] Cleared ' . $cleared . ' cached page(s) for ' . $url
                 : '[OK] Nothing cached for ' . $url);
 
             return 0;

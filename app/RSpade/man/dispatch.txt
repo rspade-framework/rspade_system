@@ -86,12 +86,16 @@ THE FRONT CONTROLLER
          PAGE    everything else, in its realm: public files, /error/*
                  previews, routes, SPA bootstraps, the file routes.
 
-       The realm (staff or portal) is the portal's dedicated domain or its path
-       prefix on the staff host; Rsx_Portal::is_portal_request() reads it.
+       The realm (staff or portal) is where PORTAL_URL places the portal: on
+       the application host a path under the portal prefix; on a portal host
+       of its own every request there, a path outside the prefix being the
+       portal's 404 (rsx:man portal, PORTAL URL). Rsx_Portal::
+       is_portal_request() reads it.
 
     3. The preamble: the request's revision unit of work, Manifest::init(), the
        development hostname tripwire (Rsx_Env_Hostname_Guard: a browsed host
-       that does not match APP_URL fatals; loopback is exempt), and - AJAX and
+       that matches neither APP_URL's nor PORTAL_URL's host fatals; loopback
+       is exempt), and - AJAX and
        PAGE only - the development first-run setup screen (offered to, and
        accepted from, a loopback caller only).
 

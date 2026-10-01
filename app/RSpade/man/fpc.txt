@@ -83,7 +83,14 @@ ATTRIBUTE USAGE
 
 CACHE BEHAVIOR
     Cache Key:
-        fpc:{build_key}:{sha1(path?sorted_query_params)}
+        fpc:{build_key}:{host}:{sha1(path?sorted_query_params)}
+
+    {host} is the request's host, lowercased, without a port (an IPv6 literal
+    unbracketed). One application answers on more than one host - APP_URL's,
+    and a client portal on a host of its own (rsx:man portal, PORTAL URL) - and
+    the same path on two hosts is two different pages. The proxy
+    (make_cache_key() in system/bin/fpc-proxy.js) and PHP (Rsx_FPC::cache_key())
+    derive it identically.
 
     The build key is the manifest hash, written to
     build/build_key during manifest save. When any file
@@ -123,11 +130,13 @@ PER-ROUTE TTL
 WHAT CLEARS AN ENTRY
     Four things, and nothing else:
 
-    php artisan rsx:fpc:clear [--url=/path]
+    php artisan rsx:fpc:clear [--url=/path | --url=https://host/path]
         The operator lever. With no --url it clears THIS BUILD's entries
         (fpc:{build_key}:*), never the whole database - another build's entries
         are another build's business. With --url it clears one page, sorting
-        query parameters exactly as the proxy's key derivation does. A page
+        query parameters exactly as the proxy's key derivation does: a bare
+        PATH clears that page on EVERY host it was cached under, a full URL on
+        the one host it names. It reports how many entries it removed. A page
         that was not cached is reported and exits 0: that is the state the
         operator wanted, reached before they asked. An unreachable Redis FAILS
         LOUD rather than reporting "0 cleared".
@@ -324,7 +333,7 @@ DEBUGGING
 
     View cached entry:
 
-        redis-cli GET "fpc:{build_key}:{sha1_of_url}"
+        redis-cli GET "fpc:{build_key}:{host}:{sha1_of_url}"
 
     List all FPC keys:
 

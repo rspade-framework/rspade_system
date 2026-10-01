@@ -611,7 +611,7 @@ SUBSYSTEM PRIMERS
             Manifest::init(), hostname guard
             ASSET -> AssetHandler::serve_build_artifact() (a miss is a
               plain-text 404, never a route)
-            API -> Api_Dispatcher (the portal's dedicated domain answers
+            API -> Api_Dispatcher (a portal's own host answers
               404 not_found; before the FPC marker, so an API response never
               gets it)
             first-user setup (AJAX and PAGE only)
@@ -1122,8 +1122,8 @@ SUBSYSTEM PRIMERS
     session?" is has_session(), which creates nothing.
 
     THE PORTAL FORK is Rsx_Portal::is_portal_request(), memoized per process,
-    resolved from the configured portal domain if there is one and otherwise
-    from the URL prefix, and false on the CLI. THE SAME PREDICATE drives the
+    resolved from where PORTAL_URL places the portal (its own host, or its
+    prefix on the application host - rsx:man portal), and false on the CLI. THE SAME PREDICATE drives the
     active auth realm, the error screens' realm, and the ORM's choice between
     fetch() and portal_fetch(). Application code that must fork forks on
     THIS - never on whether somebody is logged in. Identity is not

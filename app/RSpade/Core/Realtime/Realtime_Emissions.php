@@ -405,8 +405,8 @@ class Realtime_Emissions
      * default), else 0.
      *
      * The session tier is realm-aware. A model with no site_id column written
-     * during a portal request must not be scoped by the STAFF session's site — in
-     * prefix mode that is a real value belonging to a different realm's session, so
+     * during a portal request must not be scoped by the STAFF session's site — with
+     * the portal on the application host that is a real value belonging to a different realm's session, so
      * the frame would be routed to the wrong tenant's connections. Portal_Session's
      * site is declared per request by the app (Portal_Main::init()) and throws if it
      * was not, which on a portal request is the correct fail-loud.

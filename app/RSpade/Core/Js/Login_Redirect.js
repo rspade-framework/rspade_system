@@ -22,11 +22,11 @@
  * pre-feature behavior (land on the dashboard), not surface an error.
  *
  * PORTAL CONTEXT SENSITIVITY (mirrors the PHP twin): the validator reads
- * Rsx_Portal.is_portal() and adapts its page-path and loop-prevention rules. In
- * portal prefix mode (no dedicated portal domain) a return target must live under
- * the portal prefix (Rsx_Portal.get_prefix()); the prefix is stripped before the
- * base non-page and exclusion rules apply. In portal domain mode portal paths are
- * unprefixed and the base rules apply directly. Staff and portal targets are
+ * Rsx_Portal.is_portal() and adapts its page-path and loop-prevention rules. On a
+ * portal page a return target must live under the portal's prefix
+ * (Rsx_Portal.prefix(); an empty prefix contains every path), and the prefix is
+ * stripped before the base non-page and exclusion rules apply. On a staff page a
+ * target under a same-host portal prefix is refused. Staff and portal targets are
  * isolated in both directions. Portal exclusions read
  * window.rsxapp.login_redirect.portal_excluded_prefixes (namespace-relative).
  */
@@ -150,7 +150,7 @@ class Login_Redirect {
         const path_only = value.split('?')[0];
 
         // Framework-internal / asset / Ajax-endpoint / external API paths are never
-        // valid return targets. Context-aware: in portal prefix mode the portal
+        // valid return targets. Context-aware: in portal context the portal
         // prefix is a page namespace, so <prefix>/page passes while <prefix>/_...
         // and <prefix>/api/... reject; a staff target may not point under the
         // portal prefix, and a portal target may not point outside it.
@@ -159,7 +159,7 @@ class Login_Redirect {
         }
 
         // Loop prevention: reject targets that are themselves login-flow routes.
-        // The exclusion list is namespace-relative, so in portal prefix mode the
+        // The exclusion list is namespace-relative, so in portal context the
         // portal prefix is stripped before the comparison.
         const namespace_path = Login_Redirect.#namespace_path(path_only);
         for (const prefix of Login_Redirect.#excluded_prefixes()) {
@@ -183,52 +183,46 @@ class Login_Redirect {
 
     /**
      * Context-aware page-path predicate. Wraps the base rules with the portal
-     * namespace rule when the current page is a portal page (mirror of the PHP
-     * _is_non_page_path_in_context()).
+     * namespace rule (mirror of the PHP _is_non_page_path_in_context()):
+     *
+     *   - staff page: a path under the portal's prefix on this same host is the
+     *     portal's, never a staff target; otherwise the base rules.
+     *   - portal page: the path MUST be under the portal's prefix (an empty prefix
+     *     contains every path); the prefix is stripped and the base rules apply to
+     *     the remainder.
      *
      * @param {string} path
      * @returns {boolean}
      */
     static #is_non_page_path_in_context(path) {
-        if (!Rsx_Portal.is_portal() || Rsx_Portal.has_dedicated_domain()) {
+        if (!Rsx_Portal.is_portal()) {
+            if (!Rsx_Portal.is_separate_host() && Rsx_Portal.is_under_prefix(path)) {
+                return true;
+            }
+
             return Login_Redirect.#is_non_page_path(path);
         }
 
-        // Portal prefix mode: the target must live under the portal prefix.
-        const prefix = Rsx_Portal.get_prefix();
-        if (path !== prefix && !path.startsWith(prefix + '/')) {
+        if (!Rsx_Portal.is_under_prefix(path)) {
             return true;
         }
 
-        let remainder = path.slice(prefix.length);
-        if (remainder === '') {
-            remainder = '/';
-        }
-
-        return Login_Redirect.#is_non_page_path(remainder);
+        return Login_Redirect.#is_non_page_path(Rsx_Portal.strip_prefix(path));
     }
 
     /**
-     * The portal-namespace-relative path used for exclusion matching. In portal
-     * prefix mode the portal prefix is stripped (empty remainder counts as '/');
-     * in every other context the path is returned unchanged.
+     * The portal-namespace-relative path used for exclusion matching: the portal
+     * prefix stripped on a portal page, the path unchanged on a staff page.
      *
      * @param {string} path
      * @returns {string}
      */
     static #namespace_path(path) {
-        if (!Rsx_Portal.is_portal() || Rsx_Portal.has_dedicated_domain()) {
+        if (!Rsx_Portal.is_portal()) {
             return path;
         }
 
-        const prefix = Rsx_Portal.get_prefix();
-        if (!path.startsWith(prefix)) {
-            return path;
-        }
-
-        const remainder = path.slice(prefix.length);
-
-        return remainder === '' ? '/' : remainder;
+        return Rsx_Portal.strip_prefix(path);
     }
 
     /**

@@ -108,7 +108,7 @@ class Passkeys
      * The application's relying party id: the bare APP_URL hostname, no scheme, no port.
      *
      * The staff realm's rpId, and the portal's too unless the portal is served from a
-     * dedicated domain (see Rsx_Portal_Two_Factor::_relying_party_id()).
+     * host of its own (see Rsx_Portal_Two_Factor::_relying_party_id()).
      *
      * @return string
      */

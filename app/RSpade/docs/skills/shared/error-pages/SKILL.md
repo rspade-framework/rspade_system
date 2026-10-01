@@ -51,7 +51,7 @@ One argument beyond the request: `$params['error']`, a readonly `App\RSpade\Core
 | `message` | the framework sentence, or the reason the failing endpoint gave |
 | `path` / `method` | the failing request |
 | `realm` | staff or portal |
-| `home_url` | the realm's home (portal prefix, or the portal root on a dedicated domain) |
+| `home_url` | the realm's home, absolute (the staff root, or the portal's origin + prefix from `PORTAL_URL`) |
 | `preview` | true when a development `/error/<code>` browse fabricated this context |
 | `detail` | `{class, message, file, line, frames[]}` — a **500 only**, and only for a **developer caller** in development or debug mode (`Rsx_Diagnostics::caller_sees_detail()`); null for everybody else and in strict production |
 | `error_id` | a redacted 500's reference (logged as `[error_id=<id>]`); null when `detail` is shown — print it |
@@ -78,7 +78,7 @@ The error page for the error page must not be a third error.
 
 ## Preview (development only)
 
-Browse the URL: `/error/404`, `/error/403`, `/error/419`, `/error/500`, `/error/generic` (and the portal twins under `config('rsx.portal.prefix')`, default `/_portal`).
+Browse the URL: `/error/404`, `/error/403`, `/error/419`, `/error/500`, `/error/generic` (and the portal twins under the portal's prefix on its host - `/_portal` by default, from `PORTAL_URL`).
 
 ```bash
 php artisan rsx:debug /error/generic --user=1

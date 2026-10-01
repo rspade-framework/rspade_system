@@ -831,9 +831,13 @@ THE CLIENT PORTAL REALM
                     staff identity's store): each failure feeds
                     Login_Throttle::record_failure() directly, exactly once,
                     and a success records nothing beyond the last_login stamp.
-        rpId        the dedicated portal domain (rsx.portal.domain) when one
-                    is configured, otherwise the application's hostname
-                    (shared with staff - safe, see PASSKEYS above).
+        rpId        the portal's HOST (Rsx_Portal_Url::host()) when PORTAL_URL
+                    gives the portal a host of its own, otherwise the
+                    application's hostname (shared with staff - safe, see
+                    PASSKEYS above). A prefix never enters it. A passkey is
+                    bound to its rpId, so moving the portal to another host
+                    strands the passkeys enrolled under the old one (rsx:man
+                    prelaunch_checklist, ENTRY 16).
         user handle 'portal-<id>'.
         endpoints   Rsx_Portal_Two_Factor_Controller.
         impersonation

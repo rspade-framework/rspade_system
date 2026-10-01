@@ -23,7 +23,7 @@ TEST_NAME="Portal Login Uses The One Session Cookie"
 # row that the portal login wrote its identity onto.
 
 BASE="http://localhost"
-PORTAL_PREFIX="${PORTAL_PREFIX:-/_portal}"
+SYSTEM_DIR="$(cd "$(dirname "$0")/../../../../.." && pwd)"
 FIXTURE_EMAIL="flash-http-fixture@rspade.test"
 FIXTURE_PASSWORD="FlashHttp!123"
 FLASH_TEXT="Welcome to the Client Portal"
@@ -47,6 +47,17 @@ assert_no_portal_cookie() {
         fail "$label set the retired rsx_portal cookie; there is one session cookie: $(grep -i '^set-cookie:' "$header_file")"
     fi
 }
+
+# The one-cookie model this test proves is the SAME-HOST layout: a portal under a prefix on
+# the application host, reached here as localhost + <prefix> (Rsx_Portal_Url, read from
+# the live configuration). A portal on a host of its own holds a cookie per host by
+# construction, so the test does not apply there.
+PORTAL_LAYOUT="$(cd "$SYSTEM_DIR" && php -r '$app = require "script.php"; echo (\App\RSpade\Core\Portal\Rsx_Portal_Url::is_separate_host() ? "separate" : "same") . " " . \App\RSpade\Core\Portal\Rsx_Portal_Url::prefix();' 2>/dev/null | tail -1)"
+case "${PORTAL_LAYOUT%% *}" in
+    same) PORTAL_PREFIX="${PORTAL_LAYOUT#* }" ;;
+    separate) echo "SKIP: $TEST_NAME - PORTAL_URL names a host of its own"; exit 0 ;;
+    *) fail "the portal layout could not be read from the configuration" ;;
+esac
 
 # ---------------------------------------------------------------------------
 # Step 0: Seed the fixture portal account. Self-seeding on purpose - this test

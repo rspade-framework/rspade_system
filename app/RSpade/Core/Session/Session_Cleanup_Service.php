@@ -10,10 +10,11 @@ use App\RSpade\Core\Task\Task_Instance;
 /**
  * Session_Cleanup_Service
  *
- * Hourly retention sweeps for the session concern's two tables: cleanup_sessions() expires
+ * Hourly retention sweeps for the session concern's tables: cleanup_sessions() expires
  * idle `_sessions` rows by type, cleanup_login_history() prunes `_login_history` past its
- * retention window. Separate tasks because they answer separate questions (inactivity vs age)
- * and either may be disabled without touching the other.
+ * retention window, cleanup_session_links() removes expired `_session_links` handshake codes.
+ * Separate tasks because they answer separate questions (inactivity, age, expiry) and any
+ * may be disabled without touching the others.
  *
  * For sessions this is the ONE retention mechanism.
  *
@@ -188,6 +189,39 @@ class Session_Cleanup_Service extends Rsx_Service_Abstract
 
         if ($deleted > 0) {
             $task->info("Deleted {$deleted} login history rows older than {$retention_days} days");
+        }
+
+        return ['total_deleted' => $deleted];
+    }
+
+    /**
+     * Delete the linked-session handshake codes whose window has passed.
+     *
+     * A code is unredeemable the instant it expires (Session_Link filters on expires_at),
+     * and a redeemed one is deleted by its redemption, so this only reclaims the space of
+     * links nobody finished - an abandoned tab, a refused leg. A link whose session ends
+     * first goes with it (ON DELETE CASCADE).
+     *
+     * @param Task_Instance $task Task instance for logging
+     * @param array $params Task parameters (chunk_size: rows per DELETE, testing)
+     * @return array Deletion count
+     */
+    #[Task('Delete expired linked-session handshake codes (runs hourly)')]
+    #[Exclusive]
+    #[Schedule('hourly')]
+    public static function cleanup_session_links(Task_Instance $task, array $params = [])
+    {
+        $chunk_size = (int) ($params['chunk_size'] ?? self::DELETE_CHUNK_SIZE);
+        $now = now();
+
+        $deleted = self::_delete_chunked(
+            fn () => DB::table('_session_links')->where('expires_at', '<', $now),
+            $task,
+            $chunk_size
+        );
+
+        if ($deleted > 0) {
+            $task->info("Deleted {$deleted} expired session links");
         }
 
         return ['total_deleted' => $deleted];

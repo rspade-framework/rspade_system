@@ -11,7 +11,7 @@ use App\RSpade\Core\Auth\Login_Throttle;
 use App\RSpade\Core\Database\Models\Rsx_Model_Abstract;
 use App\RSpade\Core\Models\Portal_User_Model;
 use App\RSpade\Core\Portal\Portal_Session;
-use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 use App\RSpade\Core\TwoFactor\Passkeys;
 use App\RSpade\Core\TwoFactor\Portal_Two_Factor_Credential_Model;
 use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Abstract;
@@ -45,9 +45,9 @@ use App\RSpade\Core\TwoFactor\Rsx_Two_Factor_Abstract;
  *   enrollment and removal refuses under it: a staff member viewing a client's portal must
  *   never be able to enroll a passkey onto that client's account.
  *
- *   THE RELYING PARTY is the portal's own host. With a dedicated portal domain
- *   (rsx.portal.domain) that is that domain; in prefix mode the portal shares the
- *   application's host, and so shares its rpId with staff - which is safe because the two
+ *   THE RELYING PARTY is the portal's own host. When PORTAL_URL names a host of its own
+ *   that is that host (Rsx_Portal_Url::host()); under a prefix on the application host
+ *   the portal shares that host, and so shares its rpId with staff - which is safe because the two
  *   realms' credentials live in different tables (see Passkeys). The USER HANDLE is
  *   'portal-<id>', never the bare id, so a portal passkey and a staff passkey on one
  *   authenticator can never overwrite each other.
@@ -103,22 +103,18 @@ class Rsx_Portal_Two_Factor extends Rsx_Two_Factor_Abstract
     }
 
     /**
-     * The dedicated portal domain when one is configured, else the application's hostname.
+     * The portal's own host when it has one (Rsx_Portal_Url), else the application's
+     * hostname.
      *
      * @return string
      */
     public static function _relying_party_id(): string
     {
-        if (!Rsx_Portal::has_dedicated_domain()) {
+        if (!Rsx_Portal_Url::is_separate_host()) {
             return Passkeys::relying_party_id();
         }
 
-        $domain = (string) Rsx_Portal::get_domain();
-
-        // Accept either spelling an operator might write - a bare host or a URL.
-        $host = str_contains($domain, '://') ? (string) parse_url($domain, PHP_URL_HOST) : $domain;
-
-        return Passkeys::bare_host($host);
+        return Passkeys::bare_host(Rsx_Portal_Url::host());
     }
 
     /**

@@ -46,8 +46,9 @@ class Pdf_Viewer extends Component {
         }
 
         const version = (window.rsxapp && window.rsxapp.build_key) ? window.rsxapp.build_key : '';
-        const module_url = Rsx.Route('File_Preview_Controller::pdfjs') + '?v=' + urlencode(version);
-        const worker_url = Rsx.Route('File_Preview_Controller::pdf_worker') + '?v=' + urlencode(version);
+        // Both routes exist in both realms; a portal page asks its own (Rsx_Portal.internal_url).
+        const module_url = Rsx_Portal.internal_url(Rsx.Route('File_Preview_Controller::pdfjs')) + '?v=' + urlencode(version);
+        const worker_url = Rsx_Portal.internal_url(Rsx.Route('File_Preview_Controller::pdf_worker')) + '?v=' + urlencode(version);
 
         Pdf_Viewer._pdfjs_promise = import(module_url).then((pdfjs) => {
             pdfjs.GlobalWorkerOptions.workerSrc = worker_url;

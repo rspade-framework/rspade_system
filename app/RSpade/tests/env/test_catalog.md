@@ -7,13 +7,14 @@ One row per test worth having (implemented AND not). Status is one of
 
 Covers Rsx_Env_Hostname_Guard's pure core. The PHP runner is CLI, where check()
 bails, so the request wrapper's end-to-end behavior is proven by E2E curl in the
-ticket verification (see EHG-E2E below), not a persistent test. The guard now
-consults only the APP_URL host, matched exactly.
+ticket verification (see EHG-E2E below), not a persistent test. The guard declares
+the APP_URL host plus, when PORTAL_URL names a host of its own, the portal host; a
+request passes when it matches ANY declared host exactly, without its port.
 
 | ID | Purpose (what it proves) | Type | Input | Expected | Status | Last updated |
 |----|--------------------------|------|-------|----------|--------|--------------|
 | EHG-01 | exact APP_URL host match passes | php | request host == APP_URL host | no mismatch | implemented | 2026-07-22 |
-| EHG-02 | APP_URL host mismatch caught, names both hosts | php | request != APP_URL host | mismatch var=APP_URL, env+request hosts | implemented | 2026-07-22 |
+| EHG-02 | APP_URL host mismatch caught, names both hosts | php | request != APP_URL host | mismatch carries the declared APP_URL entry + request host; message "does not match APP_URL host" | implemented | 2026-10-01 |
 | EHG-03 | old suffix rule no longer applies (exact only) | php | sub.domain of APP_URL host | mismatch; exact host still passes | implemented | 2026-07-22 |
 | EHG-04 | loopback-VALUED APP_URL not skipped | php | APP_URL=https://localhost, real request host | 1 entry; mismatch | implemented | 2026-07-22 |
 | EHG-05 | empty / absent APP_URL declares nothing | php | APP_URL='' and [] | 0 entries | implemented | 2026-07-22 |
@@ -21,6 +22,12 @@ consults only the APP_URL host, matched exactly.
 | EHG-07 | loopback hosts recognized (localhost/127.*/::1) | php | various | true; real host false | implemented | 2026-07-22 |
 | EHG-08 | normalize strips port, lowercases, handles IPv6 brackets | php | HOST:port / [::1]:port | bare lowercased host | implemented | 2026-07-22 |
 | EHG-09 | comparison is case-insensitive | php | mixed-case request + APP_URL | no mismatch | implemented | 2026-07-22 |
+| EHG-10 | a separate PORTAL_URL host is a second declared host: either host passes, a third is refused, the message names both | php | APP_URL + PORTAL_URL on another host | 2 entries; app/portal pass; third mismatch | implemented | 2026-10-01 |
+| EHG-11 | a same-host or blank PORTAL_URL declares nothing more; nothing is declared before APP_URL | php | prefix on the app host, blank, empty APP_URL | 1 / 1 / 0 entries | implemented | 2026-10-01 |
+| EHG-12 | a hostless PORTAL_URL fails loud | php | PORTAL_URL='/clients' | RuntimeException naming PORTAL_URL | implemented | 2026-10-01 |
+| EHG-13 | the portal host is compared without its port | php | declared :8080, request :9000 | no mismatch | implemented | 2026-10-01 |
+| EHG-14 | no declared host is never a mismatch | php | [] | null | implemented | 2026-10-01 |
+| EHG-15 | production `Rsx::get_hostname()` serves the APP_URL host, its sub-hosts and the portal host (exact), nothing else | php | `Rsx::host_is_served()` | per row | implemented | 2026-10-01 |
 
 ## App_Url_Test (php)
 

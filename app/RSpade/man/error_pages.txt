@@ -33,8 +33,9 @@ SYNOPSIS
     Preview, development only - browse the URL:
 
         /error/404   /error/403   /error/419   /error/500   /error/generic
-        <portal prefix>/error/404             (config('rsx.portal.prefix'),
-        <portal prefix>/error/generic          default /_portal)
+        <portal prefix>/error/404             (on the portal's host; the prefix
+        <portal prefix>/error/generic          comes from PORTAL_URL, default
+                                               /_portal - rsx:man portal)
 
         php artisan rsx:debug /error/404 --user=1
 
@@ -112,8 +113,9 @@ WHAT A PAGE RECEIVES
         path        string   the failing request's path
         method      string   the failing request's HTTP method
         realm       string   Auth_Gates::REALM_STAFF | REALM_PORTAL
-        home_url    string   the realm's home - the staff root, or the portal
-                             prefix (the portal root on a dedicated domain)
+        home_url    string   the realm's home, absolute - the staff root, or
+                             the portal's own root (its origin + prefix from
+                             PORTAL_URL, on whichever host it lives)
         preview     bool     true when a development browse of /error/<code>
                              fabricated this context
         detail      ?array   {class, message, file, line, frames[]} - a 500 only,

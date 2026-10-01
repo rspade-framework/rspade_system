@@ -43,7 +43,7 @@ class Csrf_Reject_Contract_Test extends Rsx_Test_Abstract
     /** Staff internal-endpoint channel. */
     private const AJAX_URI = '/_ajax/Foo_Controller/bar';
 
-    /** Portal internal-endpoint channel in prefix mode (domain mode reuses /_ajax). */
+    /** Portal internal-endpoint channel under the default prefix (any prefix + /_ajax is the same shape). */
     private const PORTAL_AJAX_URI = '/_portal/_ajax/Foo_Controller/bar';
 
     /** A native #[Route] path -> reject renders the 419 page. */

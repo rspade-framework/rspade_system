@@ -11,6 +11,7 @@ use Illuminate\Http\Request;
 use App\RSpade\Core\Api\Api_Dispatcher;
 use App\RSpade\Core\Dispatch\AssetHandler;
 use App\RSpade\Core\Portal\Rsx_Portal;
+use App\RSpade\Core\Portal\Rsx_Portal_Url;
 
 /**
  * Rsx_Request_Channel - which kind of request this is, decided ONCE per request.
@@ -26,17 +27,27 @@ use App\RSpade\Core\Portal\Rsx_Portal;
  *          (AssetHandler::is_build_artifact_request). A build artifact: no session, no
  *          CSRF, no route scan; a miss is a plain-text 404, never a route.
  *   API    ^/api/v<N>/ - the external bearer API. It is a STAFF identity on any host,
- *          EXCEPT a dedicated portal domain: the API does not exist there, and the API
+ *          EXCEPT the portal's own host: the API does not exist there, and the API
  *          pipeline answers every path under it with its own 404 (is_portal_host()).
- *          In path-prefix mode the portal lives under a prefix on the staff host, and
- *          /api/... on that host is the API as usual.
+ *          When the portal lives under a prefix on the application host, /api/... on
+ *          that host is the API as usual.
  *   AJAX   /_ajax/... POST, in its realm (staff, or the portal: the same path under the
- *          portal's prefix or on its domain).
+ *          portal's prefix).
  *   PAGE   everything else, in its realm: public files, /error/* previews, routes, SPA
  *          bootstraps and the framework file routes.
  *
- * THE REALM (staff | portal) is an attribute of AJAX and PAGE, not a channel: the portal
- * is its dedicated domain, or its path prefix on the staff host. Rsx_Portal::
+ * THE REALM (staff | portal) is an attribute of AJAX and PAGE, not a channel. Where the
+ * portal lives is Rsx_Portal_Url's derivation of PORTAL_URL:
+ *
+ *   portal on the application host (under a prefix): a path under the prefix is the
+ *     portal, any other path is staff - on every host the application answers on.
+ *   portal on its own host: EVERY request on that host is the portal realm. A path
+ *     outside the prefix there is a portal path no route matches (Dispatcher answers the
+ *     portal's 404), never a staff page. On any other host the request is staff, the
+ *     prefix included.
+ *
+ * Build artifacts (/_compiled, /_vendor) are realm-agnostic on every host. realm_path is
+ * the path with the prefix removed when the request is under it. Rsx_Portal::
  * is_portal_request() is exactly "realm() === REALM_PORTAL".
  *
  * OUTSIDE A REQUEST (CLI, a test that never classified one) the answer is a staff PAGE,
@@ -100,8 +111,9 @@ class Rsx_Request_Channel
     }
 
     /**
-     * True when the current request arrived on the portal's DEDICATED domain. The API
-     * reads this to refuse its whole namespace there.
+     * True when the current request arrived on the portal's OWN host (PORTAL_URL names a
+     * host other than APP_URL's). Never true when the portal is under a prefix on the
+     * application host. The API reads this to refuse its whole namespace there.
      */
     public static function is_portal_host(): bool
     {
@@ -190,33 +202,30 @@ class Rsx_Request_Channel
     {
         $path = static::dispatch_path($request);
 
-        $portal_host = false;
-        $in_portal_prefix = false;
+        $portal_host = Rsx_Portal_Url::is_separate_host()
+            && strtolower($request->getHost()) === Rsx_Portal_Url::host();
 
-        if (Rsx_Portal::has_dedicated_domain()) {
-            $domain = strtolower((string) Rsx_Portal::get_domain());
-            $portal_host = $domain === strtolower($request->getHost())
-                || $domain === strtolower($request->getHttpHost());
-        } else {
-            $prefix = Rsx_Portal::get_prefix();
-            $in_portal_prefix = $path === $prefix || str_starts_with($path, $prefix . '/');
-        }
+        $in_portal_prefix = Rsx_Portal::is_under_prefix($path);
 
-        $realm = ($portal_host || $in_portal_prefix) ? self::REALM_PORTAL : self::REALM_STAFF;
+        // The portal's own host is the portal realm throughout; on the application host the
+        // prefix decides. A separate-host portal's prefix means nothing on the staff host.
+        $is_portal = Rsx_Portal_Url::is_separate_host() ? $portal_host : $in_portal_prefix;
+        $realm = $is_portal ? self::REALM_PORTAL : self::REALM_STAFF;
 
         // The path inside the realm: the portal prefix is not part of any portal path.
-        $realm_path = $path;
-        if ($in_portal_prefix) {
-            $realm_path = substr($path, strlen(Rsx_Portal::get_prefix())) ?: '/';
-        }
+        $under_prefix = $is_portal && $in_portal_prefix;
+        $realm_path = $under_prefix ? Rsx_Portal::strip_prefix($path) : $path;
 
         if (AssetHandler::is_build_artifact_request($realm_path)) {
             return ['channel' => self::ASSET, 'realm' => $realm, 'portal_host' => $portal_host, 'realm_path' => $realm_path];
         }
 
         // The API is a staff identity wherever it answers, so its realm is staff even on
-        // the portal domain - where the API pipeline refuses it (is_portal_host()).
-        if (!$in_portal_prefix && Api_Dispatcher::is_api_request($path)) {
+        // the portal host - where the API pipeline refuses it (is_portal_host()). /api/
+        // under a non-empty portal prefix is a portal path, not the API.
+        $prefixed_portal_path = $under_prefix && Rsx_Portal_Url::prefix() !== '';
+
+        if (!$prefixed_portal_path && Api_Dispatcher::is_api_request($path)) {
             return ['channel' => self::API, 'realm' => self::REALM_STAFF, 'portal_host' => $portal_host, 'realm_path' => $path];
         }
 

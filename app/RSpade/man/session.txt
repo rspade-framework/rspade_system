@@ -23,11 +23,10 @@ DESCRIPTION
 
         staff properties    login_user_id, site_id, impersonator_login_user_id
         portal properties   portal_user_id, portal_site_id, impersonator_user_id,
-                            impersonation_started_at, handoff_token,
-                            handoff_expires_at
+                            impersonation_started_at
 
     The EXPERIENCE is a property of the REQUEST - Rsx_Portal::is_portal_request()
-    (portal domain, or the /_portal prefix) - and all it decides is which of the
+    (where PORTAL_URL places the portal - rsx:man portal) - and all it decides is which of the
     row's properties get consulted. BOTH IDENTITIES SET AT ONCE IS NORMAL: the
     same human, in the same browser, signed into the staff app and the client
     portal. site_id is STAFF-only, which is why portal_site_id exists - a browser
@@ -41,9 +40,20 @@ DESCRIPTION
     token are SHARED - Portal_Session::get_session_id()/get_csrf_token() report
     the same values Session does.
 
-    A dedicated portal domain needs no machinery at all: per-origin cookie jars
-    mean that browser holds its own row on that origin, with the staff properties
-    simply null.
+    A portal on its OWN host (PORTAL_URL) is reached through a separate cookie
+    jar, so the browser holds an `rsx` cookie per host, and ordinarily each names
+    its own row - the portal host's with the staff properties null. The one
+    place the two are joined is staff "View as Client": the linked-session
+    handshake (rsx:man portal, IMPERSONATION) ends with the portal host's cookie
+    naming the SAME row as the staff host's, through the framework-internal
+    Session::_clone_session_to_this_host(). One row then serves both hosts
+    through two cookies - the same shape as the same-host layout: reset() on
+    either host retires it for both, and a logout on either clears only its own
+    experience's properties. The handshake's one-time codes live in
+    _session_links (code_hash, leg, session_id, nonce_hash, payload, expires_at;
+    ON DELETE CASCADE with the session) and its URLs are signed by
+    Rsx_Signed_Url (HMAC-SHA256, key derived from app.key); the session token
+    never appears in a URL.
 
     Consequence worth stating outright: portal logout, terminating a portal
     device session and the portal sign-in cap CLEAR THE PORTAL PROPERTIES. They
@@ -796,9 +806,11 @@ IMPERSONATION
     Overview:
         The main Session supports "log in as another user" - a staff/admin user
         temporarily assuming another login user's identity to see and debug what
-        that user sees. Unlike the portal's cross-domain flow (rsx:man portal),
-        the main case is a same-cookie, in-place identity swap: same session row,
-        same cookie, no handoff token, no throwaway row, no claim route. Begin
+        that user sees. Unlike the portal's "View as Client" (rsx:man portal),
+        which writes a PORTAL identity onto the row - through a linked-session
+        handshake when the portal has its own host - the main case is a
+        same-cookie, in-place swap of the STAFF identity: same session row,
+        same cookie, no extra route. Begin
         remembers the current login_user_id, swaps it to the target, and can swap
         it back.
 
@@ -1326,6 +1338,12 @@ GARBAGE COLLECTION
             Service:  Session_Cleanup_Service::cleanup_sessions() (hourly)
             Requires: the standard rsx:task:process cron entry
 
+        Linked-session codes: Session_Cleanup_Service::cleanup_session_links()
+        (hourly, #[Exclusive]) deletes the _session_links rows whose 120-second
+        window has passed. A code is unredeemable the instant it expires and a
+        redeemed one is deleted by its redemption, so this only reclaims links
+        nobody finished.
+
         Manual Trigger:
             To manually run cleanup outside the schedule:
 
@@ -1364,9 +1382,7 @@ SESSION MANAGEMENT
         nothing ever expired - now TYPE_PLAYWRIGHT, deleted as each run ends - a
         retention bug, not a query bug.
         Portal_Session::get_sessions_for_user() is the same query narrowed on
-        portal_user_id instead of login_user_id, and additionally excludes the
-        "View as Client" handoff rows (handoff_token IS NOT NULL) - those are
-        single-use transport, not a device anyone is signed in on. A row with no
+        portal_user_id instead of login_user_id. A row with no
         portal identity never appears there, and vice versa: that is PROPERTY
         isolation, and it is what replaced the old row isolation.
 
@@ -1945,4 +1961,4 @@ SEE ALSO
     rsx:man module_organization - RSX application structure
     rsx:man acls              - Roles, permissions, Permission facade
     rsx:man portal            - Portal session + portal-side impersonation
-                                (read-only, cross-domain handoff)
+                                (read-only; linked-session handshake)

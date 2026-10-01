@@ -20,7 +20,6 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const os = require('os');
 
 // Parse command line arguments
 function parse_args() {
@@ -59,7 +58,10 @@ function parse_args() {
         console.log('  --console-debug-benchmark   Include benchmark timing in console_debug');
         console.log('  --console-debug-all         Show all console_debug channels');
         console.log('  --dump-dimensions=<sel>    Add layout dimensions to matching elements');
-        console.log('  --portal           Test portal routes (uses /_portal/ prefix)');
+        console.log('  --portal           Test portal routes (browses --portal-host + --portal-prefix)');
+        console.log('  --app-host=<h>     The APP_URL host[:port] to browse (passed by rsx:debug)');
+        console.log('  --portal-host=<h>  The portal host[:port] (passed by rsx:debug with --portal)');
+        console.log('  --portal-prefix=<p> The portal path prefix, \'\' at the root of its host');
         console.log('  --portal-user=<id> Test as specific portal user ID');
         console.log('  --help             Show this help message');
         process.exit(0);
@@ -110,7 +112,12 @@ function parse_args() {
         dev_auth_token: process.env.RSX_DEV_AUTH_TOKEN || null,
         dev_auth_exp: process.env.RSX_DEV_AUTH_EXP || null,
         portal: false,
-        portal_user_id: null
+        portal_user_id: null,
+        // The addresses to browse arrive from rsx:debug, which derives them from APP_URL and
+        // PORTAL_URL (Rsx_App_Url / Rsx_Portal_Url); this script never reads .env.
+        app_host: null,
+        portal_host: null,
+        portal_prefix: ''
     };
     
     for (const arg of args) {
@@ -189,6 +196,12 @@ function parse_args() {
             options.portal = true;
         } else if (arg.startsWith('--portal-user=')) {
             options.portal_user_id = arg.substring(14);
+        } else if (arg.startsWith('--app-host=')) {
+            options.app_host = arg.substring(11);
+        } else if (arg.startsWith('--portal-host=')) {
+            options.portal_host = arg.substring(14);
+        } else if (arg.startsWith('--portal-prefix=')) {
+            options.portal_prefix = arg.substring(16);
         } else if (!arg.startsWith('--')) {
             options.route = arg;
         }
@@ -225,34 +238,31 @@ function parse_args() {
     // The path library answers for every volatile root, honouring an RSX_STORAGE_PATH
     // in the project's .env exactly as PHP does.
     const rsx_paths = require('./lib/rsx_paths.js');
-    const project_root = rsx_paths.project_root();
 
-    // Browse the APP_URL host (DNS-mapped to loopback via a Chromium resolver rule)
-    // rather than a literal localhost, so everything that keys on the request host -
-    // Rsx::get_hostname(), environment-scoped auth gates, the
-    // dev-mode hostname guard - sees the same identity a real browser does. Plain
-    // http: nginx serves the name on :80 (upstream SSL termination is a deployment
-    // concern). Falls back to localhost when no APP_URL host can be resolved.
-    let app_host = null;
-    try {
-        const env_raw = fs.readFileSync(path.join(project_root, '.env'), 'utf8');
-        const app_url_match = env_raw.match(/^APP_URL=\s*"?https?:\/\/([^\/"\s]+)/m);
-        if (app_url_match && app_url_match[1]) {
-            // The literal $HOSTNAME token resolves to the OS hostname (same rule the
-            // framework applies at boot).
-            app_host = app_url_match[1] === '$HOSTNAME' ? os.hostname() : app_url_match[1];
-        }
-    } catch (e) {
-        // No readable .env - keep the localhost default.
-    }
-    const baseUrl = app_host ? 'http://' + app_host : 'http://localhost';
+    // Browse the APP_URL host - or, with --portal, the portal's host - DNS-mapped to
+    // loopback via a Chromium resolver rule, rather than a literal localhost, so everything
+    // that keys on the request host - Rsx::get_hostname(), request classification (a portal
+    // on its own host), environment-scoped auth gates, the dev-mode hostname guard - sees
+    // the same identity a real browser does. Plain http: nginx serves every name on :80
+    // (upstream SSL termination is a deployment concern). localhost when rsx:debug passed
+    // no host (APP_URL not configured yet).
+    const app_host = options.app_host;
+    const browse_host = (options.portal && options.portal_host) ? options.portal_host : app_host;
+    const baseUrl = browse_host ? 'http://' + browse_host : 'http://localhost';
 
-    // In portal mode, ensure route has /_portal prefix
+    // In portal mode the route is the path INSIDE the portal (rsx:debug stripped any
+    // prefix); the portal's own prefix puts it back at the portal's address.
     let route = options.route;
-    if (options.portal && !route.startsWith('/_portal')) {
-        route = '/_portal' + route;
+    if (options.portal) {
+        route = options.portal_prefix + route;
     }
     const fullUrl = baseUrl + route;
+
+    // Every host this run may browse resolves to loopback: the APP_URL host, and the
+    // portal's host when it has one of its own. A resolver rule names a bare hostname.
+    const mapped_hosts = [...new Set([app_host, options.portal_host]
+        .filter((host) => host)
+        .map((host) => host.replace(/:\d+$/, '')))];
     const laravel_log_path = process.env.LARAVEL_LOG_PATH
         || path.join(rsx_paths.storage_root(), 'logs', 'laravel.log');
     
@@ -260,7 +270,9 @@ function parse_args() {
     const browser = await chromium.launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox'].concat(
-            app_host ? ['--host-resolver-rules=MAP ' + app_host + ' 127.0.0.1'] : [])
+            mapped_hosts.length > 0
+                ? ['--host-resolver-rules=' + mapped_hosts.map((host) => 'MAP ' + host + ' 127.0.0.1').join(',')]
+                : [])
     });
 
     // Set viewport for screenshot if requested

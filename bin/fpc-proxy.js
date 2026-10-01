@@ -121,7 +121,31 @@ function watch_build_key() {
 // Cache key generation
 // ---------------------------------------------------------------------------
 
-function make_cache_key(url) {
+/**
+ * The host part of the key: the request's Host header, lowercased, port removed (hosts are
+ * compared without ports everywhere in the framework - cookies are port-agnostic). nginx
+ * forwards the browser's host ($host). One application can answer on several hosts (the
+ * APP_URL host and a client portal on a host of its own), and the same path on two hosts is
+ * two different pages, so the host is part of every key.
+ */
+function cache_key_host(host_header) {
+    let host = String(host_header || '').trim().toLowerCase();
+
+    if (host.startsWith('[')) {
+        const close = host.indexOf(']');
+        return close === -1 ? host : host.substring(1, close);
+    }
+
+    const colon = host.indexOf(':');
+    return colon === -1 ? host : host.substring(0, colon);
+}
+
+/**
+ * fpc:{build_key}:{host}:{sha1(path?sorted_query)} - mirrors Rsx_FPC::cache_key(), which
+ * the framework suite checks against this function. The host is in clear so a purge of one
+ * path can reach it on every host (Rsx_FPC::clear_url()). Pure.
+ */
+function compose_cache_key(key_build, host_header, url) {
     // Parse URL to extract path and sorted query params
     const parsed = new URL(url, 'http://localhost');
     const path_str = parsed.pathname;
@@ -134,7 +158,11 @@ function make_cache_key(url) {
         : path_str;
 
     const hash = crypto.createHash('sha1').update(full_url).digest('hex');
-    return `fpc:${build_key}:${hash}`;
+    return `fpc:${key_build}:${cache_key_host(host_header)}:${hash}`;
+}
+
+function make_cache_key(host_header, url) {
+    return compose_cache_key(build_key, host_header, url);
 }
 
 // ---------------------------------------------------------------------------
@@ -285,7 +313,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 4. Compute cache key and check Redis
-    const cache_key = make_cache_key(req.url);
+    const cache_key = make_cache_key(req.headers.host, req.url);
 
     try {
         const cached = await redis_client.get(cache_key);
@@ -399,7 +427,12 @@ async function shutdown(signal) {
     process.exit(0);
 }
 
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+// Required as a module (the framework suite reads the key derivation), nothing starts.
+if (require.main === module) {
+    process.on('SIGTERM', () => shutdown('SIGTERM'));
+    process.on('SIGINT', () => shutdown('SIGINT'));
 
-start();
+    start();
+}
+
+module.exports = { compose_cache_key, cache_key_host };

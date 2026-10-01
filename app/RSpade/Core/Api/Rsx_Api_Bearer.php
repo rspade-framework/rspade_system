@@ -8,6 +8,7 @@ use App\RSpade\Core\Api\Api_Key_Model;
 use App\RSpade\Core\Api\Api_Scopes;
 use App\RSpade\Core\Api\Rsx_Api;
 use App\RSpade\Core\Models\User_Model;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Session\Session;
 
 /**
@@ -100,7 +101,9 @@ class Rsx_Api_Bearer
      * run, so those gates see the key's user in Session::get_user() exactly as they see a
      * browser's user.
      *
-     * Three outcomes, in this order:
+     * The outcomes, in this order:
+     *   - a Bearer header on a PORTAL-realm request (the portal twin of these routes),
+     *     identity or not -> the API's own 404 not_found: the API does not exist on the portal.
      *   - an identity already exists (a staff or portal cookie session, or an API identity set
      *     earlier in this request) -> null, and NOTHING is touched. A browser request behaves
      *     exactly as it did before this method existed, header or no header. This also enforces
@@ -133,6 +136,15 @@ class Rsx_Api_Bearer
      */
     public static function authenticate_web_request(Request $request): ?Response
     {
+        // The portal realm takes no key. These routes also answer in the portal's route
+        // table, for portal pages; an API key is a STAFF identity and the API does not exist
+        // on the portal, so a key presented there is refused exactly as an unknown API path
+        // on the portal host is (Api_Dispatcher) - never signed into a portal request. A
+        // browser never sends one of its own accord, so no page is affected.
+        if (Rsx_Portal::is_portal_request() && static::token_from($request) !== null) {
+            return Rsx_Api::error('not_found', 'Unknown API endpoint', 404);
+        }
+
         if (Session::is_api_request() || Session::has_session()) {
             return null;
         }

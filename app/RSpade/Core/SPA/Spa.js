@@ -226,12 +226,9 @@ class Spa {
         const parsed = Spa.parse_url(url);
         let path = parsed.path;
 
-        // Strip portal prefix if in portal context
-        if (Rsx_Portal.is_portal() && !Rsx_Portal.has_dedicated_domain()) {
-            const prefix = Rsx_Portal.get_prefix();
-            if (path.startsWith(prefix)) {
-                path = path.substring(prefix.length) || '/';
-            }
+        // Strip the portal prefix if in portal context
+        if (Rsx_Portal.is_portal()) {
+            path = Rsx_Portal.strip_prefix(path);
         }
 
         // Normalize path - remove leading/trailing slashes for matching

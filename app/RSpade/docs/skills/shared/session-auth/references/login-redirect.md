@@ -48,7 +48,7 @@ The target is **URL-threaded, never stashed in the session or browser storage** 
 
 ## Portal parity
 
-Everything is context-aware via `Rsx_Portal::is_portal_request()`: in prefix mode the portal prefix is a page namespace (stripped before the base rules apply), staff and portal targets are **isolated in both directions**, and portal loop-prevention uses `config('rsx.login_redirect.portal_excluded_prefixes')`. The template's portal login/register flows are wired end to end (`Portal_Main::pre_dispatch` captures, the forms emit `hidden_input()`, the post-auth decision consumes).
+Everything is context-aware via `Rsx_Portal::is_portal_request()`: in a portal request the portal prefix (from `PORTAL_URL`; `''` at the root of a portal host) is a page namespace stripped before the base rules apply, staff and portal targets are **isolated in both directions** (a staff request rejects a path under a same-host portal prefix whatever its spelling), and portal loop-prevention uses `config('rsx.login_redirect.portal_excluded_prefixes')`. The template's portal login/register flows are wired end to end (`Portal_Main::pre_dispatch` captures, the forms emit `hidden_input()`, the post-auth decision consumes).
 
 ## Pitfalls
 

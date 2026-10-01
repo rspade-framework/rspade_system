@@ -176,6 +176,15 @@ DEFINING AN AUTH CHECK
         public          always true - the explicit open marker
         is_logged_in    staff session present (the existing facade method,
                         now additionally marked as a gate)
+        is_sysadmin     the developer flag (Session::is_developer()) - the
+                        /_sys panel's gate; #[Replaceable] (rsx:man sys_panel)
+        can_impersonate may this staff user "View as Client" (rsx:man portal,
+                        IMPERSONATION). DENIES by default; #[Replaceable], so
+                        an app offering the feature redeclares it on its
+                        Permission class with its own rule (#[Auth_Check]
+                        included) and no parent:: call is owed. The framework
+                        asks it itself when an impersonation starts and again
+                        on the linked-session handshake's staff leg.
 
     Portal_Permission_Abstract carries the portal realm's marked equivalents
     ('public', 'is_logged_in' resolving against Portal_Session). Realm decides
@@ -547,8 +556,9 @@ PORTAL
     (/_ajax/_batch) and the upload transport (/_upload) - are served on BOTH
     channels by the same handlers: the one Dispatcher answers the bare path in
     the staff realm, and the same path under the portal's own base in the
-    portal realm (/_portal/_ajax/... in prefix mode; /_ajax/... on the portal
-    domain, where the HOST already selects the portal realm). The client picks the
+    portal realm (/_portal/_ajax/... by default; /_ajax/... when the portal is
+    at the root of its own host, where the HOST already selects the portal
+    realm - rsx:man portal, PORTAL URL). The client picks the
     channel from the page it is on - Rsx_Portal.internal_url() - so every
     generated controller stub keeps ONE spelling and acquires the channel at
     call time.

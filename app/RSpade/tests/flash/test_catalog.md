@@ -91,8 +91,8 @@ depending on a hand-made dev row.
 | flash-http-04 | the jar holds exactly one session cookie | cookie jar after the flow | bare `rsx` present, `rsx_portal` absent | implemented |
 | flash-http-05 | portal Ajax still passes the csrf seam | POST `<prefix>/_ajax/...` with `window.rsxapp.csrf` | no "CSRF token mismatch" - the exact brick the CR reported | implemented |
 
-Override `PORTAL_PREFIX` for a deployment that repointed `rsx.portal.prefix` (a portal
-DOMAIN deployment would use `""`).
+`<prefix>` is read from the live configuration (`Rsx_Portal_Url::prefix()`); the script
+SKIPs when `PORTAL_URL` names a host of its own, where a cookie per host is the design.
 
 ## Deferred
 

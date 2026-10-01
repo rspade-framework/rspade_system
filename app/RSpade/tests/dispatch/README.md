@@ -70,7 +70,7 @@ ROUTE-VERB-01 build rule, and the dev-auth credential.
   `shouldnt_happen()`), and a failure anywhere in it is rendered once by the channel's
   policy - a build-artifact miss is a plain-text 404, a 404 raised after the action
   returned is the 404 page with the action run once. No Laravel route is reachable, and
-  the external API answers 404 on the portal's dedicated domain.
+  the external API answers 404 on a portal's own host.
 - The default route `/_/Controller/action` qualifies only a `Rsx_Controller_Abstract`
   method with a `#[Route]` surface (never an `#[SPA]` bootstrap, never Ajax/fetch/API), no
   `/error/` route and scalar query values; GET redirects to its real URL, POST runs it

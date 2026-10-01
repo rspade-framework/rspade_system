@@ -1,0 +1,110 @@
+PORTAL_URL REPLACES THE PORTAL DOMAIN/PREFIX KEYS, AND VIEW AS CLIENT USES A NEW API
+Date: 2026-10-01
+
+IF YOU DO NOTHING: a configured portal domain is ignored and View as Client fatals.
+    - An application that set PORTAL_DOMAIN (or rsx.portal.domain /
+      rsx.portal.prefix in rsx/resource/config/rsx.php) serves its portal at
+      APP_URL + /_portal instead, silently: those keys are no longer read.
+    - Code calling Portal_Session::create_impersonation_session() or
+      claim_impersonation(), or routing to Portal_Impersonate_Controller::claim,
+      fatals. Your "View as Client" button stops working.
+    - Code calling Rsx_Portal::get_domain(), get_prefix(),
+      has_dedicated_domain(), url(), get_normalized_path() or URL_PREFIX (PHP or
+      JS), or reading window.rsxapp.portal.domain / .prefix, throws or reads
+      undefined.
+    - An application whose Permission class does not declare can_impersonate
+      has View as Client refused: the framework now declares the check and it
+      answers false until you redeclare it.
+
+SUMMARY
+    Where the client portal lives is now ONE setting, PORTAL_URL in .env (config
+    rsx.portal.url), written exactly like APP_URL ($HOSTNAME token, https
+    outside development, an explicit port when it is not the scheme default).
+    Blank means APP_URL + /_portal, which is what an application that never set
+    a portal domain already had. The host and prefix are derived from it, so the
+    portal may live under any prefix on the application host, on a host of its
+    own, or on its own host under a prefix. PORTAL_URL equal to APP_URL is
+    refused at boot.
+
+    A portal on its own host is now fully served: both hostname guards accept
+    it, the file, preview and CSP-report routes exist in the portal realm,
+    Rsx_Portal::Route() answers an absolute URL when called off the portal's
+    host (so emailed portal links are right), and the page cache keys on host.
+
+    View as Client is started by Portal_Session::begin_impersonation_from_staff().
+    On the application host it writes the impersonation onto the staff user's own
+    session. On a portal with its own host it returns the first URL of a signed,
+    single-use, three-leg handshake that links the browser's portal-host cookie to
+    the staff session. The old 60-second handoff token, its claim route and its
+    invalid-link view are gone.
+
+WHAT YOU ALREADY HAVE
+    Arrived automatically in system/, nothing to do:
+
+    PORTAL_URL / rsx.portal.url, Rsx_Portal_Url (origin(), host(), prefix(),
+        is_separate_host()), and the rsx:health "Portal URL" row.
+    Rsx_Portal::Route() / portal_path() / internal_url() (PHP and JS), which
+        build portal URLs for every layout; rsx_absolute_url() passes an
+        absolute URL through, so rsx_absolute_url(Rsx_Portal::Route(...)) is
+        right everywhere.
+    window.rsxapp.portal = {origin, prefix, separate_host} on every page.
+    /_session_link/open|confirm|complete (both realms), _session_links,
+        Session_Link, Rsx_Signed_Url.
+    can_impersonate, declared on Permission_Abstract (#[Replaceable], false).
+
+WHAT IS MISSING IN YOUR APPLICATION
+    1. The portal location, moved to PORTAL_URL.
+    2. Your View as Client endpoint and the JS that opens it, moved to the new
+       API.
+    3. Your own can_impersonate declaration, if you had none.
+
+THE REFERENCE IMPLEMENTATION
+    system/app/RSpade/resource/reference_app/resource/config/rsx.php
+        (the portal block: no domain or prefix key)
+    system/app/RSpade/resource/reference_app/app/frontend/contacts/contacts_controller.php
+        (begin_portal_impersonation: calls begin_impersonation_from_staff() and
+        returns ['url' => ...])
+    system/app/RSpade/resource/reference_app/app/frontend/contacts/view/Contacts_View_Action.js
+        (view_as_client: opens the tab BEFORE the await, then navigates it)
+    system/app/RSpade/resource/reference_app/portal/auth/Portal_Impersonate_Controller.php
+        (only /impersonate/stop remains)
+    system/app/RSpade/resource/reference_app/permission.php
+        (can_impersonate, redeclared with the application's rule)
+
+PORTING IT
+    1. Delete PORTAL_DOMAIN and any rsx.portal.domain / rsx.portal.prefix
+       entries from your config. If your portal was on a dedicated host, set
+       PORTAL_URL=https://<that host> in .env. Then run php artisan rsx:health
+       and read the "Portal URL" row.
+    2. Replace every call to the removed Rsx_Portal members with
+       Rsx_Portal_Url::origin()/host()/prefix()/is_separate_host() (PHP) or
+       Rsx_Portal.origin()/host()/prefix()/is_separate_host() (JS). Hand-built
+       portal URLs become Rsx_Portal::Route() or Rsx_Portal::portal_path().
+    3. In your View as Client endpoint, replace create_impersonation_session() +
+       the claim URL with:
+           $url = Portal_Session::begin_impersonation_from_staff(
+               $portal_user->id, Session::get_user()->id, $portal_site_id);
+       and return it. In the JS, open the window synchronously and set its
+       location after the call returns, as the reference does.
+    4. Delete your /impersonate/claim route and its invalid-link view; keep
+       /impersonate/stop.
+    5. If your Permission class did not declare can_impersonate, add an
+       #[Auth_Check] public static function can_impersonate(): bool with your
+       rule.
+
+    Moving the portal to a different host has consequences outside your code:
+    each SSO provider console needs the new portal redirect URI, passkeys
+    enrolled under the old portal host stop working, and stored portal links
+    carry the old address. rsx:man prelaunch_checklist (ENTRY 16).
+
+VERIFICATION
+    php artisan rsx:health shows the "Portal URL" row OK with the origin and
+    prefix you expect. As a staff user allowed to impersonate, use View as
+    Client on a contact with a portal account: the portal opens as that client
+    with the stop link in its layout. With PORTAL_URL on a separate host the
+    tab passes through /_session_link/open, /confirm and /complete first.
+
+SEE ALSO
+    portal - PORTAL URL, INTERNAL ENDPOINTS, IMPERSONATION
+    prelaunch_checklist - changing PORTAL_URL
+    skill rspade:portal-core - layouts and View as Client

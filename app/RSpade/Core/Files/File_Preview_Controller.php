@@ -12,9 +12,9 @@ use App\RSpade\Core\Files\File_Storage_Model;
 use App\RSpade\Core\Files\Markdown_Rendition;
 use App\RSpade\Core\Files\Rsx_File_Paths;
 use App\RSpade\Core\Files\Spreadsheet_Rendition;
+use App\RSpade\Core\Portal\Rsx_Portal;
 use App\RSpade\Core\Rsx;
 use App\RSpade\Core\Search\Search_Index_Model;
-use App\RSpade\Core\Session\Session;
 
 /**
  * File_Preview_Controller
@@ -39,6 +39,13 @@ use App\RSpade\Core\Session\Session;
  *                                  render_status_id, urls{rendition|null, inline, icon}} for a Document_Preview
  * POST (Ajax) get_extracted_text - {status, text|null} for a Document_Text_Preview
  * POST (Ajax) get_markdown_html  - {status, html|null, truncated} for a Markdown_Viewer
+ *
+ * BOTH REALMS: the GET routes carry a #[Portal_Route] twin on the same handler, and every URL
+ * get_preview_info() hands out (and Pdf_Viewer's module URLs) goes through
+ * Rsx_Portal::internal_url(), so a portal page fetches its preview bytes as a PORTAL request -
+ * under the portal's prefix, or on the portal's own host. The Ajax endpoints ride the realm of
+ * the page through #[Auth_Realm('any')], and every gate is handed the realm's own user
+ * (File_Attachment_Controller::_gate_user()).
  *
  * ================================================================================================
  * FILTER / GATE CHAINS
@@ -104,6 +111,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * @return \Symfony\Component\HttpFoundation\Response
      */
     #[Route('/_preview/pdf/:key', methods: ['GET'])]
+    #[Portal_Route('/_preview/pdf/:key', methods: ['GET'])]
     public static function pdf_rendition(Request $request, array $params = [])
     {
         // An API client may present its key here instead of a cookie session; this is a no-op
@@ -127,7 +135,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // Dual authorization gate cascade - identical to inline()/download_file().
         $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
         ]);
         if ($thumbnail_auth !== true) {
@@ -136,7 +144,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
 
         $download_auth = Rsx::trigger_gate('file.download.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
         ]);
         if ($download_auth !== true) {
@@ -201,6 +209,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * @return \Symfony\Component\HttpFoundation\Response
      */
     #[Route('/_preview/sheet/:key', methods: ['GET'])]
+    #[Portal_Route('/_preview/sheet/:key', methods: ['GET'])]
     public static function sheet_rendition(Request $request, array $params = [])
     {
         $bearer_denied = Rsx_Api_Bearer::authenticate_web_request($request);
@@ -220,7 +229,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
 
         $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
         ]);
         if ($thumbnail_auth !== true) {
@@ -229,7 +238,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
 
         $download_auth = Rsx::trigger_gate('file.download.authorize', [
             'attachment' => $attachment,
-            'user' => Session::get_user(),
+            'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
         ]);
         if ($download_auth !== true) {
@@ -449,6 +458,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * @return \Symfony\Component\HttpFoundation\Response
      */
     #[Route('/_preview/pdfjs.mjs', methods: ['GET'])]
+    #[Portal_Route('/_preview/pdfjs.mjs', methods: ['GET'])]
     public static function pdfjs(Request $request, array $params = [])
     {
         return static::__serve_module(base_path('node_modules/pdfjs-dist/build/pdf.min.mjs'));
@@ -464,6 +474,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
      * @return \Symfony\Component\HttpFoundation\Response
      */
     #[Route('/_preview/pdf_worker.mjs', methods: ['GET'])]
+    #[Portal_Route('/_preview/pdf_worker.mjs', methods: ['GET'])]
     public static function pdf_worker(Request $request, array $params = [])
     {
         return static::__serve_module(base_path('node_modules/pdfjs-dist/build/pdf.worker.min.mjs'));
@@ -525,15 +536,13 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         //
         // 'user' is realm-honest. This endpoint is #[Auth_Realm('any')], so a portal page's
         // <Document_Preview> reaches it as a genuine PORTAL request; handing the app's gate
-        // a staff-facade read there gives it either null or - in prefix mode, where the
+        // a staff-facade read there gives it either null or - with the portal on the application host, where the
         // browser still carries the staff cookie - the STAFF user, which would authorize a
         // portal viewer against staff permissions. Same idiom as /_upload. See
         // docs.dev/audits/portal_realm_session_audit_2026_08_09.md.
         $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
             'attachment' => $attachment,
-            'user' => \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
-                ? \App\RSpade\Core\Portal\Portal_Session::get_portal_user()
-                : Session::get_user(),
+            'user' => File_Attachment_Controller::_gate_user(),
             'request' => $request,
         ]);
         if ($thumbnail_auth !== true) {
@@ -554,17 +563,17 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         $is_spreadsheet = Spreadsheet_Rendition::handles_mime($attachment->pipeline_mime());
 
         if ($attachment->pipeline_mime() === 'application/pdf') {
-            $rendition_url = Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]);
+            $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]));
         } elseif ($render_status === File_Storage_Model::RENDER_STATUS_RENDERED) {
             $storage = File_Storage_Model::find($attachment->file_storage_id);
 
             // A workbook's rendition is HTML at its own endpoint - see sheet_rendition().
             if ($is_spreadsheet) {
                 if ($storage && file_exists(static::sheet_rendition_cache_path($storage))) {
-                    $rendition_url = Rsx::Route('File_Preview_Controller::sheet_rendition', ['key' => $attachment->key]);
+                    $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::sheet_rendition', ['key' => $attachment->key]));
                 }
             } elseif ($storage && file_exists(static::rendition_cache_path($storage))) {
-                $rendition_url = Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]);
+                $rendition_url = Rsx_Portal::internal_url(Rsx::Route('File_Preview_Controller::pdf_rendition', ['key' => $attachment->key]));
             }
         }
 
@@ -591,7 +600,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
             'urls' => [
                 'rendition' => $rendition_url,
                 'inline' => $attachment->get_url(),
-                'icon' => Rsx::Route('File_Attachment_Controller::icon_by_extension', ['extension' => $attachment->file_extension]),
+                'icon' => Rsx_Portal::internal_url(Rsx::Route('File_Attachment_Controller::icon_by_extension', ['extension' => $attachment->file_extension])),
             ],
         ];
     }
@@ -640,9 +649,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // 'user' is realm-honest for the same reason get_preview_info's is: this endpoint is
         // #[Auth_Realm('any')], so a portal page reaches it as a genuine PORTAL request and its
         // gate must not be handed a staff-facade read.
-        $user = \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
-            ? \App\RSpade\Core\Portal\Portal_Session::get_portal_user()
-            : Session::get_user();
+        $user = File_Attachment_Controller::_gate_user();
 
         $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
             'attachment' => $attachment,
@@ -741,9 +748,7 @@ class File_Preview_Controller extends Rsx_Controller_Abstract
         // 'user' is realm-honest for the same reason the two siblings' is: this endpoint is
         // #[Auth_Realm('any')], so a portal page reaches it as a genuine PORTAL request and its
         // gate must not be handed a staff-facade read.
-        $user = \App\RSpade\Core\Portal\Rsx_Portal::is_portal_request()
-            ? \App\RSpade\Core\Portal\Portal_Session::get_portal_user()
-            : Session::get_user();
+        $user = File_Attachment_Controller::_gate_user();
 
         $thumbnail_auth = Rsx::trigger_gate('file.thumbnail.authorize', [
             'attachment' => $attachment,

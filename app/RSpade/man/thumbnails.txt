@@ -570,7 +570,11 @@ THE ATTACHMENT_THUMBNAIL COMPONENT
     file.thumbnail.authorize handler with realm-honest user resolution, and a denial
     is indistinguishable from a missing record. An app whose thumbnail gate only
     considered staff users will now deny every portal thumbnail - the handler must
-    answer for a Portal_User_Model too.
+    answer for a Portal_User_Model too. The image itself is requested in the
+    portal realm as well: the thumbnail routes are declared in both route tables
+    and the URL lands under the portal's own address (Rsx_Portal.internal_url()),
+    so the gate sees the portal user on whichever host and prefix PORTAL_URL
+    places the portal (rsx:man portal).
 
 FUTURE POSSIBILITIES (unbuilt)
 

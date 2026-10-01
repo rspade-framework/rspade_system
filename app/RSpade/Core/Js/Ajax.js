@@ -648,8 +648,8 @@ class Ajax {
         // Tolerate an ALREADY-rebased portal URL. The channel is applied at call time
         // (Rsx_Portal.internal_url in _call_direct), so a caller that rebased the path
         // itself must not end up double-prefixed or rejected here.
-        const portal_prefix = Rsx_Portal.get_prefix();
-        if (portal_prefix && url.startsWith(portal_prefix + '/_ajax')) {
+        const portal_prefix = Rsx_Portal.prefix();
+        if (portal_prefix !== '' && url.startsWith(portal_prefix + '/_ajax')) {
             url = url.substring(portal_prefix.length);
         }
 

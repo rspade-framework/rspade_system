@@ -121,7 +121,7 @@ VALIDATION GUARANTEES
           valid path that no REGISTERED GET route handles. See ROUTABILITY below.
 
     The page-path and loop-prevention rules are CONTEXT-AWARE (see PORTAL PARITY):
-    in a portal request the portal prefix is a page namespace (prefix mode) and the
+    in a portal request the portal prefix is a page namespace and the
     portal exclusion list applies; staff and portal targets are isolated in both
     directions.
 
@@ -212,34 +212,33 @@ PORTAL PARITY
     (JS) and adapts its page-path and loop-prevention rules to the active context;
     application code writes the identical idiom on both sides.
 
-    Prefix mode (no dedicated portal domain - config('rsx.portal.domain') empty)
-        Every portal page URL is <prefix>/... (prefix = config('rsx.portal.prefix'),
-        default /_portal). In a portal request the validator treats the portal
-        prefix as a page namespace: a return target MUST be exactly the prefix or
-        start with prefix + '/', and the prefix is stripped before the base rules
-        apply. So /_portal/workspace/5 is a valid portal target, while the portal's
-        own non-page sub-paths (/_portal/_ajax/..., /_portal/api/v1/...) still
-        reject. A path NOT under the prefix (/login, /contacts) is rejected in
-        portal context - the staff app and the portal cannot capture each other's
-        URLs.
-
-    Domain mode (dedicated portal host configured)
-        Portal paths are unprefixed, so the base rules apply directly and the
-        portal exclusion list matches un-prefixed.
+    The portal prefix
+        The prefix is Rsx_Portal_Url::prefix(), derived from PORTAL_URL (rsx:man
+        portal, PORTAL URL): /_portal by default, any other path, or '' when the
+        portal sits at the root of its own host. In a portal request the
+        validator treats the prefix as a page namespace: a return target MUST be
+        exactly the prefix or start with prefix + '/', and the prefix is stripped
+        before the base rules apply. So /_portal/workspace/5 is a valid portal
+        target, while the portal's own non-page sub-paths (/_portal/_ajax/...,
+        /_portal/api/v1/...) still reject. An empty prefix contains every path,
+        so on a portal's own host with no prefix the base rules apply directly
+        and the portal exclusion list matches un-prefixed.
 
     Cross-context isolation (both directions)
-        In a STAFF request /_portal/... is never a valid target (it is an
-        underscore-led non-page path under the base rules). In a PORTAL request a
-        non-prefix path is never a valid target. Neither experience can be steered
-        onto the other through ?redirect=.
+        In a STAFF request a path under a SAME-HOST portal prefix is never a
+        valid target - rejected explicitly, whatever the prefix's spelling (a
+        prefix like /clients is not covered by the underscore rule that already
+        rejects /_portal/...). In a PORTAL request a path outside the prefix is
+        never a valid target. Neither experience can be steered onto the other
+        through ?redirect=. A target is a path, never an absolute URL, so a
+        portal on another host is unreachable from a staff ?redirect= anyway.
 
     Loop prevention
         Portal login-flow routes come from config('rsx.login_redirect.
         portal_excluded_prefixes'), expressed in portal-NAMESPACE (unprefixed)
         terms - default ['/login','/logout','/register','/password/reset',
-        '/request-access','/impersonate']. In prefix mode the portal prefix is
-        stripped from the target before this comparison; in domain mode it matches
-        directly. Staff requests keep using excluded_prefixes unchanged.
+        '/request-access','/impersonate']. The portal prefix is stripped from
+        the target before this comparison (nothing to strip when it is empty). Staff requests keep using excluded_prefixes unchanged.
 
     Template wiring (shipped)
         Portal_Main::pre_dispatch is the rejection point:

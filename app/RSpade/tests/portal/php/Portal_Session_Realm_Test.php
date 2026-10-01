@@ -127,23 +127,28 @@ class Portal_Session_Realm_Test extends Rsx_Test_Abstract
     }
 
     /**
-     * create_impersonation_session() is the one row-minting portal path reachable
-     * outside a web request. The row it mints is pure HANDOFF TRANSPORT - it carries
-     * the payload the claiming browser will copy onto its own session.
+     * "View as Client" writes the impersonation onto the staff browser's own row
+     * (Session::_apply_portal_impersonation - the seam both the same-host path and the
+     * linked-session handshake use). It writes PORTAL properties only: the staff login on
+     * that row, and the staff experience's own impersonation column, are untouched.
      */
-    public static function test_impersonation_handoff_carries_only_portal_properties()
+    public static function test_view_as_client_writes_only_portal_properties()
     {
         $user = static::__make_portal_user();
+        $session = static::__make_session(null, 777300);
 
-        $handoff = Portal_Session::create_impersonation_session($user->id, self::IMPERSONATOR_ID, self::SITE_ID);
+        static::__assert_true(
+            Session::_apply_portal_impersonation($session->id, $user->id, self::SITE_ID, self::IMPERSONATOR_ID),
+            'applied to a live row'
+        );
 
-        $row = Session::where('handoff_token', $handoff)->first();
+        $row = Session::find($session->id);
 
-        static::__assert_not_null($row, 'handoff row created');
         static::__assert_equals($user->id, (int) $row->portal_user_id, 'bound to the target portal user');
         static::__assert_equals(self::SITE_ID, (int) $row->portal_site_id, 'carries the portal tenant');
-        static::__assert_null($row->login_user_id, 'no staff identity');
         static::__assert_equals(self::IMPERSONATOR_ID, (int) $row->impersonator_user_id, 'staff impersonator recorded');
+        static::__assert_not_null($row->impersonation_started_at, 'start time recorded');
+        static::__assert_equals(777300, (int) $row->login_user_id, 'the staff login on the same row is untouched');
         static::__assert_null($row->impersonator_login_user_id, 'the staff impersonation column stays empty');
     }
 

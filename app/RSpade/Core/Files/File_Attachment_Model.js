@@ -34,18 +34,19 @@ class File_Attachment_Model extends Base_File_Attachment_Model {
 
         const v = File_Attachment_Model.thumbnail_version(record);
 
+        // The route exists in both realms; a portal page asks its own (Rsx_Portal.internal_url).
         if (options.preset) {
-            return '/_thumbnail/preset/' + record.key + '/' + options.preset + '?v=' + v;
+            return Rsx_Portal.internal_url('/_thumbnail/preset/' + record.key + '/' + options.preset + '?v=' + v);
         }
 
         const type = options.type || 'fit';
         const width = int(options.width || 400);
 
         if (options.height === undefined || options.height === null || options.height === '') {
-            return '/_thumbnail/dynamic/' + record.key + '/' + type + '/' + width + '?v=' + v;
+            return Rsx_Portal.internal_url('/_thumbnail/dynamic/' + record.key + '/' + type + '/' + width + '?v=' + v);
         }
 
-        return '/_thumbnail/dynamic/' + record.key + '/' + type + '/' + width + '/' + int(options.height) + '?v=' + v;
+        return Rsx_Portal.internal_url('/_thumbnail/dynamic/' + record.key + '/' + type + '/' + width + '/' + int(options.height) + '?v=' + v);
     }
 
     /**
